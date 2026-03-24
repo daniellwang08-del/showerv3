@@ -1,0 +1,156 @@
+import { ModalState } from '../types/ui';
+import { Edit2, XCircle, Copy, Trash2, RefreshCw } from 'lucide-react';
+
+type Props = {
+  modal: ModalState;
+  modalUrl: string;
+  onModalUrlChange: (next: string) => void;
+  modalReason: string;
+  onModalReasonChange: (next: string) => void;
+  modalDuplicateOf: string;
+  onModalDuplicateOfChange: (next: string) => void;
+  modalSubmitting: boolean;
+  modalError: string;
+  onClose: () => void;
+  onConfirm: () => void;
+};
+
+export function JobActionModal({
+  modal,
+  modalUrl,
+  onModalUrlChange,
+  modalReason,
+  onModalReasonChange,
+  modalDuplicateOf,
+  onModalDuplicateOfChange,
+  modalSubmitting,
+  modalError,
+  onClose,
+  onConfirm,
+}: Props) {
+  if (!modal) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white shadow-xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="flex items-center gap-2 text-base font-bold text-slate-900">
+            {modal.kind === 'edit' && <Edit2 className="h-5 w-5 text-blue-600" />}
+            {modal.kind === 'reportInvalid' && <XCircle className="h-5 w-5 text-red-600" />}
+            {modal.kind === 'reportDuplicate' && <Copy className="h-5 w-5 text-orange-600" />}
+            {modal.kind === 'delete' && <Trash2 className="h-5 w-5 text-red-600" />}
+            {modal.kind === 'replaceInvalid' && <RefreshCw className="h-5 w-5 text-purple-600" />}
+            <span>
+              {modal.kind === 'edit' && 'Edit job URL'}
+              {modal.kind === 'reportInvalid' && 'Report as invalid job'}
+              {modal.kind === 'reportDuplicate' && 'Report as duplicated job'}
+              {modal.kind === 'delete' && 'Delete job'}
+              {modal.kind === 'replaceInvalid' && 'Replace job URL'}
+            </span>
+          </div>
+          {modal.kind !== 'replaceInvalid' && (
+            <div className="mt-1 truncate text-xs text-slate-600" title={modal.currentUrl}>
+              {modal.currentUrl}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4">
+          {modal.kind === 'edit' && (
+            <div>
+              <label className="block text-sm font-semibold text-slate-900">New URL</label>
+              <input
+                value={modalUrl}
+                onChange={(e) => onModalUrlChange(e.target.value)}
+                className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                placeholder="https://..."
+                autoFocus
+              />
+            </div>
+          )}
+
+          {modal.kind === 'reportInvalid' && (
+            <div>
+              <label className="block text-sm font-semibold text-slate-900">Reason (optional)</label>
+              <input
+                value={modalReason}
+                onChange={(e) => onModalReasonChange(e.target.value)}
+                className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                placeholder="Why is this invalid?"
+                autoFocus
+              />
+            </div>
+          )}
+
+          {modal.kind === 'reportDuplicate' && (
+            <div className="grid gap-3">
+              <div>
+                <label className="block text-sm font-semibold text-slate-900">Duplicate of job_id (optional)</label>
+                <input
+                  value={modalDuplicateOf}
+                  onChange={(e) => onModalDuplicateOfChange(e.target.value)}
+                  className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                  placeholder="UUID"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-900">Reason (optional)</label>
+                <input
+                  value={modalReason}
+                  onChange={(e) => onModalReasonChange(e.target.value)}
+                  className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                  placeholder="Why is this duplicated?"
+                />
+              </div>
+            </div>
+          )}
+
+          {modal.kind === 'delete' && <div className="text-sm text-slate-700">This will remove the job from active lists.</div>}
+
+          {modal.kind === 'replaceInvalid' && (
+            <div className="grid gap-3 text-sm text-slate-700">
+              <div>
+                <div className="text-xs font-semibold text-slate-900">Original (in To do list)</div>
+                <div className="mt-1 break-all border border-blue-200 bg-blue-50 p-2 text-xs">{modal.validUrl}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-slate-900">Replace with (duplicated link)</div>
+                <div className="mt-1 break-all border border-orange-200 bg-orange-50 p-2 text-xs">{modal.invalidUrl}</div>
+              </div>
+              <div className="text-xs text-slate-600">This will update the original job URL and then delete this duplicated entry.</div>
+            </div>
+          )}
+
+          {modalError && <div className="mt-3 text-sm font-medium text-red-700">{modalError}</div>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
+          <button
+            type="button"
+            className="border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 transition"
+            onClick={onClose}
+            disabled={modalSubmitting}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="bg-gradient-to-r from-blue-500 to-purple-500 px-4 py-2 text-sm font-semibold text-white hover:from-blue-600 hover:to-purple-600 disabled:opacity-70 transition"
+            onClick={onConfirm}
+            disabled={modalSubmitting}
+          >
+            {modalSubmitting ? 'Working…' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
