@@ -14,6 +14,7 @@ from app.extractors.ashby_api_extractor import AshbyApiExtractor
 from app.extractors.html_extractor import HTMLExtractor
 from app.extractors.browser_extractor import BrowserExtractor
 from app.core.logging import get_logger
+from app.core.exceptions import AIParsingError
 
 logger = get_logger(__name__)
 
@@ -86,18 +87,21 @@ class ExtractionService:
             if result.success and result.structured_data:
                 ai_parser = get_ai_parser()
                 description = result.structured_data.get("description", html_content)
-                job_data, confidence = await ai_parser.parse(description)
-                self._merge_job_data(job_data, result.structured_data)
-                validation = validate_job_data(job_data, confidence)
-                if validation.is_valid:
-                    return await self._save_result(
-                        job_id,
-                        job_data,
-                        ExtractionMethod.STATIC_HTML,
-                        validation.adjusted_confidence,
-                        html_content
-                    )
-                last_error = f"Validation failed: {', '.join(validation.errors)}"
+                try:
+                    job_data, confidence = await ai_parser.parse(description)
+                    self._merge_job_data(job_data, result.structured_data)
+                    validation = validate_job_data(job_data, confidence)
+                    if validation.is_valid:
+                        return await self._save_result(
+                            job_id,
+                            job_data,
+                            ExtractionMethod.STATIC_HTML,
+                            validation.adjusted_confidence,
+                            html_content
+                        )
+                    last_error = f"Validation failed: {', '.join(validation.errors)}"
+                except AIParsingError as e:
+                    last_error = f"AI parsing failed: {e}"
             elif result.error:
                 last_error = result.error
 
@@ -110,10 +114,16 @@ class ExtractionService:
                     if browser_result.structured_data:
                         # Use extracted structured data from rendered HTML when available.
                         description = browser_result.structured_data.get("description", browser_result.raw_content)
-                        job_data, confidence = await ai_parser.parse(description)
-                        self._merge_job_data(job_data, browser_result.structured_data)
+                        try:
+                            job_data, confidence = await ai_parser.parse(description)
+                            self._merge_job_data(job_data, browser_result.structured_data)
+                        except AIParsingError as e:
+                            last_error = f"AI parsing failed: {e}"
                     else:
-                        job_data, confidence = await ai_parser.parse(browser_result.raw_content)
+                        try:
+                            job_data, confidence = await ai_parser.parse(browser_result.raw_content)
+                        except AIParsingError as e:
+                            last_error = f"AI parsing failed: {e}"
 
                     validation = validate_job_data(job_data, confidence)
                     if validation.is_valid:
@@ -156,12 +166,19 @@ class ExtractionService:
     def _parse_posted_date(self, value) -> datetime | None:
         """Best-effort parse of a date string into a datetime object."""
         if isinstance(value, datetime):
+            # Convert timezone-aware to naive (assuming UTC)
+            if value.tzinfo is not None:
+                return value.replace(tzinfo=None)
             return value
         if not value or not isinstance(value, str):
             return None
         for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d"):
             try:
-                return datetime.strptime(value, fmt)
+                parsed = datetime.strptime(value, fmt)
+                # If parsed with timezone, make it naive
+                if parsed.tzinfo is not None:
+                    parsed = parsed.replace(tzinfo=None)
+                return parsed
             except (ValueError, TypeError):
                 continue
         return None
@@ -292,7 +309,12 @@ class ExtractionService:
             confidence=confidence,
         )
 
-        return {"job_id": job_id, "status": "completed", "method": method.value}
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "method": method.value,
+            "confidence": confidence,
+        }
 
     async def _save_failed(self, job_id: str, error: str) -> dict:
         async with get_session() as session:

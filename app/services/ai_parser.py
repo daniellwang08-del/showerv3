@@ -69,13 +69,19 @@ class AIParser:
             parsed_data = json.loads(result_text)
             confidence = self._calculate_confidence(parsed_data)
 
+            # Validate if content looks like a job posting
+            title = parsed_data.get("title")
+            description = parsed_data.get("description", "")
+            if not title and len(description) < 50:
+                raise AIParsingError("Content does not appear to contain job posting information")
+
             job_data = JobDescriptionSchema(
-                title=parsed_data.get("title", "Unknown Position"),
+                title=title or "Unknown Position",
                 company=parsed_data.get("company"),
                 location=parsed_data.get("location"),
                 employment_type=parsed_data.get("employment_type"),
                 salary_range=parsed_data.get("salary_range"),
-                description=parsed_data.get("description", ""),
+                description=description or "No description available",
                 responsibilities=parsed_data.get("responsibilities", []),
                 requirements=parsed_data.get("requirements", []),
                 benefits=parsed_data.get("benefits", []),

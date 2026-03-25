@@ -20,7 +20,7 @@ type Props = {
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
   userInitial?: string;
-  MenuComponent: React.ReactNode;
+  compareValidJobId?: string | null;
   children?: React.ReactNode;
 };
 
@@ -42,19 +42,18 @@ export function JobTimeline({
   onJobUrlClick,
   onRescrape,
   userInitial,
-  MenuComponent,
+  compareValidJobId,
   children,
 }: Props) {
   const [dateRange, setDateRange] = useState<'all' | '7d' | '30d' | 'custom'>('all');
   const [open, setOpen] = useState(false);
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
-  const [sortByDate, setSortByDate] = useState<Record<string, 'platform' | 'matchRate'>>({});
+  const [sortByDate, setSortByDate] = useState<Record<string, 'platform' | 'matchRate' | 'postedDate'>>({});
   const [sortOpenDate, setSortOpenDate] = useState<string | null>(null);
   const [selectedJobsByDate, setSelectedJobsByDate] = useState<Record<string, Set<string>>>({});
   const [isSelectingMode, setIsSelectingMode] = useState(false);
   const [dragStartDateKey, setDragStartDateKey] = useState<string | null>(null);
-  const [dragStartJobId, setDragStartJobId] = useState<string | null>(null);
   const [bulkActionOpen, setBulkActionOpen] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const sortMenuRef = useRef<HTMLDivElement>(null);
@@ -139,7 +138,6 @@ export function JobTimeline({
       selectionTimeoutFiredRef.current = true;
       setIsSelectingMode(true);
       setDragStartDateKey(dateKey);
-      setDragStartJobId(jobId);
       toggleJobSelection(dateKey, jobId);
     }, 300); // 300ms for long press
 
@@ -268,10 +266,6 @@ export function JobTimeline({
     setBulkActionOpen(null);
   };
 
-  // Check if any jobs are selected
-  const hasSelection = Object.values(selectedJobsByDate).some(set => set.size > 0);
-  const totalSelected = Array.from(Object.values(selectedJobsByDate)).reduce((acc, set) => acc + set.size, 0);
-
   // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -360,6 +354,11 @@ export function JobTimeline({
             const scoreB = b.match_overall_score ?? -1;
             return scoreB - scoreA; // Descending: higher scores first
           }
+          case 'postedDate': {
+            const dateA = a.posted_date_ms ?? a.created_at_ms ?? 0;
+            const dateB = b.posted_date_ms ?? b.created_at_ms ?? 0;
+            return dateB - dateA; // Descending: newest first
+          }
           default:
             return 0;
         }
@@ -374,9 +373,6 @@ export function JobTimeline({
     return new Date(b).getTime() - new Date(a).getTime();
   });
 
-  // Check if we should show date groups (show for all date ranges to organize jobs by date)
-  const shouldShowDateGroups = true;
-
   const dateRangeLabel = {
     all: 'All dates',
     '7d': 'Last 7 days',
@@ -387,6 +383,7 @@ export function JobTimeline({
   const sortLabel = {
     platform: 'By Job Platform',
     matchRate: 'By Match Rate',
+    postedDate: 'By Posted Date',
   };
 
   return (
@@ -488,7 +485,7 @@ export function JobTimeline({
                           ref={sortMenuRef}
                           className="absolute left-0 top-full mt-1 z-50 rounded-md border border-slate-200 bg-white shadow-lg"
                         >
-                          {(['platform', 'matchRate'] as const).map((option) => (
+                          {(['platform', 'matchRate', 'postedDate'] as const).map((option) => (
                             <button
                               key={option}
                               onClick={() => {
@@ -570,9 +567,11 @@ export function JobTimeline({
                       <div className="relative">
                         <div 
                           className={`flex items-center justify-between gap-3 border px-3 py-2 transition rounded cursor-pointer user-select-none ${
-                            isSelected 
-                              ? 'border-blue-500 bg-blue-50' 
-                              : 'border-transparent hover:bg-blue-50'
+                            isSelected
+                              ? 'border-blue-500 bg-blue-50'
+                              : ('border-transparent hover:bg-blue-50')
+                          } ${
+                            item.id === compareValidJobId ? 'ring-2 ring-blue-500' : ''
                           }`}
                           onMouseDown={(e) => handleJobMouseDown(dateKey, item.id, e)}
                           onMouseMove={handleJobMouseMove}

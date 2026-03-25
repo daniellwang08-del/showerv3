@@ -15,6 +15,7 @@ export type SubmittedUrlItem = {
   click_count?: number;
   appliedAt?: number;
   appliedBy?: string;
+  posted_date_ms?: number; // new field for optional sort by job posted date
   table?: 'valid' | 'invalid';
 };
 

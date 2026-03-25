@@ -88,6 +88,7 @@ async def test_extraction_service_success_mock_ai():
     # Verify
     assert result["status"] == "completed"
     assert result["job_id"] == job_id
+    assert result.get("confidence") == 0.95
     
     # Check DB
     async with get_session() as session:
@@ -143,3 +144,94 @@ async def test_browser_extractor_integration_structured(monkeypatch):
     assert result.structured_data is not None
     assert result.structured_data.get("title") == "Software Engineer"
     assert "great job" in (result.structured_data.get("description") or "")
+
+
+@pytest.mark.asyncio
+async def test_extract_job_auto_rerun_low_confidence(monkeypatch):
+    from app.tasks.worker import extract_job
+
+    mock_service = AsyncMock()
+    mock_service.process_job.return_value = {
+        "job_id": "test-job-id",
+        "status": "completed",
+        "method": "STATIC_HTML",
+        "confidence": 0.45,
+    }
+
+    monkeypatch.setattr("app.tasks.worker.ExtractionService", lambda: mock_service)
+
+    class DummyRepo:
+        def __init__(self, session):
+            pass
+
+        async def get_by_id(self, job_id):
+            return type("Extraction", (), {"retry_count": 0})()
+
+        async def increment_retry(self, job_id):
+            return None
+
+        async def update_status(self, job_id, status):
+            return None
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def commit(self):
+            return None
+
+    def dummy_session_context():
+        return DummySession()
+
+    monkeypatch.setattr("app.tasks.worker.get_session", dummy_session_context)
+    monkeypatch.setattr("app.tasks.worker.JobExtractionRepository", DummyRepo)
+
+    enqueued = []
+    class DummyPool:
+        async def enqueue_job(self, *args):
+            enqueued.append(args)
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("app.tasks.worker.get_redis_pool", AsyncMock(return_value=DummyPool()))
+
+    result = await extract_job({}, "test-job-id", "https://example.com/job", "user-1")
+
+    assert result["status"] == "requeued"
+    assert result["confidence"] == 0.45
+    assert len(enqueued) == 1
+    assert enqueued[0][0] == "extract_job"
+
+
+@pytest.mark.asyncio
+async def test_parse_posted_date():
+    service = ExtractionService()
+    
+    # Test timezone-aware string
+    result = service._parse_posted_date("2026-03-23T17:21:00.000Z")
+    assert result is not None
+    assert result.tzinfo is None
+    assert result.year == 2026
+    assert result.month == 3
+    assert result.day == 23
+    
+    # Test already naive datetime
+    from datetime import datetime
+    naive_dt = datetime(2026, 3, 23, 17, 21, 0)
+    result = service._parse_posted_date(naive_dt)
+    assert result == naive_dt
+    
+    # Test timezone-aware datetime
+    import datetime as dt
+    aware_dt = dt.datetime(2026, 3, 23, 17, 21, 0, tzinfo=dt.timezone.utc)
+    result = service._parse_posted_date(aware_dt)
+    assert result.tzinfo is None
+    assert result == dt.datetime(2026, 3, 23, 17, 21, 0)
+    
+    # Test invalid
+    result = service._parse_posted_date("invalid")
+    assert result is None

@@ -25,6 +25,7 @@ SAMPLE_HTML_WITH_JSON_LD = """
             }
         },
         "employmentType": "FULL_TIME",
+        "datePosted": "2026-03-23T17:21:00.000Z",
         "baseSalary": {
             "@type": "MonetaryAmount",
             "currency": "USD",
@@ -92,3 +93,9 @@ class TestAPIDetector:
         assert result.success is True
         assert "150,000" in result.structured_data["salary_range"]
         assert "200,000" in result.structured_data["salary_range"]
+
+    @pytest.mark.asyncio
+    async def test_extract_date_posted_parsing(self, extractor):
+        result = await extractor.extract("https://example.com/job", SAMPLE_HTML_WITH_JSON_LD)
+        assert result.success is True
+        assert result.structured_data["posted_date"] == "2026-03-23T17:21:00.000Z"

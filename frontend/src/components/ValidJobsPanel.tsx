@@ -1,15 +1,12 @@
-import { Pencil, Flag, Copy, Trash2, CheckCircle } from 'lucide-react';
+import { CheckCircle } from 'lucide-react';
 import { SubmittedUrlItem } from '../types/ui';
 import JobTimeline from './JobTimeline';
 
 type Props = {
-  loadingLists: boolean;
   items: SubmittedUrlItem[];
-  compareValidJobId: string | null;
-  setRowRef: (id: string, el: HTMLLIElement | null) => void;
+  compareValidJobId?: string | null;
   openMenuId: string | null;
   onToggleMenu: (id: string) => void;
-  onCloseMenu: () => void;
   onEdit: (item: SubmittedUrlItem) => void;
   onReportInvalid: (item: SubmittedUrlItem) => void;
   onReportDuplicate: (item: SubmittedUrlItem) => void;
@@ -26,13 +23,9 @@ type Props = {
 };
 
 export function ValidJobsPanel({
-  loadingLists,
   items,
-  compareValidJobId,
-  setRowRef,
   openMenuId,
   onToggleMenu,
-  onCloseMenu,
   onEdit,
   onReportInvalid,
   onReportDuplicate,
@@ -46,6 +39,7 @@ export function ValidJobsPanel({
   onJobUrlClick,
   onRescrape,
   userInitial,
+  compareValidJobId,
 }: Props) {
   return (
     <div className="flex min-h-screen min-w-0 flex-col overflow-hidden border-b border-blue-200/30 px-6 py-8 md:border-b-0 md:border-r md:bg-white">
@@ -61,6 +55,7 @@ export function ValidJobsPanel({
       <JobTimeline
         items={items}
         openMenuId={openMenuId}
+        compareValidJobId={compareValidJobId}
         onToggleMenu={onToggleMenu}
         onEdit={onEdit}
         onReportInvalid={onReportInvalid}
@@ -75,7 +70,6 @@ export function ValidJobsPanel({
         onJobUrlClick={onJobUrlClick}
         onRescrape={onRescrape}
         userInitial={userInitial}
-        MenuComponent={null}
       />
     </div>
   );

@@ -205,6 +205,7 @@ function App() {
         id: string;
         source_url: string;
         created_at: string;
+        posted_date?: string | null;
         scraped_at: string | null;
         extraction_id: string | null;
         extraction_status: string | null;
@@ -236,6 +237,10 @@ function App() {
             match_overall_score: j.match_overall_score ?? undefined,
             match_status: j.match_status ?? undefined,
             click_count: j.click_count ?? 0,
+            posted_date_ms:
+              j.posted_date && !Number.isNaN(Date.parse(j.posted_date))
+                ? Date.parse(j.posted_date)
+                : undefined,
             table: 'valid' as const,
           };
         }),
@@ -474,19 +479,14 @@ function App() {
         <div className="flex-1 min-w-0 overflow-hidden">
           <div className="grid min-h-screen grid-cols-1 md:grid-cols-2 min-w-0">
         <ValidJobsPanel
-          loadingLists={loadingLists}
           items={uniqueUrls}
           compareValidJobId={compareValidJobId}
-          setRowRef={(id, el) => {
-            validRowRefs.current[id] = el;
-          }}
           openMenuId={openMenu?.table === 'valid' ? openMenu.id : null}
           onToggleMenu={(id) => {
             setOpenMenu((prev) =>
               prev?.table === 'valid' && prev.id === id ? null : { table: 'valid', id },
             );
           }}
-          onCloseMenu={() => setOpenMenu(null)}
           onEdit={(item) => openModal({ kind: 'edit', table: 'valid', id: item.id, currentUrl: item.url })}
           onReportInvalid={(item) =>
             openModal({ kind: 'reportInvalid', table: 'valid', id: item.id, currentUrl: item.url })
