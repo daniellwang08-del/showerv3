@@ -591,14 +591,6 @@ function App() {
           <div
             className={`fixed right-0 top-1/2 z-50 h-[40vh] w-[50vw] -translate-y-1/2 rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden transition-transform duration-300 ease-out ${isDuplicatePanelOpen ? 'translate-x-0' : 'translate-x-full'}`}
           >
-            <button
-              type="button"
-              onClick={() => setDuplicatePanelOpen(false)}
-              className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 h-12 w-12 rounded-l-full bg-white border border-slate-200 shadow text-orange-600 flex items-center justify-center"
-              aria-label="Close duplicates drawer"
-            >
-              ◀
-            </button>
             <div className="h-full overflow-auto p-2">
               <DuplicateJobsPanel
                 loadingLists={loadingLists}
