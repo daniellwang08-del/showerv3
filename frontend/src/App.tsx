@@ -41,6 +41,7 @@ function App() {
   const [compareValidJobId, setCompareValidJobId] = useState<string | null>(null);
   const [pendingScrollValidJobId, setPendingScrollValidJobId] = useState<string | null>(null);
   const [detailMode, setDetailMode] = useState<'scraped' | 'jobmatch' | null>(null);
+  const [isDuplicatePanelOpen, setDuplicatePanelOpen] = useState(false);
   const [scrapedContentExtractionId, setScrapedContentExtractionId] = useState<string | null>(null);
   const [jobMatchValidJobId, setJobMatchValidJobId] = useState<string | null>(null);
 
@@ -469,178 +470,206 @@ function App() {
       {mainView === 'profiles' ? (
         <ProfilesManagementPage onBack={() => setMainView('dashboard')} />
       ) : (
-      <div className="flex min-h-screen">
-        <SideDrawer
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          onMyProfile={() => setMainView('profiles')}
-        />
-
-        <div className="flex-1 min-w-0 overflow-hidden">
-          <div className="grid min-h-screen grid-cols-1 md:grid-cols-2 min-w-0">
-        <ValidJobsPanel
-          items={uniqueUrls}
-          compareValidJobId={compareValidJobId}
-          openMenuId={openMenu?.table === 'valid' ? openMenu.id : null}
-          onToggleMenu={(id) => {
-            setOpenMenu((prev) =>
-              prev?.table === 'valid' && prev.id === id ? null : { table: 'valid', id },
-            );
-          }}
-          onEdit={(item) => openModal({ kind: 'edit', table: 'valid', id: item.id, currentUrl: item.url })}
-          onReportInvalid={(item) =>
-            openModal({ kind: 'reportInvalid', table: 'valid', id: item.id, currentUrl: item.url })
-          }
-          onReportDuplicate={(item) =>
-            openModal({ kind: 'reportDuplicate', table: 'valid', id: item.id, currentUrl: item.url })
-          }
-          onDelete={(item) => openModal({ kind: 'delete', table: 'valid', id: item.id, currentUrl: item.url })}
-          onBatchDelete={handleBatchDelete}
-          onMarkApplied={handleMarkApplied}
-          onMarkUnapplied={handleMarkUnapplied}
-          onShowScrapedContent={(item) => {
-            if (item.extraction_id) {
-              setDetailMode('scraped');
-              setScrapedContentExtractionId(item.extraction_id);
-              setJobMatchValidJobId(null);
-            }
-          }}
-          onShowJobMatch={(item) => {
-            if (item.match_overall_score != null) {
-              setDetailMode('jobmatch');
-              setJobMatchValidJobId(item.id);
-              setScrapedContentExtractionId(null);
-            }
-          }}
-          onTriggerJobMatch={async (item) => {
-            try {
-              await apiClient.post(`/jobs/valid/${item.id}/match`);
-              void refreshLists();
-            } catch {
-              // Error toast could be added
-            }
-          }}
-          onJobUrlClick={async (item) => {
-            if (item.table !== 'valid') return;
-            const jobId = item.id;
-            const prevCount = item.click_count ?? 0;
-            setUniqueUrls((prev) =>
-              prev.map((u) => (u.id === jobId ? { ...u, click_count: prevCount + 1 } : u)),
-            );
-            try {
-              const res = await apiClient.post<{ click_count: number }>(`/jobs/valid/${jobId}/click`);
-              const serverCount = res.data?.click_count ?? prevCount + 1;
-              setUniqueUrls((prev) =>
-                prev.map((u) => (u.id === jobId ? { ...u, click_count: serverCount } : u)),
-              );
-            } catch {
-              // Keep optimistic count on failure
-            }
-          }}
-          onRescrape={handleRescrape}
-          userInitial={getUserInitial()}
-        />
-
-        <div className="flex min-h-screen min-w-0 flex-col overflow-hidden md:bg-gradient-to-b md:from-purple-50/50 md:to-white">
-          {detailMode ? (
-            <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
-              <DetailContentPanel
-                mode={detailMode}
-                extractionId={scrapedContentExtractionId}
-                validJobId={jobMatchValidJobId}
-                onClose={() => {
-                  setDetailMode(null);
-                  setScrapedContentExtractionId(null);
-                  setJobMatchValidJobId(null);
-                }}
-                onMatchStored={() => void refreshLists()}
-              />
-            </div>
-          ) : (
-            <div className="animate-panel-fade-in flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <DuplicateJobsPanel
-              loadingLists={loadingLists}
-              items={duplicateUrls}
-              openMenuId={openMenu?.table === 'invalid' ? openMenu.id : null}
-              onToggleMenu={(id) => {
-                setOpenMenu((prev) =>
-                  prev?.table === 'invalid' && prev.id === id ? null : { table: 'invalid', id },
-                );
-              }}
-              onCloseMenu={() => setOpenMenu(null)}
-              onCompare={(item) => {
-            const targetId = item.duplicate_job_id;
-            if (!targetId) {
-              setSubmitError('Cannot compare: missing duplicate_job_id');
-              return;
-            }
-            const inList = uniqueUrls.find((u) => u.id === targetId);
-            if (inList) {
-              scrollToValidJob(inList.id);
-              return;
-            }
-
-            (async () => {
-              const url = await fetchValidJobUrlById(targetId);
-              if (!url) {
-                setSubmitError('Cannot compare: original job not found in To do list');
-                return;
-              }
-              await refreshLists();
-              scrollToValidJob(targetId);
-            })();
-          }}
-          onReplace={(item) => {
-            const targetId = item.duplicate_job_id;
-            if (!targetId) {
-              setSubmitError('Cannot replace: missing duplicate_job_id');
-              return;
-            }
-            const inList = uniqueUrls.find((u) => u.id === targetId);
-            if (inList) {
-              openModal({
-                kind: 'replaceInvalid',
-                invalidJobId: item.id,
-                invalidUrl: item.url,
-                validJobId: inList.id,
-                validUrl: inList.url,
-              });
-              return;
-            }
-
-            (async () => {
-              const url = await fetchValidJobUrlById(targetId);
-              if (!url) {
-                setSubmitError('Cannot replace: original job not found in To do list');
-                return;
-              }
-              openModal({
-                kind: 'replaceInvalid',
-                invalidJobId: item.id,
-                invalidUrl: item.url,
-                validJobId: targetId,
-                validUrl: url,
-              });
-            })();
-          }}
-          onDelete={(item) => openModal({ kind: 'delete', table: 'invalid', id: item.id, currentUrl: item.url })}
-        >
-          <SubmitForm
-            url={url}
-            onUrlChange={setUrl}
-            loading={loading}
-            onSubmit={handleSubmit}
-            submitNotice={submitNotice}
-            submitNoticeKind={submitNoticeKind}
-            submitError={submitError}
+        <div className="flex min-h-screen">
+          <SideDrawer
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            onMyProfile={() => setMainView('profiles')}
           />
-        </DuplicateJobsPanel>
+
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <div className="grid min-h-screen grid-cols-1 md:grid-cols-2 min-w-0">
+              <ValidJobsPanel
+                items={uniqueUrls}
+                compareValidJobId={compareValidJobId}
+                openMenuId={openMenu?.table === 'valid' ? openMenu.id : null}
+                onToggleMenu={(id) => {
+                  setOpenMenu((prev) =>
+                    prev?.table === 'valid' && prev.id === id ? null : { table: 'valid', id },
+                  );
+                }}
+                onEdit={(item) => openModal({ kind: 'edit', table: 'valid', id: item.id, currentUrl: item.url })}
+                onReportInvalid={(item) =>
+                  openModal({ kind: 'reportInvalid', table: 'valid', id: item.id, currentUrl: item.url })
+                }
+                onReportDuplicate={(item) =>
+                  openModal({ kind: 'reportDuplicate', table: 'valid', id: item.id, currentUrl: item.url })
+                }
+                onDelete={(item) => openModal({ kind: 'delete', table: 'valid', id: item.id, currentUrl: item.url })}
+                onBatchDelete={handleBatchDelete}
+                onMarkApplied={handleMarkApplied}
+                onMarkUnapplied={handleMarkUnapplied}
+                onShowScrapedContent={(item) => {
+                  if (item.extraction_id) {
+                    setDetailMode('scraped');
+                    setScrapedContentExtractionId(item.extraction_id);
+                    setJobMatchValidJobId(null);
+                  }
+                }}
+                onShowJobMatch={(item) => {
+                  if (item.match_overall_score != null) {
+                    setDetailMode('jobmatch');
+                    setJobMatchValidJobId(item.id);
+                    setScrapedContentExtractionId(null);
+                  }
+                }}
+                onTriggerJobMatch={async (item) => {
+                  try {
+                    await apiClient.post(`/jobs/valid/${item.id}/match`);
+                    void refreshLists();
+                  } catch {
+                    // Error toast could be added
+                  }
+                }}
+                onJobUrlClick={async (item) => {
+                  if (item.table !== 'valid') return;
+                  const jobId = item.id;
+                  const prevCount = item.click_count ?? 0;
+                  setUniqueUrls((prev) =>
+                    prev.map((u) => (u.id === jobId ? { ...u, click_count: prevCount + 1 } : u)),
+                  );
+                  try {
+                    const res = await apiClient.post<{ click_count: number }>(`/jobs/valid/${jobId}/click`);
+                    const serverCount = res.data?.click_count ?? prevCount + 1;
+                    setUniqueUrls((prev) =>
+                      prev.map((u) => (u.id === jobId ? { ...u, click_count: serverCount } : u)),
+                    );
+                  } catch {
+                    // Keep optimistic count on failure
+                  }
+                }}
+                onRescrape={handleRescrape}
+                userInitial={getUserInitial()}
+              />
+
+              <div className="flex min-h-screen min-w-0 flex-col overflow-hidden md:bg-gradient-to-b md:from-purple-50/50 md:to-white">
+                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <h3 className="mb-2 text-lg font-semibold text-slate-900">Post a job</h3>
+                  <SubmitForm
+                    url={url}
+                    onUrlChange={setUrl}
+                    loading={loading}
+                    onSubmit={handleSubmit}
+                    submitNotice={submitNotice}
+                    submitNoticeKind={submitNoticeKind}
+                    submitError={submitError}
+                  />
+                </div>
+
+                {detailMode ? (
+                  <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
+                    <DetailContentPanel
+                      mode={detailMode}
+                      extractionId={scrapedContentExtractionId}
+                      validJobId={jobMatchValidJobId}
+                      onClose={() => {
+                        setDetailMode(null);
+                        setScrapedContentExtractionId(null);
+                        setJobMatchValidJobId(null);
+                      }}
+                      onMatchStored={() => void refreshLists()}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex min-h-0 min-w-0 flex-1" />
+                )}
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setDuplicatePanelOpen(true)}
+            className="fixed right-5 top-1/2 z-50 h-11 w-11 -translate-y-1/2 rounded-full bg-orange-600 text-white shadow-lg border-2 border-white hover:bg-orange-500 transition"
+            aria-label="Open duplicates drawer"
+          >
+            <span className="text-lg">⋯</span>
+          </button>
+
+          <div className="fixed inset-0 z-40 bg-black/20 transition-opacity duration-300" style={{ opacity: isDuplicatePanelOpen ? 1 : 0, pointerEvents: isDuplicatePanelOpen ? 'auto' : 'none' }} onClick={() => setDuplicatePanelOpen(false)} />
+
+          <div
+            className={`fixed right-0 top-1/2 z-50 h-[40vh] w-[50vw] -translate-y-1/2 rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden transition-transform duration-300 ease-out ${isDuplicatePanelOpen ? 'translate-x-0' : 'translate-x-full'}`}
+          >
+            <button
+              type="button"
+              onClick={() => setDuplicatePanelOpen(false)}
+              className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 h-12 w-12 rounded-l-full bg-white border border-slate-200 shadow text-orange-600 flex items-center justify-center"
+              aria-label="Close duplicates drawer"
+            >
+              ◀
+            </button>
+            <div className="h-full overflow-auto p-2">
+              <DuplicateJobsPanel
+                loadingLists={loadingLists}
+                items={duplicateUrls}
+                openMenuId={openMenu?.table === 'invalid' ? openMenu.id : null}
+                onToggleMenu={(id) => {
+                  setOpenMenu((prev) =>
+                    prev?.table === 'invalid' && prev.id === id ? null : { table: 'invalid', id },
+                  );
+                }}
+                onCloseMenu={() => setOpenMenu(null)}
+                onCompare={(item) => {
+                  const targetId = item.duplicate_job_id;
+                  if (!targetId) {
+                    setSubmitError('Cannot compare: missing duplicate_job_id');
+                    return;
+                  }
+                  const inList = uniqueUrls.find((u) => u.id === targetId);
+                  if (inList) {
+                    scrollToValidJob(inList.id);
+                    return;
+                  }
+                  (async () => {
+                    const url = await fetchValidJobUrlById(targetId);
+                    if (!url) {
+                      setSubmitError('Cannot compare: original job not found in To do list');
+                      return;
+                    }
+                    await refreshLists();
+                    scrollToValidJob(targetId);
+                  })();
+                }}
+                onReplace={(item) => {
+                  const targetId = item.duplicate_job_id;
+                  if (!targetId) {
+                    setSubmitError('Cannot replace: missing duplicate_job_id');
+                    return;
+                  }
+                  const inList = uniqueUrls.find((u) => u.id === targetId);
+                  if (inList) {
+                    openModal({
+                      kind: 'replaceInvalid',
+                      invalidJobId: item.id,
+                      invalidUrl: item.url,
+                      validJobId: inList.id,
+                      validUrl: inList.url,
+                    });
+                    return;
+                  }
+                  (async () => {
+                    const url = await fetchValidJobUrlById(targetId);
+                    if (!url) {
+                      setSubmitError('Cannot replace: original job not found in To do list');
+                      return;
+                    }
+                    openModal({
+                      kind: 'replaceInvalid',
+                      invalidJobId: item.id,
+                      invalidUrl: item.url,
+                      validJobId: targetId,
+                      validUrl: url,
+                    });
+                  })();
+                }}
+                onDelete={(item) => openModal({ kind: 'delete', table: 'invalid', id: item.id, currentUrl: item.url })}
+              >
+                <></>
+              </DuplicateJobsPanel>
+            </div>
           </div>
         </div>
-      </div>
       )}
     </div>
   );
