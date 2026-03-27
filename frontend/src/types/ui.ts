@@ -51,4 +51,9 @@ export type ModalState =
       table: 'valid' | 'invalid';
       id: string;
       currentUrl: string;
+    }
+  | {
+      kind: 'promoteInvalidToValid';
+      id: string;
+      currentUrl: string;
     };

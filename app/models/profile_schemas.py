@@ -117,6 +117,11 @@ class ProfileCreateRequest(BaseModel):
     def validate_github(cls, v: str | None) -> str | None:
         return _github_valid(v)
 
+    @field_validator("name_middle", mode="before")
+    @classmethod
+    def empty_middle_to_none(cls, v):
+        return _empty_to_none(v)
+
     @field_validator("phone_number")
     @classmethod
     def validate_phone(cls, v: str) -> str:

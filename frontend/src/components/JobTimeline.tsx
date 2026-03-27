@@ -14,8 +14,7 @@ type Props = {
   onMarkApplied: (items: SubmittedUrlItem[], userInitial: string) => void;
   onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
   onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
-  onShowScrapedContent?: (item: SubmittedUrlItem) => void;
-  onShowJobMatch?: (item: SubmittedUrlItem) => void;
+  onOpenJobAnalysis?: (item: SubmittedUrlItem) => void;
   onTriggerJobMatch?: (item: SubmittedUrlItem) => void;
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
@@ -36,8 +35,7 @@ export function JobTimeline({
   onMarkApplied,
   onMarkUnapplied,
   onOpenSelectedUrls,
-  onShowScrapedContent,
-  onShowJobMatch,
+  onOpenJobAnalysis,
   onTriggerJobMatch,
   onJobUrlClick,
   onRescrape,
@@ -587,7 +585,6 @@ export function JobTimeline({
                               }
                               if (status === 'completed' || item.scraped_at_ms != null) {
                                 const hasExtraction = !!item.extraction_id;
-                                const badgeClass = `shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700 ${hasExtraction ? 'cursor-pointer hover:bg-emerald-200' : ''}`;
                                 const matchScore = item.match_overall_score;
                                 const matchProcessing = item.match_status === 'processing';
                                 const matchLabel = matchProcessing
@@ -596,62 +593,40 @@ export function JobTimeline({
                                     ? String(matchScore)
                                     : '—';
                                 const matchBadgeClass = matchProcessing
-                                  ? 'shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700'
+                                  ? 'shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 cursor-pointer hover:bg-amber-200'
                                   : 'shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 cursor-pointer hover:bg-blue-200';
-                                const handleMatchClick = () => {
-                                  if (matchScore != null) {
-                                    onShowJobMatch?.(item);
-                                  } else {
+                                const handleOpenAnalysis = () => {
+                                  onOpenJobAnalysis?.(item);
+                                  if (matchScore == null && !matchProcessing) {
                                     onTriggerJobMatch?.(item);
                                   }
                                 };
                                 return (
                                   <div className="flex items-center gap-1 shrink-0">
-                                    {hasExtraction && onShowScrapedContent ? (
+                                    {seenBadge}
+                                    {(onOpenJobAnalysis || onTriggerJobMatch) && hasExtraction && (
                                       <button
                                         type="button"
                                         onClick={(e) => {
                                           e.preventDefault();
                                           e.stopPropagation();
-                                          onShowScrapedContent(item);
-                                        }}
-                                        className={badgeClass}
-                                        title="Click to view scraped content"
-                                      >
-                                        Scraped
-                                      </button>
-                                    ) : (
-                                      <span className={badgeClass} title="Content scraped">
-                                        Scraped
-                                      </span>
-                                    )}
-                                    {seenBadge}
-                                    {(onShowJobMatch || onTriggerJobMatch) && hasExtraction && (
-                                      matchProcessing ? (
-                                        <span
-                                          className={matchBadgeClass}
-                                          title="AI analyzing job match"
-                                        >
-                                          {matchLabel}
-                                        </span>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            handleMatchClick();
-                                          }}
-                                          className={matchBadgeClass}
-                                          title={
-                                            matchScore != null
-                                              ? `Match score: ${matchScore}. Click to view details`
-                                              : 'Click to analyze job match'
+                                          if (matchProcessing) {
+                                            onOpenJobAnalysis?.(item);
+                                          } else {
+                                            handleOpenAnalysis();
                                           }
-                                        >
-                                          {matchLabel}
-                                        </button>
-                                      )
+                                        }}
+                                        className={matchBadgeClass}
+                                        title={
+                                          matchProcessing
+                                            ? 'View job match analysis (AI still running)'
+                                            : matchScore != null
+                                              ? `Match score: ${matchScore}. Open job match analysis`
+                                              : 'Open job match analysis and run profile match'
+                                        }
+                                      >
+                                        {matchLabel}
+                                      </button>
                                     )}
                                   </div>
                                 );

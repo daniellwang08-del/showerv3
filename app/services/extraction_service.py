@@ -9,6 +9,7 @@ from app.models.database import ValidJob, InvalidJob
 from app.services.http_client import HTTPService
 from app.services.ai_parser import get_ai_parser
 from app.services.validator import validate_job_data
+from app.services.company_policy import enforce_one_active_job_per_company
 from app.extractors.api_detector import APIDetectorExtractor
 from app.extractors.ashby_api_extractor import AshbyApiExtractor
 from app.extractors.html_extractor import HTMLExtractor
@@ -257,6 +258,9 @@ class ExtractionService:
             await session.flush()
 
             if valid_job:
+                # Sync valid_jobs mirror fields immediately with structured extraction
+                # so policy checks and list APIs use the latest company/title metadata.
+                await valid_repo.update_from_structured_extraction(valid_job.id, job_data)
                 dup_checker = DuplicationChecker(session)
                 is_dup, dup_info = await dup_checker.comprehensive_duplicate_check(
                     url=valid_job.source_url,
@@ -300,6 +304,12 @@ class ExtractionService:
                         duplicate_of=canonical_id,
                         reason=dup_info.get("duplication_reason"),
                     )
+                # Enforce one-active-job-per-company as soon as extraction gives company details.
+                await enforce_one_active_job_per_company(
+                    session,
+                    valid_job.id,
+                    company_name=job_data.company,
+                )
             await session.commit()
 
         logger.info(

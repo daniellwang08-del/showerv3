@@ -216,6 +216,42 @@ class JobExtractionRepository:
             .values(retry_count=JobExtraction.retry_count + 1)
         )
 
+    async def update_ai_structured_content(
+        self,
+        job_id: str,
+        job_data: JobDescriptionSchema,
+        *,
+        source: str = "job_match_analysis",
+    ) -> None:
+        """
+        Replace posting fields with LLM-structured job content and drop raw page capture.
+        """
+        extraction = await self.get_by_id(job_id)
+        if not extraction:
+            return
+
+        limits = _JOB_EXTRACTION_LIMITS
+        extraction.title = _truncate_for_db(job_data.title, limits["title"]) or extraction.title
+        extraction.company = _truncate_for_db(job_data.company, limits["company"]) or extraction.company
+        extraction.location = _truncate_for_db(job_data.location, limits["location"]) or extraction.location
+        extraction.employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])
+        extraction.salary_range = _truncate_for_db(job_data.salary_range, limits["salary_range"])
+        extraction.description = sanitize_for_postgres_text(job_data.description)
+        extraction.responsibilities = list(job_data.responsibilities or [])
+        extraction.requirements = list(job_data.requirements or [])
+        extraction.benefits = list(job_data.benefits or [])
+        extraction.remote_policy = _truncate_for_db(job_data.remote_policy, limits["remote_policy"])
+        extraction.experience_level = _truncate_for_db(job_data.experience_level, limits["experience_level"])
+        extraction.industry = _truncate_for_db(job_data.industry, limits["industry"])
+        extraction.raw_html = None
+        extraction.updated_at = datetime.utcnow()
+
+        metadata = dict(extraction.raw_metadata or {})
+        metadata["ai_structured_source"] = source
+        metadata["ai_structured_updated_at"] = datetime.utcnow().isoformat()
+        extraction.raw_metadata = metadata
+        await self._session.flush()
+
 
 class ValidJobRepository:
     def __init__(self, session: AsyncSession):
@@ -233,6 +269,29 @@ class ValidJobRepository:
             select(ValidJob).where(ValidJob.extraction_id == extraction_id).limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def update_from_structured_extraction(
+        self,
+        valid_job_id: str,
+        job_data: JobDescriptionSchema,
+    ) -> None:
+        """
+        Keep valid_jobs in sync with enriched structured extraction content.
+        """
+        result = await self._session.execute(select(ValidJob).where(ValidJob.id == valid_job_id))
+        valid_job = result.scalar_one_or_none()
+        if not valid_job:
+            return
+
+        valid_job.title = _truncate_for_db(job_data.title, 500) or valid_job.title
+        valid_job.company = _truncate_for_db(job_data.company, 500) or valid_job.company
+        valid_job.location = _truncate_for_db(job_data.location, 500) or valid_job.location
+        valid_job.description = sanitize_for_postgres_text(job_data.description)
+        valid_job.posted_date = job_data.posted_date or valid_job.posted_date
+        valid_job.experience_level = _truncate_for_db(job_data.experience_level, 100) or valid_job.experience_level
+        valid_job.industry = _truncate_for_db(job_data.industry, 200) or valid_job.industry
+        valid_job.updated_at = datetime.utcnow()
+        await self._session.flush()
 
 
 class JobMatchRepository:

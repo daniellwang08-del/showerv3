@@ -9,10 +9,13 @@ import { JobActionModal } from './components/JobActionModal';
 import { useAuth } from './hooks/useAuth';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { ProfilesPage } from './features/profiles/ProfilesPage';
+import { mainViewFromHash, navigateMainView, type MainView } from './mainViewRouting';
 
 function App() {
   const { isAuthenticated, user, authPage, setAuthPage, logout, onAuthSuccess, getUserInitial } = useAuth();
-  const [mainView, setMainView] = useState<'dashboard' | 'profiles'>('dashboard');
+  const [mainView, setMainView] = useState<MainView>(() =>
+    typeof window !== 'undefined' ? mainViewFromHash() : 'dashboard',
+  );
 
   const [loading, setLoading] = useState(false);
   const [loadingLists, setLoadingLists] = useState(false);
@@ -30,9 +33,7 @@ function App() {
 
   const [compareValidJobId, setCompareValidJobId] = useState<string | null>(null);
   const [pendingScrollValidJobId, setPendingScrollValidJobId] = useState<string | null>(null);
-  const [detailMode, setDetailMode] = useState<'scraped' | 'jobmatch' | null>(null);
-  const [scrapedContentExtractionId, setScrapedContentExtractionId] = useState<string | null>(null);
-  const [jobMatchValidJobId, setJobMatchValidJobId] = useState<string | null>(null);
+  const [jobAnalysisValidJobId, setJobAnalysisValidJobId] = useState<string | null>(null);
 
   const validRowRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const isInitialListsLoad = useRef(true);
@@ -57,6 +58,17 @@ function App() {
       return null;
     }
   };
+
+  useEffect(() => {
+    const onHashChange = () => setMainView(mainViewFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    setMainView(mainViewFromHash());
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!pendingScrollValidJobId) return;
@@ -98,11 +110,26 @@ function App() {
 
   const confirmModal = async () => {
     if (!modal) return;
+    if (modal.kind === 'promoteInvalidToValid' && !modalReason.trim()) {
+      setModalError('Please enter a reason');
+      return;
+    }
 
     try {
       setModalSubmitting(true);
       setModalError('');
       setSubmitNotice('');
+
+      if (modal.kind === 'promoteInvalidToValid') {
+        const res = await apiClient.post<{ valid_job_id: string }>(`/jobs/invalid/${modal.id}/promote-to-valid`, {
+          reason: modalReason.trim(),
+        });
+        await refreshLists();
+        const newId = res.data?.valid_job_id;
+        closeModal();
+        if (newId) setJobAnalysisValidJobId(newId);
+        return;
+      }
 
       if (modal.kind === 'edit') {
         await apiClient.patch(`/jobs/${modal.table}/${modal.id}/url`, { url: modalUrl });
@@ -224,10 +251,19 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated || !uniqueUrls.length) return;
     const hasExtractionInProgress = uniqueUrls.some(
-      (u) => u.extraction_status === 'pending' || u.extraction_status === 'processing'
+      (u) => u.extraction_status === 'pending' || u.extraction_status === 'processing',
     );
     const hasMatchInProgress = uniqueUrls.some((u) => u.match_status === 'processing');
-    if (!hasExtractionInProgress && !hasMatchInProgress) return;
+    // Brief window after scrape completes: match may still be running (sync worker path or race
+    // before job_match_in_progress is visible). Without this, polling stops and the list can stay on "—".
+    const catchupMs = 15 * 60 * 1000;
+    const needsMatchScoreCatchup = uniqueUrls.some((u) => {
+      if (u.table !== 'valid' || !u.extraction_id || u.extraction_status !== 'completed') return false;
+      if (u.match_overall_score != null || u.match_status === 'processing') return false;
+      const refMs = u.scraped_at_ms ?? u.created_at_ms;
+      return Date.now() - refMs < catchupMs;
+    });
+    if (!hasExtractionInProgress && !hasMatchInProgress && !needsMatchScoreCatchup) return;
     const interval = setInterval(() => void refreshLists(), 5000);
     return () => clearInterval(interval);
   }, [isAuthenticated, uniqueUrls, uniqueUrls.length]);
@@ -402,16 +438,14 @@ function App() {
   };
 
   const onCloseDetail = useCallback(() => {
-    setDetailMode(null);
-    setScrapedContentExtractionId(null);
-    setJobMatchValidJobId(null);
+    setJobAnalysisValidJobId(null);
   }, []);
 
   const onMatchStored = useCallback(() => void refreshLists(), []);
 
-  const onMyProfile = useCallback(() => setMainView('profiles'), []);
+  const onMyProfile = useCallback(() => navigateMainView('profiles'), []);
 
-  const onBackFromProfiles = useCallback(() => setMainView('dashboard'), []);
+  const onBackFromProfiles = useCallback(() => navigateMainView('dashboard'), []);
 
   const onCompareDuplicate = useCallback(
     (item: SubmittedUrlItem) => {
@@ -501,18 +535,9 @@ function App() {
       onMarkApplied: handleMarkApplied,
       onMarkUnapplied: handleMarkUnapplied,
       onOpenSelectedUrls: handleOpenSelectedUrls,
-      onShowScrapedContent: (item: SubmittedUrlItem) => {
-        if (item.extraction_id) {
-          setDetailMode('scraped');
-          setScrapedContentExtractionId(item.extraction_id);
-          setJobMatchValidJobId(null);
-        }
-      },
-      onShowJobMatch: (item: SubmittedUrlItem) => {
-        if (item.match_overall_score != null) {
-          setDetailMode('jobmatch');
-          setJobMatchValidJobId(item.id);
-          setScrapedContentExtractionId(null);
+      onOpenJobAnalysis: (item: SubmittedUrlItem) => {
+        if (item.table === 'valid' && item.extraction_id) {
+          setJobAnalysisValidJobId(item.id);
         }
       },
       onTriggerJobMatch: async (item: SubmittedUrlItem) => {
@@ -538,13 +563,13 @@ function App() {
       },
       onRescrape: handleRescrape,
       userInitial: getUserInitial(),
-      detailMode,
-      scrapedContentExtractionId,
-      jobMatchValidJobId,
+      jobAnalysisValidJobId,
       onCloseDetail,
       onMatchStored,
       onCompareDuplicate,
       onReplaceDuplicate,
+      onReportDuplicateAsValid: (item: SubmittedUrlItem) =>
+        openModal({ kind: 'promoteInvalidToValid', id: item.id, currentUrl: item.url }),
     };
   }, [
     user?.email,
@@ -562,9 +587,7 @@ function App() {
     openMenu,
     compareValidJobId,
     handleOpenSelectedUrls,
-    detailMode,
-    scrapedContentExtractionId,
-    jobMatchValidJobId,
+    jobAnalysisValidJobId,
     onCloseDetail,
     onMatchStored,
     onCompareDuplicate,
@@ -606,7 +629,12 @@ function App() {
       />
 
       {mainView === 'profiles' ? (
-        <ProfilesPage onBack={onBackFromProfiles} />
+        <ProfilesPage
+          onBack={onBackFromProfiles}
+          onLogout={logout}
+          userEmail={user?.email}
+          userName={user?.name ?? undefined}
+        />
       ) : (
         <DashboardPage {...dashboardProps} />
       )}

@@ -41,23 +41,21 @@ type Props = {
   onMarkApplied: (items: SubmittedUrlItem[], userInitial: string) => void;
   onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
   onOpenSelectedUrls: (items: SubmittedUrlItem[]) => void;
-  onShowScrapedContent: (item: SubmittedUrlItem) => void;
-  onShowJobMatch: (item: SubmittedUrlItem) => void;
+  onOpenJobAnalysis: (item: SubmittedUrlItem) => void;
   onTriggerJobMatch: (item: SubmittedUrlItem) => void;
   onJobUrlClick: (item: SubmittedUrlItem) => void;
   onRescrape: (item: SubmittedUrlItem) => void;
   userInitial: string;
 
   // detail panel
-  detailMode: 'scraped' | 'jobmatch' | null;
-  scrapedContentExtractionId: string | null;
-  jobMatchValidJobId: string | null;
+  jobAnalysisValidJobId: string | null;
   onCloseDetail: () => void;
   onMatchStored: () => void;
 
   // compare helpers
   onCompareDuplicate: (item: SubmittedUrlItem) => void;
   onReplaceDuplicate: (item: SubmittedUrlItem) => void;
+  onReportDuplicateAsValid: (item: SubmittedUrlItem) => void;
 };
 
 export function DashboardPage({
@@ -86,19 +84,17 @@ export function DashboardPage({
   onMarkApplied,
   onMarkUnapplied,
   onOpenSelectedUrls,
-  onShowScrapedContent,
-  onShowJobMatch,
+  onOpenJobAnalysis,
   onTriggerJobMatch,
   onJobUrlClick,
   onRescrape,
   userInitial,
-  detailMode,
-  scrapedContentExtractionId,
-  jobMatchValidJobId,
+  jobAnalysisValidJobId,
   onCloseDetail,
   onMatchStored,
   onCompareDuplicate,
   onReplaceDuplicate,
+  onReportDuplicateAsValid,
 }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isDuplicatePanelOpen, setDuplicatePanelOpen] = useState(false);
@@ -130,7 +126,13 @@ export function DashboardPage({
       />
 
       <div className="flex flex-1 min-h-0">
-        <SideDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} onMyProfile={onMyProfile} />
+        <SideDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          onMyProfile={onMyProfile}
+          onGoDashboard={() => setDrawerOpen(false)}
+          activeItem="dashboard"
+        />
 
         <div className="flex-1 min-w-0 overflow-hidden">
           <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-3 p-3 md:grid-cols-2 md:grid-rows-1">
@@ -149,16 +151,15 @@ export function DashboardPage({
               onMarkApplied={onMarkApplied}
               onMarkUnapplied={onMarkUnapplied}
               onOpenSelectedUrls={onOpenSelectedUrls}
-              onShowScrapedContent={onShowScrapedContent}
-              onShowJobMatch={onShowJobMatch}
+              onOpenJobAnalysis={onOpenJobAnalysis}
               onTriggerJobMatch={onTriggerJobMatch}
               onJobUrlClick={onJobUrlClick}
               onRescrape={onRescrape}
               userInitial={userInitial}
             />
 
-            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden md:bg-gradient-to-b md:from-blue-50/40 md:to-white/70">
-              <div className="glass-card m-3 rounded-2xl p-4">
+            <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden md:bg-gradient-to-b md:from-blue-50/40 md:to-white/70">
+              <div className="glass-card shrink-0 rounded-2xl p-4">
                 <h3 className="mb-2 text-lg font-semibold text-slate-900">Post a job</h3>
                 <SubmitForm
                   url={url}
@@ -171,14 +172,12 @@ export function DashboardPage({
                 />
               </div>
 
-              {detailMode ? (
-                <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
+              {jobAnalysisValidJobId ? (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   <DetailContentPanel
-                    mode={detailMode}
-                    extractionId={scrapedContentExtractionId}
-                    validJobId={jobMatchValidJobId}
+                    validJobId={jobAnalysisValidJobId}
                     onClose={onCloseDetail}
-                    onMatchStored={onMatchStored}
+                    onAnalysisUpdated={onMatchStored}
                   />
                 </div>
               ) : (
@@ -228,7 +227,7 @@ export function DashboardPage({
         />
 
         <div
-          className={`fixed right-0 top-1/2 z-50 h-[72vh] w-[min(620px,92vw)] -translate-y-1/2 rounded-l-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden transition-transform duration-300 ease-out ${
+          className={`fixed right-0 top-1/2 z-[60] h-[72vh] w-[min(620px,92vw)] -translate-y-1/2 rounded-l-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden transition-transform duration-300 ease-out ${
             isDuplicatePanelOpen ? 'translate-x-0' : 'translate-x-full'
           }`}
           role="dialog"
@@ -247,6 +246,7 @@ export function DashboardPage({
               onClosePanel={() => setDuplicatePanelOpen(false)}
               onCompare={onCompareDuplicate}
               onReplace={onReplaceDuplicate}
+              onReportAsValid={onReportDuplicateAsValid}
               onDelete={onDelete}
             >
               <></>

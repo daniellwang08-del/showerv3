@@ -106,7 +106,14 @@ export function useJobsLists(isAuthenticated: boolean) {
       (u) => u.extraction_status === 'pending' || u.extraction_status === 'processing',
     );
     const hasMatchInProgress = uniqueUrls.some((u) => u.match_status === 'processing');
-    if (!hasExtractionInProgress && !hasMatchInProgress) return;
+    const catchupMs = 15 * 60 * 1000;
+    const needsMatchScoreCatchup = uniqueUrls.some((u) => {
+      if (u.table !== 'valid' || !u.extraction_id || u.extraction_status !== 'completed') return false;
+      if (u.match_overall_score != null || u.match_status === 'processing') return false;
+      const refMs = u.scraped_at_ms ?? u.created_at_ms;
+      return Date.now() - refMs < catchupMs;
+    });
+    if (!hasExtractionInProgress && !hasMatchInProgress && !needsMatchScoreCatchup) return;
     const interval = setInterval(() => void refreshLists(), 5000);
     return () => clearInterval(interval);
   }, [isAuthenticated, refreshLists, uniqueUrls]);

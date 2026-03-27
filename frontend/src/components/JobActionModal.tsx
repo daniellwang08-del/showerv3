@@ -1,5 +1,5 @@
 import { ModalState } from '../types/ui';
-import { Edit2, XCircle, Copy, Trash2, RefreshCw } from 'lucide-react';
+import { Edit2, XCircle, Copy, Trash2, RefreshCw, ClipboardCheck } from 'lucide-react';
 
 type Props = {
   modal: ModalState;
@@ -47,15 +47,17 @@ export function JobActionModal({
             {modal.kind === 'reportDuplicate' && <Copy className="h-5 w-5 text-orange-600" />}
             {modal.kind === 'delete' && <Trash2 className="h-5 w-5 text-red-600" />}
             {modal.kind === 'replaceInvalid' && <RefreshCw className="h-5 w-5 text-purple-600" />}
+            {modal.kind === 'promoteInvalidToValid' && <ClipboardCheck className="h-5 w-5 text-emerald-600" />}
             <span>
               {modal.kind === 'edit' && 'Edit job URL'}
               {modal.kind === 'reportInvalid' && 'Report as invalid job'}
               {modal.kind === 'reportDuplicate' && 'Report as duplicated job'}
               {modal.kind === 'delete' && 'Delete job'}
               {modal.kind === 'replaceInvalid' && 'Replace job URL'}
+              {modal.kind === 'promoteInvalidToValid' && 'Report as valid job'}
             </span>
           </div>
-          {modal.kind !== 'replaceInvalid' && (
+          {modal.kind !== 'replaceInvalid' && 'currentUrl' in modal && (
             <div className="mt-1 truncate text-xs text-slate-600" title={modal.currentUrl}>
               {modal.currentUrl}
             </div>
@@ -126,6 +128,22 @@ export function JobActionModal({
                 <div className="mt-1 break-all border border-orange-200 bg-orange-50 p-2 text-xs">{modal.invalidUrl}</div>
               </div>
               <div className="text-xs text-slate-600">This will update the original job URL and then delete this duplicated entry.</div>
+            </div>
+          )}
+
+          {modal.kind === 'promoteInvalidToValid' && (
+            <div>
+              <label className="block text-sm font-semibold text-slate-900">Reason</label>
+              <p className="mt-1 text-xs text-slate-500">
+                Shown as a badge on the job match analysis header after this URL is moved to To do jobs.
+              </p>
+              <textarea
+                value={modalReason}
+                onChange={(e) => onModalReasonChange(e.target.value)}
+                className="blue-outline-input mt-2 min-h-[88px] w-full resize-y bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                placeholder="Why should this posting be on your To do list?"
+                autoFocus
+              />
             </div>
           )}
 

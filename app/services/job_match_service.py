@@ -11,12 +11,40 @@ from app.core.openai_client import get_openai_client
 from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
 from app.prompts.job_match_prompt import JOB_MATCH_SYSTEM_PROMPT, JOB_MATCH_USER_TEMPLATE
+from app.models.schemas import JobDescriptionSchema
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = get_logger(__name__)
 
 MAX_JOB_LENGTH = 15000
 MAX_PROFILE_LENGTH = 8000
+MAX_STRUCTURED_JOB_LENGTH = 20000
+
+STRUCTURED_JOB_SYSTEM_PROMPT = (
+    "You are a precise job-posting structuring assistant. "
+    "Convert raw job text into clean structured JSON. "
+    "Preserve meaning; do not invent facts."
+)
+
+STRUCTURED_JOB_USER_TEMPLATE = """Extract structured job-posting data from the text below.
+
+Return ONLY JSON with keys:
+- title (string)
+- company (string or null)
+- location (string or null)
+- employment_type (string or null)
+- salary_range (string or null)
+- description (string)
+- responsibilities (array of strings)
+- requirements (array of strings)
+- benefits (array of strings)
+- remote_policy (string or null)
+- experience_level (string or null)
+- industry (string or null)
+
+Job text:
+{job_text}
+"""
 
 
 def _build_job_text(
@@ -142,3 +170,69 @@ async def analyze_job_match(
     except Exception as e:
         logger.error("job_match_failed", error=str(e))
         raise AIParsingError(str(e))
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    reraise=True,
+)
+async def extract_structured_job_content(job_text: str) -> JobDescriptionSchema:
+    """
+    Build enhanced structured job content from already-scraped text using OpenAI.
+    """
+    client: AsyncOpenAI = get_openai_client()
+    settings = get_settings()
+    job_truncated = _truncate(job_text, MAX_STRUCTURED_JOB_LENGTH)
+
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": STRUCTURED_JOB_SYSTEM_PROMPT},
+            {"role": "user", "content": STRUCTURED_JOB_USER_TEMPLATE.format(job_text=job_truncated)},
+        ],
+        temperature=0.1,
+        max_tokens=settings.openai_max_tokens,
+        response_format={"type": "json_object"},
+    )
+
+    result_text = response.choices[0].message.content
+    if not result_text:
+        raise AIParsingError("Empty structured job response from AI model")
+
+    try:
+        parsed = json.loads(result_text)
+    except json.JSONDecodeError as e:
+        raise AIParsingError(f"Structured job JSON parse failed: {e}")
+
+    description = str(parsed.get("description", "")).strip()
+    if not description:
+        description = "No description available"
+
+    title = str(parsed.get("title", "")).strip() or "Unknown Position"
+
+    def _list_of_strings(value) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        out: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                s = item.strip()
+                if s:
+                    out.append(s)
+        return out
+
+    return JobDescriptionSchema(
+        title=title,
+        company=(str(parsed["company"]).strip() if parsed.get("company") else None),
+        location=(str(parsed["location"]).strip() if parsed.get("location") else None),
+        employment_type=(str(parsed["employment_type"]).strip() if parsed.get("employment_type") else None),
+        salary_range=(str(parsed["salary_range"]).strip() if parsed.get("salary_range") else None),
+        description=description,
+        responsibilities=_list_of_strings(parsed.get("responsibilities")),
+        requirements=_list_of_strings(parsed.get("requirements")),
+        benefits=_list_of_strings(parsed.get("benefits")),
+        remote_policy=(str(parsed["remote_policy"]).strip() if parsed.get("remote_policy") else None),
+        experience_level=(str(parsed["experience_level"]).strip() if parsed.get("experience_level") else None),
+        industry=(str(parsed["industry"]).strip() if parsed.get("industry") else None),
+    )

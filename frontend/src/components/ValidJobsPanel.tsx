@@ -15,8 +15,7 @@ type Props = {
   onMarkApplied: (items: SubmittedUrlItem[], userInitial: string) => void;
   onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
   onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
-  onShowScrapedContent?: (item: SubmittedUrlItem) => void;
-  onShowJobMatch?: (item: SubmittedUrlItem) => void;
+  onOpenJobAnalysis?: (item: SubmittedUrlItem) => void;
   onTriggerJobMatch?: (item: SubmittedUrlItem) => void;
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
@@ -35,8 +34,7 @@ export function ValidJobsPanel({
   onMarkApplied,
   onMarkUnapplied,
   onOpenSelectedUrls,
-  onShowScrapedContent,
-  onShowJobMatch,
+  onOpenJobAnalysis,
   onTriggerJobMatch,
   onJobUrlClick,
   onRescrape,
@@ -68,8 +66,7 @@ export function ValidJobsPanel({
           onMarkApplied={onMarkApplied}
           onMarkUnapplied={onMarkUnapplied}
           onOpenSelectedUrls={onOpenSelectedUrls}
-          onShowScrapedContent={onShowScrapedContent}
-          onShowJobMatch={onShowJobMatch}
+          onOpenJobAnalysis={onOpenJobAnalysis}
           onTriggerJobMatch={onTriggerJobMatch}
           onJobUrlClick={onJobUrlClick}
           onRescrape={onRescrape}

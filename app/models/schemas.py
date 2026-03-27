@@ -129,6 +129,32 @@ class JobMatchResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class JobPromotionInfo(BaseModel):
+    """User promotion from duplicates → valid (reason + who + when)."""
+
+    reason: str
+    promoted_by: str
+    promoted_at: str | None = None
+
+
+class JobAnalysisResponse(BaseModel):
+    """
+    Unified payload for the job analysis panel: scraped/structured posting + optional match result.
+    """
+
+    valid_job_id: str
+    extraction_id: str | None
+    extraction_status: ExtractionStatus | None
+    source_url: str
+    job_data: JobDescriptionSchema | None = None
+    extraction_method: ExtractionMethod | None = None
+    confidence_score: float | None = None
+    content_enriched_by_ai: bool = False
+    match: JobMatchResponse | None = None
+    match_in_progress: bool = False
+    promotion: JobPromotionInfo | None = None
+
+
 class InvalidJobResponse(BaseModel):
     id: str
     source_url: str

@@ -14,11 +14,18 @@ from app.models.schemas import (
     InvalidJobResponse,
     JobSubmissionResponse,
     JobMatchResponse,
+    JobAnalysisResponse,
+    JobPromotionInfo,
 )
 from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
 from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest
 from app.storage.database import get_session, check_database_connection
-from app.storage.repository import JobExtractionRepository, JobMatchRepository, ValidJobRepository
+from app.storage.repository import (
+    JobExtractionRepository,
+    JobMatchRepository,
+    JobMatchInProgressRepository,
+    ValidJobRepository,
+)
 from app.storage.user_repository import UserRepository, _profile_display_name
 from app.services.url_manager import URLManager
 from app.services.deduplication import DeduplicationService
@@ -30,6 +37,7 @@ from app.models.database import ValidJob, InvalidJob, JobExtraction, JobMatchRes
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
+from app.utils.text_sanitizer import sanitize_for_postgres_text
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -44,6 +52,10 @@ class JobReportRequest(BaseModel):
     duplicate_of_job_id: str | None = Field(default=None, max_length=36)
 
 
+class PromoteInvalidRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
 async def get_current_user(request: Request):
     token = request.cookies.get("access_token")
     if not token:
@@ -53,6 +65,16 @@ async def get_current_user(request: Request):
     if not payload:
         logger.warning("auth_required_invalid_token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    uid = payload.get("user_id")
+    if uid is not None and str(uid).strip():
+        return {**payload, "user_id": str(uid).strip()}
+    sub = payload.get("sub")
+    if isinstance(sub, str) and sub.strip():
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_email(sub.lower().strip())
+            if user:
+                return {**payload, "user_id": user.id}
     return payload
 
 
@@ -369,6 +391,42 @@ async def enqueue_extraction(
             logger.error("extraction_not_enqueued", extraction_id=extraction_id, reason="No worker and no background_tasks available")
 
 
+async def enqueue_job_match_analysis(
+    valid_job_id: str,
+    user_id: str,
+    *,
+    background_tasks: BackgroundTasks | None = None,
+) -> None:
+    """
+    Enqueue AI job-match analysis immediately.
+    Uses worker queue when available, otherwise background-task fallback.
+    """
+    pool = await try_get_redis_pool()
+    if pool and await _has_active_arq_worker(pool):
+        await pool.enqueue_job("analyze_job_match", valid_job_id, user_id)
+        await pool.close()
+        logger.info(
+            "job_match_enqueued_redis",
+            valid_job_id=valid_job_id,
+            user_id=user_id,
+            queue="job_extraction",
+        )
+    else:
+        if pool:
+            await pool.close()
+        if background_tasks:
+            from app.services.job_match_orchestrator import run_job_match_analysis
+            background_tasks.add_task(run_job_match_analysis, valid_job_id, user_id)
+            logger.info("job_match_enqueued_sync", valid_job_id=valid_job_id, user_id=user_id)
+        else:
+            logger.error(
+                "job_match_not_enqueued",
+                valid_job_id=valid_job_id,
+                user_id=user_id,
+                reason="No worker and no background_tasks available",
+            )
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     settings = get_settings()
@@ -425,14 +483,20 @@ async def process_extraction_sync(
         result = await service.process_job(job_id, url)
         # Run job match analysis when extraction completes (sync fallback path)
         if user_id and result.get("status") == "completed":
+            valid_job_id: str | None = None
             async with get_session() as session:
                 valid_repo = ValidJobRepository(session)
                 valid_job = await valid_repo.get_by_extraction_id(job_id)
                 if valid_job:
-                    try:
-                        await run_job_match_analysis(valid_job.id, user_id)
-                    except Exception as match_err:
-                        logger.warning("sync_job_match_failed", valid_job_id=valid_job.id, error=str(match_err))
+                    valid_job_id = valid_job.id
+                    progress_repo = JobMatchInProgressRepository(session)
+                    await progress_repo.add(valid_job.id, user_id)
+                    await session.commit()
+            if valid_job_id:
+                try:
+                    await run_job_match_analysis(valid_job_id, user_id)
+                except Exception as match_err:
+                    logger.warning("sync_job_match_failed", valid_job_id=valid_job_id, error=str(match_err))
     except Exception as e:
         logger.error("sync_extraction_failed", job_id=job_id, error=str(e))
 
@@ -847,6 +911,33 @@ async def submit_job(
                     user_id=current_user.get("user_id"),
                     background_tasks=background_tasks,
                 )
+            else:
+                # If extraction already exists as completed, trigger match analysis immediately.
+                # This preserves the original design requirement: extracted content should flow
+                # into match engine without waiting for manual trigger.
+                user_id = current_user.get("user_id")
+                if user_id:
+                    existing_match = await session.execute(
+                        select(JobMatchResult).where(
+                            JobMatchResult.valid_job_id == valid_job.id,
+                            JobMatchResult.user_id == user_id,
+                        )
+                    )
+                    existing_progress = await session.execute(
+                        select(JobMatchInProgress).where(
+                            JobMatchInProgress.valid_job_id == valid_job.id,
+                            JobMatchInProgress.user_id == user_id,
+                        )
+                    )
+                    if not existing_match.scalar_one_or_none() and not existing_progress.scalar_one_or_none():
+                        progress_repo = JobMatchInProgressRepository(session)
+                        await progress_repo.add(valid_job.id, user_id)
+                        await session.commit()
+                        await enqueue_job_match_analysis(
+                            valid_job.id,
+                            user_id,
+                            background_tasks=background_tasks,
+                        )
 
             logger.info("jobs_submit_valid_created", job_id=valid_job.id, url=request.url, extraction_id=extraction.id)
             return JobSubmissionResponse(
@@ -867,6 +958,8 @@ async def get_valid_jobs(
     """Get valid jobs (todo-jobs)"""
     logger.debug("get_valid_jobs", limit=limit, offset=offset)
     user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     async with get_session() as session:
         stmt = (
             select(
@@ -1004,6 +1097,128 @@ async def get_job_match(
             gaps=match_result.gaps or [],
             recommendation=match_result.recommendation or "moderate_match",
             created_at=match_result.created_at,
+        )
+
+
+def _ai_enriched_extraction(extraction: JobExtraction | None) -> bool:
+    if not extraction:
+        return False
+    meta = extraction.raw_metadata or {}
+    return bool(meta.get("ai_structured_updated_at") or meta.get("ai_structured_source"))
+
+
+@router.get(
+    "/jobs/valid/{job_id}/analysis",
+    response_model=JobAnalysisResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_job_analysis_panel(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> JobAnalysisResponse:
+    """
+    Single payload for the analysis UI: extraction posting + optional cached AI match.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    async with get_session() as session:
+        r = await session.execute(select(ValidJob).where(ValidJob.id == job_id, ValidJob.is_active == True))
+        job = r.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="Valid job not found")
+
+        extraction = None
+        extraction_status = None
+        extraction_method = None
+        confidence_score = None
+        job_data = None
+        content_enriched_by_ai = False
+
+        if job.extraction_id:
+            ext_repo = JobExtractionRepository(session)
+            extraction = await ext_repo.get_by_id(job.extraction_id)
+            if extraction:
+                extraction_status = extraction.status
+                extraction_method = extraction.extraction_method
+                confidence_score = extraction.confidence_score
+                content_enriched_by_ai = _ai_enriched_extraction(extraction)
+                if extraction.status == ExtractionStatus.COMPLETED and extraction.title:
+                    job_data = JobDescriptionSchema(
+                        title=extraction.title,
+                        company=extraction.company,
+                        location=extraction.location,
+                        employment_type=extraction.employment_type,
+                        salary_range=extraction.salary_range,
+                        description=extraction.description or "",
+                        responsibilities=extraction.responsibilities or [],
+                        requirements=extraction.requirements or [],
+                        benefits=extraction.benefits or [],
+                        posted_date=extraction.posted_date,
+                        application_deadline=extraction.application_deadline,
+                        remote_policy=extraction.remote_policy,
+                        experience_level=extraction.experience_level,
+                        industry=extraction.industry,
+                        raw_metadata=extraction.raw_metadata or {},
+                    )
+
+        match_repo = JobMatchRepository(session)
+        match_row = await match_repo.get(job_id, user_id)
+        in_prog = await session.execute(
+            select(JobMatchInProgress).where(
+                JobMatchInProgress.valid_job_id == job_id,
+                JobMatchInProgress.user_id == user_id,
+            )
+        )
+        match_in_progress = in_prog.scalar_one_or_none() is not None
+
+        match_payload = None
+        if match_row:
+            match_payload = JobMatchResponse(
+                valid_job_id=match_row.valid_job_id,
+                overall_score=match_row.overall_score,
+                dimension_scores=match_row.dimension_scores,
+                summary=match_row.summary or "",
+                strengths=match_row.strengths or [],
+                gaps=match_row.gaps or [],
+                recommendation=match_row.recommendation or "moderate_match",
+                created_at=match_row.created_at,
+            )
+
+        vm = job.raw_metadata or {}
+        reason_raw = vm.get("promotion_reason")
+        promotion_payload = None
+        if isinstance(reason_raw, str) and reason_raw.strip():
+            name = vm.get("promoted_by_name")
+            email = vm.get("promoted_by_email")
+            if isinstance(name, str) and name.strip():
+                by_label = name.strip()
+            elif isinstance(email, str) and email.strip():
+                by_label = email.strip()
+            else:
+                by_label = "Unknown"
+            at_raw = vm.get("promoted_at")
+            at_str = at_raw.strip() if isinstance(at_raw, str) and at_raw.strip() else None
+
+            promotion_payload = JobPromotionInfo(
+                reason=reason_raw.strip(),
+                promoted_by=by_label,
+                promoted_at=at_str,
+            )
+
+        return JobAnalysisResponse(
+            valid_job_id=job.id,
+            extraction_id=job.extraction_id,
+            extraction_status=extraction_status,
+            source_url=job.source_url,
+            job_data=job_data,
+            extraction_method=extraction_method,
+            confidence_score=confidence_score,
+            content_enriched_by_ai=content_enriched_by_ai,
+            match=match_payload,
+            match_in_progress=match_in_progress,
+            promotion=promotion_payload,
         )
 
 
@@ -1182,6 +1397,134 @@ async def get_invalid_job(job_id: str) -> InvalidJobResponse:
             created_at=job.created_at,
             updated_at=job.updated_at,
         )
+
+
+@router.post("/jobs/invalid/{job_id}/promote-to-valid", dependencies=[Depends(get_current_user)])
+async def promote_invalid_to_valid(
+    job_id: str,
+    request: PromoteInvalidRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Move a duplicate (invalid) job to the valid list with a user reason stored on the new row.
+    """
+    reason_clean = sanitize_for_postgres_text(request.reason.strip())
+    if not reason_clean:
+        raise HTTPException(status_code=400, detail="Reason is required")
+    user_id = current_user.get("user_id")
+
+    async with get_session() as session:
+        duplication_checker = DuplicationChecker(session)
+        inv_result = await session.execute(
+            select(InvalidJob).where(InvalidJob.id == job_id, InvalidJob.is_active == True)
+        )
+        invalid = inv_result.scalar_one_or_none()
+        if not invalid:
+            logger.warning("promote_invalid_not_found", job_id=job_id)
+            raise HTTPException(status_code=404, detail="Invalid job not found")
+
+        taken = await session.execute(
+            select(ValidJob.id).where(ValidJob.normalized_url == invalid.normalized_url).limit(1)
+        )
+        if taken.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail="This URL is already on the valid jobs list",
+            )
+
+        meta = dict(invalid.raw_metadata or {})
+        promoted_at_iso = datetime.utcnow().isoformat()
+        meta["promotion_reason"] = reason_clean
+        meta["promoted_from_invalid_job_id"] = invalid.id
+        meta["promoted_at"] = promoted_at_iso
+        if user_id:
+            meta["promoted_by_user_id"] = user_id
+        sub_email = current_user.get("sub")
+        if sub_email:
+            meta["promoted_by_email"] = str(sub_email).strip()
+        if user_id:
+            user_repo = UserRepository(session)
+            promoter = await user_repo.get_by_id(user_id)
+            if promoter and promoter.name and str(promoter.name).strip():
+                meta["promoted_by_name"] = str(promoter.name).strip()
+
+        sim_hash = invalid.similarity_hash
+        if not sim_hash:
+            sim_hash = duplication_checker.generate_content_hash(
+                invalid.title or "",
+                invalid.company or "",
+                invalid.description or "",
+            )
+
+        valid_job = ValidJob(
+            source_url=invalid.source_url,
+            normalized_url=invalid.normalized_url,
+            domain=invalid.domain,
+            title=invalid.title,
+            company=invalid.company or "Unknown",
+            location=invalid.location,
+            description=invalid.description,
+            posted_date=invalid.posted_date,
+            experience_level=invalid.experience_level,
+            industry=invalid.industry,
+            similarity_hash=sim_hash,
+            raw_metadata=meta,
+        )
+        session.add(valid_job)
+        await session.flush()
+
+        extraction_repo = JobExtractionRepository(session)
+        extraction, _ = await extraction_repo.get_or_create(
+            source_url=invalid.source_url,
+            normalized_url=invalid.normalized_url,
+            domain=invalid.domain,
+        )
+        valid_job.extraction_id = extraction.id
+        if extraction.status == ExtractionStatus.COMPLETED and extraction.completed_at:
+            valid_job.scraped_at = extraction.completed_at
+
+        await session.delete(invalid)
+        await session.commit()
+
+        valid_job_id = valid_job.id
+        extraction_id = extraction.id
+        extraction_status = extraction.status
+        source_url = valid_job.source_url
+
+    if extraction_status != ExtractionStatus.COMPLETED:
+        await enqueue_extraction(
+            extraction_id,
+            source_url,
+            user_id=user_id,
+            background_tasks=background_tasks,
+        )
+    elif user_id:
+        async with get_session() as session:
+            existing_match = await session.execute(
+                select(JobMatchResult).where(
+                    JobMatchResult.valid_job_id == valid_job_id,
+                    JobMatchResult.user_id == user_id,
+                )
+            )
+            existing_progress = await session.execute(
+                select(JobMatchInProgress).where(
+                    JobMatchInProgress.valid_job_id == valid_job_id,
+                    JobMatchInProgress.user_id == user_id,
+                )
+            )
+            if not existing_match.scalar_one_or_none() and not existing_progress.scalar_one_or_none():
+                progress_repo = JobMatchInProgressRepository(session)
+                await progress_repo.add(valid_job_id, user_id)
+                await session.commit()
+                await enqueue_job_match_analysis(
+                    valid_job_id,
+                    user_id,
+                    background_tasks=background_tasks,
+                )
+
+    logger.info("promote_invalid_to_valid_success", invalid_job_id=job_id, valid_job_id=valid_job_id)
+    return {"success": True, "valid_job_id": valid_job_id}
 
 
 @router.get("/jobs/stats", dependencies=[Depends(get_current_user)])
@@ -1400,9 +1743,45 @@ async def delete_valid_job(job_id: str) -> dict:
             logger.warning("delete_valid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Valid job not found")
 
+        extraction_id = job.extraction_id
+
+        # Remove AI match artifacts tied to this valid job.
+        match_rows = await session.execute(
+            select(JobMatchResult).where(JobMatchResult.valid_job_id == job_id)
+        )
+        for row in match_rows.scalars().all():
+            await session.delete(row)
+
+        progress_rows = await session.execute(
+            select(JobMatchInProgress).where(JobMatchInProgress.valid_job_id == job_id)
+        )
+        for row in progress_rows.scalars().all():
+            await session.delete(row)
+
         await session.delete(job)
+
+        # Remove extracted content for this job URL when no other valid job references it.
+        if extraction_id:
+            other_ref = await session.execute(
+                select(ValidJob.id).where(
+                    ValidJob.extraction_id == extraction_id,
+                    ValidJob.id != job_id,
+                ).limit(1)
+            )
+            if other_ref.scalar_one_or_none() is None:
+                extraction_result = await session.execute(
+                    select(JobExtraction).where(JobExtraction.id == extraction_id)
+                )
+                extraction = extraction_result.scalar_one_or_none()
+                if extraction:
+                    await session.delete(extraction)
+
         await session.commit()
-        logger.info("delete_valid_job_success", job_id=job_id)
+        logger.info(
+            "delete_valid_job_success",
+            job_id=job_id,
+            extraction_deleted=bool(extraction_id),
+        )
         return {"success": True}
 
 
