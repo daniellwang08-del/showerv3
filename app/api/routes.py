@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Response, status, Cookie
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Response, status, Cookie, File, UploadFile, Query
 from pydantic import BaseModel, Field
 from app.services.auth_service import AuthService
 from app.models.schemas import (
@@ -11,6 +11,8 @@ from app.models.schemas import (
     JobDescriptionSchema,
     JobSubmissionRequest,
     ValidJobResponse,
+    AiJobSearchRequest,
+    AiJobSearchResponse,
     InvalidJobResponse,
     JobSubmissionResponse,
     JobMatchResponse,
@@ -18,7 +20,7 @@ from app.models.schemas import (
     JobPromotionInfo,
 )
 from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
-from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest
+from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest, ResumeParseResponse
 from app.storage.database import get_session, check_database_connection
 from app.storage.repository import (
     JobExtractionRepository,
@@ -33,6 +35,9 @@ from app.services.duplication_checker import DuplicationChecker
 from app.extractors.browser_extractor import get_browser_pool_safe
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.exceptions import AIParsingError
+from app.services.job_ai_search_service import apply_job_search_spec, interpret_job_search_prompt
+from app.services.resume_parse_service import parse_resume_bytes
 from app.models.database import ValidJob, InvalidJob, JobExtraction, JobMatchResult, JobMatchInProgress
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -316,6 +321,44 @@ async def put_profile(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         await session.refresh(user)
         return _user_to_profile_response(user)
+
+
+@router.post("/profile/resume-parse", response_model=ResumeParseResponse, dependencies=[Depends(get_current_user)])
+async def resume_parse(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+) -> ResumeParseResponse:
+    """Parse a résumé PDF (vision) or DOCX (text) into structured profile draft fields."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+    try:
+        result = await parse_resume_bytes(raw=raw, filename=file.filename or "")
+        logger.info("resume_parse_ok", user_id=user_id, source_kind=result.source_kind)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except AIParsingError as e:
+        logger.warning("resume_parse_ai_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e) or "Résumé parsing failed. Check OPENAI_API_KEY and model access.",
+        )
+    except ModuleNotFoundError as e:
+        logger.exception("resume_parse_missing_dependency", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Server dependency missing ({e}). Run: pip install -r requirements.txt",
+        )
+    except Exception as e:
+        logger.exception("resume_parse_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Résumé parsing failed. See server logs for details.",
+        )
 
 
 @router.get("/profile/openai-text")
@@ -1013,6 +1056,29 @@ async def get_valid_jobs(
         ]
 
 
+@router.post("/jobs/valid/ai-search", response_model=AiJobSearchResponse, dependencies=[Depends(get_current_user)])
+async def ai_search_valid_jobs(
+    body: AiJobSearchRequest,
+    current_user: dict = Depends(get_current_user),
+) -> AiJobSearchResponse:
+    """Interpret a natural language prompt via OpenAI and return valid job ids that match."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        spec = await interpret_job_search_prompt(body.prompt)
+    except AIParsingError as e:
+        logger.warning("ai_search_valid_jobs_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e) or "AI search is unavailable. Check OPENAI_API_KEY.",
+        )
+    async with get_session() as session:
+        matching_ids, total = await apply_job_search_spec(session, user_id, spec)
+    logger.info("ai_search_valid_jobs_ok", matches=len(matching_ids), candidates=total)
+    return AiJobSearchResponse(matching_job_ids=matching_ids, query=spec, total_candidates=total)
+
+
 @router.get("/jobs/valid/{job_id}", response_model=ValidJobResponse, dependencies=[Depends(get_current_user)])
 async def get_valid_job(job_id: str) -> ValidJobResponse:
     async with get_session() as session:
@@ -1226,20 +1292,21 @@ async def get_job_analysis_panel(
 async def trigger_job_match(
     job_id: str,
     background_tasks: BackgroundTasks,
+    force: bool = Query(
+        False,
+        description="If true, discard cached match and re-run (e.g. after profile update).",
+    ),
     current_user: dict = Depends(get_current_user),
 ):
-    """Trigger AI job–profile match analysis. Returns 202 when queued, or 200 if already cached."""
+    """Trigger AI job–profile match analysis. Returns 202 when queued, or 200 if already cached (unless force)."""
     from app.storage.repository import JobMatchInProgressRepository
 
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     async with get_session() as session:
-        match_repo = JobMatchRepository(session)
-        existing = await match_repo.get(job_id, user_id)
-        if existing:
-            return {"status": "cached", "message": "Match already computed"}
         progress_repo = JobMatchInProgressRepository(session)
+        match_repo = JobMatchRepository(session)
         in_prog = await session.execute(
             select(JobMatchInProgress).where(
                 JobMatchInProgress.valid_job_id == job_id,
@@ -1248,7 +1315,11 @@ async def trigger_job_match(
         )
         if in_prog.scalar_one_or_none():
             return {"status": "queued", "message": "Match analysis already in progress"}
-        valid_repo = ValidJobRepository(session)
+        existing = await match_repo.get(job_id, user_id)
+        if existing and not force:
+            return {"status": "cached", "message": "Match already computed"}
+        if existing and force:
+            await match_repo.delete(job_id, user_id)
         r = await session.execute(select(ValidJob).where(ValidJob.id == job_id, ValidJob.is_active == True))
         valid_job = r.scalar_one_or_none()
         if not valid_job or not valid_job.extraction_id:
@@ -1266,6 +1337,7 @@ async def trigger_job_match(
         return {"status": "queued", "message": "Match analysis queued"}
     if background_tasks:
         from app.services.job_match_orchestrator import run_job_match_analysis
+
         background_tasks.add_task(run_job_match_analysis, job_id, user_id)
         return {"status": "queued", "message": "Match analysis started in background"}
     raise HTTPException(status_code=503, detail="No worker available to process match analysis")
@@ -1273,6 +1345,217 @@ async def trigger_job_match(
 
 class RescrapeRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
+
+
+class RescrapeBatchRequest(BaseModel):
+    valid_job_ids: list[str] = Field(..., min_length=1, max_length=50)
+
+
+async def _prepare_valid_job_rescrape_in_session(
+    session,
+    valid_job: ValidJob,
+    source_url: str,
+    user_id: str | None,
+) -> str:
+    """
+    Reset extraction (or attach a new one), clear cached match for the user, return extraction_id.
+    Caller must commit, then call enqueue_extraction (same pipeline as a new job posting).
+    """
+    source_url = source_url.strip()
+    is_valid, error = URLManager.validate_url(source_url)
+    if not is_valid:
+        raise ValueError(error or "Invalid URL")
+
+    duplication_checker = DuplicationChecker(session)
+    normalized_url = duplication_checker.normalize_url(source_url)
+    domain = duplication_checker.extract_domain(source_url)
+
+    extraction_id = valid_job.extraction_id
+    repo = JobExtractionRepository(session)
+
+    if not extraction_id:
+        extraction, _ = await repo.get_or_create(
+            source_url=source_url,
+            normalized_url=normalized_url,
+            domain=domain,
+        )
+        valid_job.extraction_id = extraction.id
+        valid_job.scraped_at = None
+        extraction_id = extraction.id
+    else:
+        await repo.reset_for_refresh(extraction_id, source_url, domain)
+        valid_job.scraped_at = None
+
+    if user_id:
+        match_repo = JobMatchRepository(session)
+        await match_repo.delete(valid_job.id, user_id)
+        progress_repo = JobMatchInProgressRepository(session)
+        await progress_repo.remove(valid_job.id, user_id)
+
+    return extraction_id
+
+
+class RerunJobMatchBatchRequest(BaseModel):
+    valid_job_ids: list[str] = Field(..., min_length=1, max_length=100)
+
+
+@router.post("/jobs/valid/match/rerun", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(get_current_user)])
+async def rerun_job_match_batch(
+    body: RerunJobMatchBatchRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Re-queue AI job–profile match for many valid jobs (e.g. after profile / résumé update).
+    Clears cached scores, marks rows in progress, and enqueues analysis asynchronously.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    seen_ids: set[str] = set()
+    unique_ids: list[str] = []
+    for jid in body.valid_job_ids:
+        if jid in seen_ids:
+            continue
+        seen_ids.add(jid)
+        unique_ids.append(jid)
+
+    enqueued_ids: list[str] = []
+    skipped: list[dict[str, str]] = []
+
+    for job_id in unique_ids:
+        async with get_session() as session:
+            progress_repo = JobMatchInProgressRepository(session)
+            match_repo = JobMatchRepository(session)
+            in_prog = await session.execute(
+                select(JobMatchInProgress).where(
+                    JobMatchInProgress.valid_job_id == job_id,
+                    JobMatchInProgress.user_id == user_id,
+                )
+            )
+            if in_prog.scalar_one_or_none():
+                skipped.append({"id": job_id, "reason": "already_in_progress"})
+                continue
+
+            await match_repo.delete(job_id, user_id)
+
+            r = await session.execute(select(ValidJob).where(ValidJob.id == job_id, ValidJob.is_active == True))
+            valid_job = r.scalar_one_or_none()
+            if not valid_job or not valid_job.extraction_id:
+                skipped.append({"id": job_id, "reason": "no_extraction"})
+                continue
+
+            extraction_repo = JobExtractionRepository(session)
+            extraction = await extraction_repo.get_by_id(valid_job.extraction_id)
+            if not extraction or extraction.status != ExtractionStatus.COMPLETED:
+                skipped.append({"id": job_id, "reason": "extraction_not_ready"})
+                continue
+
+            await progress_repo.add(job_id, user_id)
+            await session.commit()
+            enqueued_ids.append(job_id)
+
+    if not enqueued_ids:
+        return {
+            "status": "accepted",
+            "enqueued": 0,
+            "enqueued_ids": [],
+            "skipped": skipped,
+            "message": "Nothing queued; fix skipped reasons or wait for in-progress jobs.",
+        }
+
+    pool = await try_get_redis_pool()
+    if pool and await _has_active_arq_worker(pool):
+        for jid in enqueued_ids:
+            await pool.enqueue_job("analyze_job_match", jid, user_id)
+        await pool.close()
+        logger.info(
+            "job_match_rerun_batch_redis",
+            user_id=user_id,
+            count=len(enqueued_ids),
+            skipped=len(skipped),
+        )
+        return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
+
+    if background_tasks:
+        from app.services.job_match_orchestrator import run_job_match_analysis
+
+        for jid in enqueued_ids:
+            background_tasks.add_task(run_job_match_analysis, jid, user_id)
+        logger.info(
+            "job_match_rerun_batch_sync",
+            user_id=user_id,
+            count=len(enqueued_ids),
+            skipped=len(skipped),
+        )
+        return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
+
+    raise HTTPException(status_code=503, detail="No worker available to process match analysis")
+
+
+@router.post(
+    "/jobs/valid/rescrape/batch",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(get_current_user)],
+)
+async def rescrape_valid_jobs_batch(
+    body: RescrapeBatchRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Re-queue page extraction for many valid jobs (stored source_url each).
+    Uses the same extraction queue and post-completion match pipeline as a new job post.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    seen: set[str] = set()
+    unique_ids: list[str] = []
+    for jid in body.valid_job_ids:
+        if jid in seen:
+            continue
+        seen.add(jid)
+        unique_ids.append(jid)
+
+    jobs_out: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+
+    for job_id in unique_ids:
+        async with get_session() as session:
+            r = await session.execute(select(ValidJob).where(ValidJob.id == job_id, ValidJob.is_active == True))
+            valid_job = r.scalar_one_or_none()
+            if not valid_job:
+                skipped.append({"id": job_id, "reason": "not_found"})
+                continue
+            source_url = (valid_job.source_url or "").strip()
+            if not source_url:
+                skipped.append({"id": job_id, "reason": "no_url"})
+                continue
+            try:
+                extraction_id = await _prepare_valid_job_rescrape_in_session(session, valid_job, source_url, user_id)
+            except ValueError as e:
+                skipped.append({"id": job_id, "reason": str(e)[:200]})
+                continue
+            await session.commit()
+
+        await enqueue_extraction(
+            extraction_id,
+            source_url,
+            user_id=user_id,
+            background_tasks=background_tasks,
+        )
+        jobs_out.append({"valid_job_id": job_id, "extraction_id": extraction_id})
+        logger.info("rescrape_batch_enqueued", valid_job_id=job_id, extraction_id=extraction_id)
+
+    return {
+        "status": "queued",
+        "enqueued": len(jobs_out),
+        "jobs": jobs_out,
+        "skipped": skipped,
+    }
 
 
 @router.post("/jobs/valid/{job_id}/rescrape", dependencies=[Depends(get_current_user)])
@@ -1283,47 +1566,24 @@ async def rescrape_valid_job(
     current_user: dict = Depends(get_current_user),
 ):
     """Reset extraction for a valid job and re-enqueue it for scraping. Uses the URL from the request to ensure we scrape exactly the URL the user clicked on."""
-    is_valid, error = URLManager.validate_url(request.url)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=f"Invalid URL: {error}")
+    user_id = current_user.get("user_id")
+    source_url = request.url.strip()
 
     async with get_session() as session:
-        stmt = (
-            select(ValidJob)
-            .where(ValidJob.id == job_id, ValidJob.is_active == True)
-        )
-        result = await session.execute(stmt)
+        result = await session.execute(select(ValidJob).where(ValidJob.id == job_id, ValidJob.is_active == True))
         valid_job = result.scalar_one_or_none()
         if not valid_job:
             raise HTTPException(status_code=404, detail="Valid job not found")
-
-        extraction_id = valid_job.extraction_id
-        source_url = request.url.strip()
-        duplication_checker = DuplicationChecker(session)
-        normalized_url = duplication_checker.normalize_url(source_url)
-        domain = duplication_checker.extract_domain(source_url)
-
-        if not extraction_id:
-            repo = JobExtractionRepository(session)
-            extraction, _ = await repo.get_or_create(
-                source_url=source_url,
-                normalized_url=normalized_url,
-                domain=domain,
-            )
-            valid_job.extraction_id = extraction.id
-            valid_job.scraped_at = None
-            await session.commit()
-            extraction_id = extraction.id
-        else:
-            repo = JobExtractionRepository(session)
-            await repo.reset_for_refresh(extraction_id, source_url, domain)
-            valid_job.scraped_at = None
-            await session.commit()
+        try:
+            extraction_id = await _prepare_valid_job_rescrape_in_session(session, valid_job, source_url, user_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        await session.commit()
 
     await enqueue_extraction(
         extraction_id,
         source_url,
-        user_id=current_user.get("user_id"),
+        user_id=user_id,
         background_tasks=background_tasks,
     )
     logger.info("rescrape_enqueued", job_id=job_id, extraction_id=extraction_id, url=source_url)

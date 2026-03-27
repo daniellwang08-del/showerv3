@@ -25,7 +25,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   role_fit: 'Role fit',
   skills_match: 'Skills match',
   experience_level: 'Experience level',
-  education_certifications: 'Education & certifications',
+  education_certifications: 'Education & Certifications',
   location_work_style: 'Location & work style',
 };
 
@@ -159,9 +159,11 @@ export function JobMatchModal({ validJobId, onClose, onMatchStored }: Props) {
               {data.gaps?.length > 0 && (
                 <div>
                   <span className="font-semibold text-slate-600">Gaps</span>
-                  <ul className="mt-1 list-inside list-disc space-y-0.5 text-slate-800">
+                  <ul className="mt-1 list-outside list-disc space-y-3 pl-5 text-slate-800 leading-relaxed">
                     {data.gaps.map((g, i) => (
-                      <li key={i}>{g}</li>
+                      <li key={i} className="marker:text-slate-400">
+                        {g}
+                      </li>
                     ))}
                   </ul>
                 </div>

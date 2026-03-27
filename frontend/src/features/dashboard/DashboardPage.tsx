@@ -42,7 +42,9 @@ type Props = {
   onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
   onOpenSelectedUrls: (items: SubmittedUrlItem[]) => void;
   onOpenJobAnalysis: (item: SubmittedUrlItem) => void;
-  onTriggerJobMatch: (item: SubmittedUrlItem) => void;
+  onTriggerJobMatch: (item: SubmittedUrlItem, opts?: { force?: boolean }) => void | Promise<void>;
+  onRerunMatchAnalysis: (items: SubmittedUrlItem[]) => void | Promise<void>;
+  onBatchRescrapePipeline: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onJobUrlClick: (item: SubmittedUrlItem) => void;
   onRescrape: (item: SubmittedUrlItem) => void;
   userInitial: string;
@@ -86,6 +88,8 @@ export function DashboardPage({
   onOpenSelectedUrls,
   onOpenJobAnalysis,
   onTriggerJobMatch,
+  onRerunMatchAnalysis,
+  onBatchRescrapePipeline,
   onJobUrlClick,
   onRescrape,
   userInitial,
@@ -153,6 +157,8 @@ export function DashboardPage({
               onOpenSelectedUrls={onOpenSelectedUrls}
               onOpenJobAnalysis={onOpenJobAnalysis}
               onTriggerJobMatch={onTriggerJobMatch}
+              onRerunMatchAnalysis={onRerunMatchAnalysis}
+              onBatchRescrapePipeline={onBatchRescrapePipeline}
               onJobUrlClick={onJobUrlClick}
               onRescrape={onRescrape}
               userInitial={userInitial}

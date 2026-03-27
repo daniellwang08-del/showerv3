@@ -123,6 +123,10 @@ async def analyze_job_match(
         profile_text=profile_truncated,
     )
 
+    # Longer narrative gaps need a sufficient completion budget (avoid truncated JSON).
+    match_max_tokens = max(settings.openai_max_tokens, 6144)
+    match_max_tokens = min(match_max_tokens, 16384)
+
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
@@ -131,7 +135,7 @@ async def analyze_job_match(
                 {"role": "user", "content": user_content},
             ],
             temperature=0.2,
-            max_tokens=settings.openai_max_tokens,
+            max_tokens=match_max_tokens,
             response_format={"type": "json_object"},
         )
 
@@ -155,12 +159,20 @@ async def analyze_job_match(
             if d not in dims:
                 dims[d] = 0
 
+        raw_gaps = list(parsed.get("gaps", [])) if isinstance(parsed.get("gaps"), list) else []
+        gaps: list[str] = []
+        for g in raw_gaps:
+            if isinstance(g, str):
+                t = g.strip()
+                if t:
+                    gaps.append(t)
+
         return {
             "overall_score": max(0, min(100, overall)),
             "dimension_scores": {k: max(0, min(100, int(v))) for k, v in dims.items()},
             "summary": str(parsed.get("summary", "")).strip() or "No summary provided.",
             "strengths": list(parsed.get("strengths", [])) if isinstance(parsed.get("strengths"), list) else [],
-            "gaps": list(parsed.get("gaps", [])) if isinstance(parsed.get("gaps"), list) else [],
+            "gaps": gaps,
             "recommendation": parsed.get("recommendation") or "moderate_match",
         }
 

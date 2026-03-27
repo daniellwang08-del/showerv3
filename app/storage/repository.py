@@ -307,6 +307,17 @@ class JobMatchRepository:
         )
         return result.scalar_one_or_none()
 
+    async def delete(self, valid_job_id: str, user_id: str) -> None:
+        """Remove cached match so a rerun can show processing and store a fresh score."""
+        from sqlalchemy import delete
+
+        await self._session.execute(
+            delete(JobMatchResult).where(
+                JobMatchResult.valid_job_id == valid_job_id,
+                JobMatchResult.user_id == user_id,
+            )
+        )
+
     async def upsert(
         self,
         valid_job_id: str,

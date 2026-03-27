@@ -540,12 +540,34 @@ function App() {
           setJobAnalysisValidJobId(item.id);
         }
       },
-      onTriggerJobMatch: async (item: SubmittedUrlItem) => {
+      onTriggerJobMatch: async (item: SubmittedUrlItem, opts?: { force?: boolean }) => {
         try {
-          await apiClient.post(`/jobs/valid/${item.id}/match`);
+          await apiClient.post(`/jobs/valid/${item.id}/match`, null, {
+            params: { force: opts?.force === true },
+          });
           void refreshLists();
         } catch {
           // ignore
+        }
+      },
+      onRerunMatchAnalysis: async (items: SubmittedUrlItem[]) => {
+        const valid_job_ids = [...new Set(items.map((i) => i.id).filter(Boolean))];
+        if (valid_job_ids.length === 0) return;
+        try {
+          await apiClient.post(`/jobs/valid/match/rerun`, { valid_job_ids });
+          void refreshLists();
+        } catch {
+          // ignore
+        }
+      },
+      onBatchRescrapePipeline: async (items: SubmittedUrlItem[]) => {
+        const valid_job_ids = [...new Set(items.filter((i) => i.table === 'valid').map((i) => i.id))];
+        if (valid_job_ids.length === 0) return;
+        try {
+          await apiClient.post(`/jobs/valid/rescrape/batch`, { valid_job_ids });
+          await refreshLists();
+        } catch (error: any) {
+          setSubmitError(error.response?.data?.detail || 'Failed to queue re-scrape');
         }
       },
       onJobUrlClick: async (item: SubmittedUrlItem) => {

@@ -463,9 +463,11 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: P
                   {analysis.match.gaps?.length > 0 && (
                     <div>
                       <SectionLabel icon={AlertCircle}>Gaps</SectionLabel>
-                      <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-slate-800">
+                      <ul className="mt-2 list-outside list-disc space-y-3 pl-5 text-slate-800 leading-relaxed">
                         {analysis.match.gaps.map((g, i) => (
-                          <li key={i}>{g}</li>
+                          <li key={i} className="marker:text-slate-400">
+                            {g}
+                          </li>
                         ))}
                       </ul>
                     </div>

@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
-import { ArrowLeft, Sparkles, UserCircle2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { ArrowLeft, Sparkles, UserCircle2, AlertCircle, CheckCircle2, ListChecks, CircleMinus } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { ProfileForm } from './ProfileForm';
+import { ResumeImportSection } from './ResumeImportSection';
 import type { UserProfile } from '../types/profile';
 import type { ProfileFormData } from '../types/profile';
+import { computeProfileCompletion } from '../utils/profileCompletion';
 
 type Props = {
   onBack: () => void;
+  userEmail?: string | null;
 };
 
 function toPayload(data: ProfileFormData) {
@@ -57,7 +60,7 @@ function ProfileHeroSkeleton() {
   );
 }
 
-export function ProfilesManagementPage({ onBack }: Props) {
+export function ProfilesManagementPage({ onBack, userEmail }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -94,6 +97,8 @@ export function ProfilesManagementPage({ onBack }: Props) {
     return () => window.clearTimeout(t);
   }, [saveOk]);
 
+  const completion = useMemo(() => computeProfileCompletion(profile), [profile]);
+
   const handleSubmit = async (data: ProfileFormData) => {
     try {
       setError('');
@@ -114,6 +119,7 @@ export function ProfilesManagementPage({ onBack }: Props) {
         }
       }
       setError(msg);
+      throw err instanceof Error ? err : new Error(msg);
     }
   };
 
@@ -174,12 +180,12 @@ export function ProfilesManagementPage({ onBack }: Props) {
             <div className="pointer-events-none absolute -right-8 -top-12 h-40 w-40 rounded-full bg-gradient-to-br from-blue-400/25 to-indigo-400/10 blur-2xl" />
             <div className="pointer-events-none absolute -bottom-10 -left-10 h-36 w-36 rounded-full bg-sky-400/20 blur-2xl" />
 
-            <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-start gap-4">
+            <div className="relative flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="flex min-w-0 flex-1 items-start gap-4">
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/30">
                   <UserCircle2 className="h-8 w-8" />
                 </div>
-                <div>
+                <div className="min-w-0 flex-1">
                   <h1 className="bg-gradient-to-r from-blue-800 via-indigo-700 to-sky-600 bg-clip-text text-2xl font-bold tracking-tight text-transparent md:text-3xl">
                     Your profile
                   </h1>
@@ -187,10 +193,88 @@ export function ProfilesManagementPage({ onBack }: Props) {
                     Rich, structured data here powers match summaries, dimension scores, and gap analysis when you run job
                     fit checks.
                   </p>
+
+                  {!loading ? (
+                    <div className="mt-5 border-t border-slate-200/80 pt-5">
+                      <div className="flex flex-wrap items-end justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <ListChecks className="h-4 w-4 shrink-0 text-blue-600" aria-hidden />
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Saved profile strength</p>
+                            <p className="mt-0.5 text-sm text-slate-700">
+                              <span className="font-semibold text-slate-900">
+                                {completion.requiredFilled} of {completion.requiredTotal} core areas
+                              </span>{' '}
+                              complete from your last save
+                            </p>
+                          </div>
+                        </div>
+                        <p
+                          className="text-3xl font-bold tabular-nums leading-none text-blue-800"
+                          aria-live="polite"
+                          aria-atomic="true"
+                        >
+                          {completion.requiredPercent}%
+                        </p>
+                      </div>
+                      <div
+                        className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-slate-200/90 shadow-inner"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={completion.requiredPercent}
+                        aria-label={`Profile completion ${completion.requiredPercent} percent`}
+                      >
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-blue-600 via-indigo-500 to-sky-500 transition-[width] duration-500 ease-out"
+                          style={{ width: `${completion.requiredPercent}%` }}
+                        />
+                      </div>
+
+                      {completion.missingRequired.length > 0 ? (
+                        <div className="mt-4">
+                          <p className="text-xs font-bold uppercase tracking-wide text-rose-700/90">Still needed for a complete profile</p>
+                          <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
+                            {completion.missingRequired.map((item) => (
+                              <li key={item.id} className="flex gap-2">
+                                <CircleMinus className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" aria-hidden />
+                                <span>{item.label}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <p className="mt-4 flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                          Core profile is complete. Add optional items below to enrich matches.
+                        </p>
+                      )}
+
+                      <div className="mt-4 rounded-xl border border-slate-200/90 bg-white/50 px-3 py-3">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Optional — nice to add</p>
+                        <ul className="mt-2 grid gap-1.5 sm:grid-cols-3">
+                          {completion.optionalItems.map((item) => (
+                            <li key={item.id} className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                              {item.done ? (
+                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                              ) : (
+                                <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-slate-300" aria-hidden />
+                              )}
+                              <span className={item.done ? 'text-slate-800' : ''}>{item.label}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
           </div>
+
+          {!loading ? (
+            <ResumeImportSection profile={profile} accountEmail={userEmail ?? undefined} applyProfile={handleSubmit} />
+          ) : null}
 
           {saveOk && (
             <div

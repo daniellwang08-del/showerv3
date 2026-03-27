@@ -94,6 +94,38 @@ class JobSubmissionRequest(BaseModel):
     industry: str | None = None
 
 
+class JobSearchQuerySpec(BaseModel):
+    """
+    Structured job search criteria produced by OpenAI from natural language.
+    Applied server-side against valid_jobs + job_extractions + match scores.
+    """
+
+    rationale: str | None = Field(default=None, description="Short explanation of how the query was interpreted")
+    must_contain_all: list[str] = Field(default_factory=list)
+    must_contain_any: list[str] = Field(default_factory=list)
+    must_not_contain: list[str] = Field(default_factory=list)
+    title_contains_any: list[str] = Field(default_factory=list)
+    company_contains_any: list[str] = Field(default_factory=list)
+    location_contains_any: list[str] = Field(default_factory=list)
+    domain_contains_any: list[str] = Field(default_factory=list)
+    experience_level_any: list[str] = Field(default_factory=list)
+    industry_any: list[str] = Field(default_factory=list)
+    min_match_score: int | None = Field(default=None, ge=0, le=100)
+    max_match_score: int | None = Field(default=None, ge=0, le=100)
+    match_only_analyzed: bool = Field(default=False)
+    extraction_completed_only: bool = Field(default=False)
+
+
+class AiJobSearchRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=2000)
+
+
+class AiJobSearchResponse(BaseModel):
+    matching_job_ids: list[str]
+    query: JobSearchQuerySpec
+    total_candidates: int
+
+
 class ValidJobResponse(BaseModel):
     id: str
     source_url: str

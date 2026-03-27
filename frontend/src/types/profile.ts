@@ -60,3 +60,9 @@ export type ProfileFormData = {
 };
 
 export const JOB_TYPES = ['onsite', 'hybrid', 'remote'] as const;
+
+/** Normalized remote / hybrid / onsite — used for validation and profile completion. */
+export function isValidJobArrangement(s: string | undefined | null): boolean {
+  const v = (s ?? '').trim().toLowerCase();
+  return (JOB_TYPES as readonly string[]).includes(v);
+}

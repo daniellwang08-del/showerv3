@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, Eye, MoreHorizontal, Ticket } from 'lucide-react';
+import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, RefreshCw, Eye, MoreHorizontal, Ticket } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 
 type Props = {
@@ -15,7 +15,12 @@ type Props = {
   onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
   onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
   onOpenJobAnalysis?: (item: SubmittedUrlItem) => void;
-  onTriggerJobMatch?: (item: SubmittedUrlItem) => void;
+  /** First-time match uses default; pass `{ force: true }` to re-run after profile changes. */
+  onTriggerJobMatch?: (item: SubmittedUrlItem, opts?: { force?: boolean }) => void | Promise<void>;
+  /** Bulk re-queue match analysis for selected jobs (async on server). */
+  onRerunMatchAnalysis?: (items: SubmittedUrlItem[]) => void | Promise<void>;
+  /** Bulk re-queue job page extraction + full pipeline (match after scrape), same as new job post. */
+  onBatchRescrapePipeline?: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
   userInitial?: string;
@@ -37,6 +42,8 @@ export function JobTimeline({
   onOpenSelectedUrls,
   onOpenJobAnalysis,
   onTriggerJobMatch,
+  onRerunMatchAnalysis,
+  onBatchRescrapePipeline,
   onJobUrlClick,
   onRescrape,
   userInitial,
@@ -272,6 +279,35 @@ export function JobTimeline({
     setBulkActionOpen(null);
   };
 
+  const handleRerunMatchAnalysis = () => {
+    const selectedJobs = getAllSelectedJobs();
+    const eligible = selectedJobs.filter(
+      (j) =>
+        j.table === 'valid' &&
+        !!j.extraction_id &&
+        (j.extraction_status === 'completed' || j.scraped_at_ms != null),
+    );
+    if (eligible.length === 0 || !onRerunMatchAnalysis) {
+      setBulkActionOpen(null);
+      return;
+    }
+    void Promise.resolve(onRerunMatchAnalysis(eligible));
+    setSelectedJobsByDate({});
+    setBulkActionOpen(null);
+  };
+
+  const handleBatchRescrapePipeline = () => {
+    const selectedJobs = getAllSelectedJobs();
+    const eligible = selectedJobs.filter((j) => j.table === 'valid');
+    if (eligible.length === 0 || !onBatchRescrapePipeline) {
+      setBulkActionOpen(null);
+      return;
+    }
+    void Promise.resolve(onBatchRescrapePipeline(eligible));
+    setSelectedJobsByDate({});
+    setBulkActionOpen(null);
+  };
+
   // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -444,7 +480,7 @@ export function JobTimeline({
                         {bulkActionOpen === dateKey && (
                           <div
                             ref={bulkActionRef}
-                            className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border border-slate-200 bg-white shadow-lg"
+                            className="absolute right-0 top-full mt-1 z-50 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 bg-white shadow-lg"
                           >
                             <button
                               type="button"
@@ -467,6 +503,30 @@ export function JobTimeline({
                             >
                               Open Selected Job URLs
                             </button>
+                            {onRerunMatchAnalysis ? (
+                              <button
+                                type="button"
+                                className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
+                                onClick={handleRerunMatchAnalysis}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <RefreshCw className="h-4 w-4 shrink-0" />
+                                  Re-run match analysis
+                                </span>
+                              </button>
+                            ) : null}
+                            {onBatchRescrapePipeline ? (
+                              <button
+                                type="button"
+                                className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
+                                onClick={handleBatchRescrapePipeline}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <RotateCw className="h-4 w-4 shrink-0" />
+                                  Re-scrape page & re-analyze
+                                </span>
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               className="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
@@ -591,7 +651,7 @@ export function JobTimeline({
                                   ? 'Processing'
                                   : matchScore != null
                                     ? String(matchScore)
-                                    : '—';
+                                    : 'Recent';
                                 const matchBadgeClass = matchProcessing
                                   ? 'shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 cursor-pointer hover:bg-amber-200'
                                   : 'shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 cursor-pointer hover:bg-blue-200';
@@ -622,7 +682,7 @@ export function JobTimeline({
                                             ? 'View job match analysis (AI still running)'
                                             : matchScore != null
                                               ? `Match score: ${matchScore}. Open job match analysis`
-                                              : 'Open job match analysis and run profile match'
+                                              : 'Recent job — open to run or view profile match'
                                         }
                                       >
                                         {matchLabel}
@@ -719,18 +779,38 @@ export function JobTimeline({
                                 Report Duplicate
                               </span>
                             </button>
-                            {onRescrape && item.extraction_status === 'failed' && (
+                            {onTriggerJobMatch &&
+                              item.table === 'valid' &&
+                              item.extraction_id &&
+                              (item.extraction_status === 'completed' || item.scraped_at_ms != null) && (
+                                <button
+                                  type="button"
+                                  className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
+                                  onClick={() => {
+                                    closeMenu();
+                                    void onTriggerJobMatch(item, { force: true });
+                                  }}
+                                >
+                                  <span className="inline-flex items-center gap-2">
+                                    <RefreshCw className="h-4 w-4" />
+                                    Re-run match analysis
+                                  </span>
+                                </button>
+                              )}
+                            {onRescrape && item.table === 'valid' && (
                               <button
                                 type="button"
-                                className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-amber-700 transition hover:bg-amber-50"
+                                className={`block w-full border-b border-blue-100 px-3 py-2 text-left text-sm transition hover:bg-slate-50 ${
+                                  item.extraction_status === 'failed' ? 'text-amber-800 hover:bg-amber-50' : 'text-slate-700'
+                                }`}
                                 onClick={() => {
                                   closeMenu();
-                                  onRescrape(item);
+                                  void onRescrape(item);
                                 }}
                               >
                                 <span className="inline-flex items-center gap-2">
                                   <RotateCw className="h-4 w-4" />
-                                  Rescrape
+                                  Re-scrape page & re-analyze
                                 </span>
                               </button>
                             )}

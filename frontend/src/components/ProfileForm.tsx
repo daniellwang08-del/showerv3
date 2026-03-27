@@ -26,7 +26,7 @@ import {
 import { COUNTRY_CODES } from '../constants/countryCodes';
 import type { ProfileFormData, TechnicalSkillBlock, WorkExperienceBlock, EducationBlock, CertificateBlock } from '../types/profile';
 import type { UserProfile } from '../types/profile';
-import { JOB_TYPES } from '../types/profile';
+import { JOB_TYPES, isValidJobArrangement } from '../types/profile';
 
 const emptyTechSkill = (): TechnicalSkillBlock => ({ category: '', skills: '' });
 const emptyWorkExp = (): WorkExperienceBlock => ({
@@ -49,7 +49,7 @@ const emptyEducation = (): EducationBlock => ({
 });
 const emptyCert = (): CertificateBlock => ({ name: '' });
 
-function profileToForm(p: UserProfile | null): ProfileFormData {
+export function profileToForm(p: UserProfile | null): ProfileFormData {
   if (!p) {
     return {
       name_first: '',
@@ -164,6 +164,10 @@ function collectErrors(form: ProfileFormData): Record<string, string> {
     const jt = w.job_title.trim();
     if (co && !jt) err[`work_${i}_job_title`] = 'Job title is required when company is set';
     if (!co && jt) err[`work_${i}_company_name`] = 'Company is required when job title is set';
+    if (co && jt) {
+      if (!w.location?.trim()) err[`work_${i}_location`] = 'Location is required for job matching';
+      if (!isValidJobArrangement(w.job_type)) err[`work_${i}_job_type`] = 'Choose remote, hybrid, or onsite';
+    }
     const ps = (w.period_start ?? '').trim();
     const pe = (w.period_end ?? '').trim();
     if (ps && pe && ps > pe) err[`work_${i}_period_end`] = 'End month must be after start';
@@ -626,7 +630,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
     setSavedForm(mapped);
     setSectionEditing(defaultSectionEditing(!profile?.user_id));
     setErrors({});
-  }, [profile?.user_id]);
+  }, [profile?.user_id, profile?.updated_at]);
 
   const blurField = (key: string) => {
     const f = formRef.current;
@@ -1129,27 +1133,37 @@ export function ProfileForm({ profile, onSubmit }: Props) {
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <input
-                type="text"
-                placeholder="Location"
-                value={w.location}
-                onChange={(e) => {
-                  const next = [...form.work_experience];
-                  next[i] = { ...next[i], location: e.target.value };
-                  update('work_experience', next);
-                }}
-                className={inputCls}
-              />
-              <FancySelect
-                value={w.job_type ?? ''}
-                onChange={(nextValue) => {
-                  const next = [...form.work_experience];
-                  next[i] = { ...next[i], job_type: nextValue };
-                  update('work_experience', next);
-                }}
-                placeholder="Job type"
-                options={JOB_TYPES.map((jt) => ({ value: jt, label: jt }))}
-              />
+              <div>
+                <input
+                  type="text"
+                  placeholder="Location *"
+                  value={w.location}
+                  onChange={(e) => {
+                    const next = [...form.work_experience];
+                    next[i] = { ...next[i], location: e.target.value };
+                    update('work_experience', next);
+                  }}
+                  onBlur={() => blurField(`work_${i}_location`)}
+                  className={`${inputCls} w-full${fieldRing(errors, `work_${i}_location`)}`}
+                  aria-invalid={!!errors[`work_${i}_location`]}
+                />
+                {errors[`work_${i}_location`] ? <p className={fieldErrorCls}>{errors[`work_${i}_location`]}</p> : null}
+              </div>
+              <div>
+                <FancySelect
+                  value={w.job_type ?? ''}
+                  onChange={(nextValue) => {
+                    const next = [...form.work_experience];
+                    next[i] = { ...next[i], job_type: nextValue };
+                    update('work_experience', next);
+                    window.setTimeout(() => blurField(`work_${i}_job_type`), 0);
+                  }}
+                  placeholder="Work arrangement *"
+                  options={JOB_TYPES.map((jt) => ({ value: jt, label: jt }))}
+                  hasError={!!errors[`work_${i}_job_type`]}
+                />
+                {errors[`work_${i}_job_type`] ? <p className={fieldErrorCls}>{errors[`work_${i}_job_type`]}</p> : null}
+              </div>
             </div>
             <textarea
               rows={3}

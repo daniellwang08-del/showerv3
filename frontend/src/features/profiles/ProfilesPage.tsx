@@ -37,7 +37,7 @@ export function ProfilesPage({ onBack, onLogout, userEmail, userName }: Props) {
         />
 
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-gradient-to-b from-blue-50/35 via-white/40 to-white/80 md:from-blue-50/50">
-          <ProfilesManagementPage onBack={onBack} />
+          <ProfilesManagementPage onBack={onBack} userEmail={userEmail} />
         </div>
       </div>
     </div>

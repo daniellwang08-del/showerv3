@@ -21,7 +21,7 @@ class WorkExperienceBlock(BaseModel):
     period_end: str | None = Field(default=None, max_length=20)
     location: str | None = Field(default=None, max_length=200)
     job_type: str | None = Field(default=None, max_length=20)  # onsite, hybrid, remote
-    description: str | None = Field(default=None, max_length=5000)
+    description: str | None = Field(default=None, max_length=12000)
 
     @field_validator("period_start", "period_end", "location", "job_type", "description", mode="before")
     @classmethod
@@ -84,6 +84,64 @@ def _phone_valid(v: str) -> str:
 
 
 # ---- Request schemas ----
+
+# ---- Resume import (loose extraction; validated again on profile save) ----
+
+
+class ResumeSkillBlock(BaseModel):
+    category: str | None = None
+    skills: str | None = None
+
+
+class ResumeWorkBlock(BaseModel):
+    company_name: str | None = None
+    job_title: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    location: str | None = None
+    job_type: str | None = None
+    description: str | None = None
+
+
+class ResumeEducationBlock(BaseModel):
+    university_name: str | None = None
+    degree: str | None = None
+    mark: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    location: str | None = None
+    description: str | None = None
+
+
+class ResumeCertBlock(BaseModel):
+    name: str | None = None
+
+
+class ResumeExtractedDraft(BaseModel):
+    """Structured profile fields extracted from a résumé (all optional)."""
+
+    name_first: str | None = None
+    name_middle: str | None = None
+    name_last: str | None = None
+    title: str | None = None
+    email: str | None = None
+    phone_country_code: str | None = None
+    phone_number: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    profile_summary: str | None = None
+    technical_skills: list[ResumeSkillBlock] = Field(default_factory=list)
+    work_experience: list[ResumeWorkBlock] = Field(default_factory=list)
+    education: list[ResumeEducationBlock] = Field(default_factory=list)
+    certificates: list[ResumeCertBlock] = Field(default_factory=list)
+    extra: list[str] = Field(default_factory=list)
+
+
+class ResumeParseResponse(BaseModel):
+    draft: ResumeExtractedDraft
+    source_kind: str
+    warnings: list[str] = Field(default_factory=list)
+
 
 class ProfileCreateRequest(BaseModel):
     name_first: str = Field(..., min_length=1, max_length=100)
