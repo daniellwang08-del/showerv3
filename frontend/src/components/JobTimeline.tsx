@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, Eye } from 'lucide-react';
+import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, Eye, MoreHorizontal } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 
 type Props = {
@@ -374,7 +374,7 @@ export function JobTimeline({
           <div className="text-center py-8 text-slate-400 text-sm">No jobs yet</div>
         ) : (
           // Show with date grouping for all filters
-          <div className="space-y-6">
+          <div className="space-y-6 pb-15">
             {sortedDates.map((dateKey) => (
               <div key={dateKey} className="relative">
                 {/* Timeline marker and date with sort dropdown beside it */}
@@ -670,7 +670,7 @@ export function JobTimeline({
 
                           <button
                             type="button"
-                            className="shrink-0 border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 opacity-0 transition-opacity duration-200 hover:bg-slate-100 group-hover:opacity-100"
+                            className="shrink-0 rounded-lg border border-blue-200 bg-white/90 p-1.5 text-blue-700 opacity-0 shadow-sm transition-all duration-200 hover:bg-blue-50 hover:shadow group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-blue-300"
                             aria-label="Actions"
                             onClick={(e) => {
                               e.preventDefault();
@@ -678,19 +678,19 @@ export function JobTimeline({
                               onToggleMenu(item.id);
                             }}
                           >
-                            ...
+                            <MoreHorizontal className="h-4 w-4" />
                           </button>
                         </div>
 
                         {openMenuId === item.id && (
                           <div 
                             ref={menuRef}
-                            className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-slate-200 bg-white shadow-lg"
+                            className="glass-card absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-xl border border-blue-200/70 bg-white/95 shadow-xl"
                             data-job-menu-root="true"
                           >
                             <button
                               type="button"
-                              className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50"
+                              className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
                               onClick={() => {
                                 closeMenu();
                                 onEdit(item);
@@ -703,7 +703,7 @@ export function JobTimeline({
                             </button>
                             <button
                               type="button"
-                              className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50"
+                              className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
                               onClick={() => {
                                 closeMenu();
                                 onReportInvalid(item);
@@ -716,7 +716,7 @@ export function JobTimeline({
                             </button>
                             <button
                               type="button"
-                              className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50"
+                              className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
                               onClick={() => {
                                 closeMenu();
                                 onReportDuplicate(item);
@@ -730,7 +730,7 @@ export function JobTimeline({
                             {onRescrape && item.extraction_status === 'failed' && (
                               <button
                                 type="button"
-                                className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-50"
+                                className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-amber-700 transition hover:bg-amber-50"
                                 onClick={() => {
                                   closeMenu();
                                   onRescrape(item);

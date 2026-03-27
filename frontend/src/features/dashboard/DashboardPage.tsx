@@ -120,7 +120,7 @@ export function DashboardPage({
   );
 
   return (
-    <div className="app-surface h-screen overflow-hidden text-slate-900 flex flex-col">
+    <div className="app-surface h-[100dvh] overflow-hidden text-slate-900 flex flex-col">
       <Header
         onToggleDrawer={() => setDrawerOpen((s) => !s)}
         onLogout={onLogout}
@@ -133,7 +133,7 @@ export function DashboardPage({
         <SideDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} onMyProfile={onMyProfile} />
 
         <div className="flex-1 min-w-0 overflow-hidden">
-          <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] md:grid-cols-2 md:grid-rows-1">
+          <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-3 p-3 md:grid-cols-2 md:grid-rows-1">
             <ValidJobsPanel
               items={uniqueUrls}
               compareValidJobId={compareValidJobId}

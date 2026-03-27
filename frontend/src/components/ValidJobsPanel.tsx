@@ -44,7 +44,7 @@ export function ValidJobsPanel({
   compareValidJobId,
 }: Props) {
   return (
-    <div className="glass-card m-3 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-blue-200/60 px-4 py-4 md:mb-3 md:mr-0 md:border-r md:bg-white/70 md:px-6 md:py-6">
+    <div className="glass-card flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-blue-200/60 px-4 py-4 md:bg-white/70 md:px-6 md:py-6">
       <div className="mb-4 shrink-0 md:mb-6">
         <div className="flex items-center gap-2">
           <CheckCircle className="h-6 w-6 text-blue-600" />
