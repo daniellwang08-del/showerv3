@@ -395,6 +395,43 @@ function App() {
     }
   };
 
+  const handleOpenSelectedUrls = async (items: SubmittedUrlItem[]) => {
+    if (!items.length) return;
+
+    const uniqueItems = items.filter(
+      (item, index, arr) => arr.findIndex((x) => x.url === item.url) === index,
+    );
+
+    uniqueItems.forEach((item) => {
+      window.open(item.url, '_blank', 'noopener,noreferrer');
+    });
+
+    // Keep click counts consistent with individual URL opens.
+    setUniqueUrls((prev) =>
+      prev.map((job) => {
+        const opened = uniqueItems.find((item) => item.id === job.id);
+        if (!opened) return job;
+        return { ...job, click_count: (job.click_count ?? 0) + 1 };
+      }),
+    );
+
+    await Promise.all(
+      uniqueItems.map(async (item) => {
+        if (item.table !== 'valid') return;
+        try {
+          const res = await apiClient.post<{ click_count: number }>(`/jobs/valid/${item.id}/click`);
+          const serverCount = res.data?.click_count;
+          if (typeof serverCount !== 'number') return;
+          setUniqueUrls((prev) =>
+            prev.map((job) => (job.id === item.id ? { ...job, click_count: serverCount } : job)),
+          );
+        } catch {
+          // Keep optimistic count on failure
+        }
+      }),
+    );
+  };
+
   // Handle batch delete of jobs
   const handleBatchDelete = async (itemsToDelete: SubmittedUrlItem[]) => {
     console.log('handleBatchDelete - Deleting items:', itemsToDelete);
@@ -499,6 +536,7 @@ function App() {
                 onBatchDelete={handleBatchDelete}
                 onMarkApplied={handleMarkApplied}
                 onMarkUnapplied={handleMarkUnapplied}
+                onOpenSelectedUrls={handleOpenSelectedUrls}
                 onShowScrapedContent={(item) => {
                   if (item.extraction_id) {
                     setDetailMode('scraped');

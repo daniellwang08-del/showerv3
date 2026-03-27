@@ -14,6 +14,7 @@ type Props = {
   onBatchDelete?: (items: SubmittedUrlItem[]) => void;
   onMarkApplied: (items: SubmittedUrlItem[], userInitial: string) => void;
   onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
+  onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
   onShowScrapedContent?: (item: SubmittedUrlItem) => void;
   onShowJobMatch?: (item: SubmittedUrlItem) => void;
   onTriggerJobMatch?: (item: SubmittedUrlItem) => void;
@@ -33,6 +34,7 @@ export function ValidJobsPanel({
   onBatchDelete,
   onMarkApplied,
   onMarkUnapplied,
+  onOpenSelectedUrls,
   onShowScrapedContent,
   onShowJobMatch,
   onTriggerJobMatch,
@@ -64,6 +66,7 @@ export function ValidJobsPanel({
         onBatchDelete={onBatchDelete}
         onMarkApplied={onMarkApplied}
         onMarkUnapplied={onMarkUnapplied}
+        onOpenSelectedUrls={onOpenSelectedUrls}
         onShowScrapedContent={onShowScrapedContent}
         onShowJobMatch={onShowJobMatch}
         onTriggerJobMatch={onTriggerJobMatch}
