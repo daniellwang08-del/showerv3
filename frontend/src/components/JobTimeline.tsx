@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, Eye, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, Eye, MoreHorizontal, Ticket } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 
 type Props = {
@@ -487,14 +487,17 @@ export function JobTimeline({
                 <div className="ml-4 border-l-2 border-slate-200 pl-4 space-y-2">
                   {sortedGroupedByDate[dateKey].map((item) => {
                     const isSelected = selectedJobsByDate[dateKey]?.has(item.id) || false;
+                    const isApplied = !!item.appliedAt && !!item.appliedBy;
                     return (
                     <div key={item.id} className="group">
                       <div className="relative">
                         <div 
-                          className={`flex items-center justify-between gap-3 border px-3 py-2 transition rounded cursor-pointer select-none ${
+                          className={`relative flex items-center justify-between gap-3 border px-3 py-2 transition rounded cursor-pointer select-none ${
                             isSelected
                               ? 'border-blue-500 bg-blue-50'
-                              : ('border-transparent hover:bg-blue-50')
+                              : isApplied
+                                ? 'border-emerald-200/70 bg-emerald-50/60 hover:bg-emerald-50/80'
+                                : 'border-transparent hover:bg-blue-50'
                           } ${
                             item.id === compareValidJobId ? 'ring-2 ring-blue-500' : ''
                           }`}
@@ -543,6 +546,20 @@ export function JobTimeline({
                             >
                               <div className="truncate text-sm font-medium text-slate-700 hover:text-blue-600 hover:underline">{item.url}</div>
                             </a>
+                            {isApplied && (
+                              <span className="relative shrink-0 group/applied">
+                                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-300/70 bg-emerald-100/80 text-emerald-800 shadow-sm">
+                                  <Ticket className="h-3 w-3" />
+                                </span>
+                                <span className="pointer-events-none absolute bottom-full left-1/2 z-[80] mb-1 hidden w-44 -translate-x-1/2 rounded-lg border border-emerald-200 bg-white/95 p-2 text-[11px] text-slate-700 shadow-xl backdrop-blur-sm group-hover/applied:block">
+                                  <span className="block font-semibold text-emerald-700">Applied</span>
+                                  <span className="mt-0.5 block">By: {item.appliedBy}</span>
+                                  <span className="block text-slate-500">
+                                    At: {new Date(item.appliedAt!).toLocaleString()}
+                                  </span>
+                                </span>
+                              </span>
+                            )}
                             {item.table === 'valid' && (() => {
                               const status = item.extraction_status;
                               const seenCount = item.click_count ?? 0;
@@ -758,13 +775,6 @@ export function JobTimeline({
                           </div>
                         )}
                       </div>
-
-                      {/* Applied indicator - shown below job link */}
-                      {item.appliedAt && item.appliedBy && (
-                        <div className="mt-1 ml-4 text-xs text-green-600 font-medium flex items-center gap-1">
-                          ✓ Applied by {item.appliedBy}
-                        </div>
-                      )}
                     </div>
                   );
                   })}
