@@ -1,12 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Calendar, Pencil, Flag, Copy, Trash2, RotateCw, Eye } from 'lucide-react';
+import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, Eye } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 
 type Props = {
   items: SubmittedUrlItem[];
   openMenuId: string | null;
   onToggleMenu: (id: string) => void;
-  onDateRangeChange?: (range: 'all' | '7d' | '30d' | 'custom') => void;
   onEdit: (item: SubmittedUrlItem) => void;
   onReportInvalid: (item: SubmittedUrlItem) => void;
   onReportDuplicate: (item: SubmittedUrlItem) => void;
@@ -29,7 +28,6 @@ export function JobTimeline({
   items,
   openMenuId,
   onToggleMenu,
-  onDateRangeChange,
   onEdit,
   onReportInvalid,
   onReportDuplicate,
@@ -47,10 +45,6 @@ export function JobTimeline({
   compareValidJobId,
   children,
 }: Props) {
-  const [dateRange, setDateRange] = useState<'all' | '7d' | '30d' | 'custom'>('all');
-  const [open, setOpen] = useState(false);
-  const [customStartDate, setCustomStartDate] = useState('');
-  const [customEndDate, setCustomEndDate] = useState('');
   const [sortByDate, setSortByDate] = useState<Record<string, 'platform' | 'matchRate' | 'postedDate'>>({});
   const [sortOpenDate, setSortOpenDate] = useState<string | null>(null);
   const [selectedJobsByDate, setSelectedJobsByDate] = useState<Record<string, Set<string>>>({});
@@ -61,12 +55,6 @@ export function JobTimeline({
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const bulkActionRef = useRef<HTMLDivElement>(null);
   const selectionTimeoutFiredRef = useRef(false);
-
-  const handleDateChange = (range: 'all' | '7d' | '30d' | 'custom') => {
-    setDateRange(range);
-    onDateRangeChange?.(range);
-    setOpen(false);
-  };
 
   const closeMenu = () => {
     onToggleMenu('');
@@ -321,29 +309,7 @@ export function JobTimeline({
   // Filter to show only actual jobs (exclude submission success notifications)
   const filteredItems = items.filter(item => {
     const hasValidJob = item.job_id !== null || item.duplicate_job_id !== null;
-    if (!hasValidJob) return false;
-
-    // Apply date range filtering
-    const itemDate = new Date(item.created_at_ms);
-    const now = new Date();
-    const daysDiff = Math.floor((now.getTime() - itemDate.getTime()) / (1000 * 60 * 60 * 24));
-
-    switch (dateRange) {
-      case '7d':
-        return daysDiff <= 7;
-      case '30d':
-        return daysDiff <= 30;
-      case 'custom': {
-        if (!customStartDate || !customEndDate) return true;
-        const startDate = new Date(customStartDate);
-        const endDate = new Date(customEndDate);
-        endDate.setHours(23, 59, 59, 999);
-        return itemDate >= startDate && itemDate <= endDate;
-      }
-      case 'all':
-      default:
-        return true;
-    }
+    return hasValidJob;
   });
 
   // Group items by date
@@ -393,13 +359,6 @@ export function JobTimeline({
     return new Date(b).getTime() - new Date(a).getTime();
   });
 
-  const dateRangeLabel = {
-    all: 'All dates',
-    '7d': 'Last 7 days',
-    '30d': 'Last 30 days',
-    custom: 'Custom range',
-  };
-
   const sortLabel = {
     platform: 'By Job Platform',
     matchRate: 'By Match Rate',
@@ -408,70 +367,9 @@ export function JobTimeline({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Date selector dropdown */}
-      <div className="mb-6 relative">
-        <button
-          onClick={() => setOpen(!open)}
-          className="flex items-center justify-between px-3 py-2 text-sm rounded-md border border-slate-300 bg-white hover:bg-slate-50 transition w-full"
-        >
-          <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-slate-600" />
-            <span className="text-slate-700 font-medium">{dateRangeLabel[dateRange]}</span>
-          </div>
-          <ChevronDown className="h-4 w-4 text-slate-500" />
-        </button>
-
-        {open && (
-          <div className="absolute top-full mt-1 left-0 right-0 z-10 rounded-md border border-slate-200 bg-white shadow-lg">
-            {(['all', '7d', '30d', 'custom'] as const).map((range) => (
-              <div key={range}>
-                <button
-                  onClick={() => handleDateChange(range)}
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 transition ${
-                    dateRange === range ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700'
-                  }`}
-                >
-                  {dateRangeLabel[range]}
-                </button>
-                
-                {/* Custom date range picker */}
-                {dateRange === 'custom' && range === 'custom' && (
-                  <div className="border-t border-slate-200 px-3 py-3 space-y-3">
-                    <div className="space-y-1">
-                      <label className="block text-xs font-medium text-slate-600">Start Date</label>
-                      <input
-                        type="date"
-                        value={customStartDate}
-                        onChange={(e) => setCustomStartDate(e.target.value)}
-                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="block text-xs font-medium text-slate-600">End Date</label>
-                      <input
-                        type="date"
-                        value={customEndDate}
-                        onChange={(e) => setCustomEndDate(e.target.value)}
-                        className="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setOpen(false)}
-                      className="w-full px-2 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 transition font-medium"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Timeline with job links */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="timeline-scroll relative min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="pointer-events-none sticky top-0 z-10 h-5 bg-gradient-to-b from-white via-white/80 to-transparent" />
         {filteredItems.length === 0 ? (
           <div className="text-center py-8 text-slate-400 text-sm">No jobs yet</div>
         ) : (
@@ -875,6 +773,7 @@ export function JobTimeline({
             ))}
           </div>
         )}
+        <div className="pointer-events-none sticky bottom-0 z-10 h-6 bg-gradient-to-t from-white via-white/80 to-transparent" />
       </div>
 
       {children}

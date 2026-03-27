@@ -32,15 +32,15 @@ export function JobActionModal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-blue-950/30 p-4 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white shadow-xl">
-        <div className="border-b border-slate-200 px-5 py-4">
+      <div className="glass-card w-full max-w-lg rounded-2xl border border-blue-200/70 bg-white/90 shadow-2xl">
+        <div className="border-b border-blue-200/60 px-5 py-4">
           <div className="flex items-center gap-2 text-base font-bold text-slate-900">
             {modal.kind === 'edit' && <Edit2 className="h-5 w-5 text-blue-600" />}
             {modal.kind === 'reportInvalid' && <XCircle className="h-5 w-5 text-red-600" />}
@@ -69,7 +69,7 @@ export function JobActionModal({
               <input
                 value={modalUrl}
                 onChange={(e) => onModalUrlChange(e.target.value)}
-                className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                className="blue-outline-input mt-2 block w-full bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                 placeholder="https://..."
                 autoFocus
               />
@@ -82,7 +82,7 @@ export function JobActionModal({
               <input
                 value={modalReason}
                 onChange={(e) => onModalReasonChange(e.target.value)}
-                className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                className="blue-outline-input mt-2 block w-full bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                 placeholder="Why is this invalid?"
                 autoFocus
               />
@@ -96,7 +96,7 @@ export function JobActionModal({
                 <input
                   value={modalDuplicateOf}
                   onChange={(e) => onModalDuplicateOfChange(e.target.value)}
-                  className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                  className="blue-outline-input mt-2 block w-full bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                   placeholder="UUID"
                   autoFocus
                 />
@@ -106,7 +106,7 @@ export function JobActionModal({
                 <input
                   value={modalReason}
                   onChange={(e) => onModalReasonChange(e.target.value)}
-                  className="mt-2 block w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                  className="blue-outline-input mt-2 block w-full bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                   placeholder="Why is this duplicated?"
                 />
               </div>
@@ -132,10 +132,10 @@ export function JobActionModal({
           {modalError && <div className="mt-3 text-sm font-medium text-red-700">{modalError}</div>}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-blue-200/60 px-5 py-3">
           <button
             type="button"
-            className="border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 transition"
+            className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-blue-50"
             onClick={onClose}
             disabled={modalSubmitting}
           >
@@ -143,7 +143,7 @@ export function JobActionModal({
           </button>
           <button
             type="button"
-            className="bg-gradient-to-r from-blue-500 to-purple-500 px-4 py-2 text-sm font-semibold text-white hover:from-blue-600 hover:to-purple-600 disabled:opacity-70 transition"
+            className="btn-blue-neon rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-70"
             onClick={onConfirm}
             disabled={modalSubmitting}
           >

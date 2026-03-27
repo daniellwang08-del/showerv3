@@ -62,8 +62,8 @@ export function Signup({ onSignup, onSwitchToLogin }: SignupProps) {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50 to-purple-50 p-4">
-      <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-8 shadow-lg">
+    <div className="app-surface flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-100 via-blue-50 to-indigo-100 p-4">
+      <div className="glass-card w-full max-w-md rounded-2xl border border-blue-200/70 bg-white/90 p-8 shadow-2xl">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold text-blue-600">Job Scraper</h1>
           <p className="mt-2 text-sm text-slate-600">Duplicate prevention system</p>
@@ -76,7 +76,7 @@ export function Signup({ onSignup, onSwitchToLogin }: SignupProps) {
               Email
             </label>
             <input
-              className="w-full rounded border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+              className="blue-outline-input w-full rounded-lg bg-white px-4 py-2.5 text-sm text-slate-900 outline-none"
               id="email"
               type="email"
               placeholder="name@example.com"
@@ -91,7 +91,7 @@ export function Signup({ onSignup, onSwitchToLogin }: SignupProps) {
               Password
             </label>
             <input
-              className="w-full rounded border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+              className="blue-outline-input w-full rounded-lg bg-white px-4 py-2.5 text-sm text-slate-900 outline-none"
               id="password"
               type="password"
               placeholder="•••••••••"
@@ -107,7 +107,7 @@ export function Signup({ onSignup, onSwitchToLogin }: SignupProps) {
               Confirm Password
             </label>
             <input
-              className="w-full rounded border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+              className="blue-outline-input w-full rounded-lg bg-white px-4 py-2.5 text-sm text-slate-900 outline-none"
               id="confirmPassword"
               type="password"
               placeholder="•••••••••"
@@ -121,7 +121,7 @@ export function Signup({ onSignup, onSwitchToLogin }: SignupProps) {
 
           <div className="mb-6">
             <button
-              className="w-full rounded-lg bg-gradient-to-r from-blue-500 to-purple-500 px-4 py-2.5 font-semibold text-white hover:from-blue-600 hover:to-purple-600 transition disabled:opacity-70 disabled:cursor-not-allowed"
+              className="btn-blue-neon w-full rounded-lg px-4 py-2.5 font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-70"
               type="submit"
               disabled={loading}
             >

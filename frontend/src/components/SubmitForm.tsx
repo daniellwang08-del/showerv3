@@ -20,7 +20,7 @@ export function SubmitForm({
   submitError,
 }: Props) {
   return (
-    <div className="min-w-0 rounded-lg border border-blue-200/50 bg-gradient-to-br from-white to-blue-50/30 p-5 shadow-sm">
+    <div className="glass-card min-w-0 rounded-2xl border border-blue-200/60 bg-gradient-to-br from-white/90 to-blue-50/50 p-5 shadow-sm">
       <form onSubmit={onSubmit} className="min-w-0">
         <div className="flex min-w-0 flex-col gap-0 sm:flex-row sm:items-stretch">
           <div className="relative min-w-0 flex-1">
@@ -43,7 +43,7 @@ export function SubmitForm({
               id="url"
               value={url}
               onChange={(e) => onUrlChange(e.target.value)}
-              className="block min-w-0 w-full border border-blue-300 bg-white py-2.5 pl-12 pr-3 text-sm text-slate-900 placeholder:text-slate-500 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200 rounded-l-lg sm:rounded-l-lg sm:rounded-r-none"
+              className="blue-outline-input block min-w-0 w-full rounded-l-lg py-2.5 pl-12 pr-3 text-sm text-slate-900 placeholder:text-slate-500 outline-none sm:rounded-l-lg sm:rounded-r-none"
               placeholder="https://boards.greenhouse.io/..."
               required
               autoComplete="off"
@@ -54,7 +54,7 @@ export function SubmitForm({
           <button
             type="submit"
             disabled={loading}
-            className="group relative inline-flex w-full sm:w-[8.5rem] sm:min-w-[8.5rem] sm:max-w-[8.5rem] shrink-0 items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-purple-500 px-6 py-2.5 text-sm font-semibold text-white shadow-md transition hover:from-blue-600 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70 rounded-r-lg sm:rounded-r-lg sm:rounded-l-none"
+            className="btn-blue-neon group relative inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-r-lg px-6 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70 sm:w-[8.5rem] sm:min-w-[8.5rem] sm:max-w-[8.5rem] sm:rounded-l-none sm:rounded-r-lg"
           >
             {loading ? (
               <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>

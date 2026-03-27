@@ -120,7 +120,7 @@ export function DashboardPage({
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 text-slate-900">
+    <div className="app-surface h-screen overflow-hidden text-slate-900 flex flex-col">
       <Header
         onToggleDrawer={() => setDrawerOpen((s) => !s)}
         onLogout={onLogout}
@@ -129,11 +129,11 @@ export function DashboardPage({
         userName={userName}
       />
 
-      <div className="flex min-h-screen">
+      <div className="flex flex-1 min-h-0">
         <SideDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} onMyProfile={onMyProfile} />
 
         <div className="flex-1 min-w-0 overflow-hidden">
-          <div className="grid min-h-screen grid-cols-1 md:grid-cols-2 min-w-0">
+          <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] md:grid-cols-2 md:grid-rows-1">
             <ValidJobsPanel
               items={uniqueUrls}
               compareValidJobId={compareValidJobId}
@@ -157,8 +157,8 @@ export function DashboardPage({
               userInitial={userInitial}
             />
 
-            <div className="flex min-h-screen min-w-0 flex-col overflow-hidden md:bg-gradient-to-b md:from-purple-50/50 md:to-white">
-              <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden md:bg-gradient-to-b md:from-blue-50/40 md:to-white/70">
+              <div className="glass-card m-3 rounded-2xl p-4">
                 <h3 className="mb-2 text-lg font-semibold text-slate-900">Post a job</h3>
                 <SubmitForm
                   url={url}
@@ -198,10 +198,10 @@ export function DashboardPage({
             if (!wasDrag) handleToggleDuplicates();
           }}
           onPointerCancel={floating.handlers.onPointerCancel}
-          className={`fixed z-50 rounded-l-xl rounded-r-md border px-3 py-2 shadow-lg transition focus:outline-none focus:ring-2 focus:ring-orange-400 touch-none ${
+          className={`fixed z-50 rounded-l-xl rounded-r-md border px-3 py-2 shadow-lg transition focus:outline-none focus:ring-2 focus:ring-blue-400 touch-none ${
             isDuplicatePanelOpen
-              ? 'border-orange-300 bg-orange-100 text-orange-800'
-              : 'border-orange-400 bg-orange-600 text-white hover:bg-orange-500'
+              ? 'border-blue-300 bg-blue-100 text-blue-800'
+              : 'border-blue-400 btn-blue-neon text-white'
           }`}
           style={floating.pos ? { left: floating.pos.x, top: floating.pos.y } : undefined}
           aria-label={isDuplicatePanelOpen ? 'Close duplicates panel' : 'Open duplicates panel'}
@@ -212,7 +212,7 @@ export function DashboardPage({
             <span>Duplicates</span>
             <span
               className={`inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-bold ${
-                isDuplicatePanelOpen ? 'bg-white text-orange-700' : 'bg-orange-100 text-orange-700'
+                isDuplicatePanelOpen ? 'bg-white text-blue-700' : 'bg-blue-100 text-blue-700'
               }`}
             >
               {duplicateUrls.length}
@@ -235,7 +235,7 @@ export function DashboardPage({
           aria-modal="true"
           aria-label="Duplicate jobs panel"
         >
-          <div className="h-full overflow-auto p-4">
+          <div className="h-full overflow-auto p-4 bg-gradient-to-b from-blue-50/80 via-white to-blue-50/40">
             <DuplicateJobsPanel
               loadingLists={loadingLists}
               items={duplicateUrls}

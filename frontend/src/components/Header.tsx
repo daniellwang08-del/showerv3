@@ -50,17 +50,19 @@ export function Header({ onToggleDrawer, onLogout, onMyProfile, userEmail, userN
 
   return (
     <>
-      <header className="w-full border-b border-slate-100 bg-white/60">
+      <header className="relative z-20 w-full border-b border-blue-200/60 bg-white/55 backdrop-blur-xl">
         <button
           onClick={onToggleDrawer}
           aria-label="Toggle navigation"
-          className="fixed top-2 left-4 z-50 rounded-md bg-white/90 p-2 text-slate-800 hover:bg-white border border-slate-200 shadow-md transition"
+          className="fixed top-2 left-4 z-50 rounded-xl border border-blue-200/70 bg-white/90 p-2 text-blue-800 shadow-lg transition hover:-translate-y-0.5 hover:bg-white"
         >
           <Menu className="h-5 w-5" />
         </button>
 
         <div className="max-w-7xl mx-auto flex items-center justify-center px-4 py-3">
-          <div className="text-lg font-semibold text-slate-900">Job Scraper</div>
+          <div className="text-lg font-semibold tracking-wide bg-gradient-to-r from-blue-700 via-indigo-600 to-sky-500 bg-clip-text text-transparent">
+            Job Scraper
+          </div>
         </div>
 
         <div className="fixed top-2 right-4 z-50" ref={ref}>
@@ -75,10 +77,10 @@ export function Header({ onToggleDrawer, onLogout, onMyProfile, userEmail, userN
           </button>
 
           {open && (
-            <div className="absolute right-0 mt-2 w-44 rounded-md border border-slate-100 bg-white shadow-lg">
+            <div className="glass-card absolute right-0 mt-2 w-44 rounded-xl border border-blue-200/70 bg-white/90 shadow-xl">
               {onMyProfile && (
                 <button
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50"
                   onClick={() => {
                     setOpen(false);
                     onMyProfile();
@@ -89,7 +91,7 @@ export function Header({ onToggleDrawer, onLogout, onMyProfile, userEmail, userN
                 </button>
               )}
               <button
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50"
                 onClick={onLogout}
               >
                 <LogOut className="h-4 w-4 text-rose-600" />

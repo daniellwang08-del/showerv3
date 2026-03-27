@@ -10,13 +10,13 @@ type Props = {
 export const SideDrawer: FC<Props> = ({ open, onClose, onMyProfile }) => {
   return (
     <aside
-      className={`flex-shrink-0 overflow-hidden transition-all duration-200 ease-in-out bg-white border-r border-slate-100 shadow-sm ${
+      className={`z-20 flex-shrink-0 overflow-hidden transition-all duration-300 ease-out border-r border-blue-200/60 bg-white/70 backdrop-blur-xl shadow-xl ${
         open ? 'w-56' : 'w-0'
       }`}
       aria-hidden={!open}
     >
       <div className="h-full flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-blue-200/60">
           <div className="flex items-center gap-2">
             <Home className="h-5 w-5 text-blue-600" />
             <span className="text-sm font-semibold text-slate-900">Navigation</span>
@@ -24,7 +24,7 @@ export const SideDrawer: FC<Props> = ({ open, onClose, onMyProfile }) => {
           <button
             aria-label="Close drawer"
             onClick={onClose}
-            className="rounded-md p-1 text-slate-600 hover:bg-slate-100"
+            className="rounded-md p-1 text-slate-600 hover:bg-blue-100"
           >
             <X className="h-4 w-4" />
           </button>
@@ -36,7 +36,7 @@ export const SideDrawer: FC<Props> = ({ open, onClose, onMyProfile }) => {
               <button
                 type="button"
                 onClick={() => { onMyProfile(); onClose(); }}
-                className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-slate-700 hover:bg-slate-50 text-left"
+                className="flex w-full items-center gap-3 rounded-lg border border-transparent px-2 py-2 text-left text-sm text-slate-700 transition hover:border-blue-200 hover:bg-blue-50/80"
               >
                 <User className="h-4 w-4 text-slate-500 flex-shrink-0" />
                 My profile
@@ -45,7 +45,7 @@ export const SideDrawer: FC<Props> = ({ open, onClose, onMyProfile }) => {
           </ul>
         </nav>
 
-        <div className="p-3 text-xs text-slate-500 border-t border-slate-100">
+        <div className="p-3 text-xs text-slate-500 border-t border-blue-200/60">
           <div>v1.0</div>
         </div>
       </div>
