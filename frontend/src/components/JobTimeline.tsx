@@ -327,7 +327,7 @@ export function JobTimeline({
   // Sort jobs within each date group based on sortByDate option for that group
   const sortedGroupedByDate = Object.entries(groupedByDate).reduce(
     (acc, [dateKey, items]) => {
-      const currentSort = sortByDate[dateKey] || 'platform';
+      const currentSort = sortByDate[dateKey] || 'postedDate';
       const sortedItems = [...items].sort((a, b) => {
         switch (currentSort) {
           case 'platform': {
@@ -394,7 +394,7 @@ export function JobTimeline({
                         onClick={() => setSortOpenDate(sortOpenDate === dateKey ? null : dateKey)}
                         className="flex items-center gap-1 px-2 py-1 text-xs border border-slate-300 bg-white hover:bg-slate-50 transition rounded whitespace-nowrap"
                       >
-                        <span className="text-slate-600 font-medium">Sort: {sortLabel[sortByDate[dateKey] || 'platform']}</span>
+                        <span className="text-slate-600 font-medium">Sort: {sortLabel[sortByDate[dateKey] || 'postedDate']}</span>
                         <ChevronDown className="h-3 w-3 text-slate-500" />
                       </button>
 
@@ -414,7 +414,7 @@ export function JobTimeline({
                                 setSortOpenDate(null);
                               }}
                               className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 transition whitespace-nowrap ${
-                                (sortByDate[dateKey] || 'platform') === option ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700'
+                                (sortByDate[dateKey] || 'postedDate') === option ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700'
                               }`}
                             >
                               {sortLabel[option]}
