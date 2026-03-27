@@ -54,26 +54,28 @@ export function ValidJobsPanel({
       </div>
 
       {/* Timeline with integrated job list */}
-      <JobTimeline
-        items={items}
-        openMenuId={openMenuId}
-        compareValidJobId={compareValidJobId}
-        onToggleMenu={onToggleMenu}
-        onEdit={onEdit}
-        onReportInvalid={onReportInvalid}
-        onReportDuplicate={onReportDuplicate}
-        onDelete={onDelete}
-        onBatchDelete={onBatchDelete}
-        onMarkApplied={onMarkApplied}
-        onMarkUnapplied={onMarkUnapplied}
-        onOpenSelectedUrls={onOpenSelectedUrls}
-        onShowScrapedContent={onShowScrapedContent}
-        onShowJobMatch={onShowJobMatch}
-        onTriggerJobMatch={onTriggerJobMatch}
-        onJobUrlClick={onJobUrlClick}
-        onRescrape={onRescrape}
-        userInitial={userInitial}
-      />
+      <div className="min-h-0 flex flex-1">
+        <JobTimeline
+          items={items}
+          openMenuId={openMenuId}
+          compareValidJobId={compareValidJobId}
+          onToggleMenu={onToggleMenu}
+          onEdit={onEdit}
+          onReportInvalid={onReportInvalid}
+          onReportDuplicate={onReportDuplicate}
+          onDelete={onDelete}
+          onBatchDelete={onBatchDelete}
+          onMarkApplied={onMarkApplied}
+          onMarkUnapplied={onMarkUnapplied}
+          onOpenSelectedUrls={onOpenSelectedUrls}
+          onShowScrapedContent={onShowScrapedContent}
+          onShowJobMatch={onShowJobMatch}
+          onTriggerJobMatch={onTriggerJobMatch}
+          onJobUrlClick={onJobUrlClick}
+          onRescrape={onRescrape}
+          userInitial={userInitial}
+        />
+      </div>
     </div>
   );
 }

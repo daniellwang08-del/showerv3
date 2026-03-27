@@ -366,7 +366,7 @@ export function JobTimeline({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 w-full flex-col">
       {/* Timeline with job links */}
       <div className="timeline-scroll relative min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="pointer-events-none sticky top-0 z-10 h-5 bg-gradient-to-b from-white via-white/80 to-transparent" />
@@ -374,7 +374,7 @@ export function JobTimeline({
           <div className="text-center py-8 text-slate-400 text-sm">No jobs yet</div>
         ) : (
           // Show with date grouping for all filters
-          <div className="space-y-6 pb-15">
+          <div className="space-y-6 pb">
             {sortedDates.map((dateKey) => (
               <div key={dateKey} className="relative">
                 {/* Timeline marker and date with sort dropdown beside it */}
