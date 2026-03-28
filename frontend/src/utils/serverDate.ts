@@ -37,3 +37,10 @@ export function localCalendarDayKey(ms: number): string {
   if (Number.isNaN(d.getTime())) return '';
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
+
+/** Stable local calendar month (year + month index) for monthly pipeline buckets. */
+export function localCalendarMonthKey(ms: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${d.getMonth()}`;
+}

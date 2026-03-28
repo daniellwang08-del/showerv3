@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronDown,
   Pencil,
@@ -8,7 +9,6 @@ import {
   RotateCw,
   RefreshCw,
   Eye,
-  MoreHorizontal,
   Check,
   X,
 } from 'lucide-react';
@@ -71,9 +71,12 @@ export function JobTimeline({
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const bulkActionRef = useRef<HTMLDivElement>(null);
   const selectionTimeoutFiredRef = useRef(false);
+  /** When set, job action menu is shown fixed at this point (right-click); otherwise anchored to the … button. */
+  const [jobMenuPoint, setJobMenuPoint] = useState<{ x: number; y: number } | null>(null);
 
   const closeMenu = () => {
-    onToggleMenu('');
+    setJobMenuPoint(null);
+    if (openMenuId) onToggleMenu(openMenuId);
   };
 
   // Function to extract domain from URL
@@ -320,6 +323,10 @@ export function JobTimeline({
     setSelectedJobsByDate({});
     setBulkActionOpen(null);
   };
+
+  useEffect(() => {
+    if (!openMenuId) setJobMenuPoint(null);
+  }, [openMenuId]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -569,7 +576,7 @@ export function JobTimeline({
                     <div key={item.id} className="group">
                       <div className="relative">
                         <div 
-                          className={`relative flex items-center justify-between gap-3 border px-3 py-2 transition rounded cursor-pointer select-none ${
+                          className={`relative flex items-center gap-3 border px-3 py-2 transition rounded cursor-pointer select-none ${
                             isSelected
                               ? 'border-blue-500 bg-blue-50'
                               : isApplied
@@ -582,6 +589,16 @@ export function JobTimeline({
                           onMouseMove={handleJobMouseMove}
                           onMouseUp={handleJobMouseUp}
                           onMouseEnter={() => handleJobMouseEnter(dateKey, item.id)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const { left, top } = clampJobContextMenuPosition(e.clientX, e.clientY);
+                            setJobMenuPoint({ x: left, y: top });
+                            if (openMenuId !== item.id) {
+                              onToggleMenu(item.id);
+                            }
+                          }}
+                          title="Right-click for actions"
                         >
                           <div className="flex items-center gap-3 min-w-0 flex-1">
                             {/* Checkbox - only show when selected */}
@@ -614,6 +631,9 @@ export function JobTimeline({
                               rel="noreferrer"
                               className="min-w-0 flex-1 cursor-pointer"
                               title={item.url}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                              }}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 e.preventDefault();
@@ -741,116 +761,158 @@ export function JobTimeline({
                               return null;
                             })()}
                           </div>
-
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-lg border border-blue-200 bg-white/90 p-1.5 text-blue-700 opacity-0 shadow-sm transition-all duration-200 hover:bg-blue-50 hover:shadow group-hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                            aria-label="Actions"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              onToggleMenu(item.id);
-                            }}
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </button>
                         </div>
 
-                        {openMenuId === item.id && (
-                          <div 
-                            ref={menuRef}
-                            className="glass-card absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-xl border border-blue-200/70 bg-white/95 shadow-xl"
-                            data-job-menu-root="true"
-                          >
-                            <button
-                              type="button"
-                              className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
-                              onClick={() => {
-                                closeMenu();
-                                onEdit(item);
-                              }}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Pencil className="h-4 w-4" />
-                                Edit
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
-                              onClick={() => {
-                                closeMenu();
-                                onReportInvalid(item);
-                              }}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Flag className="h-4 w-4" />
-                                Report Invalid
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
-                              onClick={() => {
-                                closeMenu();
-                                onReportDuplicate(item);
-                              }}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Copy className="h-4 w-4" />
-                                Report Duplicate
-                              </span>
-                            </button>
-                            {onTriggerJobMatch &&
-                              item.table === 'valid' &&
-                              item.extraction_id &&
-                              (item.extraction_status === 'completed' || item.scraped_at_ms != null) && (
+                        {openMenuId === item.id &&
+                          (() => {
+                            const menuPanel = (
+                              <>
+                                {item.table === 'valid' && (
+                                  <>
+                                    {!isApplied ? (
+                                      <button
+                                        type="button"
+                                        className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
+                                        onClick={() => {
+                                          closeMenu();
+                                          void onMarkApplied([item]);
+                                        }}
+                                      >
+                                        <span className="inline-flex items-center gap-2">
+                                          <Check className="h-4 w-4 shrink-0 text-blue-600" strokeWidth={2.5} aria-hidden />
+                                          Mark as applied
+                                        </span>
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                                        onClick={() => {
+                                          closeMenu();
+                                          void onMarkUnapplied([item]);
+                                        }}
+                                      >
+                                        <span className="inline-flex items-center gap-2">
+                                          <X className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={2.5} aria-hidden />
+                                          Unmark as applied
+                                        </span>
+                                      </button>
+                                    )}
+                                  </>
+                                )}
                                 <button
                                   type="button"
                                   className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
                                   onClick={() => {
                                     closeMenu();
-                                    void onTriggerJobMatch(item, { force: true });
+                                    onEdit(item);
                                   }}
                                 >
                                   <span className="inline-flex items-center gap-2">
-                                    <RefreshCw className="h-4 w-4" />
-                                    Re-run match analysis
+                                    <Pencil className="h-4 w-4" />
+                                    Edit
                                   </span>
                                 </button>
-                              )}
-                            {onRescrape && item.table === 'valid' && (
-                              <button
-                                type="button"
-                                className={`block w-full border-b border-blue-100 px-3 py-2 text-left text-sm transition hover:bg-slate-50 ${
-                                  item.extraction_status === 'failed' ? 'text-amber-800 hover:bg-amber-50' : 'text-slate-700'
-                                }`}
-                                onClick={() => {
-                                  closeMenu();
-                                  void onRescrape(item);
-                                }}
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  <RotateCw className="h-4 w-4" />
-                                  Re-scrape page & re-analyze
-                                </span>
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                              onClick={() => {
-                                closeMenu();
-                                onDelete(item);
-                              }}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Trash2 className="h-4 w-4" />
-                                Delete
-                              </span>
-                            </button>
-                          </div>
-                        )}
+                                <button
+                                  type="button"
+                                  className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
+                                  onClick={() => {
+                                    closeMenu();
+                                    onReportInvalid(item);
+                                  }}
+                                >
+                                  <span className="inline-flex items-center gap-2">
+                                    <Flag className="h-4 w-4" />
+                                    Report Invalid
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
+                                  onClick={() => {
+                                    closeMenu();
+                                    onReportDuplicate(item);
+                                  }}
+                                >
+                                  <span className="inline-flex items-center gap-2">
+                                    <Copy className="h-4 w-4" />
+                                    Report Duplicate
+                                  </span>
+                                </button>
+                                {onTriggerJobMatch &&
+                                  item.table === 'valid' &&
+                                  item.extraction_id &&
+                                  (item.extraction_status === 'completed' || item.scraped_at_ms != null) && (
+                                    <button
+                                      type="button"
+                                      className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
+                                      onClick={() => {
+                                        closeMenu();
+                                        void onTriggerJobMatch(item, { force: true });
+                                      }}
+                                    >
+                                      <span className="inline-flex items-center gap-2">
+                                        <RefreshCw className="h-4 w-4" />
+                                        Re-run match analysis
+                                      </span>
+                                    </button>
+                                  )}
+                                {onRescrape && item.table === 'valid' && (
+                                  <button
+                                    type="button"
+                                    className={`block w-full border-b border-blue-100 px-3 py-2 text-left text-sm transition hover:bg-slate-50 ${
+                                      item.extraction_status === 'failed' ? 'text-amber-800 hover:bg-amber-50' : 'text-slate-700'
+                                    }`}
+                                    onClick={() => {
+                                      closeMenu();
+                                      void onRescrape(item);
+                                    }}
+                                  >
+                                    <span className="inline-flex items-center gap-2">
+                                      <RotateCw className="h-4 w-4" />
+                                      Re-scrape page & re-analyze
+                                    </span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                                  onClick={() => {
+                                    closeMenu();
+                                    onDelete(item);
+                                  }}
+                                >
+                                  <span className="inline-flex items-center gap-2">
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete
+                                  </span>
+                                </button>
+                              </>
+                            );
+                            return jobMenuPoint && typeof document !== 'undefined'
+                              ? createPortal(
+                                  <div
+                                    ref={menuRef}
+                                    role="menu"
+                                    className="glass-card w-56 overflow-hidden rounded-xl border border-blue-200/70 bg-white/95 shadow-xl"
+                                    style={{ position: 'fixed', left: jobMenuPoint.x, top: jobMenuPoint.y, zIndex: 100 }}
+                                    data-job-menu-root="true"
+                                  >
+                                    {menuPanel}
+                                  </div>,
+                                  document.body,
+                                )
+                              : (
+                                  <div
+                                    ref={menuRef}
+                                    role="menu"
+                                    className="glass-card absolute right-0 top-full z-[100] mt-1 w-56 overflow-hidden rounded-xl border border-blue-200/70 bg-white/95 shadow-xl"
+                                    data-job-menu-root="true"
+                                  >
+                                    {menuPanel}
+                                  </div>
+                                );
+                          })()}
                       </div>
                     </div>
                   );
@@ -866,6 +928,21 @@ export function JobTimeline({
       {children}
     </div>
   );
+}
+
+function clampJobContextMenuPosition(clientX: number, clientY: number) {
+  const menuWidth = 224;
+  const menuHeight = 360;
+  const pad = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left = clientX;
+  let top = clientY;
+  if (left + menuWidth + pad > vw) left = vw - menuWidth - pad;
+  if (top + menuHeight + pad > vh) top = vh - menuHeight - pad;
+  if (left < pad) left = pad;
+  if (top < pad) top = pad;
+  return { left, top };
 }
 
 export default JobTimeline;

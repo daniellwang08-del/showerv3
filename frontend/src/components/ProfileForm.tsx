@@ -138,18 +138,18 @@ function defaultSectionEditing(allEditing: boolean): Record<SectionId, boolean> 
 }
 
 function collectErrors(form: ProfileFormData): Record<string, string> {
-  const err: Record<string, string> = {};
-  if (!form.name_first.trim()) err.name_first = 'First name is required';
-  if (!form.name_last.trim()) err.name_last = 'Last name is required';
-  if (!form.title.trim()) err.title = 'Title is required';
-  if (!form.email.trim()) err.email = 'Email is required';
-  else if (!validateEmail(form.email)) err.email = 'Invalid email format';
-  if (!form.phone_number.trim()) err.phone_number = 'Phone number is required';
+    const err: Record<string, string> = {};
+    if (!form.name_first.trim()) err.name_first = 'First name is required';
+    if (!form.name_last.trim()) err.name_last = 'Last name is required';
+    if (!form.title.trim()) err.title = 'Title is required';
+    if (!form.email.trim()) err.email = 'Email is required';
+    else if (!validateEmail(form.email)) err.email = 'Invalid email format';
+    if (!form.phone_number.trim()) err.phone_number = 'Phone number is required';
   else if (!validatePhone(form.phone_number)) err.phone_number = 'Use 7–25 digits/spaces/+-()';
-  if (!form.linkedin_url.trim()) err.linkedin_url = 'LinkedIn URL is required';
+    if (!form.linkedin_url.trim()) err.linkedin_url = 'LinkedIn URL is required';
   else if (!validateLinkedIn(form.linkedin_url)) err.linkedin_url = 'Use a profile URL (linkedin.com/in/…)';
   if (form.github_url.trim() && !validateGitHub(form.github_url)) err.github_url = 'Use a GitHub URL (github.com/…)';
-  if (!form.profile_summary.trim()) err.profile_summary = 'Profile summary is required';
+    if (!form.profile_summary.trim()) err.profile_summary = 'Profile summary is required';
   else if (form.profile_summary.length > 5000) err.profile_summary = 'Max 5,000 characters';
 
   form.technical_skills.forEach((t, i) => {
@@ -231,13 +231,13 @@ function fieldRing(errors: Record<string, string>, key: string): string {
 
 function buildPayload(form: ProfileFormData): ProfileFormData {
   return {
-    ...form,
-    technical_skills: form.technical_skills.filter((t) => t.category.trim() && t.skills.trim()),
-    work_experience: form.work_experience.filter((w) => w.company_name.trim() && w.job_title.trim()),
+      ...form,
+      technical_skills: form.technical_skills.filter((t) => t.category.trim() && t.skills.trim()),
+      work_experience: form.work_experience.filter((w) => w.company_name.trim() && w.job_title.trim()),
     education: form.education.filter((ed) => ed.university_name.trim() && ed.degree.trim()),
-    certificates: form.certificates.filter((c) => c.name.trim()),
-    extra: form.extra.filter((x) => x.trim()),
-  };
+      certificates: form.certificates.filter((c) => c.name.trim()),
+      extra: form.extra.filter((x) => x.trim()),
+    };
 }
 
 function errorInSection(errorKey: string, section: SectionId): boolean {
@@ -751,8 +751,8 @@ export function ProfileForm({ profile, onSubmit }: Props) {
         }
       >
         <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div>
               <label className={labelCls} htmlFor="name_first">
                 First name *
               </label>
@@ -768,8 +768,8 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                 aria-invalid={!!errors.name_first}
               />
               {errors.name_first ? <p className={fieldErrorCls}>{errors.name_first}</p> : null}
-            </div>
-            <div>
+          </div>
+          <div>
               <label className={labelCls} htmlFor="name_middle">
                 Middle (optional)
               </label>
@@ -782,8 +782,8 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                 className={inputCls}
                 maxLength={100}
               />
-            </div>
-            <div>
+          </div>
+          <div>
               <label className={labelCls} htmlFor="name_last">
                 Last name *
               </label>
@@ -799,8 +799,8 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                 aria-invalid={!!errors.name_last}
               />
               {errors.name_last ? <p className={fieldErrorCls}>{errors.name_last}</p> : null}
-            </div>
           </div>
+        </div>
           <div className="space-y-4 border-t border-slate-200/60 pt-6">
           <div>
             <label className={labelCls} htmlFor="title">
@@ -907,7 +907,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
             />
             {errors.github_url ? <p className={fieldErrorCls}>{errors.github_url}</p> : null}
           </div>
-          </div>
+        </div>
         </div>
       </ProfileSection>
 
@@ -1148,7 +1148,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                   aria-invalid={!!errors[`work_${i}_location`]}
                 />
                 {errors[`work_${i}_location`] ? <p className={fieldErrorCls}>{errors[`work_${i}_location`]}</p> : null}
-              </div>
+            </div>
               <div>
                 <FancySelect
                   value={w.job_type ?? ''}
@@ -1314,7 +1314,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                   onPick={() => window.setTimeout(() => blurField(`edu_${i}_period_end`), 0)}
                 />
                 {errors[`edu_${i}_period_end`] ? <p className={fieldErrorCls}>{errors[`edu_${i}_period_end`]}</p> : null}
-              </div>
+            </div>
             </div>
             <textarea
               rows={2}
@@ -1457,6 +1457,6 @@ export function ProfileForm({ profile, onSubmit }: Props) {
         </button>
       </ProfileSection>
 
-    </div>
+      </div>
   );
 }

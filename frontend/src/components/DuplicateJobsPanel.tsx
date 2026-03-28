@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeftRight, Search, Trash2, AlertCircle, MoreHorizontal, X, ClipboardCheck } from 'lucide-react';
 import { SubmittedUrlItem } from '../types/ui';
@@ -21,9 +21,23 @@ type Props = {
   children: ReactNode;
 };
 
+function clampDupContextMenu(clientX: number, clientY: number) {
+  const pad = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left = clientX;
+  let top = clientY;
+  if (left + MENU_WIDTH + pad > vw) left = vw - MENU_WIDTH - pad;
+  if (top + MENU_EST_HEIGHT + pad > vh) top = vh - MENU_EST_HEIGHT - pad;
+  if (left < pad) left = pad;
+  if (top < pad) top = pad;
+  return { left, top };
+}
+
 function DuplicateActionsMenuPortal({
   openMenuId,
   items,
+  overridePosition,
   onCloseMenu,
   onCompare,
   onReplace,
@@ -32,6 +46,8 @@ function DuplicateActionsMenuPortal({
 }: {
   openMenuId: string | null;
   items: SubmittedUrlItem[];
+  /** When set (e.g. right-click), menu is fixed here instead of anchoring to the … button. */
+  overridePosition: { left: number; top: number } | null;
   onCloseMenu: () => void;
   onCompare: (item: SubmittedUrlItem) => void;
   onReplace: (item: SubmittedUrlItem) => void;
@@ -43,6 +59,11 @@ function DuplicateActionsMenuPortal({
   useLayoutEffect(() => {
     if (!openMenuId) {
       setPos(null);
+      return;
+    }
+
+    if (overridePosition) {
+      setPos({ top: overridePosition.top, left: overridePosition.left });
       return;
     }
 
@@ -69,7 +90,7 @@ function DuplicateActionsMenuPortal({
       window.removeEventListener('scroll', update, true);
       window.removeEventListener('resize', update);
     };
-  }, [openMenuId]);
+  }, [openMenuId, overridePosition]);
 
   const item = items.find((i) => i.id === openMenuId);
   if (!openMenuId || !pos || !item) return null;
@@ -151,6 +172,17 @@ export function DuplicateJobsPanel({
   onClosePanel,
   children,
 }: Props) {
+  const [dupMenuOverride, setDupMenuOverride] = useState<{ left: number; top: number } | null>(null);
+
+  const closeDupMenu = () => {
+    setDupMenuOverride(null);
+    onCloseMenu();
+  };
+
+  useEffect(() => {
+    if (!openMenuId) setDupMenuOverride(null);
+  }, [openMenuId]);
+
   return (
     <>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -193,13 +225,25 @@ export function DuplicateJobsPanel({
                 {items.map((item) => (
                   <li key={item.id} className="group">
                     <div className="relative" data-job-menu-root="true">
-                      <div className="flex items-center justify-between gap-2 border border-transparent px-3 py-2 transition hover:bg-blue-50/70">
+                      <div
+                        className="flex items-center justify-between gap-2 border border-transparent px-3 py-2 transition hover:bg-blue-50/70"
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const p = clampDupContextMenu(e.clientX, e.clientY);
+                          setDupMenuOverride(p);
+                          if (openMenuId !== item.id) {
+                            onToggleMenu(item.id);
+                          }
+                        }}
+                      >
                         <a
                           href={item.url}
                           target="_blank"
                           rel="noreferrer"
                           className="min-w-0 flex-1 cursor-pointer"
                           title={item.url}
+                          onContextMenu={(e) => e.preventDefault()}
                         >
                           <div className="truncate text-xs font-medium text-slate-700 hover:text-blue-700 hover:underline">{item.url}</div>
                           <div className="mt-0.5 text-[11px] text-slate-500">
@@ -216,6 +260,7 @@ export function DuplicateJobsPanel({
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
+                            setDupMenuOverride(null);
                             onToggleMenu(item.id);
                           }}
                         >
@@ -234,7 +279,8 @@ export function DuplicateJobsPanel({
       <DuplicateActionsMenuPortal
         openMenuId={openMenuId}
         items={items}
-        onCloseMenu={onCloseMenu}
+        overridePosition={dupMenuOverride}
+        onCloseMenu={closeDupMenu}
         onCompare={onCompare}
         onReplace={onReplace}
         onReportAsValid={onReportAsValid}

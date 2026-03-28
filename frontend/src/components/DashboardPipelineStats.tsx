@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 import { jobMarkedApplied } from '../utils/appliedStatus';
-import { localCalendarDayKey, toFiniteTimeMs } from '../utils/serverDate';
+import { localCalendarDayKey, localCalendarMonthKey, toFiniteTimeMs } from '../utils/serverDate';
 
 export type PipelineRangePreset = '7d' | '14d' | '30d' | 'all';
 
@@ -119,12 +119,6 @@ function computeTodayCohort(jobs: SubmittedUrlItem[]): {
   return { postedToday, appliedToday, rateToday };
 }
 
-function startOfLocalDayMs(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
 /** Last `n` local calendar days ending today (n ≥ 1). */
 function getLastNLocalDayStarts(n: number): number[] {
   const starts: number[] = [];
@@ -138,26 +132,32 @@ function getLastNLocalDayStarts(n: number): number[] {
   return starts;
 }
 
-/** Every local calendar day from `firstDayMs` through `lastDayMs` inclusive (caps at a large max). */
-const MAX_HISTORY_DAYS = 5000;
+function startOfLocalMonthMs(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(1);
+  return d.getTime();
+}
 
-function getLocalDayStartsInclusiveRange(firstDayMs: number, lastDayMs: number): number[] {
+/** Every local calendar month from `firstMs` through `lastMs` inclusive (first instant = start of month). */
+function getLocalMonthStartsInclusiveRange(firstMs: number, lastMs: number): number[] {
   const starts: number[] = [];
-  let cur = startOfLocalDayMs(firstDayMs);
-  const end = startOfLocalDayMs(lastDayMs);
+  let cur = startOfLocalMonthMs(firstMs);
+  const end = startOfLocalMonthMs(lastMs);
   if (cur > end) {
     return [end];
   }
-  let guard = 0;
-  while (cur <= end && guard < MAX_HISTORY_DAYS) {
+  while (cur <= end) {
     starts.push(cur);
     const d = new Date(cur);
-    d.setDate(d.getDate() + 1);
+    d.setMonth(d.getMonth() + 1);
     cur = d.getTime();
-    guard++;
   }
   return starts;
 }
+
+/** Cap all-time monthly chart at this many months (then keep the most recent segment). */
+const MAX_HISTORY_MONTHS = 240;
 
 type WeekDayBucket = {
   /** Midnight local time for this bucket */
@@ -178,7 +178,8 @@ type WeekSeries = {
   /** Sum of applied cohort counts aligned with those buckets. */
   sumAppliedWeek: number;
   preset: PipelineRangePreset;
-  /** All-time range exceeded cap; chart shows the most recent days only. */
+  bucketGranularity: 'day' | 'month';
+  /** All-time monthly range exceeded cap; chart shows the most recent months only. */
   historyTruncated?: boolean;
 };
 
@@ -233,12 +234,67 @@ function fillPipelineBuckets(jobs: SubmittedUrlItem[], dayStarts: number[], pres
   const sumPostedWeek = days.reduce((a, b) => a + b.posted, 0);
   const sumAppliedWeek = days.reduce((a, b) => a + b.applied, 0);
 
-  return { days, maxCount, sumPostedWeek, sumAppliedWeek, preset };
+  return { days, maxCount, sumPostedWeek, sumAppliedWeek, preset, bucketGranularity: 'day' };
+}
+
+/**
+ * Same cohort logic as daily buckets, but one column per **calendar month** (jobs grouped by month added).
+ */
+function fillPipelineMonthlyBuckets(
+  jobs: SubmittedUrlItem[],
+  monthStarts: number[],
+  preset: PipelineRangePreset,
+): WeekSeries {
+  const bucketKeys = monthStarts.map((t) => localCalendarMonthKey(t));
+  const keySet = new Set(bucketKeys.filter(Boolean));
+  const posted = new Map<string, number>();
+  const applied = new Map<string, number>();
+  for (const k of bucketKeys) {
+    if (k) {
+      posted.set(k, 0);
+      applied.set(k, 0);
+    }
+  }
+
+  for (const j of jobs) {
+    const ms = toFiniteTimeMs(j.created_at_ms as unknown);
+    if (ms == null) continue;
+    const k = localCalendarMonthKey(ms);
+    if (!k || !keySet.has(k)) continue;
+    posted.set(k, (posted.get(k) ?? 0) + 1);
+    if (jobMarkedApplied(j)) {
+      applied.set(k, (applied.get(k) ?? 0) + 1);
+    }
+  }
+
+  const n = monthStarts.length;
+  const labelOpts = { month: 'short' as const, year: 'numeric' as const };
+  const labelOptsCompact = { month: 'numeric' as const, year: '2-digit' as const };
+  const useCompact = n > 18;
+
+  const days: WeekDayBucket[] = monthStarts.map((dayStart, idx) => {
+    const d = new Date(dayStart);
+    const label = d.toLocaleDateString(undefined, useCompact ? labelOptsCompact : labelOpts);
+    const k = bucketKeys[idx];
+    return {
+      dayStart,
+      label,
+      posted: k ? posted.get(k) ?? 0 : 0,
+      applied: k ? applied.get(k) ?? 0 : 0,
+    };
+  });
+
+  let maxCount = 0;
+  for (const b of days) {
+    maxCount = Math.max(maxCount, b.posted, b.applied);
+  }
+  const sumPostedWeek = days.reduce((a, b) => a + b.posted, 0);
+  const sumAppliedWeek = days.reduce((a, b) => a + b.applied, 0);
+
+  return { days, maxCount, sumPostedWeek, sumAppliedWeek, preset, bucketGranularity: 'month' };
 }
 
 function computePipelineSeries(jobs: SubmittedUrlItem[], preset: PipelineRangePreset): WeekSeries {
-  const todayStart = startOfLocalDayMs(Date.now());
-
   if (preset === 'all') {
     let minMs: number | null = null;
     for (const j of jobs) {
@@ -246,17 +302,15 @@ function computePipelineSeries(jobs: SubmittedUrlItem[], preset: PipelineRangePr
       if (ms == null) continue;
       if (minMs == null || ms < minMs) minMs = ms;
     }
-    const firstDay = minMs != null ? startOfLocalDayMs(minMs) : todayStart;
-    const estSpanDays = Math.floor((todayStart - firstDay) / 86_400_000) + 1;
+    const thisMonthStart = startOfLocalMonthMs(Date.now());
+    const firstMonthStart = minMs != null ? startOfLocalMonthMs(minMs) : thisMonthStart;
+    let monthStarts = getLocalMonthStartsInclusiveRange(firstMonthStart, thisMonthStart);
     let historyTruncated = false;
-    let dayStarts: number[];
-    if (estSpanDays > MAX_HISTORY_DAYS) {
-      dayStarts = getLastNLocalDayStarts(MAX_HISTORY_DAYS);
+    if (monthStarts.length > MAX_HISTORY_MONTHS) {
+      monthStarts = monthStarts.slice(-MAX_HISTORY_MONTHS);
       historyTruncated = true;
-    } else {
-      dayStarts = getLocalDayStartsInclusiveRange(firstDay, todayStart);
     }
-    const base = fillPipelineBuckets(jobs, dayStarts, preset);
+    const base = fillPipelineMonthlyBuckets(jobs, monthStarts, preset);
     return historyTruncated ? { ...base, historyTruncated: true } : base;
   }
 
@@ -269,7 +323,7 @@ const RANGE_OPTIONS: { value: PipelineRangePreset; label: string }[] = [
   { value: '7d', label: 'Last 7 days' },
   { value: '14d', label: 'Last 14 days' },
   { value: '30d', label: 'Last 30 days' },
-  { value: 'all', label: 'All time (first add → today)' },
+  { value: 'all', label: 'All time (monthly)' },
 ];
 
 export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props) {
@@ -418,10 +472,12 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
                   {pipelineSeries.preset === 'all' ? (
                     <>
                       <strong className="font-medium text-slate-700">All time</strong> — one column per{' '}
-                      <strong className="font-medium text-slate-700">calendar day</strong> from your{' '}
-                      <strong className="font-medium text-slate-700">earliest add</strong> through today (
-                      {pipelineSeries.days.length} days). Same cohort logic as shorter ranges; scroll horizontally to
-                      move through history.
+                      <strong className="font-medium text-slate-700">calendar month</strong> from your{' '}
+                      <strong className="font-medium text-slate-700">earliest add</strong> through this month (
+                      {pipelineSeries.days.length} months). <strong className="font-medium text-slate-700">Posted</strong>{' '}
+                      counts jobs added in that month; <strong className="font-medium text-slate-700">Applied</strong> is
+                      how many of <em>those</em> are <strong>now</strong> marked applied. Scroll horizontally when there
+                      are many months.
                     </>
                   ) : (
                     <>
@@ -436,8 +492,8 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
                 </p>
                 {pipelineSeries.historyTruncated ? (
                   <p className="mt-1.5 max-w-2xl text-[10px] leading-snug text-amber-800/95">
-                    Your history from first add is longer than we can render in one chart; showing the{' '}
-                    <strong className="font-semibold">most recent {pipelineSeries.days.length} days</strong> only.
+                    Your history from first add spans more months than we can show at once; displaying the{' '}
+                    <strong className="font-semibold">most recent {pipelineSeries.days.length} months</strong> only.
                   </p>
                 ) : null}
               </div>
@@ -445,8 +501,8 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
                 <div className="font-medium text-slate-500">
                   {pipelineSeries.preset === 'all'
                     ? pipelineSeries.historyTruncated
-                      ? `Recent segment (${pipelineSeries.days.length} days)`
-                      : `First add → today (${pipelineSeries.days.length} days)`
+                      ? `Recent segment (${pipelineSeries.days.length} mo.)`
+                      : `First add → this month (${pipelineSeries.days.length} mo.)`
                     : `This window (${pipelineSeries.days.length} days)`}
                 </div>
                 <div className="mt-0.5">
@@ -465,7 +521,11 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
             <div className="mt-3 flex flex-wrap gap-4 border-t border-slate-100 pt-3 text-[11px] text-slate-600">
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-3 w-4 rounded-sm border border-slate-400/80 bg-slate-300" aria-hidden />
-                Gray column height ∝ added that day
+                {pipelineSeries.bucketGranularity === 'month' ? (
+                  <>Gray column height ∝ added that month</>
+                ) : (
+                  <>Gray column height ∝ added that day</>
+                )}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span
@@ -536,10 +596,11 @@ function WeeklyPostedAppliedChart({ series }: { series: WeekSeries }) {
     1,
   );
   const n = series.days.length;
-  const compact = n > 14;
-  /** Last 7 days view: narrow bars centered in each column (grid still full width for labels). */
-  const isWeeklyPreset = series.preset === '7d';
-  /** Up to ~42 days: equal columns fill the card. Beyond that: min column width so long ranges scroll instead of vanishing. */
+  const isMonthly = series.bucketGranularity === 'month';
+  const compact = isMonthly ? n > 12 : n > 14;
+  /** Last 7 days or all-time monthly: narrow bars centered in each column. */
+  const isThinBarPreset = series.preset === '7d' || series.preset === 'all';
+  /** Up to ~42 buckets: equal columns fill the card. Beyond that: min column width so long ranges scroll instead of vanishing. */
   const minColPx = n > 42 ? 10 : 0;
   const gridTemplateColumns =
     minColPx > 0
@@ -550,10 +611,14 @@ function WeeklyPostedAppliedChart({ series }: { series: WeekSeries }) {
     <div
       className="relative w-full overflow-x-auto overflow-y-visible pb-1 [-webkit-overflow-scrolling:touch]"
       role="img"
-      aria-label="Each day: gray column height by jobs added that day; blue fill is applied share of that cohort"
+      aria-label={
+        isMonthly
+          ? 'Each month: gray column height by jobs added that month; blue fill is applied share of that cohort'
+          : 'Each day: gray column height by jobs added that day; blue fill is applied share of that cohort'
+      }
     >
       <div
-        className={`grid w-full min-w-0 ${isWeeklyPreset ? 'gap-2 sm:gap-3' : 'gap-1 sm:gap-1.5'}`}
+        className={`grid w-full min-w-0 ${isThinBarPreset ? 'gap-2 sm:gap-3' : 'gap-1 sm:gap-1.5'}`}
         style={{ gridTemplateColumns }}
       >
         {series.days.map((d, idx) => {
@@ -561,18 +626,20 @@ function WeeklyPostedAppliedChart({ series }: { series: WeekSeries }) {
             d.posted > 0 ? Math.max(10, Math.round((d.posted / maxPosted) * WEEK_CHART_H)) : 6;
           const fillPct = d.posted > 0 ? (d.applied / d.posted) * 100 : 0;
           const cellKey = `${d.dayStart}-${idx}`;
-          const dateTitle = new Date(d.dayStart).toLocaleDateString(undefined, {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-          });
+          const dateTitle = isMonthly
+            ? new Date(d.dayStart).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+            : new Date(d.dayStart).toLocaleDateString(undefined, {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              });
           return (
             <div key={cellKey} className="flex min-w-0 flex-col items-center">
               <div className="flex h-[120px] w-full max-w-full items-end justify-center px-px sm:px-0.5">
                 <div
                   className={`pipeline-col-track group/cell relative overflow-hidden border border-slate-300/90 bg-slate-200 shadow-inner ${
-                    isWeeklyPreset
+                    isThinBarPreset
                       ? 'w-full max-w-[13px] rounded-t-sm sm:max-w-[14px]'
                       : 'w-full max-w-full rounded-t-md'
                   }`}
@@ -587,7 +654,9 @@ function WeeklyPostedAppliedChart({ series }: { series: WeekSeries }) {
                     style={{ height: `${fillPct}%` }}
                   />
                   <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 hidden w-max max-w-[min(220px,70vw)] -translate-x-1/2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-left text-[10px] font-medium text-slate-800 shadow-lg group-hover/cell:block">
-                    <span className="block text-slate-500">Added that day</span>
+                    <span className="block text-slate-500">
+                      {isMonthly ? 'Added that month' : 'Added that day'}
+                    </span>
                     <span className="tabular-nums text-slate-900">{d.posted}</span>
                     <span className="mt-1 block text-slate-500">Now applied (cohort)</span>
                     <span className="tabular-nums text-blue-700">
