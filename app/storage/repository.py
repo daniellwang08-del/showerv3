@@ -1,7 +1,17 @@
-from sqlalchemy import select, update, and_
+import uuid
+
+from sqlalchemy import select, update, and_, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.database import JobExtraction, APIPatternRegistry, ValidJob, JobMatchResult, JobMatchInProgress
+from app.models.database import (
+    JobExtraction,
+    APIPatternRegistry,
+    ValidJob,
+    JobMatchResult,
+    JobMatchInProgress,
+    ValidJobUserApplication,
+)
 from app.models.schemas import ExtractionStatus, ExtractionMethod, JobDescriptionSchema
 from app.core.logging import get_logger
 from app.utils.text_sanitizer import sanitize_for_postgres_text
@@ -384,6 +394,50 @@ class JobMatchInProgressRepository:
             )
         )
 
+
+class ValidJobUserApplicationRepository:
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def upsert_batch(
+        self,
+        user_id: str,
+        valid_job_ids: Sequence[str],
+        applied_by_name: str,
+    ) -> int:
+        label = (applied_by_name or "Unknown")[:300]
+        now = datetime.utcnow()
+        n = 0
+        for jid in valid_job_ids:
+            job = await self._session.get(ValidJob, jid)
+            if not job or not job.is_active:
+                continue
+            stmt = (
+                pg_insert(ValidJobUserApplication)
+                .values(
+                    id=str(uuid.uuid4()),
+                    user_id=user_id,
+                    valid_job_id=jid,
+                    applied_at=now,
+                    applied_by_name=label,
+                )
+                .on_conflict_do_update(
+                    index_elements=[ValidJobUserApplication.user_id, ValidJobUserApplication.valid_job_id],
+                    set_={"applied_at": now, "applied_by_name": label},
+                )
+            )
+            await self._session.execute(stmt)
+            n += 1
+        return n
+
+    async def delete_batch(self, user_id: str, valid_job_ids: Sequence[str]) -> int:
+        r = await self._session.execute(
+            delete(ValidJobUserApplication).where(
+                ValidJobUserApplication.user_id == user_id,
+                ValidJobUserApplication.valid_job_id.in_(list(valid_job_ids)),
+            )
+        )
+        return int(r.rowcount or 0)
 
 
 class APIPatternRepository:

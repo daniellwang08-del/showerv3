@@ -14,6 +14,7 @@ export type SubmittedUrlItem = {
   match_status?: string | null;
   click_count?: number;
   appliedAt?: number;
+  /** Full name stored when marked applied (server: profile name → account name → email). */
   appliedBy?: string;
   posted_date_ms?: number; // new field for optional sort by job posted date
   table?: 'valid' | 'invalid';

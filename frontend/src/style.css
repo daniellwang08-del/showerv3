@@ -463,3 +463,120 @@ body {
   background: linear-gradient(90deg, #f59e0b, #ef4444);
   animation-delay: 0.7s;
 }
+
+/* Dashboard: today pipeline — thin battery + motion */
+@keyframes today-battery-flow {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes today-battery-sheen {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateX(280%);
+    opacity: 0;
+  }
+}
+
+.today-battery-track {
+  transition: box-shadow 0.45s ease, background-color 0.45s ease;
+}
+
+.today-battery-fill-shell {
+  transition: width 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: width;
+}
+
+.today-battery-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    #1d4ed8,
+    #3b82f6,
+    #93c5fd,
+    #3b82f6,
+    #1d4ed8
+  );
+  background-size: 220% 100%;
+  animation: today-battery-flow 3.2s ease-in-out infinite;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+.today-battery-fill-shell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  width: 35%;
+  animation: today-battery-sheen 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .today-battery-fill {
+    animation: none;
+    background: linear-gradient(90deg, #2563eb, #3b82f6);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+
+  .today-battery-fill-shell::after {
+    animation: none;
+    opacity: 0;
+  }
+
+  .today-battery-fill-shell {
+    transition: width 0.35s ease !important;
+  }
+}
+
+/* Dashboard: weekly pipeline columns — animated blue fill */
+@keyframes pipeline-col-fill-flow {
+  0%,
+  100% {
+    background-position: 50% 0%;
+  }
+  50% {
+    background-position: 50% 100%;
+  }
+}
+
+.pipeline-col-track {
+  transition: height 0.75s cubic-bezier(0.22, 1, 0.36, 1), min-height 0.45s ease;
+}
+
+.pipeline-col-fill {
+  background: linear-gradient(
+    180deg,
+    #1d4ed8,
+    #3b82f6,
+    #93c5fd,
+    #60a5fa,
+    #3b82f6,
+    #1d4ed8
+  );
+  background-size: 100% 240%;
+  animation: pipeline-col-fill-flow 3.4s ease-in-out infinite;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-col-fill {
+    animation: none;
+    background: linear-gradient(180deg, #1d4ed8, #3b82f6);
+  }
+}

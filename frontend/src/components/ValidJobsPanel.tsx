@@ -14,8 +14,8 @@ type Props = {
   onReportDuplicate: (item: SubmittedUrlItem) => void;
   onDelete: (item: SubmittedUrlItem) => void;
   onBatchDelete?: (items: SubmittedUrlItem[]) => void;
-  onMarkApplied: (items: SubmittedUrlItem[], userInitial: string) => void;
-  onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
+  onMarkApplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
+  onMarkUnapplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
   onOpenJobAnalysis?: (item: SubmittedUrlItem) => void;
   onTriggerJobMatch?: (item: SubmittedUrlItem, opts?: { force?: boolean }) => void | Promise<void>;
@@ -23,7 +23,6 @@ type Props = {
   onBatchRescrapePipeline?: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
-  userInitial?: string;
 };
 
 type AiSearchResponse = {
@@ -50,7 +49,6 @@ export function ValidJobsPanel({
   onBatchRescrapePipeline,
   onJobUrlClick,
   onRescrape,
-  userInitial,
   compareValidJobId,
 }: Props) {
   const [aiPrompt, setAiPrompt] = useState('');
@@ -204,7 +202,6 @@ export function ValidJobsPanel({
           onBatchRescrapePipeline={onBatchRescrapePipeline}
           onJobUrlClick={onJobUrlClick}
           onRescrape={onRescrape}
-          userInitial={userInitial}
         />
       </div>
     </div>

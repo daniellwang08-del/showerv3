@@ -145,9 +145,15 @@ class ValidJobResponse(BaseModel):
     match_overall_score: int | None = None
     match_status: str | None = None
     click_count: int = 0
+    applied_at: datetime | None = None
+    applied_by_name: str | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class ValidJobIdsBatchRequest(BaseModel):
+    valid_job_ids: list[str] = Field(..., min_length=1, max_length=200)
 
 
 class JobMatchResponse(BaseModel):

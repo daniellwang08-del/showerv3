@@ -179,6 +179,22 @@ class JobMatchInProgress(Base):
     )
 
 
+class ValidJobUserApplication(Base):
+    """Per-user mark that the user applied to this valid job posting (UI + persistence)."""
+    __tablename__ = "valid_job_user_applications"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    valid_job_id = Column(String(36), ForeignKey("valid_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    applied_at = Column(DateTime, server_default=func.now(), nullable=False)
+    applied_by_name = Column(String(300), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "valid_job_id", name="uq_valid_job_user_application"),
+        Index("ix_valid_job_user_applications_user_valid", "user_id", "valid_job_id"),
+    )
+
+
 class APIPatternRegistry(Base):
     __tablename__ = "api_pattern_registry"
 

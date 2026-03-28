@@ -1,6 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Pencil, Flag, Copy, Trash2, RotateCw, RefreshCw, Eye, MoreHorizontal, Ticket } from 'lucide-react';
+import {
+  ChevronDown,
+  Pencil,
+  Flag,
+  Copy,
+  Trash2,
+  RotateCw,
+  RefreshCw,
+  Eye,
+  MoreHorizontal,
+  Check,
+  X,
+} from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
+import { jobMarkedApplied } from '../utils/appliedStatus';
 
 type Props = {
   items: SubmittedUrlItem[];
@@ -11,8 +24,8 @@ type Props = {
   onReportDuplicate: (item: SubmittedUrlItem) => void;
   onDelete: (item: SubmittedUrlItem) => void;
   onBatchDelete?: (items: SubmittedUrlItem[]) => void;
-  onMarkApplied: (items: SubmittedUrlItem[], userInitial: string) => void;
-  onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
+  onMarkApplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
+  onMarkUnapplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
   onOpenJobAnalysis?: (item: SubmittedUrlItem) => void;
   /** First-time match uses default; pass `{ force: true }` to re-run after profile changes. */
@@ -23,7 +36,6 @@ type Props = {
   onBatchRescrapePipeline?: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
-  userInitial?: string;
   compareValidJobId?: string | null;
   children?: React.ReactNode;
 };
@@ -46,7 +58,6 @@ export function JobTimeline({
   onBatchRescrapePipeline,
   onJobUrlClick,
   onRescrape,
-  userInitial,
   compareValidJobId,
   children,
 }: Props) {
@@ -211,25 +222,27 @@ export function JobTimeline({
     return result;
   };
 
-  // Handle mark as applied
-  const handleMarkApplied = () => {
+  const handleMarkApplied = async () => {
     const selectedJobs = getAllSelectedJobs();
-    if (selectedJobs.length > 0 && userInitial) {
-      onMarkApplied(selectedJobs, userInitial);
-      // Clear selections after action
+    if (selectedJobs.length === 0) return;
+    try {
+      await onMarkApplied(selectedJobs);
       setSelectedJobsByDate({});
       setBulkActionOpen(null);
+    } catch {
+      /* error surfaced by parent */
     }
   };
 
-  // Handle mark as unapplied
-  const handleMarkUnapplied = () => {
+  const handleMarkUnapplied = async () => {
     const selectedJobs = getAllSelectedJobs();
-    if (selectedJobs.length > 0) {
-      onMarkUnapplied(selectedJobs);
-      // Clear selections after action
+    if (selectedJobs.length === 0) return;
+    try {
+      await onMarkUnapplied(selectedJobs);
       setSelectedJobsByDate({});
       setBulkActionOpen(null);
+    } catch {
+      /* error surfaced by parent */
     }
   };
 
@@ -484,17 +497,23 @@ export function JobTimeline({
                           >
                             <button
                               type="button"
-                              className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
-                              onClick={handleMarkApplied}
+                              className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50/80"
+                              onClick={() => void handleMarkApplied()}
                             >
-                              Mark as Applied
+                              <span className="inline-flex items-center gap-2">
+                                <Check className="h-4 w-4 shrink-0 text-blue-600" strokeWidth={2.5} aria-hidden />
+                                Mark as Applied
+                              </span>
                             </button>
                             <button
                               type="button"
-                              className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
-                              onClick={handleMarkUnapplied}
+                              className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
+                              onClick={() => void handleMarkUnapplied()}
                             >
-                              Mark as Unapplied
+                              <span className="inline-flex items-center gap-2">
+                                <X className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={2.5} aria-hidden />
+                                Mark as Unapplied
+                              </span>
                             </button>
                             <button
                               type="button"
@@ -545,7 +564,7 @@ export function JobTimeline({
                 <div className="ml-4 border-l-2 border-slate-200 pl-4 space-y-2">
                   {sortedGroupedByDate[dateKey].map((item) => {
                     const isSelected = selectedJobsByDate[dateKey]?.has(item.id) || false;
-                    const isApplied = !!item.appliedAt && !!item.appliedBy;
+                    const isApplied = jobMarkedApplied(item);
                     return (
                     <div key={item.id} className="group">
                       <div className="relative">
@@ -554,7 +573,7 @@ export function JobTimeline({
                             isSelected
                               ? 'border-blue-500 bg-blue-50'
                               : isApplied
-                                ? 'border-emerald-200/70 bg-emerald-50/60 hover:bg-emerald-50/80'
+                                ? 'border-blue-300/80 bg-blue-50/90 hover:bg-blue-100/90'
                                 : 'border-transparent hover:bg-blue-50'
                           } ${
                             item.id === compareValidJobId ? 'ring-2 ring-blue-500' : ''
@@ -605,15 +624,18 @@ export function JobTimeline({
                               <div className="truncate text-sm font-medium text-slate-700 hover:text-blue-600 hover:underline">{item.url}</div>
                             </a>
                             {isApplied && (
-                              <span className="relative shrink-0 group/applied">
-                                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-300/70 bg-emerald-100/80 text-emerald-800 shadow-sm">
-                                  <Ticket className="h-3 w-3" />
+                              <span className="group/applied relative shrink-0">
+                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-blue-400/70 bg-blue-100 text-blue-900 shadow-sm">
+                                  <Check className="h-3.5 w-3.5 text-blue-800" strokeWidth={2.75} aria-hidden />
                                 </span>
-                                <span className="pointer-events-none absolute bottom-full left-1/2 z-[80] mb-1 hidden w-44 -translate-x-1/2 rounded-lg border border-emerald-200 bg-white/95 p-2 text-[11px] text-slate-700 shadow-xl backdrop-blur-sm group-hover/applied:block">
-                                  <span className="block font-semibold text-emerald-700">Applied</span>
-                                  <span className="mt-0.5 block">By: {item.appliedBy}</span>
+                                <span className="pointer-events-none absolute bottom-full left-1/2 z-[80] mb-1 hidden w-52 -translate-x-1/2 rounded-lg border border-blue-200 bg-white/95 p-2 text-[11px] text-slate-700 shadow-xl backdrop-blur-sm group-hover/applied:block">
+                                  <span className="block font-semibold text-blue-800">Applied</span>
+                                  <span className="mt-0.5 block">
+                                    <span className="font-medium text-slate-600">Applied by: </span>
+                                    {item.appliedBy}
+                                  </span>
                                   <span className="block text-slate-500">
-                                    At: {new Date(item.appliedAt!).toLocaleString()}
+                                    {new Date(item.appliedAt!).toLocaleString()}
                                   </span>
                                 </span>
                               </span>

@@ -47,6 +47,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     name: str | None = None
+    display_name: str
     is_active: bool
     created_at: datetime
 

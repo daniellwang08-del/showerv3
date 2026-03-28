@@ -13,6 +13,16 @@ def _profile_display_name(first: str | None, middle: str | None, last: str | Non
     return " ".join(parts) if parts else ""
 
 
+def user_applied_by_display_name(user: User) -> str:
+    """Label stored when marking jobs as applied: profile full name, header name, or email."""
+    from_parts = _profile_display_name(user.name_first, user.name_middle, user.name_last)
+    if from_parts.strip():
+        return from_parts.strip()[:300]
+    if user.name and str(user.name).strip():
+        return str(user.name).strip()[:300]
+    return (user.email or "Unknown")[:300]
+
+
 class UserRepository:
     def __init__(self, session: AsyncSession):
         self.session = session

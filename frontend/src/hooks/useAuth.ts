@@ -7,6 +7,8 @@ export type AuthUser = {
   id?: string;
   email?: string;
   name?: string | null;
+  /** Profile / account display name (for “applied by”, header, etc.) */
+  display_name?: string;
   is_active?: boolean;
   created_at?: string;
 };

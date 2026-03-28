@@ -8,6 +8,7 @@ import Header from '../../components/Header';
 import SideDrawer from '../../components/SideDrawer';
 import { SubmitForm } from '../../components/SubmitForm';
 import { ValidJobsPanel } from '../../components/ValidJobsPanel';
+import { DashboardPipelineStats } from '../../components/DashboardPipelineStats';
 import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 import { useFloatingButtonPosition } from '../../hooks/useFloatingButtonPosition';
 
@@ -38,8 +39,8 @@ type Props = {
   onReportDuplicate: (item: SubmittedUrlItem) => void;
   onDelete: (item: SubmittedUrlItem) => void;
   onBatchDelete: (items: SubmittedUrlItem[]) => void;
-  onMarkApplied: (items: SubmittedUrlItem[], userInitial: string) => void;
-  onMarkUnapplied: (items: SubmittedUrlItem[]) => void;
+  onMarkApplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
+  onMarkUnapplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onOpenSelectedUrls: (items: SubmittedUrlItem[]) => void;
   onOpenJobAnalysis: (item: SubmittedUrlItem) => void;
   onTriggerJobMatch: (item: SubmittedUrlItem, opts?: { force?: boolean }) => void | Promise<void>;
@@ -47,7 +48,6 @@ type Props = {
   onBatchRescrapePipeline: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onJobUrlClick: (item: SubmittedUrlItem) => void;
   onRescrape: (item: SubmittedUrlItem) => void;
-  userInitial: string;
 
   // detail panel
   jobAnalysisValidJobId: string | null;
@@ -92,7 +92,6 @@ export function DashboardPage({
   onBatchRescrapePipeline,
   onJobUrlClick,
   onRescrape,
-  userInitial,
   jobAnalysisValidJobId,
   onCloseDetail,
   onMatchStored,
@@ -161,7 +160,6 @@ export function DashboardPage({
               onBatchRescrapePipeline={onBatchRescrapePipeline}
               onJobUrlClick={onJobUrlClick}
               onRescrape={onRescrape}
-              userInitial={userInitial}
             />
 
             <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden md:bg-gradient-to-b md:from-blue-50/40 md:to-white/70">
@@ -187,7 +185,11 @@ export function DashboardPage({
                   />
                 </div>
               ) : (
-                <div className="flex min-h-0 min-w-0 flex-1" />
+                <DashboardPipelineStats
+                  jobs={uniqueUrls}
+                  duplicateCount={duplicateUrls.length}
+                  loading={loadingLists}
+                />
               )}
             </div>
           </div>

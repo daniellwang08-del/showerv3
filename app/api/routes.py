@@ -11,6 +11,7 @@ from app.models.schemas import (
     JobDescriptionSchema,
     JobSubmissionRequest,
     ValidJobResponse,
+    ValidJobIdsBatchRequest,
     AiJobSearchRequest,
     AiJobSearchResponse,
     InvalidJobResponse,
@@ -27,8 +28,9 @@ from app.storage.repository import (
     JobMatchRepository,
     JobMatchInProgressRepository,
     ValidJobRepository,
+    ValidJobUserApplicationRepository,
 )
-from app.storage.user_repository import UserRepository, _profile_display_name
+from app.storage.user_repository import UserRepository, _profile_display_name, user_applied_by_display_name
 from app.services.url_manager import URLManager
 from app.services.deduplication import DeduplicationService
 from app.services.duplication_checker import DuplicationChecker
@@ -38,10 +40,18 @@ from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
 from app.services.job_ai_search_service import apply_job_search_spec, interpret_job_search_prompt
 from app.services.resume_parse_service import parse_resume_bytes
-from app.models.database import ValidJob, InvalidJob, JobExtraction, JobMatchResult, JobMatchInProgress
+from app.models.database import (
+    ValidJob,
+    InvalidJob,
+    JobExtraction,
+    JobMatchResult,
+    JobMatchInProgress,
+    ValidJobUserApplication,
+)
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from datetime import datetime
+import asyncio
+from datetime import datetime, timezone
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 
 router = APIRouter()
@@ -207,8 +217,9 @@ async def read_users_me(current_user: dict = Depends(get_current_user)) -> UserR
             id=user.id,
             email=user.email,
             name=getattr(user, "name", None),
+            display_name=user_applied_by_display_name(user),
             is_active=user.is_active,
-            created_at=user.created_at
+            created_at=user.created_at,
         )
 
 
@@ -237,8 +248,9 @@ async def update_profile(
             id=user.id,
             email=user.email,
             name=getattr(user, "name", None),
+            display_name=user_applied_by_display_name(user),
             is_active=user.is_active,
-            created_at=user.created_at
+            created_at=user.created_at,
         )
 
 
@@ -390,15 +402,6 @@ async def try_get_redis_pool():
         return None
 
 
-async def _has_active_arq_worker(pool) -> bool:
-    """Check if at least one arq worker is actively consuming the queue."""
-    try:
-        keys = await pool.keys("arq:worker:*")
-        return len(keys) > 0
-    except Exception:
-        return False
-
-
 async def enqueue_extraction(
     extraction_id: str,
     url: str,
@@ -406,32 +409,38 @@ async def enqueue_extraction(
     user_id: str | None = None,
     background_tasks: BackgroundTasks | None = None,
 ) -> None:
+    """
+    Prefer Redis/arq whenever Redis is reachable (jobs wait in queue until a worker runs).
+    Fall back in-process only when Redis is down or enqueue fails.
+    """
     pool = await try_get_redis_pool()
-    if pool and await _has_active_arq_worker(pool):
-        if user_id:
-            await pool.enqueue_job("extract_job", extraction_id, url, user_id)
-        else:
-            await pool.enqueue_job("extract_job", extraction_id, url)
-        await pool.close()
-        logger.info(
-            "extraction_enqueued_redis",
-            extraction_id=extraction_id,
-            url=url,
-            queue="job_extraction",
-        )
-    else:
-        if pool:
-            await pool.close()
-            logger.warning(
-                "redis_available_but_no_worker",
+    if pool:
+        try:
+            if user_id:
+                await pool.enqueue_job("extract_job", extraction_id, url, user_id)
+            else:
+                await pool.enqueue_job("extract_job", extraction_id, url)
+            logger.info(
+                "extraction_enqueued_redis",
                 extraction_id=extraction_id,
-                hint="Redis is reachable but no arq worker is running. Falling back to in-process execution. Start worker: python run_worker.py",
+                url=url,
+                queue="job_extraction",
             )
-        if background_tasks:
-            background_tasks.add_task(process_extraction_sync, extraction_id, url, user_id)
-            logger.info("extraction_enqueued_sync", extraction_id=extraction_id, url=url)
-        else:
-            logger.error("extraction_not_enqueued", extraction_id=extraction_id, reason="No worker and no background_tasks available")
+            return
+        except Exception as e:
+            logger.warning("extraction_redis_enqueue_failed", extraction_id=extraction_id, error=str(e))
+        finally:
+            await pool.close()
+
+    if background_tasks:
+        background_tasks.add_task(process_extraction_sync, extraction_id, url, user_id)
+        logger.info("extraction_enqueued_in_process", extraction_id=extraction_id, url=url)
+    else:
+        logger.error(
+            "extraction_not_enqueued",
+            extraction_id=extraction_id,
+            reason="No Redis and no background_tasks available",
+        )
 
 
 async def enqueue_job_match_analysis(
@@ -441,33 +450,70 @@ async def enqueue_job_match_analysis(
     background_tasks: BackgroundTasks | None = None,
 ) -> None:
     """
-    Enqueue AI job-match analysis immediately.
-    Uses worker queue when available, otherwise background-task fallback.
+    Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks.
     """
     pool = await try_get_redis_pool()
-    if pool and await _has_active_arq_worker(pool):
-        await pool.enqueue_job("analyze_job_match", valid_job_id, user_id)
-        await pool.close()
-        logger.info(
-            "job_match_enqueued_redis",
-            valid_job_id=valid_job_id,
-            user_id=user_id,
-            queue="job_extraction",
-        )
-    else:
-        if pool:
-            await pool.close()
-        if background_tasks:
-            from app.services.job_match_orchestrator import run_job_match_analysis
-            background_tasks.add_task(run_job_match_analysis, valid_job_id, user_id)
-            logger.info("job_match_enqueued_sync", valid_job_id=valid_job_id, user_id=user_id)
-        else:
-            logger.error(
-                "job_match_not_enqueued",
+    if pool:
+        try:
+            await pool.enqueue_job("analyze_job_match", valid_job_id, user_id)
+            logger.info(
+                "job_match_enqueued_redis",
                 valid_job_id=valid_job_id,
                 user_id=user_id,
-                reason="No worker and no background_tasks available",
+                queue="job_extraction",
             )
+            return
+        except Exception as e:
+            logger.warning("job_match_redis_enqueue_failed", valid_job_id=valid_job_id, error=str(e))
+        finally:
+            await pool.close()
+
+    if background_tasks:
+        from app.services.job_match_orchestrator import run_job_match_analysis
+
+        background_tasks.add_task(run_job_match_analysis, valid_job_id, user_id)
+        logger.info("job_match_enqueued_in_process", valid_job_id=valid_job_id, user_id=user_id)
+    else:
+        logger.error(
+            "job_match_not_enqueued",
+            valid_job_id=valid_job_id,
+            user_id=user_id,
+            reason="No Redis and no background_tasks available",
+        )
+
+
+async def _fallback_job_match_after_extraction(valid_job_id: str, user_id: str) -> None:
+    """Run match in a separate task so extraction (BackgroundTasks) does not block on OpenAI."""
+    from app.services.job_match_orchestrator import run_job_match_analysis
+
+    try:
+        await run_job_match_analysis(valid_job_id, user_id)
+    except Exception as match_err:
+        logger.warning(
+            "fallback_job_match_failed",
+            valid_job_id=valid_job_id,
+            user_id=user_id,
+            error=str(match_err),
+        )
+
+
+async def _fallback_match_batch_parallel(user_id: str, valid_job_ids: list[str]) -> None:
+    """
+    When Redis is unavailable, run many matches with bounded concurrency (not one-by-one
+    Starlette background tasks, which would serialize all match calls).
+    """
+    from app.services.job_match_orchestrator import run_job_match_analysis
+
+    sem = asyncio.Semaphore(4)
+
+    async def one(jid: str) -> None:
+        async with sem:
+            try:
+                await run_job_match_analysis(jid, user_id)
+            except Exception as e:
+                logger.warning("fallback_batch_job_match_failed", valid_job_id=jid, error=str(e))
+
+    await asyncio.gather(*(one(jid) for jid in valid_job_ids))
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -519,12 +565,12 @@ async def process_extraction_sync(
 ) -> None:
     from app.services.extraction_service import ExtractionService
     from app.storage.repository import ValidJobRepository
-    from app.services.job_match_orchestrator import run_job_match_analysis
 
     try:
         service = ExtractionService()
         result = await service.process_job(job_id, url)
-        # Run job match analysis when extraction completes (sync fallback path)
+        # Match runs in a separate asyncio task so this extraction job finishes quickly and
+        # does not serialize with other BackgroundTasks work (same pattern as worker: scrape then match).
         if user_id and result.get("status") == "completed":
             valid_job_id: str | None = None
             async with get_session() as session:
@@ -536,10 +582,7 @@ async def process_extraction_sync(
                     await progress_repo.add(valid_job.id, user_id)
                     await session.commit()
             if valid_job_id:
-                try:
-                    await run_job_match_analysis(valid_job_id, user_id)
-                except Exception as match_err:
-                    logger.warning("sync_job_match_failed", valid_job_id=valid_job_id, error=str(match_err))
+                asyncio.create_task(_fallback_job_match_after_extraction(valid_job_id, user_id))
     except Exception as e:
         logger.error("sync_extraction_failed", job_id=job_id, error=str(e))
 
@@ -1010,6 +1053,8 @@ async def get_valid_jobs(
                 JobExtraction.status,
                 JobMatchResult.overall_score,
                 JobMatchInProgress.id.label("match_progress_id"),
+                ValidJobUserApplication.applied_at,
+                ValidJobUserApplication.applied_by_name,
             )
             .select_from(ValidJob)
             .outerjoin(JobExtraction, ValidJob.extraction_id == JobExtraction.id)
@@ -1020,6 +1065,11 @@ async def get_valid_jobs(
             .outerjoin(
                 JobMatchInProgress,
                 (JobMatchInProgress.valid_job_id == ValidJob.id) & (JobMatchInProgress.user_id == user_id),
+            )
+            .outerjoin(
+                ValidJobUserApplication,
+                (ValidJobUserApplication.valid_job_id == ValidJob.id)
+                & (ValidJobUserApplication.user_id == user_id),
             )
             .where(ValidJob.is_active == True)
             .order_by(ValidJob.created_at.desc())
@@ -1048,11 +1098,13 @@ async def get_valid_jobs(
                 match_overall_score=match_score,
                 match_status="processing" if (match_progress_id and match_score is None) else None,
                 click_count=getattr(job, "click_count", 0) or 0,
+                applied_at=applied_at,
+                applied_by_name=applied_by_name,
                 is_active=job.is_active,
                 created_at=job.created_at,
                 updated_at=job.updated_at,
             )
-            for job, ext_status, match_score, match_progress_id in rows
+            for job, ext_status, match_score, match_progress_id, applied_at, applied_by_name in rows
         ]
 
 
@@ -1080,12 +1132,25 @@ async def ai_search_valid_jobs(
 
 
 @router.get("/jobs/valid/{job_id}", response_model=ValidJobResponse, dependencies=[Depends(get_current_user)])
-async def get_valid_job(job_id: str) -> ValidJobResponse:
+async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_user)) -> ValidJobResponse:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     async with get_session() as session:
         stmt = (
-            select(ValidJob, JobExtraction.status)
+            select(
+                ValidJob,
+                JobExtraction.status,
+                ValidJobUserApplication.applied_at,
+                ValidJobUserApplication.applied_by_name,
+            )
             .select_from(ValidJob)
             .outerjoin(JobExtraction, ValidJob.extraction_id == JobExtraction.id)
+            .outerjoin(
+                ValidJobUserApplication,
+                (ValidJobUserApplication.valid_job_id == ValidJob.id)
+                & (ValidJobUserApplication.user_id == user_id),
+            )
             .where(ValidJob.id == job_id)
         )
         result = await session.execute(stmt)
@@ -1093,7 +1158,7 @@ async def get_valid_job(job_id: str) -> ValidJobResponse:
         if not row:
             logger.warning("get_valid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Valid job not found")
-        job, ext_status = row
+        job, ext_status, applied_at, applied_by_name = row
         return ValidJobResponse(
             id=job.id,
             source_url=job.source_url,
@@ -1111,10 +1176,58 @@ async def get_valid_job(job_id: str) -> ValidJobResponse:
             extraction_id=job.extraction_id,
             extraction_status=ext_status.value if ext_status else None,
             click_count=getattr(job, "click_count", 0) or 0,
+            applied_at=applied_at,
+            applied_by_name=applied_by_name,
             is_active=job.is_active,
             created_at=job.created_at,
             updated_at=job.updated_at,
         )
+
+
+@router.post(
+    "/jobs/valid/applied/batch",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user)],
+)
+async def mark_valid_jobs_applied_batch(
+    body: ValidJobIdsBatchRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Persist per-user applied marks (full name from profile / account)."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        label = user_applied_by_display_name(user)
+        app_repo = ValidJobUserApplicationRepository(session)
+        n = await app_repo.upsert_batch(user_id, body.valid_job_ids, label)
+        await session.commit()
+    # ISO timestamp so the client can align charts without waiting for a list refetch parse edge cases
+    applied_at_iso = datetime.now(timezone.utc).isoformat()
+    return {"marked": n, "applied_by_name": label, "applied_at": applied_at_iso}
+
+
+@router.post(
+    "/jobs/valid/unapplied/batch",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(get_current_user)],
+)
+async def mark_valid_jobs_unapplied_batch(
+    body: ValidJobIdsBatchRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    async with get_session() as session:
+        app_repo = ValidJobUserApplicationRepository(session)
+        n = await app_repo.delete_batch(user_id, body.valid_job_ids)
+        await session.commit()
+    return {"cleared": n}
 
 
 @router.post("/jobs/valid/{job_id}/click", response_model=dict)
@@ -1330,17 +1443,8 @@ async def trigger_job_match(
             raise HTTPException(status_code=400, detail="Job description not yet scraped")
         await progress_repo.add(job_id, user_id)
         await session.commit()
-    pool = await try_get_redis_pool()
-    if pool and await _has_active_arq_worker(pool):
-        await pool.enqueue_job("analyze_job_match", job_id, user_id)
-        await pool.close()
-        return {"status": "queued", "message": "Match analysis queued"}
-    if background_tasks:
-        from app.services.job_match_orchestrator import run_job_match_analysis
-
-        background_tasks.add_task(run_job_match_analysis, job_id, user_id)
-        return {"status": "queued", "message": "Match analysis started in background"}
-    raise HTTPException(status_code=503, detail="No worker available to process match analysis")
+    await enqueue_job_match_analysis(job_id, user_id, background_tasks=background_tasks)
+    return {"status": "queued", "message": "Match analysis queued"}
 
 
 class RescrapeRequest(BaseModel):
@@ -1465,33 +1569,49 @@ async def rerun_job_match_batch(
             "message": "Nothing queued; fix skipped reasons or wait for in-progress jobs.",
         }
 
+    ids_for_in_process: list[str] = list(enqueued_ids)
     pool = await try_get_redis_pool()
-    if pool and await _has_active_arq_worker(pool):
-        for jid in enqueued_ids:
-            await pool.enqueue_job("analyze_job_match", jid, user_id)
-        await pool.close()
-        logger.info(
-            "job_match_rerun_batch_redis",
-            user_id=user_id,
-            count=len(enqueued_ids),
-            skipped=len(skipped),
-        )
-        return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
+    if pool:
+        redis_failed: list[str] = []
+        try:
+            for jid in enqueued_ids:
+                try:
+                    await pool.enqueue_job("analyze_job_match", jid, user_id)
+                except Exception as e:
+                    logger.warning(
+                        "job_match_rerun_redis_enqueue_failed",
+                        valid_job_id=jid,
+                        error=str(e),
+                    )
+                    redis_failed.append(jid)
+            if not redis_failed:
+                logger.info(
+                    "job_match_rerun_batch_redis",
+                    user_id=user_id,
+                    count=len(enqueued_ids),
+                    skipped=len(skipped),
+                )
+                return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
+            logger.warning(
+                "job_match_rerun_batch_redis_partial",
+                user_id=user_id,
+                redis_failed=len(redis_failed),
+            )
+            ids_for_in_process = redis_failed
+        finally:
+            await pool.close()
 
     if background_tasks:
-        from app.services.job_match_orchestrator import run_job_match_analysis
-
-        for jid in enqueued_ids:
-            background_tasks.add_task(run_job_match_analysis, jid, user_id)
+        background_tasks.add_task(_fallback_match_batch_parallel, user_id, ids_for_in_process)
         logger.info(
-            "job_match_rerun_batch_sync",
+            "job_match_rerun_batch_in_process",
             user_id=user_id,
             count=len(enqueued_ids),
             skipped=len(skipped),
         )
         return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
 
-    raise HTTPException(status_code=503, detail="No worker available to process match analysis")
+    raise HTTPException(status_code=503, detail="Could not queue match analysis")
 
 
 @router.post(

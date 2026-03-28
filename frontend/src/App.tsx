@@ -10,9 +10,10 @@ import { useAuth } from './hooks/useAuth';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { ProfilesPage } from './features/profiles/ProfilesPage';
 import { mainViewFromHash, navigateMainView, type MainView } from './mainViewRouting';
+import { parseServerDateTime, toFiniteTimeMs } from './utils/serverDate';
 
 function App() {
-  const { isAuthenticated, user, authPage, setAuthPage, logout, onAuthSuccess, getUserInitial } = useAuth();
+  const { isAuthenticated, user, authPage, setAuthPage, logout, onAuthSuccess } = useAuth();
   const [mainView, setMainView] = useState<MainView>(() =>
     typeof window !== 'undefined' ? mainViewFromHash() : 'dashboard',
   );
@@ -189,6 +190,8 @@ function App() {
         match_overall_score: number | null;
         match_status: string | null;
         click_count?: number;
+        applied_at?: string | null;
+        applied_by_name?: string | null;
       }>;
       const invalid = invalidRes.data as Array<{
         id: string;
@@ -200,24 +203,34 @@ function App() {
 
       setUniqueUrls(
         valid.map((j) => {
-          const scrapedMs = j.scraped_at ? Date.parse(j.scraped_at) : NaN;
+          const scrapedMs = j.scraped_at ? parseServerDateTime(j.scraped_at) : undefined;
+          const createdMs = parseServerDateTime(j.created_at) ?? 0;
+          const postedDateMs = j.posted_date ? parseServerDateTime(j.posted_date) : undefined;
+          const raw = j as {
+            applied_at?: string | null;
+            applied_by_name?: string | null;
+            appliedAt?: string | null;
+            applied_by?: string | null;
+          };
+          const appliedRaw = raw.applied_at ?? raw.appliedAt;
+          const nameRaw = raw.applied_by_name ?? raw.applied_by;
+          const appliedAtParsed = toFiniteTimeMs(appliedRaw ?? undefined);
           return {
             id: j.id,
             url: j.source_url,
             message: 'Job submitted successfully',
             job_id: j.id,
             duplicate_job_id: null,
-            created_at_ms: Date.parse(j.created_at),
-            scraped_at_ms: Number.isNaN(scrapedMs) ? undefined : scrapedMs,
+            created_at_ms: createdMs,
+            scraped_at_ms: scrapedMs,
             extraction_id: j.extraction_id ?? undefined,
             extraction_status: (j.extraction_status as ExtractionStatusLabel | null) ?? undefined,
             match_overall_score: j.match_overall_score ?? undefined,
             match_status: j.match_status ?? undefined,
             click_count: j.click_count ?? 0,
-            posted_date_ms:
-              j.posted_date && !Number.isNaN(Date.parse(j.posted_date))
-                ? Date.parse(j.posted_date)
-                : undefined,
+            posted_date_ms: postedDateMs,
+            appliedAt: appliedAtParsed,
+            appliedBy: nameRaw?.trim() ? nameRaw.trim() : undefined,
             table: 'valid' as const,
           };
         }),
@@ -330,34 +343,46 @@ function App() {
     }
   };
 
-  // Handle marking jobs as applied
-  const handleMarkApplied = (items: SubmittedUrlItem[], userInitial: string) => {
-    const updatedUrls = uniqueUrls.map(job => {
-      if (items.find(item => item.id === job.id)) {
-        return {
-          ...job,
-          appliedAt: Date.now(),
-          appliedBy: userInitial
-        };
-      }
-      return job;
-    });
-    setUniqueUrls(updatedUrls);
+  const handleMarkApplied = async (items: SubmittedUrlItem[]) => {
+    const valid_job_ids = [...new Set(items.filter((i) => i.table === 'valid').map((i) => i.id))];
+    if (valid_job_ids.length === 0) return;
+    try {
+      const res = await apiClient.post<{ marked: number; applied_by_name: string; applied_at?: string }>(
+        '/jobs/valid/applied/batch',
+        { valid_job_ids },
+      );
+      const label = res.data?.applied_by_name?.trim() ?? '';
+      const serverAt = res.data?.applied_at ? parseServerDateTime(res.data.applied_at) : undefined;
+      const appliedMs = serverAt ?? Date.now();
+      setUniqueUrls((prev) =>
+        prev.map((job) =>
+          valid_job_ids.includes(job.id)
+            ? { ...job, appliedAt: appliedMs, appliedBy: label || job.appliedBy }
+            : job,
+        ),
+      );
+      await refreshLists(false);
+    } catch (error: any) {
+      setSubmitError(error.response?.data?.detail || 'Failed to save applied status');
+      throw error;
+    }
   };
 
-  // Handle marking jobs as unapplied
-  const handleMarkUnapplied = (items: SubmittedUrlItem[]) => {
-    const updatedUrls = uniqueUrls.map(job => {
-      if (items.find(item => item.id === job.id) && job.appliedAt) {
-        return {
-          ...job,
-          appliedAt: undefined,
-          appliedBy: undefined
-        };
-      }
-      return job;
-    });
-    setUniqueUrls(updatedUrls);
+  const handleMarkUnapplied = async (items: SubmittedUrlItem[]) => {
+    const valid_job_ids = [...new Set(items.filter((i) => i.table === 'valid').map((i) => i.id))];
+    if (valid_job_ids.length === 0) return;
+    try {
+      await apiClient.post('/jobs/valid/unapplied/batch', { valid_job_ids });
+      setUniqueUrls((prev) =>
+        prev.map((job) =>
+          valid_job_ids.includes(job.id) ? { ...job, appliedAt: undefined, appliedBy: undefined } : job,
+        ),
+      );
+      await refreshLists(false);
+    } catch (error: any) {
+      setSubmitError(error.response?.data?.detail || 'Failed to clear applied status');
+      throw error;
+    }
   };
 
   const handleRescrape = async (item: SubmittedUrlItem) => {
@@ -584,7 +609,6 @@ function App() {
         }
       },
       onRescrape: handleRescrape,
-      userInitial: getUserInitial(),
       jobAnalysisValidJobId,
       onCloseDetail,
       onMatchStored,

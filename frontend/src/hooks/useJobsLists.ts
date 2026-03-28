@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { apiClient } from '../api/client';
+import { parseServerDateTime, toFiniteTimeMs } from '../utils/serverDate';
 import type { SubmissionResponse } from '../types';
 import type { ExtractionStatusLabel, SubmittedUrlItem } from '../types/ui';
 
@@ -40,6 +41,8 @@ export function useJobsLists(isAuthenticated: boolean) {
           match_overall_score: number | null;
           match_status: string | null;
           click_count?: number;
+          applied_at?: string | null;
+          applied_by_name?: string | null;
         }>;
         const invalid = invalidRes.data as Array<{
           id: string;
@@ -51,22 +54,31 @@ export function useJobsLists(isAuthenticated: boolean) {
 
         setUniqueUrls(
           valid.map((j) => {
-            const scrapedMs = j.scraped_at ? Date.parse(j.scraped_at) : NaN;
+            const scrapedMs = j.scraped_at ? parseServerDateTime(j.scraped_at) : undefined;
+            const createdMs = parseServerDateTime(j.created_at) ?? 0;
+            const postedDateMs = j.posted_date ? parseServerDateTime(j.posted_date) : undefined;
+            const raw = j as {
+              applied_at?: string | null;
+              appliedAt?: string | null;
+              applied_by_name?: string | null;
+            };
+            const appliedAtParsed = toFiniteTimeMs(raw.applied_at ?? raw.appliedAt ?? undefined);
             return {
               id: j.id,
               url: j.source_url,
               message: 'Job submitted successfully',
               job_id: j.id,
               duplicate_job_id: null,
-              created_at_ms: Date.parse(j.created_at),
-              scraped_at_ms: Number.isNaN(scrapedMs) ? undefined : scrapedMs,
+              created_at_ms: createdMs,
+              scraped_at_ms: scrapedMs,
               extraction_id: j.extraction_id ?? undefined,
               extraction_status: (j.extraction_status as ExtractionStatusLabel | null) ?? undefined,
               match_overall_score: j.match_overall_score ?? undefined,
               match_status: j.match_status ?? undefined,
               click_count: j.click_count ?? 0,
-              posted_date_ms:
-                j.posted_date && !Number.isNaN(Date.parse(j.posted_date)) ? Date.parse(j.posted_date) : undefined,
+              posted_date_ms: postedDateMs,
+              appliedAt: appliedAtParsed,
+              appliedBy: raw.applied_by_name?.trim() ? raw.applied_by_name.trim() : undefined,
               table: 'valid' as const,
             };
           }),
