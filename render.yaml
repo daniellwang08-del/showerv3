@@ -1,0 +1,88 @@
+# Render.com Blueprint — provisions all services for the Job Scraper app.
+# Usage: New > Blueprint > connect repo > Render detects this file automatically.
+# Database: external Neon PostgreSQL (not Render-managed).
+
+services:
+  # --- FastAPI backend ---
+  - type: web
+    name: job-scraper-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: job-scraper-kv
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AUTH_SECRET_KEY
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: BROWSER_POOL_SIZE
+        value: "0"
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+
+  # --- arq background worker ---
+  - type: worker
+    name: job-scraper-worker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_worker.py
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: job-scraper-kv
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AUTH_SECRET_KEY
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: BROWSER_POOL_SIZE
+        value: "0"
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+
+  # --- React/Vite frontend (static site, free by default) ---
+  - type: web
+    name: job-scraper-frontend
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://job-scraper-api-zf03.onrender.com/api/*
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  # --- Redis-compatible Key Value store ---
+  - type: keyvalue
+    name: job-scraper-kv
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere

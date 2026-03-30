@@ -18,7 +18,7 @@ if sys.platform == "win32":
         pass
 
 from arq import run_worker
-from app.tasks.worker import WorkerSettings, extract_job
+from app.tasks.worker import WorkerSettings, extract_job, analyze_job_match
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
 from app.services.ai_parser import init_ai_parser
@@ -51,7 +51,7 @@ async def shutdown(ctx):
 class WorkerConfig(WorkerSettings):
     on_startup = startup
     on_shutdown = shutdown
-    functions = [extract_job]
+    functions = [extract_job, analyze_job_match]
     # arq's get_kwargs uses __dict__ (own attrs only, not inherited).
     # We must redeclare these so they appear in WorkerConfig.__dict__,
     # otherwise the Worker falls back to arq defaults.

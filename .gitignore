@@ -1,6 +1,7 @@
-# Env and secrets
+# Env and secrets (all env files contain API keys / DB credentials)
 .env
 .env.local
+.env.production
 .env.*.local
 
 # Python

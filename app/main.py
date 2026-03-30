@@ -4,6 +4,7 @@ Uvicorn reload spawns a child process that imports this module; the policy
 must be set here so the child gets it (start_server.py runs only in parent).
 """
 import asyncio
+import os
 import sys
 
 if sys.platform == "win32":
@@ -111,16 +112,20 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
-    # In development, allow the local frontend dev server origin so cookies are accepted.
     # When `allow_credentials=True`, `allow_origins` must not be ['*'] or browsers will block cookies.
+    origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    frontend_url = os.environ.get("FRONTEND_URL")
+    if frontend_url:
+        origins.append(frontend_url.rstrip("/"))
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

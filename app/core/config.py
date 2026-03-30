@@ -3,14 +3,40 @@ from pydantic import Field
 from pydantic import field_validator
 from functools import lru_cache
 from typing import Literal
+from pathlib import Path
+import os
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+def _resolve_env_files() -> tuple[str, ...]:
+    """Return env files to load in priority order (last wins in pydantic-settings).
+
+    Resolution:
+      1. Always load `.env` as the base (fallback defaults).
+      2. If APP_ENV is set (e.g. "local", "production"), also load `.env.{APP_ENV}`
+         which overrides values from `.env`.
+
+    On Render / production the env vars are injected directly, so the files
+    are optional — real env vars always take highest precedence.
+    """
+    env = os.environ.get("APP_ENV", "").strip().lower()
+    base = _PROJECT_ROOT / ".env"
+    files: list[str] = [str(base)]
+    if env:
+        overlay = _PROJECT_ROOT / f".env.{env}"
+        if overlay.exists():
+            files.append(str(overlay))
+    return tuple(files)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_resolve_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    app_env: str = Field(default="local")
 
     app_name: str = "Job Description Scraper"
     app_version: str = "1.0.0"
@@ -26,6 +52,36 @@ class Settings(BaseSettings):
     def _validate_database_url(cls, v: str) -> str:
         if not v:
             raise ValueError("DATABASE_URL is required and must be PostgreSQL (postgresql+asyncpg://...)")
+
+        # Render (and many PaaS) provide postgres:// — auto-convert to the
+        # asyncpg dialect SQLAlchemy requires.
+        if v.startswith("postgres://"):
+            v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif v.startswith("postgresql://") and "+asyncpg" not in v:
+            v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        # asyncpg does not recognise the standard libpq query params that
+        # hosted providers like Neon append.  Rewrite them so the driver
+        # connects correctly:
+        #   sslmode=require  ->  ssl=require   (asyncpg's spelling)
+        #   channel_binding=*  removed         (not supported by asyncpg)
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+        parsed = urlparse(v)
+        if parsed.query:
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            changed = False
+            if "sslmode" in params and "ssl" not in params:
+                params["ssl"] = params.pop("sslmode")
+                changed = True
+            elif "sslmode" in params:
+                del params["sslmode"]
+                changed = True
+            if "channel_binding" in params:
+                del params["channel_binding"]
+                changed = True
+            if changed:
+                flat = {k: vs[0] for k, vs in params.items()}
+                v = urlunparse(parsed._replace(query=urlencode(flat)))
 
         lower_v = v.lower()
         if not lower_v.startswith("postgresql"):
@@ -67,4 +123,13 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    env_label = settings.app_env or os.environ.get("APP_ENV", "local")
+    import logging
+    logging.getLogger("app.config").info(
+        "Loaded settings for APP_ENV=%s  (debug=%s, db_host=%s)",
+        env_label,
+        settings.debug,
+        settings.database_url.split("@")[-1].split("/")[0] if "@" in settings.database_url else "local",
+    )
+    return settings
