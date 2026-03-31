@@ -3,12 +3,9 @@ from app.models.schemas import ExtractionMethod, ExtractionStatus, JobDescriptio
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, ValidJobRepository
-from app.services.duplication_checker import DuplicationChecker
-from app.models.database import InvalidJob
 from app.services.http_client import HTTPService
 from app.services.ai_parser import get_ai_parser
 from app.services.validator import validate_job_data
-from app.services.company_policy import enforce_one_active_job_per_company
 from app.extractors.api_detector import APIDetectorExtractor
 from app.extractors.ashby_api_extractor import AshbyApiExtractor
 from app.extractors.html_extractor import HTMLExtractor
@@ -261,51 +258,6 @@ class ExtractionService:
                 # Sync valid_jobs mirror fields immediately with structured extraction
                 # so policy checks and list APIs use the latest company/title metadata.
                 await valid_repo.update_from_structured_extraction(valid_job.id, job_data)
-                dup_checker = DuplicationChecker(session)
-                is_dup, dup_info = await dup_checker.comprehensive_duplicate_check(
-                    url=valid_job.source_url,
-                    title=job_data.title or "",
-                    company=job_data.company or "",
-                    description=job_data.description or "",
-                    exclude_valid_job_id=valid_job.id,
-                )
-                if is_dup and dup_info and dup_info.get("job_id") != valid_job.id:
-                    canonical_id = dup_info["job_id"]
-                    invalid_job = InvalidJob(
-                        source_url=valid_job.source_url,
-                        normalized_url=valid_job.normalized_url,
-                        domain=valid_job.domain,
-                        title=job_data.title,
-                        company=job_data.company or valid_job.company,
-                        location=job_data.location or valid_job.location,
-                        description=job_data.description,
-                        posted_date=job_data.posted_date or valid_job.posted_date,
-                        experience_level=job_data.experience_level or valid_job.experience_level,
-                        industry=job_data.industry or valid_job.industry,
-                        duplicate_of_job_id=canonical_id,
-                        duplication_reason=dup_info.get("duplication_reason", "Duplicate detected after scraping"),
-                        similarity_score=dup_info.get("similarity_score"),
-                        similarity_hash=dup_checker.generate_content_hash(
-                            job_data.title or "", job_data.company or "", job_data.description or ""
-                        ),
-                        raw_metadata=valid_job.raw_metadata or {},
-                        is_active=True,
-                    )
-                    session.add(invalid_job)
-                    valid_job.is_active = False
-                    valid_job.updated_at = datetime.utcnow()
-                    logger.info(
-                        "post_extraction_duplicate_detected",
-                        valid_job_id=valid_job.id,
-                        duplicate_of=canonical_id,
-                        reason=dup_info.get("duplication_reason"),
-                    )
-                # Enforce one-active-job-per-company as soon as extraction gives company details.
-                await enforce_one_active_job_per_company(
-                    session,
-                    valid_job.id,
-                    company_name=job_data.company,
-                )
             await session.commit()
 
         logger.info(

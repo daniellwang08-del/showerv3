@@ -14,7 +14,7 @@ from app.storage.repository import (
 )
 from app.storage.user_repository import UserRepository
 from app.services.job_match_service import analyze_job_match, _build_job_text
-from app.services.company_policy import enforce_one_active_job_per_company
+from app.services.company_policy import enforce_company_priority_after_match
 from app.core.logging import bind_logging_context, get_logger
 
 logger = get_logger(__name__)
@@ -82,19 +82,6 @@ async def run_job_match_analysis(valid_job_id: str, user_id: str) -> dict | None
         else:
             logger.warning("job_match_no_structured_job_returned", valid_job_id=valid_job_id)
 
-        try:
-            await enforce_one_active_job_per_company(
-                session,
-                valid_job_id,
-                company_name=structured_company,
-            )
-        except Exception as dup_err:
-            logger.warning(
-                "single_company_policy_check_failed",
-                valid_job_id=valid_job_id,
-                error=str(dup_err),
-            )
-
         await match_repo.upsert(
             valid_job_id=valid_job_id,
             user_id=user_id,
@@ -105,6 +92,21 @@ async def run_job_match_analysis(valid_job_id: str, user_id: str) -> dict | None
             gaps=result["gaps"],
             recommendation=result["recommendation"],
         )
+        try:
+            await enforce_company_priority_after_match(
+                session,
+                valid_job_id,
+                user_id=user_id,
+                new_match_score=int(result["overall_score"]),
+                company_name=structured_company,
+            )
+        except Exception as dup_err:
+            logger.warning(
+                "company_priority_policy_check_failed",
+                valid_job_id=valid_job_id,
+                user_id=user_id,
+                error=str(dup_err),
+            )
         progress_repo = JobMatchInProgressRepository(session)
         await progress_repo.remove(valid_job_id, user_id)
         logger.info("job_match_stored", valid_job_id=valid_job_id, user_id=user_id, score=result["overall_score"])
