@@ -125,10 +125,10 @@ class HTTPService:
                 )
             except httpx.TimeoutException:
                 logger.warning("http_fetch_timeout", url=url)
-                raise NetworkError("Request timeout", {"url": url})
+                raise
             except httpx.NetworkError as e:
                 logger.warning("http_fetch_network_error", url=url, error=str(e))
-                raise NetworkError(str(e), {"url": url})
+                raise
 
     @retry(
         stop=stop_after_attempt(3),
@@ -172,10 +172,10 @@ class HTTPService:
                 )
             except httpx.TimeoutException:
                 logger.warning("http_fetch_timeout", url=url)
-                raise NetworkError("Request timeout", {"url": url})
+                raise
             except httpx.NetworkError as e:
                 logger.warning("http_fetch_network_error", url=url, error=str(e))
-                raise NetworkError(str(e), {"url": url})
+                raise
 
     async def fetch_with_redirect_chain(self, url: str) -> tuple[str, str, int]:
         if not _client or not _semaphore:

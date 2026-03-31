@@ -334,20 +334,22 @@ class JobMatchInProgressRepository:
         self._session = session
 
     async def add(self, valid_job_id: str, user_id: str) -> JobMatchInProgress:
-        """Mark job match as in progress. Idempotent (no-op if exists)."""
+        """Mark job match as in progress. Idempotent and race-safe."""
+        stmt = (
+            pg_insert(JobMatchInProgress)
+            .values(id=str(uuid.uuid4()), valid_job_id=valid_job_id, user_id=user_id)
+            .on_conflict_do_nothing(
+                index_elements=[JobMatchInProgress.valid_job_id, JobMatchInProgress.user_id]
+            )
+        )
+        await self._session.execute(stmt)
         existing = await self._session.execute(
             select(JobMatchInProgress).where(
                 JobMatchInProgress.valid_job_id == valid_job_id,
                 JobMatchInProgress.user_id == user_id,
             )
         )
-        row = existing.scalar_one_or_none()
-        if row:
-            return row
-        prog = JobMatchInProgress(valid_job_id=valid_job_id, user_id=user_id)
-        self._session.add(prog)
-        await self._session.flush()
-        return prog
+        return existing.scalar_one()
 
     async def remove(self, valid_job_id: str, user_id: str) -> None:
         """Remove in-progress marker when analysis completes."""

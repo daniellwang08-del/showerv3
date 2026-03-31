@@ -600,6 +600,9 @@ async def extract_job(
     current_user: dict = Depends(get_current_user),
 ) -> ExtractionResponse:
     url = str(request.url)
+    should_enqueue = False
+    extraction_id: str | None = None
+    response: ExtractionResponse | None = None
 
     is_valid, error = URLManager.validate_url(url)
     if not is_valid:
@@ -622,14 +625,20 @@ async def extract_job(
             return _build_response(extraction)
 
         if extraction.status == ExtractionStatus.PENDING:
-            await enqueue_extraction(
-                extraction.id, url, user_id=current_user.get("user_id"), background_tasks=background_tasks
-            )
+            # Commit DB row before enqueue to avoid worker seeing uncommitted state.
+            should_enqueue = True
+            extraction_id = extraction.id
             logger.info("extract_job_created", job_id=extraction.id, url=url, is_duplicate=is_duplicate)
         else:
             logger.debug("extract_job_existing", job_id=extraction.id, status=extraction.status.value)
 
-        return _build_response(extraction)
+        response = _build_response(extraction)
+
+    if should_enqueue and extraction_id:
+        await enqueue_extraction(
+            extraction_id, url, user_id=current_user.get("user_id"), background_tasks=background_tasks
+        )
+    return response
 
 
 @router.post("/extract/batch", response_model=BatchExtractionResponse, dependencies=[Depends(get_current_user)])
@@ -640,6 +649,7 @@ async def extract_batch(
 ) -> BatchExtractionResponse:
     job_ids = []
     duplicate_count = 0
+    to_enqueue: list[tuple[str, str]] = []
 
     async with get_session() as session:
         repository = JobExtractionRepository(session)
@@ -660,12 +670,16 @@ async def extract_batch(
             job_ids.append(extraction.id)
 
             if extraction.status == ExtractionStatus.PENDING:
-                await enqueue_extraction(
-                    extraction.id,
-                    url_str,
-                    user_id=current_user.get("user_id"),
-                    background_tasks=background_tasks,
-                )
+                # Queue only after transaction commits to avoid read-before-commit races.
+                to_enqueue.append((extraction.id, url_str))
+
+    for extraction_id, url_str in to_enqueue:
+        await enqueue_extraction(
+            extraction_id,
+            url_str,
+            user_id=current_user.get("user_id"),
+            background_tasks=background_tasks,
+        )
 
     logger.info(
         "extract_batch_completed",
@@ -1414,6 +1428,11 @@ async def rerun_job_match_batch(
         )
         return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
 
+    # Redis unavailable and no fallback worker path: clear markers for jobs we failed to queue.
+    async with get_session() as session:
+        progress_repo = JobMatchInProgressRepository(session)
+        for jid in ids_for_in_process:
+            await progress_repo.remove(jid, user_id)
     raise HTTPException(status_code=503, detail="Could not queue match analysis")
 
 
