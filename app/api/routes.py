@@ -36,7 +36,7 @@ from app.services.deduplication import DeduplicationService
 from app.services.duplication_checker import DuplicationChecker
 from app.extractors.browser_extractor import get_browser_pool_safe
 from app.core.config import get_settings
-from app.core.logging import get_logger
+from app.core.logging import bind_logging_context, get_logger
 from app.core.exceptions import AIParsingError
 from app.services.job_ai_search_service import apply_job_search_spec, interpret_job_search_prompt
 from app.services.resume_parse_service import parse_resume_bytes
@@ -82,14 +82,18 @@ async def get_current_user(request: Request):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     uid = payload.get("user_id")
     if uid is not None and str(uid).strip():
-        return {**payload, "user_id": str(uid).strip()}
+        normalized_uid = str(uid).strip()
+        bind_logging_context(user_id=normalized_uid, user_email=payload.get("sub"))
+        return {**payload, "user_id": normalized_uid}
     sub = payload.get("sub")
     if isinstance(sub, str) and sub.strip():
         async with get_session() as session:
             user_repo = UserRepository(session)
             user = await user_repo.get_by_email(sub.lower().strip())
             if user:
+                bind_logging_context(user_id=user.id, user_email=user.email)
                 return {**payload, "user_id": user.id}
+    bind_logging_context(user_email=payload.get("sub"))
     return payload
 
 
@@ -414,6 +418,7 @@ async def enqueue_extraction(
     Fall back in-process only when Redis is down or enqueue fails.
     """
     pool = await try_get_redis_pool()
+    bind_logging_context(extraction_id=extraction_id, target_url=url, user_id=user_id)
     if pool:
         try:
             if user_id:
@@ -453,6 +458,7 @@ async def enqueue_job_match_analysis(
     Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks.
     """
     pool = await try_get_redis_pool()
+    bind_logging_context(valid_job_id=valid_job_id, user_id=user_id)
     if pool:
         try:
             await pool.enqueue_job("analyze_job_match", valid_job_id, user_id)
@@ -634,7 +640,6 @@ async def extract_batch(
 ) -> BatchExtractionResponse:
     job_ids = []
     duplicate_count = 0
-    seen_normalized: set[str] = set()
 
     async with get_session() as session:
         repository = JobExtractionRepository(session)
@@ -647,22 +652,14 @@ async def extract_batch(
             if not is_valid:
                 continue
 
-            normalized_url = URLManager.normalize_url(url_str)
-            if normalized_url in seen_normalized:
-                duplicate_count += 1
-                continue
-            seen_normalized.add(normalized_url)
-
-            extraction, is_duplicate = await dedup_service.check_and_create(
+            extraction, _ = await dedup_service.check_and_create(
                 url_str,
                 request.force_refresh,
             )
 
             job_ids.append(extraction.id)
 
-            if is_duplicate:
-                duplicate_count += 1
-            elif extraction.status == ExtractionStatus.PENDING:
+            if extraction.status == ExtractionStatus.PENDING:
                 await enqueue_extraction(
                     extraction.id,
                     url_str,
@@ -740,7 +737,7 @@ async def submit_job(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ) -> JobSubmissionResponse:
-    """Submit a job link for duplication checking"""
+    """Submit a job link. Duplicate detection happens after LLM extraction/matching."""
     
     # Validate URL
     is_valid, error = URLManager.validate_url(request.url)
@@ -756,283 +753,89 @@ async def submit_job(
     
     async with get_session() as session:
         duplication_checker = DuplicationChecker(session)
-
         normalized_url = duplication_checker.normalize_url(request.url)
+        domain = duplication_checker.extract_domain(request.url)
 
-        # Idempotency / safety: if the URL is already stored, return the existing row instead
-        # of attempting to insert again (normalized_url is unique).
-        existing_invalid_stmt = select(InvalidJob).where(InvalidJob.normalized_url == normalized_url)
-        existing_invalid_result = await session.execute(existing_invalid_stmt)
-        existing_invalid = existing_invalid_result.scalar_one_or_none()
-        if existing_invalid:
-            logger.info("jobs_submit_duplicate_invalid", job_id=existing_invalid.id, url=request.url)
-            return JobSubmissionResponse(
-                success=True,
-                job_id=existing_invalid.id,
-                is_duplicate=True,
-                duplicate_job_id=existing_invalid.duplicate_of_job_id,
-                message=f"Duplicate job detected: {existing_invalid.duplication_reason or 'Exact URL match'}",
-            )
-
-        existing_valid_stmt = select(ValidJob).where(ValidJob.normalized_url == normalized_url)
-        existing_valid_result = await session.execute(existing_valid_stmt)
-        existing_valid = existing_valid_result.scalar_one_or_none()
-        if existing_valid:
-            # If the URL is already in the valid table, treat this submission as a duplicate.
-            invalid_job = InvalidJob(
-                source_url=request.url,
-                normalized_url=normalized_url,
-                domain=duplication_checker.extract_domain(request.url),
-                title=request.title or existing_valid.title,
-                company=(request.company or existing_valid.company) or "Unknown",
-                location=request.location or existing_valid.location,
-                description=request.description or existing_valid.description,
-                posted_date=request.posted_date or existing_valid.posted_date,
-                experience_level=request.experience_level or existing_valid.experience_level,
-                industry=request.industry or existing_valid.industry,
-                duplicate_of_job_id=existing_valid.id,
-                duplication_reason="Exact URL match",
-                similarity_score=1.0,
-                similarity_hash=duplication_checker.generate_content_hash(
-                    request.title or existing_valid.title or "",
-                    request.company or existing_valid.company or "",
-                    request.description or existing_valid.description or "",
-                ),
-                raw_metadata={
-                    "submitted_data": {
-                        "title": request.title,
-                        "company": request.company,
-                        "location": request.location,
-                        "description": request.description,
-                        "posted_date": request.posted_date.isoformat() if request.posted_date else None,
-                        "experience_level": request.experience_level,
-                        "industry": request.industry,
-                    }
-                },
-            )
-
-            session.add(invalid_job)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                existing_invalid_result = await session.execute(
-                    select(InvalidJob).where(InvalidJob.normalized_url == normalized_url)
-                )
-                existing_invalid = existing_invalid_result.scalar_one_or_none()
-                if existing_invalid:
-                    return JobSubmissionResponse(
-                        success=True,
-                        job_id=existing_invalid.id,
-                        is_duplicate=True,
-                        duplicate_job_id=existing_invalid.duplicate_of_job_id,
-                        message=f"Duplicate job detected: {existing_invalid.duplication_reason or 'Exact URL match'}",
-                    )
-                raise
-
-            logger.info("jobs_submit_duplicate_valid_url", valid_job_id=existing_valid.id, invalid_job_id=invalid_job.id, url=request.url)
-            return JobSubmissionResponse(
-                success=True,
-                job_id=invalid_job.id,
-                is_duplicate=True,
-                duplicate_job_id=existing_valid.id,
-                message="Duplicate job detected: Exact URL match",
-            )
-        
-        # Check for duplicates
-        is_duplicate, duplicate_info = await duplication_checker.comprehensive_duplicate_check(
-            url=request.url,
-            title=request.title or "",
-            company=request.company or "",
-            description=request.description or ""
-        )
-        
-        if is_duplicate and duplicate_info:
-            # If the duplication checker matched an existing invalid row (exact URL), do not insert another.
-            if duplicate_info.get("match_type") == "exact_url" and duplicate_info.get("job_id"):
-                existing_invalid_by_id_result = await session.execute(
-                    select(InvalidJob).where(InvalidJob.id == duplicate_info.get("job_id"))
-                )
-                existing_invalid_by_id = existing_invalid_by_id_result.scalar_one_or_none()
-                if existing_invalid_by_id:
-                    return JobSubmissionResponse(
-                        success=True,
-                        job_id=existing_invalid_by_id.id,
-                        is_duplicate=True,
-                        duplicate_job_id=existing_invalid_by_id.duplicate_of_job_id,
-                        message=f"Duplicate job detected: {existing_invalid_by_id.duplication_reason or 'Exact URL match'}",
-                    )
-
-            # Save to invalid jobs table
-            invalid_job = InvalidJob(
-                source_url=request.url,
-                normalized_url=normalized_url,
-                domain=duplication_checker.extract_domain(request.url),
-                title=request.title,
-                company=request.company or "Unknown",
-                location=request.location,
-                description=request.description,
-                posted_date=request.posted_date,
-                experience_level=request.experience_level,
-                industry=request.industry,
-                duplicate_of_job_id=duplicate_info.get("job_id"),
-                duplication_reason=duplicate_info.get("duplication_reason"),
-                similarity_score=duplicate_info.get("similarity_score"),
-                similarity_hash=duplication_checker.generate_content_hash(
-                    request.title or "", request.company or "", request.description or ""
-                ),
-                raw_metadata={
-                    "submitted_data": {
-                        "title": request.title,
-                        "company": request.company,
-                        "location": request.location,
-                        "description": request.description,
-                        "posted_date": request.posted_date.isoformat() if request.posted_date else None,
-                        "experience_level": request.experience_level,
-                        "industry": request.industry
-                    }
+        valid_job = ValidJob(
+            source_url=request.url,
+            normalized_url=normalized_url,
+            domain=domain,
+            title=request.title,
+            company=request.company or "Unknown",
+            location=request.location,
+            description=request.description,
+            posted_date=request.posted_date,
+            experience_level=request.experience_level,
+            industry=request.industry,
+            similarity_hash=duplication_checker.generate_content_hash(
+                request.title or "", request.company or "", request.description or ""
+            ),
+            raw_metadata={
+                "submitted_data": {
+                    "title": request.title,
+                    "company": request.company,
+                    "location": request.location,
+                    "description": request.description,
+                    "posted_date": request.posted_date.isoformat() if request.posted_date else None,
+                    "experience_level": request.experience_level,
+                    "industry": request.industry,
                 }
-            )
-            
-            session.add(invalid_job)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                # Another request inserted the same normalized_url (or it already exists).
-                existing_invalid_result = await session.execute(
-                    select(InvalidJob).where(InvalidJob.normalized_url == normalized_url)
-                )
-                existing_invalid = existing_invalid_result.scalar_one_or_none()
-                if existing_invalid:
-                    return JobSubmissionResponse(
-                        success=True,
-                        job_id=existing_invalid.id,
-                        is_duplicate=True,
-                        duplicate_job_id=existing_invalid.duplicate_of_job_id,
-                        message=f"Duplicate job detected: {existing_invalid.duplication_reason or 'Exact URL match'}",
-                    )
-                raise
-            
-            logger.info(
-                "jobs_submit_duplicate_detected",
-                job_id=invalid_job.id,
-                duplicate_of=duplicate_info.get("job_id"),
-                reason=duplicate_info.get("duplication_reason"),
-                url=request.url,
-            )
-            return JobSubmissionResponse(
-                success=True,
-                job_id=invalid_job.id,
-                is_duplicate=True,
-                duplicate_job_id=duplicate_info.get("job_id"),
-                message=f"Duplicate job detected: {duplicate_info.get('duplication_reason')}"
+            },
+        )
+        session.add(valid_job)
+        await session.flush()
+
+        extraction_repo = JobExtractionRepository(session)
+        extraction, _ = await extraction_repo.get_or_create(
+            source_url=request.url,
+            normalized_url=normalized_url,
+            domain=domain,
+        )
+        valid_job.extraction_id = extraction.id
+        if extraction.status == ExtractionStatus.COMPLETED and extraction.completed_at:
+            valid_job.scraped_at = extraction.completed_at
+        await session.commit()
+
+        if extraction.status != ExtractionStatus.COMPLETED:
+            await enqueue_extraction(
+                extraction.id,
+                request.url,
+                user_id=current_user.get("user_id"),
+                background_tasks=background_tasks,
             )
         else:
-            # Save to valid jobs table
-            valid_job = ValidJob(
-                source_url=request.url,
-                normalized_url=normalized_url,
-                domain=duplication_checker.extract_domain(request.url),
-                title=request.title,
-                company=request.company or "Unknown",
-                location=request.location,
-                description=request.description,
-                posted_date=request.posted_date,
-                experience_level=request.experience_level,
-                industry=request.industry,
-                similarity_hash=duplication_checker.generate_content_hash(
-                    request.title or "", request.company or "", request.description or ""
-                ),
-                raw_metadata={
-                    "submitted_data": {
-                        "title": request.title,
-                        "company": request.company,
-                        "location": request.location,
-                        "description": request.description,
-                        "posted_date": request.posted_date.isoformat() if request.posted_date else None,
-                        "experience_level": request.experience_level,
-                        "industry": request.industry
-                    }
-                }
-            )
-            
-            session.add(valid_job)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                existing_valid_result = await session.execute(
-                    select(ValidJob).where(ValidJob.normalized_url == normalized_url)
+            user_id = current_user.get("user_id")
+            if user_id:
+                existing_match = await session.execute(
+                    select(JobMatchResult).where(
+                        JobMatchResult.valid_job_id == valid_job.id,
+                        JobMatchResult.user_id == user_id,
+                    )
                 )
-                existing_valid = existing_valid_result.scalar_one_or_none()
-                if existing_valid:
-                    return JobSubmissionResponse(
-                        success=True,
-                        job_id=existing_valid.id,
-                        is_duplicate=False,
-                        duplicate_job_id=None,
-                        message="Job submitted successfully",
+                existing_progress = await session.execute(
+                    select(JobMatchInProgress).where(
+                        JobMatchInProgress.valid_job_id == valid_job.id,
+                        JobMatchInProgress.user_id == user_id,
                     )
-                raise
-
-            extraction_repo = JobExtractionRepository(session)
-            extraction, created = await extraction_repo.get_or_create(
-                source_url=request.url,
-                normalized_url=normalized_url,
-                domain=duplication_checker.extract_domain(request.url),
-            )
-            valid_job.extraction_id = extraction.id
-            if extraction.status == ExtractionStatus.COMPLETED and extraction.completed_at:
-                valid_job.scraped_at = extraction.completed_at
-            await session.commit()
-
-            # Enqueue whenever extraction is not completed (new or stuck PENDING).
-            # Only requiring "created" left existing-but-never-processed extractions (e.g. from
-            # /extract or a previous submit when worker was down) stuck in PENDING forever.
-            if extraction.status != ExtractionStatus.COMPLETED:
-                await enqueue_extraction(
-                    extraction.id,
-                    request.url,
-                    user_id=current_user.get("user_id"),
-                    background_tasks=background_tasks,
                 )
-            else:
-                # If extraction already exists as completed, trigger match analysis immediately.
-                # This preserves the original design requirement: extracted content should flow
-                # into match engine without waiting for manual trigger.
-                user_id = current_user.get("user_id")
-                if user_id:
-                    existing_match = await session.execute(
-                        select(JobMatchResult).where(
-                            JobMatchResult.valid_job_id == valid_job.id,
-                            JobMatchResult.user_id == user_id,
-                        )
+                if not existing_match.scalar_one_or_none() and not existing_progress.scalar_one_or_none():
+                    progress_repo = JobMatchInProgressRepository(session)
+                    await progress_repo.add(valid_job.id, user_id)
+                    await session.commit()
+                    await enqueue_job_match_analysis(
+                        valid_job.id,
+                        user_id,
+                        background_tasks=background_tasks,
                     )
-                    existing_progress = await session.execute(
-                        select(JobMatchInProgress).where(
-                            JobMatchInProgress.valid_job_id == valid_job.id,
-                            JobMatchInProgress.user_id == user_id,
-                        )
-                    )
-                    if not existing_match.scalar_one_or_none() and not existing_progress.scalar_one_or_none():
-                        progress_repo = JobMatchInProgressRepository(session)
-                        await progress_repo.add(valid_job.id, user_id)
-                        await session.commit()
-                        await enqueue_job_match_analysis(
-                            valid_job.id,
-                            user_id,
-                            background_tasks=background_tasks,
-                        )
 
-            logger.info("jobs_submit_valid_created", job_id=valid_job.id, url=request.url, extraction_id=extraction.id)
-            return JobSubmissionResponse(
-                success=True,
-                job_id=valid_job.id,
-                is_duplicate=False,
-                duplicate_job_id=None,
-                message="Job submitted successfully"
-            )
+        logger.info("jobs_submit_valid_created", job_id=valid_job.id, url=request.url, extraction_id=extraction.id)
+        return JobSubmissionResponse(
+            success=True,
+            job_id=valid_job.id,
+            is_duplicate=False,
+            duplicate_job_id=None,
+            message="Job submitted successfully",
+        )
 
 
 @router.get("/jobs/valid", response_model=list[ValidJobResponse], dependencies=[Depends(get_current_user)])
@@ -1803,15 +1606,6 @@ async def promote_invalid_to_valid(
         if not invalid:
             logger.warning("promote_invalid_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Invalid job not found")
-
-        taken = await session.execute(
-            select(ValidJob.id).where(ValidJob.normalized_url == invalid.normalized_url).limit(1)
-        )
-        if taken.scalar_one_or_none():
-            raise HTTPException(
-                status_code=409,
-                detail="This URL is already on the valid jobs list",
-            )
 
         meta = dict(invalid.raw_metadata or {})
         promoted_at_iso = datetime.utcnow().isoformat()

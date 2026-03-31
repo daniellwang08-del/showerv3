@@ -55,41 +55,30 @@ async def enforce_one_active_job_per_company(
     if canonical.id == current.id:
         return
 
-    existing_invalid = (
-        await session.execute(
-            select(InvalidJob).where(InvalidJob.normalized_url == current.normalized_url)
-        )
-    ).scalar_one_or_none()
-
     reason = (
         f"Company policy duplicate: only one active application per company. "
         f"Keeping earliest job for '{effective_company}'."
     )
 
-    if existing_invalid:
-        existing_invalid.duplicate_of_job_id = canonical.id
-        existing_invalid.duplication_reason = reason
-        existing_invalid.updated_at = datetime.utcnow()
-    else:
-        invalid = InvalidJob(
-            source_url=current.source_url,
-            normalized_url=current.normalized_url,
-            domain=current.domain,
-            title=current.title,
-            company=current.company,
-            location=current.location,
-            description=current.description,
-            posted_date=current.posted_date,
-            experience_level=current.experience_level,
-            industry=current.industry,
-            raw_metadata=current.raw_metadata or {},
-            duplicate_of_job_id=canonical.id,
-            duplication_reason=reason,
-            similarity_score=1.0,
-            similarity_hash=current.similarity_hash,
-            is_active=True,
-        )
-        session.add(invalid)
+    invalid = InvalidJob(
+        source_url=current.source_url,
+        normalized_url=current.normalized_url,
+        domain=current.domain,
+        title=current.title,
+        company=current.company,
+        location=current.location,
+        description=current.description,
+        posted_date=current.posted_date,
+        experience_level=current.experience_level,
+        industry=current.industry,
+        raw_metadata=current.raw_metadata or {},
+        duplicate_of_job_id=canonical.id,
+        duplication_reason=reason,
+        similarity_score=1.0,
+        similarity_hash=current.similarity_hash,
+        is_active=True,
+    )
+    session.add(invalid)
 
     current.is_active = False
     current.updated_at = datetime.utcnow()

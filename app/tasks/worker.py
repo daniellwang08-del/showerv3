@@ -2,7 +2,7 @@ import traceback
 from arq import create_pool
 from arq.connections import RedisSettings, ArqRedis
 from app.core.config import get_settings
-from app.core.logging import get_logger
+from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
 from app.services.extraction_service import ExtractionService
 from app.storage.database import get_session
 from app.storage.repository import ValidJobRepository, JobMatchInProgressRepository, JobExtractionRepository
@@ -12,6 +12,8 @@ logger = get_logger(__name__)
 
 
 async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = None) -> dict:
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="extract_job", extraction_id=job_id, target_url=url, user_id=user_id)
     logger.info("worker_extract_job_started", job_id=job_id, url=url)
     try:
         service = ExtractionService()
@@ -88,12 +90,16 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
             traceback=tb,
         )
         raise
+    finally:
+        clear_logging_context()
 
 
 async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict | None:
     """AI job–profile match analysis. Runs async after extraction completes."""
     from app.services.job_match_orchestrator import run_job_match_analysis
 
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="analyze_job_match", valid_job_id=valid_job_id, user_id=user_id)
     logger.info("worker_analyze_job_match_started", valid_job_id=valid_job_id, user_id=user_id)
     try:
         result = await run_job_match_analysis(valid_job_id, user_id)
@@ -103,6 +109,8 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict 
     except Exception as e:
         logger.exception("worker_analyze_job_match_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
         raise
+    finally:
+        clear_logging_context()
 
 
 class WorkerSettings:

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 import { jobMarkedApplied } from '../utils/appliedStatus';
+import { logger } from '../utils/logger';
 
 type Props = {
   items: SubmittedUrlItem[];
@@ -103,7 +104,11 @@ export function JobTimeline({
         ...prev,
         [dateKey]: dateSet
       };
-      console.log('After toggle selection - jobId:', jobId, 'dateKey:', dateKey, 'selectedIds:', Array.from(dateSet));
+      logger.debug('ui_job_selection_toggled', {
+        job_id: jobId,
+        date_key: dateKey,
+        selected_ids: Array.from(dateSet),
+      });
       return newState;
     });
   };
@@ -199,29 +204,19 @@ export function JobTimeline({
   // Get all selected jobs across all date groups
   const getAllSelectedJobs = (): SubmittedUrlItem[] => {
     const selectedIds = new Set<string>();
-    
-    console.log('getAllSelectedJobs START - selectedJobsByDate:', selectedJobsByDate);
-    
+
     // Collect all selected IDs from all date groups
-    Object.entries(selectedJobsByDate).forEach(([dateKey, dateSet]) => {
-      console.log(`  dateKey: ${dateKey}, dateSet:`, dateSet, 'isSet:', dateSet instanceof Set);
+    Object.entries(selectedJobsByDate).forEach(([, dateSet]) => {
       if (dateSet instanceof Set) {
         dateSet.forEach(id => {
-          console.log(`    Adding id: ${id}`);
           selectedIds.add(id);
         });
       }
     });
-    
-    console.log('getAllSelectedJobs - All selectedIds:', Array.from(selectedIds));
-    console.log('getAllSelectedJobs - items.length:', items.length);
-    console.log('getAllSelectedJobs - items IDs:', items.map(i => i.id));
-    
+
     // Get selected jobs from items (the original props)
     const result = items.filter(item => selectedIds.has(item.id));
-    
-    console.log('getAllSelectedJobs - Found jobs count:', result.length);
-    console.log('getAllSelectedJobs - Found jobs URLs:', result.map(j => j.url));
+    logger.debug('ui_get_selected_jobs', { selected_count: result.length });
     return result;
   };
 
@@ -252,21 +247,18 @@ export function JobTimeline({
   // Handle delete all selected
   const handleDeleteAll = () => {
     const selectedJobs = getAllSelectedJobs();
-    
-    console.log('handleDeleteAll - Total jobs to delete:', selectedJobs.length);
-    console.log('handleDeleteAll - Jobs:', selectedJobs);
-    
+
     if (selectedJobs.length === 0) {
-      console.log('No jobs selected to delete!');
+      logger.debug('ui_delete_selected_skipped_empty_selection');
       return;
     }
     
     // Use batch delete if available, otherwise fallback to individual deletes
     if (onBatchDelete) {
-      console.log('Using batch delete...');
+      logger.info('ui_delete_selected_batch', { count: selectedJobs.length });
       onBatchDelete(selectedJobs);
     } else {
-      console.log('Using individual deletes (fallback)...');
+      logger.info('ui_delete_selected_individual_fallback', { count: selectedJobs.length });
       selectedJobs.forEach(job => {
         onDelete(job);
       });

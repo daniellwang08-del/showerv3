@@ -11,6 +11,7 @@ import { DashboardPage } from './features/dashboard/DashboardPage';
 import { ProfilesPage } from './features/profiles/ProfilesPage';
 import { mainViewFromHash, navigateMainView, type MainView } from './mainViewRouting';
 import { parseServerDateTime, toFiniteTimeMs } from './utils/serverDate';
+import { logger } from './utils/logger';
 
 function App() {
   const { isAuthenticated, user, authPage, setAuthPage, logout, onAuthSuccess } = useAuth();
@@ -433,7 +434,7 @@ function App() {
 
   // Handle batch delete of jobs
   const handleBatchDelete = async (itemsToDelete: SubmittedUrlItem[]) => {
-    console.log('handleBatchDelete - Deleting items:', itemsToDelete);
+    logger.info('ui_batch_delete_started', { count: itemsToDelete.length });
     
     try {
       setLoadingLists(true);
@@ -441,21 +442,20 @@ function App() {
       // Delete each job by ID and table
       for (const item of itemsToDelete) {
         const table = item.table || 'valid'; // Default to 'valid' if table not specified
-        console.log(`Deleting job ID: ${item.id} from table: ${table}`);
         try {
           await apiClient.delete(`/jobs/${table}/${item.id}`);
-          console.log(`Successfully deleted: ${item.id}`);
+          logger.debug('ui_batch_delete_item_success', { job_id: item.id, table });
         } catch (error) {
-          console.error(`Error deleting ${item.id}:`, error);
+          logger.error('ui_batch_delete_item_failed', { job_id: item.id, table, error: String(error) });
         }
       }
       
       // Refresh the list after all deletions
-      console.log('All deletions complete, refreshing lists...');
+      logger.info('ui_batch_delete_refreshing_lists');
       await refreshLists();
       
     } catch (error) {
-      console.error('Error in batch delete:', error);
+      logger.error('ui_batch_delete_failed', { error: String(error) });
       setSubmitError('Error deleting jobs');
     } finally {
       setLoadingLists(false);

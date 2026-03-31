@@ -2,7 +2,6 @@ import uuid
 
 from sqlalchemy import select, update, and_, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import (
     JobExtraction,
@@ -15,7 +14,7 @@ from app.models.database import (
 from app.models.schemas import ExtractionStatus, ExtractionMethod, JobDescriptionSchema
 from app.core.logging import get_logger
 from app.utils.text_sanitizer import sanitize_for_postgres_text
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Sequence
 
 logger = get_logger(__name__)
@@ -69,28 +68,17 @@ class JobExtractionRepository:
         normalized_url: str,
         domain: str,
     ) -> tuple[JobExtraction, bool]:
+        # URL-based extraction dedupe is intentionally removed. Always create a fresh extraction row.
         extraction = JobExtraction(
             source_url=source_url,
             normalized_url=normalized_url,
             domain=domain,
             status=ExtractionStatus.PENDING,
         )
-
-        try:
-            async with self._session.begin_nested():
-                self._session.add(extraction)
-                await self._session.flush()
-            logger.debug("repository_get_or_create_created", extraction_id=extraction.id, normalized_url=normalized_url)
-            return extraction, True
-        except IntegrityError:
-            result = await self._session.execute(
-                select(JobExtraction).where(JobExtraction.normalized_url == normalized_url)
-            )
-            existing = result.scalar_one_or_none()
-            if existing:
-                logger.debug("repository_get_or_create_existing", extraction_id=existing.id, normalized_url=normalized_url)
-                return existing, False
-            raise
+        self._session.add(extraction)
+        await self._session.flush()
+        logger.debug("repository_get_or_create_created", extraction_id=extraction.id, normalized_url=normalized_url)
+        return extraction, True
 
     async def reset_for_refresh(self, job_id: str, source_url: str, domain: str) -> None:
         values = {
@@ -129,29 +117,6 @@ class JobExtractionRepository:
     async def get_by_id(self, job_id: str) -> JobExtraction | None:
         result = await self._session.execute(
             select(JobExtraction).where(JobExtraction.id == job_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_by_normalized_url(self, normalized_url: str) -> JobExtraction | None:
-        result = await self._session.execute(
-            select(JobExtraction).where(JobExtraction.normalized_url == normalized_url)
-        )
-        return result.scalar_one_or_none()
-
-    async def find_recent_by_normalized_url(
-        self,
-        normalized_url: str,
-        within_hours: int = 24,
-    ) -> JobExtraction | None:
-        cutoff = datetime.utcnow() - timedelta(hours=within_hours)
-        result = await self._session.execute(
-            select(JobExtraction).where(
-                and_(
-                    JobExtraction.normalized_url == normalized_url,
-                    JobExtraction.created_at >= cutoff,
-                    JobExtraction.status == ExtractionStatus.COMPLETED,
-                )
-            )
         )
         return result.scalar_one_or_none()
 

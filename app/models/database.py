@@ -50,7 +50,7 @@ class JobExtraction(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_url = Column(Text, nullable=False)
-    normalized_url = Column(String(2048), nullable=False, unique=True)
+    normalized_url = Column(String(2048), nullable=False, index=True)
     domain = Column(String(255), nullable=False, index=True)
     status = Column(SQLEnum(ExtractionStatus), default=ExtractionStatus.PENDING, nullable=False)
     extraction_method = Column(SQLEnum(ExtractionMethod), nullable=True)
@@ -88,8 +88,8 @@ class ValidJob(Base):
     __tablename__ = "valid_jobs"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    source_url = Column(Text, nullable=False, unique=True)
-    normalized_url = Column(String(2048), nullable=False, unique=True)
+    source_url = Column(Text, nullable=False)
+    normalized_url = Column(String(2048), nullable=False, index=True)
     domain = Column(String(255), nullable=False, index=True)
     title = Column(String(500), nullable=True)
     company = Column(String(500), nullable=False)
@@ -118,8 +118,8 @@ class InvalidJob(Base):
     __tablename__ = "invalid_jobs"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    source_url = Column(Text, nullable=False, unique=True)
-    normalized_url = Column(String(2048), nullable=False, unique=True)
+    source_url = Column(Text, nullable=False)
+    normalized_url = Column(String(2048), nullable=False, index=True)
     domain = Column(String(255), nullable=False, index=True)
     title = Column(String(500), nullable=True)
     company = Column(String(500), nullable=False)

@@ -1,12 +1,9 @@
 """
 Professional job duplication detection engine.
 
-Multi-tier strategy:
-  1. Exact normalized URL - strict equality after normalization
-  2. Canonical job key - (board_domain, job_id) for known job boards (Ashby, Greenhouse, etc.)
-  3. Same-domain URL similarity - alternate URLs for same job (path/stem matching)
-  4. Same-company content - title/description similarity when company matches
-  5. Cross-company content - high-content-similarity reposts (e.g. staffing agencies)
+Multi-tier strategy (content-first):
+  1. Same-company content similarity (title/description/hash)
+  2. Cross-company content similarity (high-content reposts)
 """
 
 import hashlib
@@ -15,7 +12,7 @@ from difflib import SequenceMatcher
 from urllib.parse import urlparse
 from typing import Tuple, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_
 from app.models.database import ValidJob, InvalidJob
 from app.services.url_manager import URLManager
 from app.core.logging import get_logger
@@ -25,7 +22,6 @@ logger = get_logger(__name__)
 
 # Minimum similarity scores
 SIMILARITY_THRESHOLD = 0.82
-URL_SIMILARITY_THRESHOLD = 0.88
 CROSS_COMPANY_CONTENT_THRESHOLD = 0.92
 TITLE_NORMALIZE_PATTERN = re.compile(r"\b(sr\.?|junior|jr\.?|senior|lead|principal|staff|remote|hybrid|onsite|contract|full[- ]?time|part[- ]?time)\b", re.IGNORECASE)
 
@@ -80,9 +76,6 @@ class DuplicationChecker:
         except Exception:
             return urlparse(url).netloc.lower()
 
-    def _get_canonical_job_key(self, url: str) -> Tuple[str | None, str | None]:
-        return URLManager.get_canonical_job_key(url)
-
     def generate_content_hash(
         self,
         title: str = "",
@@ -108,138 +101,6 @@ class DuplicationChecker:
         jaccard = _token_set_similarity(t1, t2)
         return max(seq, jaccard)
 
-    def calculate_url_similarity(self, url1: str, url2: str) -> float:
-        norm1 = self.normalize_url(url1)
-        norm2 = self.normalize_url(url2)
-        if norm1 == norm2:
-            return 1.0
-        return SequenceMatcher(None, norm1, norm2).ratio()
-
-    def _extract_url_path_stem(self, url: str) -> str:
-        """Extract path without query for stem comparison."""
-        parsed = urlparse(url)
-        path = (parsed.path or "/").rstrip("/") or "/"
-        path = re.sub(r"/application$", "", path, flags=re.IGNORECASE)
-        return path.lower()
-
-    async def check_exact_url_duplicate(
-        self, url: str, company: Optional[str] = None
-    ) -> Tuple[bool, Optional[str]]:
-        """Tier 1: Exact normalized URL match."""
-        normalized_url = self.normalize_url(url)
-
-        for model, label in [(ValidJob, "valid"), (InvalidJob, "invalid")]:
-            stmt = select(model).where(model.normalized_url == normalized_url)
-            if company:
-                stmt = stmt.where(model.company.ilike(f"%{company}%"))
-            result = await self.db_session.execute(stmt)
-            job = result.scalar_one_or_none()
-            if job:
-                logger.debug("duplicate_tier1_exact_url", model=label, job_id=job.id, url=url)
-                return True, job.id
-
-        domain = self.extract_domain(url)
-        canonical_prefix = normalized_url.split("?", 1)[0]
-
-        for model in [ValidJob, InvalidJob]:
-            stmt = select(model).where(
-                and_(
-                    model.domain == domain,
-                    or_(
-                        model.source_url.ilike(f"{canonical_prefix}%"),
-                        model.normalized_url.ilike(f"{canonical_prefix}%"),
-                    ),
-                )
-            )
-            if company:
-                stmt = stmt.where(model.company.ilike(f"%{company}%"))
-            result = await self.db_session.execute(stmt)
-            for job in result.scalars().all():
-                if self.normalize_url(job.source_url) == normalized_url:
-                    return True, job.id
-
-        return False, None
-
-    async def check_canonical_job_key_duplicate(
-        self, url: str, exclude_valid_job_id: Optional[str] = None
-    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        """Tier 2: Same (board_domain, job_id) = same job."""
-        root_domain, job_id = self._get_canonical_job_key(url)
-        if not root_domain or not job_id:
-            return False, None
-
-        for model in [ValidJob, InvalidJob]:
-            stmt = select(model).where(model.is_active == True)
-            if exclude_valid_job_id and model == ValidJob:
-                stmt = stmt.where(ValidJob.id != exclude_valid_job_id)
-            result = await self.db_session.execute(stmt)
-            for job in result.scalars().all():
-                other_root, other_id = self._get_canonical_job_key(job.source_url)
-                if other_root and other_id and other_root == root_domain and other_id == job_id:
-                    match_type = "valid_job" if model == ValidJob else "invalid_job"
-                    canonical_id = job.duplicate_of_job_id if hasattr(job, "duplicate_of_job_id") and job.duplicate_of_job_id else job.id
-                    logger.debug(
-                        "duplicate_tier2_canonical_key",
-                        job_id=job.id,
-                        root=root_domain,
-                        key=job_id,
-                        url=url,
-                    )
-                    return True, {
-                        "job_id": canonical_id,
-                        "similarity_score": 1.0,
-                        "url_similarity": 1.0,
-                        "content_similarity": 1.0,
-                        "hash_match": False,
-                        "match_type": match_type,
-                        "duplication_reason": "Same job (identical job ID on same board)",
-                    }
-        return False, None
-
-    async def check_same_domain_url_similarity(
-        self, url: str, exclude_valid_job_id: Optional[str] = None
-    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        """Tier 3: High URL path similarity within same domain."""
-        domain = self.extract_domain(url)
-        path_stem = self._extract_url_path_stem(url)
-        url_sim_thresh = URL_SIMILARITY_THRESHOLD
-
-        for model in [ValidJob, InvalidJob]:
-            stmt = select(model).where(and_(model.domain == domain, model.is_active == True))
-            if exclude_valid_job_id and model == ValidJob:
-                stmt = stmt.where(ValidJob.id != exclude_valid_job_id)
-            result = await self.db_session.execute(stmt)
-            best = None
-            best_score = 0.0
-            for job in result.scalars().all():
-                other_stem = self._extract_url_path_stem(job.source_url)
-                if path_stem == other_stem:
-                    score = 1.0
-                else:
-                    score = self.calculate_url_similarity(url, job.source_url)
-                if score >= url_sim_thresh and score > best_score:
-                    best_score = score
-                    match_type = "valid_job" if model == ValidJob else "invalid_job"
-                    canonical_id = job.duplicate_of_job_id if hasattr(job, "duplicate_of_job_id") and job.duplicate_of_job_id else job.id
-                    best = {
-                        "job_id": canonical_id,
-                        "similarity_score": score,
-                        "url_similarity": score,
-                        "content_similarity": 0.0,
-                        "hash_match": False,
-                        "match_type": match_type,
-                        "duplication_reason": "Very similar URL on same job board",
-                    }
-            if best:
-                logger.debug(
-                    "duplicate_tier3_url_similarity",
-                    job_id=best["job_id"],
-                    score=best_score,
-                    url=url,
-                )
-                return True, best
-        return False, None
-
     async def check_company_duplicates(
         self,
         url: str,
@@ -248,11 +109,10 @@ class DuplicationChecker:
         description: str = "",
         exclude_valid_job_id: Optional[str] = None,
     ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        """Tier 4: Same company + high content/URL similarity."""
+        """Tier 1: Same company + high content similarity."""
         if not company and not title and not description:
             return False, None
 
-        domain = self.extract_domain(url)
         content_hash = self.generate_content_hash(title, company, description)
         norm_company = _normalize_company(company)
         norm_title = _normalize_job_title(title)
@@ -260,31 +120,20 @@ class DuplicationChecker:
         for model in [ValidJob, InvalidJob]:
             stmt = select(model).where(model.is_active == True)
             if norm_company:
-                conds = [model.company.ilike(f"%{company}%")]
-                if domain:
-                    conds.append(
-                        and_(
-                            model.domain == domain,
-                            model.company.ilike(f"%{norm_company[:30]}%"),
-                        )
-                    )
-                stmt = stmt.where(or_(*conds))
-            else:
-                stmt = stmt.where(model.domain == domain)
+                stmt = stmt.where(model.company.ilike(f"%{company}%"))
             if exclude_valid_job_id and model == ValidJob:
                 stmt = stmt.where(ValidJob.id != exclude_valid_job_id)
             result = await self.db_session.execute(stmt)
             best = None
             best_score = 0.0
             for job in result.scalars().all():
-                url_sim = self.calculate_url_similarity(url, job.source_url)
                 title_sim = self.calculate_text_similarity(title or "", job.title or "")
                 if norm_title and (job.title or ""):
                     title_sim = max(title_sim, self.calculate_text_similarity(norm_title, _normalize_job_title(job.title or "")))
                 desc_sim = self.calculate_text_similarity(description, job.description or "")
                 content_sim = max(title_sim, desc_sim) if (title or description) else 0.0
                 hash_match = content_hash is not None and content_hash == job.similarity_hash
-                combined = (url_sim * 0.45 + content_sim * 0.55) if (title or description) else url_sim
+                combined = content_sim
                 if hash_match:
                     combined = 1.0
                 if combined >= SIMILARITY_THRESHOLD and combined > best_score:
@@ -294,7 +143,7 @@ class DuplicationChecker:
                     best = {
                         "job_id": canonical_id,
                         "similarity_score": combined,
-                        "url_similarity": url_sim,
+                        "url_similarity": 0.0,
                         "content_similarity": content_sim,
                         "hash_match": hash_match,
                         "match_type": match_type,
@@ -312,7 +161,7 @@ class DuplicationChecker:
         description: str = "",
         exclude_valid_job_id: Optional[str] = None,
     ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        """Tier 5: Cross-company high content similarity (reposts, staffing)."""
+        """Tier 2: Cross-company high content similarity (reposts, staffing)."""
         content_hash = self.generate_content_hash(title, company, description)
         if not content_hash and not (title and description):
             return False, None
@@ -378,41 +227,7 @@ class DuplicationChecker:
         description: str = "",
         exclude_valid_job_id: Optional[str] = None,
     ) -> Tuple[bool, Optional[Dict[str, Any]]]:
-        """Run all tiers in order. First match wins."""
-        is_exact, exact_id = await self.check_exact_url_duplicate(url, company or None)
-        if is_exact and exact_id:
-            return True, {
-                "job_id": exact_id,
-                "similarity_score": 1.0,
-                "url_similarity": 1.0,
-                "content_similarity": 1.0,
-                "hash_match": True,
-                "match_type": "exact_url",
-                "duplication_reason": "Exact URL match",
-            }
-
-        is_canon, canon_match = await self.check_canonical_job_key_duplicate(url, exclude_valid_job_id)
-        if is_canon and canon_match:
-            logger.info(
-                "comprehensive_duplicate_check_match",
-                match_type="canonical_key",
-                job_id=canon_match.get("job_id"),
-                url=url,
-            )
-            return True, canon_match
-
-        is_url_sim, url_sim_match = await self.check_same_domain_url_similarity(
-            url, exclude_valid_job_id
-        )
-        if is_url_sim and url_sim_match:
-            logger.info(
-                "comprehensive_duplicate_check_match",
-                match_type="url_similarity",
-                job_id=url_sim_match.get("job_id"),
-                url=url,
-                score=url_sim_match.get("similarity_score"),
-            )
-            return True, url_sim_match
+        """Run content-based duplicate tiers in order. First match wins."""
 
         is_company, company_match = await self.check_company_duplicates(
             url, title, company, description, exclude_valid_job_id

@@ -218,7 +218,7 @@ export function DuplicateJobsPanel({
             ) : items.length === 0 ? (
               <div className="p-8 text-center">
                 <p className="text-sm font-medium text-slate-600">No duplicates yet.</p>
-                <p className="mt-1 text-xs text-slate-500">Potential duplicate URLs will appear here automatically.</p>
+                <p className="mt-1 text-xs text-slate-500">Potential duplicate jobs will appear here after AI analysis.</p>
               </div>
             ) : (
               <ul className="divide-y divide-blue-100/60">

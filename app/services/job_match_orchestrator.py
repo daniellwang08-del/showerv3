@@ -15,7 +15,7 @@ from app.storage.repository import (
 from app.storage.user_repository import UserRepository
 from app.services.job_match_service import analyze_job_match, _build_job_text
 from app.services.company_policy import enforce_one_active_job_per_company
-from app.core.logging import get_logger
+from app.core.logging import bind_logging_context, get_logger
 
 logger = get_logger(__name__)
 
@@ -25,6 +25,7 @@ async def run_job_match_analysis(valid_job_id: str, user_id: str) -> dict | None
     Run full job match pipeline and store result.
     Returns match result dict or None on failure.
     """
+    bind_logging_context(valid_job_id=valid_job_id, user_id=user_id)
     async with get_session() as session:
         extraction_repo = JobExtractionRepository(session)
         user_repo = UserRepository(session)

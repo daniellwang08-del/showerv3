@@ -4,8 +4,7 @@ from app.utils.text_sanitizer import sanitize_for_postgres_text
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, ValidJobRepository
 from app.services.duplication_checker import DuplicationChecker
-from sqlalchemy import select
-from app.models.database import ValidJob, InvalidJob
+from app.models.database import InvalidJob
 from app.services.http_client import HTTPService
 from app.services.ai_parser import get_ai_parser
 from app.services.validator import validate_job_data
@@ -14,7 +13,7 @@ from app.extractors.api_detector import APIDetectorExtractor
 from app.extractors.ashby_api_extractor import AshbyApiExtractor
 from app.extractors.html_extractor import HTMLExtractor
 from app.extractors.browser_extractor import BrowserExtractor
-from app.core.logging import get_logger
+from app.core.logging import bind_logging_context, get_logger
 from app.core.exceptions import AIParsingError
 
 logger = get_logger(__name__)
@@ -32,6 +31,7 @@ class ExtractionService:
         Process a job extraction request through the full pipeline.
         Returns a dictionary with the result status and metadata.
         """
+        bind_logging_context(extraction_id=job_id, target_url=url)
         logger.info("extraction_service_started", job_id=job_id, url=url)
 
         # Update status to PROCESSING
@@ -271,11 +271,7 @@ class ExtractionService:
                 )
                 if is_dup and dup_info and dup_info.get("job_id") != valid_job.id:
                     canonical_id = dup_info["job_id"]
-                    existing_invalid = (await session.execute(
-                        select(InvalidJob).where(InvalidJob.normalized_url == valid_job.normalized_url)
-                    )).scalar_one_or_none()
-                    if not existing_invalid:
-                        invalid_job = InvalidJob(
+                    invalid_job = InvalidJob(
                         source_url=valid_job.source_url,
                         normalized_url=valid_job.normalized_url,
                         domain=valid_job.domain,
@@ -295,7 +291,7 @@ class ExtractionService:
                         raw_metadata=valid_job.raw_metadata or {},
                         is_active=True,
                     )
-                        session.add(invalid_job)
+                    session.add(invalid_job)
                     valid_job.is_active = False
                     valid_job.updated_at = datetime.utcnow()
                     logger.info(

@@ -1,6 +1,11 @@
-import structlog
 import logging
+import re
 import sys
+from contextvars import ContextVar
+from uuid import uuid4
+
+import structlog
+
 from app.core.config import get_settings
 
 
@@ -10,6 +15,63 @@ class FlushingStreamHandler(logging.StreamHandler):
     def emit(self, record):
         super().emit(record)
         self.flush()
+
+
+_request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
+
+_SENSITIVE_KEYWORDS = (
+    "password",
+    "passwd",
+    "token",
+    "secret",
+    "authorization",
+    "cookie",
+    "api_key",
+    "access_key",
+    "refresh_token",
+)
+_BEARER_RE = re.compile(r"(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*")
+
+
+def _mask_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if _BEARER_RE.search(value):
+            return _BEARER_RE.sub("Bearer [REDACTED]", value)
+        return value
+    return value
+
+
+def _redact_sensitive_fields(_, __, event_dict):
+    for key in list(event_dict.keys()):
+        lowered = key.lower()
+        if any(word in lowered for word in _SENSITIVE_KEYWORDS):
+            event_dict[key] = "[REDACTED]"
+            continue
+        event_dict[key] = _mask_value(event_dict[key])
+    return event_dict
+
+
+def _add_request_id(_, __, event_dict):
+    request_id = _request_id_ctx.get()
+    if request_id and "request_id" not in event_dict:
+        event_dict["request_id"] = request_id
+    return event_dict
+
+
+def _normalize_event_name(_, __, event_dict):
+    event = event_dict.get("event")
+    if isinstance(event, str):
+        event_dict["event"] = event.strip().lower()
+    return event_dict
+
+
+def _normalize_exceptions(_, __, event_dict):
+    exc = event_dict.get("exception")
+    if exc is not None and "error" not in event_dict:
+        event_dict["error"] = str(exc)
+    return event_dict
 
 
 def setup_logging() -> None:
@@ -32,9 +94,14 @@ def setup_logging() -> None:
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            _add_request_id,
             structlog.processors.add_log_level,
+            structlog.stdlib.add_logger_name,
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
+            _normalize_exceptions,
+            _normalize_event_name,
+            _redact_sensitive_fields,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.JSONRenderer()
             if use_json
@@ -62,3 +129,22 @@ def setup_logging() -> None:
 
 def get_logger(name: str) -> structlog.BoundLogger:
     return structlog.get_logger(name)
+
+
+def new_request_id() -> str:
+    return str(uuid4())
+
+
+def set_request_id(request_id: str | None) -> None:
+    _request_id_ctx.set(request_id)
+
+
+def clear_logging_context() -> None:
+    structlog.contextvars.clear_contextvars()
+    _request_id_ctx.set(None)
+
+
+def bind_logging_context(**kwargs) -> None:
+    clean = {k: v for k, v in kwargs.items() if v is not None}
+    if clean:
+        structlog.contextvars.bind_contextvars(**clean)

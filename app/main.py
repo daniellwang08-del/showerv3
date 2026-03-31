@@ -131,9 +131,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Temporarily disable middleware to debug loading issues
-    # app.add_middleware(MetricsMiddleware)
-    # app.add_middleware(ErrorHandlerMiddleware)
+    app.add_middleware(ErrorHandlerMiddleware)
+    app.add_middleware(MetricsMiddleware)
 
     # Add root route
     @app.get("/")
