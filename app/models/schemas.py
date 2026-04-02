@@ -220,3 +220,11 @@ class JobSubmissionResponse(BaseModel):
     is_duplicate: bool
     duplicate_job_id: str | None
     message: str
+
+
+class AttachmentExtractUrlsResponse(BaseModel):
+    """OpenAI-filtered job URLs extracted from uploaded documents."""
+
+    urls: list[str]
+    files_processed: int
+    warnings: list[str] = Field(default_factory=list)

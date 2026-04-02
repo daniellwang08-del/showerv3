@@ -1,7 +1,7 @@
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
 import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, PanelRightClose, PanelRightOpen } from 'lucide-react';
-import type { SubmittedUrlItem } from '../../types/ui';
+import type { AttachmentFlowStatus, SubmittedUrlItem } from '../../types/ui';
 import { DuplicateJobsPanel } from '../../components/DuplicateJobsPanel';
 import { DetailContentPanel } from '../../components/DetailContentPanel';
 import Header from '../../components/Header';
@@ -29,6 +29,8 @@ type Props = {
   loading: boolean;
   onUrlChange: (next: string) => void;
   onSubmit: (e: FormEvent) => void;
+  attachmentFlow: AttachmentFlowStatus;
+  onSubmitAttachment: (files: File[]) => Promise<void>;
 
   openMenu: { table: 'valid' | 'invalid'; id: string } | null;
   setOpenMenu: Dispatch<SetStateAction<{ table: 'valid' | 'invalid'; id: string } | null>>;
@@ -85,6 +87,8 @@ export function DashboardPage({
   loading,
   onUrlChange,
   onSubmit,
+  attachmentFlow,
+  onSubmitAttachment,
   openMenu,
   setOpenMenu,
   compareValidJobId,
@@ -196,6 +200,8 @@ export function DashboardPage({
                   submitNotice={submitNotice}
                   submitNoticeKind={submitNoticeKind}
                   submitError={submitError}
+                  attachmentFlow={attachmentFlow}
+                  onSubmitAttachment={onSubmitAttachment}
                 />
               </div>
 

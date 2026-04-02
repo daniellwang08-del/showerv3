@@ -1,3 +1,12 @@
+export type AttachmentFlowStatus =
+  | null
+  | {
+      phase: 'upload_extract' | 'submitting';
+      message: string;
+      submitted: number;
+      total: number;
+    };
+
 export type ExtractionStatusLabel = 'pending' | 'processing' | 'completed' | 'failed';
 
 export type SubmittedUrlItem = {

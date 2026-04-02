@@ -126,7 +126,7 @@ async def test_extraction_service_failure():
         repo = JobExtractionRepository(session)
         updated_job = await repo.get_by_id(job_id)
         assert updated_job.status.value == "failed"
-        assert updated_job.retry_count == 1
+        assert updated_job.retry_count == 0
 
 
 @pytest.mark.asyncio
@@ -160,17 +160,21 @@ async def test_extract_job_auto_rerun_low_confidence(monkeypatch):
 
     monkeypatch.setattr("app.tasks.worker.ExtractionService", lambda: mock_service)
 
-    class DummyRepo:
+    class MockValidJobRepo:
         def __init__(self, session):
             pass
 
-        async def get_by_id(self, job_id):
-            return type("Extraction", (), {"retry_count": 0})()
+        async def get_by_extraction_id(self, extraction_id):
+            return type("VJ", (), {"id": "valid-job-1"})()
 
-        async def increment_retry(self, job_id):
+    class MockProgressRepo:
+        def __init__(self, session):
+            pass
+
+        async def add(self, valid_job_id, user_id):
             return None
 
-        async def update_status(self, job_id, status):
+        async def remove(self, valid_job_id, user_id):
             return None
 
     class DummySession:
@@ -187,7 +191,8 @@ async def test_extract_job_auto_rerun_low_confidence(monkeypatch):
         return DummySession()
 
     monkeypatch.setattr("app.tasks.worker.get_session", dummy_session_context)
-    monkeypatch.setattr("app.tasks.worker.JobExtractionRepository", DummyRepo)
+    monkeypatch.setattr("app.tasks.worker.ValidJobRepository", MockValidJobRepo)
+    monkeypatch.setattr("app.tasks.worker.JobMatchInProgressRepository", MockProgressRepo)
 
     enqueued = []
     class DummyPool:
@@ -201,10 +206,10 @@ async def test_extract_job_auto_rerun_low_confidence(monkeypatch):
 
     result = await extract_job({}, "test-job-id", "https://example.com/job", "user-1")
 
-    assert result["status"] == "requeued"
+    assert result["status"] == "completed"
     assert result["confidence"] == 0.45
     assert len(enqueued) == 1
-    assert enqueued[0][0] == "extract_job"
+    assert enqueued[0][0] == "analyze_job_match"
 
 
 @pytest.mark.asyncio

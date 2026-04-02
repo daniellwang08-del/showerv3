@@ -3,6 +3,7 @@ Shared async OpenAI client for AI-powered features.
 Avoids duplication across ai_parser, job_match_service, etc.
 """
 
+import httpx
 from openai import AsyncOpenAI
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
@@ -20,5 +21,12 @@ def get_openai_client() -> AsyncOpenAI:
         settings = get_settings()
         if not settings.openai_api_key:
             raise AIParsingError("OpenAI API key not configured")
-        _client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=0)
+        t = settings.openai_timeout_seconds
+        timeout = httpx.Timeout(t, connect=min(30.0, t))
+        _client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            max_retries=0,
+            timeout=timeout,
+        )
+        logger.info("openai_client_initialized", timeout_seconds=t)
     return _client

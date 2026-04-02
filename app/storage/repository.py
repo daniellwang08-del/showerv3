@@ -311,9 +311,12 @@ class JobMatchRepository:
             existing.summary = summary
             existing.strengths = strengths
             existing.gaps = gaps
-            existing.recommendation = recommendation
+            existing.recommendation = (
+                recommendation if recommendation is None else str(recommendation)[:50]
+            )
             await self._session.flush()
             return existing
+        rec = recommendation if recommendation is None else str(recommendation)[:50]
         row = JobMatchResult(
             valid_job_id=valid_job_id,
             user_id=user_id,
@@ -322,7 +325,7 @@ class JobMatchRepository:
             summary=summary,
             strengths=strengths,
             gaps=gaps,
-            recommendation=recommendation,
+            recommendation=rec,
         )
         self._session.add(row)
         await self._session.flush()

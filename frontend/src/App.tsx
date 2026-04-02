@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { SubmissionResponse } from './types';
 import { apiClient } from './api/client';
-import { ModalState, SubmittedUrlItem } from './types/ui';
+import { ModalState, SubmittedUrlItem, type AttachmentFlowStatus } from './types/ui';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
 import { JobActionModal } from './components/JobActionModal';
@@ -22,6 +22,9 @@ import {
   type InvalidJobApiRow,
   type ValidJobApiRow,
 } from './utils/jobListPagination';
+import { runWithConcurrencyLimit } from './utils/asyncPool';
+
+const ATTACHMENT_SUBMIT_CONCURRENCY = 30;
 
 function App() {
   const { isAuthenticated, user, authPage, setAuthPage, logout, onAuthSuccess } = useAuth();
@@ -62,6 +65,7 @@ function App() {
   const [loadingMoreInvalid, setLoadingMoreInvalid] = useState(false);
 
   const [url, setUrl] = useState('');
+  const [attachmentFlow, setAttachmentFlow] = useState<AttachmentFlowStatus>(null);
 
   const [batchDeletePending, setBatchDeletePending] = useState<SubmittedUrlItem[] | null>(null);
   const [batchDeleteSubmitting, setBatchDeleteSubmitting] = useState(false);
@@ -378,6 +382,65 @@ function App() {
     }
   };
 
+  const submitAttachmentFiles = useCallback(async (files: File[]) => {
+    if (!files.length) return;
+    setSubmitError('');
+    setSubmitNotice('');
+    setLoading(true);
+    setAttachmentFlow({
+      phase: 'upload_extract',
+      message: 'Reading files and extracting job URLs with AI…',
+      submitted: 0,
+      total: 0,
+    });
+    try {
+      const formData = new FormData();
+      files.forEach((f) => formData.append('files', f));
+      const res = await apiClient.post<{ urls: string[]; files_processed: number; warnings: string[] }>(
+        '/jobs/attachment/extract-urls',
+        formData,
+      );
+      const { urls, warnings } = res.data;
+      if (!urls?.length) {
+        setSubmitError('No job URLs found in the attachment.');
+        throw new Error('NO_URLS_IN_ATTACHMENT');
+      }
+      setAttachmentFlow({
+        phase: 'submitting',
+        message: `Submitting ${urls.length} job URL${urls.length === 1 ? '' : 's'}…`,
+        submitted: 0,
+        total: urls.length,
+      });
+      await runWithConcurrencyLimit(
+        urls,
+        ATTACHMENT_SUBMIT_CONCURRENCY,
+        async (u) => {
+          await apiClient.post<SubmissionResponse>(`/jobs/submit`, { url: u });
+        },
+        (done, tot) => {
+          setAttachmentFlow({
+            phase: 'submitting',
+            message: `Submitting job URLs (${done}/${tot})…`,
+            submitted: done,
+            total: tot,
+          });
+        },
+      );
+      await refreshLists({ showLoading: false, reset: false });
+      if (warnings?.length) {
+        setSubmitNoticeKind('warning');
+        setSubmitNotice(warnings.slice(0, 2).join(' · ') + (warnings.length > 2 ? ' …' : ''));
+      }
+    } catch (error: any) {
+      const msg = error.response?.data?.detail || 'Attachment processing failed';
+      setSubmitError(msg);
+      throw error;
+    } finally {
+      setLoading(false);
+      setAttachmentFlow(null);
+    }
+  }, [refreshLists]);
+
   const handleMarkApplied = async (items: SubmittedUrlItem[]) => {
     const valid_job_ids = [...new Set(items.filter((i) => i.table === 'valid').map((i) => i.id))];
     if (valid_job_ids.length === 0) return;
@@ -613,6 +676,8 @@ function App() {
       loading,
       onUrlChange: setUrl,
       onSubmit: handleSubmit,
+      attachmentFlow,
+      onSubmitAttachment: submitAttachmentFiles,
       openMenu,
       setOpenMenu,
       compareValidJobId,
@@ -709,6 +774,8 @@ function App() {
     submitNoticeKind,
     submitError,
     loading,
+    attachmentFlow,
+    submitAttachmentFiles,
     openMenu,
     compareValidJobId,
     handleOpenSelectedUrls,

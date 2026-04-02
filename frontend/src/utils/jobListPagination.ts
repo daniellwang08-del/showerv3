@@ -70,18 +70,27 @@ export function mapInvalidJobRow(j: InvalidJobApiRow): SubmittedUrlItem {
 }
 
 /** Merge first-page poll into full list: upsert by id, preserve order by created_at desc. */
-export function mergeValidJobs(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
-  const map = new Map(prev.map((x) => [x.id, x]));
+function mergeWithAuthoritativeWindow(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
+  if (fresh.length === 0) return prev;
+
+  const freshIds = new Set(fresh.map((j) => j.id));
+  const oldestFreshMs = fresh.reduce((min, j) => Math.min(min, j.created_at_ms), Number.POSITIVE_INFINITY);
+
+  // Keep older paged history as-is, but for the currently-polled first page window:
+  // if a previously loaded row is not returned anymore, treat it as stale and drop it.
+  const keptPrev = prev.filter((j) => j.created_at_ms < oldestFreshMs || freshIds.has(j.id));
+
+  const map = new Map(keptPrev.map((x) => [x.id, x]));
   for (const j of fresh) {
     map.set(j.id, j);
   }
   return Array.from(map.values()).sort((a, b) => b.created_at_ms - a.created_at_ms);
 }
 
+export function mergeValidJobs(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
+  return mergeWithAuthoritativeWindow(prev, fresh);
+}
+
 export function mergeInvalidJobs(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
-  const map = new Map(prev.map((x) => [x.id, x]));
-  for (const j of fresh) {
-    map.set(j.id, j);
-  }
-  return Array.from(map.values()).sort((a, b) => b.created_at_ms - a.created_at_ms);
+  return mergeWithAuthoritativeWindow(prev, fresh);
 }

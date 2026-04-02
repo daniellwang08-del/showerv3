@@ -67,6 +67,20 @@ body {
   }
 }
 
+/** Attachment import: indeterminate segment inside the URL field progress track */
+@keyframes attachment-bar-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.attachment-bar-indeterminate {
+  animation: attachment-bar-sweep 1.2s ease-in-out infinite;
+}
+
 .animate-spinner {
   animation: spinner-rotate 0.8s linear infinite;
 }

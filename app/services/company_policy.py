@@ -8,8 +8,29 @@ from app.models.database import (
     ValidJobUserApplication,
 )
 from app.core.logging import get_logger
+from app.storage.repository import _truncate_for_db
 
 logger = get_logger(__name__)
+
+# Must match `invalid_jobs` / `valid_jobs` VARCHAR lengths (PostgreSQL truncates on overflow otherwise).
+_VARCHAR_TITLE = 500
+_VARCHAR_COMPANY = 500
+_VARCHAR_LOCATION = 500
+_VARCHAR_DUP_REASON = 500
+_VARCHAR_VALID_JOB_COMPANY = 500
+# Short snippet for embedding in duplication_reason so the full message stays within 500 chars.
+_REASON_COMPANY_SNIPPET = 96
+
+
+def _clip_varchar(value: str | None, max_len: int) -> str | None:
+    """Alias for repository helper; keeps call sites readable."""
+    return _truncate_for_db(value, max_len)
+
+
+def _company_snippet_for_reason(company: str | None) -> str:
+    """Short label for duplication_reason text (avoid huge LLM garbage in f-strings)."""
+    s = _truncate_for_db(company, _REASON_COMPANY_SNIPPET)
+    return s if s else "unknown company"
 
 
 def normalize_company(company: str | None) -> str:
@@ -35,16 +56,16 @@ async def _demote_valid_job_to_invalid(
         source_url=job.source_url,
         normalized_url=job.normalized_url,
         domain=job.domain,
-        title=job.title,
-        company=job.company,
-        location=job.location,
+        title=_clip_varchar(job.title, _VARCHAR_TITLE),
+        company=_clip_varchar(job.company, _VARCHAR_COMPANY) or "Unknown",
+        location=_clip_varchar(job.location, _VARCHAR_LOCATION),
         description=job.description,
         posted_date=job.posted_date,
-        experience_level=job.experience_level,
-        industry=job.industry,
+        experience_level=_truncate_for_db(job.experience_level, 100),
+        industry=_truncate_for_db(job.industry, 200),
         raw_metadata=job.raw_metadata or {},
         duplicate_of_job_id=duplicate_of_job_id,
-        duplication_reason=reason,
+        duplication_reason=_clip_varchar(reason, _VARCHAR_DUP_REASON),
         similarity_score=similarity_score,
         similarity_hash=job.similarity_hash,
         is_active=True,
@@ -72,12 +93,20 @@ async def enforce_company_priority_after_match(
     company_name: str | None = None,
 ) -> None:
     """
-    Company dedupe rule after OpenAI match result:
-    1) If any previously saved same-company job is already applied by this user,
-       new job becomes duplicate.
-    2) Else compare match score with previous same-company jobs for this user:
-       - new score > previous best => keep new as valid and demote older company jobs
-       - new score <= previous best => new becomes duplicate
+    Company dedupe rule **after** match analysis (LLM structured job + match score stored).
+
+    Runs once per completed match for the *new* posting (`valid_job_id`). Uses normalized
+    company name (from structured LLM output when provided, else the valid_jobs row).
+
+    1) If any other active same-company job was **already applied** by this user → demote
+       the **new** job (duplicate of the applied row).
+    2) Else if any previous same-company job has a **match score** for this user:
+       - new score **>** previous best → demote those older rows (new wins).
+       - new score **<=** previous best → demote the **new** job (duplicate of best prior).
+    3) Else (same-company rows exist but **none** have a match score yet for this user) →
+       the newly analyzed posting wins; older same-company active rows are demoted.
+       This avoids leaving multiple active listings for one company when only the new
+       job has a score to compare.
     """
     row = await session.execute(select(ValidJob).where(ValidJob.id == valid_job_id))
     current = row.scalar_one_or_none()
@@ -90,7 +119,7 @@ async def enforce_company_priority_after_match(
         return
 
     if company_name and normalize_company(current.company) != company_key:
-        current.company = company_name.strip()
+        current.company = _clip_varchar(company_name.strip(), _VARCHAR_VALID_JOB_COMPANY) or current.company
 
     all_rows = await session.execute(
         select(ValidJob).where(ValidJob.is_active == True).order_by(ValidJob.created_at.asc())
@@ -118,7 +147,12 @@ async def enforce_company_priority_after_match(
             session,
             current.id,
             duplicate_of_job_id=canonical_id,
-            reason=f"Company duplicate: existing applied job retained for '{effective_company}'.",
+            reason=_clip_varchar(
+                f"Company duplicate: existing applied job retained for "
+                f"'{_company_snippet_for_reason(effective_company)}'.",
+                _VARCHAR_DUP_REASON,
+            )
+            or "Company duplicate: existing applied job retained.",
             similarity_score=float(new_match_score) / 100.0,
         )
         return
@@ -131,6 +165,22 @@ async def enforce_company_priority_after_match(
     )
     score_by_job_id = {row.valid_job_id: int(row.overall_score) for row in prev_match_rows.scalars().all()}
     if not score_by_job_id:
+        # First posting at this company (for this user) to have a match score; older
+        # same-company rows have nothing to compare — keep the analyzed job, demote the rest.
+        for prev_job in same_company:
+            await _demote_valid_job_to_invalid(
+                session,
+                prev_job.id,
+                duplicate_of_job_id=current.id,
+                reason=_clip_varchar(
+                    f"Company duplicate: superseded by analyzed posting for "
+                    f"'{_company_snippet_for_reason(effective_company)}' "
+                    f"(no prior match score for comparison).",
+                    _VARCHAR_DUP_REASON,
+                )
+                or "Company duplicate: superseded by analyzed posting.",
+                similarity_score=None,
+            )
         return
 
     best_prev_id, best_prev_score = max(score_by_job_id.items(), key=lambda kv: kv[1])
@@ -139,10 +189,13 @@ async def enforce_company_priority_after_match(
             session,
             current.id,
             duplicate_of_job_id=best_prev_id,
-            reason=(
+            reason=_clip_varchar(
                 f"Company duplicate: lower match score ({new_match_score}) "
-                f"than previous best ({best_prev_score}) for '{effective_company}'."
-            ),
+                f"than previous best ({best_prev_score}) for "
+                f"'{_company_snippet_for_reason(effective_company)}'.",
+                _VARCHAR_DUP_REASON,
+            )
+            or "Company duplicate: lower match score than previous best.",
             similarity_score=float(new_match_score) / 100.0,
         )
         return
@@ -154,10 +207,12 @@ async def enforce_company_priority_after_match(
             session,
             prev_job.id,
             duplicate_of_job_id=current.id,
-            reason=(
+            reason=_clip_varchar(
                 f"Company duplicate: replaced by higher match score job ({new_match_score}) "
-                f"for '{effective_company}'."
-            ),
+                f"for '{_company_snippet_for_reason(effective_company)}'.",
+                _VARCHAR_DUP_REASON,
+            )
+            or "Company duplicate: replaced by higher match score job.",
             similarity_score=(float(prev_score) / 100.0) if prev_score is not None else None,
         )
 

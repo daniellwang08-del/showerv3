@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1"
     openai_max_tokens: int = 4096
     openai_temperature: float = 0.1
+    # HTTP timeout for each OpenAI request (stay below worker job_timeout so jobs fail cleanly).
+    openai_timeout_seconds: float = 240.0
 
     browser_pool_size: int = 5
     browser_timeout_ms: int = 30000

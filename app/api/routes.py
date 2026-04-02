@@ -16,6 +16,7 @@ from app.models.schemas import (
     AiJobSearchResponse,
     InvalidJobResponse,
     JobSubmissionResponse,
+    AttachmentExtractUrlsResponse,
     JobMatchResponse,
     JobAnalysisResponse,
     JobPromotionInfo,
@@ -34,6 +35,7 @@ from app.storage.user_repository import UserRepository, _profile_display_name, u
 from app.services.url_manager import URLManager
 from app.services.deduplication import DeduplicationService
 from app.services.duplication_checker import DuplicationChecker
+from app.services.submit_queue_dedup import find_inflight_valid_job_with_same_url
 from app.extractors.browser_extractor import get_browser_pool_safe
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, get_logger
@@ -54,6 +56,8 @@ from sqlalchemy.exc import IntegrityError
 import asyncio
 from datetime import datetime, timezone
 from app.utils.text_sanitizer import sanitize_for_postgres_text
+from app.services.attachment_text_extract import combine_file_texts, extract_text_from_bytes
+from app.services.attachment_job_url_ai import extract_job_urls_from_text_combined
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -835,7 +839,17 @@ async def submit_job(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ) -> JobSubmissionResponse:
-    """Submit a job link. Duplicate detection happens after LLM extraction/matching."""
+    """
+    Submit a job link.
+
+    **Exact URL queue dedup:** if another active job has the same `source_url` string
+    and is still extracting or in match analysis for this user, the submission is stored
+    as an invalid (duplicate) row and extraction/analysis are not enqueued.
+
+    **Company-level deduplication** after LLM match remains in `enforce_company_priority_after_match`.
+
+    Content-hash duplicate detection (`DuplicationChecker.comprehensive_duplicate_check`) is not run on submit.
+    """
     
     # Validate URL
     is_valid, error = URLManager.validate_url(request.url)
@@ -853,6 +867,61 @@ async def submit_job(
         duplication_checker = DuplicationChecker(session)
         normalized_url = duplication_checker.normalize_url(request.url)
         domain = duplication_checker.extract_domain(request.url)
+        user_id_submit = current_user.get("user_id")
+
+        inflight = await find_inflight_valid_job_with_same_url(
+            session,
+            source_url=request.url,
+            user_id=user_id_submit,
+        )
+        if inflight:
+            sim_hash = duplication_checker.generate_content_hash(
+                request.title or "", request.company or "", request.description or ""
+            )
+            invalid_job = InvalidJob(
+                source_url=request.url,
+                normalized_url=normalized_url,
+                domain=domain,
+                title=request.title,
+                company=request.company or "Unknown",
+                location=request.location,
+                description=request.description,
+                posted_date=request.posted_date,
+                experience_level=request.experience_level,
+                industry=request.industry,
+                duplicate_of_job_id=inflight.id,
+                duplication_reason="Exact URL duplicate while the original is still extracting or being analyzed.",
+                similarity_score=None,
+                similarity_hash=sim_hash,
+                raw_metadata={
+                    "submitted_data": {
+                        "title": request.title,
+                        "company": request.company,
+                        "location": request.location,
+                        "description": request.description,
+                        "posted_date": request.posted_date.isoformat() if request.posted_date else None,
+                        "experience_level": request.experience_level,
+                        "industry": request.industry,
+                    },
+                    "queue_duplicate_detected": True,
+                },
+                is_active=True,
+            )
+            session.add(invalid_job)
+            await session.commit()
+            logger.info(
+                "jobs_submit_queue_duplicate",
+                invalid_job_id=invalid_job.id,
+                duplicate_of_valid_job_id=inflight.id,
+                url=request.url,
+            )
+            return JobSubmissionResponse(
+                success=True,
+                job_id=invalid_job.id,
+                is_duplicate=True,
+                duplicate_job_id=inflight.id,
+                message="Same job URL is already being processed; saved as duplicate.",
+            )
 
         valid_job = ValidJob(
             source_url=request.url,
@@ -934,6 +1003,75 @@ async def submit_job(
             duplicate_job_id=None,
             message="Job submitted successfully",
         )
+
+
+_MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
+_MAX_ATTACHMENT_FILES = 15
+
+
+@router.post(
+    "/jobs/attachment/extract-urls",
+    response_model=AttachmentExtractUrlsResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def extract_job_urls_from_attachments(
+    files: list[UploadFile] = File(...),
+) -> AttachmentExtractUrlsResponse:
+    """
+    Upload Word (.docx), Excel (.xlsx), Markdown, plain text, or HTML files.
+    Text is extracted server-side, then OpenAI returns job-related URLs as JSON.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    if len(files) > _MAX_ATTACHMENT_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files (max {_MAX_ATTACHMENT_FILES})",
+        )
+
+    warnings: list[str] = []
+    parts: list[tuple[str, str]] = []
+
+    for upload in files:
+        filename = (upload.filename or "attachment").strip()
+        raw = await upload.read()
+        if len(raw) > _MAX_ATTACHMENT_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File {filename} exceeds maximum size of {_MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB",
+            )
+        try:
+            text = extract_text_from_bytes(filename, raw)
+        except ValueError as e:
+            warnings.append(f"{filename}: {e}")
+            continue
+        if text.strip():
+            parts.append((filename, text))
+
+    if not parts:
+        raise HTTPException(
+            status_code=400,
+            detail="No readable text from attachments. " + ("; ".join(warnings) if warnings else "Try .docx, .xlsx, .txt, .md, or .html"),
+        )
+
+    combined = combine_file_texts(parts)
+    if not combined.strip():
+        raise HTTPException(status_code=400, detail="Extracted text was empty")
+
+    try:
+        urls = await extract_job_urls_from_text_combined(combined)
+    except AIParsingError as e:
+        logger.warning("extract_urls_ai_failed", error=str(e))
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    logger.info(
+        "extract_job_urls_from_attachments_done",
+        files_processed=len(parts),
+        url_count=len(urls),
+        warning_count=len(warnings),
+    )
+    return AttachmentExtractUrlsResponse(urls=urls, files_processed=len(parts), warnings=warnings)
 
 
 @router.get("/jobs/valid", response_model=list[ValidJobResponse], dependencies=[Depends(get_current_user)])

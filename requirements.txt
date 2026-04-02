@@ -28,3 +28,4 @@ passlib[bcrypt]==1.7.4
 pymupdf==1.25.3
 pypdf==5.1.0
 python-docx==1.1.2
+openpyxl==3.1.5
