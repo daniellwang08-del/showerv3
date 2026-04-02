@@ -11,6 +11,7 @@ import {
   Eye,
   Check,
   X,
+  Loader2,
 } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 import { jobMarkedApplied } from '../utils/appliedStatus';
@@ -40,6 +41,11 @@ type Props = {
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
   compareValidJobId?: string | null;
+  /** Infinite scroll: load older jobs when user nears list bottom */
+  jobListHasMore?: boolean;
+  loadingMoreJobs?: boolean;
+  onLoadMoreJobs?: () => void;
+  jobsLoadedCount?: number;
   children?: React.ReactNode;
 };
 
@@ -62,6 +68,10 @@ export function JobTimeline({
   onJobUrlClick,
   onRescrape,
   compareValidJobId,
+  jobListHasMore,
+  loadingMoreJobs,
+  onLoadMoreJobs,
+  jobsLoadedCount,
   children,
 }: Props) {
   const [sortByDate, setSortByDate] = useState<Record<string, 'platform' | 'matchRate' | 'postedDate'>>({});
@@ -76,6 +86,8 @@ export function JobTimeline({
   const selectionTimeoutFiredRef = useRef(false);
   /** When set, job action menu is shown fixed at this point (right-click); otherwise anchored to the … button. */
   const [jobMenuPoint, setJobMenuPoint] = useState<{ x: number; y: number } | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
   const closeMenu = () => {
     setJobMenuPoint(null);
@@ -413,16 +425,35 @@ export function JobTimeline({
     postedDate: 'By Posted Date',
   };
 
+  useEffect(() => {
+    if (!onLoadMoreJobs || !jobListHasMore || filteredItems.length === 0) return;
+    const root = timelineScrollRef.current;
+    const target = loadMoreSentinelRef.current;
+    if (!root || !target) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.some((e) => e.isIntersecting);
+        if (hit && !loadingMoreJobs) {
+          onLoadMoreJobs();
+        }
+      },
+      { root, rootMargin: '160px 0px', threshold: 0 },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [onLoadMoreJobs, jobListHasMore, loadingMoreJobs, filteredItems.length]);
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
       {/* Timeline with job links */}
-      <div className="timeline-scroll relative min-h-0 flex-1 overflow-y-auto pr-1">
+      <div ref={timelineScrollRef} className="timeline-scroll relative min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="pointer-events-none sticky top-0 z-10 h-5 bg-gradient-to-b from-white via-white/80 to-transparent" />
         {filteredItems.length === 0 ? (
           <div className="text-center py-8 text-slate-400 text-sm">No jobs yet</div>
         ) : (
           // Show with date grouping for all filters
-          <div className="space-y-6 pb">
+          <div className="space-y-6 pb-2">
             {sortedDates.map((dateKey) => (
               <div key={dateKey} className="relative">
                 {/* Timeline marker and date with sort dropdown beside it */}
@@ -996,6 +1027,28 @@ export function JobTimeline({
             ))}
           </div>
         )}
+        {jobListHasMore && onLoadMoreJobs ? (
+          <div className="px-1 pb-6 pt-4">
+            <div
+              ref={loadMoreSentinelRef}
+              className="flex min-h-[56px] flex-col items-center justify-center gap-2 rounded-2xl border border-blue-100/80 bg-gradient-to-b from-blue-50/90 to-white/60 px-4 py-3 shadow-inner"
+            >
+              {loadingMoreJobs ? (
+                <>
+                  <Loader2 className="h-6 w-6 animate-spin text-blue-600" aria-hidden />
+                  <span className="text-xs font-medium text-slate-600">Loading older jobs…</span>
+                </>
+              ) : (
+                <span className="text-center text-[11px] font-medium leading-snug text-slate-500">
+                  Scroll for more — older jobs load automatically
+                  {jobsLoadedCount != null ? (
+                    <span className="mt-1 block tabular-nums text-slate-400">{jobsLoadedCount} loaded</span>
+                  ) : null}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : null}
         <div className="pointer-events-none sticky bottom-0 z-10 h-6 bg-gradient-to-t from-white via-white/80 to-transparent" />
       </div>
 

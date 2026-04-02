@@ -58,6 +58,15 @@ type Props = {
   onCompareDuplicate: (item: SubmittedUrlItem) => void;
   onReplaceDuplicate: (item: SubmittedUrlItem) => void;
   onReportDuplicateAsValid: (item: SubmittedUrlItem) => void;
+
+  jobListHasMore?: boolean;
+  loadingMoreValidJobs?: boolean;
+  onLoadMoreValidJobs?: () => void;
+  validJobsLoadedCount?: number;
+  duplicateListHasMore?: boolean;
+  loadingMoreDuplicates?: boolean;
+  onLoadMoreDuplicates?: () => void;
+  duplicatesLoadedCount?: number;
 };
 
 export function DashboardPage({
@@ -98,6 +107,14 @@ export function DashboardPage({
   onCompareDuplicate,
   onReplaceDuplicate,
   onReportDuplicateAsValid,
+  jobListHasMore,
+  loadingMoreValidJobs,
+  onLoadMoreValidJobs,
+  validJobsLoadedCount,
+  duplicateListHasMore,
+  loadingMoreDuplicates,
+  onLoadMoreDuplicates,
+  duplicatesLoadedCount,
 }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isDuplicatePanelOpen, setDuplicatePanelOpen] = useState(false);
@@ -160,6 +177,10 @@ export function DashboardPage({
               onBatchRescrapePipeline={onBatchRescrapePipeline}
               onJobUrlClick={onJobUrlClick}
               onRescrape={onRescrape}
+              jobListHasMore={jobListHasMore}
+              loadingMoreJobs={loadingMoreValidJobs}
+              onLoadMoreJobs={onLoadMoreValidJobs}
+              jobsLoadedCount={validJobsLoadedCount}
             />
 
             <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden md:bg-gradient-to-b md:from-blue-50/40 md:to-white/70">
@@ -189,6 +210,8 @@ export function DashboardPage({
                   jobs={uniqueUrls}
                   duplicateCount={duplicateUrls.length}
                   loading={loadingLists}
+                  jobsHasMore={jobListHasMore}
+                  jobsLoadedCount={validJobsLoadedCount}
                 />
               )}
             </div>
@@ -256,6 +279,10 @@ export function DashboardPage({
               onReplace={onReplaceDuplicate}
               onReportAsValid={onReportDuplicateAsValid}
               onDelete={onDelete}
+              duplicateListHasMore={duplicateListHasMore}
+              loadingMoreDuplicates={loadingMoreDuplicates}
+              onLoadMoreDuplicates={onLoadMoreDuplicates}
+              duplicatesLoadedCount={duplicatesLoadedCount}
             >
               <></>
             </DuplicateJobsPanel>

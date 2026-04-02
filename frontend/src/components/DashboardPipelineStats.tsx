@@ -20,6 +20,9 @@ type Props = {
   jobs: SubmittedUrlItem[];
   duplicateCount: number;
   loading?: boolean;
+  /** When true, stats reflect loaded pages only; more jobs exist on the server */
+  jobsHasMore?: boolean;
+  jobsLoadedCount?: number;
 };
 
 type PipelineStats = {
@@ -327,7 +330,13 @@ const RANGE_OPTIONS: { value: PipelineRangePreset; label: string }[] = [
   { value: 'all', label: 'All time (monthly)' },
 ];
 
-export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props) {
+export function DashboardPipelineStats({
+  jobs,
+  duplicateCount,
+  loading,
+  jobsHasMore,
+  jobsLoadedCount,
+}: Props) {
   const [rangePreset, setRangePreset] = useState<PipelineRangePreset>('7d');
   const s = useMemo(() => computeStats(jobs), [jobs]);
   const pipelineSeries = useMemo(
@@ -369,6 +378,12 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
               <BarChart3 className="h-5 w-5 text-blue-600" aria-hidden />
               Pipeline overview
             </h3>
+            {jobsHasMore && jobsLoadedCount != null ? (
+              <p className="mt-1 max-w-md text-[11px] leading-snug text-slate-500">
+                Figures below use the <span className="font-semibold text-slate-600">{jobsLoadedCount}</span> jobs
+                currently loaded in To do. Scroll the list to load more history for fuller coverage.
+              </p>
+            ) : null}
           </div>
         </div>
       </div>

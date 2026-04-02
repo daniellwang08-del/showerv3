@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { SubmissionResponse } from './types';
 import { apiClient } from './api/client';
-import { ModalState, SubmittedUrlItem, ExtractionStatusLabel } from './types/ui';
+import { ModalState, SubmittedUrlItem } from './types/ui';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
 import { JobActionModal } from './components/JobActionModal';
@@ -10,8 +10,17 @@ import { useAuth } from './hooks/useAuth';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { ProfilesPage } from './features/profiles/ProfilesPage';
 import { mainViewFromHash, navigateMainView, type MainView } from './mainViewRouting';
-import { parseServerDateTime, toFiniteTimeMs } from './utils/serverDate';
+import { parseServerDateTime } from './utils/serverDate';
 import { logger } from './utils/logger';
+import {
+  JOB_PAGE_SIZE,
+  mapInvalidJobRow,
+  mapValidJobRow,
+  mergeInvalidJobs,
+  mergeValidJobs,
+  type InvalidJobApiRow,
+  type ValidJobApiRow,
+} from './utils/jobListPagination';
 
 function App() {
   const { isAuthenticated, user, authPage, setAuthPage, logout, onAuthSuccess } = useAuth();
@@ -42,6 +51,14 @@ function App() {
 
   const [uniqueUrls, setUniqueUrls] = useState<SubmittedUrlItem[]>([]);
   const [duplicateUrls, setDuplicateUrls] = useState<SubmittedUrlItem[]>([]);
+
+  /** Server offset for the next "older" page (not affected by merge polls). */
+  const [validNextOffset, setValidNextOffset] = useState(0);
+  const [validHasMore, setValidHasMore] = useState(false);
+  const [loadingMoreValid, setLoadingMoreValid] = useState(false);
+  const [invalidNextOffset, setInvalidNextOffset] = useState(0);
+  const [invalidHasMore, setInvalidHasMore] = useState(false);
+  const [loadingMoreInvalid, setLoadingMoreInvalid] = useState(false);
 
   const [url, setUrl] = useState('');
 
@@ -126,7 +143,7 @@ function App() {
         const res = await apiClient.post<{ valid_job_id: string }>(`/jobs/invalid/${modal.id}/promote-to-valid`, {
           reason: modalReason.trim(),
         });
-        await refreshLists();
+        await refreshLists({ showLoading: false, reset: true });
         const newId = res.data?.valid_job_id;
         closeModal();
         if (newId) setJobAnalysisValidJobId(newId);
@@ -159,7 +176,7 @@ function App() {
         await apiClient.delete(`/jobs/invalid/${modal.invalidJobId}`);
       }
 
-      await refreshLists();
+      await refreshLists({ showLoading: false, reset: true });
       closeModal();
     } catch (e: any) {
       setModalError(e.response?.data?.detail || 'Action failed');
@@ -169,96 +186,111 @@ function App() {
     }
   };
 
-  const refreshLists = async (showLoading = true) => {
+  type RefreshOpts = { showLoading?: boolean; reset?: boolean };
+
+  const refreshLists = async (opts: RefreshOpts = {}) => {
+    const showLoading = opts.showLoading !== false;
+    const reset = opts.reset === true;
+
     if (!isAuthenticated) return;
     const shouldShowLoading = showLoading && isInitialListsLoad.current;
     try {
       if (shouldShowLoading) setLoadingLists(true);
 
       const [validRes, invalidRes] = await Promise.all([
-        apiClient.get(`/jobs/valid?limit=2000`),
-        apiClient.get(`/jobs/invalid?limit=2000`),
+        apiClient.get<ValidJobApiRow[]>(`/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=0`),
+        apiClient.get<InvalidJobApiRow[]>(`/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0`),
       ]);
 
-      const valid = validRes.data as Array<{
-        id: string;
-        source_url: string;
-        created_at: string;
-        posted_date?: string | null;
-        scraped_at: string | null;
-        extraction_id: string | null;
-        extraction_status: string | null;
-        match_overall_score: number | null;
-        match_status: string | null;
-        click_count?: number;
-        applied_at?: string | null;
-        applied_by_name?: string | null;
-      }>;
-      const invalid = invalidRes.data as Array<{
-        id: string;
-        source_url: string;
-        duplicate_of_job_id: string | null;
-        duplication_reason: string | null;
-        created_at: string;
-      }>;
+      const mappedValid = (validRes.data ?? []).map((j) => mapValidJobRow(j));
+      const mappedInvalid = (invalidRes.data ?? []).map((j) => mapInvalidJobRow(j));
 
-      setUniqueUrls(
-        valid.map((j) => {
-          const scrapedMs = j.scraped_at ? parseServerDateTime(j.scraped_at) : undefined;
-          const createdMs = parseServerDateTime(j.created_at) ?? 0;
-          const postedDateMs = j.posted_date ? parseServerDateTime(j.posted_date) : undefined;
-          const raw = j as {
-            applied_at?: string | null;
-            applied_by_name?: string | null;
-            appliedAt?: string | null;
-            applied_by?: string | null;
-          };
-          const appliedRaw = raw.applied_at ?? raw.appliedAt;
-          const nameRaw = raw.applied_by_name ?? raw.applied_by;
-          const appliedAtParsed = toFiniteTimeMs(appliedRaw ?? undefined);
-          return {
-            id: j.id,
-            url: j.source_url,
-            message: 'Job submitted successfully',
-            job_id: j.id,
-            duplicate_job_id: null,
-            created_at_ms: createdMs,
-            scraped_at_ms: scrapedMs,
-            extraction_id: j.extraction_id ?? undefined,
-            extraction_status: (j.extraction_status as ExtractionStatusLabel | null) ?? undefined,
-            match_overall_score: j.match_overall_score ?? undefined,
-            match_status: j.match_status ?? undefined,
-            click_count: j.click_count ?? 0,
-            posted_date_ms: postedDateMs,
-            appliedAt: appliedAtParsed,
-            appliedBy: nameRaw?.trim() ? nameRaw.trim() : undefined,
-            table: 'valid' as const,
-          };
-        }),
-      );
-
-      setDuplicateUrls(
-        invalid.map((j) => ({
-          id: j.id,
-          url: j.source_url,
-          message: j.duplication_reason ?? 'Duplicate job detected',
-          job_id: j.id,
-          duplicate_job_id: j.duplicate_of_job_id,
-          created_at_ms: Date.parse(j.created_at),
-          table: 'invalid' as const,
-        })),
-      );
+      if (reset) {
+        setUniqueUrls(mappedValid);
+        setDuplicateUrls(mappedInvalid);
+        setValidNextOffset(mappedValid.length);
+        setValidHasMore(mappedValid.length === JOB_PAGE_SIZE);
+        setInvalidNextOffset(mappedInvalid.length);
+        setInvalidHasMore(mappedInvalid.length === JOB_PAGE_SIZE);
+      } else {
+        setUniqueUrls((prev) => mergeValidJobs(prev, mappedValid));
+        setDuplicateUrls((prev) => mergeInvalidJobs(prev, mappedInvalid));
+      }
       isInitialListsLoad.current = false;
-    } catch (e) {
+    } catch {
       return;
     } finally {
       if (shouldShowLoading) setLoadingLists(false);
     }
   };
 
+  const loadMoreValidJobs = async () => {
+    if (!isAuthenticated || !validHasMore || loadingMoreValid) return;
+    setLoadingMoreValid(true);
+    try {
+      const res = await apiClient.get<ValidJobApiRow[]>(
+        `/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=${validNextOffset}`,
+      );
+      const chunk = (res.data ?? []).map((j) => mapValidJobRow(j));
+      if (chunk.length === 0) {
+        setValidHasMore(false);
+        return;
+      }
+      setUniqueUrls((prev) => {
+        const seen = new Set(prev.map((j) => j.id));
+        const merged = [...prev];
+        for (const j of chunk) {
+          if (!seen.has(j.id)) {
+            seen.add(j.id);
+            merged.push(j);
+          }
+        }
+        return merged.sort((a, b) => b.created_at_ms - a.created_at_ms);
+      });
+      setValidNextOffset((o) => o + chunk.length);
+      setValidHasMore(chunk.length === JOB_PAGE_SIZE);
+    } catch {
+      return;
+    } finally {
+      setLoadingMoreValid(false);
+    }
+  };
+
+  const loadMoreInvalidJobs = async () => {
+    if (!isAuthenticated || !invalidHasMore || loadingMoreInvalid) return;
+    setLoadingMoreInvalid(true);
+    try {
+      const res = await apiClient.get<InvalidJobApiRow[]>(
+        `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=${invalidNextOffset}`,
+      );
+      const chunk = (res.data ?? []).map((j) => mapInvalidJobRow(j));
+      if (chunk.length === 0) {
+        setInvalidHasMore(false);
+        return;
+      }
+      setDuplicateUrls((prev) => {
+        const seen = new Set(prev.map((j) => j.id));
+        const merged = [...prev];
+        for (const j of chunk) {
+          if (!seen.has(j.id)) {
+            seen.add(j.id);
+            merged.push(j);
+          }
+        }
+        return merged.sort((a, b) => b.created_at_ms - a.created_at_ms);
+      });
+      setInvalidNextOffset((o) => o + chunk.length);
+      setInvalidHasMore(chunk.length === JOB_PAGE_SIZE);
+    } catch {
+      return;
+    } finally {
+      setLoadingMoreInvalid(false);
+    }
+  };
+
   useEffect(() => {
     if (isAuthenticated) {
-      void refreshLists();
+      void refreshLists({ showLoading: true, reset: true });
     }
   }, [isAuthenticated]);
 
@@ -268,8 +300,6 @@ function App() {
       (u) => u.extraction_status === 'pending' || u.extraction_status === 'processing',
     );
     const hasMatchInProgress = uniqueUrls.some((u) => u.match_status === 'processing');
-    // Brief window after scrape completes: match may still be running (sync worker path or race
-    // before job_match_in_progress is visible). Without this, polling stops and the list can stay on "—".
     const catchupMs = 15 * 60 * 1000;
     const needsMatchScoreCatchup = uniqueUrls.some((u) => {
       if (u.table !== 'valid' || !u.extraction_id || u.extraction_status !== 'completed') return false;
@@ -278,7 +308,7 @@ function App() {
       return Date.now() - refMs < catchupMs;
     });
     if (!hasExtractionInProgress && !hasMatchInProgress && !needsMatchScoreCatchup) return;
-    const interval = setInterval(() => void refreshLists(), 5000);
+    const interval = setInterval(() => void refreshLists({ showLoading: false, reset: false }), 5000);
     return () => clearInterval(interval);
   }, [isAuthenticated, uniqueUrls, uniqueUrls.length]);
 
@@ -327,7 +357,7 @@ function App() {
           setSubmitNoticeKind('success');
           setSubmitNotice(response.message || 'Job submitted successfully.');
         }
-        await refreshLists(false);
+        await refreshLists({ showLoading: false, reset: false });
       } else {
         setSubmitError(response.message || 'Error submitting job');
         setSubmitNotice('');
@@ -362,7 +392,7 @@ function App() {
             : job,
         ),
       );
-      await refreshLists(false);
+      await refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
       setSubmitError(error.response?.data?.detail || 'Failed to save applied status');
       throw error;
@@ -379,7 +409,7 @@ function App() {
           valid_job_ids.includes(job.id) ? { ...job, appliedAt: undefined, appliedBy: undefined } : job,
         ),
       );
-      await refreshLists(false);
+      await refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
       setSubmitError(error.response?.data?.detail || 'Failed to clear applied status');
       throw error;
@@ -389,7 +419,7 @@ function App() {
   const handleRescrape = async (item: SubmittedUrlItem) => {
     try {
       await apiClient.post(`/jobs/valid/${item.id}/rescrape`, { url: item.url });
-      await refreshLists();
+      await refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
       setSubmitError(error.response?.data?.detail || 'Failed to rescrape job');
     }
@@ -452,7 +482,7 @@ function App() {
       
       // Refresh the list after all deletions
       logger.info('ui_batch_delete_refreshing_lists');
-      await refreshLists();
+      await refreshLists({ showLoading: false, reset: true });
       
     } catch (error) {
       logger.error('ui_batch_delete_failed', { error: String(error) });
@@ -466,7 +496,7 @@ function App() {
     setJobAnalysisValidJobId(null);
   }, []);
 
-  const onMatchStored = useCallback(() => void refreshLists(), []);
+  const onMatchStored = useCallback(() => void refreshLists({ showLoading: false, reset: false }), []);
 
   const onMyProfile = useCallback(() => navigateMainView('profiles'), []);
 
@@ -490,7 +520,7 @@ function App() {
           setSubmitError('Cannot compare: original job not found in To do list');
           return;
         }
-        await refreshLists();
+        await refreshLists({ showLoading: false, reset: false });
         scrollToValidJob(targetId);
       })();
     },
@@ -570,7 +600,7 @@ function App() {
           await apiClient.post(`/jobs/valid/${item.id}/match`, null, {
             params: { force: opts?.force === true },
           });
-          void refreshLists();
+          void refreshLists({ showLoading: false, reset: false });
         } catch {
           // ignore
         }
@@ -580,7 +610,7 @@ function App() {
         if (valid_job_ids.length === 0) return;
         try {
           await apiClient.post(`/jobs/valid/match/rerun`, { valid_job_ids });
-          void refreshLists();
+          void refreshLists({ showLoading: false, reset: false });
         } catch {
           // ignore
         }
@@ -590,7 +620,7 @@ function App() {
         if (valid_job_ids.length === 0) return;
         try {
           await apiClient.post(`/jobs/valid/rescrape/batch`, { valid_job_ids });
-          await refreshLists();
+          await refreshLists({ showLoading: false, reset: false });
         } catch (error: any) {
           setSubmitError(error.response?.data?.detail || 'Failed to queue re-scrape');
         }
@@ -616,6 +646,14 @@ function App() {
       onReplaceDuplicate,
       onReportDuplicateAsValid: (item: SubmittedUrlItem) =>
         openModal({ kind: 'promoteInvalidToValid', id: item.id, currentUrl: item.url }),
+      jobListHasMore: validHasMore,
+      loadingMoreValidJobs: loadingMoreValid,
+      onLoadMoreValidJobs: loadMoreValidJobs,
+      validJobsLoadedCount: uniqueUrls.length,
+      duplicateListHasMore: invalidHasMore,
+      loadingMoreDuplicates: loadingMoreInvalid,
+      onLoadMoreDuplicates: loadMoreInvalidJobs,
+      duplicatesLoadedCount: duplicateUrls.length,
     };
   }, [
     user?.email,
@@ -625,6 +663,12 @@ function App() {
     uniqueUrls,
     duplicateUrls,
     loadingLists,
+    validHasMore,
+    loadingMoreValid,
+    loadMoreValidJobs,
+    invalidHasMore,
+    loadingMoreInvalid,
+    loadMoreInvalidJobs,
     url,
     submitNotice,
     submitNoticeKind,

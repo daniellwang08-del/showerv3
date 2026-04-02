@@ -1,7 +1,17 @@
 import type { ReactNode } from 'react';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeftRight, Search, Trash2, AlertCircle, MoreHorizontal, X, ClipboardCheck } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  Search,
+  Trash2,
+  AlertCircle,
+  MoreHorizontal,
+  X,
+  ClipboardCheck,
+  Loader2,
+  ChevronDown,
+} from 'lucide-react';
 import { SubmittedUrlItem } from '../types/ui';
 
 const MENU_WIDTH = 224;
@@ -19,6 +29,10 @@ type Props = {
   onDelete: (item: SubmittedUrlItem) => void;
   onClosePanel: () => void;
   children: ReactNode;
+  duplicateListHasMore?: boolean;
+  loadingMoreDuplicates?: boolean;
+  onLoadMoreDuplicates?: () => void;
+  duplicatesLoadedCount?: number;
 };
 
 function clampDupContextMenu(clientX: number, clientY: number) {
@@ -171,6 +185,10 @@ export function DuplicateJobsPanel({
   onDelete,
   onClosePanel,
   children,
+  duplicateListHasMore,
+  loadingMoreDuplicates,
+  onLoadMoreDuplicates,
+  duplicatesLoadedCount,
 }: Props) {
   const [dupMenuOverride, setDupMenuOverride] = useState<{ left: number; top: number } | null>(null);
 
@@ -182,6 +200,28 @@ export function DuplicateJobsPanel({
   useEffect(() => {
     if (!openMenuId) setDupMenuOverride(null);
   }, [openMenuId]);
+
+  const dupScrollRef = useRef<HTMLDivElement | null>(null);
+  const dupSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!onLoadMoreDuplicates || !duplicateListHasMore || items.length === 0) return;
+    const root = dupScrollRef.current;
+    const target = dupSentinelRef.current;
+    if (!root || !target) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.some((e) => e.isIntersecting);
+        if (hit && !loadingMoreDuplicates) {
+          onLoadMoreDuplicates();
+        }
+      },
+      { root, rootMargin: '120px 0px', threshold: 0 },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, [onLoadMoreDuplicates, duplicateListHasMore, loadingMoreDuplicates, items.length]);
 
   return (
     <>
@@ -196,6 +236,20 @@ export function DuplicateJobsPanel({
               </span>
             </div>
             <p className="mt-1 text-sm text-slate-500">Review and resolve duplicate job postings</p>
+            {items.length > 0 && duplicateListHasMore != null ? (
+              <p className="mt-2 text-[11px] text-slate-500">
+                <span className="font-semibold tabular-nums text-slate-700">{duplicatesLoadedCount ?? items.length}</span>{' '}
+                loaded
+                {duplicateListHasMore ? (
+                  <span className="ml-1 inline-flex items-center gap-0.5 font-semibold text-indigo-600">
+                    <ChevronDown className="h-3 w-3" aria-hidden />
+                    scroll for more
+                  </span>
+                ) : (
+                  <span className="text-slate-400"> · all loaded</span>
+                )}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -211,7 +265,7 @@ export function DuplicateJobsPanel({
           {children}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={dupScrollRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="glass-card rounded-xl border border-blue-200/70 bg-gradient-to-b from-white to-blue-50/30 shadow-sm">
             {loadingLists ? (
               <div className="p-4 text-sm text-slate-500">Loading...</div>
@@ -273,6 +327,21 @@ export function DuplicateJobsPanel({
               </ul>
             )}
           </div>
+          {duplicateListHasMore && onLoadMoreDuplicates && items.length > 0 ? (
+            <div
+              ref={dupSentinelRef}
+              className="mt-2 flex min-h-[48px] flex-col items-center justify-center gap-2 rounded-xl border border-blue-100/90 bg-gradient-to-b from-blue-50/80 to-white/70 px-3 py-2"
+            >
+              {loadingMoreDuplicates ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin text-blue-600" aria-hidden />
+                  <span className="text-[11px] font-medium text-slate-600">Loading more…</span>
+                </>
+              ) : (
+                <span className="text-center text-[10px] text-slate-500">Scroll for older duplicates</span>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
 

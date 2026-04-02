@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type FormEvent } from 'react';
-import { CheckCircle, Loader2, Search, Sparkles, X } from 'lucide-react';
+import { CheckCircle, ChevronDown, Loader2, Search, Sparkles, X } from 'lucide-react';
 import { SubmittedUrlItem } from '../types/ui';
 import JobTimeline from './JobTimeline';
 import { apiClient } from '../api/client';
@@ -23,6 +23,10 @@ type Props = {
   onBatchRescrapePipeline?: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onJobUrlClick?: (item: SubmittedUrlItem) => void;
   onRescrape?: (item: SubmittedUrlItem) => void;
+  jobListHasMore?: boolean;
+  loadingMoreJobs?: boolean;
+  onLoadMoreJobs?: () => void;
+  jobsLoadedCount?: number;
 };
 
 type AiSearchResponse = {
@@ -50,6 +54,10 @@ export function ValidJobsPanel({
   onJobUrlClick,
   onRescrape,
   compareValidJobId,
+  jobListHasMore,
+  loadingMoreJobs,
+  onLoadMoreJobs,
+  jobsLoadedCount,
 }: Props) {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -118,7 +126,6 @@ export function ValidJobsPanel({
           <h2 className="text-2xl font-bold text-slate-900">To do jobs</h2>
         </div>
         <p className="mt-1 text-sm text-slate-500">List of valid job postings to process</p>
-
         <form onSubmit={onSearchSubmit} className="mt-4 space-y-2">
           <label htmlFor="ai-job-search" className="sr-only">
             AI job search
@@ -202,6 +209,10 @@ export function ValidJobsPanel({
           onBatchRescrapePipeline={onBatchRescrapePipeline}
           onJobUrlClick={onJobUrlClick}
           onRescrape={onRescrape}
+          jobListHasMore={jobListHasMore}
+          loadingMoreJobs={loadingMoreJobs}
+          onLoadMoreJobs={onLoadMoreJobs}
+          jobsLoadedCount={jobsLoadedCount}
         />
       </div>
     </div>
