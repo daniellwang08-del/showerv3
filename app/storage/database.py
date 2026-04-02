@@ -19,7 +19,7 @@ async def init_database() -> None:
     settings = get_settings()
 
     engine_kwargs = {
-        "echo": settings.debug,
+        "echo": settings.sqlalchemy_echo,
     }
 
     engine_kwargs["pool_size"] = settings.database_pool_size

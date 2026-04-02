@@ -26,7 +26,7 @@ from app.extractors.browser_extractor import (
     init_browser_pool,
     close_browser_pool,
 )
-from app.core.logging import setup_logging, get_logger
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 

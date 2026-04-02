@@ -5,7 +5,6 @@ from app.core.openai_client import get_openai_client
 from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
 from app.models.schemas import JobDescriptionSchema
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = get_logger(__name__)
 
@@ -35,11 +34,6 @@ class AIParser:
     def __init__(self):
         self._settings = get_settings()
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        reraise=True,
-    )
     async def parse(self, content: str) -> tuple[JobDescriptionSchema, float]:
         client = get_openai_client()
         truncated_content = self._truncate_content(content)

@@ -11,8 +11,6 @@ from io import BytesIO
 from typing import Any
 
 from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
@@ -385,11 +383,6 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     return draft
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=25),
-    reraise=True,
-)
 async def _call_openai_resume(
     *,
     user_text: str | None,

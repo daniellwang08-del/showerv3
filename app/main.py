@@ -3,6 +3,12 @@ FastAPI app. Set Windows event loop policy before any asyncio use.
 Uvicorn reload spawns a child process that imports this module; the policy
 must be set here so the child gets it (start_server.py runs only in parent).
 """
+import warnings
+
+# Before any transitive `import requests` (e.g. tldextract): chardet 7+ fails
+# requests' bundled compatibility check; pin chardet<6 in requirements.txt.
+warnings.filterwarnings("ignore", message="doesn't match a supported version")
+
 import asyncio
 import os
 import sys

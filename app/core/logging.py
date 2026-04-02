@@ -1,6 +1,7 @@
 import logging
 import re
 import sys
+import warnings
 from contextvars import ContextVar
 from uuid import uuid4
 
@@ -120,11 +121,16 @@ def setup_logging() -> None:
         force=True,
     )
 
-    # Suppress SQLAlchemy SQL echo so app logs are visible.
-    # echo=True (set by debug mode) creates a child logger at
-    # "sqlalchemy.engine.Engine" with DEBUG level, so we must suppress both.
+    # Keep SQLAlchemy quiet unless sqlalchemy_echo=True in settings.
+    # Set the parent so pool/dialects/ORM don't spam INFO on the root handler.
+    logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.dialects").setLevel(logging.WARNING)
+
+    # Belt-and-suspenders (see also app/main.py): pin chardet<6 in requirements.txt.
+    warnings.filterwarnings("ignore", message="doesn't match a supported version")
 
 
 def get_logger(name: str) -> structlog.BoundLogger:

@@ -5,8 +5,7 @@ from app.core.config import get_settings
 from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
 from app.services.extraction_service import ExtractionService
 from app.storage.database import get_session
-from app.storage.repository import ValidJobRepository, JobMatchInProgressRepository, JobExtractionRepository
-from app.models.schemas import ExtractionStatus
+from app.storage.repository import ValidJobRepository, JobMatchInProgressRepository
 
 logger = get_logger(__name__)
 
@@ -20,41 +19,12 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
         result = await service.process_job(job_id, url)
         if result.get("status") == "completed":
             confidence = result.get("confidence", 1.0)
-            LOW_CONFIDENCE_THRESHOLD = 0.6
-            MAX_LOW_CONFIDENCE_RETRIES = 3
-
-            if confidence < LOW_CONFIDENCE_THRESHOLD:
-                async with get_session() as session:
-                    extraction_repo = JobExtractionRepository(session)
-                    extraction = await extraction_repo.get_by_id(job_id)
-                    retry_count = extraction.retry_count or 0
-
-                    if retry_count < MAX_LOW_CONFIDENCE_RETRIES:
-                        await extraction_repo.increment_retry(job_id)
-                        await extraction_repo.update_status(job_id, ExtractionStatus.PENDING)
-                        await session.commit()
-
-                        # Re-enqueue extraction to retry
-                        pool = await get_redis_pool()
-                        await pool.enqueue_job("extract_job", job_id, url, user_id) if user_id else await pool.enqueue_job("extract_job", job_id, url)
-                        await pool.close()
-
-                        logger.info(
-                            "worker_extract_job_requeued_low_confidence",
-                            job_id=job_id,
-                            url=url,
-                            confidence=confidence,
-                            retry_count=retry_count + 1,
-                        )
-                        return {"job_id": job_id, "status": "requeued", "confidence": confidence}
-
             logger.info(
                 "worker_extract_job_completed",
                 job_id=job_id,
                 method=result.get("method"),
                 confidence=confidence,
             )
-            # Enqueue job match analysis for user who triggered extraction
             if user_id:
                 async with get_session() as session:
                     valid_repo = ValidJobRepository(session)
@@ -89,7 +59,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
             error=str(e),
             traceback=tb,
         )
-        raise
+        return {"job_id": job_id, "status": "failed", "error": str(e)}
     finally:
         clear_logging_context()
 
@@ -108,7 +78,7 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict 
         return result
     except Exception as e:
         logger.exception("worker_analyze_job_match_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
-        raise
+        return None
     finally:
         clear_logging_context()
 
@@ -122,7 +92,7 @@ class WorkerSettings:
         return RedisSettings.from_dsn(settings.redis_url)
 
     job_timeout = 300
-    max_tries = 3
+    max_tries = 1
     queue_name = "job_extraction"
 
 

@@ -37,6 +37,7 @@ from app.services.duplication_checker import DuplicationChecker
 from app.extractors.browser_extractor import get_browser_pool_safe
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, get_logger
+from openai import APIError as OpenAIAPIError
 from app.core.exceptions import AIParsingError
 from app.services.job_ai_search_service import apply_job_search_spec, interpret_job_search_prompt
 from app.services.resume_parse_service import parse_resume_bytes
@@ -362,6 +363,12 @@ async def resume_parse(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e) or "Résumé parsing failed. Check OPENAI_API_KEY and model access.",
+        )
+    except OpenAIAPIError as e:
+        logger.warning("resume_parse_openai_error", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Résumé parsing is temporarily unavailable. Please try again later.",
         )
     except ModuleNotFoundError as e:
         logger.exception("resume_parse_missing_dependency", error=str(e))
@@ -936,6 +943,12 @@ async def ai_search_valid_jobs(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
         spec = await interpret_job_search_prompt(body.prompt)
+    except OpenAIAPIError as e:
+        logger.warning("ai_search_openai_error", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI search is temporarily unavailable. Please try again later.",
+        )
     except AIParsingError as e:
         logger.warning("ai_search_valid_jobs_failed", error=str(e))
         raise HTTPException(

@@ -12,7 +12,6 @@ from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
 from app.prompts.job_match_prompt import JOB_MATCH_SYSTEM_PROMPT, JOB_MATCH_USER_TEMPLATE
 from app.models.schemas import JobDescriptionSchema
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = get_logger(__name__)
 
@@ -129,11 +128,6 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
         return None
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    reraise=True,
-)
 async def analyze_job_match(
     job_text: str,
     profile_text: str,

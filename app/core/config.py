@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = True
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # When True, SQLAlchemy logs every SQL statement (very noisy). Not tied to `debug`.
+    sqlalchemy_echo: bool = False
 
     database_url: str = Field(default="")
     database_pool_size: int = 20

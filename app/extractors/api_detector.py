@@ -1,5 +1,7 @@
 import json
 import re
+from typing import Any
+
 from lxml import html as lxml_html
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.models.schemas import ExtractionMethod
@@ -110,7 +112,7 @@ class APIDetectorExtractor(BaseExtractor):
                 "responsibilities": self._extract_responsibilities(data),
                 "remote_policy": self._extract_remote_policy(data),
                 "experience_level": data.get("experienceRequirements"),
-                "industry": data.get("industry"),
+                "industry": self._normalize_industry(data.get("industry")),
                 "raw_metadata": data,
             }
             return result
@@ -166,6 +168,38 @@ class APIDetectorExtractor(BaseExtractor):
         if emp_type:
             return str(emp_type).replace("_", " ").title()
         return None
+
+    def _normalize_industry(self, value: Any) -> str | None:
+        """JSON-LD may use Text, DefinedTerm, or a list; JobDescriptionSchema expects str | None."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            t = self._clean_text(value)
+            return t if t else None
+        if isinstance(value, list):
+            if not value:
+                return None
+            parts: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    p = self._clean_text(item)
+                    if p:
+                        parts.append(p)
+                elif isinstance(item, dict):
+                    n = item.get("name") or item.get("termCode")
+                    if n is not None:
+                        p = self._clean_text(str(n))
+                        if p:
+                            parts.append(p)
+            return ", ".join(parts) if parts else None
+        if isinstance(value, dict):
+            n = value.get("name") or value.get("termCode")
+            if n is None:
+                return None
+            t = self._clean_text(str(n))
+            return t if t else None
+        t = self._clean_text(str(value))
+        return t if t else None
 
     def _extract_salary(self, data: dict) -> str | None:
         salary = data.get("baseSalary") or data.get("estimatedSalary")

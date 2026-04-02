@@ -20,5 +20,5 @@ def get_openai_client() -> AsyncOpenAI:
         settings = get_settings()
         if not settings.openai_api_key:
             raise AIParsingError("OpenAI API key not configured")
-        _client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _client = AsyncOpenAI(api_key=settings.openai_api_key, max_retries=0)
     return _client

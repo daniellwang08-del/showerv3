@@ -64,53 +64,60 @@ class ExtractionService:
                     logger.warning("ashby_api_extract_failed", job_id=job_id, url=url, error=result.error)
 
             # 2. Fetch HTML for other extractors
-            html_content, status_code, headers = await self.http_service.fetch(url)
+            html_content: str | None = None
+            try:
+                html_content, status_code, headers = await self.http_service.fetch(url)
+            except Exception as e:
+                last_error = str(e)
+                logger.warning("http_fetch_failed_will_try_browser", job_id=job_id, url=url, error=str(e))
 
-            # 3. Try JSON-LD Extraction (schema.org JobPosting in <script type="application/ld+json">)
-            if await self.api_extractor.can_extract(url, html_content):
-                result = await self.api_extractor.extract(url, html_content)
-                if result.success and result.structured_data:
-                    return await self._finalize_extraction(
-                        job_id,
-                        result.structured_data,
-                        result.method,
-                        result.confidence,
-                        html_content
-                    )
-                if result.error:
-                    last_error = result.error
-
-            # 4. Try HTML Extraction (readability + lxml)
-            result = await self.html_extractor.extract(url, html_content)
-            if result.success and result.structured_data:
-                ai_parser = get_ai_parser()
-                description = result.structured_data.get("description", html_content)
-                try:
-                    job_data, confidence = await ai_parser.parse(description)
-                    self._merge_job_data(job_data, result.structured_data)
-                    validation = validate_job_data(job_data, confidence)
-                    if validation.is_valid:
-                        return await self._save_result(
+            if html_content is not None:
+                # 3. Try JSON-LD Extraction (schema.org JobPosting in <script type="application/ld+json">)
+                if await self.api_extractor.can_extract(url, html_content):
+                    result = await self.api_extractor.extract(url, html_content)
+                    if result.success and result.structured_data:
+                        return await self._finalize_extraction(
                             job_id,
-                            job_data,
-                            ExtractionMethod.STATIC_HTML,
-                            validation.adjusted_confidence,
+                            result.structured_data,
+                            result.method,
+                            result.confidence,
                             html_content
                         )
-                    last_error = f"Validation failed: {', '.join(validation.errors)}"
-                except AIParsingError as e:
-                    last_error = f"AI parsing failed: {e}"
-            elif result.error:
-                last_error = result.error
+                    if result.error:
+                        last_error = result.error
+
+                # 4. Try HTML Extraction (readability + lxml)
+                result = await self.html_extractor.extract(url, html_content)
+                if result.success and result.structured_data:
+                    ai_parser = get_ai_parser()
+                    description = result.structured_data.get("description", html_content)
+                    try:
+                        job_data, confidence = await ai_parser.parse(description)
+                        self._merge_job_data(job_data, result.structured_data)
+                        validation = validate_job_data(job_data, confidence)
+                        if validation.is_valid:
+                            return await self._save_result(
+                                job_id,
+                                job_data,
+                                ExtractionMethod.STATIC_HTML,
+                                validation.adjusted_confidence,
+                                html_content
+                            )
+                        last_error = f"Validation failed: {', '.join(validation.errors)}"
+                    except AIParsingError as e:
+                        last_error = f"AI parsing failed: {e}"
+                elif result.error:
+                    last_error = result.error
 
             # 5. Try Browser Extraction (only if Playwright available)
             if await self.browser_extractor.can_extract(url):
                 browser_result = await self.browser_extractor.extract(url)
                 if browser_result.success and browser_result.raw_content:
                     ai_parser = get_ai_parser()
+                    job_data = None
+                    confidence = 0.0
 
                     if browser_result.structured_data:
-                        # Use extracted structured data from rendered HTML when available.
                         description = browser_result.structured_data.get("description", browser_result.raw_content)
                         try:
                             job_data, confidence = await ai_parser.parse(description)
@@ -123,17 +130,17 @@ class ExtractionService:
                         except AIParsingError as e:
                             last_error = f"AI parsing failed: {e}"
 
-                    validation = validate_job_data(job_data, confidence)
-                    if validation.is_valid:
-                        return await self._save_result(
-                            job_id,
-                            job_data,
-                            ExtractionMethod.BROWSER_RENDER,
-                            validation.adjusted_confidence,
-                            browser_result.raw_content
-                        )
-
-                    last_error = f"Validation failed: {', '.join(validation.errors)}"
+                    if job_data is not None:
+                        validation = validate_job_data(job_data, confidence)
+                        if validation.is_valid:
+                            return await self._save_result(
+                                job_id,
+                                job_data,
+                                ExtractionMethod.BROWSER_RENDER,
+                                validation.adjusted_confidence,
+                                browser_result.raw_content
+                            )
+                        last_error = f"Validation failed: {', '.join(validation.errors)}"
                 if browser_result.error:
                     last_error = browser_result.error
             else:
@@ -215,8 +222,11 @@ class ExtractionService:
                 raw_metadata=structured_data.get("raw_metadata", {}),
             )
         else:
-            ai_parser = get_ai_parser()
-            job_data, confidence = await ai_parser.parse(str(structured_data))
+            try:
+                ai_parser = get_ai_parser()
+                job_data, confidence = await ai_parser.parse(str(structured_data))
+            except AIParsingError as e:
+                return await self._save_failed(job_id, f"AI parsing failed: {e}")
 
         validation = validate_job_data(job_data, confidence)
 
@@ -278,7 +288,6 @@ class ExtractionService:
         async with get_session() as session:
             repository = JobExtractionRepository(session)
             await repository.update_status(job_id, ExtractionStatus.FAILED, error)
-            await repository.increment_retry(job_id)
 
         logger.error(
             "extraction_failed_final",

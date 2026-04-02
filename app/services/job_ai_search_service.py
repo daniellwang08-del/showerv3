@@ -12,8 +12,6 @@ from typing import Any
 from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
@@ -240,11 +238,6 @@ def _row_matches(
     return True
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=20),
-    reraise=True,
-)
 async def interpret_job_search_prompt(prompt: str) -> JobSearchQuerySpec:
     client: AsyncOpenAI = get_openai_client()
     settings = get_settings()
