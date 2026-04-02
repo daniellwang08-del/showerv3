@@ -126,28 +126,23 @@ type ScoreChipProps = {
   onClick?: (e: MouseEvent) => void;
 };
 
-/** Saved match score — same footprint as before (h-8 · min-w-[2rem] · px-2 · text-xs) */
+/** Saved match score — balanced tint: stronger than flat -50, softer than full saturated gradients */
 export function MatchScoreChip({ score, className = '', title, onClick }: ScoreChipProps) {
   const band =
     score >= 75
-      ? 'border border-white/30 bg-gradient-to-br from-emerald-400 via-emerald-600 to-green-900 shadow-lg shadow-emerald-950/28 ring-1 ring-white/15'
+      ? 'border border-emerald-300/95 bg-gradient-to-b from-emerald-100 to-emerald-50/95 text-emerald-950 shadow-md shadow-emerald-900/12 group-hover:border-emerald-400/90 group-hover:from-emerald-200 group-hover:to-emerald-100 group-hover:shadow-lg group-hover:shadow-emerald-900/15'
       : score >= 45
-        ? 'border border-white/30 bg-gradient-to-br from-sky-400 via-blue-600 to-indigo-800 shadow-lg shadow-blue-950/26 ring-1 ring-white/15'
-        : 'border border-white/30 bg-gradient-to-br from-amber-400 via-orange-500 to-amber-900 shadow-lg shadow-orange-950/22 ring-1 ring-white/15';
+        ? 'border border-sky-300/90 bg-gradient-to-b from-sky-100 to-slate-50 text-sky-950 shadow-md shadow-sky-900/10 group-hover:border-sky-400/85 group-hover:from-sky-200/95 group-hover:to-sky-50 group-hover:shadow-lg group-hover:shadow-sky-900/12'
+        : 'border border-amber-300/95 bg-gradient-to-b from-amber-100 to-amber-50/95 text-amber-950 shadow-md shadow-amber-900/12 group-hover:border-amber-400/90 group-hover:from-amber-200 group-hover:to-amber-100 group-hover:shadow-lg group-hover:shadow-amber-900/15';
 
   const interactiveChip =
-    'transition-[box-shadow,filter] duration-200 ease-out group-hover:shadow-[0_10px_26px_-8px_rgb(15_23_42/0.35)] group-hover:ring-2 group-hover:ring-white/45 group-hover:brightness-[1.06] group-active:shadow-[inset_0_3px_12px_rgb(0_0_0/0.22)] group-active:brightness-95 group-active:ring-white/25';
+    'transition-[box-shadow,background-color,border-color,transform] duration-200 ease-out group-active:scale-[0.98]';
 
   const content = (
     <span
-      className={`relative isolate flex h-8 min-w-[2rem] items-center justify-center overflow-hidden rounded-full px-2 text-xs font-bold tabular-nums tracking-tight text-white ${band} ${onClick ? interactiveChip : ''} ${className}`}
+      className={`flex h-8 min-w-[2rem] items-center justify-center rounded-full px-2 text-xs font-bold tabular-nums tracking-tight ${band} ${onClick ? interactiveChip : ''} ${className}`}
     >
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/[0.22] via-transparent to-black/[0.12] group-active:opacity-90"
-      />
-      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-white/35 transition-opacity group-hover:bg-white/50" />
-      <span className="relative z-[1] [text-shadow:0_1px_1px_rgb(0_0_0/0.22)]">{score}</span>
+      {score}
     </span>
   );
 
@@ -157,7 +152,7 @@ export function MatchScoreChip({ score, className = '', title, onClick }: ScoreC
         type="button"
         title={title}
         onClick={onClick}
-        className="group origin-center shrink-0 cursor-pointer rounded-full border-0 bg-transparent p-0 [touch-action:manipulation] [-webkit-tap-highlight-color:transparent] transition-transform duration-200 ease-out hover:scale-105 active:scale-[0.96] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/90 focus-visible:ring-offset-2"
+        className="group origin-center shrink-0 cursor-pointer rounded-full border-0 bg-transparent p-0 [touch-action:manipulation] [-webkit-tap-highlight-color:transparent] transition-transform duration-200 ease-out hover:scale-[1.02] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/55 focus-visible:ring-offset-2"
       >
         {content}
       </button>

@@ -104,32 +104,32 @@ type Props = {
   onAnalysisUpdated?: () => void;
 };
 
-/** Large overall score — same band logic as list `MatchScoreChip`, gradient + white text */
+/** Large overall score — same band language as `MatchScoreChip` */
 function matchScoreHeroClass(score: number): string {
   if (score >= 75) {
-    return 'border border-white/30 bg-gradient-to-br from-emerald-400 via-emerald-600 to-green-900 shadow-xl shadow-emerald-950/30 ring-1 ring-white/20';
+    return 'border border-emerald-300/95 bg-gradient-to-b from-emerald-100 to-emerald-50/95 text-emerald-950 shadow-md shadow-emerald-900/12';
   }
   if (score >= 45) {
-    return 'border border-white/30 bg-gradient-to-br from-sky-400 via-blue-600 to-indigo-800 shadow-xl shadow-blue-950/28 ring-1 ring-white/20';
+    return 'border border-sky-300/90 bg-gradient-to-b from-sky-100 to-slate-50 text-sky-950 shadow-md shadow-sky-900/10';
   }
-  return 'border border-white/30 bg-gradient-to-br from-amber-400 via-orange-500 to-amber-900 shadow-xl shadow-orange-950/25 ring-1 ring-white/20';
+  return 'border border-amber-300/95 bg-gradient-to-b from-amber-100 to-amber-50/95 text-amber-950 shadow-md shadow-amber-900/12';
 }
 
-/** Per-dimension mini badges — gradient pills aligned with score bands */
+/** Per-dimension mini badges — mid-strength tints */
 function matchScoreDimensionBadgeClass(score: number): string {
   if (score >= 80) {
-    return 'border border-white/25 bg-gradient-to-br from-emerald-500 to-emerald-900 text-white shadow-md shadow-emerald-950/20';
+    return 'border border-emerald-300/85 bg-gradient-to-b from-emerald-100 to-emerald-50 text-emerald-950 shadow-sm';
   }
   if (score >= 65) {
-    return 'border border-white/25 bg-gradient-to-br from-green-500 to-green-800 text-white shadow-md shadow-green-950/20';
+    return 'border border-green-300/85 bg-gradient-to-b from-green-100 to-green-50 text-green-950 shadow-sm';
   }
   if (score >= 50) {
-    return 'border border-white/25 bg-gradient-to-br from-amber-400 to-amber-800 text-white shadow-md shadow-amber-950/15';
+    return 'border border-amber-300/85 bg-gradient-to-b from-amber-100 to-amber-50 text-amber-950 shadow-sm';
   }
   if (score >= 35) {
-    return 'border border-white/25 bg-gradient-to-br from-orange-500 to-orange-900 text-white shadow-md shadow-orange-950/20';
+    return 'border border-orange-300/85 bg-gradient-to-b from-orange-100 to-orange-50 text-orange-950 shadow-sm';
   }
-  return 'border border-white/25 bg-gradient-to-br from-red-500 to-red-950 text-white shadow-md shadow-red-950/25';
+  return 'border border-red-300/85 bg-gradient-to-b from-red-100 to-red-50 text-red-950 shadow-sm';
 }
 
 function MetaTile({
@@ -402,13 +402,13 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: P
 
         {!initialLoading && !loadError && analysis && (
           <div className="animate-content-in space-y-6 text-sm">
-            <section className="relative overflow-hidden rounded-2xl border border-blue-200/55 bg-gradient-to-br from-blue-100/90 via-white to-indigo-50/80 p-5 shadow-lg shadow-blue-900/10 ring-1 ring-blue-100/70">
+            <section className="relative overflow-hidden rounded-2xl border border-sky-200/70 bg-gradient-to-br from-sky-50/95 via-white to-slate-50/50 p-5 shadow-md shadow-sky-900/5 ring-1 ring-sky-100/70">
               <div
                 aria-hidden
-                className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-gradient-to-br from-blue-400/20 to-indigo-500/10 blur-2xl"
+                className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-gradient-to-br from-sky-300/25 to-indigo-200/15 blur-2xl"
               />
-              <div className="relative mb-4 flex flex-wrap items-center gap-2 border-b border-blue-200/50 pb-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-800 text-white shadow-md shadow-blue-950/25 ring-1 ring-white/25">
+              <div className="relative mb-4 flex flex-wrap items-center gap-2 border-b border-sky-200/55 pb-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/80 bg-gradient-to-b from-sky-100 to-sky-50 text-sky-800 shadow-sm">
                   <Target className="h-4 w-4" strokeWidth={2.25} aria-hidden />
                 </span>
                 <div>
@@ -447,16 +447,9 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: P
                 <div className="space-y-5">
                   <div className="flex flex-wrap items-center gap-3">
                     <div
-                      className={`relative isolate overflow-hidden rounded-2xl px-6 py-3 text-3xl font-bold tabular-nums tracking-tight text-white ${matchScoreHeroClass(analysis.match.overall_score)}`}
+                      className={`rounded-2xl px-6 py-3 text-3xl font-bold tabular-nums tracking-tight ${matchScoreHeroClass(analysis.match.overall_score)}`}
                     >
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/[0.22] via-transparent to-black/[0.15]"
-                      />
-                      <span aria-hidden className="absolute inset-x-3 top-0 h-px bg-white/40" />
-                      <span className="relative z-[1] [text-shadow:0_2px_4px_rgb(0_0_0/0.25)]">
-                        {analysis.match.overall_score}
-                      </span>
+                      {analysis.match.overall_score}
                     </div>
                     <div>
                       <span className="text-base font-semibold text-slate-800">
