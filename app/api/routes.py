@@ -72,6 +72,83 @@ class PromoteInvalidRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500)
 
 
+class InvalidJobIdsBatchRequest(BaseModel):
+    invalid_job_ids: list[str] = Field(..., min_length=1, max_length=200)
+
+
+async def _purge_valid_job_cascade(session, job_id: str) -> bool:
+    """
+    Delete a valid job row and related match/progress/application rows.
+    Remove JobExtraction when no other valid job references it.
+    Returns False if the valid job row was not found.
+    """
+    result = await session.execute(select(ValidJob).where(ValidJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        return False
+
+    extraction_id = job.extraction_id
+
+    match_rows = await session.execute(
+        select(JobMatchResult).where(JobMatchResult.valid_job_id == job_id)
+    )
+    for row in match_rows.scalars().all():
+        await session.delete(row)
+
+    progress_rows = await session.execute(
+        select(JobMatchInProgress).where(JobMatchInProgress.valid_job_id == job_id)
+    )
+    for row in progress_rows.scalars().all():
+        await session.delete(row)
+
+    app_rows = await session.execute(
+        select(ValidJobUserApplication).where(ValidJobUserApplication.valid_job_id == job_id)
+    )
+    for row in app_rows.scalars().all():
+        await session.delete(row)
+
+    await session.delete(job)
+
+    if extraction_id:
+        other_ref = await session.execute(
+            select(ValidJob.id).where(
+                ValidJob.extraction_id == extraction_id,
+                ValidJob.id != job_id,
+            ).limit(1)
+        )
+        if other_ref.scalar_one_or_none() is None:
+            extraction_result = await session.execute(
+                select(JobExtraction).where(JobExtraction.id == extraction_id)
+            )
+            extraction = extraction_result.scalar_one_or_none()
+            if extraction:
+                await session.delete(extraction)
+    return True
+
+
+async def _purge_invalid_job_cascade(session, invalid_job_id: str) -> bool:
+    """
+    Remove an invalid (duplicate) job row. Also removes shadow inactive ValidJob rows
+    for the same normalized URL (created when reporting/demoting) and their extractions.
+    """
+    result = await session.execute(select(InvalidJob).where(InvalidJob.id == invalid_job_id))
+    inv = result.scalar_one_or_none()
+    if not inv:
+        return False
+
+    shadow = await session.execute(
+        select(ValidJob).where(
+            ValidJob.normalized_url == inv.normalized_url,
+            ValidJob.is_active == False,
+        )
+    )
+    for v in shadow.scalars().all():
+        await _purge_valid_job_cascade(session, v.id)
+
+    await session.delete(inv)
+    return True
+
+
 async def get_current_user(request: Request):
     token = request.cookies.get("access_token")
     if not token:
@@ -1943,44 +2020,12 @@ async def report_invalid_as_duplicate(job_id: str, request: JobReportRequest) ->
 @router.delete("/jobs/valid/{job_id}", dependencies=[Depends(get_current_user)])
 async def delete_valid_job(job_id: str) -> dict:
     async with get_session() as session:
-        result = await session.execute(select(ValidJob).where(ValidJob.id == job_id))
-        job = result.scalar_one_or_none()
-        if not job:
+        ext_row = await session.execute(select(ValidJob.extraction_id).where(ValidJob.id == job_id))
+        extraction_id = ext_row.scalar_one_or_none()
+        ok = await _purge_valid_job_cascade(session, job_id)
+        if not ok:
             logger.warning("delete_valid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Valid job not found")
-
-        extraction_id = job.extraction_id
-
-        # Remove AI match artifacts tied to this valid job.
-        match_rows = await session.execute(
-            select(JobMatchResult).where(JobMatchResult.valid_job_id == job_id)
-        )
-        for row in match_rows.scalars().all():
-            await session.delete(row)
-
-        progress_rows = await session.execute(
-            select(JobMatchInProgress).where(JobMatchInProgress.valid_job_id == job_id)
-        )
-        for row in progress_rows.scalars().all():
-            await session.delete(row)
-
-        await session.delete(job)
-
-        # Remove extracted content for this job URL when no other valid job references it.
-        if extraction_id:
-            other_ref = await session.execute(
-                select(ValidJob.id).where(
-                    ValidJob.extraction_id == extraction_id,
-                    ValidJob.id != job_id,
-                ).limit(1)
-            )
-            if other_ref.scalar_one_or_none() is None:
-                extraction_result = await session.execute(
-                    select(JobExtraction).where(JobExtraction.id == extraction_id)
-                )
-                extraction = extraction_result.scalar_one_or_none()
-                if extraction:
-                    await session.delete(extraction)
 
         await session.commit()
         logger.info(
@@ -1994,13 +2039,25 @@ async def delete_valid_job(job_id: str) -> dict:
 @router.delete("/jobs/invalid/{job_id}", dependencies=[Depends(get_current_user)])
 async def delete_invalid_job(job_id: str) -> dict:
     async with get_session() as session:
-        result = await session.execute(select(InvalidJob).where(InvalidJob.id == job_id))
-        job = result.scalar_one_or_none()
-        if not job:
+        ok = await _purge_invalid_job_cascade(session, job_id)
+        if not ok:
             logger.warning("delete_invalid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Invalid job not found")
 
-        await session.delete(job)
         await session.commit()
         logger.info("delete_invalid_job_success", job_id=job_id)
         return {"success": True}
+
+
+@router.post("/jobs/invalid/delete/batch", dependencies=[Depends(get_current_user)])
+async def delete_invalid_jobs_batch(body: InvalidJobIdsBatchRequest) -> dict:
+    """Delete multiple invalid jobs with the same cascade as DELETE /jobs/invalid/{id}."""
+    ids = list(dict.fromkeys(i for i in body.invalid_job_ids if i and str(i).strip()))
+    async with get_session() as session:
+        deleted = 0
+        for jid in ids:
+            if await _purge_invalid_job_cascade(session, jid):
+                deleted += 1
+        await session.commit()
+    logger.info("delete_invalid_jobs_batch", count=deleted, requested=len(ids))
+    return {"success": True, "deleted": deleted}

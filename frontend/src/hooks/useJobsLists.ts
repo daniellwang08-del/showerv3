@@ -173,8 +173,7 @@ export function useJobsLists(isAuthenticated: boolean) {
               ]);
             }
           } else {
-            setSubmitNoticeKind('success');
-            setSubmitNotice(response.message || 'Job submitted successfully.');
+            setSubmitNotice('');
           }
           await refreshLists(false);
         } else {

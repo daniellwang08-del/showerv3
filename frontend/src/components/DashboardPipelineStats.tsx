@@ -12,7 +12,6 @@ import {
 import type { SubmittedUrlItem } from '../types/ui';
 import { jobMarkedApplied } from '../utils/appliedStatus';
 import { localCalendarDayKey, localCalendarMonthKey, toFiniteTimeMs } from '../utils/serverDate';
-import { MatchScoreChip, PipelineQuarterRing } from './PipelineProgressRing';
 
 export type PipelineRangePreset = '7d' | '14d' | '30d' | 'all';
 
@@ -572,51 +571,6 @@ export function DashboardPipelineStats({
               value={duplicateCount}
               hint="Rows in Check required"
             />
-          </div>
-
-          <div className="mt-4 shrink-0 border-t border-blue-100/80 pt-4">
-            <div className="rounded-xl border border-slate-200/80 bg-gradient-to-b from-white/95 to-slate-50/40 px-3 py-2.5 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Extraction & match pipeline</div>
-              <p className="mt-1 text-xs leading-snug text-slate-700">
-                {s.extraction.failed > 0 && (
-                  <span className="mr-2 inline-flex items-center rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700">
-                    Failed {s.extraction.failed}
-                  </span>
-                )}
-                <span className="text-slate-600">
-                  In queue {s.extraction.pending + s.extraction.processing}
-                  <span className="text-slate-400"> · </span>
-                  Posting extracted {s.extraction.completed}
-                </span>
-              </p>
-              <div className="mt-2.5 border-t border-slate-100/90 pt-2.5">
-                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Row indicator key</p>
-                <p className="mt-1 text-[10px] leading-snug text-slate-500">
-                  On the job list, the ring shows a <span className="font-medium text-slate-600">spinning dot</span> and soft
-                  pulse until your match score is saved (static icons here).
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2.5 text-[11px] text-slate-600">
-                  <span className="inline-flex items-center gap-2">
-                    <PipelineQuarterRing filled={1} phase="queue" showActivity={false} className="opacity-95" aria-hidden />
-                    <span className="max-w-[9rem] leading-snug">Amber ¼ - extraction queued or running</span>
-                  </span>
-                  <span className="inline-flex items-center gap-2">
-                    <PipelineQuarterRing filled={2} phase="extracted" showActivity={false} className="opacity-95" aria-hidden />
-                    <span className="max-w-[9rem] leading-snug">Blue ½ - posting text ready; match not started</span>
-                  </span>
-                  <span className="inline-flex items-center gap-2">
-                    <PipelineQuarterRing filled={3} phase="analyzing" showActivity={false} className="opacity-95" aria-hidden />
-                    <span className="max-w-[9rem] leading-snug">Amber ¾ - AI match in progress</span>
-                  </span>
-                  <span className="inline-flex items-center gap-2">
-                    <span className="inline-flex select-none" aria-hidden>
-                      <MatchScoreChip score={82} />
-                    </span>
-                    <span className="max-w-[9rem] leading-snug">Saved score replaces the ring when analysis is stored</span>
-                  </span>
-                </div>
-              </div>
-            </div>
           </div>
         </>
       )}

@@ -6,6 +6,7 @@ import { ModalState, SubmittedUrlItem } from './types/ui';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
 import { JobActionModal } from './components/JobActionModal';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { useAuth } from './hooks/useAuth';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { ProfilesPage } from './features/profiles/ProfilesPage';
@@ -61,6 +62,10 @@ function App() {
   const [loadingMoreInvalid, setLoadingMoreInvalid] = useState(false);
 
   const [url, setUrl] = useState('');
+
+  const [batchDeletePending, setBatchDeletePending] = useState<SubmittedUrlItem[] | null>(null);
+  const [batchDeleteSubmitting, setBatchDeleteSubmitting] = useState(false);
+  const [batchDeleteError, setBatchDeleteError] = useState('');
 
   const scrollToValidJob = (jobId: string) => {
     setCompareValidJobId(jobId);
@@ -354,8 +359,7 @@ function App() {
             ]);
           }
         } else {
-          setSubmitNoticeKind('success');
-          setSubmitNotice(response.message || 'Job submitted successfully.');
+          setSubmitNotice('');
         }
         await refreshLists({ showLoading: false, reset: false });
       } else {
@@ -491,6 +495,36 @@ function App() {
       setLoadingLists(false);
     }
   };
+
+  const openBatchDeleteConfirm = useCallback((items: SubmittedUrlItem[]) => {
+    if (items.length === 0) return;
+    setBatchDeleteError('');
+    setBatchDeletePending(items);
+  }, []);
+
+  const closeBatchDeleteConfirm = useCallback(() => {
+    if (batchDeleteSubmitting) return;
+    setBatchDeletePending(null);
+    setBatchDeleteError('');
+  }, [batchDeleteSubmitting]);
+
+  const executeBatchDeleteInvalid = useCallback(async () => {
+    if (!batchDeletePending?.length) return;
+    setBatchDeleteSubmitting(true);
+    setBatchDeleteError('');
+    try {
+      await apiClient.post('/jobs/invalid/delete/batch', {
+        invalid_job_ids: batchDeletePending.map((i) => i.id),
+      });
+      setBatchDeletePending(null);
+      setOpenMenu(null);
+      await refreshLists({ showLoading: false, reset: true });
+    } catch (error: any) {
+      setBatchDeleteError(error.response?.data?.detail || 'Failed to delete duplicate jobs');
+    } finally {
+      setBatchDeleteSubmitting(false);
+    }
+  }, [batchDeletePending, refreshLists]);
 
   const onCloseDetail = useCallback(() => {
     setJobAnalysisValidJobId(null);
@@ -646,6 +680,7 @@ function App() {
       onReplaceDuplicate,
       onReportDuplicateAsValid: (item: SubmittedUrlItem) =>
         openModal({ kind: 'promoteInvalidToValid', id: item.id, currentUrl: item.url }),
+      onBatchDeleteInvalid: openBatchDeleteConfirm,
       jobListHasMore: validHasMore,
       loadingMoreValidJobs: loadingMoreValid,
       onLoadMoreValidJobs: loadMoreValidJobs,
@@ -682,6 +717,7 @@ function App() {
     onMatchStored,
     onCompareDuplicate,
     onReplaceDuplicate,
+    openBatchDeleteConfirm,
   ]);
 
   if (isAuthenticated === null) {
@@ -716,6 +752,30 @@ function App() {
         modalError={modalError}
         onClose={closeModal}
         onConfirm={confirmModal}
+      />
+
+      <ConfirmDialog
+        open={batchDeletePending != null}
+        title="Delete duplicate entries?"
+        description={
+          batchDeletePending && batchDeletePending.length > 0 ? (
+            <>
+              You are about to permanently remove{' '}
+              <span className="font-semibold tabular-nums text-slate-800">{batchDeletePending.length}</span>{' '}
+              duplicate entr{batchDeletePending.length === 1 ? 'y' : 'ies'} from your list. Related inactive job rows
+              and orphan extraction data will be removed. This action cannot be undone.
+            </>
+          ) : (
+            ''
+          )
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={batchDeleteSubmitting}
+        error={batchDeleteError}
+        onConfirm={() => void executeBatchDeleteInvalid()}
+        onCancel={closeBatchDeleteConfirm}
       />
 
       {mainView === 'profiles' ? (

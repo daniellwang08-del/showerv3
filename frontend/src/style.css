@@ -256,6 +256,18 @@ body {
   filter: brightness(1.03);
 }
 
+/** Icon submit (Post a job): hover scales in place instead of lifting — avoids layout shift next to the URL field */
+.btn-blue-neon.btn-submit-icon:hover:not(:disabled) {
+  transform: scale(1.045);
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.35);
+  filter: brightness(1.03);
+}
+
+.btn-blue-neon.btn-submit-icon:active:not(:disabled) {
+  transform: scale(0.98);
+  filter: brightness(0.98);
+}
+
 .timeline-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(59, 130, 246, 0.35) rgba(226, 232, 240, 0.45);

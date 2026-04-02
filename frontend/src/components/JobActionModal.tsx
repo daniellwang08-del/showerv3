@@ -115,7 +115,21 @@ export function JobActionModal({
             </div>
           )}
 
-          {modal.kind === 'delete' && <div className="text-sm text-slate-700">This will remove the job from active lists.</div>}
+          {modal.kind === 'delete' && (
+            <div className="text-sm leading-relaxed text-slate-700">
+              {modal.table === 'invalid' ? (
+                <>
+                  This removes the duplicate entry from your list. Inactive job rows and orphan extraction data tied to
+                  this URL are removed when nothing else references them. This cannot be undone.
+                </>
+              ) : (
+                <>
+                  This removes the job from your To do list. AI match data for this job is deleted, and stored
+                  extraction text is removed when no other job shares it. This cannot be undone.
+                </>
+              )}
+            </div>
+          )}
 
           {modal.kind === 'replaceInvalid' && (
             <div className="grid gap-3 text-sm text-slate-700">

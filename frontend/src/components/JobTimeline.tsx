@@ -260,6 +260,38 @@ export function JobTimeline({
     return result;
   };
 
+  /**
+   * Context menu is anchored to one row (`item`). If that row is part of the current multi-selection,
+   * actions should apply to all selected jobs (same as the bulk toolbar). If the user right-clicks a row
+   * that is not selected, only that row is targeted — so an unrelated selection is preserved.
+   */
+  const getContextMenuTargets = (dateKey: string, item: SubmittedUrlItem): SubmittedUrlItem[] => {
+    const allSelected = getAllSelectedJobs();
+    const itemInSelection = selectedJobsByDate[dateKey]?.has(item.id) ?? false;
+    if (itemInSelection && allSelected.length > 0) {
+      return allSelected;
+    }
+    return [item];
+  };
+
+  /** Clear drag-selection when the menu action applied to the entire current selection (including single row). */
+  const clearSelectionIfMenuActionConsumedFullSelection = (targets: SubmittedUrlItem[]) => {
+    const allSelected = getAllSelectedJobs();
+    if (allSelected.length === 0 || targets.length !== allSelected.length) return;
+    const targetIds = new Set(targets.map((t) => t.id));
+    if (!allSelected.every((j) => targetIds.has(j.id))) return;
+    setSelectedJobsByDate({});
+    setBulkActionOpen(null);
+  };
+
+  const filterEligibleForRerunMatch = (jobs: SubmittedUrlItem[]) =>
+    jobs.filter(
+      (j) =>
+        j.table === 'valid' &&
+        !!j.extraction_id &&
+        (j.extraction_status === 'completed' || j.scraped_at_ms != null),
+    );
+
   const handleMarkApplied = async () => {
     const selectedJobs = getAllSelectedJobs();
     if (selectedJobs.length === 0) return;
@@ -904,9 +936,15 @@ export function JobTimeline({
                                       <button
                                         type="button"
                                         className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
-                                        onClick={() => {
+                                        onClick={async () => {
+                                          const targets = getContextMenuTargets(dateKey, item);
                                           closeMenu();
-                                          void onMarkApplied([item]);
+                                          try {
+                                            await onMarkApplied(targets);
+                                            clearSelectionIfMenuActionConsumedFullSelection(targets);
+                                          } catch {
+                                            /* parent */
+                                          }
                                         }}
                                       >
                                         <span className="inline-flex items-center gap-2">
@@ -918,9 +956,15 @@ export function JobTimeline({
                                       <button
                                         type="button"
                                         className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50"
-                                        onClick={() => {
+                                        onClick={async () => {
+                                          const targets = getContextMenuTargets(dateKey, item);
                                           closeMenu();
-                                          void onMarkUnapplied([item]);
+                                          try {
+                                            await onMarkUnapplied(targets);
+                                            clearSelectionIfMenuActionConsumedFullSelection(targets);
+                                          } catch {
+                                            /* parent */
+                                          }
                                         }}
                                       >
                                         <span className="inline-flex items-center gap-2">
@@ -970,7 +1014,7 @@ export function JobTimeline({
                                     Report Duplicate
                                   </span>
                                 </button>
-                                {onTriggerJobMatch &&
+                                {(onRerunMatchAnalysis || onTriggerJobMatch) &&
                                   item.table === 'valid' &&
                                   item.extraction_id &&
                                   (item.extraction_status === 'completed' || item.scraped_at_ms != null) && (
@@ -978,8 +1022,18 @@ export function JobTimeline({
                                       type="button"
                                       className="block w-full border-b border-blue-100 px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-blue-50"
                                       onClick={() => {
+                                        const targets = getContextMenuTargets(dateKey, item);
+                                        const eligible = filterEligibleForRerunMatch(targets);
                                         closeMenu();
-                                        void onTriggerJobMatch(item, { force: true });
+                                        if (eligible.length === 0) return;
+                                        if (onRerunMatchAnalysis) {
+                                          void Promise.resolve(onRerunMatchAnalysis(eligible));
+                                        } else if (onTriggerJobMatch) {
+                                          void Promise.all(
+                                            eligible.map((j) => Promise.resolve(onTriggerJobMatch(j, { force: true }))),
+                                          );
+                                        }
+                                        clearSelectionIfMenuActionConsumedFullSelection(targets);
                                       }}
                                     >
                                       <span className="inline-flex items-center gap-2">
@@ -988,15 +1042,23 @@ export function JobTimeline({
                                       </span>
                                     </button>
                                   )}
-                                {onRescrape && item.table === 'valid' && (
+                                {(onBatchRescrapePipeline || onRescrape) && item.table === 'valid' && (
                                   <button
                                     type="button"
                                     className={`block w-full border-b border-blue-100 px-3 py-2 text-left text-sm transition hover:bg-slate-50 ${
                                       item.extraction_status === 'failed' ? 'text-amber-800 hover:bg-amber-50' : 'text-slate-700'
                                     }`}
                                     onClick={() => {
+                                      const targets = getContextMenuTargets(dateKey, item);
+                                      const eligible = targets.filter((j) => j.table === 'valid');
                                       closeMenu();
-                                      void onRescrape(item);
+                                      if (eligible.length === 0) return;
+                                      if (onBatchRescrapePipeline) {
+                                        void Promise.resolve(onBatchRescrapePipeline(eligible));
+                                      } else if (onRescrape) {
+                                        void Promise.all(eligible.map((j) => Promise.resolve(onRescrape(j))));
+                                      }
+                                      clearSelectionIfMenuActionConsumedFullSelection(targets);
                                     }}
                                   >
                                     <span className="inline-flex items-center gap-2">
@@ -1009,8 +1071,14 @@ export function JobTimeline({
                                   type="button"
                                   className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
                                   onClick={() => {
+                                    const targets = getContextMenuTargets(dateKey, item);
                                     closeMenu();
-                                    onDelete(item);
+                                    if (targets.length > 1 && onBatchDelete) {
+                                      onBatchDelete(targets);
+                                    } else {
+                                      onDelete(targets[0]);
+                                    }
+                                    clearSelectionIfMenuActionConsumedFullSelection(targets);
                                   }}
                                 >
                                   <span className="inline-flex items-center gap-2">

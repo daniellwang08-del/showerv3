@@ -11,6 +11,8 @@ import {
   ClipboardCheck,
   Loader2,
   ChevronDown,
+  Square,
+  CheckSquare,
 } from 'lucide-react';
 import { SubmittedUrlItem } from '../types/ui';
 
@@ -27,6 +29,8 @@ type Props = {
   onReplace: (item: SubmittedUrlItem) => void;
   onReportAsValid: (item: SubmittedUrlItem) => void;
   onDelete: (item: SubmittedUrlItem) => void;
+  /** Bulk delete selected invalid jobs (server removes invalid row + shadow valid rows + orphan extractions). */
+  onBatchDeleteInvalid?: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onClosePanel: () => void;
   children: ReactNode;
   duplicateListHasMore?: boolean;
@@ -183,6 +187,7 @@ export function DuplicateJobsPanel({
   onReplace,
   onReportAsValid,
   onDelete,
+  onBatchDeleteInvalid,
   onClosePanel,
   children,
   duplicateListHasMore,
@@ -191,6 +196,7 @@ export function DuplicateJobsPanel({
   duplicatesLoadedCount,
 }: Props) {
   const [dupMenuOverride, setDupMenuOverride] = useState<{ left: number; top: number } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const closeDupMenu = () => {
     setDupMenuOverride(null);
@@ -200,6 +206,45 @@ export function DuplicateJobsPanel({
   useEffect(() => {
     if (!openMenuId) setDupMenuOverride(null);
   }, [openMenuId]);
+
+  useEffect(() => {
+    const valid = new Set(items.map((i) => i.id));
+    setSelectedIds((prev) => {
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (valid.has(id)) next.add(id);
+      });
+      return next;
+    });
+  }, [items]);
+
+  const allSelected = items.length > 0 && selectedIds.size === items.length;
+  const someSelected = selectedIds.size > 0;
+
+  const toggleSelectAll = () => {
+    if (items.length === 0) return;
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(items.map((i) => i.id)));
+    }
+  };
+
+  const toggleRow = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBatchDelete = () => {
+    if (!onBatchDeleteInvalid || !someSelected) return;
+    const selectedItems = items.filter((i) => selectedIds.has(i.id));
+    if (selectedItems.length === 0) return;
+    onBatchDeleteInvalid(selectedItems);
+  };
 
   const dupScrollRef = useRef<HTMLDivElement | null>(null);
   const dupSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -250,6 +295,37 @@ export function DuplicateJobsPanel({
                 )}
               </p>
             ) : null}
+            {items.length > 0 ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleSelectAll}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  {allSelected ? (
+                    <>
+                      <CheckSquare className="h-3.5 w-3.5 text-blue-600" aria-hidden />
+                      Deselect all
+                    </>
+                  ) : (
+                    <>
+                      <Square className="h-3.5 w-3.5 text-slate-500" aria-hidden />
+                      Select all
+                    </>
+                  )}
+                </button>
+                {someSelected && onBatchDeleteInvalid ? (
+                  <button
+                    type="button"
+                    onClick={handleBatchDelete}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-100"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                    Delete ({selectedIds.size})
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <button
             type="button"
@@ -280,7 +356,7 @@ export function DuplicateJobsPanel({
                   <li key={item.id} className="group">
                     <div className="relative" data-job-menu-root="true">
                       <div
-                        className="flex items-center justify-between gap-2 border border-transparent px-3 py-2 transition hover:bg-blue-50/70"
+                        className="flex items-center justify-between gap-2 border border-transparent px-2 py-2 transition hover:bg-blue-50/70"
                         onContextMenu={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
@@ -291,6 +367,22 @@ export function DuplicateJobsPanel({
                           }
                         }}
                       >
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleRow(item.id);
+                          }}
+                          className="shrink-0 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                          aria-label={selectedIds.has(item.id) ? 'Deselect row' : 'Select row'}
+                          aria-pressed={selectedIds.has(item.id)}
+                        >
+                          {selectedIds.has(item.id) ? (
+                            <CheckSquare className="h-4 w-4 text-blue-600" aria-hidden />
+                          ) : (
+                            <Square className="h-4 w-4" aria-hidden />
+                          )}
+                        </button>
                         <a
                           href={item.url}
                           target="_blank"

@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react';
+import { Loader2, Send } from 'lucide-react';
 
 type Props = {
   url: string;
@@ -43,7 +44,7 @@ export function SubmitForm({
               id="url"
               value={url}
               onChange={(e) => onUrlChange(e.target.value)}
-              className="blue-outline-input block min-w-0 w-full rounded-l-lg py-2.5 pl-12 pr-3 text-sm text-slate-900 placeholder:text-slate-500 outline-none sm:rounded-l-lg sm:rounded-r-none"
+              className="blue-outline-input block min-h-11 min-w-0 w-full rounded-l-lg py-2.5 pl-12 pr-3 text-sm text-slate-900 placeholder:text-slate-500 outline-none sm:rounded-l-lg sm:rounded-r-none"
               placeholder="https://boards.greenhouse.io/..."
               required
               autoComplete="off"
@@ -54,23 +55,22 @@ export function SubmitForm({
           <button
             type="submit"
             disabled={loading}
-            className="btn-blue-neon group relative inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-r-lg px-6 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70 sm:w-[8.5rem] sm:min-w-[8.5rem] sm:max-w-[8.5rem] sm:rounded-l-none sm:rounded-r-lg"
+            aria-busy={loading}
+            aria-label={loading ? 'Submitting job URL' : 'Submit job URL'}
+            title={loading ? 'Submitting…' : 'Submit'}
+            className="btn-blue-neon btn-submit-icon inline-flex h-11 w-full shrink-0 items-center justify-center rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70 sm:w-11 sm:min-w-[2.75rem] sm:max-w-[2.75rem] sm:rounded-l-none sm:rounded-r-lg sm:rounded-t-none"
           >
             {loading ? (
-              <svg className="h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <circle className="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-              </svg>
-            ) : null}
-            <span>{loading ? 'Submitting…' : 'Submit'}</span>
+              <Loader2 className="h-5 w-5 shrink-0 animate-spin" strokeWidth={2.25} aria-hidden />
+            ) : (
+              <Send className="h-5 w-5 shrink-0" strokeWidth={2.25} aria-hidden />
+            )}
           </button>
         </div>
 
-        {submitNotice && (
-          <div className={`mt-3 text-sm font-medium ${
-            submitNoticeKind === 'warning' ? 'text-amber-700' : 'text-emerald-700'
-          }`}>
-            {submitNoticeKind === 'warning' && '⚠ '}{submitNotice}
+        {submitNotice && submitNoticeKind === 'warning' && (
+          <div className="mt-3 text-sm font-medium text-amber-700">
+            ⚠ {submitNotice}
           </div>
         )}
 

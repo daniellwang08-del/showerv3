@@ -58,6 +58,7 @@ type Props = {
   onCompareDuplicate: (item: SubmittedUrlItem) => void;
   onReplaceDuplicate: (item: SubmittedUrlItem) => void;
   onReportDuplicateAsValid: (item: SubmittedUrlItem) => void;
+  onBatchDeleteInvalid?: (items: SubmittedUrlItem[]) => void | Promise<void>;
 
   jobListHasMore?: boolean;
   loadingMoreValidJobs?: boolean;
@@ -107,6 +108,7 @@ export function DashboardPage({
   onCompareDuplicate,
   onReplaceDuplicate,
   onReportDuplicateAsValid,
+  onBatchDeleteInvalid,
   jobListHasMore,
   loadingMoreValidJobs,
   onLoadMoreValidJobs,
@@ -279,6 +281,7 @@ export function DashboardPage({
               onReplace={onReplaceDuplicate}
               onReportAsValid={onReportDuplicateAsValid}
               onDelete={onDelete}
+              onBatchDeleteInvalid={onBatchDeleteInvalid}
               duplicateListHasMore={duplicateListHasMore}
               loadingMoreDuplicates={loadingMoreDuplicates}
               onLoadMoreDuplicates={onLoadMoreDuplicates}
