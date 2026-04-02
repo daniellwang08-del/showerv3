@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
@@ -84,6 +84,45 @@ export function JobTimeline({
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const bulkActionRef = useRef<HTMLDivElement>(null);
   const selectionTimeoutFiredRef = useRef(false);
+  /** Single pending long-press timer (do not store per-row on DOM nodes: mouseup may occur on another row or outside the list). */
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  /** Stops drag-painting (hover-select) without clearing `selectionTimeoutFiredRef` — row `mouseup` may run after window capture and still needs `preventDefault`. */
+  const exitDragPaintMode = useCallback(() => {
+    setIsSelectingMode(false);
+    setDragStartDateKey(null);
+  }, []);
+
+  /** Full reset (new press on a row, or explicit cleanup). */
+  const endDragSelectGesture = useCallback(() => {
+    clearLongPressTimer();
+    selectionTimeoutFiredRef.current = false;
+    exitDragPaintMode();
+  }, [clearLongPressTimer, exitDragPaintMode]);
+
+  useEffect(() => {
+    /** Window capture runs before row `mouseup`; only clear timer + paint mode so bubble handler can still read `selectionTimeoutFiredRef` for preventDefault. */
+    const onWindowPointerEnd = () => {
+      clearLongPressTimer();
+      exitDragPaintMode();
+    };
+    window.addEventListener('mouseup', onWindowPointerEnd, true);
+    window.addEventListener('pointerup', onWindowPointerEnd, true);
+    window.addEventListener('pointercancel', onWindowPointerEnd, true);
+    return () => {
+      window.removeEventListener('mouseup', onWindowPointerEnd, true);
+      window.removeEventListener('pointerup', onWindowPointerEnd, true);
+      window.removeEventListener('pointercancel', onWindowPointerEnd, true);
+    };
+  }, [clearLongPressTimer, exitDragPaintMode]);
+
   /** When set, job action menu is shown fixed at this point (right-click); otherwise anchored to the … button. */
   const [jobMenuPoint, setJobMenuPoint] = useState<{ x: number; y: number } | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
@@ -158,46 +197,33 @@ export function JobTimeline({
   // Handle mouse down on job - start selection mode
   const handleJobMouseDown = (dateKey: string, jobId: string, e: React.MouseEvent) => {
     if (e.button !== 0) return; // Only left click
-    
-    selectionTimeoutFiredRef.current = false;
-    
+
+    // End any stale session: missed mouseup (released outside rows/scroll), or timer still pending on another row.
+    endDragSelectGesture();
+
     // Long press simulation - set selecting mode after a short delay
-    const timeoutId = setTimeout(() => {
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
       selectionTimeoutFiredRef.current = true;
       setIsSelectingMode(true);
       setDragStartDateKey(dateKey);
       toggleJobSelection(dateKey, jobId);
     }, 300); // 300ms for long press
-
-    // Store timeout ID for cleanup on mouse up
-    (e.currentTarget as any).timeoutId = timeoutId;
   };
 
   // Handle mouse move - detect drag and prevent link if dragging
   const handleJobMouseMove = (e: React.MouseEvent) => {
-    const timeoutId = (e.currentTarget as any).timeoutId;
-    // If timeout is still pending and user moved mouse, they're dragging
-    if (timeoutId) {
+    if (longPressTimerRef.current) {
       e.preventDefault();
     }
   };
 
-  // Handle mouse up - end drag selection
+  // Bubble phase: window capture already ended paint mode; clear long-press ref and cancel any stray timer
   const handleJobMouseUp = (e: React.MouseEvent) => {
-    const timeoutId = (e.currentTarget as any).timeoutId;
-    if (timeoutId) {
-      // Clear the timeout (in case it hasn't fired yet)
-      clearTimeout(timeoutId);
-      (e.currentTarget as any).timeoutId = null;
-    }
-    
-    // If the timeout already fired (selection mode was activated), prevent link opening
     if (selectionTimeoutFiredRef.current) {
       e.preventDefault();
-      selectionTimeoutFiredRef.current = false;
     }
-    
-    setIsSelectingMode(false);
+    endDragSelectGesture();
   };
 
   // Handle mouse enter during drag - select jobs

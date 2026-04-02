@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type FormEvent } from 'react';
-import { CheckCircle, ChevronDown, Loader2, Search, Sparkles, X } from 'lucide-react';
+import { CheckCircle, Loader2, Search, Sparkles, X } from 'lucide-react';
 import { SubmittedUrlItem } from '../types/ui';
 import JobTimeline from './JobTimeline';
 import { apiClient } from '../api/client';
