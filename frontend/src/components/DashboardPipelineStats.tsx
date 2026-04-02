@@ -12,6 +12,7 @@ import {
 import type { SubmittedUrlItem } from '../types/ui';
 import { jobMarkedApplied } from '../utils/appliedStatus';
 import { localCalendarDayKey, localCalendarMonthKey, toFiniteTimeMs } from '../utils/serverDate';
+import { MatchScoreChip, PipelineQuarterRing } from './PipelineProgressRing';
 
 export type PipelineRangePreset = '7d' | '14d' | '30d' | 'all';
 
@@ -99,7 +100,7 @@ function pct(part: number, whole: number): number {
   return Math.min(100, Math.round((part / whole) * 100));
 }
 
-/** Jobs added today (local) vs how many of that cohort are now applied. */
+/** Jobs posted today (local) vs how many of that cohort are now applied. */
 function computeTodayCohort(jobs: SubmittedUrlItem[]): {
   postedToday: number;
   appliedToday: number;
@@ -164,7 +165,7 @@ type WeekDayBucket = {
   dayStart: number;
   /** Short label for axis */
   label: string;
-  /** Jobs added to To do on this calendar day */
+  /** Jobs posted to To do on this calendar day */
   posted: number;
   /** Of those jobs, how many are currently marked applied (pipeline progress; apply date ignored) */
   applied: number;
@@ -184,8 +185,8 @@ type WeekSeries = {
 };
 
 /**
- * Cohort / pipeline by **day added**.
- * For each calendar day in the window: posted = jobs added that day; applied = those jobs now marked applied.
+ * Cohort / pipeline by **day posted**.
+ * For each calendar day in the window: posted = jobs posted that day; applied = those jobs now marked applied.
  */
 function fillPipelineBuckets(jobs: SubmittedUrlItem[], dayStarts: number[], preset: PipelineRangePreset): WeekSeries {
   const bucketKeys = dayStarts.map((t) => localCalendarDayKey(t));
@@ -238,7 +239,7 @@ function fillPipelineBuckets(jobs: SubmittedUrlItem[], dayStarts: number[], pres
 }
 
 /**
- * Same cohort logic as daily buckets, but one column per **calendar month** (jobs grouped by month added).
+ * Same cohort logic as daily buckets, but one column per **calendar month** (jobs grouped by month posted).
  */
 function fillPipelineMonthlyBuckets(
   jobs: SubmittedUrlItem[],
@@ -368,11 +369,6 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
               <BarChart3 className="h-5 w-5 text-blue-600" aria-hidden />
               Pipeline overview
             </h3>
-            <p className="mt-1 max-w-xl text-xs leading-relaxed text-slate-600">
-              Totals come from your <strong className="font-semibold text-slate-800">To do jobs</strong> list. Track how
-              many postings you have opened versus how many you have marked as applied, plus scraping and AI match
-              coverage so you know what still needs attention.
-            </p>
           </div>
         </div>
       </div>
@@ -387,11 +383,11 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
         </div>
       ) : (
         <>
-          {/* Today: cohort added today — battery bar (gray track, blue = applied share) */}
+          {/* Today: cohort posted today - battery bar (gray track, blue = applied share) */}
           <div className="mb-5 shrink-0">
             <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Today — added vs applied (pipeline)
+                Today - posted vs applied (pipeline)
               </span>
               <span className="text-xs text-slate-600">
                 <span className="font-semibold text-slate-800">{todayCohort.rateToday}%</span> of today&apos;s adds
@@ -399,18 +395,18 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
                 <span className="text-slate-600">{todayCohort.appliedToday}</span>
                 <Check className="mx-0.5 inline h-3 w-3 text-blue-600" strokeWidth={3} aria-hidden />
                 <span className="text-slate-400"> / </span>
-                <span className="font-medium text-slate-800">{todayCohort.postedToday}</span> added today
+                <span className="font-medium text-slate-800">{todayCohort.postedToday}</span> posted today
               </span>
             </div>
             <div className="space-y-1.5">
               <div
                 className="today-battery-track relative h-1.5 w-full overflow-hidden rounded-full bg-slate-200/90 shadow-[inset_0_1px_2px_rgba(15,23,42,0.12)] ring-1 ring-slate-300/50"
                 role="img"
-                aria-label={`Today: ${todayCohort.appliedToday} of ${todayCohort.postedToday} jobs added today are now applied`}
+                aria-label={`Today: ${todayCohort.appliedToday} of ${todayCohort.postedToday} jobs posted today are now applied`}
                 title={
                   todayCohort.postedToday > 0
-                    ? `Track = added today (${todayCohort.postedToday}). Fill = now applied (${todayCohort.appliedToday}).`
-                    : 'No jobs added today yet'
+                    ? `Track = posted today (${todayCohort.postedToday}). Fill = now applied (${todayCohort.appliedToday}).`
+                    : 'No jobs posted today yet'
                 }
               >
                 {todayCohort.postedToday > 0 ? (
@@ -424,14 +420,14 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
               </div>
               {todayCohort.postedToday === 0 ? (
                 <p className="text-[11px] font-medium leading-snug text-slate-500">
-                  No jobs added today — post a URL on the left to see today&apos;s progress.
+                  No jobs posted today - post the JOBS on the left to see today&apos;s progress.
                 </p>
               ) : null}
             </div>
             <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-slate-600">
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-1 w-4 shrink-0 rounded-sm bg-slate-400" aria-hidden />
-                Track = added today ({todayCohort.postedToday})
+                Track = posted today ({todayCohort.postedToday})
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span
@@ -443,14 +439,14 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
             </div>
           </div>
 
-          {/* Pipeline by day added — range selectable */}
+          {/* Pipeline by day posted - range selectable */}
           <div className="mb-5 shrink-0 rounded-xl border border-blue-100/90 bg-white/60 p-4 shadow-sm ring-1 ring-slate-100/80">
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                     <CalendarRange className="h-4 w-4 shrink-0 text-blue-600" aria-hidden />
-                    Pipeline by day added
+                    Pipeline by day posted
                   </h4>
                   <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
                     <span className="sr-only">Chart time range</span>
@@ -471,21 +467,19 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
                 <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-slate-600">
                   {pipelineSeries.preset === 'all' ? (
                     <>
-                      <strong className="font-medium text-slate-700">All time</strong> — one column per{' '}
+                      <strong className="font-medium text-slate-700">All time</strong> - one column per{' '}
                       <strong className="font-medium text-slate-700">calendar month</strong> from your{' '}
                       <strong className="font-medium text-slate-700">earliest add</strong> through this month (
                       {pipelineSeries.days.length} months). <strong className="font-medium text-slate-700">Posted</strong>{' '}
-                      counts jobs added in that month; <strong className="font-medium text-slate-700">Applied</strong> is
+                      counts jobs posted in that month; <strong className="font-medium text-slate-700">Applied</strong> is
                       how many of <em>those</em> are <strong>now</strong> marked applied. Scroll horizontally when there
                       are many months.
                     </>
                   ) : (
                     <>
-                      Each column is the <strong className="font-medium text-slate-700">day you added</strong> the job
+                      Each column is the <strong className="font-medium text-slate-700">day you posted</strong> the job
                       to To do (last {pipelineSeries.days.length} days).{' '}
-                      <strong className="font-medium text-slate-700">Posted</strong> is how many you added that day;{' '}
-                      <strong className="font-medium text-slate-700">Applied</strong> is how many of{' '}
-                      <em>those same jobs</em> are <strong>now</strong> marked applied. Scroll horizontally on small
+                      Scroll horizontally on small
                       screens when the range is long.
                     </>
                   )}
@@ -506,7 +500,7 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
                     : `This window (${pipelineSeries.days.length} days)`}
                 </div>
                 <div className="mt-0.5">
-                  <span className="font-semibold text-slate-800">{pipelineSeries.sumPostedWeek}</span> added
+                  <span className="font-semibold text-slate-800">{pipelineSeries.sumPostedWeek}</span> posted
                   <span className="text-slate-400"> · </span>
                   <span className="font-semibold text-blue-700">{pipelineSeries.sumAppliedWeek}</span> now applied
                   <span className="text-slate-500">
@@ -522,9 +516,9 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-3 w-4 rounded-sm border border-slate-400/80 bg-slate-300" aria-hidden />
                 {pipelineSeries.bucketGranularity === 'month' ? (
-                  <>Gray column height ∝ added that month</>
+                  <>Gray column height ∝ posted that month</>
                 ) : (
-                  <>Gray column height ∝ added that day</>
+                  <>Gray column height ∝ posted that day</>
                 )}
               </span>
               <span className="inline-flex items-center gap-1.5">
@@ -555,7 +549,7 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
               icon={<Loader2 className="h-4 w-4 text-amber-500" />}
               label="Match pending"
               value={s.matchProcessing + s.matchAwaiting}
-              hint="Running or not analyzed yet"
+              hint="In the match queue, analyzing, or not analyzed yet (see ring legend below)"
             />
             <MiniStat
               icon={<AlertTriangle className="h-4 w-4 text-orange-600" />}
@@ -566,8 +560,8 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
           </div>
 
           <div className="mt-4 shrink-0 border-t border-blue-100/80 pt-4">
-            <div className="rounded-xl border border-slate-200/80 bg-white/70 px-3 py-2.5">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Scraping status</div>
+            <div className="rounded-xl border border-slate-200/80 bg-gradient-to-b from-white/95 to-slate-50/40 px-3 py-2.5 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Extraction & match pipeline</div>
               <p className="mt-1 text-xs leading-snug text-slate-700">
                 {s.extraction.failed > 0 && (
                   <span className="mr-2 inline-flex items-center rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700">
@@ -575,11 +569,38 @@ export function DashboardPipelineStats({ jobs, duplicateCount, loading }: Props)
                   </span>
                 )}
                 <span className="text-slate-600">
-                  Queue {s.extraction.pending + s.extraction.processing}
+                  In queue {s.extraction.pending + s.extraction.processing}
                   <span className="text-slate-400"> · </span>
-                  Done {s.extraction.completed}
+                  Posting extracted {s.extraction.completed}
                 </span>
               </p>
+              <div className="mt-2.5 border-t border-slate-100/90 pt-2.5">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Row indicator key</p>
+                <p className="mt-1 text-[10px] leading-snug text-slate-500">
+                  On the job list, the ring shows a <span className="font-medium text-slate-600">spinning dot</span> and soft
+                  pulse until your match score is saved (static icons here).
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2.5 text-[11px] text-slate-600">
+                  <span className="inline-flex items-center gap-2">
+                    <PipelineQuarterRing filled={1} phase="queue" showActivity={false} className="opacity-95" aria-hidden />
+                    <span className="max-w-[9rem] leading-snug">Amber ¼ - extraction queued or running</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <PipelineQuarterRing filled={2} phase="extracted" showActivity={false} className="opacity-95" aria-hidden />
+                    <span className="max-w-[9rem] leading-snug">Blue ½ - posting text ready; match not started</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <PipelineQuarterRing filled={3} phase="analyzing" showActivity={false} className="opacity-95" aria-hidden />
+                    <span className="max-w-[9rem] leading-snug">Amber ¾ - AI match in progress</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="inline-flex select-none" aria-hidden>
+                      <MatchScoreChip score={82} />
+                    </span>
+                    <span className="max-w-[9rem] leading-snug">Saved score replaces the ring when analysis is stored</span>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </>
@@ -613,8 +634,8 @@ function WeeklyPostedAppliedChart({ series }: { series: WeekSeries }) {
       role="img"
       aria-label={
         isMonthly
-          ? 'Each month: gray column height by jobs added that month; blue fill is applied share of that cohort'
-          : 'Each day: gray column height by jobs added that day; blue fill is applied share of that cohort'
+          ? 'Each month: gray column height by jobs posted that month; blue fill is applied share of that cohort'
+          : 'Each day: gray column height by jobs posted that day; blue fill is applied share of that cohort'
       }
     >
       <div
@@ -647,7 +668,7 @@ function WeeklyPostedAppliedChart({ series }: { series: WeekSeries }) {
                     height: trackPx,
                     minHeight: d.posted > 0 ? 10 : 6,
                   }}
-                  title={`${d.label}: ${d.posted} added · ${d.applied} now applied`}
+                  title={`${d.label}: ${d.posted} posted · ${d.applied} now applied`}
                 >
                   <div
                     className="pipeline-col-fill absolute bottom-0 left-0 right-0 transition-[height] duration-500 ease-out"
@@ -655,7 +676,7 @@ function WeeklyPostedAppliedChart({ series }: { series: WeekSeries }) {
                   />
                   <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 hidden w-max max-w-[min(220px,70vw)] -translate-x-1/2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-left text-[10px] font-medium text-slate-800 shadow-lg group-hover/cell:block">
                     <span className="block text-slate-500">
-                      {isMonthly ? 'Added that month' : 'Added that day'}
+                      {isMonthly ? 'posted that month' : 'posted that day'}
                     </span>
                     <span className="tabular-nums text-slate-900">{d.posted}</span>
                     <span className="mt-1 block text-slate-500">Now applied (cohort)</span>

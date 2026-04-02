@@ -75,6 +75,40 @@ body {
   animation: content-fade-in 0.35s ease-out forwards;
 }
 
+/** Pipeline row: smooth idle motion while extraction / match is running */
+@keyframes pipeline-ring-breathe {
+  0%,
+  100% {
+    opacity: 0.87;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-pipeline-ring-breathe {
+  animation: pipeline-ring-breathe 2.8s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+}
+
+/** Orbiting marker on pipeline ring (queue → extracted → analyzing until score is saved) */
+@keyframes pipeline-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-pipeline-orbit {
+  animation: pipeline-orbit-spin 1.12s linear infinite;
+  transform-origin: center center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pipeline-orbit,
+  .animate-pipeline-ring-breathe {
+    animation: none !important;
+  }
+}
+
 @keyframes profile-section-in {
   from {
     opacity: 0;

@@ -5,7 +5,10 @@ from typing import Any
 from lxml import html as lxml_html
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.models.schemas import ExtractionMethod
-from app.services.url_manager import URLManager
+from app.services.job_content_cleaner import (
+    clean_string_list_field,
+    plain_text_from_fragment_html,
+)
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -99,19 +102,21 @@ class APIDetectorExtractor(BaseExtractor):
 
     def _parse_json_ld(self, data: dict) -> dict | None:
         try:
+            req_raw = self._extract_requirements(data)
+            resp_raw = self._extract_responsibilities(data)
             result = {
                 "title": self._clean_text(data.get("title", "")),
-                "description": self._clean_html(data.get("description", "")),
+                "description": plain_text_from_fragment_html(str(data.get("description") or "")),
                 "company": self._extract_company(data),
                 "location": self._extract_location(data),
                 "employment_type": self._normalize_employment_type(data.get("employmentType")),
                 "salary_range": self._extract_salary(data),
                 "posted_date": data.get("datePosted"),
                 "application_deadline": data.get("validThrough"),
-                "requirements": self._extract_requirements(data),
-                "responsibilities": self._extract_responsibilities(data),
+                "requirements": clean_string_list_field(req_raw),
+                "responsibilities": clean_string_list_field(resp_raw),
                 "remote_policy": self._extract_remote_policy(data),
-                "experience_level": data.get("experienceRequirements"),
+                "experience_level": self._normalize_experience_requirements(data.get("experienceRequirements")),
                 "industry": self._normalize_industry(data.get("industry")),
                 "raw_metadata": data,
             }
@@ -124,11 +129,24 @@ class APIDetectorExtractor(BaseExtractor):
             return ""
         return re.sub(r"\s+", " ", str(text)).strip()
 
-    def _clean_html(self, text: str | None) -> str:
-        if not text:
-            return ""
-        text = re.sub(r"<[^>]+>", " ", str(text))
-        return self._clean_text(text)
+    def _normalize_experience_requirements(self, value: Any) -> str | None:
+        """Schema.org may use Text, Occupation, or nested dicts."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            t = self._clean_text(value)
+            return t if t else None
+        if isinstance(value, dict):
+            for key in ("name", "description", "title", "experienceRequirements"):
+                v = value.get(key)
+                if isinstance(v, str) and v.strip():
+                    return self._clean_text(v)
+            return self._clean_text(str(value)) or None
+        if isinstance(value, list):
+            parts = [self._clean_text(str(x)) for x in value if x]
+            parts = [p for p in parts if p]
+            return "; ".join(parts) if parts else None
+        return self._clean_text(str(value)) or None
 
     def _extract_company(self, data: dict) -> str | None:
         hiring_org = data.get("hiringOrganization", {})
@@ -225,20 +243,33 @@ class APIDetectorExtractor(BaseExtractor):
                 return f"{currency} {value:,}"
         return None
 
+    def _json_ld_list_item_to_string(self, item: Any) -> str:
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict):
+            for key in ("name", "value", "description", "text"):
+                v = item.get(key)
+                if isinstance(v, str) and v.strip():
+                    return v
+            return ""
+        if item is not None:
+            return str(item)
+        return ""
+
     def _extract_requirements(self, data: dict) -> list[str]:
         quals = data.get("qualifications") or data.get("skills") or []
         if isinstance(quals, str):
-            return [self._clean_text(quals)]
+            return [quals]
         if isinstance(quals, list):
-            return [self._clean_text(q) for q in quals if q]
+            return [self._json_ld_list_item_to_string(q) for q in quals if q]
         return []
 
     def _extract_responsibilities(self, data: dict) -> list[str]:
         resp = data.get("responsibilities") or []
         if isinstance(resp, str):
-            return [self._clean_text(resp)]
+            return [resp]
         if isinstance(resp, list):
-            return [self._clean_text(r) for r in resp if r]
+            return [self._json_ld_list_item_to_string(r) for r in resp if r]
         return []
 
     def _extract_remote_policy(self, data: dict) -> str | None:

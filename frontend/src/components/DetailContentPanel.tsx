@@ -104,12 +104,32 @@ type Props = {
   onAnalysisUpdated?: () => void;
 };
 
-function scoreColor(score: number) {
-  if (score >= 80) return 'text-emerald-700 bg-emerald-100';
-  if (score >= 65) return 'text-green-700 bg-green-100';
-  if (score >= 50) return 'text-amber-700 bg-amber-100';
-  if (score >= 35) return 'text-orange-700 bg-orange-100';
-  return 'text-red-700 bg-red-100';
+/** Large overall score — same band logic as list `MatchScoreChip`, gradient + white text */
+function matchScoreHeroClass(score: number): string {
+  if (score >= 75) {
+    return 'border border-white/30 bg-gradient-to-br from-emerald-400 via-emerald-600 to-green-900 shadow-xl shadow-emerald-950/30 ring-1 ring-white/20';
+  }
+  if (score >= 45) {
+    return 'border border-white/30 bg-gradient-to-br from-sky-400 via-blue-600 to-indigo-800 shadow-xl shadow-blue-950/28 ring-1 ring-white/20';
+  }
+  return 'border border-white/30 bg-gradient-to-br from-amber-400 via-orange-500 to-amber-900 shadow-xl shadow-orange-950/25 ring-1 ring-white/20';
+}
+
+/** Per-dimension mini badges — gradient pills aligned with score bands */
+function matchScoreDimensionBadgeClass(score: number): string {
+  if (score >= 80) {
+    return 'border border-white/25 bg-gradient-to-br from-emerald-500 to-emerald-900 text-white shadow-md shadow-emerald-950/20';
+  }
+  if (score >= 65) {
+    return 'border border-white/25 bg-gradient-to-br from-green-500 to-green-800 text-white shadow-md shadow-green-950/20';
+  }
+  if (score >= 50) {
+    return 'border border-white/25 bg-gradient-to-br from-amber-400 to-amber-800 text-white shadow-md shadow-amber-950/15';
+  }
+  if (score >= 35) {
+    return 'border border-white/25 bg-gradient-to-br from-orange-500 to-orange-900 text-white shadow-md shadow-orange-950/20';
+  }
+  return 'border border-white/25 bg-gradient-to-br from-red-500 to-red-950 text-white shadow-md shadow-red-950/25';
 }
 
 function MetaTile({
@@ -382,9 +402,13 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: P
 
         {!initialLoading && !loadError && analysis && (
           <div className="animate-content-in space-y-6 text-sm">
-            <section className="glass-card relative rounded-xl border border-blue-300/60 bg-gradient-to-b from-blue-50/50 to-white/80 p-4 shadow-md">
-              <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-blue-100 pb-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+            <section className="relative overflow-hidden rounded-2xl border border-blue-200/55 bg-gradient-to-br from-blue-100/90 via-white to-indigo-50/80 p-5 shadow-lg shadow-blue-900/10 ring-1 ring-blue-100/70">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-gradient-to-br from-blue-400/20 to-indigo-500/10 blur-2xl"
+              />
+              <div className="relative mb-4 flex flex-wrap items-center gap-2 border-b border-blue-200/50 pb-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-800 text-white shadow-md shadow-blue-950/25 ring-1 ring-white/25">
                   <Target className="h-4 w-4" strokeWidth={2.25} aria-hidden />
                 </span>
                 <div>
@@ -423,9 +447,16 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: P
                 <div className="space-y-5">
                   <div className="flex flex-wrap items-center gap-3">
                     <div
-                      className={`rounded-xl px-5 py-2.5 text-3xl font-bold tabular-nums shadow-sm ${scoreColor(analysis.match.overall_score)}`}
+                      className={`relative isolate overflow-hidden rounded-2xl px-6 py-3 text-3xl font-bold tabular-nums tracking-tight text-white ${matchScoreHeroClass(analysis.match.overall_score)}`}
                     >
-                      {analysis.match.overall_score}
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/[0.22] via-transparent to-black/[0.15]"
+                      />
+                      <span aria-hidden className="absolute inset-x-3 top-0 h-px bg-white/40" />
+                      <span className="relative z-[1] [text-shadow:0_2px_4px_rgb(0_0_0/0.25)]">
+                        {analysis.match.overall_score}
+                      </span>
                     </div>
                     <div>
                       <span className="text-base font-semibold text-slate-800">
@@ -443,7 +474,9 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: P
                       {Object.entries(analysis.match.dimension_scores || {}).map(([key, value]) => (
                         <li key={key} className="flex items-center gap-2">
                           <span className="w-44 text-slate-700">{DIMENSION_LABELS[key] || key}:</span>
-                          <span className={`rounded px-2 py-0.5 text-xs font-medium ${scoreColor(value)}`}>
+                          <span
+                            className={`rounded-md px-2.5 py-0.5 text-xs font-semibold tabular-nums ${matchScoreDimensionBadgeClass(value)}`}
+                          >
                             {value}
                           </span>
                         </li>

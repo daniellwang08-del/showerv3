@@ -14,7 +14,9 @@ import {
 } from 'lucide-react';
 import type { SubmittedUrlItem } from '../types/ui';
 import { jobMarkedApplied } from '../utils/appliedStatus';
+import { getJobPipelineVisual, pipelineRingAriaLabel } from '../utils/jobPipelineVisual';
 import { logger } from '../utils/logger';
+import { MatchScoreChip, PipelineQuarterRing } from './PipelineProgressRing';
 
 type Props = {
   items: SubmittedUrlItem[];
@@ -569,13 +571,19 @@ export function JobTimeline({
                       <div className="relative">
                         <div 
                           className={`relative flex items-center gap-3 border px-3 py-2 transition rounded cursor-pointer select-none ${
-                            isSelected
-                              ? 'border-blue-500 bg-blue-50'
-                              : isApplied
-                                ? 'border-blue-300/80 bg-blue-50/90 hover:bg-blue-100/90'
-                                : 'border-transparent hover:bg-blue-50'
+                            isSelected && isApplied
+                              ? 'border-white/35 bg-gradient-to-br from-blue-500 via-blue-600 to-indigo-800 text-white shadow-lg shadow-blue-900/25 ring-2 ring-white/75 hover:brightness-[1.02]'
+                              : isSelected
+                                ? 'border-blue-500 bg-blue-50'
+                                : isApplied
+                                  ? 'border-blue-300/55 bg-gradient-to-br from-blue-400 via-blue-500 to-indigo-700 text-white shadow-md shadow-blue-900/18 hover:brightness-[1.02]'
+                                  : 'border-transparent hover:bg-blue-50'
                           } ${
-                            item.id === compareValidJobId ? 'ring-2 ring-blue-500' : ''
+                            item.id === compareValidJobId
+                              ? isApplied
+                                ? ' ring-2 ring-amber-300/95 ring-offset-2 ring-offset-blue-700'
+                                : ' ring-2 ring-blue-500'
+                              : ''
                           }`}
                           onMouseDown={(e) => handleJobMouseDown(dateKey, item.id, e)}
                           onMouseMove={handleJobMouseMove}
@@ -602,15 +610,26 @@ export function JobTimeline({
                                   e.stopPropagation();
                                   toggleJobSelection(dateKey, item.id);
                                 }}
-                                className="w-4 h-4 flex items-center justify-center bg-blue-600 border border-blue-600 rounded shrink-0 hover:bg-blue-700 transition"
+                                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded transition ${
+                                  isApplied
+                                    ? 'border border-white/95 bg-white text-blue-700 shadow-sm hover:bg-blue-50/95'
+                                    : 'border border-blue-600 bg-blue-600 hover:bg-blue-700'
+                                }`}
                                 aria-label="Unselect job"
                               >
-                                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg
+                                  className={`h-3 w-3 ${isApplied ? 'text-blue-700' : 'text-white'}`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                                 </svg>
                               </button>
                             )}
-                            <span className="text-xs font-medium text-slate-400 shrink-0">
+                            <span
+                              className={`text-xs font-medium shrink-0 ${isApplied ? 'text-blue-100/95' : 'text-slate-400'}`}
+                            >
                               {new Date(item.created_at_ms).toLocaleTimeString('en-US', {
                                 hour: '2-digit',
                                 minute: '2-digit',
@@ -633,12 +652,20 @@ export function JobTimeline({
                                 window.open(item.url, '_blank', 'noreferrer');
                               }}
                             >
-                              <div className="truncate text-sm font-medium text-slate-700 hover:text-blue-600 hover:underline">{item.url}</div>
+                              <div
+                                className={`truncate text-sm font-medium hover:underline ${
+                                  isApplied
+                                    ? 'text-white decoration-white/40 underline-offset-2 hover:text-white'
+                                    : 'text-slate-700 hover:text-blue-600'
+                                }`}
+                              >
+                                {item.url}
+                              </div>
                             </a>
                             {isApplied && (
                               <span className="group/applied relative shrink-0">
-                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-blue-400/70 bg-blue-100 text-blue-900 shadow-sm">
-                                  <Check className="h-3.5 w-3.5 text-blue-800" strokeWidth={2.75} aria-hidden />
+                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/45 bg-white/15 text-white shadow-inner backdrop-blur-[2px] ring-1 ring-white/20">
+                                  <Check className="h-3.5 w-3.5 text-white" strokeWidth={2.75} aria-hidden />
                                 </span>
                                 <span className="pointer-events-none absolute bottom-full left-1/2 z-[80] mb-1 hidden w-52 -translate-x-1/2 rounded-lg border border-blue-200 bg-white/95 p-2 text-[11px] text-slate-700 shadow-xl backdrop-blur-sm group-hover/applied:block">
                                   <span className="block font-semibold text-blue-800">Applied</span>
@@ -653,83 +680,37 @@ export function JobTimeline({
                               </span>
                             )}
                             {item.table === 'valid' && (() => {
-                              const status = item.extraction_status;
                               const seenCount = item.click_count ?? 0;
                               const seenBadge = (
-                                <span className="flex items-center gap-0.5 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600" title={`Clicked ${seenCount} time${seenCount !== 1 ? 's' : ''}`}>
-                                  <Eye className="h-3.5 w-3" />
+                                <span
+                                  className={`flex items-center gap-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs ${
+                                    isApplied
+                                      ? 'border border-white/25 bg-white/15 text-white backdrop-blur-sm'
+                                      : 'bg-slate-100 text-slate-600'
+                                  }`}
+                                  title={`Clicked ${seenCount} time${seenCount !== 1 ? 's' : ''}`}
+                                >
+                                  <Eye className={`h-3.5 w-3 ${isApplied ? 'text-white/95' : ''}`} />
                                   <span>{seenCount}</span>
                                 </span>
                               );
-                              if (status === 'pending') {
-                                return (
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {seenBadge}
-                                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600" title="Queued">Pending</span>
-                                  </div>
-                                );
+                              const visual = getJobPipelineVisual(item);
+                              if (!visual) {
+                                return <div className="flex items-center gap-1 shrink-0">{seenBadge}</div>;
                               }
-                              if (status === 'processing') {
+
+                              if (visual.kind === 'failed') {
                                 return (
                                   <div className="flex items-center gap-1 shrink-0">
                                     {seenBadge}
-                                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700" title="Scraping in progress">Processing</span>
-                                  </div>
-                                );
-                              }
-                              if (status === 'completed' || item.scraped_at_ms != null) {
-                                const hasExtraction = !!item.extraction_id;
-                                const matchScore = item.match_overall_score;
-                                const matchProcessing = item.match_status === 'processing';
-                                const matchLabel = matchProcessing
-                                  ? 'Processing'
-                                  : matchScore != null
-                                    ? String(matchScore)
-                                    : 'Recent';
-                                const matchBadgeClass = matchProcessing
-                                  ? 'shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 cursor-pointer hover:bg-amber-200'
-                                  : 'shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 cursor-pointer hover:bg-blue-200';
-                                const handleOpenAnalysis = () => {
-                                  onOpenJobAnalysis?.(item);
-                                  if (matchScore == null && !matchProcessing) {
-                                    onTriggerJobMatch?.(item);
-                                  }
-                                };
-                                return (
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {seenBadge}
-                                    {(onOpenJobAnalysis || onTriggerJobMatch) && hasExtraction && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          if (matchProcessing) {
-                                            onOpenJobAnalysis?.(item);
-                                          } else {
-                                            handleOpenAnalysis();
-                                          }
-                                        }}
-                                        className={matchBadgeClass}
-                                        title={
-                                          matchProcessing
-                                            ? 'View job match analysis (AI still running)'
-                                            : matchScore != null
-                                              ? `Match score: ${matchScore}. Open job match analysis`
-                                              : 'Recent job — open to run or view profile match'
-                                        }
-                                      >
-                                        {matchLabel}
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              }
-                              if (status === 'failed') {
-                                return (
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {seenBadge}
-                                    <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700" title="Scraping failed">
+                                    <span
+                                      className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                                        isApplied
+                                          ? 'border border-red-300/40 bg-red-500/25 text-red-50'
+                                          : 'bg-red-100 text-red-700'
+                                      }`}
+                                      title="Scraping failed"
+                                    >
                                       Failed
                                     </span>
                                     {onRescrape && (
@@ -740,7 +721,11 @@ export function JobTimeline({
                                           e.stopPropagation();
                                           onRescrape(item);
                                         }}
-                                        className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-200 transition"
+                                        className={`rounded px-1.5 py-0.5 text-xs font-medium transition ${
+                                          isApplied
+                                            ? 'border border-amber-300/50 bg-amber-400/90 text-amber-950 hover:bg-amber-300'
+                                            : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                        }`}
                                         title="Re-scrape this job"
                                       >
                                         <RotateCw className="h-3 w-3 inline-block mr-0.5" />
@@ -750,7 +735,104 @@ export function JobTimeline({
                                   </div>
                                 );
                               }
-                              return null;
+
+                              const hasExtraction = !!item.extraction_id;
+                              const queueTitle =
+                                item.extraction_status === 'processing'
+                                  ? 'Extracting job posting from the page…'
+                                  : 'In the extraction queue…';
+
+                              const ringNode =
+                                visual.kind === 'ring' ? (
+                                  visual.phase === 'queue' ? (
+                                    <span
+                                      className="inline-flex shrink-0"
+                                      title={queueTitle}
+                                      aria-label={pipelineRingAriaLabel(visual)}
+                                    >
+                                      <PipelineQuarterRing
+                                        filled={visual.filled}
+                                        phase={visual.phase}
+                                        aria-hidden
+                                      />
+                                    </span>
+                                  ) : (onOpenJobAnalysis || onTriggerJobMatch) && hasExtraction ? (
+                                    <button
+                                      type="button"
+                                      className={`inline-flex shrink-0 rounded-full p-0.5 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
+                                        isApplied
+                                          ? 'hover:bg-white/15 focus-visible:ring-white/60 focus-visible:ring-offset-blue-900'
+                                          : 'hover:bg-slate-100/90 focus-visible:ring-blue-400'
+                                      }`}
+                                      title={
+                                        visual.phase === 'analyzing'
+                                          ? 'AI profile match running — open analysis'
+                                          : 'Posting extracted — open to run profile match'
+                                      }
+                                      aria-label={pipelineRingAriaLabel(visual)}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        if (visual.phase === 'analyzing') {
+                                          onOpenJobAnalysis?.(item);
+                                        } else {
+                                          onOpenJobAnalysis?.(item);
+                                          onTriggerJobMatch?.(item);
+                                        }
+                                      }}
+                                    >
+                                      <PipelineQuarterRing
+                                        filled={visual.filled}
+                                        phase={visual.phase}
+                                        aria-hidden
+                                      />
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="inline-flex shrink-0"
+                                      title={
+                                        visual.phase === 'analyzing'
+                                          ? 'AI profile match running'
+                                          : 'Posting extracted — match not started yet'
+                                      }
+                                      aria-label={pipelineRingAriaLabel(visual)}
+                                    >
+                                      <PipelineQuarterRing
+                                        filled={visual.filled}
+                                        phase={visual.phase}
+                                        aria-hidden
+                                      />
+                                    </span>
+                                  )
+                                ) : null;
+
+                              const scoreNode =
+                                visual.kind === 'score' ? (
+                                  (onOpenJobAnalysis || onTriggerJobMatch) && hasExtraction ? (
+                                    <MatchScoreChip
+                                      score={visual.score}
+                                      title={`Match score ${visual.score} — open job match analysis`}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        onOpenJobAnalysis?.(item);
+                                      }}
+                                    />
+                                  ) : (
+                                    <MatchScoreChip
+                                      score={visual.score}
+                                      title={`Match score ${visual.score}`}
+                                    />
+                                  )
+                                ) : null;
+
+                              return (
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {seenBadge}
+                                  {ringNode}
+                                  {scoreNode}
+                                </div>
+                              );
                             })()}
                           </div>
                         </div>

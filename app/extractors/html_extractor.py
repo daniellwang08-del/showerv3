@@ -1,30 +1,12 @@
 import re
 from lxml import html as lxml_html
 from lxml_html_clean import Cleaner
-from readability import Document
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.models.schemas import ExtractionMethod
+from app.services.job_content_cleaner import plain_text_from_document_html
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-CONTENT_SELECTORS = [
-    "article.job-description",
-    "div.job-description",
-    "div.job-content",
-    "div.job-details",
-    "section.job-description",
-    "main.job-posting",
-    "div[data-automation='jobDescription']",
-    "div[class*='jobDescription']",
-    "div[class*='job-description']",
-    "div[id*='jobDescription']",
-    "div[id*='job-description']",
-    "article",
-    "main",
-    ".content",
-    "#content",
-]
 
 TITLE_SELECTORS = [
     "h1.job-title",
@@ -88,10 +70,8 @@ class HTMLExtractor(BaseExtractor):
             title = self._extract_text(cleaned_html, TITLE_SELECTORS)
             company = self._extract_text(cleaned_html, COMPANY_SELECTORS)
             location = self._extract_text(cleaned_html, LOCATION_SELECTORS)
-            content = self._extract_content(cleaned_html)
-
-            if not content or len(content) < 50:
-                content = self._extract_with_readability(html)
+            # Centralized job-body plain text (selectors + chrome stripping + Readability fallback)
+            content = plain_text_from_document_html(html)
 
             if not title or not content or len(content) < 50:
                 return ExtractionResult(
@@ -145,28 +125,6 @@ class HTMLExtractor(BaseExtractor):
             except Exception:
                 continue
         return None
-
-    def _extract_content(self, tree) -> str | None:
-        for selector in CONTENT_SELECTORS:
-            try:
-                elements = tree.cssselect(selector)
-                if elements:
-                    text = elements[0].text_content()
-                    cleaned = self._clean_text(text)
-                    if cleaned and len(cleaned) > 100:
-                        return cleaned
-            except Exception:
-                continue
-        return None
-
-    def _extract_with_readability(self, html: str) -> str:
-        try:
-            doc = Document(html)
-            summary = doc.summary()
-            text = lxml_html.fromstring(summary).text_content()
-            return self._clean_text(text)
-        except Exception:
-            return ""
 
     def _clean_text(self, text: str | None) -> str:
         if not text:
