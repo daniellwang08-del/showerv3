@@ -7,7 +7,9 @@ import pytest
 from app.extractors.ashby_api_extractor import (
     AshbyApiExtractor,
     _parse_ashby_url,
+    extract_ashby_company_slugs_from_html,
     is_ashby_job_url,
+    parse_ashby_jid_from_url,
 )
 
 
@@ -35,6 +37,14 @@ class TestParseAshbyUrl:
         assert is_ashby_job_url("https://jobs.ashbyhq.com/tailor/08796053-4fa8-48db-9a73-a977ae2c5434") is True
         assert is_ashby_job_url("https://jobs.ashbyhq.com/tailor/08796053-4fa8-48db-9a73-a977ae2c5434/application") is True
         assert is_ashby_job_url("https://example.com/job") is False
+
+    def test_parse_ashby_jid_from_company_careers_url(self):
+        u = "https://www.vesta.com/careers?ashby_jid=deee60e6-d180-41aa-8d0e-f7e9e4baf0ba"
+        assert parse_ashby_jid_from_url(u) == "deee60e6-d180-41aa-8d0e-f7e9e4baf0ba"
+
+    def test_extract_slug_from_html(self):
+        html = '<a href="https://jobs.ashbyhq.com/acme-corp/deee60e6-d180-41aa-8d0e-f7e9e4baf0ba">Apply</a>'
+        assert extract_ashby_company_slugs_from_html(html) == ["acme-corp"]
 
 
 class TestAshbyApiExtractor:
@@ -91,3 +101,34 @@ class TestAshbyApiExtractor:
 
         assert result.success is False
         assert "not found" in (result.error or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_extract_embedded_success_with_mocked_http(self):
+        html = """
+        <html><body>
+        <a href="https://jobs.ashbyhq.com/demo-co/08796053-4fa8-48db-9a73-a977ae2c5434">Board</a>
+        </body></html>
+        """
+        url = "https://employer.example/careers?ashby_jid=08796053-4fa8-48db-9a73-a977ae2c5434"
+        mock_response = {
+            "jobs": [
+                {
+                    "id": "08796053-4fa8-48db-9a73-a977ae2c5434",
+                    "title": "Platform Engineer",
+                    "location": "Remote",
+                    "employmentType": "FullTime",
+                    "descriptionPlain": "Build things.",
+                    "descriptionHtml": "<p>Build things.</p>",
+                    "isRemote": True,
+                    "publishedAt": "2026-02-27T02:34:16.756+00:00",
+                    "jobUrl": "https://jobs.ashbyhq.com/demo-co/08796053-4fa8-48db-9a73-a977ae2c5434",
+                }
+            ]
+        }
+        mock_fetch = AsyncMock(return_value=(json.dumps(mock_response), 200, {}))
+        extractor = AshbyApiExtractor()
+        with patch.object(extractor._http, "fetch_json", mock_fetch):
+            result = await extractor.extract_embedded(url, html)
+        assert result.success is True
+        assert result.structured_data is not None
+        assert result.structured_data["title"] == "Platform Engineer"

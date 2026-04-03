@@ -20,7 +20,18 @@ ASHBY_URL_PATTERN = re.compile(
     r"jobs\.ashbyhq\.com/([^/]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
+# Company career sites pass the job id in the query (?ashby_jid=...) while the board slug appears in page HTML.
+ASHBY_JID_QUERY_PATTERN = re.compile(
+    r"[?&]ashby_jid=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    re.IGNORECASE,
+)
+_SLUG_FROM_HTML_PATTERNS = (
+    re.compile(r"jobs\.ashbyhq\.com/([^/\"'\s<>]+)/", re.IGNORECASE),
+    re.compile(r"jobs\.ashbyhq\.com%2F([^%\"'\s]+)%2F", re.IGNORECASE),
+)
 ASHBY_API_BASE = "https://api.ashbyhq.com/posting-api/job-board"
+# At most two slug candidates to avoid extra API latency when HTML mentions multiple boards.
+_MAX_SLUG_CANDIDATES = 2
 
 
 def is_ashby_job_url(url: str) -> bool:
@@ -41,6 +52,29 @@ def _parse_ashby_url(url: str) -> tuple[str, str] | None:
     except Exception:
         pass
     return None
+
+
+def parse_ashby_jid_from_url(url: str) -> str | None:
+    """Job UUID from ?ashby_jid= on an embedded career page (company domain)."""
+    if not url:
+        return None
+    m = ASHBY_JID_QUERY_PATTERN.search(url)
+    return m.group(1).lower() if m else None
+
+
+def extract_ashby_company_slugs_from_html(html: str | None) -> list[str]:
+    """Find Ashby board slug(s) referenced in HTML (links to jobs.ashbyhq.com/{slug}/...)."""
+    if not html:
+        return []
+    seen: list[str] = []
+    for pat in _SLUG_FROM_HTML_PATTERNS:
+        for m in pat.finditer(html):
+            slug = m.group(1).strip().rstrip("/")
+            if slug and slug not in seen:
+                seen.append(slug)
+            if len(seen) >= _MAX_SLUG_CANDIDATES:
+                return seen
+    return seen
 
 
 class AshbyApiExtractor(BaseExtractor):
@@ -66,6 +100,46 @@ class AshbyApiExtractor(BaseExtractor):
             )
 
         company_slug, job_id = parsed
+        return await self._fetch_board_and_map_job(company_slug, job_id, url)
+
+    async def extract_embedded(self, url: str, html: str) -> ExtractionResult:
+        """
+        Company career pages: ?ashby_jid=<uuid> plus ``jobs.ashbyhq.com/{slug}/`` in HTML.
+        One JSON API call per slug candidate (max 2) — fast when slug is present.
+        """
+        job_id = parse_ashby_jid_from_url(url)
+        if not job_id:
+            return ExtractionResult(
+                success=False,
+                method=self.method,
+                error="No ashby_jid in URL",
+            )
+        slugs = extract_ashby_company_slugs_from_html(html)
+        if not slugs:
+            return ExtractionResult(
+                success=False,
+                method=self.method,
+                error="Could not find jobs.ashbyhq.com board slug in HTML",
+            )
+        last_err: str | None = None
+        for company_slug in slugs:
+            res = await self._fetch_board_and_map_job(company_slug, job_id, url)
+            if res.success:
+                logger.info(
+                    "ashby_api_embedded_success",
+                    url=url,
+                    job_id=job_id,
+                    company_slug=company_slug,
+                )
+                return res
+            last_err = res.error
+        return ExtractionResult(
+            success=False,
+            method=self.method,
+            error=last_err or "Ashby embedded extraction failed",
+        )
+
+    async def _fetch_board_and_map_job(self, company_slug: str, job_id: str, url: str) -> ExtractionResult:
         api_url = f"{ASHBY_API_BASE}/{company_slug}?includeCompensation=true"
 
         try:

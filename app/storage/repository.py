@@ -211,7 +211,11 @@ class JobExtractionRepository:
         extraction.location = _truncate_for_db(job_data.location, limits["location"]) or extraction.location
         extraction.employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])
         extraction.salary_range = _truncate_for_db(job_data.salary_range, limits["salary_range"])
-        extraction.description = sanitize_for_postgres_text(job_data.description)
+        # Job-match LLM often sees the same thin text as the user; do not replace a longer extraction.
+        old_desc = (extraction.description or "").strip()
+        new_desc = (job_data.description or "").strip()
+        if len(new_desc) > len(old_desc) or len(old_desc) < 300:
+            extraction.description = sanitize_for_postgres_text(job_data.description)
         extraction.responsibilities = list(job_data.responsibilities or [])
         extraction.requirements = list(job_data.requirements or [])
         extraction.benefits = list(job_data.benefits or [])
@@ -261,7 +265,10 @@ class ValidJobRepository:
         valid_job.title = _truncate_for_db(job_data.title, 500) or valid_job.title
         valid_job.company = _truncate_for_db(job_data.company, 500) or valid_job.company
         valid_job.location = _truncate_for_db(job_data.location, 500) or valid_job.location
-        valid_job.description = sanitize_for_postgres_text(job_data.description)
+        old_vj = (valid_job.description or "").strip()
+        new_vj = (job_data.description or "").strip()
+        if len(new_vj) > len(old_vj) or len(old_vj) < 300:
+            valid_job.description = sanitize_for_postgres_text(job_data.description)
         valid_job.posted_date = job_data.posted_date or valid_job.posted_date
         valid_job.experience_level = _truncate_for_db(job_data.experience_level, 100) or valid_job.experience_level
         valid_job.industry = _truncate_for_db(job_data.industry, 200) or valid_job.industry

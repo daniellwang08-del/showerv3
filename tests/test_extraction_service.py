@@ -12,6 +12,23 @@ class DummyPage:
     async def goto(self, url, wait_until, timeout):
         return None
 
+    async def wait_for_selector(self, *args, **kwargs):
+        return None
+
+    async def wait_for_load_state(self, *args, **kwargs):
+        return None
+
+    async def evaluate(self, *args, **kwargs):
+        return 800
+
+    @property
+    def main_frame(self):
+        return self
+
+    @property
+    def frames(self):
+        return [self]
+
     async def content(self):
         return "<html><body><h1 class='job-title'>Software Engineer</h1><div class='company-name'>Tech Corp</div><div class='job-description'>Really a great job. This position requires experience with Python, APIs, and async programming. Excellent team culture, remote-friendly, growth opportunities are strong.</div></body></html>"
 
@@ -49,14 +66,14 @@ async def test_extraction_service_success_mock_ai():
         job = await repo.create(url, url, "example.com")
         job_id = job.id
 
-    # Mock HTTP Service to return content
+    # Mock HTTP Service — description must be "rich" (>=900 chars) so we stay on the fast static-HTML path
+    long_body = (
+        "We need a developer. Requirements: Python. Responsibilities: Coding. "
+        * 25
+    )
     mock_http = AsyncMock()
     mock_http.fetch.return_value = (
-        "<html><body><h1>Job Title</h1><div class='job-description'>"
-        "We need a developer. Requirements: Python. Responsibilities: Coding. "
-        "We need a developer. Requirements: Python. Responsibilities: Coding. "
-        "We need a developer. Requirements: Python. Responsibilities: Coding. "
-        "</div></body></html>",
+        f"<html><body><h1>Job Title</h1><div class='job-description'>{long_body}</div></body></html>",
         200,
         {},
     )

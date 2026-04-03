@@ -777,7 +777,7 @@ export function JobTimeline({
                                     : item.confidence_score
                                   : null;
                               const needsCheckRequired =
-                                typeof confidencePct === 'number' && confidencePct < 50;
+                                typeof confidencePct === 'number' && confidencePct < 65;
                               const seenBadge = (
                                 <span
                                   className={`flex items-center gap-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs ${

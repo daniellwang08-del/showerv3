@@ -1,8 +1,10 @@
 import asyncio
+import re
 from playwright.async_api import async_playwright, Browser, Page, Playwright
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.extractors.html_extractor import HTMLExtractor
 from app.models.schemas import ExtractionMethod
+from app.services.job_content_cleaner import plain_text_from_document_html, rank_document_html_for_extraction
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.core.exceptions import BrowserError
@@ -11,6 +13,90 @@ from typing import AsyncGenerator
 import random
 
 logger = get_logger(__name__)
+
+# OneTrust, Cookiebot, TrustArc, generic CMP — must be dismissed or SPAs never expose JD text.
+_COOKIE_CLICK_SELECTORS: tuple[str, ...] = (
+    "#hs-eu-confirmation-button",
+    "button#hs-eu-confirmation-button",
+    "#onetrust-accept-btn-handler",
+    "button.onetrust-accept-btn-handler",
+    "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
+    "#CybotCookiebotDialogBodyButtonAccept",
+    ".cc-compliance .cc-btn-accept-all",
+    "button[data-cy='accept-cookies']",
+    "[aria-label='Accept cookies']",
+    "[aria-label='Accept all cookies']",
+    "[aria-label='accept cookies']",
+    "button[id*='accept-all']",
+    "button[class*='accept-all']",
+)
+
+_COOKIE_BUTTON_NAMES: tuple[str, ...] = (
+    "Accept all cookies",
+    "Accept All Cookies",
+    "Accept all",
+    "I Accept",
+    "Agree to all",
+    "Allow all",
+    "Got it",
+)
+
+
+async def _dismiss_cookie_consent(page: Page) -> bool:
+    """
+    Click through common cookie / CMP banners so the real page (e.g. Workable JD) can render.
+
+    Returns True if at least one click was attempted without throwing (banner may still persist).
+    """
+    for sel in _COOKIE_CLICK_SELECTORS:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() == 0:
+                continue
+            await loc.click(timeout=2200)
+            await asyncio.sleep(0.35)
+            logger.debug("cookie_banner_click", selector=sel)
+            return True
+        except Exception:
+            continue
+
+    for name in _COOKIE_BUTTON_NAMES:
+        try:
+            btn = page.get_by_role("button", name=name)
+            if await btn.count() == 0:
+                continue
+            await btn.first.click(timeout=1800)
+            await asyncio.sleep(0.35)
+            logger.debug("cookie_banner_click", button_name=name)
+            return True
+        except Exception:
+            continue
+
+    for phrase in ("Accept all cookies", "accept all cookies", "ACCEPT ALL COOKIES"):
+        try:
+            loc = page.get_by_text(phrase, exact=True)
+            if await loc.count() == 0:
+                continue
+            await loc.first.click(timeout=2000)
+            await asyncio.sleep(0.35)
+            logger.debug("cookie_banner_click", text_match=phrase)
+            return True
+        except Exception:
+            continue
+
+    try:
+        rx = re.compile(r"^accept(\s+all)?(\s+cookies)?$", re.I)
+        btn = page.get_by_role("button", name=rx)
+        if await btn.count() > 0:
+            await btn.first.click(timeout=1800)
+            await asyncio.sleep(0.35)
+            logger.debug("cookie_banner_click", button_name="regex_accept")
+            return True
+    except Exception:
+        pass
+
+    return False
+
 
 VIEWPORTS = [
     {"width": 1920, "height": 1080},
@@ -30,6 +116,36 @@ BLOCKED_URLS = [
     "hotjar.com",
     "intercom.io",
 ]
+
+# Embedded application / JD iframes (Greenhouse, Lever, etc.) — slight preference when scores tie.
+_ATS_EMBED_HOST_MARKERS: tuple[str, ...] = (
+    "greenhouse.io",
+    "lever.co",
+    "ashbyhq.com",
+    "myworkdayjobs.com",
+    "smartrecruiters.com",
+    "icims.com",
+    "jobvite.com",
+    "taleo.net",
+    "ultipro.com",
+    "bamboohr.com",
+    "applytojob.com",
+    "recruitee.com",
+)
+
+
+def _ats_embed_url_multiplier(url: str) -> float:
+    """
+    Prefer real JD hosts. Greenhouse ``job_app`` embeds are application forms + EEO, not postings.
+    """
+    u = (url or "").lower()
+    if not u or u.startswith("about:") or "chrome-extension:" in u:
+        return 0.05
+    if "greenhouse.io" in u and ("job_app" in u or "/embed/job_app" in u):
+        return 0.06
+    if any(m in u for m in _ATS_EMBED_HOST_MARKERS):
+        return 1.45
+    return 1.0
 
 
 class BrowserPool:
@@ -196,8 +312,13 @@ class BrowserExtractor(BaseExtractor):
                     timeout=self._settings.browser_timeout_ms,
                 )
 
+                await _dismiss_cookie_consent(page)
                 await self._wait_for_content(page)
-                content = await page.content()
+                if "apply.workable.com" in (url or "").lower():
+                    await _dismiss_cookie_consent(page)
+                    # Workable hydrates JD after shell; brief pause after CMP dismissal.
+                    await asyncio.sleep(2.5)
+                content = await self._best_document_html(page)
 
                 # Attempt structured extraction from rendered content, using existing HTML extractor logic.
                 structured_data = None
@@ -256,12 +377,20 @@ class BrowserExtractor(BaseExtractor):
             )
 
     async def _wait_for_content(self, page: Page) -> None:
+        await _dismiss_cookie_consent(page)
+
         # Prefer actual job-body containers; do not gate readiness on title-only nodes like h1.
         content_selectors = [
             "[data-automation='jobDescription']",
+            "[data-ui='job-description']",
+            "[class*='job-description']",
+            "[class*='JobDescription']",
             ".job-description",
             "section.job-description",
             "div.job-content",
+            "iframe[src*='greenhouse.io']",
+            "iframe[id*='grnhse']",
+            "iframe[src*='lever.co']",
             "article",
             "main",
         ]
@@ -295,18 +424,16 @@ class BrowserExtractor(BaseExtractor):
         elapsed = 0.0
 
         target_selector = found_selector or "main, article, [data-automation='jobDescription'], .job-description, body"
+        mid_cookie_dismiss = False
         while elapsed < max_wait_s:
             try:
-                text_len = await page.evaluate(
-                    """(sel) => {
-                        const root = document.querySelector(sel) || document.body;
-                        const txt = (root && root.innerText) ? root.innerText : '';
-                        return txt.trim().length;
-                    }""",
-                    target_selector,
-                )
+                text_len = await self._max_clean_plain_len_across_frames(page)
             except Exception:
                 text_len = 0
+
+            if not mid_cookie_dismiss and elapsed >= 4.0 and text_len < min_chars:
+                await _dismiss_cookie_consent(page)
+                mid_cookie_dismiss = True
 
             if text_len >= min_chars:
                 if text_len == observed_last:
@@ -330,3 +457,76 @@ class BrowserExtractor(BaseExtractor):
             last_text_len=max(0, observed_last),
             waited_seconds=round(elapsed, 1),
         )
+
+    async def _max_clean_plain_len_across_frames(self, page: Page) -> int:
+        """
+        Max length of CMP-stripped job plain text across main + child frames.
+
+        Readiness must not use raw ``innerText`` on the shell alone: cookie/CMP copy can exceed
+        thresholds while the real JD only exists inside an ATS iframe (e.g. Greenhouse embed).
+        """
+        best = 0
+        try:
+            frame_list = page.frames
+        except AttributeError:
+            frame_list = []
+        for frame in frame_list:
+            try:
+                fu = frame.url or ""
+                if not fu or fu.startswith("about:") or "chrome-extension:" in fu:
+                    continue
+                fh = await frame.content()
+                plen = len(plain_text_from_document_html(fh))
+                if plen > best:
+                    best = plen
+            except Exception as e:
+                logger.debug("browser_frame_plain_len_skip", error=str(e))
+                continue
+        return best
+
+    async def _best_document_html(self, page: Page) -> str:
+        """
+        Choose the document (main or child frame) with the best extraction rank score.
+
+        Prefer cleaned job text (not raw length): parent pages can exceed iframe length with
+        chrome/EEO while the real JD lives in an ATS embed. Known ATS frame URLs get a small
+        multiplier so near-tie scores favor the embed.
+        """
+        main_html = await page.content()
+        page_url = ""
+        try:
+            page_url = page.url or ""
+        except Exception:
+            pass
+        best_html = main_html
+        best_effective = rank_document_html_for_extraction(main_html) * _ats_embed_url_multiplier(page_url)
+        main_plain_len = len(plain_text_from_document_html(main_html))
+        try:
+            frame_list = page.frames
+        except AttributeError:
+            frame_list = []
+        for frame in frame_list:
+            try:
+                if frame == page.main_frame:
+                    continue
+                fu = frame.url or ""
+                if not fu or fu.startswith("about:") or "chrome-extension:" in fu:
+                    continue
+                fh = await frame.content()
+                effective = rank_document_html_for_extraction(fh) * _ats_embed_url_multiplier(fu)
+                if effective > best_effective:
+                    best_effective = effective
+                    best_html = fh
+            except Exception as e:
+                logger.debug("browser_iframe_content_skip", error=str(e))
+                continue
+
+        if best_html is not main_html:
+            chosen_len = len(plain_text_from_document_html(best_html))
+            logger.info(
+                "browser_using_richer_frame",
+                main_plain_len=main_plain_len,
+                chosen_plain_len=chosen_len,
+                chosen_effective_score=round(best_effective, 2),
+            )
+        return best_html

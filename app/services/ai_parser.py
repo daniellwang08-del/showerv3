@@ -5,6 +5,7 @@ from app.core.openai_client import get_openai_client
 from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
 from app.models.schemas import JobDescriptionSchema
+from app.services.job_content_cleaner import plain_text_from_document_html
 
 logger = get_logger(__name__)
 
@@ -36,7 +37,7 @@ class AIParser:
 
     async def parse(self, content: str) -> tuple[JobDescriptionSchema, float]:
         client = get_openai_client()
-        truncated_content = self._truncate_content(content)
+        truncated_content = self._prepare_content_for_llm(content)
 
         try:
             response = await client.chat.completions.create(
@@ -99,18 +100,42 @@ class AIParser:
             logger.error("ai_parsing_failed", error=str(e))
             raise AIParsingError(str(e))
 
-    def _truncate_content(self, content: str) -> str:
+    def _looks_like_html_document(self, content: str) -> bool:
+        """Heuristic: full-page HTML vs plain text from a field."""
+        if not content or len(content) < 80:
+            return False
+        head = content[:8000].lower()
+        if "<html" in head or "<body" in head or "<!doctype html" in head:
+            return True
+        return content.count("<") > 25 and "</" in content
+
+    def _prepare_content_for_llm(self, content: str) -> str:
+        """
+        Raw tag-stripping + 50k cap puts cookie banners and footers first on many SPAs (e.g. Workable),
+        so the real JD never reaches the model. Prefer semantic plain text for HTML documents.
+        """
+        if not content:
+            return ""
+        s = content.strip()
+        if self._looks_like_html_document(s):
+            plain = plain_text_from_document_html(s)
+            if len(plain) >= 80:
+                s = plain
+            else:
+                s = self._strip_tags_flat(s)
+        else:
+            s = self._strip_tags_flat(s)
+        if len(s) > MAX_CONTENT_LENGTH:
+            logger.debug("ai_parser_content_truncated", original_length=len(s), max_length=MAX_CONTENT_LENGTH)
+            s = s[:MAX_CONTENT_LENGTH] + "..."
+        return s
+
+    def _strip_tags_flat(self, content: str) -> str:
         content = re.sub(r"<script[^>]*>.*?</script>", "", content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r"<style[^>]*>.*?</style>", "", content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r"<[^>]+>", " ", content)
         content = re.sub(r"\s+", " ", content)
-        content = content.strip()
-
-        if len(content) > MAX_CONTENT_LENGTH:
-            logger.debug("ai_parser_content_truncated", original_length=len(content), max_length=MAX_CONTENT_LENGTH)
-            content = content[:MAX_CONTENT_LENGTH] + "..."
-
-        return content
+        return content.strip()
 
     def _calculate_confidence(self, data: dict) -> float:
         score = 0.0
