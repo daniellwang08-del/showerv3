@@ -1,7 +1,7 @@
 import type { ProfileFormData } from '../types/profile';
 import type { UserProfile } from '../types/profile';
 import { isValidJobArrangement } from '../types/profile';
-import { profileToForm } from '../components/ProfileForm';
+import { profileToForm } from './profileFormData';
 
 function validateEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);

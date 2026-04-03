@@ -12,15 +12,19 @@ echo ============================================
 echo.
 
 :: Backend API server
-echo [1/3] Starting backend API server...
+echo [1/4] Starting backend API server...
 start "Backend API (port 8000)" cmd /k "cd /d "%~dp0" && set APP_ENV=%APP_ENV% && venv\Scripts\python.exe start_server.py"
 
-:: arq background worker
-echo [2/3] Starting arq worker...
-start "arq Worker" cmd /k "cd /d "%~dp0" && set APP_ENV=%APP_ENV% && venv\Scripts\python.exe run_worker.py"
+:: arq extraction worker (scraping)
+echo [2/4] Starting extraction worker...
+start "Extraction Worker" cmd /k "cd /d "%~dp0" && set APP_ENV=%APP_ENV% && venv\Scripts\python.exe run_worker.py extraction"
+
+:: arq analysis worker (OpenAI match scoring)
+echo [3/4] Starting analysis worker...
+start "Analysis Worker" cmd /k "cd /d "%~dp0" && set APP_ENV=%APP_ENV% && venv\Scripts\python.exe run_worker.py analysis"
 
 :: Frontend dev server
-echo [3/3] Starting frontend dev server...
+echo [4/4] Starting frontend dev server...
 start "Frontend (port 5173)" cmd /k "cd /d "%~dp0\frontend" && npm run dev"
 
 echo.

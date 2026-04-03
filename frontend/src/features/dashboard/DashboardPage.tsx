@@ -1,7 +1,5 @@
-import type { Dispatch, FormEvent, SetStateAction } from 'react';
 import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, PanelRightClose, PanelRightOpen } from 'lucide-react';
-import type { AttachmentFlowStatus, SubmittedUrlItem } from '../../types/ui';
 import { DuplicateJobsPanel } from '../../components/DuplicateJobsPanel';
 import { DetailContentPanel } from '../../components/DetailContentPanel';
 import Header from '../../components/Header';
@@ -11,125 +9,33 @@ import { ValidJobsPanel } from '../../components/ValidJobsPanel';
 import { DashboardPipelineStats } from '../../components/DashboardPipelineStats';
 import { useEscapeToClose } from '../../hooks/useEscapeToClose';
 import { useFloatingButtonPosition } from '../../hooks/useFloatingButtonPosition';
+import { useJobsStore } from '../../stores/jobsStore';
+import { useUIStore } from '../../stores/uiStore';
 
 type Props = {
   userEmail?: string;
   userName?: string;
   onLogout: () => void;
   onMyProfile: () => void;
-
-  // jobs data + handlers
-  uniqueUrls: SubmittedUrlItem[];
-  duplicateUrls: SubmittedUrlItem[];
-  loadingLists: boolean;
-  url: string;
-  submitNotice: string;
-  submitNoticeKind: 'success' | 'warning';
-  submitError: string;
-  loading: boolean;
-  onUrlChange: (next: string) => void;
-  onSubmit: (e: FormEvent) => void;
-  attachmentFlow: AttachmentFlowStatus;
-  onSubmitAttachment: (files: File[]) => Promise<void>;
-
-  openMenu: { table: 'valid' | 'invalid'; id: string } | null;
-  setOpenMenu: Dispatch<SetStateAction<{ table: 'valid' | 'invalid'; id: string } | null>>;
-
-  compareValidJobId: string | null;
-  onEdit: (item: SubmittedUrlItem) => void;
-  onReportInvalid: (item: SubmittedUrlItem) => void;
-  onReportDuplicate: (item: SubmittedUrlItem) => void;
-  onDelete: (item: SubmittedUrlItem) => void;
-  onBatchDelete: (items: SubmittedUrlItem[]) => void;
-  onMarkApplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onMarkUnapplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onOpenSelectedUrls: (items: SubmittedUrlItem[]) => void;
-  onOpenJobAnalysis: (item: SubmittedUrlItem) => void;
-  onTriggerJobMatch: (item: SubmittedUrlItem, opts?: { force?: boolean }) => void | Promise<void>;
-  onRerunMatchAnalysis: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onBatchRescrapePipeline: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onJobUrlClick: (item: SubmittedUrlItem) => void;
-  onRescrape: (item: SubmittedUrlItem) => void;
-
-  // detail panel
-  jobAnalysisValidJobId: string | null;
-  onCloseDetail: () => void;
-  onMatchStored: () => void;
-  wsRefreshKey?: number;
-
-  // compare helpers
-  onCompareDuplicate: (item: SubmittedUrlItem) => void;
-  onReplaceDuplicate: (item: SubmittedUrlItem) => void;
-  onReportDuplicateAsValid: (item: SubmittedUrlItem) => void;
-  onBatchDeleteInvalid?: (items: SubmittedUrlItem[]) => void | Promise<void>;
-
-  jobListHasMore?: boolean;
-  loadingMoreValidJobs?: boolean;
-  onLoadMoreValidJobs?: () => void;
-  validJobsLoadedCount?: number;
-  duplicateListHasMore?: boolean;
-  loadingMoreDuplicates?: boolean;
-  onLoadMoreDuplicates?: () => void;
-  duplicatesLoadedCount?: number;
 };
 
-export function DashboardPage({
-  userEmail,
-  userName,
-  onLogout,
-  onMyProfile,
-  uniqueUrls,
-  duplicateUrls,
-  loadingLists,
-  url,
-  submitNotice,
-  submitNoticeKind,
-  submitError,
-  loading,
-  onUrlChange,
-  onSubmit,
-  attachmentFlow,
-  onSubmitAttachment,
-  openMenu,
-  setOpenMenu,
-  compareValidJobId,
-  onEdit,
-  onReportInvalid,
-  onReportDuplicate,
-  onDelete,
-  onBatchDelete,
-  onMarkApplied,
-  onMarkUnapplied,
-  onOpenSelectedUrls,
-  onOpenJobAnalysis,
-  onTriggerJobMatch,
-  onRerunMatchAnalysis,
-  onBatchRescrapePipeline,
-  onJobUrlClick,
-  onRescrape,
-  jobAnalysisValidJobId,
-  onCloseDetail,
-  onMatchStored,
-  onCompareDuplicate,
-  onReplaceDuplicate,
-  onReportDuplicateAsValid,
-  onBatchDeleteInvalid,
-  jobListHasMore,
-  loadingMoreValidJobs,
-  onLoadMoreValidJobs,
-  validJobsLoadedCount,
-  duplicateListHasMore,
-  loadingMoreDuplicates,
-  onLoadMoreDuplicates,
-  duplicatesLoadedCount,
-  wsRefreshKey,
-}: Props) {
+export function DashboardPage({ userEmail, userName, onLogout, onMyProfile }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isDuplicatePanelOpen, setDuplicatePanelOpen] = useState(false);
 
   useEscapeToClose(isDuplicatePanelOpen, () => setDuplicatePanelOpen(false));
 
   const floating = useFloatingButtonPosition('job_scraper:duplicates_button_pos:v1');
+
+  const uniqueUrls = useJobsStore((s) => s.uniqueUrls);
+  const duplicateUrls = useJobsStore((s) => s.duplicateUrls);
+  const loadingLists = useJobsStore((s) => s.loadingLists);
+  const validHasMore = useJobsStore((s) => s.validHasMore);
+
+  const jobAnalysisValidJobId = useUIStore((s) => s.jobAnalysisValidJobId);
+  const closeDetail = useUIStore((s) => s.closeDetail);
+  const matchStored = useUIStore((s) => s.matchStored);
+  const wsRefreshKey = useUIStore((s) => s.wsRefreshKey);
 
   const handleToggleDuplicates = useCallback(() => {
     setDuplicatePanelOpen((prev) => !prev);
@@ -164,55 +70,20 @@ export function DashboardPage({
 
         <div className="flex-1 min-w-0 overflow-hidden">
           <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-3 p-3 md:grid-cols-2 md:grid-rows-1">
-            <ValidJobsPanel
-              items={uniqueUrls}
-              compareValidJobId={compareValidJobId}
-              openMenuId={openMenu?.table === 'valid' ? openMenu.id : null}
-              onToggleMenu={(id) => {
-                setOpenMenu((prev) => (prev?.table === 'valid' && prev.id === id ? null : { table: 'valid', id }));
-              }}
-              onEdit={onEdit}
-              onReportInvalid={onReportInvalid}
-              onReportDuplicate={onReportDuplicate}
-              onDelete={onDelete}
-              onBatchDelete={onBatchDelete}
-              onMarkApplied={onMarkApplied}
-              onMarkUnapplied={onMarkUnapplied}
-              onOpenSelectedUrls={onOpenSelectedUrls}
-              onOpenJobAnalysis={onOpenJobAnalysis}
-              onTriggerJobMatch={onTriggerJobMatch}
-              onRerunMatchAnalysis={onRerunMatchAnalysis}
-              onBatchRescrapePipeline={onBatchRescrapePipeline}
-              onJobUrlClick={onJobUrlClick}
-              onRescrape={onRescrape}
-              jobListHasMore={jobListHasMore}
-              loadingMoreJobs={loadingMoreValidJobs}
-              onLoadMoreJobs={onLoadMoreValidJobs}
-              jobsLoadedCount={validJobsLoadedCount}
-            />
+            <ValidJobsPanel />
 
             <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden md:bg-gradient-to-b md:from-blue-50/40 md:to-white/70">
               <div className="glass-card shrink-0 rounded-2xl p-4">
                 <h3 className="mb-2 text-lg font-semibold text-slate-900">Post a job</h3>
-                <SubmitForm
-                  url={url}
-                  onUrlChange={onUrlChange}
-                  loading={loading}
-                  onSubmit={onSubmit}
-                  submitNotice={submitNotice}
-                  submitNoticeKind={submitNoticeKind}
-                  submitError={submitError}
-                  attachmentFlow={attachmentFlow}
-                  onSubmitAttachment={onSubmitAttachment}
-                />
+                <SubmitForm />
               </div>
 
               {jobAnalysisValidJobId ? (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   <DetailContentPanel
                     validJobId={jobAnalysisValidJobId}
-                    onClose={onCloseDetail}
-                    onAnalysisUpdated={onMatchStored}
+                    onClose={closeDetail}
+                    onAnalysisUpdated={matchStored}
                     refreshKey={wsRefreshKey}
                   />
                 </div>
@@ -221,8 +92,8 @@ export function DashboardPage({
                   jobs={uniqueUrls}
                   duplicateCount={duplicateUrls.length}
                   loading={loadingLists}
-                  jobsHasMore={jobListHasMore}
-                  jobsLoadedCount={validJobsLoadedCount}
+                  jobsHasMore={validHasMore}
+                  jobsLoadedCount={uniqueUrls.length}
                 />
               )}
             </div>
@@ -278,23 +149,7 @@ export function DashboardPage({
         >
           <div className="h-full overflow-auto p-4 bg-gradient-to-b from-blue-50/80 via-white to-blue-50/40">
             <DuplicateJobsPanel
-              loadingLists={loadingLists}
-              items={duplicateUrls}
-              openMenuId={openMenu?.table === 'invalid' ? openMenu.id : null}
-              onToggleMenu={(id) => {
-                setOpenMenu((prev) => (prev?.table === 'invalid' && prev.id === id ? null : { table: 'invalid', id }));
-              }}
-              onCloseMenu={() => setOpenMenu(null)}
               onClosePanel={() => setDuplicatePanelOpen(false)}
-              onCompare={onCompareDuplicate}
-              onReplace={onReplaceDuplicate}
-              onReportAsValid={onReportDuplicateAsValid}
-              onDelete={onDelete}
-              onBatchDeleteInvalid={onBatchDeleteInvalid}
-              duplicateListHasMore={duplicateListHasMore}
-              loadingMoreDuplicates={loadingMoreDuplicates}
-              onLoadMoreDuplicates={onLoadMoreDuplicates}
-              duplicatesLoadedCount={duplicatesLoadedCount}
             >
               <></>
             </DuplicateJobsPanel>
@@ -304,4 +159,3 @@ export function DashboardPage({
     </div>
   );
 }
-

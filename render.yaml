@@ -34,13 +34,13 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.3"
 
-  # --- arq background worker ---
+  # --- arq extraction worker (scrapes job pages) ---
   - type: worker
-    name: job-scraper-worker
+    name: job-scraper-extraction-worker
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python run_worker.py
+    startCommand: python run_worker.py extraction
     envVars:
       - key: DATABASE_URL
         sync: false
@@ -61,6 +61,34 @@ services:
         value: "false"
       - key: BROWSER_POOL_SIZE
         value: "0"
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+
+  # --- arq analysis worker (AI match scoring) ---
+  - type: worker
+    name: job-scraper-analysis-worker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_worker.py analysis
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: job-scraper-kv
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AUTH_SECRET_KEY
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
       - key: PYTHON_VERSION
         value: "3.12.3"
 

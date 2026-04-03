@@ -1,35 +1,23 @@
 import type { FormEvent } from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { FileText, Loader2, Paperclip, Send, X } from 'lucide-react';
-import type { AttachmentFlowStatus } from '../types/ui';
 import { AttachmentJobProgress } from './AttachmentJobProgress';
-
-type Props = {
-  url: string;
-  onUrlChange: (next: string) => void;
-  loading: boolean;
-  onSubmit: (e: FormEvent) => void;
-  submitNotice: string;
-  submitNoticeKind: 'success' | 'warning';
-  submitError: string;
-  attachmentFlow: AttachmentFlowStatus;
-  onSubmitAttachment: (files: File[]) => Promise<void>;
-};
+import { useJobsStore } from '../stores/jobsStore';
 
 const ACCEPT =
   '.docx,.xlsx,.txt,.text,.md,.markdown,.html,.htm,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/html';
 
-export function SubmitForm({
-  url,
-  onUrlChange,
-  loading,
-  onSubmit,
-  submitNotice,
-  submitNoticeKind,
-  submitError,
-  attachmentFlow,
-  onSubmitAttachment,
-}: Props) {
+export function SubmitForm() {
+  const url = useJobsStore((s) => s.url);
+  const setUrl = useJobsStore((s) => s.setUrl);
+  const loading = useJobsStore((s) => s.loading);
+  const submitNotice = useJobsStore((s) => s.submitNotice);
+  const submitNoticeKind = useJobsStore((s) => s.submitNoticeKind);
+  const submitError = useJobsStore((s) => s.submitError);
+  const attachmentFlow = useJobsStore((s) => s.attachmentFlow);
+  const submitJob = useJobsStore((s) => s.submitJob);
+  const submitAttachmentFiles = useJobsStore((s) => s.submitAttachmentFiles);
+
   const fileRef = useRef<HTMLInputElement>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
@@ -51,14 +39,14 @@ export function SubmitForm({
     e.preventDefault();
     if (hasPendingAttachment) {
       try {
-        await onSubmitAttachment(pendingFiles);
+        await submitAttachmentFiles(pendingFiles);
         setPendingFiles([]);
       } catch {
-        // errors shown via submitError from parent
+        // errors shown via submitError from store
       }
       return;
     }
-    onSubmit(e);
+    await submitJob(url.trim());
   };
 
   const clearPendingAttachment = () => {
@@ -84,7 +72,6 @@ export function SubmitForm({
               e.target.value = '';
             }}
           />
-          {/* Single bordered field: attach | URL or attachment summary */}
           <div className="flex min-h-11 min-w-0 flex-1 overflow-hidden rounded-t-lg border border-[rgba(147,197,253,0.8)] bg-[rgba(255,255,255,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] transition-[border-color,box-shadow,background-color] duration-[180ms] focus-within:border-[rgba(59,130,246,0.95)] focus-within:bg-white focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.85)] sm:rounded-l-lg sm:rounded-r-none">
             <button
               type="button"
@@ -135,7 +122,7 @@ export function SubmitForm({
                 type="url"
                 id="url"
                 value={url}
-                onChange={(e) => onUrlChange(e.target.value)}
+                onChange={(e) => setUrl(e.target.value)}
                 disabled={busy}
                 className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pl-2 pr-3 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-500 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="https://boards.greenhouse.io/..."
@@ -152,12 +139,12 @@ export function SubmitForm({
             aria-busy={busy}
             aria-label={
               busy
-                ? 'Working…'
+                ? 'Working\u2026'
                 : hasPendingAttachment
                   ? 'Submit attachment and import job URLs'
                   : 'Submit job URL'
             }
-            title={busy ? 'Working…' : hasPendingAttachment ? 'Submit attachment' : 'Submit'}
+            title={busy ? 'Working\u2026' : hasPendingAttachment ? 'Submit attachment' : 'Submit'}
             className="btn-blue-neon btn-submit-icon inline-flex h-11 w-full shrink-0 items-center justify-center rounded-b-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70 sm:w-[3.25rem] sm:min-w-[4.25rem] sm:max-w-[3.25rem] sm:rounded-l-none sm:rounded-r-lg"
           >
             {busy ? (
@@ -170,11 +157,11 @@ export function SubmitForm({
 
         {submitNotice && submitNoticeKind === 'warning' && (
           <div className="mt-3 text-sm font-medium text-amber-700">
-            ⚠ {submitNotice}
+            \u26A0 {submitNotice}
           </div>
         )}
 
-        {submitError && <div className="mt-3 text-sm font-medium text-red-700">✕ {submitError}</div>}
+        {submitError && <div className="mt-3 text-sm font-medium text-red-700">\u2715 {submitError}</div>}
       </form>
     </div>
   );

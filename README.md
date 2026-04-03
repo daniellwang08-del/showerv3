@@ -5,16 +5,19 @@ Full-stack job extraction and analysis platform. Submit job posting URLs, automa
 ## Architecture
 
 ```
-Frontend (React/Vite)  ──WebSocket──►  API Server (FastAPI)  ──Redis──►  Worker (arq)
-         │                                    │                              │
-         └──── REST API ──────────────────────┘                              │
-                                              │                              │
-                                         PostgreSQL  ◄───────────────────────┘
+                                                  ┌──► Extraction Worker (arq)
+Frontend (React/Vite) ──WebSocket──► API (FastAPI) ──Redis──┤     queue: job_extraction
+         │                                │        └──► Analysis Worker   (arq)
+         └──── REST API ───────────────────┘                  queue: job_analysis
+                                           │                        │
+                                      PostgreSQL  ◄─────────────────┘
 ```
 
 **API Server** — FastAPI app handling REST endpoints, authentication (JWT), and WebSocket connections for real-time progress updates.
 
-**Worker** — arq background worker that processes extraction and AI match analysis jobs. Publishes progress events to Redis pub/sub for WebSocket delivery.
+**Extraction Worker** — arq worker listening on the `job_extraction` queue. Runs I/O-heavy scraping tasks (HTTP fetches, Playwright browser rendering). Initializes HTTP client and browser pool on startup.
+
+**Analysis Worker** — arq worker listening on the `job_analysis` queue. Runs API-heavy AI match analysis tasks (OpenAI). Only needs a database connection — no browser or HTTP client.
 
 **Frontend** — React SPA with real-time WebSocket updates (no polling), job list management, profile editor, and AI match score display.
 
@@ -28,7 +31,7 @@ Multi-strategy extraction with automatic fallback:
 4. **Static HTML** — Readability + CSS selector extraction
 5. **Browser Rendering** — Playwright for SPAs and dynamic content
 
-Extracted data feeds directly into `JobDescriptionSchema` — no intermediate AI parsing step. OpenAI is used only for job-profile match analysis (not extraction).
+Extracted data feeds directly into `JobDescriptionSchema` — no intermediate AI parsing step. On successful extraction, the worker automatically enqueues a match analysis job onto the separate analysis queue.
 
 ### Post-Extraction
 
@@ -81,20 +84,25 @@ npm install
 
 ## Run
 
-All three processes must run for full functionality:
+All four processes must run for full functionality:
 
 ```bash
 # 1. API server (port 8000)
 python start_server.py
 
-# 2. Background worker (processes extraction and match jobs)
-python run_worker.py
+# 2. Extraction worker (scrapes job pages — HTTP/browser)
+python run_worker.py extraction
 
-# 3. Frontend dev server (port 5173)
+# 3. Analysis worker (AI match scoring — OpenAI)
+python run_worker.py analysis
+
+# 4. Frontend dev server (port 5173)
 cd frontend && npm run dev
 ```
 
-Jobs stay in "pending" status until the worker picks them up. The frontend receives real-time updates via WebSocket — no manual refresh needed.
+The two workers use independent Redis queues (`job_extraction` and `job_analysis`) so they process jobs concurrently without blocking each other. You can run multiple instances of either worker for horizontal scaling.
+
+Jobs stay in "pending" status until a worker picks them up. The frontend receives real-time updates via WebSocket — no manual refresh needed.
 
 ## Environment Overlays
 
@@ -114,4 +122,4 @@ pytest
 
 ## Deployment
 
-A `render.yaml` Blueprint is included for Render.com deployment (API server, worker, static frontend, Redis key-value store). Database is external (e.g. Neon PostgreSQL).
+A `render.yaml` Blueprint is included for Render.com deployment (API server, extraction worker, analysis worker, static frontend, Redis key-value store). Database is external (e.g. Neon PostgreSQL).

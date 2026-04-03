@@ -59,8 +59,8 @@ async def lifespan(app: FastAPI):
 
     redis_ok = False
     try:
-        from app.tasks.worker import get_redis_pool
-        pool = await get_redis_pool()
+        from app.tasks.worker import get_extraction_pool
+        pool = await get_extraction_pool()
         await pool.ping()
         redis_ok = True
         await pool.close()
@@ -71,13 +71,13 @@ async def lifespan(app: FastAPI):
         logger.info(
             "application_started",
             redis_connected=True,
-            worker_required="Run 'python run_worker.py' in another terminal to process jobs",
+            worker_required="Run 'python run_worker.py extraction' and 'python run_worker.py analysis' in separate terminals",
         )
     else:
         logger.info(
             "application_started",
             redis_connected=False,
-            worker_required="Jobs use in-process fallback. For async queue: start Memurai/Redis and run 'python run_worker.py'",
+            worker_required="Jobs use in-process fallback. For async queues: start Memurai/Redis and run both workers",
         )
 
     yield

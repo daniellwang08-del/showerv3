@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeftRight,
@@ -15,28 +15,16 @@ import {
   CheckSquare,
 } from 'lucide-react';
 import { SubmittedUrlItem } from '../types/ui';
+import { useJobsStore } from '../stores/jobsStore';
+import { useModalStore } from '../stores/modalStore';
+import { useUIStore } from '../stores/uiStore';
 
 const MENU_WIDTH = 224;
 const MENU_EST_HEIGHT = 200;
 
 type Props = {
-  loadingLists: boolean;
-  items: SubmittedUrlItem[];
-  openMenuId: string | null;
-  onToggleMenu: (id: string) => void;
-  onCloseMenu: () => void;
-  onCompare: (item: SubmittedUrlItem) => void;
-  onReplace: (item: SubmittedUrlItem) => void;
-  onReportAsValid: (item: SubmittedUrlItem) => void;
-  onDelete: (item: SubmittedUrlItem) => void;
-  /** Bulk delete selected invalid jobs (server removes invalid row + shadow valid rows + orphan extractions). */
-  onBatchDeleteInvalid?: (items: SubmittedUrlItem[]) => void | Promise<void>;
   onClosePanel: () => void;
   children: ReactNode;
-  duplicateListHasMore?: boolean;
-  loadingMoreDuplicates?: boolean;
-  onLoadMoreDuplicates?: () => void;
-  duplicatesLoadedCount?: number;
 };
 
 function clampDupContextMenu(clientX: number, clientY: number) {
@@ -178,23 +166,30 @@ function DuplicateActionsMenuPortal({
 }
 
 export function DuplicateJobsPanel({
-  loadingLists,
-  items,
-  openMenuId,
-  onToggleMenu,
-  onCloseMenu,
-  onCompare,
-  onReplace,
-  onReportAsValid,
-  onDelete,
-  onBatchDeleteInvalid,
   onClosePanel,
   children,
-  duplicateListHasMore,
-  loadingMoreDuplicates,
-  onLoadMoreDuplicates,
-  duplicatesLoadedCount,
 }: Props) {
+  const loadingLists = useJobsStore((s) => s.loadingLists);
+  const items = useJobsStore((s) => s.duplicateUrls);
+  const duplicateListHasMore = useJobsStore((s) => s.invalidHasMore);
+  const loadingMoreDuplicates = useJobsStore((s) => s.loadingMoreInvalid);
+  const onLoadMoreDuplicates = useJobsStore((s) => s.loadMoreInvalidJobs);
+  const duplicatesLoadedCount = useJobsStore((s) => s.duplicateUrls.length);
+  const onBatchDeleteInvalid = useJobsStore((s) => s.openBatchDeleteConfirm);
+
+  const openMenuRaw = useUIStore((s) => s.openMenu);
+  const openMenuId = openMenuRaw?.table === 'invalid' ? openMenuRaw.id : null;
+  const onToggleMenu = useCallback((id: string) => {
+    useUIStore.getState().toggleMenu('invalid', id);
+  }, []);
+  const onCloseMenu = useCallback(() => {
+    useUIStore.getState().setOpenMenu(null);
+  }, []);
+
+  const onCompare = useUIStore((s) => s.compareDuplicate);
+  const onReplace = useUIStore((s) => s.replaceDuplicate);
+  const onReportAsValid = useModalStore((s) => s.openPromoteModal);
+  const onDelete = useModalStore((s) => s.openDeleteModal);
   const [dupMenuOverride, setDupMenuOverride] = useState<{ left: number; top: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
@@ -314,7 +309,7 @@ export function DuplicateJobsPanel({
                     </>
                   )}
                 </button>
-                {someSelected && onBatchDeleteInvalid ? (
+                {someSelected ? (
                   <button
                     type="button"
                     onClick={handleBatchDelete}
@@ -419,7 +414,7 @@ export function DuplicateJobsPanel({
               </ul>
             )}
           </div>
-          {duplicateListHasMore && onLoadMoreDuplicates && items.length > 0 ? (
+          {duplicateListHasMore && items.length > 0 ? (
             <div
               ref={dupSentinelRef}
               className="mt-2 flex min-h-[48px] flex-col items-center justify-center gap-2 rounded-xl border border-blue-100/90 bg-gradient-to-b from-blue-50/80 to-white/70 px-3 py-2"

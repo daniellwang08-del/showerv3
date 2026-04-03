@@ -7,7 +7,7 @@ import {
   isValidJobArrangement,
 } from '../types/profile';
 import type { UserProfile } from '../types/profile';
-import { profileToForm } from '../components/ProfileForm';
+import { profileToForm } from './profileFormData';
 
 export type ResumeDraft = {
   name_first?: string | null;

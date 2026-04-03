@@ -196,7 +196,7 @@ async def test_extract_job_auto_rerun_low_confidence(monkeypatch):
         async def close(self):
             pass
 
-    monkeypatch.setattr("app.tasks.worker.get_redis_pool", AsyncMock(return_value=DummyPool()))
+    monkeypatch.setattr("app.tasks.worker.get_analysis_pool", AsyncMock(return_value=DummyPool()))
 
     result = await extract_job({}, "test-job-id", "https://example.com/job", "user-1")
 

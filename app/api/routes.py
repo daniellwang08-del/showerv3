@@ -478,20 +478,30 @@ async def get_profile_openai_text(current_user: dict = Depends(get_current_user)
         return {"profile_openai_text": text}
 
 
-async def try_get_redis_pool():
-    """Get Redis/Memurai pool for job queue. Returns None on any connection failure."""
+async def _try_pool(pool_factory, label: str):
+    """Try to create and ping a Redis pool. Returns the pool or None."""
     try:
-        from app.tasks.worker import get_redis_pool
-        pool = await get_redis_pool()
+        pool = await pool_factory()
         await pool.ping()
         return pool
     except Exception as e:
         logger.warning(
             "redis_pool_unavailable",
+            queue=label,
             error=str(e),
-            hint="Jobs will use background_tasks fallback. For async processing, ensure Memurai/Redis is running and worker is started: python run_worker.py",
+            hint="Jobs will use background_tasks fallback. For async processing, ensure Memurai/Redis is running and workers are started.",
         )
         return None
+
+
+async def try_get_extraction_pool():
+    from app.tasks.worker import get_extraction_pool, EXTRACTION_QUEUE
+    return await _try_pool(get_extraction_pool, EXTRACTION_QUEUE)
+
+
+async def try_get_analysis_pool():
+    from app.tasks.worker import get_analysis_pool, ANALYSIS_QUEUE
+    return await _try_pool(get_analysis_pool, ANALYSIS_QUEUE)
 
 
 async def enqueue_extraction(
@@ -505,7 +515,9 @@ async def enqueue_extraction(
     Prefer Redis/arq whenever Redis is reachable (jobs wait in queue until a worker runs).
     Fall back in-process only when Redis is down or enqueue fails.
     """
-    pool = await try_get_redis_pool()
+    from app.tasks.worker import EXTRACTION_QUEUE
+
+    pool = await try_get_extraction_pool()
     bind_logging_context(extraction_id=extraction_id, target_url=url, user_id=user_id)
     if pool:
         try:
@@ -517,7 +529,7 @@ async def enqueue_extraction(
                 "extraction_enqueued_redis",
                 extraction_id=extraction_id,
                 url=url,
-                queue="job_extraction",
+                queue=EXTRACTION_QUEUE,
             )
             return
         except Exception as e:
@@ -544,8 +556,11 @@ async def enqueue_job_match_analysis(
 ) -> None:
     """
     Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks.
+    Uses the dedicated analysis queue, independent from extraction.
     """
-    pool = await try_get_redis_pool()
+    from app.tasks.worker import ANALYSIS_QUEUE
+
+    pool = await try_get_analysis_pool()
     bind_logging_context(valid_job_id=valid_job_id, user_id=user_id)
     if pool:
         try:
@@ -554,7 +569,7 @@ async def enqueue_job_match_analysis(
                 "job_match_enqueued_redis",
                 valid_job_id=valid_job_id,
                 user_id=user_id,
-                queue="job_extraction",
+                queue=ANALYSIS_QUEUE,
             )
             return
         except Exception as e:
@@ -617,7 +632,7 @@ async def health_check() -> HealthResponse:
 
     redis_connected = False
     try:
-        pool = await try_get_redis_pool()
+        pool = await try_get_extraction_pool()
         if pool:
             redis_connected = True
             await pool.close()
@@ -1603,7 +1618,7 @@ async def rerun_job_match_batch(
         }
 
     ids_for_in_process: list[str] = list(enqueued_ids)
-    pool = await try_get_redis_pool()
+    pool = await try_get_analysis_pool()
     if pool:
         redis_failed: list[str] = []
         try:

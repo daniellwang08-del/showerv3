@@ -1,33 +1,9 @@
 import { useCallback, useMemo, useState, type FormEvent } from 'react';
 import { CheckCircle, Loader2, Search, Sparkles, X } from 'lucide-react';
-import { SubmittedUrlItem } from '../types/ui';
 import JobTimeline from './JobTimeline';
 import { apiClient } from '../api/client';
-
-type Props = {
-  items: SubmittedUrlItem[];
-  compareValidJobId?: string | null;
-  openMenuId: string | null;
-  onToggleMenu: (id: string) => void;
-  onEdit: (item: SubmittedUrlItem) => void;
-  onReportInvalid: (item: SubmittedUrlItem) => void;
-  onReportDuplicate: (item: SubmittedUrlItem) => void;
-  onDelete: (item: SubmittedUrlItem) => void;
-  onBatchDelete?: (items: SubmittedUrlItem[]) => void;
-  onMarkApplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onMarkUnapplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
-  onOpenJobAnalysis?: (item: SubmittedUrlItem) => void;
-  onTriggerJobMatch?: (item: SubmittedUrlItem, opts?: { force?: boolean }) => void | Promise<void>;
-  onRerunMatchAnalysis?: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onBatchRescrapePipeline?: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onJobUrlClick?: (item: SubmittedUrlItem) => void;
-  onRescrape?: (item: SubmittedUrlItem) => void;
-  jobListHasMore?: boolean;
-  loadingMoreJobs?: boolean;
-  onLoadMoreJobs?: () => void;
-  jobsLoadedCount?: number;
-};
+import { useJobsStore } from '../stores/jobsStore';
+import { useUIStore } from '../stores/uiStore';
 
 type AiSearchResponse = {
   matching_job_ids: string[];
@@ -35,30 +11,14 @@ type AiSearchResponse = {
   total_candidates: number;
 };
 
-export function ValidJobsPanel({
-  items,
-  openMenuId,
-  onToggleMenu,
-  onEdit,
-  onReportInvalid,
-  onReportDuplicate,
-  onDelete,
-  onBatchDelete,
-  onMarkApplied,
-  onMarkUnapplied,
-  onOpenSelectedUrls,
-  onOpenJobAnalysis,
-  onTriggerJobMatch,
-  onRerunMatchAnalysis,
-  onBatchRescrapePipeline,
-  onJobUrlClick,
-  onRescrape,
-  compareValidJobId,
-  jobListHasMore,
-  loadingMoreJobs,
-  onLoadMoreJobs,
-  jobsLoadedCount,
-}: Props) {
+export function ValidJobsPanel() {
+  const items = useJobsStore((s) => s.uniqueUrls);
+  const validHasMore = useJobsStore((s) => s.validHasMore);
+  const loadingMoreValid = useJobsStore((s) => s.loadingMoreValid);
+  const loadMoreValidJobs = useJobsStore((s) => s.loadMoreValidJobs);
+
+  const compareValidJobId = useUIStore((s) => s.compareValidJobId);
+
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -81,7 +41,7 @@ export function ValidJobsPanel({
   const runAiSearch = useCallback(async () => {
     const prompt = aiPrompt.trim();
     if (!prompt) {
-      setAiError('Enter a short description of what you’re looking for.');
+      setAiError('Enter a short description of what you\u2019re looking for.');
       return;
     }
     setAiLoading(true);
@@ -188,31 +148,14 @@ export function ValidJobsPanel({
         </form>
       </div>
 
-      {/* Timeline with integrated job list */}
       <div className="min-h-0 flex flex-1">
         <JobTimeline
           items={displayedItems}
-          openMenuId={openMenuId}
           compareValidJobId={compareValidJobId}
-          onToggleMenu={onToggleMenu}
-          onEdit={onEdit}
-          onReportInvalid={onReportInvalid}
-          onReportDuplicate={onReportDuplicate}
-          onDelete={onDelete}
-          onBatchDelete={onBatchDelete}
-          onMarkApplied={onMarkApplied}
-          onMarkUnapplied={onMarkUnapplied}
-          onOpenSelectedUrls={onOpenSelectedUrls}
-          onOpenJobAnalysis={onOpenJobAnalysis}
-          onTriggerJobMatch={onTriggerJobMatch}
-          onRerunMatchAnalysis={onRerunMatchAnalysis}
-          onBatchRescrapePipeline={onBatchRescrapePipeline}
-          onJobUrlClick={onJobUrlClick}
-          onRescrape={onRescrape}
-          jobListHasMore={jobListHasMore}
-          loadingMoreJobs={loadingMoreJobs}
-          onLoadMoreJobs={onLoadMoreJobs}
-          jobsLoadedCount={jobsLoadedCount}
+          jobListHasMore={validHasMore}
+          loadingMoreJobs={loadingMoreValid}
+          onLoadMoreJobs={loadMoreValidJobs}
+          jobsLoadedCount={items.length}
         />
       </div>
     </div>

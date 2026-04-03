@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ChevronDown,
@@ -18,30 +18,13 @@ import { jobMarkedApplied } from '../utils/appliedStatus';
 import { getJobPipelineVisual, pipelineRingAriaLabel } from '../utils/jobPipelineVisual';
 import { logger } from '../utils/logger';
 import { MatchScoreChip, PipelineQuarterRing } from './PipelineProgressRing';
+import { useJobsStore } from '../stores/jobsStore';
+import { useModalStore } from '../stores/modalStore';
+import { useUIStore } from '../stores/uiStore';
 
 type Props = {
   items: SubmittedUrlItem[];
-  openMenuId: string | null;
-  onToggleMenu: (id: string) => void;
-  onEdit: (item: SubmittedUrlItem) => void;
-  onReportInvalid: (item: SubmittedUrlItem) => void;
-  onReportDuplicate: (item: SubmittedUrlItem) => void;
-  onDelete: (item: SubmittedUrlItem) => void;
-  onBatchDelete?: (items: SubmittedUrlItem[]) => void;
-  onMarkApplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onMarkUnapplied: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onOpenSelectedUrls?: (items: SubmittedUrlItem[]) => void;
-  onOpenJobAnalysis?: (item: SubmittedUrlItem) => void;
-  /** First-time match uses default; pass `{ force: true }` to re-run after profile changes. */
-  onTriggerJobMatch?: (item: SubmittedUrlItem, opts?: { force?: boolean }) => void | Promise<void>;
-  /** Bulk re-queue match analysis for selected jobs (async on server). */
-  onRerunMatchAnalysis?: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  /** Bulk re-queue job page extraction + full pipeline (match after scrape), same as new job post. */
-  onBatchRescrapePipeline?: (items: SubmittedUrlItem[]) => void | Promise<void>;
-  onJobUrlClick?: (item: SubmittedUrlItem) => void;
-  onRescrape?: (item: SubmittedUrlItem) => void;
   compareValidJobId?: string | null;
-  /** Infinite scroll: load older jobs when user nears list bottom */
   jobListHasMore?: boolean;
   loadingMoreJobs?: boolean;
   onLoadMoreJobs?: () => void;
@@ -51,22 +34,6 @@ type Props = {
 
 export function JobTimeline({
   items,
-  openMenuId,
-  onToggleMenu,
-  onEdit,
-  onReportInvalid,
-  onReportDuplicate,
-  onDelete,
-  onBatchDelete,
-  onMarkApplied,
-  onMarkUnapplied,
-  onOpenSelectedUrls,
-  onOpenJobAnalysis,
-  onTriggerJobMatch,
-  onRerunMatchAnalysis,
-  onBatchRescrapePipeline,
-  onJobUrlClick,
-  onRescrape,
   compareValidJobId,
   jobListHasMore,
   loadingMoreJobs,
@@ -74,6 +41,24 @@ export function JobTimeline({
   jobsLoadedCount,
   children,
 }: Props) {
+  const onEdit = useModalStore((s) => s.openEditModal);
+  const onReportInvalid = useModalStore((s) => s.openReportInvalidModal);
+  const onReportDuplicate = useModalStore((s) => s.openReportDuplicateModal);
+  const onDelete = useModalStore((s) => s.openDeleteModal);
+  const onBatchDelete = useJobsStore((s) => s.batchDeleteValid);
+  const onMarkApplied = useJobsStore((s) => s.markApplied);
+  const onMarkUnapplied = useJobsStore((s) => s.markUnapplied);
+  const onOpenSelectedUrls = useJobsStore((s) => s.openSelectedUrls);
+  const onOpenJobAnalysis = useUIStore((s) => s.openJobAnalysis);
+  const onTriggerJobMatch = useJobsStore((s) => s.triggerJobMatch);
+  const onRerunMatchAnalysis = useJobsStore((s) => s.rerunMatchAnalysis);
+  const onBatchRescrapePipeline = useJobsStore((s) => s.batchRescrapePipeline);
+  const onJobUrlClick = useJobsStore((s) => s.recordJobClick);
+  const onRescrape = useJobsStore((s) => s.rescrapeJob);
+  const openMenuId = useUIStore((s) => s.openMenu?.table === 'valid' ? s.openMenu.id : null);
+  const onToggleMenu = useCallback((id: string) => {
+    useUIStore.getState().toggleMenu('valid', id);
+  }, []);
   const [sortByDate, setSortByDate] = useState<Record<string, 'platform' | 'matchRate' | 'postedDate'>>({});
   const [sortOpenDate, setSortOpenDate] = useState<string | null>(null);
   const [selectedJobsByDate, setSelectedJobsByDate] = useState<Record<string, Set<string>>>({});
@@ -325,16 +310,8 @@ export function JobTimeline({
       return;
     }
     
-    // Use batch delete if available, otherwise fallback to individual deletes
-    if (onBatchDelete) {
-      logger.info('ui_delete_selected_batch', { count: selectedJobs.length });
-      onBatchDelete(selectedJobs);
-    } else {
-      logger.info('ui_delete_selected_individual_fallback', { count: selectedJobs.length });
-      selectedJobs.forEach(job => {
-        onDelete(job);
-      });
-    }
+    logger.info('ui_delete_selected_batch', { count: selectedJobs.length });
+    onBatchDelete(selectedJobs);
     
     // Clear selections
     setSelectedJobsByDate({});
@@ -346,14 +323,7 @@ export function JobTimeline({
     const selectedJobs = getAllSelectedJobs();
     if (selectedJobs.length === 0) return;
 
-    if (onOpenSelectedUrls) {
-      onOpenSelectedUrls(selectedJobs);
-    } else {
-      const uniqueUrls = Array.from(new Set(selectedJobs.map((job) => job.url)));
-      uniqueUrls.forEach((jobUrl) => {
-        window.open(jobUrl, '_blank', 'noopener,noreferrer');
-      });
-    }
+    onOpenSelectedUrls(selectedJobs);
 
     setSelectedJobsByDate({});
     setBulkActionOpen(null);
@@ -367,7 +337,7 @@ export function JobTimeline({
         !!j.extraction_id &&
         (j.extraction_status === 'completed' || j.scraped_at_ms != null),
     );
-    if (eligible.length === 0 || !onRerunMatchAnalysis) {
+    if (eligible.length === 0) {
       setBulkActionOpen(null);
       return;
     }
@@ -379,7 +349,7 @@ export function JobTimeline({
   const handleBatchRescrapePipeline = () => {
     const selectedJobs = getAllSelectedJobs();
     const eligible = selectedJobs.filter((j) => j.table === 'valid');
-    if (eligible.length === 0 || !onBatchRescrapePipeline) {
+    if (eligible.length === 0) {
       setBulkActionOpen(null);
       return;
     }
@@ -424,29 +394,24 @@ export function JobTimeline({
     }
   }, [bulkActionOpen]);
 
-  // Filter to show only actual jobs (exclude submission success notifications)
-  const filteredItems = items.filter(item => {
-    const hasValidJob = item.job_id !== null || item.duplicate_job_id !== null;
-    return hasValidJob;
-  });
-
-  // Group items by date
-  const groupedByDate = filteredItems.reduce(
-    (acc, item) => {
-      const date = new Date(item.created_at_ms);
-      const dateKey = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      if (!acc[dateKey]) acc[dateKey] = [];
-      acc[dateKey].push(item);
-      return acc;
-    },
-    {} as Record<string, SubmittedUrlItem[]>
+  const filteredItems = useMemo(
+    () => items.filter((item) => item.job_id !== null || item.duplicate_job_id !== null),
+    [items],
   );
 
-  // Sort jobs within each date group based on sortByDate option for that group
-  const sortedGroupedByDate = Object.entries(groupedByDate).reduce(
-    (acc, [dateKey, items]) => {
+  const { sortedGroupedByDate, sortedDates } = useMemo(() => {
+    const grouped: Record<string, SubmittedUrlItem[]> = {};
+    for (const item of filteredItems) {
+      const date = new Date(item.created_at_ms);
+      const dateKey = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      if (!grouped[dateKey]) grouped[dateKey] = [];
+      grouped[dateKey].push(item);
+    }
+
+    const sorted: Record<string, SubmittedUrlItem[]> = {};
+    for (const [dateKey, groupItems] of Object.entries(grouped)) {
       const currentSort = sortByDate[dateKey] || 'postedDate';
-      const sortedItems = [...items].sort((a, b) => {
+      sorted[dateKey] = [...groupItems].sort((a, b) => {
         switch (currentSort) {
           case 'platform': {
             const platformA = getPlatformDomain(a.url);
@@ -456,26 +421,22 @@ export function JobTimeline({
           case 'matchRate': {
             const scoreA = a.match_overall_score ?? -1;
             const scoreB = b.match_overall_score ?? -1;
-            return scoreB - scoreA; // Descending: higher scores first
+            return scoreB - scoreA;
           }
           case 'postedDate': {
             const dateA = a.posted_date_ms ?? a.created_at_ms ?? 0;
             const dateB = b.posted_date_ms ?? b.created_at_ms ?? 0;
-            return dateB - dateA; // Descending: newest first
+            return dateB - dateA;
           }
           default:
             return 0;
         }
       });
-      acc[dateKey] = sortedItems;
-      return acc;
-    },
-    {} as Record<string, SubmittedUrlItem[]>
-  );
+    }
 
-  const sortedDates = Object.keys(groupedByDate).sort((a, b) => {
-    return new Date(b).getTime() - new Date(a).getTime();
-  });
+    const dates = Object.keys(grouped).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    return { sortedGroupedByDate: sorted, sortedDates: dates };
+  }, [filteredItems, sortByDate]);
 
   const sortLabel = {
     platform: 'By Job Platform',
@@ -612,30 +573,26 @@ export function JobTimeline({
                             >
                               Open Selected Job URLs
                             </button>
-                            {onRerunMatchAnalysis ? (
-                              <button
-                                type="button"
-                                className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
-                                onClick={handleRerunMatchAnalysis}
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  <RefreshCw className="h-4 w-4 shrink-0" />
-                                  Re-run match analysis
-                                </span>
-                              </button>
-                            ) : null}
-                            {onBatchRescrapePipeline ? (
-                              <button
-                                type="button"
-                                className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
-                                onClick={handleBatchRescrapePipeline}
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  <RotateCw className="h-4 w-4 shrink-0" />
-                                  Re-scrape page & re-analyze
-                                </span>
-                              </button>
-                            ) : null}
+                            <button
+                              type="button"
+                              className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
+                              onClick={handleRerunMatchAnalysis}
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                <RefreshCw className="h-4 w-4 shrink-0" />
+                                Re-run match analysis
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              className="block w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 border-b border-slate-100"
+                              onClick={handleBatchRescrapePipeline}
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                <RotateCw className="h-4 w-4 shrink-0" />
+                                Re-scrape page & re-analyze
+                              </span>
+                            </button>
                             <button
                               type="button"
                               className="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
@@ -810,7 +767,7 @@ export function JobTimeline({
                                     >
                                       Failed
                                     </span>
-                                    {onRescrape && (
+                                    {(
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -853,7 +810,7 @@ export function JobTimeline({
                                         aria-hidden
                                       />
                                     </span>
-                                  ) : (onOpenJobAnalysis || onTriggerJobMatch) && hasExtraction ? (
+                                  ) : hasExtraction ? (
                                     <button
                                       type="button"
                                       className={`inline-flex shrink-0 rounded-full p-0.5 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
@@ -905,7 +862,7 @@ export function JobTimeline({
 
                               const scoreNode =
                                 visual.kind === 'score' ? (
-                                  (onOpenJobAnalysis || onTriggerJobMatch) && hasExtraction ? (
+                                  hasExtraction ? (
                                     <MatchScoreChip
                                       score={visual.score}
                                       title={`Match score ${visual.score} — open job match analysis`}
@@ -1034,8 +991,7 @@ export function JobTimeline({
                                     Report Duplicate
                                   </span>
                                 </button>
-                                {(onRerunMatchAnalysis || onTriggerJobMatch) &&
-                                  item.table === 'valid' &&
+                                {item.table === 'valid' &&
                                   item.extraction_id &&
                                   (item.extraction_status === 'completed' || item.scraped_at_ms != null) && (
                                     <button
@@ -1046,13 +1002,7 @@ export function JobTimeline({
                                         const eligible = filterEligibleForRerunMatch(targets);
                                         closeMenu();
                                         if (eligible.length === 0) return;
-                                        if (onRerunMatchAnalysis) {
-                                          void Promise.resolve(onRerunMatchAnalysis(eligible));
-                                        } else if (onTriggerJobMatch) {
-                                          void Promise.all(
-                                            eligible.map((j) => Promise.resolve(onTriggerJobMatch(j, { force: true }))),
-                                          );
-                                        }
+                                        void Promise.resolve(onRerunMatchAnalysis(eligible));
                                         clearSelectionIfMenuActionConsumedFullSelection(targets);
                                       }}
                                     >
@@ -1062,7 +1012,7 @@ export function JobTimeline({
                                       </span>
                                     </button>
                                   )}
-                                {(onBatchRescrapePipeline || onRescrape) && item.table === 'valid' && (
+                                {item.table === 'valid' && (
                                   <button
                                     type="button"
                                     className={`block w-full border-b border-blue-100 px-3 py-2 text-left text-sm transition hover:bg-slate-50 ${
@@ -1073,11 +1023,7 @@ export function JobTimeline({
                                       const eligible = targets.filter((j) => j.table === 'valid');
                                       closeMenu();
                                       if (eligible.length === 0) return;
-                                      if (onBatchRescrapePipeline) {
-                                        void Promise.resolve(onBatchRescrapePipeline(eligible));
-                                      } else if (onRescrape) {
-                                        void Promise.all(eligible.map((j) => Promise.resolve(onRescrape(j))));
-                                      }
+                                      void Promise.resolve(onBatchRescrapePipeline(eligible));
                                       clearSelectionIfMenuActionConsumedFullSelection(targets);
                                     }}
                                   >
@@ -1093,7 +1039,7 @@ export function JobTimeline({
                                   onClick={() => {
                                     const targets = getContextMenuTargets(dateKey, item);
                                     closeMenu();
-                                    if (targets.length > 1 && onBatchDelete) {
+                                    if (targets.length > 1) {
                                       onBatchDelete(targets);
                                     } else {
                                       onDelete(targets[0]);

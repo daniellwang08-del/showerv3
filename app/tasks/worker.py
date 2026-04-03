@@ -13,6 +13,9 @@ from app.api.websocket import publish_ws_event
 
 logger = get_logger(__name__)
 
+EXTRACTION_QUEUE = "job_extraction"
+ANALYSIS_QUEUE = "job_analysis"
+
 
 async def _mark_extraction_failed_cancelled(job_id: str) -> None:
     try:
@@ -78,10 +81,10 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                             await progress_repo.add(valid_job.id, user_id)
                             await session.commit()
                             pending_match_progress = (valid_job.id, user_id)
-                            pool = await get_redis_pool()
+                            pool = await get_analysis_pool()
                             await pool.enqueue_job("analyze_job_match", valid_job.id, user_id)
                             await pool.close()
-                            logger.info("job_match_enqueued", valid_job_id=valid_job.id, user_id=user_id)
+                            logger.info("job_match_enqueued", valid_job_id=valid_job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
                             pending_match_progress = None
                         except Exception as enq_err:
                             await progress_repo.remove(valid_job.id, user_id)
@@ -187,22 +190,39 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict 
         clear_logging_context()
 
 
-class WorkerSettings:
-    functions = [extract_job, analyze_job_match]
+def _redis_settings() -> RedisSettings:
+    return RedisSettings.from_dsn(get_settings().redis_url)
 
-    @staticmethod
-    def redis_settings() -> RedisSettings:
-        settings = get_settings()
-        return RedisSettings.from_dsn(settings.redis_url)
 
+class ExtractionWorkerSettings:
+    """arq settings for the extraction pipeline (I/O-heavy: HTTP + Playwright)."""
+    functions = [extract_job]
+    redis_settings = _redis_settings
+    queue_name = EXTRACTION_QUEUE
     job_timeout = 300
     max_tries = 1
-    queue_name = "job_extraction"
 
 
-async def get_redis_pool() -> ArqRedis:
-    settings = get_settings()
+class AnalysisWorkerSettings:
+    """arq settings for the AI match analysis pipeline (API-heavy: OpenAI)."""
+    functions = [analyze_job_match]
+    redis_settings = _redis_settings
+    queue_name = ANALYSIS_QUEUE
+    job_timeout = 120
+    max_tries = 1
+
+
+async def get_extraction_pool() -> ArqRedis:
+    """Redis pool that enqueues onto the extraction queue."""
     return await create_pool(
-        RedisSettings.from_dsn(settings.redis_url),
-        default_queue_name=WorkerSettings.queue_name,
+        _redis_settings(),
+        default_queue_name=EXTRACTION_QUEUE,
+    )
+
+
+async def get_analysis_pool() -> ArqRedis:
+    """Redis pool that enqueues onto the analysis queue."""
+    return await create_pool(
+        _redis_settings(),
+        default_queue_name=ANALYSIS_QUEUE,
     )
