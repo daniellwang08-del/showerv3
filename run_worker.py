@@ -5,8 +5,9 @@ Worker startup script.
 Usage:
     python run_worker.py extraction   # start the extraction worker (HTTP/browser scraping)
     python run_worker.py analysis     # start the analysis worker  (OpenAI match scoring)
+    python run_worker.py resume       # start the resume build worker (DOCX/PDF generation)
 
-Both workers share the same Redis instance but listen on independent queues
+All workers share the same Redis instance but listen on independent queues
 so they can be scaled and deployed separately.
 """
 import argparse
@@ -27,8 +28,10 @@ from arq import run_worker
 from app.tasks.worker import (
     ExtractionWorkerSettings,
     AnalysisWorkerSettings,
+    ResumeBuildWorkerSettings,
     extract_job,
     analyze_job_match,
+    build_resume_task,
 )
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
@@ -97,9 +100,34 @@ class AnalysisWorkerConfig(AnalysisWorkerSettings):
     redis_settings = AnalysisWorkerSettings.redis_settings()
 
 
+# ── Resume build worker lifecycle (DB only, no browser/HTTP) ───────────────
+
+async def resume_build_startup(ctx):
+    logger.info("resume_build_worker_startup_begin")
+    await init_database()
+    logger.info("resume_build_worker_startup_complete")
+
+
+async def resume_build_shutdown(ctx):
+    logger.info("resume_build_worker_shutdown_begin")
+    await close_database()
+    logger.info("resume_build_worker_shutdown_complete")
+
+
+class ResumeBuildWorkerConfig(ResumeBuildWorkerSettings):
+    on_startup = resume_build_startup
+    on_shutdown = resume_build_shutdown
+    functions = [build_resume_task]
+    queue_name = ResumeBuildWorkerSettings.queue_name
+    job_timeout = ResumeBuildWorkerSettings.job_timeout
+    max_tries = ResumeBuildWorkerSettings.max_tries
+    redis_settings = ResumeBuildWorkerSettings.redis_settings()
+
+
 WORKER_CONFIGS = {
     "extraction": ExtractionWorkerConfig,
     "analysis": AnalysisWorkerConfig,
+    "resume": ResumeBuildWorkerConfig,
 }
 
 
@@ -110,7 +138,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "mode",
         choices=list(WORKER_CONFIGS.keys()),
-        help="Which pipeline to run: 'extraction' (scraping) or 'analysis' (OpenAI match).",
+        help="Which pipeline to run: 'extraction' (scraping), 'analysis' (OpenAI match), or 'resume' (document builder).",
     )
     args = parser.parse_args()
     logger.info("worker_launching", mode=args.mode)

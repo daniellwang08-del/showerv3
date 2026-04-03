@@ -230,6 +230,19 @@ class JobPromotionInfo(BaseModel):
     promoted_at: str | None = None
 
 
+class ResumeBuildStatusResponse(BaseModel):
+    """Per-file status of the resume/cover letter build pipeline."""
+    valid_job_id: str
+    resume_docx_status: str = "pending"
+    resume_pdf_status: str = "pending"
+    cover_letter_docx_status: str = "pending"
+    cover_letter_pdf_status: str = "pending"
+    output_directory: str | None = None
+    error_message: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class JobAnalysisResponse(BaseModel):
     """
     Unified payload for the job analysis panel: scraped/structured posting + optional match result.
@@ -246,6 +259,7 @@ class JobAnalysisResponse(BaseModel):
     match: JobMatchResponse | None = None
     match_in_progress: bool = False
     promotion: JobPromotionInfo | None = None
+    resume_build: ResumeBuildStatusResponse | None = None
 
 
 class InvalidJobResponse(BaseModel):

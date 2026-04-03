@@ -14,6 +14,7 @@ export interface WsEvent {
   error?: string;
   reason?: string;
   company?: string;
+  file_type?: string;
 }
 
 type WsEventHandler = (event: WsEvent) => void;

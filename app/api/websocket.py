@@ -21,6 +21,7 @@ from app.services.auth_service import AuthService
 logger = get_logger(__name__)
 
 WS_CHANNEL = "ws:events"
+WS_RESUME_CHANNEL = "ws:resume_events"
 
 ws_router = APIRouter()
 
@@ -99,8 +100,8 @@ class ConnectionManager:
             try:
                 r = aioredis.from_url(settings.redis_url, decode_responses=True)
                 pubsub = r.pubsub()
-                await pubsub.subscribe(WS_CHANNEL)
-                logger.info("ws_redis_subscriber_started")
+                await pubsub.subscribe(WS_CHANNEL, WS_RESUME_CHANNEL)
+                logger.info("ws_redis_subscriber_started", channels=[WS_CHANNEL, WS_RESUME_CHANNEL])
                 async for message in pubsub.listen():
                     if message["type"] != "message":
                         continue
@@ -144,6 +145,20 @@ async def publish_ws_event(event: dict[str, Any]) -> None:
         await r.aclose()
     except Exception as e:
         logger.warning("ws_publish_failed", error=str(e), event_type=event.get("type"))
+
+
+async def publish_resume_event(event: dict[str, Any]) -> None:
+    """Publish a resume-build event to the dedicated resume Redis pub/sub channel."""
+    import redis.asyncio as aioredis
+
+    settings = get_settings()
+    try:
+        r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        receivers = await r.publish(WS_RESUME_CHANNEL, json.dumps(event))
+        logger.info("resume_event_published", event_type=event.get("type"), receivers=receivers)
+        await r.aclose()
+    except Exception as e:
+        logger.warning("resume_publish_failed", error=str(e), event_type=event.get("type"))
 
 
 @ws_router.websocket("/ws")

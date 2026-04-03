@@ -8,6 +8,8 @@
 venv/
 .venv/
 __pycache__/
+resume_output/
+templates/
 *.py[cod]
 *.pyo
 *.pyd

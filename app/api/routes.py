@@ -20,6 +20,7 @@ from app.models.schemas import (
     JobMatchResponse,
     JobAnalysisResponse,
     JobPromotionInfo,
+    ResumeBuildStatusResponse,
 )
 from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
 from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest, ResumeParseResponse
@@ -30,6 +31,7 @@ from app.storage.repository import (
     JobMatchInProgressRepository,
     ValidJobRepository,
     ValidJobUserApplicationRepository,
+    ResumeBuildRepository,
 )
 from app.storage.user_repository import UserRepository, _profile_display_name, user_applied_by_display_name
 from app.services.url_manager import URLManager
@@ -1483,6 +1485,22 @@ async def get_job_analysis_panel(
                 promoted_at=at_str,
             )
 
+        resume_build_payload = None
+        resume_repo = ResumeBuildRepository(session)
+        rb_row = await resume_repo.get(job_id, user_id)
+        if rb_row:
+            resume_build_payload = ResumeBuildStatusResponse(
+                valid_job_id=rb_row.valid_job_id,
+                resume_docx_status=rb_row.resume_docx_status,
+                resume_pdf_status=rb_row.resume_pdf_status,
+                cover_letter_docx_status=rb_row.cover_letter_docx_status,
+                cover_letter_pdf_status=rb_row.cover_letter_pdf_status,
+                output_directory=rb_row.output_directory,
+                error_message=rb_row.error_message,
+                created_at=rb_row.created_at,
+                updated_at=rb_row.updated_at,
+            )
+
         return JobAnalysisResponse(
             valid_job_id=job.id,
             extraction_id=job.extraction_id,
@@ -1495,6 +1513,7 @@ async def get_job_analysis_panel(
             match=match_payload,
             match_in_progress=match_in_progress,
             promotion=promotion_payload,
+            resume_build=resume_build_payload,
         )
 
 
@@ -2254,3 +2273,107 @@ async def delete_invalid_jobs_batch(body: InvalidJobIdsBatchRequest) -> dict:
         await session.commit()
     logger.info("delete_invalid_jobs_batch", count=deleted, requested=len(ids))
     return {"success": True, "deleted": deleted}
+
+
+# ── Resume build endpoints ─────────────────────────────────────────────────
+
+@router.get(
+    "/jobs/valid/{job_id}/resume-build",
+    response_model=ResumeBuildStatusResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_resume_build_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> ResumeBuildStatusResponse:
+    """Return current resume/cover letter build status for a valid job."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    async with get_session() as session:
+        repo = ResumeBuildRepository(session)
+        row = await repo.get(job_id, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="No resume build found for this job")
+
+        return ResumeBuildStatusResponse(
+            valid_job_id=row.valid_job_id,
+            resume_docx_status=row.resume_docx_status,
+            resume_pdf_status=row.resume_pdf_status,
+            cover_letter_docx_status=row.cover_letter_docx_status,
+            cover_letter_pdf_status=row.cover_letter_pdf_status,
+            output_directory=row.output_directory,
+            error_message=row.error_message,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+
+@router.post(
+    "/jobs/valid/{job_id}/resume-build/trigger",
+    dependencies=[Depends(get_current_user)],
+)
+async def trigger_resume_build(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Manually (re-)trigger resume build for a job that already has tailored data."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    async with get_session() as session:
+        repo = ResumeBuildRepository(session)
+        row = await repo.get(job_id, user_id)
+        if not row or not row.tailored_resume_data:
+            raise HTTPException(status_code=404, detail="No tailored data available. Run job analysis first.")
+
+        await repo.upsert(job_id, user_id, row.tailored_resume_data, row.cover_letter_data)
+        await session.commit()
+
+    from app.tasks.worker import get_resume_build_pool
+    pool = await get_resume_build_pool()
+    await pool.enqueue_job("build_resume_task", job_id, user_id)
+    await pool.close()
+    return {"success": True, "message": "Resume build enqueued"}
+
+
+@router.get(
+    "/jobs/valid/{job_id}/resume-build/download/{file_type}",
+    dependencies=[Depends(get_current_user)],
+)
+async def download_resume_file(
+    job_id: str,
+    file_type: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Download a generated resume or cover letter file."""
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    valid_types = {"resume_docx", "resume_pdf", "cover_letter_docx", "cover_letter_pdf"}
+    if file_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid file_type. Must be one of: {valid_types}")
+
+    async with get_session() as session:
+        repo = ResumeBuildRepository(session)
+        row = await repo.get(job_id, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="No resume build found")
+
+    path_col = f"{file_type}_path"
+    file_path = getattr(row, path_col, None)
+    if not file_path:
+        raise HTTPException(status_code=404, detail=f"{file_type} not generated yet")
+
+    p = Path(file_path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    media_type = "application/pdf" if file_type.endswith("_pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return FileResponse(path=str(p), filename=p.name, media_type=media_type)

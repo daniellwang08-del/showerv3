@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     auth_password: str = Field(default="")
     auth_secret_key: str = Field(default="")
 
+    resume_output_root: str = Field(default="./resume_output")
+    libreoffice_path: str | None = Field(default=None)
+    resume_template_path: str = Field(default="app/templates/resume_template.docx")
+    cover_letter_template_path: str = Field(default="app/templates/cover_letter_template.docx")
+
 
 @lru_cache
 def get_settings() -> Settings:

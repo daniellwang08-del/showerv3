@@ -14,6 +14,7 @@ import {
   CircleDollarSign,
   ClipboardList,
   Clock,
+  Download,
   Factory,
   FileText,
   Gift,
@@ -61,6 +62,18 @@ type JobPromotionInfo = {
   promoted_at: string | null;
 };
 
+type ResumeBuildStatus = {
+  valid_job_id: string;
+  resume_docx_status: string;
+  resume_pdf_status: string;
+  cover_letter_docx_status: string;
+  cover_letter_pdf_status: string;
+  output_directory: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 type JobAnalysisResponse = {
   valid_job_id: string;
   extraction_id: string | null;
@@ -73,6 +86,7 @@ type JobAnalysisResponse = {
   match: JobMatchPayload | null;
   match_in_progress: boolean;
   promotion?: JobPromotionInfo | null;
+  resume_build?: ResumeBuildStatus | null;
 };
 
 function formatPromotedAt(iso: string | null | undefined): string {
@@ -104,6 +118,74 @@ type Props = {
   onAnalysisUpdated?: () => void;
   refreshKey?: number;
 };
+
+/* ── Resume build file badges ────────────────────────────────────────── */
+
+const FILE_BADGE_META: { key: keyof ResumeBuildStatus; label: string; downloadType: string }[] = [
+  { key: 'resume_docx_status', label: 'Resume DOCX', downloadType: 'resume_docx' },
+  { key: 'resume_pdf_status', label: 'Resume PDF', downloadType: 'resume_pdf' },
+  { key: 'cover_letter_docx_status', label: 'Cover DOCX', downloadType: 'cover_letter_docx' },
+  { key: 'cover_letter_pdf_status', label: 'Cover PDF', downloadType: 'cover_letter_pdf' },
+];
+
+function statusDotClass(status: string): string {
+  if (status === 'completed') return 'bg-emerald-500';
+  if (status === 'processing') return 'bg-amber-400 animate-pulse';
+  if (status === 'failed') return 'bg-red-500';
+  return 'bg-slate-300';
+}
+
+function ResumeBuildBadges({ build, validJobId }: { build: ResumeBuildStatus; validJobId: string }) {
+  const handleDownload = async (downloadType: string) => {
+    try {
+      const res = await apiClient.get(`/jobs/valid/${validJobId}/resume-build/download/${downloadType}`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ext = downloadType.endsWith('_pdf') ? '.pdf' : '.docx';
+      a.download = `${downloadType}${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {FILE_BADGE_META.map(({ key, label, downloadType }) => {
+        const status = (build[key] as string) || 'pending';
+        const isReady = status === 'completed';
+        return (
+          <button
+            key={key}
+            type="button"
+            disabled={!isReady}
+            onClick={() => isReady && handleDownload(downloadType)}
+            title={`${label}: ${status}${isReady ? ' — click to download' : ''}`}
+            className={`group relative flex h-7 items-center gap-1 rounded-md border px-1.5 text-[10px] font-medium leading-none transition-colors ${
+              isReady
+                ? 'border-emerald-300/80 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer'
+                : status === 'processing'
+                  ? 'border-amber-300/80 bg-amber-50 text-amber-700 cursor-wait'
+                  : status === 'failed'
+                    ? 'border-red-300/80 bg-red-50 text-red-700 cursor-not-allowed'
+                    : 'border-slate-200 bg-slate-50 text-slate-400 cursor-default'
+            }`}
+          >
+            <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusDotClass(status)}`} />
+            <span className="whitespace-nowrap">{label.split(' ')[0]}</span>
+            <span className="uppercase">{label.split(' ')[1]}</span>
+            {isReady && <Download className="h-2.5 w-2.5 opacity-60 group-hover:opacity-100" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** Large overall score — same band language as `MatchScoreChip` */
 function matchScoreHeroClass(score: number): string {
@@ -297,11 +379,14 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
       if (!prev) {
         return;
       }
+      const resumeChanged =
+        JSON.stringify(prev.resume_build) !== JSON.stringify(next.resume_build);
       const shouldRefresh =
         (!prev.match && next.match) ||
         (prev.extraction_status !== 'completed' && next.extraction_status === 'completed') ||
         (!prev.match_in_progress && next.match_in_progress) ||
-        (!prev.content_enriched_by_ai && next.content_enriched_by_ai);
+        (!prev.content_enriched_by_ai && next.content_enriched_by_ai) ||
+        resumeChanged;
       if (shouldRefresh) {
         onAnalysisUpdatedRef.current?.();
       }
@@ -408,10 +493,11 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/80 bg-gradient-to-b from-sky-100 to-sky-50 text-sky-800 shadow-sm">
                   <Target className="h-4 w-4" strokeWidth={2.25} aria-hidden />
                 </span>
-                <div>
+                <div className="flex-1">
                   <h3 className="text-base font-semibold text-slate-900">Profile match</h3>
                   <p className="text-xs text-slate-500">How well this role fits your profile</p>
                 </div>
+                {analysis.resume_build && <ResumeBuildBadges build={analysis.resume_build} validJobId={analysis.valid_job_id} />}
               </div>
 
               {analysis.match_in_progress && !analysis.match && (

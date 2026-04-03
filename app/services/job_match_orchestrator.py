@@ -16,6 +16,7 @@ from app.storage.repository import (
     JobMatchRepository,
     JobMatchInProgressRepository,
     ValidJobRepository,
+    ResumeBuildRepository,
     _truncate_for_db,
 )
 from app.storage.user_repository import UserRepository
@@ -121,7 +122,7 @@ async def run_job_match_analysis(
             profile_text = await user_repo.get_profile_openai_text(user_id)
 
             try:
-                result, structured_job, is_job_posting = await analyze_job_match(job_text, profile_text)
+                result, structured_job, is_job_posting, tailored_resume, cover_letter = await analyze_job_match(job_text, profile_text)
             except Exception as e:
                 logger.error(
                     "job_match_analysis_failed",
@@ -189,6 +190,25 @@ async def run_job_match_analysis(
                 await _remove_match_progress(session, valid_job_id, user_id)
                 await session.flush()
 
+                # Store tailored resume/cover letter data for async document build
+                if tailored_resume or cover_letter:
+                    try:
+                        resume_repo = ResumeBuildRepository(session)
+                        await resume_repo.upsert(
+                            valid_job_id=valid_job_id,
+                            user_id=user_id,
+                            tailored_resume_data=tailored_resume,
+                            cover_letter_data=cover_letter,
+                        )
+                        await session.flush()
+                        logger.info("tailored_resume_data_stored", valid_job_id=valid_job_id)
+                    except Exception as resume_err:
+                        logger.warning(
+                            "tailored_resume_data_store_failed",
+                            valid_job_id=valid_job_id,
+                            error=str(resume_err),
+                        )
+
                 # Clean up cache after successful analysis
                 try:
                     cache = ExtractionCache()
@@ -202,6 +222,18 @@ async def run_job_match_analysis(
                     user_id=user_id,
                     score=result["overall_score"],
                 )
+
+                # Enqueue resume build (fire-and-forget, never blocks match result)
+                if tailored_resume:
+                    try:
+                        from app.tasks.worker import get_resume_build_pool
+                        pool = await get_resume_build_pool()
+                        await pool.enqueue_job("build_resume_task", valid_job_id, user_id)
+                        await pool.close()
+                        logger.info("resume_build_enqueued", valid_job_id=valid_job_id)
+                    except Exception as enq_err:
+                        logger.warning("resume_build_enqueue_failed", valid_job_id=valid_job_id, error=str(enq_err))
+
                 return result
             except Exception as e:
                 logger.error(

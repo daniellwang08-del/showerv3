@@ -10,6 +10,7 @@ from app.models.database import (
     JobMatchResult,
     JobMatchInProgress,
     ValidJobUserApplication,
+    ResumeBuildResult,
 )
 from app.models.schemas import ExtractionStatus, ExtractionMethod, JobDescriptionSchema
 from app.core.logging import get_logger
@@ -428,6 +429,86 @@ class ValidJobUserApplicationRepository:
             )
         )
         return int(r.rowcount or 0)
+
+
+class ResumeBuildRepository:
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def get(self, valid_job_id: str, user_id: str) -> ResumeBuildResult | None:
+        result = await self._session.execute(
+            select(ResumeBuildResult).where(
+                ResumeBuildResult.valid_job_id == valid_job_id,
+                ResumeBuildResult.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert(
+        self,
+        valid_job_id: str,
+        user_id: str,
+        tailored_resume_data: dict | None = None,
+        cover_letter_data: dict | None = None,
+    ) -> ResumeBuildResult:
+        existing = await self.get(valid_job_id, user_id)
+        if existing:
+            if tailored_resume_data is not None:
+                existing.tailored_resume_data = tailored_resume_data
+            if cover_letter_data is not None:
+                existing.cover_letter_data = cover_letter_data
+            existing.resume_docx_status = "pending"
+            existing.resume_pdf_status = "pending"
+            existing.cover_letter_docx_status = "pending"
+            existing.cover_letter_pdf_status = "pending"
+            existing.resume_docx_path = None
+            existing.resume_pdf_path = None
+            existing.cover_letter_docx_path = None
+            existing.cover_letter_pdf_path = None
+            existing.output_directory = None
+            existing.error_message = None
+            existing.updated_at = _utcnow()
+            await self._session.flush()
+            return existing
+
+        row = ResumeBuildResult(
+            valid_job_id=valid_job_id,
+            user_id=user_id,
+            tailored_resume_data=tailored_resume_data,
+            cover_letter_data=cover_letter_data,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def update_file_status(
+        self,
+        build_id: str,
+        file_type: str,
+        status: str,
+        path: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        row = await self._session.get(ResumeBuildResult, build_id)
+        if not row:
+            return
+        status_col = f"{file_type}_status"
+        path_col = f"{file_type}_path"
+        if hasattr(row, status_col):
+            setattr(row, status_col, status)
+        if path and hasattr(row, path_col):
+            setattr(row, path_col, path)
+        if error:
+            row.error_message = error
+        row.updated_at = _utcnow()
+        await self._session.flush()
+
+    async def set_output_directory(self, build_id: str, directory: str) -> None:
+        row = await self._session.get(ResumeBuildResult, build_id)
+        if row:
+            row.output_directory = directory
+            row.updated_at = _utcnow()
+            await self._session.flush()
 
 
 class APIPatternRepository:

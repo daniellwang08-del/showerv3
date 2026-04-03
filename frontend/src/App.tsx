@@ -83,6 +83,17 @@ function App() {
       debouncedRefresh();
       bumpWsRefreshKey();
     }
+
+    const resumeActionable =
+      event.type === 'resume_build_started' ||
+      event.type === 'resume_build_completed' ||
+      event.type === 'resume_build_failed' ||
+      event.type === 'resume_file_processing' ||
+      event.type === 'resume_file_ready' ||
+      event.type === 'resume_file_failed';
+    if (resumeActionable) {
+      bumpWsRefreshKey();
+    }
   }, [debouncedRefresh, bumpWsRefreshKey]);
 
   useWebSocket(!!isAuthenticated, handleWsEvent);

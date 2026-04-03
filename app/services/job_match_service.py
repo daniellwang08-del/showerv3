@@ -16,7 +16,7 @@ from app.models.schemas import JobDescriptionSchema
 logger = get_logger(__name__)
 
 MAX_JOB_LENGTH = 15000
-MAX_PROFILE_LENGTH = 8000
+MAX_PROFILE_LENGTH = 16000
 
 
 def _build_job_text(
@@ -128,15 +128,82 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
         return None
 
 
+def _parse_tailored_resume(parsed: dict | None) -> dict | None:
+    """Extract and validate the tailored_resume section. Returns None on failure."""
+    if not parsed or not isinstance(parsed, dict):
+        return None
+    try:
+        summary = str(parsed.get("profile_summary", "")).strip()
+        if not summary:
+            return None
+
+        skills_raw = parsed.get("technical_skills", [])
+        skills: list[dict] = []
+        if isinstance(skills_raw, list):
+            for item in skills_raw:
+                if isinstance(item, dict):
+                    cat = str(item.get("category", "")).strip()
+                    vals = str(item.get("skills", "")).strip()
+                    if cat and vals:
+                        skills.append({"category": cat, "skills": vals})
+
+        exp_raw = parsed.get("work_experience", [])
+        experience: list[dict] = []
+        if isinstance(exp_raw, list):
+            for entry in exp_raw:
+                if not isinstance(entry, dict):
+                    continue
+                company = str(entry.get("company_name", "")).strip()
+                title = str(entry.get("job_title", "")).strip()
+                if not company or not title:
+                    continue
+                bullets = []
+                for b in (entry.get("bullets") or []):
+                    if isinstance(b, str) and b.strip():
+                        bullets.append(b.strip())
+                raw_pn = entry.get("project_name")
+                project_name = str(raw_pn).strip() if raw_pn not in (None, "", "None", "null") else None
+                raw_pd = entry.get("project_description")
+                project_desc = str(raw_pd).strip() if raw_pd not in (None, "", "None", "null") else None
+
+                experience.append({
+                    "company_name": company,
+                    "job_title": title,
+                    "project_name": project_name or None,
+                    "project_description": project_desc or None,
+                    "bullets": bullets,
+                })
+
+        return {
+            "profile_summary": summary,
+            "technical_skills": skills,
+            "work_experience": experience,
+        }
+    except Exception as e:
+        logger.warning("tailored_resume_parse_failed", error=str(e))
+        return None
+
+
+def _parse_cover_letter(parsed: dict | None) -> dict | None:
+    """Extract the cover_letter section. Returns None on failure."""
+    if not parsed or not isinstance(parsed, dict):
+        return None
+    body = str(parsed.get("body", "")).strip()
+    if not body:
+        return None
+    return {"body": body}
+
+
 async def analyze_job_match(
     job_text: str,
     profile_text: str,
-) -> tuple[dict, JobDescriptionSchema | None, bool]:
+) -> tuple[dict, JobDescriptionSchema | None, bool, dict | None, dict | None]:
     """
-    Single LLM call that returns the match result, structured job content, and
-    whether the page is actually a job posting.
+    Single LLM call that returns match result, structured job content,
+    job posting validation, tailored resume content, and cover letter.
 
-    Returns ``(match_result_dict, structured_job_or_None, is_job_posting)``.
+    Returns ``(match_result_dict, structured_job_or_None, is_job_posting,
+               tailored_resume_or_None, cover_letter_or_None)``.
     Raises AIParsingError on complete failure.
     """
     client: AsyncOpenAI = get_openai_client()
@@ -163,6 +230,8 @@ async def analyze_job_match(
             },
             None,
             False,
+            None,
+            None,
         )
 
     user_content = JOB_MATCH_USER_TEMPLATE.format(
@@ -170,9 +239,8 @@ async def analyze_job_match(
         profile_text=profile_truncated,
     )
 
-    # Budget for match narrative gaps + structured job fields in one response.
-    combined_max_tokens = max(settings.openai_max_tokens, 8192)
-    combined_max_tokens = min(combined_max_tokens, 16384)
+    combined_max_tokens = max(settings.openai_max_tokens, 16384)
+    combined_max_tokens = min(combined_max_tokens, 32768)
 
     try:
         response = await client.chat.completions.create(
@@ -205,7 +273,15 @@ async def analyze_job_match(
         else:
             logger.warning("structured_job_section_missing_from_combined_response")
 
-        return match_result, structured_job, is_job_posting
+        tailored_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
+        cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
+
+        if not tailored_resume:
+            logger.warning("tailored_resume_section_missing_or_invalid")
+        if not cover_letter:
+            logger.warning("cover_letter_section_missing_or_invalid")
+
+        return match_result, structured_job, is_job_posting, tailored_resume, cover_letter
 
     except json.JSONDecodeError as e:
         logger.error("job_match_json_error", error=str(e))

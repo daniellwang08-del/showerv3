@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 
 EXTRACTION_QUEUE = "job_extraction"
 ANALYSIS_QUEUE = "job_analysis"
+RESUME_BUILD_QUEUE = "resume_build"
 
 
 async def _move_valid_job_to_invalid(extraction_id: str, reason: str, user_id: str | None) -> str | None:
@@ -259,6 +260,50 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
         clear_logging_context()
 
 
+async def build_resume_task(ctx: dict, valid_job_id: str, user_id: str) -> dict | None:
+    from app.services.resume_build_orchestrator import run_resume_build
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="build_resume", valid_job_id=valid_job_id, user_id=user_id)
+    logger.info("worker_build_resume_started", valid_job_id=valid_job_id, user_id=user_id)
+
+    await publish_ws_event({
+        "type": "resume_build_started",
+        "user_id": user_id,
+        "valid_job_id": valid_job_id,
+    })
+
+    try:
+        result = await run_resume_build(valid_job_id, user_id)
+        if result:
+            logger.info("worker_build_resume_completed", valid_job_id=valid_job_id, files=list(result.keys()))
+            await publish_ws_event({
+                "type": "resume_build_completed",
+                "user_id": user_id,
+                "valid_job_id": valid_job_id,
+            })
+        return result
+    except asyncio.CancelledError:
+        await publish_ws_event({
+            "type": "resume_build_failed",
+            "user_id": user_id,
+            "valid_job_id": valid_job_id,
+            "error": "Cancelled or timed out",
+        })
+        raise
+    except Exception as e:
+        logger.exception("worker_build_resume_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
+        await publish_ws_event({
+            "type": "resume_build_failed",
+            "user_id": user_id,
+            "valid_job_id": valid_job_id,
+            "error": str(e),
+        })
+        return None
+    finally:
+        clear_logging_context()
+
+
 def _redis_settings() -> RedisSettings:
     return RedisSettings.from_dsn(get_settings().redis_url)
 
@@ -281,6 +326,15 @@ class AnalysisWorkerSettings:
     max_tries = 1
 
 
+class ResumeBuildWorkerSettings:
+    """arq settings for the resume/cover letter document builder."""
+    functions = [build_resume_task]
+    redis_settings = _redis_settings
+    queue_name = RESUME_BUILD_QUEUE
+    job_timeout = 180
+    max_tries = 1
+
+
 async def get_extraction_pool() -> ArqRedis:
     return await create_pool(
         _redis_settings(),
@@ -292,4 +346,11 @@ async def get_analysis_pool() -> ArqRedis:
     return await create_pool(
         _redis_settings(),
         default_queue_name=ANALYSIS_QUEUE,
+    )
+
+
+async def get_resume_build_pool() -> ArqRedis:
+    return await create_pool(
+        _redis_settings(),
+        default_queue_name=RESUME_BUILD_QUEUE,
     )

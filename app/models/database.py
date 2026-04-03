@@ -194,6 +194,37 @@ class ValidJobUserApplication(Base):
     )
 
 
+class ResumeBuildResult(Base):
+    """Tracks per-job tailored resume & cover letter document generation."""
+    __tablename__ = "resume_build_results"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    valid_job_id = Column(String(36), ForeignKey("valid_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    resume_docx_status = Column(String(20), default="pending", nullable=False)
+    resume_pdf_status = Column(String(20), default="pending", nullable=False)
+    cover_letter_docx_status = Column(String(20), default="pending", nullable=False)
+    cover_letter_pdf_status = Column(String(20), default="pending", nullable=False)
+
+    resume_docx_path = Column(Text, nullable=True)
+    resume_pdf_path = Column(Text, nullable=True)
+    cover_letter_docx_path = Column(Text, nullable=True)
+    cover_letter_pdf_path = Column(Text, nullable=True)
+
+    tailored_resume_data = Column(JSON, nullable=True)
+    cover_letter_data = Column(JSON, nullable=True)
+
+    output_directory = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("valid_job_id", "user_id", name="uq_resume_build_valid_job_user"),
+    )
+
+
 class APIPatternRegistry(Base):
     __tablename__ = "api_pattern_registry"
 
