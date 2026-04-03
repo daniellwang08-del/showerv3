@@ -33,7 +33,6 @@ from app.storage.repository import (
 )
 from app.storage.user_repository import UserRepository, _profile_display_name, user_applied_by_display_name
 from app.services.url_manager import URLManager
-from app.services.deduplication import DeduplicationService
 from app.services.duplication_checker import DuplicationChecker
 from app.services.submit_queue_dedup import find_inflight_valid_job_with_same_url
 from app.extractors.browser_extractor import get_browser_pool_safe
@@ -51,13 +50,14 @@ from app.models.database import (
     JobMatchInProgress,
     ValidJobUserApplication,
 )
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from datetime import datetime, timezone
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 from app.services.attachment_text_extract import combine_file_texts, extract_text_from_bytes
 from app.services.attachment_job_url_ai import extract_job_urls_from_text_combined
+from app.storage.repository import _utcnow
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -182,7 +182,7 @@ async def get_current_user(request: Request):
 @router.post("/auth/signup", response_model=AuthResponse)
 async def signup(request: SignupRequest, response: Response) -> AuthResponse:
     """Register a new user with email and password"""
-    # Normalize email (lowercase and strip whitespace)
+    settings = get_settings()
     normalized_email = request.email.lower().strip()
     
     async with get_session() as session:
@@ -207,9 +207,9 @@ async def signup(request: SignupRequest, response: Response) -> AuthResponse:
                 key="access_token",
                 value=access_token,
                 httponly=True,
-                max_age=86400,  # 24 hours
+                max_age=86400,
                 samesite="lax",
-                secure=False  # Set to True in production with HTTPS
+                secure=settings.app_env == "production",
             )
             
             logger.info("user_signup_success", email=user.email, user_id=user.id)
@@ -238,7 +238,7 @@ async def signup(request: SignupRequest, response: Response) -> AuthResponse:
 @router.post("/auth/login", response_model=AuthResponse)
 async def login(request: LoginRequest, response: Response) -> AuthResponse:
     """Login with email and password"""
-    # Normalize email (lowercase and strip whitespace)
+    settings = get_settings()
     normalized_email = request.email.lower().strip()
     
     async with get_session() as session:
@@ -259,9 +259,9 @@ async def login(request: LoginRequest, response: Response) -> AuthResponse:
             key="access_token",
             value=access_token,
             httponly=True,
-            max_age=86400,  # 24 hours
+            max_age=86400,
             samesite="lax",
-            secure=False  # Set to True in production with HTTPS
+            secure=settings.app_env == "production",
         )
         
         logger.info("user_login_success", email=user.email, user_id=user.id)
@@ -697,29 +697,18 @@ async def extract_job(
         logger.warning("extract_job_invalid_url", url=url, error=error)
         raise HTTPException(status_code=400, detail=error)
 
+    domain = URLManager.extract_domain(url)
+
     async with get_session() as session:
         repository = JobExtractionRepository(session)
-        dedup_service = DeduplicationService(repository)
-
-        extraction, is_duplicate = await dedup_service.check_and_create(
-            url,
-            request.force_refresh,
+        extraction = await repository.create(
+            source_url=url,
+            normalized_url=url,
+            domain=domain,
         )
-
-        if is_duplicate and extraction.status == ExtractionStatus.COMPLETED:
-            return _build_response(extraction)
-
-        if is_duplicate and extraction.status in (ExtractionStatus.PENDING, ExtractionStatus.PROCESSING):
-            return _build_response(extraction)
-
-        if extraction.status == ExtractionStatus.PENDING:
-            # Commit DB row before enqueue to avoid worker seeing uncommitted state.
-            should_enqueue = True
-            extraction_id = extraction.id
-            logger.info("extract_job_created", job_id=extraction.id, url=url, is_duplicate=is_duplicate)
-        else:
-            logger.debug("extract_job_existing", job_id=extraction.id, status=extraction.status.value)
-
+        should_enqueue = True
+        extraction_id = extraction.id
+        logger.info("extract_job_created", job_id=extraction.id, url=url)
         response = _build_response(extraction)
 
     if should_enqueue and extraction_id:
@@ -736,12 +725,10 @@ async def extract_batch(
     current_user: dict = Depends(get_current_user),
 ) -> BatchExtractionResponse:
     job_ids = []
-    duplicate_count = 0
     to_enqueue: list[tuple[str, str]] = []
 
     async with get_session() as session:
         repository = JobExtractionRepository(session)
-        dedup_service = DeduplicationService(repository)
 
         for url in request.urls:
             url_str = str(url)
@@ -750,16 +737,15 @@ async def extract_batch(
             if not is_valid:
                 continue
 
-            extraction, _ = await dedup_service.check_and_create(
-                url_str,
-                request.force_refresh,
+            domain = URLManager.extract_domain(url_str)
+            extraction = await repository.create(
+                source_url=url_str,
+                normalized_url=url_str,
+                domain=domain,
             )
 
             job_ids.append(extraction.id)
-
-            if extraction.status == ExtractionStatus.PENDING:
-                # Queue only after transaction commits to avoid read-before-commit races.
-                to_enqueue.append((extraction.id, url_str))
+            to_enqueue.append((extraction.id, url_str))
 
     for extraction_id, url_str in to_enqueue:
         await enqueue_extraction(
@@ -773,14 +759,13 @@ async def extract_batch(
         "extract_batch_completed",
         total_urls=len(request.urls),
         accepted_urls=len(job_ids),
-        duplicate_urls=duplicate_count,
         job_ids=job_ids,
     )
     return BatchExtractionResponse(
-        batch_id=f"batch_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        batch_id=f"batch_{_utcnow().strftime('%Y%m%d%H%M%S')}",
         total_urls=len(request.urls),
         accepted_urls=len(job_ids),
-        duplicate_urls=duplicate_count,
+        duplicate_urls=0,
         job_ids=job_ids,
     )
 
@@ -865,7 +850,7 @@ async def submit_job(
     
     async with get_session() as session:
         duplication_checker = DuplicationChecker(session)
-        normalized_url = duplication_checker.normalize_url(request.url)
+        normalized_url = request.url
         domain = duplication_checker.extract_domain(request.url)
         user_id_submit = current_user.get("user_id")
 
@@ -953,14 +938,12 @@ async def submit_job(
         await session.flush()
 
         extraction_repo = JobExtractionRepository(session)
-        extraction, _ = await extraction_repo.get_or_create(
+        extraction = await extraction_repo.create(
             source_url=request.url,
             normalized_url=normalized_url,
             domain=domain,
         )
         valid_job.extraction_id = extraction.id
-        if extraction.status == ExtractionStatus.COMPLETED and extraction.completed_at:
-            valid_job.scraped_at = extraction.completed_at
         await session.commit()
 
         if extraction.status != ExtractionStatus.COMPLETED:
@@ -1081,6 +1064,7 @@ async def get_valid_jobs(
     current_user: dict = Depends(get_current_user),
 ) -> list[ValidJobResponse]:
     """Get valid jobs (todo-jobs)"""
+    limit = min(limit, 200)
     logger.debug("get_valid_jobs", limit=limit, offset=offset)
     user_id = current_user.get("user_id")
     if not user_id:
@@ -1256,7 +1240,7 @@ async def mark_valid_jobs_applied_batch(
         n = await app_repo.upsert_batch(user_id, body.valid_job_ids, label)
         await session.commit()
     # ISO timestamp so the client can align charts without waiting for a list refetch parse edge cases
-    applied_at_iso = datetime.now(timezone.utc).isoformat()
+    applied_at_iso = _utcnow().isoformat()
     return {"marked": n, "applied_by_name": label, "applied_at": applied_at_iso}
 
 
@@ -1520,14 +1504,14 @@ async def _prepare_valid_job_rescrape_in_session(
         raise ValueError(error or "Invalid URL")
 
     duplication_checker = DuplicationChecker(session)
-    normalized_url = duplication_checker.normalize_url(source_url)
+    normalized_url = source_url
     domain = duplication_checker.extract_domain(source_url)
 
     extraction_id = valid_job.extraction_id
     repo = JobExtractionRepository(session)
 
     if not extraction_id:
-        extraction, _ = await repo.get_or_create(
+        extraction = await repo.create(
             source_url=source_url,
             normalized_url=normalized_url,
             domain=domain,
@@ -1767,6 +1751,7 @@ async def rescrape_valid_job(
 @router.get("/jobs/invalid", response_model=list[InvalidJobResponse], dependencies=[Depends(get_current_user)])
 async def get_invalid_jobs(limit: int = 50, offset: int = 0) -> list[InvalidJobResponse]:
     """Get invalid jobs (check-required jobs)"""
+    limit = min(limit, 200)
     logger.debug("get_invalid_jobs", limit=limit, offset=offset)
     async with get_session() as session:
         stmt = select(InvalidJob).where(InvalidJob.is_active == True).order_by(
@@ -1859,7 +1844,7 @@ async def promote_invalid_to_valid(
             raise HTTPException(status_code=404, detail="Invalid job not found")
 
         meta = dict(invalid.raw_metadata or {})
-        promoted_at_iso = datetime.utcnow().isoformat()
+        promoted_at_iso = _utcnow().isoformat()
         meta["promotion_reason"] = reason_clean
         meta["promoted_from_invalid_job_id"] = invalid.id
         meta["promoted_at"] = promoted_at_iso
@@ -1900,14 +1885,12 @@ async def promote_invalid_to_valid(
         await session.flush()
 
         extraction_repo = JobExtractionRepository(session)
-        extraction, _ = await extraction_repo.get_or_create(
+        extraction = await extraction_repo.create(
             source_url=invalid.source_url,
             normalized_url=invalid.normalized_url,
             domain=invalid.domain,
         )
         valid_job.extraction_id = extraction.id
-        if extraction.status == ExtractionStatus.COMPLETED and extraction.completed_at:
-            valid_job.scraped_at = extraction.completed_at
 
         await session.delete(invalid)
         await session.commit()
@@ -1957,16 +1940,14 @@ async def get_job_stats() -> dict:
     """Get statistics about valid and invalid jobs"""
     
     async with get_session() as session:
-        # Count valid jobs
-        valid_stmt = select(ValidJob).where(ValidJob.is_active == True)
-        valid_result = await session.execute(valid_stmt)
-        valid_count = len(valid_result.scalars().all())
-        
-        # Count invalid jobs
-        invalid_stmt = select(InvalidJob).where(InvalidJob.is_active == True)
-        invalid_result = await session.execute(invalid_stmt)
-        invalid_count = len(invalid_result.scalars().all())
-        
+        valid_count = (await session.execute(
+            select(func.count()).select_from(ValidJob).where(ValidJob.is_active == True)
+        )).scalar_one()
+
+        invalid_count = (await session.execute(
+            select(func.count()).select_from(InvalidJob).where(InvalidJob.is_active == True)
+        )).scalar_one()
+
         logger.debug("get_job_stats", valid_count=valid_count, invalid_count=invalid_count)
         return {
             "valid_jobs_count": valid_count,
@@ -1989,13 +1970,12 @@ async def update_valid_job_url(job_id: str, request: JobUrlUpdateRequest) -> dic
             logger.warning("update_valid_job_url_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Valid job not found")
 
-        duplication_checker = DuplicationChecker(session)
         job.source_url = request.url
-        job.normalized_url = duplication_checker.normalize_url(request.url)
-        job.domain = duplication_checker.extract_domain(request.url)
+        job.normalized_url = request.url
+        job.domain = URLManager.extract_domain(request.url)
         job.extraction_id = None
         job.scraped_at = None
-        job.updated_at = datetime.utcnow()
+        job.updated_at = _utcnow()
 
         try:
             await session.commit()
@@ -2022,11 +2002,10 @@ async def update_invalid_job_url(job_id: str, request: JobUrlUpdateRequest) -> d
             logger.warning("update_invalid_job_url_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Invalid job not found")
 
-        duplication_checker = DuplicationChecker(session)
         job.source_url = request.url
-        job.normalized_url = duplication_checker.normalize_url(request.url)
-        job.domain = duplication_checker.extract_domain(request.url)
-        job.updated_at = datetime.utcnow()
+        job.normalized_url = request.url
+        job.domain = URLManager.extract_domain(request.url)
+        job.updated_at = _utcnow()
 
         try:
             await session.commit()
@@ -2068,7 +2047,7 @@ async def report_valid_as_invalid(job_id: str, request: JobReportRequest) -> dic
         )
 
         job.is_active = False
-        job.updated_at = datetime.utcnow()
+        job.updated_at = _utcnow()
 
         session.add(invalid_job)
         try:
@@ -2111,7 +2090,7 @@ async def report_valid_as_duplicate(job_id: str, request: JobReportRequest) -> d
         )
 
         job.is_active = False
-        job.updated_at = datetime.utcnow()
+        job.updated_at = _utcnow()
 
         session.add(invalid_job)
         try:
@@ -2136,7 +2115,7 @@ async def report_invalid_as_invalid(job_id: str, request: JobReportRequest) -> d
 
         job.duplicate_of_job_id = None
         job.duplication_reason = request.duplication_reason or "Manually reported as invalid job"
-        job.updated_at = datetime.utcnow()
+        job.updated_at = _utcnow()
         await session.commit()
         logger.info("report_invalid_as_invalid_success", job_id=job_id)
         return {"success": True}
@@ -2153,7 +2132,7 @@ async def report_invalid_as_duplicate(job_id: str, request: JobReportRequest) ->
 
         job.duplicate_of_job_id = request.duplicate_of_job_id
         job.duplication_reason = request.duplication_reason or "Manually reported as duplicated job"
-        job.updated_at = datetime.utcnow()
+        job.updated_at = _utcnow()
         await session.commit()
         logger.info("report_invalid_as_duplicate_success", job_id=job_id, duplicate_of=request.duplicate_of_job_id)
         return {"success": True}

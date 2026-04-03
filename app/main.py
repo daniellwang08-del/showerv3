@@ -23,12 +23,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from prometheus_client import make_asgi_app
 from app.api.routes import router
-from app.api.middleware import MetricsMiddleware, ErrorHandlerMiddleware
+from app.api.websocket import ws_router, manager as ws_manager
+from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
-from app.services.ai_parser import init_ai_parser
 from app.extractors.browser_extractor import init_browser_pool, close_browser_pool
 from app.core.config import get_settings
 from app.core.logging import setup_logging, get_logger
@@ -53,11 +52,6 @@ async def lifespan(app: FastAPI):
         logger.error("http_client_init_failed", error=str(e))
 
     try:
-        await init_ai_parser()
-    except Exception as e:
-        logger.warning("ai_parser_init_skipped", error=str(e))
-
-    try:
         await init_browser_pool()
     except Exception as e:
         err_msg = str(e) or f"{type(e).__name__}"
@@ -73,6 +67,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     if redis_ok:
+        await ws_manager.start_redis_subscriber()
         logger.info(
             "application_started",
             redis_connected=True,
@@ -88,6 +83,11 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("application_stopping")
+
+    try:
+        await ws_manager.stop_redis_subscriber()
+    except Exception:
+        pass
 
     try:
         await close_browser_pool()
@@ -138,7 +138,7 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(ErrorHandlerMiddleware)
-    app.add_middleware(MetricsMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
 
     # Add root route
     @app.get("/")
@@ -157,9 +157,7 @@ def create_app() -> FastAPI:
         return Response(status_code=204)
 
     app.include_router(router, prefix="/api/v1")
-
-    metrics_app = make_asgi_app()
-    app.mount("/metrics", metrics_app)
+    app.include_router(ws_router, prefix="/api/v1")
 
     return app
 

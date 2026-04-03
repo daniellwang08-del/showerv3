@@ -8,6 +8,7 @@ import { Signup } from './components/Signup';
 import { JobActionModal } from './components/JobActionModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { useAuth } from './hooks/useAuth';
+import { useWebSocket, type WsEvent } from './hooks/useWebSocket';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { ProfilesPage } from './features/profiles/ProfilesPage';
 import { mainViewFromHash, navigateMainView, type MainView } from './mainViewRouting';
@@ -49,6 +50,7 @@ function App() {
   const [compareValidJobId, setCompareValidJobId] = useState<string | null>(null);
   const [pendingScrollValidJobId, setPendingScrollValidJobId] = useState<string | null>(null);
   const [jobAnalysisValidJobId, setJobAnalysisValidJobId] = useState<string | null>(null);
+  const [wsRefreshKey, setWsRefreshKey] = useState(0);
 
   const validRowRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const isInitialListsLoad = useRef(true);
@@ -303,23 +305,28 @@ function App() {
     }
   }, [isAuthenticated]);
 
-  useEffect(() => {
-    if (!isAuthenticated || !uniqueUrls.length) return;
-    const hasExtractionInProgress = uniqueUrls.some(
-      (u) => u.extraction_status === 'pending' || u.extraction_status === 'processing',
-    );
-    const hasMatchInProgress = uniqueUrls.some((u) => u.match_status === 'processing');
-    const catchupMs = 15 * 60 * 1000;
-    const needsMatchScoreCatchup = uniqueUrls.some((u) => {
-      if (u.table !== 'valid' || !u.extraction_id || u.extraction_status !== 'completed') return false;
-      if (u.match_overall_score != null || u.match_status === 'processing') return false;
-      const refMs = u.scraped_at_ms ?? u.created_at_ms;
-      return Date.now() - refMs < catchupMs;
-    });
-    if (!hasExtractionInProgress && !hasMatchInProgress && !needsMatchScoreCatchup) return;
-    const interval = setInterval(() => void refreshLists({ showLoading: false, reset: false }), 5000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated, uniqueUrls, uniqueUrls.length]);
+  const refreshListsRef = useRef(refreshLists);
+  refreshListsRef.current = refreshLists;
+
+  const handleWsEvent = useCallback((event: WsEvent) => {
+    logger.info(`ws_event_${event.type}`, { event_data: event });
+
+    const actionable =
+      event.type === 'extraction_started' ||
+      event.type === 'extraction_completed' ||
+      event.type === 'extraction_failed' ||
+      event.type === 'match_started' ||
+      event.type === 'match_completed' ||
+      event.type === 'match_failed' ||
+      event.type === 'job_demoted';
+
+    if (actionable) {
+      void refreshListsRef.current({ showLoading: false, reset: false });
+      setWsRefreshKey((k) => k + 1);
+    }
+  }, []);
+
+  useWebSocket(!!isAuthenticated, handleWsEvent);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -754,6 +761,7 @@ function App() {
       loadingMoreDuplicates: loadingMoreInvalid,
       onLoadMoreDuplicates: loadMoreInvalidJobs,
       duplicatesLoadedCount: duplicateUrls.length,
+      wsRefreshKey,
     };
   }, [
     user?.email,
@@ -785,6 +793,7 @@ function App() {
     onCompareDuplicate,
     onReplaceDuplicate,
     openBatchDeleteConfirm,
+    wsRefreshKey,
   ]);
 
   if (isAuthenticated === null) {

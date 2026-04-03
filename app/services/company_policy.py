@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.models.database import (
@@ -8,7 +8,8 @@ from app.models.database import (
     ValidJobUserApplication,
 )
 from app.core.logging import get_logger
-from app.storage.repository import _truncate_for_db
+from app.storage.repository import _truncate_for_db, _utcnow
+from app.api.websocket import publish_ws_event
 
 logger = get_logger(__name__)
 
@@ -46,6 +47,7 @@ async def _demote_valid_job_to_invalid(
     duplicate_of_job_id: str,
     reason: str,
     similarity_score: float | None = None,
+    user_id: str | None = None,
 ) -> None:
     row = await session.execute(select(ValidJob).where(ValidJob.id == valid_job_id))
     job = row.scalar_one_or_none()
@@ -73,7 +75,7 @@ async def _demote_valid_job_to_invalid(
     session.add(invalid)
 
     job.is_active = False
-    job.updated_at = datetime.utcnow()
+    job.updated_at = _utcnow()
 
     logger.info(
         "company_policy_job_demoted_to_invalid",
@@ -82,6 +84,16 @@ async def _demote_valid_job_to_invalid(
         company=job.company,
         reason=reason,
     )
+
+    if user_id:
+        await publish_ws_event({
+            "type": "job_demoted",
+            "user_id": user_id,
+            "valid_job_id": valid_job_id,
+            "invalid_job_id": invalid.id,
+            "reason": reason,
+            "company": job.company,
+        })
 
 
 async def enforce_company_priority_after_match(
@@ -154,6 +166,7 @@ async def enforce_company_priority_after_match(
             )
             or "Company duplicate: existing applied job retained.",
             similarity_score=float(new_match_score) / 100.0,
+            user_id=user_id,
         )
         return
 
@@ -180,6 +193,7 @@ async def enforce_company_priority_after_match(
                 )
                 or "Company duplicate: superseded by analyzed posting.",
                 similarity_score=None,
+                user_id=user_id,
             )
         return
 
@@ -197,6 +211,7 @@ async def enforce_company_priority_after_match(
             )
             or "Company duplicate: lower match score than previous best.",
             similarity_score=float(new_match_score) / 100.0,
+            user_id=user_id,
         )
         return
 
@@ -214,5 +229,6 @@ async def enforce_company_priority_after_match(
             )
             or "Company duplicate: replaced by higher match score job.",
             similarity_score=(float(prev_score) / 100.0) if prev_score is not None else None,
+            user_id=user_id,
         )
 

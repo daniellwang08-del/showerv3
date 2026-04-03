@@ -21,7 +21,6 @@ from arq import run_worker
 from app.tasks.worker import WorkerSettings, extract_job, analyze_job_match
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
-from app.services.ai_parser import init_ai_parser
 from app.extractors.browser_extractor import (
     init_browser_pool,
     close_browser_pool,
@@ -35,7 +34,6 @@ async def startup(ctx):
     logger.info("worker_startup_begin")
     await init_database()
     await init_http_client()
-    await init_ai_parser()
     await init_browser_pool()
     logger.info("worker_startup_complete")
 

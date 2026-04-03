@@ -9,12 +9,12 @@ from app.services.extraction_service import ExtractionService
 from app.services.job_match_orchestrator import clear_job_match_progress
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, ValidJobRepository, JobMatchInProgressRepository
+from app.api.websocket import publish_ws_event
 
 logger = get_logger(__name__)
 
 
 async def _mark_extraction_failed_cancelled(job_id: str) -> None:
-    """If the worker times out or cancels extract_job, arq stops the coroutine without running process_job cleanup."""
     try:
         async with get_session() as session:
             repo = JobExtractionRepository(session)
@@ -37,6 +37,15 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="extract_job", extraction_id=job_id, target_url=url, user_id=user_id)
     logger.info("worker_extract_job_started", job_id=job_id, url=url)
+
+    if user_id:
+        await publish_ws_event({
+            "type": "extraction_started",
+            "user_id": user_id,
+            "job_id": job_id,
+            "url": url,
+        })
+
     pending_match_progress: tuple[str, str] | None = None
     try:
         service = ExtractionService()
@@ -49,6 +58,16 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                 method=result.get("method"),
                 confidence=confidence,
             )
+            if user_id:
+                await publish_ws_event({
+                    "type": "extraction_completed",
+                    "user_id": user_id,
+                    "job_id": job_id,
+                    "url": url,
+                    "method": result.get("method"),
+                    "confidence": confidence,
+                })
+
             if user_id:
                 async with get_session() as session:
                     valid_repo = ValidJobRepository(session)
@@ -76,11 +95,27 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                 url=url,
                 error=result.get("error", "Unknown error"),
             )
+            if user_id:
+                await publish_ws_event({
+                    "type": "extraction_failed",
+                    "user_id": user_id,
+                    "job_id": job_id,
+                    "url": url,
+                    "error": result.get("error"),
+                })
         return result
     except asyncio.CancelledError:
         await _mark_extraction_failed_cancelled(job_id)
         if pending_match_progress:
             await clear_job_match_progress(pending_match_progress[0], pending_match_progress[1])
+        if user_id:
+            await publish_ws_event({
+                "type": "extraction_failed",
+                "user_id": user_id,
+                "job_id": job_id,
+                "url": url,
+                "error": "Cancelled or timed out",
+            })
         raise
     except Exception as e:
         tb = traceback.format_exc()
@@ -91,29 +126,62 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
             error=str(e),
             traceback=tb,
         )
+        if user_id:
+            await publish_ws_event({
+                "type": "extraction_failed",
+                "user_id": user_id,
+                "job_id": job_id,
+                "url": url,
+                "error": str(e),
+            })
         return {"job_id": job_id, "status": "failed", "error": str(e)}
     finally:
         clear_logging_context()
 
 
 async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict | None:
-    """AI job–profile match analysis. Runs async after extraction completes."""
     from app.services.job_match_orchestrator import run_job_match_analysis
 
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="analyze_job_match", valid_job_id=valid_job_id, user_id=user_id)
     logger.info("worker_analyze_job_match_started", valid_job_id=valid_job_id, user_id=user_id)
+
+    await publish_ws_event({
+        "type": "match_started",
+        "user_id": user_id,
+        "valid_job_id": valid_job_id,
+    })
+
     try:
         result = await run_job_match_analysis(valid_job_id, user_id)
         if result:
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
+            await publish_ws_event({
+                "type": "match_completed",
+                "user_id": user_id,
+                "valid_job_id": valid_job_id,
+                "overall_score": result.get("overall_score"),
+                "recommendation": result.get("recommendation"),
+            })
         return result
     except asyncio.CancelledError:
         await clear_job_match_progress(valid_job_id, user_id)
+        await publish_ws_event({
+            "type": "match_failed",
+            "user_id": user_id,
+            "valid_job_id": valid_job_id,
+            "error": "Cancelled or timed out",
+        })
         raise
     except Exception as e:
         logger.exception("worker_analyze_job_match_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
         await clear_job_match_progress(valid_job_id, user_id)
+        await publish_ws_event({
+            "type": "match_failed",
+            "user_id": user_id,
+            "valid_job_id": valid_job_id,
+            "error": str(e),
+        })
         return None
     finally:
         clear_logging_context()
@@ -133,7 +201,6 @@ class WorkerSettings:
 
 
 async def get_redis_pool() -> ArqRedis:
-    """Create Redis pool with queue_name matching WorkerSettings.queue_name."""
     settings = get_settings()
     return await create_pool(
         RedisSettings.from_dsn(settings.redis_url),

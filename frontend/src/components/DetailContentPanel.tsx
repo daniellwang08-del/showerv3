@@ -102,6 +102,7 @@ type Props = {
   validJobId: string | null;
   onClose: () => void;
   onAnalysisUpdated?: () => void;
+  refreshKey?: number;
 };
 
 /** Large overall score — same band language as `MatchScoreChip` */
@@ -268,7 +269,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
   );
 }
 
-export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: Props) {
+export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, refreshKey }: Props) {
   const onAnalysisUpdatedRef = useRef(onAnalysisUpdated);
   onAnalysisUpdatedRef.current = onAnalysisUpdated;
 
@@ -331,16 +332,12 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated }: P
       }
     };
 
-    void fetchAnalysis(false);
-    const interval = window.setInterval(() => {
-      void fetchAnalysis(true);
-    }, 2500);
+    void fetchAnalysis(snapshotRef.current !== null);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
     };
-  }, [validJobId]);
+  }, [validJobId, refreshKey]);
 
   if (!validJobId) return null;
 

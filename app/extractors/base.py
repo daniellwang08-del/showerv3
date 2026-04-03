@@ -29,18 +29,3 @@ class BaseExtractor(ABC):
         pass
 
 
-class ExtractorPipeline:
-    def __init__(self, extractors: list[BaseExtractor]):
-        self._extractors = extractors
-
-    async def extract(self, url: str, html: str | None = None) -> ExtractionResult:
-        for extractor in self._extractors:
-            if await extractor.can_extract(url, html):
-                result = await extractor.extract(url, html)
-                if result.success:
-                    return result
-        return ExtractionResult(
-            success=False,
-            method=ExtractionMethod.STATIC_HTML,
-            error="All extraction methods failed",
-        )

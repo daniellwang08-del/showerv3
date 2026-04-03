@@ -14,7 +14,6 @@ from typing import Tuple, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from app.models.database import ValidJob, InvalidJob
-from app.services.url_manager import URLManager
 from app.core.logging import get_logger
 import tldextract
 
@@ -62,12 +61,6 @@ def _normalize_company(name: str) -> str:
 class DuplicationChecker:
     def __init__(self, db_session: AsyncSession):
         self.db_session = db_session
-
-    def normalize_url(self, url: str) -> str:
-        try:
-            return URLManager.normalize_url(url)
-        except Exception:
-            return url.strip().lower()
 
     def extract_domain(self, url: str) -> str:
         try:
@@ -117,12 +110,33 @@ class DuplicationChecker:
         norm_company = _normalize_company(company)
         norm_title = _normalize_job_title(title)
 
+        if not norm_company:
+            return False, None
+
+        # SQL pre-filter: hash match OR company name match (narrows candidate set)
         for model in [ValidJob, InvalidJob]:
-            stmt = select(model).where(model.is_active == True)
-            if norm_company:
-                stmt = stmt.where(model.company.ilike(f"%{company}%"))
+            conditions = [model.is_active == True, model.company.ilike(f"%{norm_company}%")]
             if exclude_valid_job_id and model == ValidJob:
-                stmt = stmt.where(ValidJob.id != exclude_valid_job_id)
+                conditions.append(ValidJob.id != exclude_valid_job_id)
+            if content_hash:
+                hash_stmt = select(model).where(
+                    model.is_active == True,
+                    model.similarity_hash == content_hash,
+                )
+                if exclude_valid_job_id and model == ValidJob:
+                    hash_stmt = hash_stmt.where(ValidJob.id != exclude_valid_job_id)
+                hash_result = await self.db_session.execute(hash_stmt)
+                for job in hash_result.scalars().all():
+                    match_type = "valid_job" if model == ValidJob else "invalid_job"
+                    canonical_id = job.duplicate_of_job_id if hasattr(job, "duplicate_of_job_id") and job.duplicate_of_job_id else job.id
+                    return True, {
+                        "job_id": canonical_id, "similarity_score": 1.0,
+                        "url_similarity": 0.0, "content_similarity": 1.0,
+                        "hash_match": True, "match_type": match_type,
+                        "duplication_reason": "Similar job from same company",
+                    }
+
+            stmt = select(model).where(and_(*conditions))
             result = await self.db_session.execute(stmt)
             best = None
             best_score = 0.0
@@ -132,21 +146,14 @@ class DuplicationChecker:
                     title_sim = max(title_sim, self.calculate_text_similarity(norm_title, _normalize_job_title(job.title or "")))
                 desc_sim = self.calculate_text_similarity(description, job.description or "")
                 content_sim = max(title_sim, desc_sim) if (title or description) else 0.0
-                hash_match = content_hash is not None and content_hash == job.similarity_hash
-                combined = content_sim
-                if hash_match:
-                    combined = 1.0
-                if combined >= SIMILARITY_THRESHOLD and combined > best_score:
-                    best_score = combined
+                if content_sim >= SIMILARITY_THRESHOLD and content_sim > best_score:
+                    best_score = content_sim
                     match_type = "valid_job" if model == ValidJob else "invalid_job"
                     canonical_id = job.duplicate_of_job_id if hasattr(job, "duplicate_of_job_id") and job.duplicate_of_job_id else job.id
                     best = {
-                        "job_id": canonical_id,
-                        "similarity_score": combined,
-                        "url_similarity": 0.0,
-                        "content_similarity": content_sim,
-                        "hash_match": hash_match,
-                        "match_type": match_type,
+                        "job_id": canonical_id, "similarity_score": content_sim,
+                        "url_similarity": 0.0, "content_similarity": content_sim,
+                        "hash_match": False, "match_type": match_type,
                         "duplication_reason": "Similar job from same company",
                     }
             if best:
@@ -186,14 +193,22 @@ class DuplicationChecker:
                     "duplication_reason": "Identical job content posted by different company",
                 }
 
-        if not title and not description:
+        if not title:
             return False, None
 
+        # SQL pre-filter: only load candidates whose title shares key words
+        norm_title = _normalize_job_title(title)
+        title_words = [w for w in norm_title.split() if len(w) >= 3]
+        if not title_words:
+            return False, None
+
+        # Use the longest word from the title for SQL pre-filter
+        key_word = max(title_words, key=len)
         stmt = select(ValidJob).where(
             and_(
                 ValidJob.is_active == True,
                 ValidJob.title.isnot(None),
-                ValidJob.description.isnot(None),
+                ValidJob.title.ilike(f"%{key_word}%"),
             )
         )
         if exclude_valid_job_id:
@@ -203,7 +218,7 @@ class DuplicationChecker:
         best_score = 0.0
         for job in result.scalars().all():
             title_sim = self.calculate_text_similarity(title, job.title or "")
-            desc_sim = self.calculate_text_similarity(description, job.description or "")
+            desc_sim = self.calculate_text_similarity(description, job.description or "") if description else 0.0
             content_sim = max(title_sim, desc_sim)
             if content_sim >= CROSS_COMPANY_CONTENT_THRESHOLD and content_sim > best_score:
                 best_score = content_sim

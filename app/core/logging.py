@@ -121,8 +121,8 @@ def setup_logging() -> None:
         force=True,
     )
 
-    # Keep SQLAlchemy quiet unless sqlalchemy_echo=True in settings.
-    # Set the parent so pool/dialects/ORM don't spam INFO on the root handler.
+    logging.getLogger("arq.worker").setLevel(logging.WARNING)
+
     logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.WARNING)

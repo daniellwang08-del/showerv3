@@ -121,8 +121,8 @@ class Settings(BaseSettings):
     proxy_enabled: bool = False
     proxy_url: str | None = None
 
-    auth_password: str = "qwe123"
-    auth_secret_key: str = "super-secret-key-change-me"
+    auth_password: str = Field(default="")
+    auth_secret_key: str = Field(default="")
 
 
 @lru_cache

@@ -55,6 +55,7 @@ type Props = {
   jobAnalysisValidJobId: string | null;
   onCloseDetail: () => void;
   onMatchStored: () => void;
+  wsRefreshKey?: number;
 
   // compare helpers
   onCompareDuplicate: (item: SubmittedUrlItem) => void;
@@ -121,6 +122,7 @@ export function DashboardPage({
   loadingMoreDuplicates,
   onLoadMoreDuplicates,
   duplicatesLoadedCount,
+  wsRefreshKey,
 }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isDuplicatePanelOpen, setDuplicatePanelOpen] = useState(false);
@@ -211,6 +213,7 @@ export function DashboardPage({
                     validJobId={jobAnalysisValidJobId}
                     onClose={onCloseDetail}
                     onAnalysisUpdated={onMatchStored}
+                    refreshKey={wsRefreshKey}
                   />
                 </div>
               ) : (

@@ -110,10 +110,9 @@ async def extract_job_urls_from_text_combined(text: str) -> list[str]:
             norm = _validate_and_normalize_url(u)
             if not norm:
                 continue
-            nk = URLManager.normalize_url(norm)
-            if nk in seen:
+            if norm in seen:
                 continue
-            seen.add(nk)
+            seen.add(norm)
             ordered.append(norm)
 
     return ordered

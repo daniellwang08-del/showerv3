@@ -14,10 +14,15 @@ from app.models.database import (
 from app.models.schemas import ExtractionStatus, ExtractionMethod, JobDescriptionSchema
 from app.core.logging import get_logger
 from app.utils.text_sanitizer import sanitize_for_postgres_text
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence
 
 logger = get_logger(__name__)
+
+
+def _utcnow() -> datetime:
+    """Naive UTC datetime compatible with TIMESTAMP WITHOUT TIME ZONE columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # Max lengths for job_extractions VARCHAR columns (must match database schema)
 _JOB_EXTRACTION_LIMITS = {
@@ -62,24 +67,6 @@ class JobExtractionRepository:
         await self._session.flush()
         return extraction
 
-    async def get_or_create(
-        self,
-        source_url: str,
-        normalized_url: str,
-        domain: str,
-    ) -> tuple[JobExtraction, bool]:
-        # URL-based extraction dedupe is intentionally removed. Always create a fresh extraction row.
-        extraction = JobExtraction(
-            source_url=source_url,
-            normalized_url=normalized_url,
-            domain=domain,
-            status=ExtractionStatus.PENDING,
-        )
-        self._session.add(extraction)
-        await self._session.flush()
-        logger.debug("repository_get_or_create_created", extraction_id=extraction.id, normalized_url=normalized_url)
-        return extraction, True
-
     async def reset_for_refresh(self, job_id: str, source_url: str, domain: str) -> None:
         values = {
             "source_url": source_url,
@@ -104,9 +91,8 @@ class JobExtractionRepository:
             "raw_html": None,
             "confidence_score": None,
             "error_message": None,
-            "retry_count": 0,
             "completed_at": None,
-            "updated_at": datetime.utcnow(),
+            "updated_at": _utcnow(),
         }
 
         await self._session.execute(
@@ -126,11 +112,11 @@ class JobExtractionRepository:
         status: ExtractionStatus,
         error_message: str | None = None,
     ) -> None:
-        values = {"status": status, "updated_at": datetime.utcnow()}
+        values = {"status": status, "updated_at": _utcnow()}
         if error_message:
             values["error_message"] = sanitize_for_postgres_text(error_message)
         if status == ExtractionStatus.COMPLETED:
-            values["completed_at"] = datetime.utcnow()
+            values["completed_at"] = _utcnow()
 
         await self._session.execute(
             update(JobExtraction).where(JobExtraction.id == job_id).values(**values)
@@ -165,8 +151,8 @@ class JobExtractionRepository:
             "industry": _truncate_for_db(job_data.industry, limits["industry"]),
             "raw_metadata": job_data.raw_metadata,
             "confidence_score": confidence_score,
-            "completed_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "completed_at": _utcnow(),
+            "updated_at": _utcnow(),
         }
         if raw_html:
             values["raw_html"] = sanitize_for_postgres_text(raw_html)
@@ -183,13 +169,6 @@ class JobExtractionRepository:
             .limit(limit)
         )
         return result.scalars().all()
-
-    async def increment_retry(self, job_id: str) -> None:
-        await self._session.execute(
-            update(JobExtraction)
-            .where(JobExtraction.id == job_id)
-            .values(retry_count=JobExtraction.retry_count + 1)
-        )
 
     async def update_ai_structured_content(
         self,
@@ -223,11 +202,11 @@ class JobExtractionRepository:
         extraction.experience_level = _truncate_for_db(job_data.experience_level, limits["experience_level"])
         extraction.industry = _truncate_for_db(job_data.industry, limits["industry"])
         extraction.raw_html = None
-        extraction.updated_at = datetime.utcnow()
+        extraction.updated_at = _utcnow()
 
         metadata = dict(extraction.raw_metadata or {})
         metadata["ai_structured_source"] = source
-        metadata["ai_structured_updated_at"] = datetime.utcnow().isoformat()
+        metadata["ai_structured_updated_at"] = _utcnow().isoformat()
         extraction.raw_metadata = metadata
         await self._session.flush()
 
@@ -240,7 +219,7 @@ class ValidJobRepository:
         await self._session.execute(
             update(ValidJob)
             .where(ValidJob.extraction_id == extraction_id)
-            .values(scraped_at=datetime.utcnow())
+            .values(scraped_at=_utcnow())
         )
 
     async def get_by_extraction_id(self, extraction_id: str) -> ValidJob | None:
@@ -272,7 +251,7 @@ class ValidJobRepository:
         valid_job.posted_date = job_data.posted_date or valid_job.posted_date
         valid_job.experience_level = _truncate_for_db(job_data.experience_level, 100) or valid_job.experience_level
         valid_job.industry = _truncate_for_db(job_data.industry, 200) or valid_job.industry
-        valid_job.updated_at = datetime.utcnow()
+        valid_job.updated_at = _utcnow()
         await self._session.flush()
 
 
@@ -383,7 +362,7 @@ class ValidJobUserApplicationRepository:
         applied_by_name: str,
     ) -> int:
         label = (applied_by_name or "Unknown")[:300]
-        now = datetime.utcnow()
+        now = _utcnow()
         n = 0
         for jid in valid_job_ids:
             job = await self._session.get(ValidJob, jid)
@@ -427,7 +406,7 @@ class APIPatternRepository:
             .where(
                 and_(
                     APIPatternRegistry.domain_pattern == domain,
-                    APIPatternRegistry.is_active == 1,
+                    APIPatternRegistry.is_active == True,
                 )
             )
             .order_by(APIPatternRegistry.priority.desc())
@@ -437,7 +416,7 @@ class APIPatternRepository:
     async def get_all_active_patterns(self) -> Sequence[APIPatternRegistry]:
         result = await self._session.execute(
             select(APIPatternRegistry)
-            .where(APIPatternRegistry.is_active == 1)
+            .where(APIPatternRegistry.is_active == True)
             .order_by(APIPatternRegistry.priority.desc())
         )
         return result.scalars().all()
@@ -451,7 +430,7 @@ class APIPatternRepository:
         if pattern:
             if success:
                 pattern.success_rate = min(1.0, pattern.success_rate + 0.01)
-                pattern.last_success_at = datetime.utcnow()
+                pattern.last_success_at = _utcnow()
             else:
                 pattern.success_rate = max(0.0, pattern.success_rate - 0.05)
             await self._session.flush()

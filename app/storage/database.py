@@ -1,8 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text
-from sqlalchemy import exc as sa_exc
 from app.core.config import get_settings
-from app.models.database import Base
 from app.core.logging import get_logger
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -37,17 +35,8 @@ async def init_database() -> None:
             autoflush=False,
         )
 
-        async with _engine.begin() as conn:
-            try:
-                await conn.run_sync(Base.metadata.create_all)
-            except sa_exc.ProgrammingError as e:
-                # If objects (tables/indexes) already exist (created via alembic),
-                # allow startup to continue. Re-raise unexpected programming errors.
-                msg = str(e).lower()
-                if "already exists" in msg or "duplicate" in msg:
-                    logger.warning("database_init_partial_success", error=str(e))
-                else:
-                    raise
+        async with _engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
 
         _initialized = True
         logger.info("database_initialized", url=settings.database_url.split("@")[-1] if "@" in settings.database_url else settings.database_url)
