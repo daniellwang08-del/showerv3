@@ -233,9 +233,8 @@ def _build_search_query(
     )
 
     if not _spec_has_constraints(spec):
-        stmt = stmt.order_by(ValidJob.created_at.desc())
         if limit is not None:
-            stmt = stmt.limit(limit).offset(offset)
+            stmt = stmt.order_by(ValidJob.created_at.desc()).limit(limit).offset(offset)
         return stmt
 
     json_text_fields = [
@@ -352,9 +351,8 @@ def _build_search_query(
         if clause is not None:
             stmt = stmt.where(clause)
 
-    stmt = stmt.order_by(ValidJob.created_at.desc())
     if limit is not None:
-        stmt = stmt.limit(limit).offset(offset)
+        stmt = stmt.order_by(ValidJob.created_at.desc()).limit(limit).offset(offset)
     return stmt
 
 
