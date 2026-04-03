@@ -4,11 +4,13 @@ import JobTimeline from './JobTimeline';
 import { apiClient } from '../api/client';
 import { useJobsStore } from '../stores/jobsStore';
 import { useUIStore } from '../stores/uiStore';
+import { mapValidJobRow, type ValidJobApiRow } from '../utils/jobListPagination';
+import type { SubmittedUrlItem } from '../types/ui';
 
 type AiSearchResponse = {
-  matching_job_ids: string[];
+  matching_jobs: ValidJobApiRow[];
   query: { rationale?: string | null };
-  total_candidates: number;
+  total_matching: number;
 };
 
 export function ValidJobsPanel() {
@@ -23,18 +25,20 @@ export function ValidJobsPanel() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const [aiRationale, setAiRationale] = useState<string | null>(null);
-  const [aiFilterSet, setAiFilterSet] = useState<Set<string> | null>(null);
-  const [aiMeta, setAiMeta] = useState<{ candidates: number } | null>(null);
+  const [aiResults, setAiResults] = useState<SubmittedUrlItem[] | null>(null);
+  const [aiTotalMatching, setAiTotalMatching] = useState<number>(0);
 
   const displayedItems = useMemo(() => {
-    if (aiFilterSet === null) return items;
-    return items.filter((i) => aiFilterSet.has(i.id));
-  }, [items, aiFilterSet]);
+    if (aiResults !== null) return aiResults;
+    return items;
+  }, [items, aiResults]);
+
+  const isAiActive = aiResults !== null;
 
   const clearAiFilter = useCallback(() => {
-    setAiFilterSet(null);
+    setAiResults(null);
+    setAiTotalMatching(0);
     setAiRationale(null);
-    setAiMeta(null);
     setAiError('');
   }, []);
 
@@ -50,21 +54,22 @@ export function ValidJobsPanel() {
     try {
       const res = await apiClient.post<AiSearchResponse>('/jobs/valid/ai-search', { prompt });
       const data = res.data;
-      if (!data?.matching_job_ids) {
+      if (!data?.matching_jobs) {
         setAiError('Unexpected response from AI search.');
         return;
       }
-      setAiFilterSet(new Set(data.matching_job_ids));
+      const mapped = data.matching_jobs.map((j) => mapValidJobRow(j as ValidJobApiRow));
+      setAiResults(mapped);
+      setAiTotalMatching(data.total_matching);
       setAiRationale(data.query?.rationale?.trim() || null);
-      setAiMeta({ candidates: data.total_candidates });
     } catch (err: unknown) {
       const detail =
         err && typeof err === 'object' && 'response' in err
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
           : undefined;
       setAiError(typeof detail === 'string' ? detail : 'AI search failed. Check OpenAI configuration and try again.');
-      setAiFilterSet(null);
-      setAiMeta(null);
+      setAiResults(null);
+      setAiTotalMatching(0);
     } finally {
       setAiLoading(false);
     }
@@ -98,7 +103,7 @@ export function ValidJobsPanel() {
                 type="text"
                 value={aiPrompt}
                 onChange={(e) => setAiPrompt(e.target.value)}
-                placeholder='e.g. "senior Python remote, match score at least 70"'
+                placeholder='e.g. "remote Python jobs with match score above 70"'
                 disabled={aiLoading}
                 className="blue-outline-input w-full rounded-xl border border-blue-200/80 bg-white/90 py-2.5 pl-10 pr-3 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-blue-400 disabled:opacity-60"
                 autoComplete="off"
@@ -113,7 +118,7 @@ export function ValidJobsPanel() {
                 {aiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 AI search
               </button>
-              {aiFilterSet !== null ? (
+              {isAiActive ? (
                 <button
                   type="button"
                   onClick={clearAiFilter}
@@ -131,11 +136,11 @@ export function ValidJobsPanel() {
               {aiError}
             </p>
           ) : null}
-          {aiMeta && aiFilterSet !== null ? (
+          {isAiActive ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-semibold text-indigo-900 ring-1 ring-indigo-100">
-                Showing {displayedItems.length} of {items.length} loaded
-                {aiMeta.candidates > items.length ? ` (${aiMeta.candidates} on server)` : ''}
+                {displayedItems.length} matching job{displayedItems.length !== 1 ? 's' : ''} found
+                {aiTotalMatching > displayedItems.length ? ` (${aiTotalMatching} total)` : ''}
               </span>
               {aiRationale ? (
                 <span className="max-w-full text-slate-500">
@@ -152,10 +157,10 @@ export function ValidJobsPanel() {
         <JobTimeline
           items={displayedItems}
           compareValidJobId={compareValidJobId}
-          jobListHasMore={validHasMore}
-          loadingMoreJobs={loadingMoreValid}
-          onLoadMoreJobs={loadMoreValidJobs}
-          jobsLoadedCount={items.length}
+          jobListHasMore={isAiActive ? false : validHasMore}
+          loadingMoreJobs={isAiActive ? false : loadingMoreValid}
+          onLoadMoreJobs={isAiActive ? async () => {} : loadMoreValidJobs}
+          jobsLoadedCount={displayedItems.length}
         />
       </div>
     </div>

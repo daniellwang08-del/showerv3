@@ -84,5 +84,6 @@ class TestEnums:
 
     def test_extraction_status(self):
         assert ExtractionStatus.PENDING.value == "pending"
+        assert ExtractionStatus.EXTRACTED.value == "extracted"
         assert ExtractionStatus.COMPLETED.value == "completed"
         assert ExtractionStatus.FAILED.value == "failed"

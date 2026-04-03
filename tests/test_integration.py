@@ -63,8 +63,9 @@ class TestExtractionPipeline:
 
         result = await extractor.extract("https://test.com", html_with_json_ld)
         assert result.success is True
-        assert result.structured_data["title"] == "Backend Engineer"
-        assert result.structured_data["company"] == "TestCorp"
+        assert result.raw_content is not None
+        assert "Backend Engineer" in result.raw_content
+        assert "TestCorp" in result.raw_content
 
     @pytest.mark.asyncio
     async def test_html_extractor_integration(self):
@@ -93,9 +94,10 @@ class TestExtractionPipeline:
         extractor = HTMLExtractor()
         result = await extractor.extract("https://test.com", job_page_html)
         assert result.success is True
-        assert "Full Stack Developer" in result.structured_data["title"]
-        assert "Acme" in result.structured_data["company"]
-        assert "Remote" in result.structured_data["location"]
+        assert result.raw_content is not None
+        assert "Full Stack Developer" in result.raw_content
+        assert "Acme" in result.raw_content
+        assert "Remote" in result.raw_content
 
 
 class TestBrowserPool:

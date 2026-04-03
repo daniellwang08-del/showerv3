@@ -10,7 +10,6 @@ class ExtractionResult:
     method: ExtractionMethod
     raw_content: str | None = None
     structured_data: dict[str, Any] | None = None
-    confidence: float = 0.0
     error: str | None = None
 
 

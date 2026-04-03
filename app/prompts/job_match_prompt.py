@@ -58,10 +58,26 @@ Preserve meaning; do not invent facts. If a field is not present in the posting,
 
 ---
 
+## Task 3 — Job Posting Validation
+
+Determine whether the provided text is actually a **real job posting / job application page**.
+
+Set `"is_job_posting": true` when the text contains a genuine, specific job listing — it should have an identifiable role title, employer context, and substantive description of duties or requirements.
+
+Set `"is_job_posting": false` when the text is any of:
+- A generic careers landing page, job board index, or search results listing multiple roles
+- A company "About Us", blog post, news article, or marketing page
+- A login/signup wall, cookie notice, error page, or empty/placeholder content
+- An application form without the actual job description
+- Any page that does not describe a single, specific open position
+
+---
+
 ## Response Format
 Return ONLY valid JSON with this exact top-level structure. No markdown, no extra text:
 
 {
+  "is_job_posting": <true or false>,
   "match": {
     "overall_score": <0-100 integer>,
     "dimension_scores": {

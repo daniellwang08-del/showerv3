@@ -33,7 +33,7 @@ export function getJobPipelineVisual(item: SubmittedUrlItem): JobPipelineVisual 
     return { kind: 'score', score: item.match_overall_score };
   }
 
-  if (ext === 'pending' || ext === 'processing') {
+  if (ext === 'pending' || ext === 'processing' || ext === 'extracted') {
     return { kind: 'ring', filled: 1, phase: 'queue' };
   }
 

@@ -68,7 +68,7 @@ type JobAnalysisResponse = {
   source_url: string;
   job_data: JobData | null;
   extraction_method: string | null;
-  confidence_score: number | null;
+  is_job_posting: boolean | null;
   content_enriched_by_ai: boolean;
   match: JobMatchPayload | null;
   match_in_progress: boolean;
@@ -342,7 +342,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
   if (!validJobId) return null;
 
   const extractionStatus = analysis?.extraction_status;
-  const extractionBusy = extractionStatus === 'pending' || extractionStatus === 'processing';
+  const extractionBusy = extractionStatus === 'pending' || extractionStatus === 'processing' || extractionStatus === 'extracted';
 
   return (
     <div className="animate-detail-panel-in flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-blue-200/70 bg-white/90 shadow-lg backdrop-blur-md">
@@ -559,11 +559,13 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
               )}
 
               {analysis.job_data && analysis.extraction_method != null && (
-                <div className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
-                  Method: {analysis.extraction_method} · Confidence:{' '}
-                  {analysis.confidence_score != null
-                    ? `${(analysis.confidence_score * 100).toFixed(0)}%`
-                    : '—'}
+                <div className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500 flex items-center gap-2">
+                  <span>Method: {analysis.extraction_method}</span>
+                  {analysis.is_job_posting === false && (
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">
+                      Not a job posting
+                    </span>
+                  )}
                 </div>
               )}
             </section>

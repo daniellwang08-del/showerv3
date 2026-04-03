@@ -727,14 +727,7 @@ export function JobTimeline({
                             )}
                             {item.table === 'valid' && (() => {
                               const seenCount = item.click_count ?? 0;
-                              const confidencePct =
-                                typeof item.confidence_score === 'number'
-                                  ? item.confidence_score <= 1
-                                    ? item.confidence_score * 100
-                                    : item.confidence_score
-                                  : null;
-                              const needsCheckRequired =
-                                typeof confidencePct === 'number' && confidencePct < 65;
+                              const needsCheckRequired = item.is_job_posting === false;
                               const seenBadge = (
                                 <span
                                   className={`flex items-center gap-0.5 shrink-0 rounded px-1.5 py-0.5 text-xs ${
@@ -794,7 +787,9 @@ export function JobTimeline({
                               const queueTitle =
                                 item.extraction_status === 'processing'
                                   ? 'Extracting job posting from the page…'
-                                  : 'In the extraction queue…';
+                                  : item.extraction_status === 'extracted'
+                                    ? 'Analyzing extracted content…'
+                                    : 'In the extraction queue…';
 
                               const ringNode =
                                 visual.kind === 'ring' ? (
@@ -889,7 +884,7 @@ export function JobTimeline({
                                           ? 'border border-amber-200/60 bg-amber-300/95 text-amber-950'
                                           : 'bg-amber-100 text-amber-800'
                                       }`}
-                                      title={`Check required: extraction confidence ${Math.round(confidencePct!)}%`}
+                                      title="Check required: page may not be a job posting"
                                     >
                                       Check required
                                     </span>

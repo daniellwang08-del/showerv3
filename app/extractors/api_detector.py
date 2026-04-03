@@ -1,19 +1,60 @@
+"""
+Extract text content from JSON-LD ``JobPosting`` blocks embedded in HTML.
+
+Rather than mapping individual schema.org fields to a structured dict, this
+extractor pulls ALL text values from the JSON-LD object and returns them as
+clean plain text.  The downstream LLM analysis determines the structured
+job content from this text.
+"""
+
 import json
-import re
 from typing import Any
 
 from lxml import html as lxml_html
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.models.schemas import ExtractionMethod
-from app.services.job_content_cleaner import (
-    clean_string_list_field,
-    plain_text_from_fragment_html,
-)
+from app.services.job_content_cleaner import plain_text_from_fragment_html
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 JSON_LD_TYPES = frozenset({"JobPosting", "JobPosting#JobPosting"})
+
+_SKIP_KEYS = frozenset({
+    "@context", "@type", "@id", "url", "sameAs", "image", "logo",
+    "identifier", "directApply",
+})
+
+_LABEL_MAP: dict[str, str] = {
+    "title": "Title",
+    "name": "Title",
+    "description": "Description",
+    "hiringOrganization": "Company",
+    "jobLocation": "Location",
+    "addressLocality": "City",
+    "addressRegion": "State/Region",
+    "addressCountry": "Country",
+    "employmentType": "Employment Type",
+    "baseSalary": "Salary",
+    "estimatedSalary": "Estimated Salary",
+    "minValue": "Min",
+    "maxValue": "Max",
+    "currency": "Currency",
+    "unitText": "Pay Period",
+    "qualifications": "Qualifications",
+    "skills": "Skills",
+    "educationRequirements": "Education Requirements",
+    "experienceRequirements": "Experience Requirements",
+    "responsibilities": "Responsibilities",
+    "jobBenefits": "Benefits",
+    "datePosted": "Posted Date",
+    "validThrough": "Application Deadline",
+    "jobLocationType": "Location Type",
+    "applicantLocationRequirements": "Location Requirements",
+    "workHours": "Work Hours",
+    "industry": "Industry",
+    "occupationalCategory": "Category",
+}
 
 
 class APIDetectorExtractor(BaseExtractor):
@@ -36,30 +77,28 @@ class APIDetectorExtractor(BaseExtractor):
 
         json_ld_data = self._find_json_ld(html)
         if not json_ld_data:
-            logger.debug("api_detector_no_json_ld", url=url)
             return ExtractionResult(
                 success=False,
                 method=self.method,
                 error="No JSON-LD job posting found",
             )
 
-        structured = self._parse_json_ld(json_ld_data)
-        if not structured:
-            logger.debug("api_detector_parse_failed", url=url)
+        plain_text = self._extract_all_text(json_ld_data)
+
+        if not plain_text or len(plain_text) < 50:
             return ExtractionResult(
                 success=False,
                 method=self.method,
-                error="Failed to parse JSON-LD data",
+                error="Insufficient text content in JSON-LD",
             )
 
-        logger.info("json_ld_extraction_success", url=url)
+        logger.info("json_ld_extraction_success", url=url, content_length=len(plain_text))
 
         return ExtractionResult(
             success=True,
             method=self.method,
-            raw_content=json.dumps(json_ld_data),
-            structured_data=structured,
-            confidence=0.95,
+            raw_content=plain_text,
+            structured_data=None,
         )
 
     def _find_json_ld(self, html_content: str) -> dict | None:
@@ -98,183 +137,64 @@ class APIDetectorExtractor(BaseExtractor):
             if "@graph" in data:
                 return self._extract_job_posting(data["@graph"])
 
+            main = data.get("mainEntity")
+            if isinstance(main, dict):
+                result = self._extract_job_posting(main)
+                if result:
+                    return result
+
         return None
 
-    def _parse_json_ld(self, data: dict) -> dict | None:
-        try:
-            req_raw = self._extract_requirements(data)
-            resp_raw = self._extract_responsibilities(data)
-            result = {
-                "title": self._clean_text(data.get("title", "")),
-                "description": plain_text_from_fragment_html(str(data.get("description") or "")),
-                "company": self._extract_company(data),
-                "location": self._extract_location(data),
-                "employment_type": self._normalize_employment_type(data.get("employmentType")),
-                "salary_range": self._extract_salary(data),
-                "posted_date": data.get("datePosted"),
-                "application_deadline": data.get("validThrough"),
-                "requirements": clean_string_list_field(req_raw),
-                "responsibilities": clean_string_list_field(resp_raw),
-                "remote_policy": self._extract_remote_policy(data),
-                "experience_level": self._normalize_experience_requirements(data.get("experienceRequirements")),
-                "industry": self._normalize_industry(data.get("industry")),
-                "raw_metadata": data,
-            }
-            return result
-        except Exception:
-            return None
+    def _extract_all_text(self, data: dict) -> str:
+        """Recursively extract all text values from the JSON-LD, with readable labels."""
+        parts: list[str] = []
+        self._walk(data, parts, depth=0)
+        return "\n".join(parts)
 
-    def _clean_text(self, text: str | None) -> str:
-        if not text:
-            return ""
-        return re.sub(r"\s+", " ", str(text)).strip()
+    def _walk(self, obj: Any, parts: list[str], depth: int) -> None:
+        if depth > 10:
+            return
 
-    def _normalize_experience_requirements(self, value: Any) -> str | None:
-        """Schema.org may use Text, Occupation, or nested dicts."""
-        if value is None:
-            return None
-        if isinstance(value, str):
-            t = self._clean_text(value)
-            return t if t else None
-        if isinstance(value, dict):
-            for key in ("name", "description", "title", "experienceRequirements"):
-                v = value.get(key)
-                if isinstance(v, str) and v.strip():
-                    return self._clean_text(v)
-            return self._clean_text(str(value)) or None
-        if isinstance(value, list):
-            parts = [self._clean_text(str(x)) for x in value if x]
-            parts = [p for p in parts if p]
-            return "; ".join(parts) if parts else None
-        return self._clean_text(str(value)) or None
+        if isinstance(obj, str):
+            text = obj.strip()
+            if not text:
+                return
+            if "<" in text:
+                text = plain_text_from_fragment_html(text)
+            if text:
+                parts.append(text)
+            return
 
-    def _extract_company(self, data: dict) -> str | None:
-        hiring_org = data.get("hiringOrganization", {})
-        if isinstance(hiring_org, dict):
-            return hiring_org.get("name")
-        return None
+        if isinstance(obj, (int, float, bool)):
+            parts.append(str(obj))
+            return
 
-    def _extract_location(self, data: dict) -> str | None:
-        location = data.get("jobLocation")
-        if not location:
-            return None
+        if isinstance(obj, list):
+            for item in obj:
+                self._walk(item, parts, depth + 1)
+            return
 
-        if isinstance(location, list):
-            location = location[0] if location else {}
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key in _SKIP_KEYS:
+                    continue
+                if value is None:
+                    continue
 
-        if isinstance(location, dict):
-            address = location.get("address", {})
-            if isinstance(address, dict):
-                parts = []
-                if address.get("addressLocality"):
-                    parts.append(address["addressLocality"])
-                if address.get("addressRegion"):
-                    parts.append(address["addressRegion"])
-                if address.get("addressCountry"):
-                    country = address["addressCountry"]
-                    if isinstance(country, dict):
-                        country = country.get("name", "")
-                    parts.append(country)
-                return ", ".join(filter(None, parts))
-        return None
-
-    def _normalize_employment_type(self, emp_type: str | list | None) -> str | None:
-        if not emp_type:
-            return None
-        if isinstance(emp_type, list):
-            emp_type = emp_type[0] if emp_type else None
-        if emp_type:
-            return str(emp_type).replace("_", " ").title()
-        return None
-
-    def _normalize_industry(self, value: Any) -> str | None:
-        """JSON-LD may use Text, DefinedTerm, or a list; JobDescriptionSchema expects str | None."""
-        if value is None:
-            return None
-        if isinstance(value, str):
-            t = self._clean_text(value)
-            return t if t else None
-        if isinstance(value, list):
-            if not value:
-                return None
-            parts: list[str] = []
-            for item in value:
-                if isinstance(item, str):
-                    p = self._clean_text(item)
-                    if p:
-                        parts.append(p)
-                elif isinstance(item, dict):
-                    n = item.get("name") or item.get("termCode")
-                    if n is not None:
-                        p = self._clean_text(str(n))
-                        if p:
-                            parts.append(p)
-            return ", ".join(parts) if parts else None
-        if isinstance(value, dict):
-            n = value.get("name") or value.get("termCode")
-            if n is None:
-                return None
-            t = self._clean_text(str(n))
-            return t if t else None
-        t = self._clean_text(str(value))
-        return t if t else None
-
-    def _extract_salary(self, data: dict) -> str | None:
-        salary = data.get("baseSalary") or data.get("estimatedSalary")
-        if not salary:
-            return None
-
-        if isinstance(salary, list):
-            salary = salary[0] if salary else {}
-
-        if isinstance(salary, dict):
-            value = salary.get("value", {})
-            currency = salary.get("currency", "USD")
-
-            if isinstance(value, dict):
-                min_val = value.get("minValue")
-                max_val = value.get("maxValue")
-                unit = value.get("unitText", "YEAR")
-                if min_val and max_val:
-                    return f"{currency} {min_val:,} - {max_val:,} per {unit.lower()}"
-                elif min_val:
-                    return f"{currency} {min_val:,}+ per {unit.lower()}"
-            elif isinstance(value, (int, float)):
-                return f"{currency} {value:,}"
-        return None
-
-    def _json_ld_list_item_to_string(self, item: Any) -> str:
-        if isinstance(item, str):
-            return item
-        if isinstance(item, dict):
-            for key in ("name", "value", "description", "text"):
-                v = item.get(key)
-                if isinstance(v, str) and v.strip():
-                    return v
-            return ""
-        if item is not None:
-            return str(item)
-        return ""
-
-    def _extract_requirements(self, data: dict) -> list[str]:
-        quals = data.get("qualifications") or data.get("skills") or []
-        if isinstance(quals, str):
-            return [quals]
-        if isinstance(quals, list):
-            return [self._json_ld_list_item_to_string(q) for q in quals if q]
-        return []
-
-    def _extract_responsibilities(self, data: dict) -> list[str]:
-        resp = data.get("responsibilities") or []
-        if isinstance(resp, str):
-            return [resp]
-        if isinstance(resp, list):
-            return [self._json_ld_list_item_to_string(r) for r in resp if r]
-        return []
-
-    def _extract_remote_policy(self, data: dict) -> str | None:
-        job_location_type = data.get("jobLocationType")
-        if job_location_type:
-            if "TELECOMMUTE" in str(job_location_type).upper():
-                return "Remote"
-        return None
+                label = _LABEL_MAP.get(key)
+                if label and isinstance(value, str):
+                    text = value.strip()
+                    if "<" in text:
+                        text = plain_text_from_fragment_html(text)
+                    if text:
+                        parts.append(f"{label}: {text}")
+                elif label and isinstance(value, (int, float)):
+                    parts.append(f"{label}: {value}")
+                elif label and isinstance(value, list) and all(isinstance(v, str) for v in value):
+                    items = [v.strip() for v in value if v.strip()]
+                    if items:
+                        parts.append(f"{label}: {', '.join(items)}")
+                else:
+                    if label and isinstance(value, (dict, list)):
+                        parts.append(f"{label}:")
+                    self._walk(value, parts, depth + 1)

@@ -12,7 +12,7 @@ export type ValidJobApiRow = {
   scraped_at: string | null;
   extraction_id: string | null;
   extraction_status: string | null;
-  confidence_score?: number | null;
+  is_job_posting?: boolean | null;
   match_overall_score: number | null;
   match_status: string | null;
   click_count?: number;
@@ -48,7 +48,7 @@ export function mapValidJobRow(j: ValidJobApiRow): SubmittedUrlItem {
     scraped_at_ms: scrapedMs,
     extraction_id: j.extraction_id ?? undefined,
     extraction_status: (j.extraction_status as ExtractionStatusLabel | null) ?? undefined,
-    confidence_score: j.confidence_score ?? undefined,
+    is_job_posting: j.is_job_posting ?? undefined,
     match_overall_score: j.match_overall_score ?? undefined,
     match_status: j.match_status ?? undefined,
     click_count: j.click_count ?? 0,

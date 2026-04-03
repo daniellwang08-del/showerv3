@@ -35,7 +35,10 @@ SAMPLE_HTML_WITH_JSON_LD = """
                 "maxValue": 200000,
                 "unitText": "YEAR"
             }
-        }
+        },
+        "educationRequirements": "Bachelor's degree in Computer Science",
+        "experienceRequirements": "5+ years of software development",
+        "skills": ["Python", "PostgreSQL", "AWS"]
     }
     </script>
 </head>
@@ -73,29 +76,37 @@ class TestAPIDetector:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_extract_json_ld_success(self, extractor):
+    async def test_extract_returns_plain_text(self, extractor):
         result = await extractor.extract("https://example.com/job", SAMPLE_HTML_WITH_JSON_LD)
         assert result.success is True
-        assert result.structured_data is not None
-        assert result.structured_data["title"] == "Senior Software Engineer"
-        assert result.structured_data["company"] == "Tech Corp"
-        assert "San Francisco" in result.structured_data["location"]
-        assert result.confidence >= 0.9
+        assert result.raw_content is not None
+        assert "Senior Software Engineer" in result.raw_content
+        assert "Tech Corp" in result.raw_content
+        assert result.structured_data is None
+
+    @pytest.mark.asyncio
+    async def test_extract_captures_all_fields(self, extractor):
+        result = await extractor.extract("https://example.com/job", SAMPLE_HTML_WITH_JSON_LD)
+        assert result.success is True
+        text = result.raw_content
+        assert "San Francisco" in text
+        assert "experienced software engineer" in text
+        assert "150000" in text or "150,000" in text
+        assert "200000" in text or "200,000" in text
+        assert "FULL_TIME" in text or "Full Time" in text
+
+    @pytest.mark.asyncio
+    async def test_extract_captures_education_and_skills(self, extractor):
+        """educationRequirements and skills must not be ignored."""
+        result = await extractor.extract("https://example.com/job", SAMPLE_HTML_WITH_JSON_LD)
+        assert result.success is True
+        text = result.raw_content
+        assert "Bachelor" in text
+        assert "Computer Science" in text
+        assert "Python" in text
+        assert "PostgreSQL" in text
 
     @pytest.mark.asyncio
     async def test_extract_without_html_fails(self, extractor):
         result = await extractor.extract("https://example.com/job", None)
         assert result.success is False
-
-    @pytest.mark.asyncio
-    async def test_extract_salary_parsing(self, extractor):
-        result = await extractor.extract("https://example.com/job", SAMPLE_HTML_WITH_JSON_LD)
-        assert result.success is True
-        assert "150,000" in result.structured_data["salary_range"]
-        assert "200,000" in result.structured_data["salary_range"]
-
-    @pytest.mark.asyncio
-    async def test_extract_date_posted_parsing(self, extractor):
-        result = await extractor.extract("https://example.com/job", SAMPLE_HTML_WITH_JSON_LD)
-        assert result.success is True
-        assert result.structured_data["posted_date"] == "2026-03-23T17:21:00.000Z"

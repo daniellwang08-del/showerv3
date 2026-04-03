@@ -40,7 +40,7 @@ async def find_inflight_valid_job_with_same_url(
         ext = await session.get(JobExtraction, vj.extraction_id)
         if not ext:
             continue
-        if ext.status in (ExtractionStatus.PENDING, ExtractionStatus.PROCESSING):
+        if ext.status in (ExtractionStatus.PENDING, ExtractionStatus.PROCESSING, ExtractionStatus.EXTRACTED):
             return vj
         if user_id and ext.status == ExtractionStatus.COMPLETED:
             prog = await session.execute(

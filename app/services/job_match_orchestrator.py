@@ -1,5 +1,7 @@
 """
-Orchestrates job match analysis: fetches job + profile, calls AI, stores result.
+Orchestrates job match analysis: reads extracted text from cache (or DB fallback),
+calls AI for match scoring + structured job extraction, stores results.
+
 Shared by worker task and sync fallback.
 """
 
@@ -7,6 +9,7 @@ import asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import ValidJob
+from app.models.schemas import ExtractionStatus
 from app.storage.database import get_session
 from app.storage.repository import (
     JobExtractionRepository,
@@ -17,6 +20,7 @@ from app.storage.repository import (
 )
 from app.storage.user_repository import UserRepository
 from app.services.job_match_service import analyze_job_match, _build_job_text
+from app.services.extraction_cache import ExtractionCache
 from app.services.company_policy import enforce_company_priority_after_match
 from app.core.logging import bind_logging_context, get_logger
 
@@ -24,7 +28,7 @@ logger = get_logger(__name__)
 
 
 async def clear_job_match_progress(valid_job_id: str, user_id: str) -> None:
-    """Remove match in-progress marker (idempotent). Used on early exit, cancel, or worker cleanup."""
+    """Remove match in-progress marker (idempotent)."""
     try:
         async with get_session() as session:
             repo = JobMatchInProgressRepository(session)
@@ -43,7 +47,44 @@ async def _remove_match_progress(session: AsyncSession, valid_job_id: str, user_
     await repo.remove(valid_job_id, user_id)
 
 
-async def run_job_match_analysis(valid_job_id: str, user_id: str) -> dict | None:
+async def _get_job_text_from_cache_or_db(
+    extraction_id: str,
+    extraction_repo: JobExtractionRepository,
+) -> str | None:
+    """
+    Try reading plain text from Redis cache first (new flow).
+    Fall back to building text from DB fields (legacy/re-analysis).
+    """
+    cache = ExtractionCache()
+    cached = await cache.get(extraction_id)
+    if cached and cached.plain_text:
+        logger.info("job_text_from_cache", extraction_id=extraction_id, length=cached.content_length)
+        return cached.plain_text
+
+    extraction = await extraction_repo.get_by_id(extraction_id)
+    if not extraction:
+        return None
+
+    if extraction.description:
+        job_text = _build_job_text(
+            title=extraction.title,
+            company=extraction.company,
+            description=extraction.description,
+            requirements=extraction.requirements,
+            responsibilities=extraction.responsibilities,
+        )
+        logger.info("job_text_from_db_fallback", extraction_id=extraction_id)
+        return job_text
+
+    return None
+
+
+async def run_job_match_analysis(
+    valid_job_id: str,
+    user_id: str,
+    *,
+    extraction_id: str | None = None,
+) -> dict | None:
     """
     Run full job match pipeline and store result.
     Returns match result dict or None on failure.
@@ -57,31 +98,30 @@ async def run_job_match_analysis(valid_job_id: str, user_id: str) -> dict | None
 
             r = await session.execute(select(ValidJob).where(ValidJob.id == valid_job_id))
             valid_job = r.scalar_one_or_none()
-            if not valid_job or not valid_job.extraction_id:
-                logger.warning("job_match_no_valid_job_or_extraction", valid_job_id=valid_job_id)
+            if not valid_job:
+                logger.warning("job_match_no_valid_job", valid_job_id=valid_job_id)
                 await _remove_match_progress(session, valid_job_id, user_id)
                 return None
 
-            extraction = await extraction_repo.get_by_id(valid_job.extraction_id)
-            if not extraction or not extraction.description:
+            ext_id = extraction_id or valid_job.extraction_id
+            if not ext_id:
+                logger.warning("job_match_no_extraction_id", valid_job_id=valid_job_id)
+                await _remove_match_progress(session, valid_job_id, user_id)
+                return None
+
+            job_text = await _get_job_text_from_cache_or_db(ext_id, extraction_repo)
+            if not job_text:
                 logger.warning(
-                    "job_match_no_extraction_or_description",
-                    extraction_id=valid_job.extraction_id,
+                    "job_match_no_text_available",
+                    extraction_id=ext_id,
                 )
                 await _remove_match_progress(session, valid_job_id, user_id)
                 return None
 
             profile_text = await user_repo.get_profile_openai_text(user_id)
-            job_text = _build_job_text(
-                title=extraction.title,
-                company=extraction.company,
-                description=extraction.description,
-                requirements=extraction.requirements,
-                responsibilities=extraction.responsibilities,
-            )
 
             try:
-                result, structured_job = await analyze_job_match(job_text, profile_text)
+                result, structured_job, is_job_posting = await analyze_job_match(job_text, profile_text)
             except Exception as e:
                 logger.error(
                     "job_match_analysis_failed",
@@ -96,29 +136,30 @@ async def run_job_match_analysis(valid_job_id: str, user_id: str) -> dict | None
                 structured_company: str | None = None
                 if structured_job:
                     try:
-                        # Match LLM may return huge garbage in `company`; DB + policy need capped strings.
                         structured_company = _truncate_for_db(structured_job.company, 500)
-                        await extraction_repo.update_ai_structured_content(
-                            extraction.id,
+                        await extraction_repo.update_extraction_result(
+                            ext_id,
                             structured_job,
-                            source="job_match_analysis",
+                            extraction_repo_method=None,
+                            is_job_posting=is_job_posting,
                         )
                         valid_repo = ValidJobRepository(session)
                         await valid_repo.update_from_structured_extraction(valid_job_id, structured_job)
                         logger.info(
                             "job_match_structured_content_updated",
                             valid_job_id=valid_job_id,
-                            extraction_id=extraction.id,
+                            extraction_id=ext_id,
                         )
                     except Exception as struct_err:
                         logger.warning(
                             "job_match_structured_content_update_failed",
                             valid_job_id=valid_job_id,
-                            extraction_id=extraction.id,
+                            extraction_id=ext_id,
                             error=str(struct_err),
                         )
                 else:
                     logger.warning("job_match_no_structured_job_returned", valid_job_id=valid_job_id)
+                    await extraction_repo.update_is_job_posting(ext_id, is_job_posting)
 
                 await match_repo.upsert(
                     valid_job_id=valid_job_id,
@@ -146,8 +187,15 @@ async def run_job_match_analysis(valid_job_id: str, user_id: str) -> dict | None
                         error=str(dup_err),
                     )
                 await _remove_match_progress(session, valid_job_id, user_id)
-                # Surface VARCHAR/constraint errors here so commit does not fail in get_session.__aexit__
                 await session.flush()
+
+                # Clean up cache after successful analysis
+                try:
+                    cache = ExtractionCache()
+                    await cache.delete(ext_id)
+                except Exception:
+                    pass
+
                 logger.info(
                     "job_match_stored",
                     valid_job_id=valid_job_id,

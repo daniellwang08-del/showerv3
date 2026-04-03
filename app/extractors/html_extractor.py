@@ -1,6 +1,3 @@
-import re
-from lxml import html as lxml_html
-from lxml_html_clean import Cleaner
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.models.schemas import ExtractionMethod
 from app.services.job_content_cleaner import plain_text_from_document_html
@@ -8,45 +5,11 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-TITLE_SELECTORS = [
-    "h1.job-title",
-    "h1[class*='title']",
-    "h1[data-automation='job-title']",
-    ".job-title h1",
-    "h1",
-]
-
-COMPANY_SELECTORS = [
-    "[data-automation='company']",
-    ".company-name",
-    "[class*='company']",
-    "[class*='employer']",
-]
-
-LOCATION_SELECTORS = [
-    "[data-automation='location']",
-    ".job-location",
-    "[class*='location']",
-    "address",
-]
+MIN_CONTENT_LENGTH = 50
 
 
 class HTMLExtractor(BaseExtractor):
-    def __init__(self):
-        self._cleaner = Cleaner(
-            scripts=True,
-            javascript=True,
-            comments=True,
-            style=True,
-            inline_style=True,
-            links=False,
-            meta=True,
-            page_structure=False,
-            processing_instructions=True,
-            remove_unknown_tags=False,
-            safe_attrs_only=False,
-            forms=True,
-        )
+    """Extract full page plain text from static HTML."""
 
     @property
     def method(self) -> ExtractionMethod:
@@ -64,45 +27,26 @@ class HTMLExtractor(BaseExtractor):
             )
 
         try:
-            tree = lxml_html.fromstring(html)
-            cleaned_html = self._cleaner.clean_html(tree)
-
-            title = self._extract_text(cleaned_html, TITLE_SELECTORS)
-            company = self._extract_text(cleaned_html, COMPANY_SELECTORS)
-            location = self._extract_text(cleaned_html, LOCATION_SELECTORS)
-            # Centralized job-body plain text (selectors + chrome stripping + Readability fallback)
             content = plain_text_from_document_html(html)
 
-            if not title or not content or len(content) < 50:
+            if not content or len(content) < MIN_CONTENT_LENGTH:
                 return ExtractionResult(
                     success=False,
                     method=self.method,
-                    error="Could not extract meaningful content",
+                    error="Insufficient text content extracted from HTML",
                 )
-
-            structured_data = {
-                "title": title or "",
-                "company": company,
-                "location": location,
-                "description": content,
-                "raw_html": html,
-            }
-
-            confidence = self._calculate_confidence(structured_data)
 
             logger.info(
                 "html_extraction_success",
                 url=url,
-                title_found=bool(title),
-                content_length=len(content) if content else 0,
+                content_length=len(content),
             )
 
             return ExtractionResult(
                 success=True,
                 method=self.method,
-                raw_content=html,
-                structured_data=structured_data,
-                confidence=confidence,
+                raw_content=content,
+                structured_data=None,
             )
 
         except Exception as e:
@@ -112,37 +56,3 @@ class HTMLExtractor(BaseExtractor):
                 method=self.method,
                 error=str(e),
             )
-
-    def _extract_text(self, tree, selectors: list[str]) -> str | None:
-        for selector in selectors:
-            try:
-                elements = tree.cssselect(selector)
-                if elements:
-                    text = elements[0].text_content()
-                    cleaned = self._clean_text(text)
-                    if cleaned:
-                        return cleaned
-            except Exception:
-                continue
-        return None
-
-    def _clean_text(self, text: str | None) -> str:
-        if not text:
-            return ""
-        text = re.sub(r"[\r\n]+", "\n", text)
-        text = re.sub(r"[ \t]+", " ", text)
-        lines = [line.strip() for line in text.split("\n")]
-        lines = [line for line in lines if line]
-        return "\n".join(lines)
-
-    def _calculate_confidence(self, data: dict) -> float:
-        score = 0.0
-        if data.get("title"):
-            score += 0.3
-        if data.get("description") and len(data["description"]) > 200:
-            score += 0.4
-        if data.get("company"):
-            score += 0.15
-        if data.get("location"):
-            score += 0.15
-        return min(score, 0.85)

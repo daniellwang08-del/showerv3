@@ -8,7 +8,7 @@ export interface WsEvent {
   invalid_job_id?: string;
   url?: string;
   method?: string;
-  confidence?: number;
+  is_job_posting?: boolean;
   overall_score?: number;
   recommendation?: string;
   error?: string;

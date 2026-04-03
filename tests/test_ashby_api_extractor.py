@@ -55,7 +55,7 @@ class TestAshbyApiExtractor:
         assert await extractor.can_extract("https://example.com/job") is False
 
     @pytest.mark.asyncio
-    async def test_extract_success_with_mocked_http(self):
+    async def test_extract_success_returns_plain_text(self):
         mock_response = {
             "jobs": [
                 {
@@ -63,8 +63,8 @@ class TestAshbyApiExtractor:
                     "title": "Full-Stack Software Engineer",
                     "location": "Remote (Anywhere in the world)",
                     "employmentType": "FullTime",
-                    "descriptionPlain": "We are looking for a talented engineer.",
-                    "descriptionHtml": "<p>We are looking for a talented engineer.</p>",
+                    "descriptionPlain": "We are looking for a talented engineer to build great products.",
+                    "descriptionHtml": "<p>We are looking for a talented engineer to build great products.</p>",
                     "isRemote": True,
                     "publishedAt": "2026-02-27T02:34:16.756+00:00",
                     "jobUrl": "https://jobs.ashbyhq.com/tailor/08796053-4fa8-48db-9a73-a977ae2c5434",
@@ -80,13 +80,11 @@ class TestAshbyApiExtractor:
             )
 
         assert result.success is True
-        assert result.structured_data is not None
-        assert result.structured_data["title"] == "Full-Stack Software Engineer"
-        assert result.structured_data["location"] == "Remote (Anywhere in the world)"
-        assert "engineer" in result.structured_data["description"].lower()
-        assert result.structured_data["company"] == "Tailor"  # derived from slug "tailor"
-        assert result.structured_data["remote_policy"] == "Remote"
-        assert result.confidence >= 0.9
+        assert result.structured_data is None
+        assert result.raw_content is not None
+        assert "Full-Stack Software Engineer" in result.raw_content
+        assert "Remote" in result.raw_content
+        assert "talented engineer" in result.raw_content
 
     @pytest.mark.asyncio
     async def test_extract_job_not_found(self):
@@ -103,7 +101,7 @@ class TestAshbyApiExtractor:
         assert "not found" in (result.error or "").lower()
 
     @pytest.mark.asyncio
-    async def test_extract_embedded_success_with_mocked_http(self):
+    async def test_extract_embedded_returns_plain_text(self):
         html = """
         <html><body>
         <a href="https://jobs.ashbyhq.com/demo-co/08796053-4fa8-48db-9a73-a977ae2c5434">Board</a>
@@ -117,8 +115,8 @@ class TestAshbyApiExtractor:
                     "title": "Platform Engineer",
                     "location": "Remote",
                     "employmentType": "FullTime",
-                    "descriptionPlain": "Build things.",
-                    "descriptionHtml": "<p>Build things.</p>",
+                    "descriptionPlain": "Build distributed platforms and scale our systems.",
+                    "descriptionHtml": "<p>Build distributed platforms and scale our systems.</p>",
                     "isRemote": True,
                     "publishedAt": "2026-02-27T02:34:16.756+00:00",
                     "jobUrl": "https://jobs.ashbyhq.com/demo-co/08796053-4fa8-48db-9a73-a977ae2c5434",
@@ -130,5 +128,6 @@ class TestAshbyApiExtractor:
         with patch.object(extractor._http, "fetch_json", mock_fetch):
             result = await extractor.extract_embedded(url, html)
         assert result.success is True
-        assert result.structured_data is not None
-        assert result.structured_data["title"] == "Platform Engineer"
+        assert result.structured_data is None
+        assert result.raw_content is not None
+        assert "Platform Engineer" in result.raw_content

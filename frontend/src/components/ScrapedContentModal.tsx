@@ -23,7 +23,7 @@ type ExtractionResponse = {
   extraction_method: string | null;
   job_data: JobData | null;
   error_message: string | null;
-  confidence_score: number | null;
+  is_job_posting: boolean | null;
 };
 
 type Props = {
@@ -164,11 +164,13 @@ export function ScrapedContentModal({ extractionId, onClose }: Props) {
                       </ul>
                     </div>
                   )}
-                  <div className="pt-2 text-xs text-slate-500">
-                    Method: {data.extraction_method || '—'} · Confidence:{' '}
-                    {data.confidence_score != null
-                      ? `${(data.confidence_score * 100).toFixed(0)}%`
-                      : '—'}
+                  <div className="pt-2 text-xs text-slate-500 flex items-center gap-2">
+                    <span>Method: {data.extraction_method || '—'}</span>
+                    {data.is_job_posting === false && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">
+                        Not a job posting
+                      </span>
+                    )}
                   </div>
                 </>
               ) : (

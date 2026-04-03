@@ -1,9 +1,12 @@
 """
-Extract job data from Ashby using the public Posting API.
+Extract job content from Ashby using the public Posting API.
+
 https://api.ashbyhq.com/posting-api/job-board/{company_slug}
-Returns JSON with all open jobs; filter by job ID from the URL.
-No API key required. Fast, direct HTTP request.
+
+Returns plain text content (not structured fields) for downstream LLM analysis.
+No API key required.
 """
+
 import json
 import re
 from urllib.parse import urlparse
@@ -11,16 +14,15 @@ from urllib.parse import urlparse
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.models.schemas import ExtractionMethod
 from app.services.http_client import HTTPService
+from app.services.job_content_cleaner import plain_text_from_fragment_html
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# jobs.ashbyhq.com/{slug}/{uuid} or .../application?...
 ASHBY_URL_PATTERN = re.compile(
     r"jobs\.ashbyhq\.com/([^/]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
-# Company career sites pass the job id in the query (?ashby_jid=...) while the board slug appears in page HTML.
 ASHBY_JID_QUERY_PATTERN = re.compile(
     r"[?&]ashby_jid=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
@@ -30,17 +32,14 @@ _SLUG_FROM_HTML_PATTERNS = (
     re.compile(r"jobs\.ashbyhq\.com%2F([^%\"'\s]+)%2F", re.IGNORECASE),
 )
 ASHBY_API_BASE = "https://api.ashbyhq.com/posting-api/job-board"
-# At most two slug candidates to avoid extra API latency when HTML mentions multiple boards.
 _MAX_SLUG_CANDIDATES = 2
 
 
 def is_ashby_job_url(url: str) -> bool:
-    """Return True if URL is an Ashby job page (fast path for sync processing)."""
     return _parse_ashby_url(url) is not None
 
 
 def _parse_ashby_url(url: str) -> tuple[str, str] | None:
-    """Extract (company_slug, job_id) from Ashby job URL. Returns None if not parseable."""
     try:
         parsed = urlparse(url)
         host = parsed.netloc or ""
@@ -55,7 +54,6 @@ def _parse_ashby_url(url: str) -> tuple[str, str] | None:
 
 
 def parse_ashby_jid_from_url(url: str) -> str | None:
-    """Job UUID from ?ashby_jid= on an embedded career page (company domain)."""
     if not url:
         return None
     m = ASHBY_JID_QUERY_PATTERN.search(url)
@@ -63,7 +61,6 @@ def parse_ashby_jid_from_url(url: str) -> str | None:
 
 
 def extract_ashby_company_slugs_from_html(html: str | None) -> list[str]:
-    """Find Ashby board slug(s) referenced in HTML (links to jobs.ashbyhq.com/{slug}/...)."""
     if not html:
         return []
     seen: list[str] = []
@@ -78,7 +75,7 @@ def extract_ashby_company_slugs_from_html(html: str | None) -> list[str]:
 
 
 class AshbyApiExtractor(BaseExtractor):
-    """Extract job data via Ashby public Posting API (no HTML, no browser)."""
+    """Extract job content via Ashby public Posting API as plain text."""
 
     def __init__(self, http_service: HTTPService | None = None):
         self._http = http_service or HTTPService()
@@ -100,12 +97,11 @@ class AshbyApiExtractor(BaseExtractor):
             )
 
         company_slug, job_id = parsed
-        return await self._fetch_board_and_map_job(company_slug, job_id, url)
+        return await self._fetch_and_convert(company_slug, job_id, url)
 
     async def extract_embedded(self, url: str, html: str) -> ExtractionResult:
         """
-        Company career pages: ?ashby_jid=<uuid> plus ``jobs.ashbyhq.com/{slug}/`` in HTML.
-        One JSON API call per slug candidate (max 2) — fast when slug is present.
+        Company career pages with ``?ashby_jid=<uuid>`` and Ashby board slug in HTML.
         """
         job_id = parse_ashby_jid_from_url(url)
         if not job_id:
@@ -123,7 +119,7 @@ class AshbyApiExtractor(BaseExtractor):
             )
         last_err: str | None = None
         for company_slug in slugs:
-            res = await self._fetch_board_and_map_job(company_slug, job_id, url)
+            res = await self._fetch_and_convert(company_slug, job_id, url)
             if res.success:
                 logger.info(
                     "ashby_api_embedded_success",
@@ -139,7 +135,7 @@ class AshbyApiExtractor(BaseExtractor):
             error=last_err or "Ashby embedded extraction failed",
         )
 
-    async def _fetch_board_and_map_job(self, company_slug: str, job_id: str, url: str) -> ExtractionResult:
+    async def _fetch_and_convert(self, company_slug: str, job_id: str, url: str) -> ExtractionResult:
         api_url = f"{ASHBY_API_BASE}/{company_slug}?includeCompensation=true"
 
         try:
@@ -200,93 +196,73 @@ class AshbyApiExtractor(BaseExtractor):
                 error=f"Job {job_id} not found in Ashby API response ({len(jobs)} jobs)",
             )
 
-        structured = self._map_job_to_structured(job, company_slug)
-        if not structured:
+        plain_text = self._job_to_plain_text(job)
+        if not plain_text or len(plain_text) < 50:
             return ExtractionResult(
                 success=False,
                 method=self.method,
-                error="Failed to map Ashby job to structured data",
+                error="Insufficient content from Ashby API",
             )
 
-        logger.info("ashby_api_extraction_success", url=url, job_id=job_id)
+        logger.info("ashby_api_extraction_success", url=url, job_id=job_id, content_length=len(plain_text))
         return ExtractionResult(
             success=True,
             method=self.method,
-            raw_content=json.dumps(job),
-            structured_data=structured,
-            confidence=0.98,
+            raw_content=plain_text,
+            structured_data=None,
         )
 
-    def _map_job_to_structured(self, job: dict, company_slug: str = "") -> dict | None:
-        """Map Ashby API job object to our structured_data format."""
-        try:
-            title = job.get("title") or ""
-            if not title:
-                logger.warning("ashby_map_missing_title", company_slug=company_slug)
-                return None
+    def _job_to_plain_text(self, job: dict) -> str:
+        """Convert Ashby API job object to readable plain text with all available fields."""
+        parts: list[str] = []
 
-            company = company_slug.replace("-", " ").title() if company_slug else None
+        if job.get("title"):
+            parts.append(f"Title: {job['title']}")
 
-            location = job.get("location") or ""
-            emp_type = job.get("employmentType")
-            if emp_type:
-                emp_type = str(emp_type).replace("_", " ").title()
+        if job.get("location"):
+            parts.append(f"Location: {job['location']}")
 
-            salary = self._format_compensation(job)
+        if job.get("employmentType"):
+            parts.append(f"Employment Type: {str(job['employmentType']).replace('_', ' ').title()}")
 
-            description = (
-                job.get("descriptionPlain")
-                or self._strip_html(job.get("descriptionHtml", ""))
-                or ""
-            ).strip()
-            if len(description) < 10:
-                description = "Job listing from Ashby (description not available)."
+        if job.get("department"):
+            parts.append(f"Department: {job['department']}")
 
-            remote = None
-            if job.get("isRemote"):
-                remote = "Remote"
-            elif job.get("workplaceType"):
-                remote = str(job.get("workplaceType", "")).replace("_", " ").title()
+        if job.get("team"):
+            parts.append(f"Team: {job['team']}")
 
-            posted_date = job.get("publishedAt")
+        if job.get("isRemote"):
+            parts.append("Remote: Yes")
+        elif job.get("workplaceType"):
+            parts.append(f"Workplace Type: {str(job['workplaceType']).replace('_', ' ').title()}")
 
-            return {
-                "title": title,
-                "company": company,
-                "location": location,
-                "employment_type": emp_type,
-                "salary_range": salary,
-                "description": description[:50000] if description else "",
-                "posted_date": posted_date,
-                "requirements": [],
-                "responsibilities": [],
-                "remote_policy": remote,
-                "raw_metadata": {
-                    "source": "ashby_api",
-                    "department": job.get("department"),
-                    "team": job.get("team"),
-                    "job_url": job.get("jobUrl"),
-                    "workplace_type": job.get("workplaceType"),
-                },
-            }
-        except Exception as e:
-            logger.error("ashby_map_failed", error=str(e), company_slug=company_slug)
-            return None
-
-    def _format_compensation(self, job: dict) -> str | None:
         comp = job.get("compensation")
         if isinstance(comp, dict):
-            return (
+            summary = (
                 comp.get("summary")
                 or comp.get("description")
                 or comp.get("compensationTierSummary")
                 or comp.get("scrapeableCompensationSalarySummary")
             )
-        if isinstance(comp, str):
-            return comp
-        return None
+            if summary:
+                parts.append(f"Compensation: {summary}")
+        elif isinstance(comp, str) and comp.strip():
+            parts.append(f"Compensation: {comp}")
 
-    def _strip_html(self, html: str) -> str:
+        if job.get("publishedAt"):
+            parts.append(f"Posted: {job['publishedAt']}")
+
+        description = (
+            job.get("descriptionPlain")
+            or self._html_to_text(job.get("descriptionHtml", ""))
+            or ""
+        ).strip()
+        if description:
+            parts.append(f"\n{description}")
+
+        return "\n".join(parts)
+
+    def _html_to_text(self, html: str) -> str:
         if not html:
             return ""
-        return re.sub(r"<[^>]+>", " ", html).strip()
+        return plain_text_from_fragment_html(html)

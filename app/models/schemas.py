@@ -31,6 +31,7 @@ class ExtractionMethod(str, Enum):
 class ExtractionStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
+    EXTRACTED = "extracted"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -108,7 +109,7 @@ class ExtractionResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     error_message: str | None = None
-    confidence_score: float | None = None
+    is_job_posting: bool | None = None
 
 
 class BatchExtractionRequest(BaseModel):
@@ -159,10 +160,14 @@ class JobSearchQuerySpec(BaseModel):
     domain_contains_any: list[str] = Field(default_factory=list)
     experience_level_any: list[str] = Field(default_factory=list)
     industry_any: list[str] = Field(default_factory=list)
+    remote_policy_any: list[str] = Field(default_factory=list)
+    salary_contains_any: list[str] = Field(default_factory=list)
+    recommendation_any: list[str] = Field(default_factory=list)
     min_match_score: int | None = Field(default=None, ge=0, le=100)
     max_match_score: int | None = Field(default=None, ge=0, le=100)
     match_only_analyzed: bool = Field(default=False)
     extraction_completed_only: bool = Field(default=False)
+    applied_status: str | None = Field(default=None, description="'applied', 'not_applied', or null")
 
 
 class AiJobSearchRequest(BaseModel):
@@ -170,9 +175,9 @@ class AiJobSearchRequest(BaseModel):
 
 
 class AiJobSearchResponse(BaseModel):
-    matching_job_ids: list[str]
+    matching_jobs: list[dict]
     query: JobSearchQuerySpec
-    total_candidates: int
+    total_matching: int
 
 
 class ValidJobResponse(BaseModel):
@@ -191,7 +196,7 @@ class ValidJobResponse(BaseModel):
     scraped_at: datetime | None = None
     extraction_id: str | None = None
     extraction_status: str | None = None
-    confidence_score: float | None = None
+    is_job_posting: bool | None = None
     match_overall_score: int | None = None
     match_status: str | None = None
     click_count: int = 0
@@ -236,7 +241,7 @@ class JobAnalysisResponse(BaseModel):
     source_url: str
     job_data: JobDescriptionSchema | None = None
     extraction_method: ExtractionMethod | None = None
-    confidence_score: float | None = None
+    is_job_posting: bool | None = None
     content_enriched_by_ai: bool = False
     match: JobMatchResponse | None = None
     match_in_progress: bool = False

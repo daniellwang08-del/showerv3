@@ -89,7 +89,7 @@ class JobExtractionRepository:
             "industry": None,
             "raw_metadata": {},
             "raw_html": None,
-            "confidence_score": None,
+            "is_job_posting": None,
             "error_message": None,
             "completed_at": None,
             "updated_at": _utcnow(),
@@ -123,18 +123,43 @@ class JobExtractionRepository:
         )
         logger.debug("repository_update_status", job_id=job_id, status=status.value)
 
+    async def update_extraction_method(
+        self,
+        job_id: str,
+        method: ExtractionMethod,
+    ) -> None:
+        await self._session.execute(
+            update(JobExtraction)
+            .where(JobExtraction.id == job_id)
+            .values(extraction_method=method, updated_at=_utcnow())
+        )
+
     async def update_extraction_result(
         self,
         job_id: str,
         job_data: JobDescriptionSchema,
-        method: ExtractionMethod,
-        confidence_score: float,
-        raw_html: str | None = None,
+        extraction_repo_method: ExtractionMethod | None = None,
+        is_job_posting: bool = True,
     ) -> None:
+        """
+        Persist LLM-structured job content and mark extraction COMPLETED.
+
+        Called by the analysis orchestrator after the LLM structures the content.
+        ``extraction_repo_method`` is optional — when None the previously stored
+        method (set during extraction) is preserved.
+        """
         limits = _JOB_EXTRACTION_LIMITS
-        values = {
+        now = _utcnow()
+
+        existing = await self.get_by_id(job_id)
+        metadata = dict((existing.raw_metadata if existing else None) or {})
+        metadata["ai_structured_source"] = "job_match_analysis"
+        metadata["ai_structured_updated_at"] = now.isoformat()
+        if job_data.raw_metadata:
+            metadata.update(job_data.raw_metadata)
+
+        values: dict = {
             "status": ExtractionStatus.COMPLETED,
-            "extraction_method": method,
             "title": _truncate_for_db(job_data.title, limits["title"]),
             "company": _truncate_for_db(job_data.company, limits["company"]),
             "location": _truncate_for_db(job_data.location, limits["location"]),
@@ -149,16 +174,25 @@ class JobExtractionRepository:
             "remote_policy": _truncate_for_db(job_data.remote_policy, limits["remote_policy"]),
             "experience_level": _truncate_for_db(job_data.experience_level, limits["experience_level"]),
             "industry": _truncate_for_db(job_data.industry, limits["industry"]),
-            "raw_metadata": job_data.raw_metadata,
-            "confidence_score": confidence_score,
-            "completed_at": _utcnow(),
-            "updated_at": _utcnow(),
+            "raw_metadata": metadata,
+            "is_job_posting": is_job_posting,
+            "raw_html": None,
+            "completed_at": now,
+            "updated_at": now,
         }
-        if raw_html:
-            values["raw_html"] = sanitize_for_postgres_text(raw_html)
+        if extraction_repo_method is not None:
+            values["extraction_method"] = extraction_repo_method
 
         await self._session.execute(
             update(JobExtraction).where(JobExtraction.id == job_id).values(**values)
+        )
+
+    async def update_is_job_posting(self, job_id: str, is_job_posting: bool) -> None:
+        """Store the LLM-determined is_job_posting flag without changing other fields."""
+        await self._session.execute(
+            update(JobExtraction)
+            .where(JobExtraction.id == job_id)
+            .values(is_job_posting=is_job_posting, updated_at=_utcnow())
         )
 
     async def get_pending_jobs(self, limit: int = 100) -> Sequence[JobExtraction]:

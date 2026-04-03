@@ -2,9 +2,8 @@ import asyncio
 import re
 from playwright.async_api import async_playwright, Browser, Page, Playwright
 from app.extractors.base import BaseExtractor, ExtractionResult
-from app.extractors.html_extractor import HTMLExtractor
 from app.models.schemas import ExtractionMethod
-from app.services.job_content_cleaner import plain_text_from_document_html, rank_document_html_for_extraction
+from app.services.job_content_cleaner import plain_text_from_document_html
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.core.exceptions import BrowserError
@@ -14,7 +13,6 @@ import random
 
 logger = get_logger(__name__)
 
-# OneTrust, Cookiebot, TrustArc, generic CMP — must be dismissed or SPAs never expose JD text.
 _COOKIE_CLICK_SELECTORS: tuple[str, ...] = (
     "#hs-eu-confirmation-button",
     "button#hs-eu-confirmation-button",
@@ -41,13 +39,23 @@ _COOKIE_BUTTON_NAMES: tuple[str, ...] = (
     "Got it",
 )
 
+_ATS_EMBED_HOST_MARKERS: tuple[str, ...] = (
+    "greenhouse.io",
+    "lever.co",
+    "ashbyhq.com",
+    "myworkdayjobs.com",
+    "smartrecruiters.com",
+    "icims.com",
+    "jobvite.com",
+    "taleo.net",
+    "ultipro.com",
+    "bamboohr.com",
+    "applytojob.com",
+    "recruitee.com",
+)
+
 
 async def _dismiss_cookie_consent(page: Page) -> bool:
-    """
-    Click through common cookie / CMP banners so the real page (e.g. Workable JD) can render.
-
-    Returns True if at least one click was attempted without throwing (banner may still persist).
-    """
     for sel in _COOKIE_CLICK_SELECTORS:
         try:
             loc = page.locator(sel).first
@@ -117,35 +125,11 @@ BLOCKED_URLS = [
     "intercom.io",
 ]
 
-# Embedded application / JD iframes (Greenhouse, Lever, etc.) — slight preference when scores tie.
-_ATS_EMBED_HOST_MARKERS: tuple[str, ...] = (
-    "greenhouse.io",
-    "lever.co",
-    "ashbyhq.com",
-    "myworkdayjobs.com",
-    "smartrecruiters.com",
-    "icims.com",
-    "jobvite.com",
-    "taleo.net",
-    "ultipro.com",
-    "bamboohr.com",
-    "applytojob.com",
-    "recruitee.com",
-)
-
-
-def _ats_embed_url_multiplier(url: str) -> float:
-    """
-    Prefer real JD hosts. Greenhouse ``job_app`` embeds are application forms + EEO, not postings.
-    """
-    u = (url or "").lower()
-    if not u or u.startswith("about:") or "chrome-extension:" in u:
-        return 0.05
-    if "greenhouse.io" in u and ("job_app" in u or "/embed/job_app" in u):
-        return 0.06
-    if any(m in u for m in _ATS_EMBED_HOST_MARKERS):
-        return 1.45
-    return 1.0
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0",
+]
 
 
 class BrowserPool:
@@ -179,7 +163,6 @@ class BrowserPool:
         except Exception as e:
             err_msg = str(e) or f"{type(e).__name__}"
             logger.warning("browser_pool_init_failed", error=err_msg)
-            # Don't raise exception, allow app to run without browser
             self._initialized = False
 
     async def close(self) -> None:
@@ -201,7 +184,7 @@ class BrowserPool:
             viewport = random.choice(VIEWPORTS)
             context = await self._browser.new_context(
                 viewport=viewport,
-                user_agent=self._get_random_user_agent(),
+                user_agent=random.choice(USER_AGENTS),
                 locale="en-US",
                 timezone_id="America/New_York",
                 java_script_enabled=True,
@@ -232,14 +215,6 @@ class BrowserPool:
             return
         await route.continue_()
 
-    def _get_random_user_agent(self) -> str:
-        agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
-        ]
-        return random.choice(agents)
-
     @property
     def available_slots(self) -> int:
         if not self._semaphore:
@@ -254,8 +229,6 @@ async def init_browser_pool() -> None:
     global _browser_pool
     _browser_pool = BrowserPool()
     await _browser_pool.initialize()
-    # When init fails or is skipped (e.g. Windows Python 3.13), pool is unusable.
-    # Set to None so get_browser_pool() raises and can_extract() returns False.
     if not _browser_pool._initialized:
         _browser_pool = None
 
@@ -274,11 +247,12 @@ def get_browser_pool() -> BrowserPool:
 
 
 def get_browser_pool_safe() -> BrowserPool | None:
-    """Get browser pool safely, return None if not initialized"""
     return _browser_pool
 
 
 class BrowserExtractor(BaseExtractor):
+    """Render page via Playwright and extract full plain text content."""
+
     def __init__(self):
         self._settings = get_settings()
 
@@ -314,51 +288,31 @@ class BrowserExtractor(BaseExtractor):
 
                 await _dismiss_cookie_consent(page)
                 await self._wait_for_content(page)
+
                 if "apply.workable.com" in (url or "").lower():
                     await _dismiss_cookie_consent(page)
-                    # Workable hydrates JD after shell; brief pause after CMP dismissal.
                     await asyncio.sleep(2.5)
-                content = await self._best_document_html(page)
 
-                # Attempt structured extraction from rendered content, using existing HTML extractor logic.
-                structured_data = None
-                structured_confidence = 0.0
-                try:
-                    html_extractor = HTMLExtractor()
-                    html_result = await html_extractor.extract(url, content)
-                    if html_result.success and html_result.structured_data:
-                        structured_data = html_result.structured_data
-                        structured_confidence = html_result.confidence or 0.0
-                        logger.info(
-                            "browser_extraction_structured_success",
-                            url=url,
-                            extracted_fields=list(structured_data.keys()),
-                            confidence=structured_confidence,
-                        )
-                    else:
-                        logger.info(
-                            "browser_extraction_structured_not_found",
-                            url=url,
-                            error=html_result.error,
-                        )
-                except Exception as e:
-                    logger.warning("browser_extraction_structured_error", url=url, error=str(e))
+                plain_text = await self._extract_all_frames_text(page)
 
-                overall_confidence = max(0.7, structured_confidence) if structured_data else 0.7
+                if not plain_text or len(plain_text) < 50:
+                    return ExtractionResult(
+                        success=False,
+                        method=self.method,
+                        error="Insufficient text content from browser render",
+                    )
 
                 logger.info(
                     "browser_extraction_success",
                     url=url,
-                    content_length=len(content),
-                    has_structured=structured_data is not None,
+                    content_length=len(plain_text),
                 )
 
                 return ExtractionResult(
                     success=True,
                     method=self.method,
-                    raw_content=content,
-                    structured_data=structured_data,
-                    confidence=overall_confidence,
+                    raw_content=plain_text,
+                    structured_data=None,
                 )
 
         except asyncio.TimeoutError:
@@ -379,7 +333,6 @@ class BrowserExtractor(BaseExtractor):
     async def _wait_for_content(self, page: Page) -> None:
         await _dismiss_cookie_consent(page)
 
-        # Prefer actual job-body containers; do not gate readiness on title-only nodes like h1.
         content_selectors = [
             "[data-automation='jobDescription']",
             "[data-ui='job-description']",
@@ -395,39 +348,33 @@ class BrowserExtractor(BaseExtractor):
             "main",
         ]
 
-        # 1) Wait for at least one likely content container.
-        found_selector: str | None = None
         for selector in content_selectors:
             try:
                 await page.wait_for_selector(selector, timeout=4000, state="attached")
-                found_selector = selector
                 break
             except Exception:
                 continue
 
-        # 2) Give SPA pages a chance to complete post-mount requests.
         try:
             await page.wait_for_load_state("networkidle", timeout=4000)
         except Exception:
-            # Many pages keep analytics/websocket traffic open; best-effort only.
             pass
 
-        # 3) Wait until text is substantial and stable to avoid early shell snapshots.
-        # Confidence and downstream parsing quality depend on this page snapshot quality.
-        min_chars = 700
+        min_chars = 200
         stable_rounds_needed = 2
         sample_interval_s = 0.6
         max_wait_s = 12.0
+        spa_max_wait_s = 25.0
 
         observed_last = -1
         stable_rounds = 0
         elapsed = 0.0
-
-        target_selector = found_selector or "main, article, [data-automation='jobDescription'], .job-description, body"
         mid_cookie_dismiss = False
+        spa_extended = False
+
         while elapsed < max_wait_s:
             try:
-                text_len = await self._max_clean_plain_len_across_frames(page)
+                text_len = await self._page_text_length(page)
             except Exception:
                 text_len = 0
 
@@ -435,98 +382,103 @@ class BrowserExtractor(BaseExtractor):
                 await _dismiss_cookie_consent(page)
                 mid_cookie_dismiss = True
 
+            if not spa_extended and elapsed >= 3.0 and text_len < min_chars:
+                if await self._is_spa_loading(page):
+                    max_wait_s = spa_max_wait_s
+                    spa_extended = True
+                    logger.info("spa_loading_detected", extending_wait_s=spa_max_wait_s)
+
             if text_len >= min_chars:
                 if text_len == observed_last:
                     stable_rounds += 1
                 else:
                     stable_rounds = 0
                 if stable_rounds >= stable_rounds_needed:
-                    logger.debug(
-                        "browser_content_ready_stable",
-                        selector=target_selector,
-                        text_len=text_len,
-                    )
+                    if spa_extended:
+                        logger.info("spa_content_loaded", elapsed_s=round(elapsed, 1), text_len=text_len)
                     return
+
             observed_last = text_len
             await asyncio.sleep(sample_interval_s)
             elapsed += sample_interval_s
 
-        logger.debug(
-            "browser_content_ready_timeout_fallback",
-            selector=target_selector,
-            last_text_len=max(0, observed_last),
-            waited_seconds=round(elapsed, 1),
-        )
-
-    async def _max_clean_plain_len_across_frames(self, page: Page) -> int:
-        """
-        Max length of CMP-stripped job plain text across main + child frames.
-
-        Readiness must not use raw ``innerText`` on the shell alone: cookie/CMP copy can exceed
-        thresholds while the real JD only exists inside an ATS iframe (e.g. Greenhouse embed).
-        """
+    async def _page_text_length(self, page: Page) -> int:
+        """Quick text length check across main page and ATS iframes."""
         best = 0
         try:
-            frame_list = page.frames
-        except AttributeError:
-            frame_list = []
-        for frame in frame_list:
-            try:
-                fu = frame.url or ""
-                if not fu or fu.startswith("about:") or "chrome-extension:" in fu:
+            for frame in page.frames:
+                try:
+                    fu = frame.url or ""
+                    if not fu or fu.startswith("about:") or "chrome-extension:" in fu:
+                        continue
+                    length = await frame.evaluate("() => document.body?.innerText?.length || 0")
+                    if length > best:
+                        best = length
+                except Exception:
                     continue
-                fh = await frame.content()
-                plen = len(plain_text_from_document_html(fh))
-                if plen > best:
-                    best = plen
-            except Exception as e:
-                logger.debug("browser_frame_plain_len_skip", error=str(e))
-                continue
-        return best
-
-    async def _best_document_html(self, page: Page) -> str:
-        """
-        Choose the document (main or child frame) with the best extraction rank score.
-
-        Prefer cleaned job text (not raw length): parent pages can exceed iframe length with
-        chrome/EEO while the real JD lives in an ATS embed. Known ATS frame URLs get a small
-        multiplier so near-tie scores favor the embed.
-        """
-        main_html = await page.content()
-        page_url = ""
-        try:
-            page_url = page.url or ""
         except Exception:
             pass
-        best_html = main_html
-        best_effective = rank_document_html_for_extraction(main_html) * _ats_embed_url_multiplier(page_url)
-        main_plain_len = len(plain_text_from_document_html(main_html))
+        return best
+
+    async def _is_spa_loading(self, page: Page) -> bool:
+        """Detect SPA skeleton/loading state that signals content will render later."""
         try:
-            frame_list = page.frames
-        except AttributeError:
-            frame_list = []
-        for frame in frame_list:
-            try:
+            return await page.evaluate("""() => {
+                const text = (document.body?.innerText || '').trim().toLowerCase();
+                if (text.length > 150) return false;
+                const hasLoadingText = /\\bloading\\b|\\bplease wait\\b|\\binitializing\\b/.test(text);
+                const hasIndicator = !!document.querySelector(
+                    '[class*="spinner"], [class*="Spinner"],'
+                    + '[class*="loading"], [class*="Loading"],'
+                    + '[class*="skeleton"], [class*="Skeleton"],'
+                    + '[class*="shimmer"], [class*="Shimmer"],'
+                    + '[role="progressbar"], .loader,'
+                    + '[class*="loader"], [class*="Loader"]'
+                );
+                return hasLoadingText || hasIndicator;
+            }""")
+        except Exception:
+            return False
+
+    async def _extract_all_frames_text(self, page: Page) -> str:
+        """
+        Extract plain text from main page and all ATS-related child frames.
+
+        Takes the longest text among: main page text and any ATS iframe text.
+        This avoids the complex ranking system — the longest meaningful content
+        from a known source wins.
+        """
+        candidates: list[str] = []
+
+        main_html = await page.content()
+        main_text = plain_text_from_document_html(main_html)
+        if main_text:
+            candidates.append(main_text)
+
+        try:
+            for frame in page.frames:
                 if frame == page.main_frame:
                     continue
-                fu = frame.url or ""
-                if not fu or fu.startswith("about:") or "chrome-extension:" in fu:
+                try:
+                    fu = frame.url or ""
+                    if not fu or fu.startswith("about:") or "chrome-extension:" in fu:
+                        continue
+                    is_ats = any(m in fu.lower() for m in _ATS_EMBED_HOST_MARKERS)
+                    if not is_ats:
+                        continue
+                    if "job_app" in fu.lower() or "/embed/job_app" in fu.lower():
+                        continue
+                    fh = await frame.content()
+                    frame_text = plain_text_from_document_html(fh)
+                    if frame_text and len(frame_text) >= 50:
+                        candidates.append(frame_text)
+                except Exception as e:
+                    logger.debug("browser_iframe_text_skip", error=str(e))
                     continue
-                fh = await frame.content()
-                effective = rank_document_html_for_extraction(fh) * _ats_embed_url_multiplier(fu)
-                if effective > best_effective:
-                    best_effective = effective
-                    best_html = fh
-            except Exception as e:
-                logger.debug("browser_iframe_content_skip", error=str(e))
-                continue
+        except Exception:
+            pass
 
-        if best_html is not main_html:
-            chosen_len = len(plain_text_from_document_html(best_html))
-            logger.info(
-                "browser_using_richer_frame",
-                main_plain_len=main_plain_len,
-                chosen_plain_len=chosen_len,
-                chosen_effective_score=round(best_effective, 2),
-            )
-        return best_html
+        if not candidates:
+            return ""
+
+        return max(candidates, key=len)

@@ -7,7 +7,7 @@ export type AttachmentFlowStatus =
       total: number;
     };
 
-export type ExtractionStatusLabel = 'pending' | 'processing' | 'completed' | 'failed';
+export type ExtractionStatusLabel = 'pending' | 'processing' | 'extracted' | 'completed' | 'failed';
 
 export type SubmittedUrlItem = {
   id: string;
@@ -19,7 +19,7 @@ export type SubmittedUrlItem = {
   scraped_at_ms?: number;
   extraction_id?: string | null;
   extraction_status?: ExtractionStatusLabel | null;
-  confidence_score?: number | null;
+  is_job_posting?: boolean | null;
   match_overall_score?: number | null;
   match_status?: string | null;
   click_count?: number;

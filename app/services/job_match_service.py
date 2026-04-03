@@ -131,10 +131,12 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
 async def analyze_job_match(
     job_text: str,
     profile_text: str,
-) -> tuple[dict, JobDescriptionSchema | None]:
+) -> tuple[dict, JobDescriptionSchema | None, bool]:
     """
-    Single LLM call that returns both the match result and structured job content.
-    Returns (match_result_dict, structured_job_or_None).
+    Single LLM call that returns the match result, structured job content, and
+    whether the page is actually a job posting.
+
+    Returns ``(match_result_dict, structured_job_or_None, is_job_posting)``.
     Raises AIParsingError on complete failure.
     """
     client: AsyncOpenAI = get_openai_client()
@@ -160,6 +162,7 @@ async def analyze_job_match(
                 "recommendation": "poor_match",
             },
             None,
+            False,
         )
 
     user_content = JOB_MATCH_USER_TEMPLATE.format(
@@ -189,7 +192,8 @@ async def analyze_job_match(
 
         parsed = json.loads(result_text)
 
-        # Extract the two sections from the combined response.
+        is_job_posting = bool(parsed.get("is_job_posting", False))
+
         match_section = parsed.get("match") or parsed
         structured_section = parsed.get("structured_job")
 
@@ -201,7 +205,7 @@ async def analyze_job_match(
         else:
             logger.warning("structured_job_section_missing_from_combined_response")
 
-        return match_result, structured_job
+        return match_result, structured_job, is_job_posting
 
     except json.JSONDecodeError as e:
         logger.error("job_match_json_error", error=str(e))

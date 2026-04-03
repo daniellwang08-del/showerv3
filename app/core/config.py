@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     rate_limit_requests_per_second: float = 2.0
     rate_limit_burst: int = 5
 
-    extraction_cache_ttl_seconds: int = 86400
+    extraction_cache_ttl_seconds: int = 3600
     dedup_window_hours: int = 24
 
     proxy_enabled: bool = False

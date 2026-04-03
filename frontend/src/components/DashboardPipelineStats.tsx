@@ -63,7 +63,7 @@ function computeStats(jobs: SubmittedUrlItem[]): PipelineStats {
     const s = j.extraction_status;
     if (!s) extraction.unknown++;
     else if (s === 'pending') extraction.pending++;
-    else if (s === 'processing') extraction.processing++;
+    else if (s === 'processing' || s === 'extracted') extraction.processing++;
     else if (s === 'completed') extraction.completed++;
     else if (s === 'failed') extraction.failed++;
   }

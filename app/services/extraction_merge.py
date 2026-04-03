@@ -1,92 +1,20 @@
-"""Merge structured job dicts from JSON-LD, static HTML, and browser without slowing the fast path."""
+"""Select the best extracted plain text from multiple extraction attempts."""
 
 from __future__ import annotations
 
-from typing import Any
-from urllib.parse import urlparse
 
-# Below this length we try richer sources (browser, iframe) before giving up on "full" JD text.
-RICH_DESCRIPTION_MIN_CHARS: int = 900
-
-def description_len(structured: dict | None) -> int:
-    if not structured:
-        return 0
-    return len((structured.get("description") or "").strip())
-
-
-def is_rich_description(structured: dict | None) -> bool:
-    return description_len(structured) >= RICH_DESCRIPTION_MIN_CHARS
-
-
-def skip_early_static_html_exit(url: str) -> bool:
+def pick_best_text(candidates: list[tuple[str, str]]) -> tuple[str, str]:
     """
-    Known ATS / embed hosts where a long first-pass HTML description is often marketing shell,
-    not the real JD. Defer early finalize so vendor API or browser can run — no extra cost for
-    normal employer sites (returns False).
+    From a list of ``(plain_text, method_name)`` tuples, pick the best extraction.
+
+    Selection rule: the longest non-trivial text wins.  This is intentionally
+    simple — the downstream LLM is far better at identifying job content than
+    any heuristic scoring.
+
+    Returns ``("", "none")`` if no candidate has sufficient content.
     """
-    if not url:
-        return False
-    u = url.strip()
-    low = u.lower()
-    try:
-        host = urlparse(u).netloc.lower()
-    except Exception:
-        host = ""
-    if "apply.workable.com" in host:
-        return True
-    if "ashby_jid=" in low:
-        return True
-    if "gh_jid=" in low:
-        return True
-    return False
-
-
-def _merge_str_lists(a: list[Any] | None, b: list[Any] | None) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for x in (a or []) + (b or []):
-        if x is None:
-            continue
-        s = str(x).strip()
-        if not s:
-            continue
-        key = s.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(s)
-    return out
-
-
-def merge_structured_job_data(base: dict | None, overlay: dict | None) -> dict | None:
-    """
-    Prefer the longer description; fill empty scalar fields from overlay; merge list fields.
-    """
-    if not overlay and not base:
-        return None
-    if not base:
-        return dict(overlay) if overlay else None
-    if not overlay:
-        return dict(base)
-    merged: dict[str, Any] = dict(base)
-    for k, v in overlay.items():
-        if k == "description":
-            bd = (merged.get("description") or "").strip()
-            od = (overlay.get("description") or "").strip()
-            if len(od) > len(bd):
-                merged["description"] = overlay.get("description")
-        elif k in ("responsibilities", "requirements", "benefits"):
-            merged[k] = _merge_str_lists(merged.get(k), overlay.get(k))
-        elif k == "raw_metadata":
-            md: dict[str, Any] = dict(merged.get("raw_metadata") or {})
-            md.update(overlay.get("raw_metadata") or {})
-            merged["raw_metadata"] = md
-        else:
-            if v is None:
-                continue
-            if isinstance(v, str) and not v.strip():
-                continue
-            cur = merged.get(k)
-            if cur is None or (isinstance(cur, str) and not str(cur).strip()):
-                merged[k] = v
-    return merged
+    MIN_LENGTH = 50
+    valid = [(t, m) for t, m in candidates if t and len(t.strip()) >= MIN_LENGTH]
+    if not valid:
+        return ("", "none")
+    return max(valid, key=lambda x: len(x[0]))

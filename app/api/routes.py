@@ -62,6 +62,19 @@ from app.storage.repository import _utcnow
 router = APIRouter()
 logger = get_logger(__name__)
 
+BLOCKED_DOMAINS: dict[str, str] = {
+    "paycomonline.net": "Paycom ATS requires lengthy manual registration; auto-extraction not supported.",
+}
+
+
+def _check_domain_blocked(domain: str) -> str | None:
+    """Return block reason if the domain (or its parent) is in the blocklist, else None."""
+    lowered = domain.lower()
+    for blocked, reason in BLOCKED_DOMAINS.items():
+        if lowered == blocked or lowered.endswith(f".{blocked}"):
+            return reason
+    return None
+
 
 class JobUrlUpdateRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
@@ -678,9 +691,7 @@ async def process_extraction_sync(
     try:
         service = ExtractionService()
         result = await service.process_job(job_id, url)
-        # Match runs in a separate asyncio task so this extraction job finishes quickly and
-        # does not serialize with other BackgroundTasks work (same pattern as worker: scrape then match).
-        if user_id and result.get("status") == "completed":
+        if user_id and result.get("status") == "extracted":
             valid_job_id: str | None = None
             async with get_session() as session:
                 valid_repo = ValidJobRepository(session)
@@ -713,6 +724,10 @@ async def extract_job(
         raise HTTPException(status_code=400, detail=error)
 
     domain = URLManager.extract_domain(url)
+
+    block_reason = _check_domain_blocked(domain)
+    if block_reason:
+        raise HTTPException(status_code=400, detail=block_reason)
 
     async with get_session() as session:
         repository = JobExtractionRepository(session)
@@ -753,6 +768,9 @@ async def extract_batch(
                 continue
 
             domain = URLManager.extract_domain(url_str)
+            if _check_domain_blocked(domain):
+                continue
+
             extraction = await repository.create(
                 source_url=url_str,
                 normalized_url=url_str,
@@ -829,7 +847,7 @@ def _build_response(extraction) -> ExtractionResponse:
         created_at=extraction.created_at,
         completed_at=extraction.completed_at,
         error_message=None,  # Never expose internal errors to frontend; log server-side only
-        confidence_score=extraction.confidence_score,
+        is_job_posting=extraction.is_job_posting,
     )
 
 
@@ -868,6 +886,37 @@ async def submit_job(
         normalized_url = request.url
         domain = duplication_checker.extract_domain(request.url)
         user_id_submit = current_user.get("user_id")
+
+        block_reason = _check_domain_blocked(domain)
+        if block_reason:
+            invalid_job = InvalidJob(
+                source_url=request.url,
+                normalized_url=normalized_url,
+                domain=domain,
+                title=request.title,
+                company=request.company or "Unknown",
+                location=request.location,
+                description=request.description,
+                posted_date=request.posted_date,
+                experience_level=request.experience_level,
+                industry=request.industry,
+                duplicate_of_job_id=None,
+                duplication_reason=block_reason,
+                similarity_score=None,
+                similarity_hash=None,
+                raw_metadata={"blocked_domain": domain},
+                is_active=True,
+            )
+            session.add(invalid_job)
+            await session.commit()
+            logger.info("jobs_submit_blocked_domain", domain=domain, invalid_job_id=invalid_job.id)
+            return JobSubmissionResponse(
+                success=True,
+                job_id=invalid_job.id,
+                is_duplicate=True,
+                duplicate_job_id=None,
+                message=block_reason,
+            )
 
         inflight = await find_inflight_valid_job_with_same_url(
             session,
@@ -1089,7 +1138,7 @@ async def get_valid_jobs(
             select(
                 ValidJob,
                 JobExtraction.status,
-                JobExtraction.confidence_score,
+                JobExtraction.is_job_posting,
                 JobMatchResult.overall_score,
                 JobMatchInProgress.id.label("match_progress_id"),
                 ValidJobUserApplication.applied_at,
@@ -1134,7 +1183,7 @@ async def get_valid_jobs(
                 scraped_at=job.scraped_at,
                 extraction_id=job.extraction_id,
                 extraction_status=ext_status.value if ext_status else None,
-                confidence_score=confidence_score,
+                is_job_posting=is_job_posting,
                 match_overall_score=match_score,
                 match_status="processing" if (match_progress_id and match_score is None) else None,
                 click_count=getattr(job, "click_count", 0) or 0,
@@ -1144,7 +1193,7 @@ async def get_valid_jobs(
                 created_at=job.created_at,
                 updated_at=job.updated_at,
             )
-            for job, ext_status, confidence_score, match_score, match_progress_id, applied_at, applied_by_name in rows
+            for job, ext_status, is_job_posting, match_score, match_progress_id, applied_at, applied_by_name in rows
         ]
 
 
@@ -1153,7 +1202,7 @@ async def ai_search_valid_jobs(
     body: AiJobSearchRequest,
     current_user: dict = Depends(get_current_user),
 ) -> AiJobSearchResponse:
-    """Interpret a natural language prompt via OpenAI and return valid job ids that match."""
+    """Interpret a natural language prompt via OpenAI and return matching valid jobs with full data."""
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -1172,9 +1221,9 @@ async def ai_search_valid_jobs(
             detail=str(e) or "AI search is unavailable. Check OPENAI_API_KEY.",
         )
     async with get_session() as session:
-        matching_ids, total = await apply_job_search_spec(session, user_id, spec)
-    logger.info("ai_search_valid_jobs_ok", matches=len(matching_ids), candidates=total)
-    return AiJobSearchResponse(matching_job_ids=matching_ids, query=spec, total_candidates=total)
+        matching_jobs, total_matching = await apply_job_search_spec(session, user_id, spec)
+    logger.info("ai_search_valid_jobs_ok", matches=len(matching_jobs), total_matching=total_matching)
+    return AiJobSearchResponse(matching_jobs=matching_jobs, query=spec, total_matching=total_matching)
 
 
 @router.get("/jobs/valid/{job_id}", response_model=ValidJobResponse, dependencies=[Depends(get_current_user)])
@@ -1187,7 +1236,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
             select(
                 ValidJob,
                 JobExtraction.status,
-                JobExtraction.confidence_score,
+                JobExtraction.is_job_posting,
                 ValidJobUserApplication.applied_at,
                 ValidJobUserApplication.applied_by_name,
             )
@@ -1205,7 +1254,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
         if not row:
             logger.warning("get_valid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Valid job not found")
-        job, ext_status, confidence_score, applied_at, applied_by_name = row
+        job, ext_status, is_job_posting, applied_at, applied_by_name = row
         return ValidJobResponse(
             id=job.id,
             source_url=job.source_url,
@@ -1222,7 +1271,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
             scraped_at=job.scraped_at,
             extraction_id=job.extraction_id,
             extraction_status=ext_status.value if ext_status else None,
-            confidence_score=confidence_score,
+            is_job_posting=is_job_posting,
             click_count=getattr(job, "click_count", 0) or 0,
             applied_at=applied_at,
             applied_by_name=applied_by_name,
@@ -1359,7 +1408,7 @@ async def get_job_analysis_panel(
         extraction = None
         extraction_status = None
         extraction_method = None
-        confidence_score = None
+        is_job_posting = None
         job_data = None
         content_enriched_by_ai = False
 
@@ -1369,7 +1418,7 @@ async def get_job_analysis_panel(
             if extraction:
                 extraction_status = extraction.status
                 extraction_method = extraction.extraction_method
-                confidence_score = extraction.confidence_score
+                is_job_posting = extraction.is_job_posting
                 content_enriched_by_ai = _ai_enriched_extraction(extraction)
                 if extraction.status == ExtractionStatus.COMPLETED and extraction.title:
                     job_data = JobDescriptionSchema(
@@ -1441,7 +1490,7 @@ async def get_job_analysis_panel(
             source_url=job.source_url,
             job_data=job_data,
             extraction_method=extraction_method,
-            confidence_score=confidence_score,
+            is_job_posting=is_job_posting,
             content_enriched_by_ai=content_enriched_by_ai,
             match=match_payload,
             match_in_progress=match_in_progress,
@@ -1517,6 +1566,10 @@ async def _prepare_valid_job_rescrape_in_session(
     is_valid, error = URLManager.validate_url(source_url)
     if not is_valid:
         raise ValueError(error or "Invalid URL")
+
+    block_reason = _check_domain_blocked(URLManager.extract_domain(source_url))
+    if block_reason:
+        raise ValueError(block_reason)
 
     duplication_checker = DuplicationChecker(session)
     normalized_url = source_url
@@ -1857,6 +1910,10 @@ async def promote_invalid_to_valid(
         if not invalid:
             logger.warning("promote_invalid_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Invalid job not found")
+
+        block_reason = _check_domain_blocked(invalid.domain)
+        if block_reason:
+            raise HTTPException(status_code=400, detail=block_reason)
 
         meta = dict(invalid.raw_metadata or {})
         promoted_at_iso = _utcnow().isoformat()

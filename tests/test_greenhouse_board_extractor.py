@@ -34,7 +34,7 @@ def test_token_candidates_url_first():
 
 
 @pytest.mark.asyncio
-async def test_extract_maps_api_job(monkeypatch):
+async def test_extract_returns_plain_text(monkeypatch):
     payload = {
         "id": 7528379003,
         "title": "Security Engineer",
@@ -52,10 +52,11 @@ async def test_extract_maps_api_job(monkeypatch):
     url = "https://boards.greenhouse.io/abnormalsecurity/jobs/7528379003"
     r = await ex.extract(url, "<html></html>")
     assert r.success
-    assert r.structured_data
-    assert r.structured_data["title"] == "Security Engineer"
-    assert "detection" in (r.structured_data.get("description") or "").lower()
-    assert r.structured_data.get("company") == "Abnormal"
+    assert r.structured_data is None
+    assert r.raw_content is not None
+    assert "Security Engineer" in r.raw_content
+    assert "detection" in r.raw_content.lower()
+    assert "Abnormal" in r.raw_content
 
 
 @pytest.mark.asyncio
@@ -64,7 +65,7 @@ async def test_extract_tries_second_token_on_404():
         "id": 1,
         "title": "Role",
         "company_name": "Co",
-        "content": "<p>Desc " + ("x" * 50) + "</p>",
+        "content": "<p>Description " + ("x" * 80) + "</p>",
         "location": {"name": "NYC"},
     }
     http = MagicMock()
@@ -75,7 +76,6 @@ async def test_extract_tries_second_token_on_404():
         ]
     )
     ex = GreenhouseBoardExtractor(http_service=http)
-    # Two board candidates so the extractor can retry after 404.
     html = (
         '<iframe src="https://job-boards.greenhouse.io/embed/job_app?for=badtoken&t=1"></iframe>'
         '<a href="https://boards.greenhouse.io/goodco/jobs/1">x</a>'

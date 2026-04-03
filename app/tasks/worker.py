@@ -2,9 +2,12 @@ import asyncio
 import traceback
 from arq import create_pool
 from arq.connections import RedisSettings, ArqRedis
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
 from app.models.schemas import ExtractionStatus
+from app.models.database import ValidJob, InvalidJob
 from app.services.extraction_service import ExtractionService
 from app.services.job_match_orchestrator import clear_job_match_progress
 from app.storage.database import get_session
@@ -15,6 +18,62 @@ logger = get_logger(__name__)
 
 EXTRACTION_QUEUE = "job_extraction"
 ANALYSIS_QUEUE = "job_analysis"
+
+
+async def _move_valid_job_to_invalid(extraction_id: str, reason: str, user_id: str | None) -> str | None:
+    """Move the valid job linked to this extraction to invalid_jobs. Returns invalid_job.id or None."""
+    try:
+        async with get_session() as session:
+            valid_repo = ValidJobRepository(session)
+            valid_job = await valid_repo.get_by_extraction_id(extraction_id)
+            if not valid_job or not valid_job.is_active:
+                return None
+
+            invalid_job = InvalidJob(
+                source_url=valid_job.source_url,
+                normalized_url=valid_job.normalized_url,
+                domain=valid_job.domain,
+                title=valid_job.title,
+                company=valid_job.company,
+                location=valid_job.location,
+                description=valid_job.description,
+                posted_date=valid_job.posted_date,
+                experience_level=valid_job.experience_level,
+                industry=valid_job.industry,
+                duplicate_of_job_id=None,
+                duplication_reason=reason,
+                similarity_score=None,
+                similarity_hash=valid_job.similarity_hash,
+                raw_metadata=valid_job.raw_metadata or {},
+                is_active=True,
+            )
+            valid_job.is_active = False
+            session.add(invalid_job)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                return None
+
+            logger.info(
+                "extraction_site_unreachable_moved_to_invalid",
+                extraction_id=extraction_id,
+                valid_job_id=valid_job.id,
+                invalid_job_id=invalid_job.id,
+                reason=reason,
+            )
+            if user_id:
+                await publish_ws_event({
+                    "type": "extraction_failed",
+                    "user_id": user_id,
+                    "job_id": extraction_id,
+                    "url": valid_job.source_url,
+                    "error": reason,
+                })
+            return invalid_job.id
+    except Exception as e:
+        logger.warning("move_to_invalid_failed", extraction_id=extraction_id, error=str(e))
+        return None
 
 
 async def _mark_extraction_failed_cancelled(job_id: str) -> None:
@@ -53,13 +112,15 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
     try:
         service = ExtractionService()
         result = await service.process_job(job_id, url)
-        if result.get("status") == "completed":
-            confidence = result.get("confidence", 1.0)
+
+        if result.get("status") == "extracted":
+            method = result.get("method")
+            content_length = result.get("content_length", 0)
             logger.info(
-                "worker_extract_job_completed",
+                "worker_extract_job_extracted",
                 job_id=job_id,
-                method=result.get("method"),
-                confidence=confidence,
+                method=method,
+                content_length=content_length,
             )
             if user_id:
                 await publish_ws_event({
@@ -67,8 +128,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                     "user_id": user_id,
                     "job_id": job_id,
                     "url": url,
-                    "method": result.get("method"),
-                    "confidence": confidence,
+                    "method": method,
                 })
 
             if user_id:
@@ -82,7 +142,12 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                             await session.commit()
                             pending_match_progress = (valid_job.id, user_id)
                             pool = await get_analysis_pool()
-                            await pool.enqueue_job("analyze_job_match", valid_job.id, user_id)
+                            await pool.enqueue_job(
+                                "analyze_job_match",
+                                valid_job.id,
+                                user_id,
+                                job_id,
+                            )
                             await pool.close()
                             logger.info("job_match_enqueued", valid_job_id=valid_job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
                             pending_match_progress = None
@@ -91,20 +156,24 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                             await session.commit()
                             pending_match_progress = None
                             logger.warning("job_match_enqueue_failed", valid_job_id=valid_job.id, error=str(enq_err))
+
         elif result.get("status") == "failed":
-            logger.error(
-                "extract_job_failed",
-                job_id=job_id,
-                url=url,
-                error=result.get("error", "Unknown error"),
-            )
-            if user_id:
+            error_msg = result.get("error", "Unknown error")
+            logger.error("extract_job_failed", job_id=job_id, url=url, error=error_msg)
+
+            if result.get("site_unreachable"):
+                await _move_valid_job_to_invalid(
+                    job_id,
+                    reason=f"Site unreachable — {error_msg[:200]}",
+                    user_id=user_id,
+                )
+            elif user_id:
                 await publish_ws_event({
                     "type": "extraction_failed",
                     "user_id": user_id,
                     "job_id": job_id,
                     "url": url,
-                    "error": result.get("error"),
+                    "error": error_msg,
                 })
         return result
     except asyncio.CancelledError:
@@ -142,7 +211,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
         clear_logging_context()
 
 
-async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict | None:
+async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extraction_id: str | None = None) -> dict | None:
     from app.services.job_match_orchestrator import run_job_match_analysis
 
     set_request_id(new_request_id())
@@ -156,7 +225,7 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict 
     })
 
     try:
-        result = await run_job_match_analysis(valid_job_id, user_id)
+        result = await run_job_match_analysis(valid_job_id, user_id, extraction_id=extraction_id)
         if result:
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
             await publish_ws_event({
@@ -213,7 +282,6 @@ class AnalysisWorkerSettings:
 
 
 async def get_extraction_pool() -> ArqRedis:
-    """Redis pool that enqueues onto the extraction queue."""
     return await create_pool(
         _redis_settings(),
         default_queue_name=EXTRACTION_QUEUE,
@@ -221,7 +289,6 @@ async def get_extraction_pool() -> ArqRedis:
 
 
 async def get_analysis_pool() -> ArqRedis:
-    """Redis pool that enqueues onto the analysis queue."""
     return await create_pool(
         _redis_settings(),
         default_queue_name=ANALYSIS_QUEUE,

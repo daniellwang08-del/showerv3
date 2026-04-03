@@ -62,37 +62,21 @@ class TestHTMLExtractor:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_extract_job_details(self, extractor):
+    async def test_extract_returns_plain_text(self, extractor):
         result = await extractor.extract("https://example.com", SAMPLE_JOB_HTML)
         assert result.success is True
-        assert result.structured_data is not None
-        assert "Software Engineer" in result.structured_data["title"]
+        assert result.raw_content is not None
+        assert "Software Engineer" in result.raw_content
+        assert "talented software engineer" in result.raw_content
+        assert "Python" in result.raw_content
 
     @pytest.mark.asyncio
-    async def test_extract_company(self, extractor):
+    async def test_extract_no_structured_data(self, extractor):
         result = await extractor.extract("https://example.com", SAMPLE_JOB_HTML)
         assert result.success is True
-        assert "TechCorp" in result.structured_data["company"]
-
-    @pytest.mark.asyncio
-    async def test_extract_location(self, extractor):
-        result = await extractor.extract("https://example.com", SAMPLE_JOB_HTML)
-        assert result.success is True
-        assert "New York" in result.structured_data["location"]
-
-    @pytest.mark.asyncio
-    async def test_extract_description(self, extractor):
-        result = await extractor.extract("https://example.com", SAMPLE_JOB_HTML)
-        assert result.success is True
-        assert "software engineer" in result.structured_data["description"].lower()
+        assert result.structured_data is None
 
     @pytest.mark.asyncio
     async def test_minimal_html_fails(self, extractor):
         result = await extractor.extract("https://example.com", MINIMAL_HTML)
         assert result.success is False
-
-    @pytest.mark.asyncio
-    async def test_confidence_score(self, extractor):
-        result = await extractor.extract("https://example.com", SAMPLE_JOB_HTML)
-        assert result.success is True
-        assert 0 < result.confidence <= 1.0

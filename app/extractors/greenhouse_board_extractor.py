@@ -1,12 +1,14 @@
 """
-Resolve job postings via Greenhouse Job Board API (no API key).
+Extract job content via Greenhouse Job Board API (no API key).
 
-Embedded career sites (e.g. company.com/careers/jobs/123?gh_jid=) often render a Greenhouse
-``job_app`` iframe (application form + EEO), not the JD. The public endpoint returns the real
-``content`` HTML for the role.
+Embedded career sites often render a Greenhouse ``job_app`` iframe (application
+form + EEO), not the JD.  The public endpoint returns the real ``content`` HTML.
+
+Returns plain text content for downstream LLM analysis.
 
 https://developers.greenhouse.io/job-board-integration.html
 """
+
 from __future__ import annotations
 
 import json
@@ -20,15 +22,14 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 GREENHOUSE_API_BASE = "https://boards-api.greenhouse.io/v1/boards"
-# boards.greenhouse.io/{token}/jobs/{id} — token in path
+
 _BOARD_JOBS_IN_PATH = re.compile(
     r"(?:boards|job-boards|jobs)\.greenhouse\.io/([^/\"'\s<>]+)/jobs/(\d+)",
     re.IGNORECASE,
 )
-# job id in path: .../jobs/7528... (company career sites)
 _JOBS_NUMERIC_PATH = re.compile(r"/jobs/(\d+)(?:\?|$|/)", re.IGNORECASE)
 _GH_JID_QUERY = re.compile(r"[?&]gh_jid=(\d+)", re.IGNORECASE)
-# Board token in embed / script references
+
 _TOKEN_FROM_HTML_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"job-boards\.greenhouse\.io/embed/[^\"'\s<>]*[?&]for=([^&\"'\s<>]+)",
@@ -51,7 +52,6 @@ _MAX_TOKEN_CANDIDATES = 4
 
 
 def parse_greenhouse_job_id_from_url(url: str) -> str | None:
-    """Numeric Greenhouse job id from path ``/jobs/{id}`` or ``gh_jid=``."""
     if not url:
         return None
     m = _BOARD_JOBS_IN_PATH.search(url)
@@ -65,7 +65,6 @@ def parse_greenhouse_job_id_from_url(url: str) -> str | None:
 
 
 def greenhouse_board_tokens_from_url(url: str) -> list[str]:
-    """Board token from a native Greenhouse jobs URL (path), if present."""
     if not url:
         return []
     m = _BOARD_JOBS_IN_PATH.search(url)
@@ -75,10 +74,8 @@ def greenhouse_board_tokens_from_url(url: str) -> list[str]:
 
 
 def extract_greenhouse_board_tokens_from_html(html: str | None) -> list[str]:
-    """Collect board token candidates from page HTML (embeds, links, API URLs)."""
     if not html:
         return []
-    # Do not require the substring "greenhouse" — CSR shells often omit it until embeds load.
     seen: list[str] = []
     for pat in _TOKEN_FROM_HTML_PATTERNS:
         for m in pat.finditer(html):
@@ -91,7 +88,6 @@ def extract_greenhouse_board_tokens_from_html(html: str | None) -> list[str]:
 
 
 def greenhouse_extraction_token_candidates(url: str, html: str | None) -> list[str]:
-    """Ordered unique board tokens: URL path first, then HTML-derived."""
     out: list[str] = []
     for t in greenhouse_board_tokens_from_url(url):
         if t not in out:
@@ -103,7 +99,7 @@ def greenhouse_extraction_token_candidates(url: str, html: str | None) -> list[s
 
 
 class GreenhouseBoardExtractor(BaseExtractor):
-    """Fetch a single job via Greenhouse boards API."""
+    """Fetch a single job via Greenhouse boards API, return plain text."""
 
     def __init__(self, http_service: HTTPService | None = None):
         self._http = http_service or HTTPService()
@@ -186,54 +182,58 @@ class GreenhouseBoardExtractor(BaseExtractor):
                 method=self.method,
                 error="Unexpected Greenhouse API response",
             )
-        structured = self._map_job(data, source_url)
-        if not structured:
+
+        plain_text = self._job_to_plain_text(data)
+        if not plain_text or len(plain_text) < 40:
             return ExtractionResult(
                 success=False,
                 method=self.method,
-                error="Could not map Greenhouse job to structured fields",
+                error="Insufficient content from Greenhouse API",
             )
+
         return ExtractionResult(
             success=True,
             method=self.method,
-            raw_content=text,
-            structured_data=structured,
-            confidence=0.97,
+            raw_content=plain_text,
+            structured_data=None,
         )
 
-    def _map_job(self, job: dict, source_url: str) -> dict | None:
-        title = (job.get("title") or "").strip()
-        raw_content = job.get("content") or ""
-        if isinstance(raw_content, str) and "<" in raw_content:
-            description = plain_text_from_fragment_html(raw_content)
-        else:
-            description = plain_text_from_fragment_html(str(raw_content)) if raw_content else ""
+    def _job_to_plain_text(self, job: dict) -> str:
+        """Convert Greenhouse API job object to readable plain text."""
+        parts: list[str] = []
 
-        if not title or len(description or "") < 40:
-            return None
+        title = (job.get("title") or "").strip()
+        if title:
+            parts.append(f"Title: {title}")
 
         company = job.get("company_name")
-        if isinstance(company, str):
-            company = company.strip() or None
-        else:
-            company = None
+        if isinstance(company, str) and company.strip():
+            parts.append(f"Company: {company.strip()}")
 
         loc = job.get("location")
-        location: str | None = None
         if isinstance(loc, dict):
-            location = (loc.get("name") or "").strip() or None
-        elif isinstance(loc, str):
-            location = loc.strip() or None
+            loc_name = (loc.get("name") or "").strip()
+            if loc_name:
+                parts.append(f"Location: {loc_name}")
+        elif isinstance(loc, str) and loc.strip():
+            parts.append(f"Location: {loc.strip()}")
 
-        absolute_url = job.get("absolute_url") or source_url
+        departments = job.get("departments") or []
+        if isinstance(departments, list):
+            dept_names = [d.get("name") for d in departments if isinstance(d, dict) and d.get("name")]
+            if dept_names:
+                parts.append(f"Department: {', '.join(dept_names)}")
 
-        return {
-            "title": title,
-            "company": company,
-            "location": location,
-            "description": description,
-            "employment_type": None,
-            "salary_range": None,
-            "raw_html": str(raw_content) if raw_content else "",
-            "raw_metadata": {"source": "greenhouse_board_api", "absolute_url": absolute_url},
-        }
+        offices = job.get("offices") or []
+        if isinstance(offices, list):
+            office_names = [o.get("name") for o in offices if isinstance(o, dict) and o.get("name")]
+            if office_names:
+                parts.append(f"Office: {', '.join(office_names)}")
+
+        raw_content = job.get("content") or ""
+        if isinstance(raw_content, str) and raw_content.strip():
+            description = plain_text_from_fragment_html(raw_content) if "<" in raw_content else raw_content.strip()
+            if description:
+                parts.append(f"\n{description}")
+
+        return "\n".join(parts)
