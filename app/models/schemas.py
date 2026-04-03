@@ -1,7 +1,24 @@
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationInfo, field_validator
 from datetime import datetime
 from enum import Enum
 from typing import Any
+
+
+def _truncate_optional_job_field(v: Any, max_len: int) -> str | None:
+    """Coerce to str, strip, empty -> None; truncate to max_len (matches DB VARCHAR limits on save)."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s[:max_len] if len(s) > max_len else s
+
+
+def _truncate_required_job_field(v: Any, max_len: int) -> str:
+    if v is None:
+        return ""
+    s = str(v).strip()
+    return s[:max_len] if len(s) > max_len else s
 
 
 class ExtractionMethod(str, Enum):
@@ -22,7 +39,8 @@ class JobDescriptionSchema(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     company: str | None = Field(default=None, max_length=500)
     location: str | None = Field(default=None, max_length=500)
-    employment_type: str | None = Field(default=None, max_length=100)
+    # Align with job_extractions.employment_type String(500)
+    employment_type: str | None = Field(default=None, max_length=500)
     salary_range: str | None = Field(default=None, max_length=200)
     description: str = Field(..., min_length=10)
     responsibilities: list[str] = Field(default_factory=list)
@@ -30,10 +48,41 @@ class JobDescriptionSchema(BaseModel):
     benefits: list[str] = Field(default_factory=list)
     posted_date: datetime | None = None
     application_deadline: datetime | None = None
-    remote_policy: str | None = None
-    experience_level: str | None = None
-    industry: str | None = None
+    remote_policy: str | None = Field(default=None, max_length=500)
+    experience_level: str | None = Field(default=None, max_length=500)
+    industry: str | None = Field(default=None, max_length=200)
     raw_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def truncate_title(cls, v: Any) -> str:
+        return _truncate_required_job_field(v, 500)
+
+    @field_validator(
+        "company",
+        "location",
+        "employment_type",
+        "salary_range",
+        "remote_policy",
+        "experience_level",
+        "industry",
+        mode="before",
+    )
+    @classmethod
+    def truncate_bounded_optional_strings(cls, v: Any, info: ValidationInfo) -> str | None:
+        limits: dict[str, int] = {
+            "company": 500,
+            "location": 500,
+            "employment_type": 500,
+            "salary_range": 200,
+            "remote_policy": 500,
+            "experience_level": 500,
+            "industry": 200,
+        }
+        field_name = info.field_name
+        if field_name not in limits:
+            return v
+        return _truncate_optional_job_field(v, limits[field_name])
 
 
 class ExtractionRequest(BaseModel):
@@ -142,6 +191,7 @@ class ValidJobResponse(BaseModel):
     scraped_at: datetime | None = None
     extraction_id: str | None = None
     extraction_status: str | None = None
+    confidence_score: float | None = None
     match_overall_score: int | None = None
     match_status: str | None = None
     click_count: int = 0

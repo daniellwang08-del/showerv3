@@ -1090,6 +1090,7 @@ async def get_valid_jobs(
             select(
                 ValidJob,
                 JobExtraction.status,
+                JobExtraction.confidence_score,
                 JobMatchResult.overall_score,
                 JobMatchInProgress.id.label("match_progress_id"),
                 ValidJobUserApplication.applied_at,
@@ -1134,6 +1135,7 @@ async def get_valid_jobs(
                 scraped_at=job.scraped_at,
                 extraction_id=job.extraction_id,
                 extraction_status=ext_status.value if ext_status else None,
+                confidence_score=confidence_score,
                 match_overall_score=match_score,
                 match_status="processing" if (match_progress_id and match_score is None) else None,
                 click_count=getattr(job, "click_count", 0) or 0,
@@ -1143,7 +1145,7 @@ async def get_valid_jobs(
                 created_at=job.created_at,
                 updated_at=job.updated_at,
             )
-            for job, ext_status, match_score, match_progress_id, applied_at, applied_by_name in rows
+            for job, ext_status, confidence_score, match_score, match_progress_id, applied_at, applied_by_name in rows
         ]
 
 
@@ -1186,6 +1188,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
             select(
                 ValidJob,
                 JobExtraction.status,
+                JobExtraction.confidence_score,
                 ValidJobUserApplication.applied_at,
                 ValidJobUserApplication.applied_by_name,
             )
@@ -1203,7 +1206,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
         if not row:
             logger.warning("get_valid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Valid job not found")
-        job, ext_status, applied_at, applied_by_name = row
+        job, ext_status, confidence_score, applied_at, applied_by_name = row
         return ValidJobResponse(
             id=job.id,
             source_url=job.source_url,
@@ -1220,6 +1223,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
             scraped_at=job.scraped_at,
             extraction_id=job.extraction_id,
             extraction_status=ext_status.value if ext_status else None,
+            confidence_score=confidence_score,
             click_count=getattr(job, "click_count", 0) or 0,
             applied_at=applied_at,
             applied_by_name=applied_by_name,

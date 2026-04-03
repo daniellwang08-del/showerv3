@@ -256,19 +256,77 @@ class BrowserExtractor(BaseExtractor):
             )
 
     async def _wait_for_content(self, page: Page) -> None:
-        selectors = [
+        # Prefer actual job-body containers; do not gate readiness on title-only nodes like h1.
+        content_selectors = [
+            "[data-automation='jobDescription']",
+            ".job-description",
+            "section.job-description",
+            "div.job-content",
             "article",
             "main",
-            ".job-description",
-            "[data-automation='jobDescription']",
-            "h1",
         ]
 
-        for selector in selectors:
+        # 1) Wait for at least one likely content container.
+        found_selector: str | None = None
+        for selector in content_selectors:
             try:
-                await page.wait_for_selector(selector, timeout=5000)
-                return
+                await page.wait_for_selector(selector, timeout=4000, state="attached")
+                found_selector = selector
+                break
             except Exception:
                 continue
 
-        await asyncio.sleep(2)
+        # 2) Give SPA pages a chance to complete post-mount requests.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=4000)
+        except Exception:
+            # Many pages keep analytics/websocket traffic open; best-effort only.
+            pass
+
+        # 3) Wait until text is substantial and stable to avoid early shell snapshots.
+        # Confidence and downstream parsing quality depend on this page snapshot quality.
+        min_chars = 700
+        stable_rounds_needed = 2
+        sample_interval_s = 0.6
+        max_wait_s = 12.0
+
+        observed_last = -1
+        stable_rounds = 0
+        elapsed = 0.0
+
+        target_selector = found_selector or "main, article, [data-automation='jobDescription'], .job-description, body"
+        while elapsed < max_wait_s:
+            try:
+                text_len = await page.evaluate(
+                    """(sel) => {
+                        const root = document.querySelector(sel) || document.body;
+                        const txt = (root && root.innerText) ? root.innerText : '';
+                        return txt.trim().length;
+                    }""",
+                    target_selector,
+                )
+            except Exception:
+                text_len = 0
+
+            if text_len >= min_chars:
+                if text_len == observed_last:
+                    stable_rounds += 1
+                else:
+                    stable_rounds = 0
+                if stable_rounds >= stable_rounds_needed:
+                    logger.debug(
+                        "browser_content_ready_stable",
+                        selector=target_selector,
+                        text_len=text_len,
+                    )
+                    return
+            observed_last = text_len
+            await asyncio.sleep(sample_interval_s)
+            elapsed += sample_interval_s
+
+        logger.debug(
+            "browser_content_ready_timeout_fallback",
+            selector=target_selector,
+            last_text_len=max(0, observed_last),
+            waited_seconds=round(elapsed, 1),
+        )

@@ -13,7 +13,7 @@ EXTRACTION_PROMPT = """Extract job posting information from the following conten
 - company: Company name (string or null)
 - location: Job location (string or null)
 - employment_type: Full-time, Part-time, Contract, etc. (string or null)
-- salary_range: Salary information if mentioned (string or null)
+- salary_range: Salary information if mentioned (string or null). Prefer one concise range or short phrase; avoid pasting long multi-state tables.
 - description: Full job description text (required, string)
 - responsibilities: List of job responsibilities (array of strings)
 - requirements: List of job requirements/qualifications (array of strings)

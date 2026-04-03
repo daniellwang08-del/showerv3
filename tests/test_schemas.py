@@ -64,6 +64,17 @@ class TestJobDescriptionSchema:
         with pytest.raises(ValidationError):
             JobDescriptionSchema(title="Valid Title", description="Short")
 
+    def test_salary_range_truncated_to_schema_limit(self):
+        long_salary = "State of California: $150k; D.C.: $195,000 - $286,000; " + ("x" * 300)
+        job = JobDescriptionSchema(
+            title="Engineer",
+            description="Ten chars min desc here.",
+            salary_range=long_salary,
+        )
+        assert job.salary_range is not None
+        assert len(job.salary_range) == 200
+        assert job.salary_range.startswith("State of California")
+
 
 class TestEnums:
     def test_extraction_methods(self):

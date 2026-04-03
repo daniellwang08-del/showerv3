@@ -19,6 +19,7 @@ export type SubmittedUrlItem = {
   scraped_at_ms?: number;
   extraction_id?: string | null;
   extraction_status?: ExtractionStatusLabel | null;
+  confidence_score?: number | null;
   match_overall_score?: number | null;
   match_status?: string | null;
   click_count?: number;
