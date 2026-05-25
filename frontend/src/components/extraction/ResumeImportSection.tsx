@@ -124,11 +124,11 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, disab
 
   return (
     <>
-      <div className="glass-panel rounded-2xl border border-indigo-200/50 bg-gradient-to-br from-white/90 to-indigo-50/40 p-5 shadow-sm md:p-6">
+      <div className="h-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Import from résumé</h2>
-            <p className="mt-1 max-w-xl text-sm text-slate-600">
+            <p className="mt-1 text-sm text-slate-600">
               Upload a <strong>PDF</strong> (analyzed as page images) or <strong>DOCX</strong> (text). We use AI to map
               fields to your profile. Empty fields are filled automatically. Replacing existing data requires your
               confirmation.
@@ -172,7 +172,7 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, disab
               aria-modal="true"
               aria-labelledby="resume-import-title"
             >
-              <div className="glass-panel my-auto max-h-[min(90dvh,90vh)] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200/80 bg-white p-6 shadow-2xl ring-1 ring-slate-200/60">
+              <div className="my-auto max-h-[min(90dvh,90vh)] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
             <div className="flex items-start gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
                 <ShieldCheck className="h-6 w-6" />

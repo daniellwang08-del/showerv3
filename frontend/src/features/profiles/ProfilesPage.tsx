@@ -18,7 +18,7 @@ export function ProfilesPage({ onBack, onLogout, userEmail, userName }: Props) {
   }, []);
 
   return (
-    <div className="app-surface flex h-[100dvh] flex-col overflow-hidden text-slate-900">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-50 text-slate-900">
       <Header
         onToggleDrawer={() => setDrawerOpen((s) => !s)}
         onLogout={onLogout}
@@ -36,7 +36,7 @@ export function ProfilesPage({ onBack, onLogout, userEmail, userName }: Props) {
           activeItem="profile"
         />
 
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-gradient-to-b from-blue-50/35 via-white/40 to-white/80 md:from-blue-50/50">
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-50">
           <ProfilesManagementPage onBack={onBack} userEmail={userEmail} />
         </div>
       </div>

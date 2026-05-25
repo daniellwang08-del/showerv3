@@ -96,6 +96,52 @@ function applyAppliedPatch(
   return jobs.map((j) => (idSet.has(j.id) ? { ...j, ...patch } : j));
 }
 
+function snapshotKey(jobIds: string[]): string {
+  return [...jobIds].sort().join(',');
+}
+
+const _appliedRevertSnapshots = new Map<string, Map<string, AppliedSnapshot>>();
+
+function mergeJobRowFromRefresh(local: DashboardJob, fresh: DashboardJob, now: number): DashboardJob {
+  let merged = fresh;
+  const guardedAt = _rerunAt.get(fresh.id);
+  if (guardedAt && now - guardedAt < GUARD_MS) {
+    const localRnk = statusRank(local.extraction_status);
+    const freshRnk = statusRank(fresh.extraction_status);
+    if (localRnk > freshRnk) {
+      merged = {
+        ...fresh,
+        extraction_status: local.extraction_status,
+        extraction_id: local.extraction_id ?? fresh.extraction_id,
+      };
+    }
+  }
+  return mergeAppliedFromLocal(local, merged, now);
+}
+
+/** Keep the user's current row order during silent refresh (marking applied must not jump rows). */
+function mergeRefreshPreservingOrder(
+  localJobs: DashboardJob[],
+  freshItems: DashboardJob[],
+  now: number,
+): DashboardJob[] {
+  const freshById = new Map(freshItems.map((j) => [j.id, j]));
+  const merged: DashboardJob[] = [];
+
+  for (const local of localJobs) {
+    const fresh = freshById.get(local.id);
+    if (!fresh) continue;
+    merged.push(mergeJobRowFromRefresh(local, fresh, now));
+    freshById.delete(local.id);
+  }
+
+  for (const fresh of freshItems) {
+    if (freshById.has(fresh.id)) merged.push(fresh);
+  }
+
+  return merged;
+}
+
 // STATUS_RANK is keyed on lowercase values.  Always call .toLowerCase() before
 // looking up so we tolerate the backend returning the PostgreSQL ENUM labels in
 // their original uppercase form (PENDING, PROCESSING, EXTRACTED, COMPLETED).
@@ -142,6 +188,8 @@ interface ScraperState {
   deleteJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
   batchDeleteJobs: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   batchRerunJobs: (jobIds: string[]) => Promise<{ ok: boolean; partial?: boolean; message: string }>;
+  /** Instant UI update — call synchronously (e.g. inside flushSync) before persist. */
+  optimisticMarkJobsApplied: (jobIds: string[], applied: boolean) => void;
   markJobsApplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   markJobsUnapplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
 
@@ -182,7 +230,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   sourceFilter: '',
   searchQuery: '',
   remoteOnly: false,
-  sortField: 'match_score',
+  sortField: 'created_at',
   sortOrder: 'desc',
 
   loadJobs: async () => {
@@ -221,24 +269,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
       const localJobs = get().jobs;
       const freshIds = new Set(result.items.map((j) => j.id));
 
-      const mergedJobs = result.items.map((fresh) => {
-        const local = localJobs.find((j) => j.id === fresh.id);
-        if (!local) return fresh;
-        let merged = fresh;
-        const guardedAt = _rerunAt.get(fresh.id);
-        if (guardedAt && now - guardedAt < GUARD_MS) {
-          const localRnk = statusRank(local.extraction_status);
-          const freshRnk = statusRank(fresh.extraction_status);
-          if (localRnk > freshRnk) {
-            merged = {
-              ...fresh,
-              extraction_status: local.extraction_status,
-              extraction_id: local.extraction_id ?? fresh.extraction_id,
-            };
-          }
-        }
-        return mergeAppliedFromLocal(local, merged, now);
-      });
+      const mergedJobs = mergeRefreshPreservingOrder(localJobs, result.items, now);
 
       const preserved = localJobs.filter((local) => {
         if (freshIds.has(local.id)) return false;
@@ -413,59 +444,24 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     }
   },
 
-  markJobsApplied: async (jobIds: string[]) => {
+  optimisticMarkJobsApplied: (jobIds, applied) => {
     const unique = [...new Set(jobIds.filter(Boolean))];
-    if (unique.length === 0) {
-      return { ok: false, message: 'No jobs to mark as applied.' };
-    }
+    if (unique.length === 0) return;
 
     const idSet = new Set(unique);
-    const snapshot = snapshotAppliedFields(get().jobs, idSet);
-    const optimisticAt = new Date().toISOString();
+    const key = snapshotKey(unique);
+    _appliedRevertSnapshots.set(key, snapshotAppliedFields(get().jobs, idSet));
 
-    touchAppliedGuard(unique, 'applied');
-    set({
-      jobs: applyAppliedPatch(get().jobs, idSet, {
-        applied_at: optimisticAt,
-        applied_by_name: null,
-      }),
-    });
-
-    try {
-      const { data } = await apiClient.post<{
-        marked: number;
-        applied_by_name: string;
-        applied_at?: string;
-      }>('/jobs/valid/applied/batch', { job_ids: unique });
-      const appliedAt = data.applied_at ?? optimisticAt;
-      const label = data.applied_by_name?.trim() ?? '';
+    if (applied) {
       touchAppliedGuard(unique, 'applied');
       set({
         jobs: applyAppliedPatch(get().jobs, idSet, {
-          applied_at: appliedAt,
-          applied_by_name: label || null,
+          applied_at: new Date().toISOString(),
+          applied_by_name: null,
         }),
       });
-      const n = data.marked ?? unique.length;
-      return {
-        ok: true,
-        message: `Marked ${n} job${n === 1 ? '' : 's'} as applied.`,
-      };
-    } catch (err) {
-      clearAppliedGuard(unique);
-      set({ jobs: restoreAppliedFields(get().jobs, snapshot, idSet) });
-      return { ok: false, message: extractErrorMessage(err, 'Failed to mark as applied.') };
+      return;
     }
-  },
-
-  markJobsUnapplied: async (jobIds: string[]) => {
-    const unique = [...new Set(jobIds.filter(Boolean))];
-    if (unique.length === 0) {
-      return { ok: false, message: 'No jobs to unmark.' };
-    }
-
-    const idSet = new Set(unique);
-    const snapshot = snapshotAppliedFields(get().jobs, idSet);
 
     touchAppliedGuard(unique, 'unapplied');
     set({
@@ -474,21 +470,84 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         applied_by_name: null,
       }),
     });
+  },
+
+  markJobsApplied: async (jobIds) => {
+    const unique = [...new Set(jobIds.filter(Boolean))];
+    if (unique.length === 0) {
+      return { ok: false, message: 'No jobs to mark as applied.' };
+    }
+
+    const idSet = new Set(unique);
+    const key = snapshotKey(unique);
+    const snapshot = _appliedRevertSnapshots.get(key);
+
+    try {
+      const { data } = await apiClient.post<{
+        marked: number;
+        applied_by_name: string;
+        applied_at?: string;
+      }>('/jobs/valid/applied/batch', { job_ids: unique });
+
+      _appliedRevertSnapshots.delete(key);
+      touchAppliedGuard(unique, 'applied');
+
+      const label = data.applied_by_name?.trim() ?? '';
+      if (label) {
+        set((state) => ({
+          jobs: state.jobs.map((j) => {
+            if (!idSet.has(j.id)) return j;
+            if (j.applied_by_name === label) return j;
+            return { ...j, applied_by_name: label };
+          }),
+        }));
+      }
+
+      const n = data.marked ?? unique.length;
+      return {
+        ok: true,
+        message: `Marked ${n} job${n === 1 ? '' : 's'} as applied.`,
+      };
+    } catch (err) {
+      _appliedRevertSnapshots.delete(key);
+      clearAppliedGuard(unique);
+      if (snapshot) {
+        set({ jobs: restoreAppliedFields(get().jobs, snapshot, idSet) });
+      }
+      return { ok: false, message: extractErrorMessage(err, 'Failed to mark as applied.') };
+    }
+  },
+
+  markJobsUnapplied: async (jobIds) => {
+    const unique = [...new Set(jobIds.filter(Boolean))];
+    if (unique.length === 0) {
+      return { ok: false, message: 'No jobs to unmark.' };
+    }
+
+    const idSet = new Set(unique);
+    const key = snapshotKey(unique);
+    const snapshot = _appliedRevertSnapshots.get(key);
 
     try {
       const { data } = await apiClient.post<{ cleared: number }>(
         '/jobs/valid/unapplied/batch',
         { job_ids: unique },
       );
+
+      _appliedRevertSnapshots.delete(key);
       touchAppliedGuard(unique, 'unapplied');
+
       const n = data.cleared ?? unique.length;
       return {
         ok: true,
         message: `Unmarked ${n} job${n === 1 ? '' : 's'}.`,
       };
     } catch (err) {
+      _appliedRevertSnapshots.delete(key);
       clearAppliedGuard(unique);
-      set({ jobs: restoreAppliedFields(get().jobs, snapshot, idSet) });
+      if (snapshot) {
+        set({ jobs: restoreAppliedFields(get().jobs, snapshot, idSet) });
+      }
       return { ok: false, message: extractErrorMessage(err, 'Failed to unmark as applied.') };
     }
   },

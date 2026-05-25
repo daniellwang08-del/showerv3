@@ -219,8 +219,8 @@ type SectionProps = {
   icon: ComponentType<{ className?: string }>;
   title: string;
   hint?: string;
-  delayMs: number;
   sectionId: SectionId;
+  layoutClassName?: string;
   isEditing: boolean;
   onEdit: () => void;
   onCancel: () => void;
@@ -234,7 +234,7 @@ function ProfileSection({
   icon: Icon,
   title,
   hint,
-  delayMs,
+  layoutClassName,
   isEditing,
   onEdit,
   onCancel,
@@ -246,10 +246,7 @@ function ProfileSection({
   const btnBase =
     'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition focus:outline-none focus:ring-2 focus:ring-blue-300';
   return (
-    <section
-      className="glass-panel animate-profile-section rounded-2xl p-5 md:p-6"
-      style={{ animationDelay: `${delayMs}ms` }}
-    >
+    <section className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6 ${layoutClassName ?? ''}`}>
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500/15 to-indigo-500/10 text-blue-600 ring-1 ring-blue-200/70 shadow-sm">
@@ -627,12 +624,12 @@ export function ProfileForm({ profile, onSubmit }: Props) {
     'inline-flex shrink-0 items-center justify-center rounded-lg p-2.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 hover:shadow-sm';
 
   return (
-    <div className="space-y-5 pb-10">
+    <div className="grid gap-5 pb-10 xl:grid-cols-2">
       <ProfileSection
+        layoutClassName="h-full"
         icon={User}
         title="Name, title & contact"
         hint="Legal name as it should appear, your professional headline, and channels recruiters use."
-        delayMs={0}
         sectionId="contact"
         isEditing={sectionEditing.contact}
         onEdit={() => setSectionEditing((s) => ({ ...s, contact: true }))}
@@ -649,32 +646,36 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                 )}
               </p>
             </div>
-            <dl className="grid gap-3 border-t border-slate-200/60 pt-4 sm:grid-cols-2">
-            <div>
-              <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Title</dt>
-              <dd className="mt-1 font-medium text-slate-900">{form.title.trim() || '—'}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Email</dt>
-              <dd className="mt-1 break-all font-medium text-slate-900">{form.email.trim() || '—'}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Phone</dt>
-              <dd className="mt-1 font-medium text-slate-900">
-                {form.phone_country_code} {form.phone_number.trim() || '—'}
-              </dd>
-            </div>
-            <div className="sm:col-span-2">
-              <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">LinkedIn</dt>
-              <dd className="mt-1 break-all text-blue-700">{form.linkedin_url.trim() || '—'}</dd>
-            </div>
-            {form.github_url.trim() ? (
-              <div className="sm:col-span-2">
-                <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">GitHub</dt>
-                <dd className="mt-1 break-all text-slate-800">{form.github_url.trim()}</dd>
+            <dl className="grid gap-x-6 gap-y-4 border-t border-slate-200/60 pt-4 sm:grid-cols-2">
+              <div className="space-y-4">
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Title</dt>
+                  <dd className="mt-1 font-medium text-slate-900">{form.title.trim() || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">LinkedIn</dt>
+                  <dd className="mt-1 break-all text-blue-700">{form.linkedin_url.trim() || '—'}</dd>
+                </div>
+                {form.github_url.trim() ? (
+                  <div>
+                    <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">GitHub</dt>
+                    <dd className="mt-1 break-all text-slate-800">{form.github_url.trim()}</dd>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </dl>
+              <div className="space-y-4">
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Email</dt>
+                  <dd className="mt-1 break-all font-medium text-slate-900">{form.email.trim() || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Phone</dt>
+                  <dd className="mt-1 font-medium text-slate-900">
+                    {form.phone_country_code} {form.phone_number.trim() || '—'}
+                  </dd>
+                </div>
+              </div>
+            </dl>
           </div>
         }
       >
@@ -840,10 +841,10 @@ export function ProfileForm({ profile, onSubmit }: Props) {
       </ProfileSection>
 
       <ProfileSection
+        layoutClassName="h-full"
         icon={FileText}
         title="Profile summary"
         hint="Concise narrative the AI uses for role fit and narrative alignment."
-        delayMs={50}
         sectionId="summary"
         isEditing={sectionEditing.summary}
         onEdit={() => setSectionEditing((s) => ({ ...s, summary: true }))}
@@ -877,10 +878,10 @@ export function ProfileForm({ profile, onSubmit }: Props) {
       </ProfileSection>
 
       <ProfileSection
+        layoutClassName="xl:col-span-2"
         icon={Code2}
         title="Technical skills"
         hint="Group tools by category for clearer skill match signals."
-        delayMs={100}
         sectionId="skills"
         isEditing={sectionEditing.skills}
         onEdit={() => setSectionEditing((s) => ({ ...s, skills: true }))}
@@ -907,7 +908,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
         {form.technical_skills.map((t, i) => (
           <div
             key={i}
-            className="profile-nested-card mb-3 flex flex-wrap items-end gap-3 rounded-xl p-4 last:mb-0 animate-content-in"
+            className="mb-3 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4 last:mb-0"
             style={{ animationDelay: `${Math.min(i * 35, 200)}ms` }}
           >
             <div className="min-w-[140px] flex-1">
@@ -956,10 +957,10 @@ export function ProfileForm({ profile, onSubmit }: Props) {
       </ProfileSection>
 
       <ProfileSection
+        layoutClassName="xl:col-span-2"
         icon={Briefcase}
         title="Work experience"
         hint="Most recent roles first help the model understand your trajectory."
-        delayMs={150}
         sectionId="work"
         isEditing={sectionEditing.work}
         onEdit={() => setSectionEditing((s) => ({ ...s, work: true }))}
@@ -994,7 +995,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
         {form.work_experience.map((w, i) => (
           <div
             key={i}
-            className="profile-nested-card mb-4 space-y-3 rounded-xl p-4 last:mb-0 animate-content-in"
+            className="mb-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4 last:mb-0"
             style={{ animationDelay: `${Math.min(i * 40, 240)}ms` }}
           >
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1121,10 +1122,10 @@ export function ProfileForm({ profile, onSubmit }: Props) {
       </ProfileSection>
 
       <ProfileSection
+        layoutClassName="xl:col-span-2"
         icon={GraduationCap}
         title="Education"
         hint="Degrees and programs you want the AI to weigh."
-        delayMs={200}
         sectionId="education"
         isEditing={sectionEditing.education}
         onEdit={() => setSectionEditing((s) => ({ ...s, education: true }))}
@@ -1156,7 +1157,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
         {form.education.map((ed, i) => (
           <div
             key={i}
-            className="profile-nested-card mb-4 space-y-3 rounded-xl p-4 last:mb-0 animate-content-in"
+            className="mb-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4 last:mb-0"
             style={{ animationDelay: `${Math.min(i * 40, 240)}ms` }}
           >
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1272,10 +1273,10 @@ export function ProfileForm({ profile, onSubmit }: Props) {
       </ProfileSection>
 
       <ProfileSection
+        layoutClassName="h-full"
         icon={Award}
         title="Certificates"
         hint="Licenses and certifications that differentiate you."
-        delayMs={250}
         sectionId="certificates"
         isEditing={sectionEditing.certificates}
         onEdit={() => setSectionEditing((s) => ({ ...s, certificates: true }))}
@@ -1299,7 +1300,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
         }
       >
         {form.certificates.map((c, i) => (
-          <div key={i} className="profile-nested-card mb-2 flex items-start gap-2 rounded-xl p-3 animate-content-in">
+          <div key={i} className="mb-2 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
             <div className="min-w-0 flex-1">
               <input
                 type="text"
@@ -1329,10 +1330,10 @@ export function ProfileForm({ profile, onSubmit }: Props) {
       </ProfileSection>
 
       <ProfileSection
+        layoutClassName="h-full"
         icon={ListTree}
         title="Extra"
         hint="Any other lines you want included in your candidate narrative."
-        delayMs={300}
         sectionId="extra"
         isEditing={sectionEditing.extra}
         onEdit={() => setSectionEditing((s) => ({ ...s, extra: true }))}
@@ -1356,7 +1357,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
         }
       >
         {form.extra.map((line, i) => (
-          <div key={i} className="profile-nested-card mb-2 flex items-start gap-2 rounded-xl p-3 animate-content-in">
+          <div key={i} className="mb-2 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
             <div className="min-w-0 flex-1">
               <input
                 type="text"

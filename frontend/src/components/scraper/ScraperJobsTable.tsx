@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import { createPortal } from 'react-dom';
 import {
   ExternalLink,
@@ -53,6 +54,26 @@ const SOURCE_BADGE_VARIANT: Record<string, 'default' | 'success' | 'warning' | '
   indeed: 'info',
   glassdoor: 'default',
 };
+
+type AppliedUiOverride = 'applied' | 'unapplied';
+
+function applyAppliedUiOverride(
+  job: DashboardJob,
+  overrides: Record<string, AppliedUiOverride>,
+): DashboardJob {
+  const mode = overrides[job.id];
+  if (mode === 'applied') {
+    return {
+      ...job,
+      applied_at: job.applied_at ?? new Date().toISOString(),
+      applied_by_name: job.applied_by_name,
+    };
+  }
+  if (mode === 'unapplied') {
+    return { ...job, applied_at: null, applied_by_name: null };
+  }
+  return job;
+}
 
 function relativeTime(dateStr: string | null): string {
   if (!dateStr) return '—';
@@ -602,6 +623,52 @@ export function ScraperJobsTable({
   const batchRerunJobs   = useScraperStore((s) => s.batchRerunJobs);
   const markJobsApplied  = useScraperStore((s) => s.markJobsApplied);
   const markJobsUnapplied = useScraperStore((s) => s.markJobsUnapplied);
+  const optimisticMarkJobsApplied = useScraperStore((s) => s.optimisticMarkJobsApplied);
+
+  // Instant applied UI — local state avoids unstable Zustand selectors (infinite re-render loop).
+  const [appliedUiOverride, setAppliedUiOverride] = useState<Record<string, AppliedUiOverride>>({});
+
+  const displayJobs = useMemo(
+    () => jobs.map((j) => applyAppliedUiOverride(j, appliedUiOverride)),
+    [jobs, appliedUiOverride],
+  );
+
+  const clearAppliedUiOverrides = useCallback((ids: string[]) => {
+    setAppliedUiOverride((prev) => {
+      if (ids.every((id) => prev[id] == null)) return prev;
+      const next = { ...prev };
+      ids.forEach((id) => { delete next[id]; });
+      return next;
+    });
+  }, []);
+
+  const setAppliedUiOverrides = useCallback((ids: string[], mode: AppliedUiOverride) => {
+    setAppliedUiOverride((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => { next[id] = mode; });
+      return next;
+    });
+  }, []);
+
+  // Drop local overrides once parent/store props reflect the persisted applied state.
+  useEffect(() => {
+    setAppliedUiOverride((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const next = { ...prev };
+      let changed = false;
+      for (const job of jobs) {
+        const mode = prev[job.id];
+        if (mode === 'applied' && dashboardJobMarkedApplied(job)) {
+          delete next[job.id];
+          changed = true;
+        } else if (mode === 'unapplied' && !dashboardJobMarkedApplied(job)) {
+          delete next[job.id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [jobs]);
 
   // ── Single-item action state ──────────────────────────────────────────────
   const [rerunningId,      setRerunningId]      = useState<string | null>(null);
@@ -712,10 +779,11 @@ export function ScraperJobsTable({
   // Context menu targets: if right-clicked job is in selection → all selected; else just that job
   const getContextTargets = useCallback((job: DashboardJob): DashboardJob[] => {
     if (selectedIds.has(job.id) && selectedIds.size > 1) {
-      return jobs.filter((j) => selectedIds.has(j.id));
+      return displayJobs.filter((j) => selectedIds.has(j.id));
     }
-    return [job];
-  }, [selectedIds, jobs]);
+    const row = displayJobs.find((j) => j.id === job.id) ?? job;
+    return [row];
+  }, [selectedIds, displayJobs]);
 
   // ── Action handlers ───────────────────────────────────────────────────────
   const handleRerun = async (job: DashboardJob) => {
@@ -749,13 +817,23 @@ export function ScraperJobsTable({
   const handleMarkApplied = useCallback((targets: DashboardJob[]) => {
     const ids = targets.map((t) => t.id);
     if (ids.length === 0) return;
-    const appliedAt = new Date().toISOString();
-    onAppliedStateChange?.(
-      ids.map((id) => ({ id, applied_at: appliedAt, applied_by_name: null })),
-    );
+
+    flushSync(() => {
+      setAppliedUiOverrides(ids, 'applied');
+      optimisticMarkJobsApplied(ids, true);
+      setSelectedIds(new Set());
+      setIsSelectingMode(false);
+      onAppliedStateChange?.(
+        ids.map((id) => ({ id, applied_at: new Date().toISOString(), applied_by_name: null })),
+      );
+    });
+
     void markJobsApplied(ids).then((res) => {
       showToast(res.ok ? 'success' : 'error', res.message);
       if (!res.ok) {
+        flushSync(() => {
+          clearAppliedUiOverrides(ids);
+        });
         onAppliedStateChange?.(
           targets.map((t) => ({
             id: t.id,
@@ -765,17 +843,35 @@ export function ScraperJobsTable({
         );
       }
     });
-  }, [markJobsApplied, onAppliedStateChange, showToast]);
+  }, [
+    markJobsApplied,
+    onAppliedStateChange,
+    optimisticMarkJobsApplied,
+    setAppliedUiOverrides,
+    clearAppliedUiOverrides,
+    showToast,
+  ]);
 
   const handleMarkUnapplied = useCallback((targets: DashboardJob[]) => {
     const ids = targets.map((t) => t.id);
     if (ids.length === 0) return;
-    onAppliedStateChange?.(
-      ids.map((id) => ({ id, applied_at: null, applied_by_name: null })),
-    );
+
+    flushSync(() => {
+      setAppliedUiOverrides(ids, 'unapplied');
+      optimisticMarkJobsApplied(ids, false);
+      setSelectedIds(new Set());
+      setIsSelectingMode(false);
+      onAppliedStateChange?.(
+        ids.map((id) => ({ id, applied_at: null, applied_by_name: null })),
+      );
+    });
+
     void markJobsUnapplied(ids).then((res) => {
       showToast(res.ok ? 'success' : 'error', res.message);
       if (!res.ok) {
+        flushSync(() => {
+          clearAppliedUiOverrides(ids);
+        });
         onAppliedStateChange?.(
           targets.map((t) => ({
             id: t.id,
@@ -785,7 +881,14 @@ export function ScraperJobsTable({
         );
       }
     });
-  }, [markJobsUnapplied, onAppliedStateChange, showToast]);
+  }, [
+    markJobsUnapplied,
+    onAppliedStateChange,
+    optimisticMarkJobsApplied,
+    setAppliedUiOverrides,
+    clearAppliedUiOverrides,
+    showToast,
+  ]);
 
   const handleDeleteConfirm = async () => {
     if (!deleting) return;
@@ -814,7 +917,7 @@ export function ScraperJobsTable({
   };
 
   // ── Bulk bar handlers ─────────────────────────────────────────────────────
-  const selectedJobs = jobs.filter((j) => selectedIds.has(j.id));
+  const selectedJobs = displayJobs.filter((j) => selectedIds.has(j.id));
 
   const handleBulkRerun = useCallback(() => void handleRerunMany(selectedJobs),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -940,8 +1043,9 @@ export function ScraperJobsTable({
 
             {/* ── Body ── */}
             <tbody className="divide-y divide-slate-100">
-              {jobs.map((job, idx) => {
+              {displayJobs.map((job, idx) => {
                 const isSelected      = selectedIds.has(job.id);
+                const isApplied       = dashboardJobMarkedApplied(job);
                 const isApiCallInFlight = rerunningId === job.id;
                 const pipelineStatus  = job.extraction_status;
                 const isPipelineRunning = pipelineStatus === 'pending' || pipelineStatus === 'processing' || pipelineStatus === 'extracted';
@@ -957,7 +1061,7 @@ export function ScraperJobsTable({
                     onClick={(e) => handleRowClick(e, job)}
                     onContextMenu={(e) => handleContextMenu(e, job)}
                     className={[
-                      `group ${ROW_H} transition-colors select-none`,
+                      `group ${ROW_H} select-none`,
                       dashboardJobRowSurfaceClass(job, { isSelected }),
                       isSelectingMode ? 'cursor-crosshair' : 'cursor-pointer',
                     ].join(' ')}
@@ -985,17 +1089,28 @@ export function ScraperJobsTable({
 
                     {/* Title */}
                     <td className={CELL}>
-                      <a
-                        href={job.source_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="inline-flex max-w-full items-center gap-1 text-blue-600 hover:text-blue-800 font-medium leading-snug"
-                        title={job.title ?? undefined}
-                      >
-                        <span className="truncate">{job.title || 'Untitled'}</span>
-                        <ExternalLink size={11} className="shrink-0 opacity-60" />
-                      </a>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <a
+                          href={job.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex min-w-0 flex-1 items-center gap-1 text-blue-600 hover:text-blue-800 font-medium leading-snug"
+                          title={job.title ?? undefined}
+                        >
+                          <span className="truncate">{job.title || 'Untitled'}</span>
+                          <ExternalLink size={11} className="shrink-0 opacity-60" />
+                        </a>
+                        {isApplied && (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                            title="Marked as applied"
+                          >
+                            <ClipboardCheck size={10} />
+                            Applied
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Company */}

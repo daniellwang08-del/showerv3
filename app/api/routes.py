@@ -1120,7 +1120,7 @@ async def extract_job_urls_from_attachments(
 async def get_dashboard_jobs(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
-    sort: str = Query("match_score"),
+    sort: str = Query("created_at"),
     order: str = Query("desc"),
     q: str | None = Query(None),
     source: str | None = Query(None),
@@ -1140,18 +1140,16 @@ async def get_dashboard_jobs(
         "updated_at": Job.updated_at,
         "match_score": JobMatchResult.overall_score,
     }
-    sort_col = SORT_COLUMNS.get(sort, JobMatchResult.overall_score)
+    sort_col = SORT_COLUMNS.get(sort, Job.created_at)
     if order == "asc":
         sort_expr = nullslast(sort_col.asc())
     else:
         sort_expr = nullslast(sort_col.desc())
 
-    # Unapplied jobs first, then chosen sort, then recency tie-breaker.
-    order_clauses = [
-        ValidJobUserApplication.applied_at.is_(None).desc(),
-        sort_expr,
-        Job.created_at.desc(),
-    ]
+    order_clauses = [sort_expr]
+    if sort != "created_at":
+        order_clauses.append(Job.created_at.desc())
+    order_clauses.append(Job.id.desc())
 
     async with get_session() as session:
         base_filter = [

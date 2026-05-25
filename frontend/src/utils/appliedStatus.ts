@@ -22,11 +22,15 @@ export function dashboardJobRowSurfaceClass(
   const isSelected = opts.isSelected ?? false;
   const isApplied = dashboardJobMarkedApplied(job);
 
-  if (isSelected) {
-    return 'bg-blue-50 border-l-[3px] border-l-blue-500';
+  // Applied must remain visible even when the row is selected (bulk actions).
+  if (isApplied && isSelected) {
+    return 'bg-sky-50 border-l-[3px] border-l-sky-500 ring-1 ring-inset ring-sky-200/80';
   }
   if (isApplied) {
-    return 'bg-blue-50 border-l-[3px] border-l-sky-300 hover:bg-blue-100/60';
+    return 'bg-sky-50 border-l-[3px] border-l-sky-500';
+  }
+  if (isSelected) {
+    return 'bg-blue-50 border-l-[3px] border-l-blue-500';
   }
   return 'border-l-[3px] border-l-transparent hover:bg-blue-50/30';
 }
@@ -35,7 +39,9 @@ export function dashboardJobStickyCellClass(
   job: Pick<DashboardJob, 'applied_at' | 'applied_by_name'>,
   opts: { isSelected?: boolean } = {},
 ): string {
-  const highlighted =
-    (opts.isSelected ?? false) || dashboardJobMarkedApplied(job);
-  return highlighted ? '!bg-blue-50 group-hover:!bg-blue-50' : 'bg-white group-hover:bg-blue-50/30';
+  const isSelected = opts.isSelected ?? false;
+  const isApplied = dashboardJobMarkedApplied(job);
+  if (isApplied) return '!bg-sky-50 group-hover:!bg-sky-50';
+  if (isSelected) return '!bg-blue-50 group-hover:!bg-blue-50';
+  return 'bg-white group-hover:bg-blue-50/30';
 }
