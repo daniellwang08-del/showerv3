@@ -43,7 +43,7 @@ export const SideDrawer: FC<Props> = ({
           </button>
         </div>
 
-        <nav className="p-3 flex-1 overflow-auto">
+        <nav className="page-scroll-y flex-1 overflow-y-scroll p-3">
           <ul className="flex flex-col gap-1.5">
             {onGoDashboard && (
               <li>

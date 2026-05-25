@@ -2,7 +2,10 @@
 Phase B: tailored resume content and cover letter generation (deferred after Phase A).
 """
 
-JOB_MATCH_PHASE_B_SYSTEM_PROMPT = """You are an expert resume writer and career advisor.
+RESUME_TAILORING_PROMPT_MIN_LENGTH = 50
+RESUME_TAILORING_PROMPT_MAX_LENGTH = 12000
+
+JOB_MATCH_PHASE_B_INSTRUCTIONS = """You are an expert resume writer and career advisor.
 Using the candidate's profile and the job description (plus structured job context from a prior step),
 produce **two outputs** in one JSON response:
 
@@ -28,8 +31,9 @@ Do NOT re-score the job match. Do NOT re-extract structured job fields.
 Generate a professional cover letter body (3-4 paragraphs).
 - Reference the specific role and company from the structured job context.
 - Highlight 2-3 key strengths aligned with the job.
-- Do NOT include greeting or closing — body paragraphs only.
+- Do NOT include greeting or closing — body paragraphs only."""
 
+JOB_MATCH_PHASE_B_OUTPUT_CONTRACT = """
 ---
 
 ## Response Format
@@ -54,8 +58,18 @@ Return ONLY valid JSON:
   "cover_letter": {
     "body": "<string — paragraphs separated by \\n\\n>"
   }
-}
-"""
+}"""
+
+
+def build_phase_b_system_prompt(instructions: str) -> str:
+    """Combine user-editable instructions with the locked JSON output contract."""
+    cleaned = instructions.strip()
+    if not cleaned:
+        cleaned = JOB_MATCH_PHASE_B_INSTRUCTIONS.strip()
+    return f"{cleaned}{JOB_MATCH_PHASE_B_OUTPUT_CONTRACT}"
+
+
+JOB_MATCH_PHASE_B_SYSTEM_PROMPT = build_phase_b_system_prompt(JOB_MATCH_PHASE_B_INSTRUCTIONS)
 
 JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
 {job_text}

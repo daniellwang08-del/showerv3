@@ -144,7 +144,7 @@ export function ProfilesManagementPage({ onBack, userEmail }: Props) {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-5 py-5">
+      <div className="page-scroll-y min-h-0 flex-1 px-5 py-5">
         <div className="w-full space-y-8 pb-8">
           {/* Row 1 — overview + import */}
           <section className="space-y-4" aria-label="Profile overview">

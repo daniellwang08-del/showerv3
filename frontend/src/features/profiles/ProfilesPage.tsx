@@ -18,7 +18,7 @@ export function ProfilesPage({ onBack, onLogout, userEmail, userName }: Props) {
   }, []);
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-50 text-slate-900">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
       <Header
         onToggleDrawer={() => setDrawerOpen((s) => !s)}
         onLogout={onLogout}

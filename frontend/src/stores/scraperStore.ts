@@ -179,6 +179,8 @@ interface ScraperState {
   loadJobs: () => Promise<void>;
   /** Refresh job rows silently (no loading spinner) — used for background polling. */
   bgRefreshJobs: () => Promise<void>;
+  /** Reload dashboard from page 1 after manual job submit. */
+  refreshAfterJobSubmit: () => Promise<void>;
   loadStats: () => Promise<void>;
   loadSpiders: () => Promise<void>;
   checkSyncStatus: () => Promise<void>;
@@ -281,6 +283,12 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     } catch {
       /* silently ignore poll errors */
     }
+  },
+
+  refreshAfterJobSubmit: async () => {
+    set({ page: 1 });
+    await get().loadJobs();
+    void get().loadStats();
   },
 
   loadStats: async () => {

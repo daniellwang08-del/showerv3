@@ -15,6 +15,7 @@ import {
 } from '../utils/jobListPagination';
 import { runWithConcurrencyLimit } from '../utils/asyncPool';
 import type { AttachmentFlowStatus } from '../types/ui';
+import { useScraperStore } from './scraperStore';
 
 /** Extract a renderable error string from an Axios error (FastAPI 422 returns detail as an array of objects). */
 function extractErrorMessage(err: any, fallback: string): string {
@@ -28,6 +29,14 @@ function extractErrorMessage(err: any, fallback: string): string {
 }
 
 const ATTACHMENT_SUBMIT_CONCURRENCY = 30;
+
+async function syncDashboardAfterSubmit(): Promise<void> {
+  try {
+    await useScraperStore.getState().refreshAfterJobSubmit();
+  } catch {
+    // Dashboard refresh is best-effort; jobsStore lists still updated separately.
+  }
+}
 
 let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const REFRESH_DEBOUNCE_MS = 400;
@@ -353,6 +362,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
           set({ submitNotice: '' });
         }
         await get().refreshLists({ showLoading: false, reset: false });
+        await syncDashboardAfterSubmit();
       } else {
         set({ submitError: response.message || 'Error submitting job', submitNotice: '' });
       }
@@ -418,6 +428,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         },
       );
       await get().refreshLists({ showLoading: false, reset: false });
+      await syncDashboardAfterSubmit();
       if (warnings?.length) {
         set({
           submitNoticeKind: 'warning',

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  FileText,
   KeyRound,
   Loader2,
   RefreshCw,
@@ -16,18 +17,30 @@ import {
   saveDedupSettings,
   saveMinMatchScoreSettings,
   saveOpenAiSettings,
+  saveResumeTailoringPromptSettings,
   testOpenAiKey,
   previewMinMatchScore,
   applyMinMatchScore,
   type MinMatchScorePreview,
 } from '../api/settingsApi';
 import type { SettingsMode, UserSettings } from '../types/settings';
+import { RESUME_TAILORING_PROMPT_MIN_LENGTH } from '../types/settings';
+import { MarkdownPromptEditor, MarkdownPromptPreview } from '../components/settings/MarkdownPromptEditor';
+import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
 
 const DEDUP_SLIDER_MAX = 365;
 const DEDUP_PRESETS = [30, 60, 90, 180] as const;
 const MATCH_SCORE_PRESETS = [0, 40, 50, 60, 70, 80] as const;
+
+function resolveStoredPromptText(data: Pick<UserSettings, 'resume_tailoring_prompt_instructions_custom' | 'default_resume_tailoring_prompt_instructions'>) {
+  return (
+    data.resume_tailoring_prompt_instructions_custom ||
+    data.default_resume_tailoring_prompt_instructions ||
+    ''
+  );
+}
 
 function ModeToggle({
   value,
@@ -108,6 +121,13 @@ export function SettingsPage() {
   const [minScoreCheckMsg, setMinScoreCheckMsg] = useState('');
   const [minScoreApplying, setMinScoreApplying] = useState(false);
 
+  // Resume tailoring prompt section state
+  const [promptMode, setPromptMode] = useState<SettingsMode>('default');
+  const [promptText, setPromptText] = useState('');
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptSaveMsg, setPromptSaveMsg] = useState('');
+  const [promptSaveOk, setPromptSaveOk] = useState(false);
+
   const applySettings = useCallback((data: UserSettings) => {
     setSettings(data);
     setOpenaiMode(data.openai_key_mode);
@@ -115,6 +135,8 @@ export function SettingsPage() {
     setDedupDays(data.dedup_recycle_days_custom);
     setMinScoreMode(data.min_match_score_mode);
     setMinScore(data.min_match_score_custom);
+    setPromptMode(data.resume_tailoring_prompt_mode ?? 'default');
+    setPromptText(resolveStoredPromptText(data));
     setOpenaiKeyInput('');
     setOpenaiTestOk(null);
     setOpenaiTestMsg('');
@@ -159,6 +181,12 @@ export function SettingsPage() {
     return () => window.clearTimeout(t);
   }, [minScoreSaveOk]);
 
+  useEffect(() => {
+    if (!promptSaveOk) return;
+    const t = window.setTimeout(() => setPromptSaveOk(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [promptSaveOk]);
+
   const defaultDedup = settings?.default_dedup_recycle_days ?? 60;
   const defaultMinScore = settings?.default_min_match_score ?? 0;
   const savedOpenaiMode = settings?.openai_key_mode ?? 'default';
@@ -166,6 +194,16 @@ export function SettingsPage() {
   const savedDedupDays = settings?.dedup_recycle_days_custom ?? 60;
   const savedMinScoreMode = settings?.min_match_score_mode ?? 'default';
   const savedMinScore = settings?.min_match_score_custom ?? 0;
+  const savedPromptMode = settings?.resume_tailoring_prompt_mode ?? 'default';
+  const savedPromptText = resolveStoredPromptText({
+    resume_tailoring_prompt_instructions_custom:
+      settings?.resume_tailoring_prompt_instructions_custom ?? '',
+    default_resume_tailoring_prompt_instructions:
+      settings?.default_resume_tailoring_prompt_instructions ?? '',
+  });
+  const defaultPromptInstructions = settings?.default_resume_tailoring_prompt_instructions ?? '';
+  const promptMaxLength = settings?.resume_tailoring_prompt_max_length ?? 12000;
+  const safePromptText = promptText ?? '';
 
   const openaiKeyDirty = openaiKeyInput.trim().length > 0;
 
@@ -433,11 +471,69 @@ export function SettingsPage() {
     }
   };
 
+  const promptTrimmed = safePromptText.trim();
+  const savedPromptTextTrimmed = savedPromptText.trim();
+  const promptChanged =
+    promptMode !== savedPromptMode ||
+    (promptMode === 'custom' && promptTrimmed !== savedPromptTextTrimmed);
+  const promptValidLength =
+    promptTrimmed.length >= RESUME_TAILORING_PROMPT_MIN_LENGTH &&
+    promptTrimmed.length <= promptMaxLength;
+  const promptSaveEnabled =
+    promptMode === 'default'
+      ? savedPromptMode !== 'default'
+      : promptChanged && promptValidLength;
+
+  const handlePromptModeChange = (mode: SettingsMode) => {
+    setPromptMode(mode);
+    setPromptSaveMsg('');
+    if (mode === 'custom' && !promptTrimmed) {
+      setPromptText(defaultPromptInstructions);
+    }
+  };
+
+  const handleResetPrompt = () => {
+    setPromptText(defaultPromptInstructions);
+    setPromptSaveMsg('');
+  };
+
+  const handleSavePrompt = async () => {
+    if (!settings || !promptSaveEnabled) return;
+    setPromptSaving(true);
+    setPromptSaveMsg('');
+    try {
+      const data =
+        promptMode === 'default'
+          ? await saveResumeTailoringPromptSettings({ resume_tailoring_prompt_mode: 'default' })
+          : await saveResumeTailoringPromptSettings({
+              resume_tailoring_prompt_mode: 'custom',
+              resume_tailoring_prompt_custom: promptTrimmed,
+            });
+      applySettings(data);
+      setPromptSaveOk(true);
+      setPromptSaveMsg(
+        promptMode === 'default'
+          ? 'Using the built-in resume tailoring prompt for new generations.'
+          : 'Custom resume tailoring prompt saved. Rerun jobs to regenerate documents.',
+      );
+    } catch (err: unknown) {
+      setPromptSaveOk(false);
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setPromptSaveMsg(typeof msg === 'string' ? msg : 'Failed to save resume tailoring prompt.');
+    } finally {
+      setPromptSaving(false);
+    }
+  };
+
   const sliderValue = Math.min(dedupDays, DEDUP_SLIDER_MAX);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
-      <div className="mb-8">
+    <PageScrollArea>
+      <div className="w-full px-5 py-5">
+      <div className="mb-6">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
             <Settings2 size={20} />
@@ -445,7 +541,7 @@ export function SettingsPage() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
             <p className="text-sm text-slate-500">
-              OpenAI, company check cycle, and match score threshold are saved separately.
+              OpenAI, company check cycle, match score threshold, and resume tailoring prompt are saved separately.
             </p>
           </div>
         </div>
@@ -456,9 +552,9 @@ export function SettingsPage() {
       ) : loadError ? (
         <p className="text-sm text-rose-700">{loadError}</p>
       ) : (
-        <div className="space-y-6">
+        <div className="grid gap-5 xl:grid-cols-2">
           {/* OpenAI */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 text-white">
                 <KeyRound className="h-5 w-5" />
@@ -567,7 +663,7 @@ export function SettingsPage() {
           </section>
 
           {/* Dedup */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white">
                 <RefreshCw className="h-5 w-5" />
@@ -674,7 +770,7 @@ export function SettingsPage() {
           </section>
 
           {/* Min match score */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-rose-600 to-orange-600 text-white">
                 <Target className="h-5 w-5" />
@@ -852,8 +948,107 @@ export function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* Resume tailoring prompt */}
+          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-bold text-slate-900">Resume tailoring prompt</h2>
+                  <ModeToggle
+                    value={promptMode}
+                    onChange={handlePromptModeChange}
+                    disabled={promptSaving}
+                  />
+                </div>
+                <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                  Controls how AI writes tailored resume content and cover letter bodies during job analysis.
+                </p>
+
+                {promptMode === 'default' ? (
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                      Using the built-in resume tailoring instructions.
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Built-in instructions
+                      </p>
+                      <div className="mt-2">
+                        <MarkdownPromptPreview value={defaultPromptInstructions} />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <label htmlFor="resume-tailoring-prompt" className="text-xs font-semibold text-slate-700">
+                          Custom instructions (Markdown)
+                        </label>
+                        <span
+                          className={`text-xs tabular-nums ${
+                            promptValidLength ? 'text-slate-500' : 'text-rose-600'
+                          }`}
+                        >
+                          {promptTrimmed.length.toLocaleString()} / {promptMaxLength.toLocaleString()}
+                        </span>
+                      </div>
+                      <MarkdownPromptEditor
+                        id="resume-tailoring-prompt"
+                        value={safePromptText}
+                        maxLength={promptMaxLength}
+                        disabled={promptSaving}
+                        onChange={(next) => {
+                          setPromptText(next);
+                          setPromptSaveMsg('');
+                        }}
+                      />
+                      {!promptValidLength && promptTrimmed.length > 0 && (
+                        <p className="mt-2 text-xs text-rose-600">
+                          Prompt must be between {RESUME_TAILORING_PROMPT_MIN_LENGTH} and{' '}
+                          {promptMaxLength.toLocaleString()} characters.
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetPrompt}
+                      disabled={promptSaving}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Reset to built-in default
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSavePrompt()}
+                    disabled={!promptSaveEnabled || promptSaving}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {promptSaving ? 'Saving…' : 'Save resume prompt'}
+                  </button>
+                </div>
+
+                {promptMode === 'custom' && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Changes apply to future tailored resume and cover letter generations. Rerun a job to regenerate documents.
+                  </p>
+                )}
+
+                {promptSaveMsg && <SectionMessage ok={promptSaveOk} text={promptSaveMsg} />}
+              </div>
+            </div>
+          </section>
         </div>
       )}
-    </div>
+      </div>
+    </PageScrollArea>
   );
 }

@@ -845,6 +845,17 @@ def _build_response(extraction) -> ExtractionResponse:
     )
 
 
+async def _publish_job_submitted(user_id: str | None, job_id: str, url: str) -> None:
+    if not user_id:
+        return
+    await publish_ws_event({
+        "type": "job_submitted",
+        "user_id": user_id,
+        "job_id": job_id,
+        "url": url,
+    })
+
+
 @router.post("/jobs/submit", response_model=JobSubmissionResponse, dependencies=[Depends(get_current_user)])
 async def submit_job(
     request: JobSubmissionRequest,
@@ -942,6 +953,7 @@ async def submit_job(
             )
             await session.commit()
             logger.info("jobs_submit_existing_job_linked", job_id=existing_job.id, url=request.url)
+            await _publish_job_submitted(user_id, existing_job.id, request.url)
             return JobSubmissionResponse(
                 success=True,
                 job_id=existing_job.id,
@@ -1037,6 +1049,7 @@ async def submit_job(
                     )
 
         logger.info("jobs_submit_created", job_id=new_job.id, url=request.url, extraction_id=extraction.id)
+        await _publish_job_submitted(user_id, new_job.id, request.url)
         return JobSubmissionResponse(
             success=True,
             job_id=new_job.id,
@@ -2197,6 +2210,12 @@ class UserSettingsResponse(BaseModel):
     min_match_score: int
     min_match_score_custom: int
     default_min_match_score: int
+    resume_tailoring_prompt_mode: str
+    resume_tailoring_prompt_instructions: str
+    resume_tailoring_prompt_instructions_custom: str
+    default_resume_tailoring_prompt_instructions: str
+    resume_tailoring_output_contract: str
+    resume_tailoring_prompt_max_length: int
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -2207,6 +2226,8 @@ class UserSettingsUpdateRequest(BaseModel):
     dedup_recycle_days: int | None = Field(default=None, ge=1, le=3650)
     min_match_score_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     min_match_score: int | None = Field(default=None, ge=0, le=100)
+    resume_tailoring_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
+    resume_tailoring_prompt_custom: str | None = Field(default=None, max_length=12000)
 
 
 class OpenAiKeyTestRequest(BaseModel):
@@ -2421,6 +2442,8 @@ async def update_user_settings(
                 dedup_recycle_days=body.dedup_recycle_days,
                 min_match_score_mode=body.min_match_score_mode,
                 min_match_score=body.min_match_score,
+                resume_tailoring_prompt_mode=body.resume_tailoring_prompt_mode,
+                resume_tailoring_prompt_custom=body.resume_tailoring_prompt_custom,
             )
             await session.commit()
         except ValueError as e:

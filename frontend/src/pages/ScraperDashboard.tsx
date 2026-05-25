@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import { useScraperStore } from '../stores/scraperStore';
 import { useJobsStore } from '../stores/jobsStore';
 import { apiClient } from '../api/client';
+import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { ScraperStatsBar } from '../components/scraper/ScraperStatsBar';
 import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
 import { SyncButton } from '../components/scraper/SyncButton';
@@ -121,6 +122,7 @@ export function ScraperDashboard() {
   }, [startSync]);
 
   return (
+    <PageScrollArea alwaysShowScrollbar={false}>
     <div className="px-5 py-5 w-full space-y-5">
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
@@ -222,5 +224,6 @@ export function ScraperDashboard() {
       {/* ── Duplicates modal ─────────────────────────────────────────────── */}
       {dupOpen && <DuplicatesModal onClose={() => setDupOpen(false)} />}
     </div>
+    </PageScrollArea>
   );
 }

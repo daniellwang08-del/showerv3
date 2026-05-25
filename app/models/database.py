@@ -53,6 +53,10 @@ class User(Base):
     min_match_score_mode = Column(String(20), default="default", nullable=False, server_default="default")
     min_match_score = Column(Integer, default=0, nullable=False, server_default="0")
 
+    # Resume tailoring (Phase B): default uses built-in instructions; custom stores editable instructions.
+    resume_tailoring_prompt_mode = Column(String(20), default="default", nullable=False, server_default="default")
+    resume_tailoring_prompt_custom = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_users_email", "email"),
         Index("ix_users_is_active", "is_active"),

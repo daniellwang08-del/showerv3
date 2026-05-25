@@ -21,6 +21,8 @@ from app.prompts.job_match_phase_b_prompt import (
     JOB_MATCH_PHASE_B_USER_TEMPLATE,
 )
 from app.models.schemas import JobDescriptionSchema
+from app.storage.database import get_session
+from app.storage.user_repository import UserRepository
 
 try:
     from langfuse import observe  # type: ignore[import-unresolved]
@@ -346,8 +348,15 @@ async def generate_tailored_content_phase_b(
     phase_b_max = max(settings.openai_max_tokens, settings.phase_b_max_tokens)
     phase_b_max = min(phase_b_max, 32768)
 
+    if user_id:
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            system_prompt = await user_repo.get_effective_resume_tailoring_system_prompt(user_id)
+    else:
+        system_prompt = JOB_MATCH_PHASE_B_SYSTEM_PROMPT
+
     parsed = await _call_openai_json(
-        system_prompt=JOB_MATCH_PHASE_B_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         user_content=user_content,
         max_tokens=phase_b_max,
         observe_name="phase_b",

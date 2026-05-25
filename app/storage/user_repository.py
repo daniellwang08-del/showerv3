@@ -3,6 +3,13 @@ from sqlalchemy import select
 from app.models.database import User
 from app.services.auth_service import AuthService
 from app.core.config import get_settings
+from app.prompts.job_match_phase_b_prompt import (
+    JOB_MATCH_PHASE_B_INSTRUCTIONS,
+    JOB_MATCH_PHASE_B_OUTPUT_CONTRACT,
+    RESUME_TAILORING_PROMPT_MAX_LENGTH,
+    RESUME_TAILORING_PROMPT_MIN_LENGTH,
+    build_phase_b_system_prompt,
+)
 from app.utils.profile_converter import user_profile_to_openai_text
 from app.utils.secret_encryption import decrypt_secret, encrypt_secret, mask_api_key
 from app.core.logging import get_logger
@@ -184,6 +191,37 @@ class UserRepository:
             return self._clamp_min_match_score(getattr(user, "min_match_score", None))
         return settings.default_min_match_score
 
+    @staticmethod
+    def _validate_resume_tailoring_instructions(text: str) -> str:
+        cleaned = text.strip()
+        if len(cleaned) < RESUME_TAILORING_PROMPT_MIN_LENGTH:
+            raise ValueError(
+                f"Resume tailoring prompt must be at least {RESUME_TAILORING_PROMPT_MIN_LENGTH} characters"
+            )
+        if len(cleaned) > RESUME_TAILORING_PROMPT_MAX_LENGTH:
+            raise ValueError(
+                f"Resume tailoring prompt must be at most {RESUME_TAILORING_PROMPT_MAX_LENGTH:,} characters"
+            )
+        return cleaned
+
+    def _resume_tailoring_instructions_for_user(self, user: User | None) -> str:
+        mode = getattr(user, "resume_tailoring_prompt_mode", None) or "default" if user else "default"
+        if mode == "custom":
+            custom = (getattr(user, "resume_tailoring_prompt_custom", None) or "").strip()
+            if custom:
+                return custom
+        return JOB_MATCH_PHASE_B_INSTRUCTIONS.strip()
+
+    async def get_effective_resume_tailoring_system_prompt(self, user_id: str) -> str:
+        """Return Phase B system prompt (editable instructions + locked output contract)."""
+        user = await self.get_by_id(user_id)
+        instructions = self._resume_tailoring_instructions_for_user(user)
+        return build_phase_b_system_prompt(instructions)
+
+    async def get_effective_resume_tailoring_instructions(self, user_id: str) -> str:
+        user = await self.get_by_id(user_id)
+        return self._resume_tailoring_instructions_for_user(user)
+
     async def update_dedup_recycle_days(self, user_id: str, days: int) -> bool:
         """Update dedup_recycle_days (1–3650). Returns True on success."""
         days = self._clamp_dedup_days(days)
@@ -221,6 +259,9 @@ class UserRepository:
         effective_min_score = (
             custom_min_score if min_score_mode == "custom" else settings.default_min_match_score
         )
+        prompt_mode = getattr(user, "resume_tailoring_prompt_mode", None) or "default"
+        stored_custom_prompt = (getattr(user, "resume_tailoring_prompt_custom", None) or "").strip()
+        effective_instructions = self._resume_tailoring_instructions_for_user(user)
         return {
             "openai_key_mode": mode,
             "openai_key_configured": has_custom_key,
@@ -234,6 +275,12 @@ class UserRepository:
             "min_match_score": effective_min_score,
             "min_match_score_custom": custom_min_score,
             "default_min_match_score": settings.default_min_match_score,
+            "resume_tailoring_prompt_mode": prompt_mode,
+            "resume_tailoring_prompt_instructions": effective_instructions,
+            "resume_tailoring_prompt_instructions_custom": stored_custom_prompt,
+            "default_resume_tailoring_prompt_instructions": JOB_MATCH_PHASE_B_INSTRUCTIONS.strip(),
+            "resume_tailoring_output_contract": JOB_MATCH_PHASE_B_OUTPUT_CONTRACT.strip(),
+            "resume_tailoring_prompt_max_length": RESUME_TAILORING_PROMPT_MAX_LENGTH,
         }
 
     async def update_user_settings(
@@ -247,6 +294,8 @@ class UserRepository:
         dedup_recycle_days: int | None = None,
         min_match_score_mode: str | None = None,
         min_match_score: int | None = None,
+        resume_tailoring_prompt_mode: str | None = None,
+        resume_tailoring_prompt_custom: str | None = None,
     ) -> dict | None:
         user = await self.get_by_id(user_id)
         if not user:
@@ -286,6 +335,16 @@ class UserRepository:
         if min_match_score is not None:
             user.min_match_score = self._clamp_min_match_score(min_match_score)
             user.min_match_score_mode = "custom"
+
+        if resume_tailoring_prompt_mode is not None:
+            if resume_tailoring_prompt_mode not in ("default", "custom"):
+                raise ValueError("resume_tailoring_prompt_mode must be 'default' or 'custom'")
+            user.resume_tailoring_prompt_mode = resume_tailoring_prompt_mode
+
+        if resume_tailoring_prompt_custom is not None:
+            validated = self._validate_resume_tailoring_instructions(resume_tailoring_prompt_custom)
+            user.resume_tailoring_prompt_custom = validated
+            user.resume_tailoring_prompt_mode = "custom"
 
         await self.session.flush()
         logger.info("user_settings_updated", user_id=user_id)

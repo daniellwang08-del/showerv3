@@ -51,6 +51,11 @@ function App() {
       void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
     }
 
+    if (event.type === 'job_submitted') {
+      void useScraperStore.getState().refreshAfterJobSubmit();
+      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
+    }
+
     const pipelineEvents = [
       'extraction_completed',
       'extraction_failed',

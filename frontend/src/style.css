@@ -161,6 +161,56 @@ body {
 .timeline-scroll::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(59,130,246,0.45), rgba(37,99,235,0.55)); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
 .timeline-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(59,130,246,0.6), rgba(37,99,235,0.75)); background-clip: padding-box; }
 
+/* Long-form pages (Settings, Profile) — thin scrollbar, always reserved when using .page-scroll-y */
+.page-scroll-y,
+.page-scroll-y-auto {
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.42) rgba(241, 245, 249, 0.95);
+  scroll-behavior: smooth;
+}
+
+.page-scroll-y {
+  overflow-y: scroll;
+}
+
+.page-scroll-y-auto {
+  overflow-y: auto;
+}
+
+.page-scroll-y::-webkit-scrollbar,
+.page-scroll-y-auto::-webkit-scrollbar {
+  width: 6px;
+}
+
+.page-scroll-y::-webkit-scrollbar-track,
+.page-scroll-y-auto::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.95);
+  border-left: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+.page-scroll-y::-webkit-scrollbar-thumb,
+.page-scroll-y-auto::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.55), rgba(100, 116, 139, 0.7));
+  border-radius: 9999px;
+  border: 1px solid rgba(241, 245, 249, 0.85);
+  background-clip: padding-box;
+  min-height: 48px;
+}
+
+.page-scroll-y::-webkit-scrollbar-thumb:hover,
+.page-scroll-y-auto::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.72), rgba(71, 85, 105, 0.82));
+  background-clip: padding-box;
+}
+
+.page-scroll-y::-webkit-scrollbar-thumb:active,
+.page-scroll-y-auto::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, rgba(71, 85, 105, 0.82), rgba(51, 65, 85, 0.9));
+  background-clip: padding-box;
+}
+
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 
