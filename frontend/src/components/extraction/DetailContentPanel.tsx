@@ -336,7 +336,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
       </div>
       <div>
         <SectionLabel icon={FileText}>Description</SectionLabel>
-        <div className="mt-2 whitespace-pre-wrap rounded-xl border border-blue-200/60 bg-white/80 p-3 text-slate-800 shadow-inner backdrop-blur-sm">
+        <div className="mt-2 max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-xl border border-blue-200/60 bg-white/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner backdrop-blur-sm">
           {data.description}
         </div>
       </div>

@@ -78,8 +78,21 @@ Write in **clear prose** (about **2-5 sentences per gap**). Explicitly contrast 
 
 ## Task 2 — Structured Job Extraction
 
-From the **same job description**, extract clean structured posting data.
-Preserve meaning; do not invent facts. If a field is not present in the posting, use `null`.
+From the **same job description**, extract structured posting metadata and lists.
+Preserve meaning; do not invent facts. If a scalar field is not present in the posting, use `null`.
+
+### Description field (CRITICAL — full detail, professionally cleaned)
+`structured_job.description` must be a **complete, professionally formatted** version of the job posting body:
+- Include **all substantive content** from the source: role overview, responsibilities, requirements, qualifications, preferred skills, benefits, compensation notes, company/team context, EEO/legal, and application instructions when present.
+- **Do NOT summarize** into a short paragraph — preserve full detail and coverage from the posting.
+- **Clean and normalize** the text for professional reading:
+  - Remove page chrome and noise: navigation menus, breadcrumbs, "Jobs", "Now hiring", duplicate salary/location/type lines, posted-date UI, apply/share buttons, similar-job widgets, cookie banners, and other non-job content.
+  - Never start with metadata blobs (e.g. `Jobs$156k...RemoteSenior Engineer...1 month ago...`). Start with the actual job content.
+  - Use clear section headings on their own lines (e.g. `About the Company`, `What You'll Do`, `Requirements`, `Benefits`).
+  - Use `- ` bullet lines for lists; separate paragraphs with a blank line.
+  - Fix grammar, spacing, and punctuation (proper sentences, spaces after periods, no run-on UI text).
+- **Do not invent** facts, requirements, or benefits not supported by the source.
+- Put salary, location, employment type, and remote policy in their structured fields — do not repeat them as a noisy prefix inside `description`.
 
 **Location format**: Use "City, State" for US jobs (e.g. "San Francisco, CA"), "City, Country" for international jobs (e.g. "London, UK"). If city is unavailable, use state/region or country only. Never include street addresses, zip codes, or building names.
 
@@ -181,7 +194,7 @@ Return ONLY valid JSON with this exact top-level structure. No markdown, no extr
     "location": "<City, State/Country or null>",
     "employment_type": "<string or null>",
     "salary_range": "<$140k - $160k or null>",
-    "description": "<string - full job description text>",
+    "description": "<string — full, detailed, professionally cleaned job posting body>",
     "responsibilities": ["<string>", ...],
     "requirements": ["<string>", ...],
     "benefits": ["<string>", ...],

@@ -106,6 +106,45 @@ def _truncate(text: str, max_len: int, suffix: str = "...") -> str:
     return text[: max_len - len(suffix)] + suffix if len(text) > max_len else text
 
 
+def _truncate_job_text_preserve_layout(text: str, max_len: int, suffix: str = "...") -> str:
+    """Truncate job text for LLM context while keeping paragraph/list structure."""
+    if not text or len(text) <= max_len:
+        return text or ""
+    trimmed = text[: max_len - len(suffix)].rstrip()
+    return trimmed + suffix
+
+
+def _normalize_description_formatting(text: str) -> str:
+    """Light post-processing so stored descriptions read professionally."""
+    if not text:
+        return text
+    cleaned = text.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n[ \t]+", "\n", cleaned)
+    cleaned = re.sub(r"\.([A-Z])", r". \1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    lines = [ln.rstrip() for ln in cleaned.split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def _finalize_structured_job_description(
+    structured_job: JobDescriptionSchema | None,
+) -> JobDescriptionSchema | None:
+    """Normalize LLM-produced description formatting for display."""
+    if not structured_job:
+        return structured_job
+    description = _normalize_description_formatting(structured_job.description or "")
+    if not description:
+        return structured_job
+    if description == structured_job.description:
+        return structured_job
+    return structured_job.model_copy(update={"description": description})
+
+
 def _list_of_strings(value) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -284,7 +323,7 @@ async def analyze_job_match_phase_a(
     Returns (match_result_dict, structured_job_or_None, is_job_posting).
     """
     settings = get_settings()
-    job_truncated = _truncate(job_text, MAX_JOB_LENGTH)
+    job_truncated = _truncate_job_text_preserve_layout(job_text, MAX_JOB_LENGTH)
     profile_truncated = _truncate(profile_text, MAX_PROFILE_LENGTH)
 
     if not profile_truncated.strip():
@@ -313,6 +352,7 @@ async def analyze_job_match_phase_a(
     structured_section = parsed.get("structured_job")
     if structured_section and isinstance(structured_section, dict):
         structured_job = _parse_structured_job_section(structured_section)
+        structured_job = _finalize_structured_job_description(structured_job)
     else:
         logger.warning("structured_job_section_missing_from_phase_a_response")
 
@@ -333,7 +373,7 @@ async def generate_tailored_content_phase_b(
     Returns (tailored_resume_or_None, cover_letter_or_None).
     """
     settings = get_settings()
-    job_truncated = _truncate(job_text, MAX_JOB_LENGTH)
+    job_truncated = _truncate_job_text_preserve_layout(job_text, MAX_JOB_LENGTH)
     profile_truncated = _truncate(profile_text, MAX_PROFILE_LENGTH)
 
     if not profile_truncated.strip():

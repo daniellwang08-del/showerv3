@@ -293,7 +293,7 @@ class JobRepository:
         job.location = _truncate_for_db(job_data.location, 500) or job.location
         old_vj = (job.description or "").strip()
         new_vj = (job_data.description or "").strip()
-        if len(new_vj) > len(old_vj) or len(old_vj) < 300:
+        if new_vj and (len(new_vj) >= len(old_vj) or len(old_vj) < 300):
             job.description = sanitize_for_postgres_text(job_data.description)
         job.posted_date = job_data.posted_date or job.posted_date
         job.experience_level = _truncate_for_db(job_data.experience_level, 100) or job.experience_level
