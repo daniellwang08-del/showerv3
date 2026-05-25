@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -17,6 +18,12 @@ from app.core.config import get_settings
 logger = logging.getLogger("alembic.env")
 
 target_metadata = Base.metadata
+
+
+def _configure_windows_event_loop() -> None:
+    """asyncpg + asyncio.run on Windows needs SelectorEventLoop for clean shutdown."""
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 def get_url():
@@ -55,14 +62,16 @@ async def run_async_migrations() -> None:
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
+    try:
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+    finally:
+        await connectable.dispose()
 
 
 def run_migrations_online() -> None:
     logger.info("alembic_migrations_online_start")
+    _configure_windows_event_loop()
     asyncio.run(run_async_migrations())
     logger.info("alembic_migrations_online_complete")
 

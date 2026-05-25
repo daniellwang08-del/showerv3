@@ -15,13 +15,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client
+from app.core.openai_client import get_openai_client_for_user
+
+try:
+    from langfuse import observe
+except ImportError:
+    from functools import wraps
+    def observe(**_kw):  # noqa: E303
+        def _decorator(fn):
+            @wraps(fn)
+            async def _wrapper(*a, **k):
+                return await fn(*a, **k)
+            return _wrapper
+        return _decorator
 from app.models.database import (
     JobExtraction,
     JobMatchResult,
-    ValidJob,
+    Job,
     ValidJobUserApplication,
     JobMatchInProgress,
+    UserJobStatus,
 )
 from app.models.schemas import ExtractionStatus, JobSearchQuerySpec
 
@@ -30,7 +43,7 @@ logger = get_logger(__name__)
 SYSTEM_PROMPT = """You convert natural language job search requests into a precise JSON filter for a job database.
 
 The database stores job postings with the following searchable data:
-- valid_jobs: title, company, location, description, domain, source_url, experience_level, industry
+- jobs: title, company, location, description, domain, source_url, experience_level, industry
 - job_extractions (from scraped content): title, company, location, description, employment_type,
   salary_range, remote_policy, experience_level, industry, responsibilities[], requirements[], benefits[]
 - match analysis (AI job–profile fit): overall_score (0–100), summary, strengths[], gaps[], recommendation
@@ -117,8 +130,9 @@ def _spec_has_constraints(spec: JobSearchQuerySpec) -> bool:
     return False
 
 
-async def interpret_job_search_prompt(prompt: str) -> JobSearchQuerySpec:
-    client: AsyncOpenAI = get_openai_client()
+@observe(name="interpret_job_search_prompt")
+async def interpret_job_search_prompt(prompt: str, *, user_id: str | None = None) -> JobSearchQuerySpec:
+    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
     settings = get_settings()
 
     user_msg = f'User search request:\n"""{prompt.strip()}"""\n\nRespond with the JSON object only.'
@@ -210,31 +224,36 @@ def _build_search_query(
     """Build the core SELECT + WHERE for AI search. Set limit=None for unbounded (count queries)."""
 
     if select_columns is None:
-        select_columns = [ValidJob.id]
+        select_columns = [Job.id]
 
     stmt = (
         select(*select_columns)
-        .select_from(ValidJob)
-        .outerjoin(JobExtraction, ValidJob.extraction_id == JobExtraction.id)
+        .select_from(Job)
+        .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
         .outerjoin(
             JobMatchResult,
-            (JobMatchResult.valid_job_id == ValidJob.id) & (JobMatchResult.user_id == user_id),
+            (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
         )
         .outerjoin(
             ValidJobUserApplication,
-            (ValidJobUserApplication.valid_job_id == ValidJob.id)
+            (ValidJobUserApplication.job_id == Job.id)
             & (ValidJobUserApplication.user_id == user_id),
         )
         .outerjoin(
             JobMatchInProgress,
-            (JobMatchInProgress.valid_job_id == ValidJob.id) & (JobMatchInProgress.user_id == user_id),
+            (JobMatchInProgress.job_id == Job.id) & (JobMatchInProgress.user_id == user_id),
         )
-        .where(ValidJob.is_active == True)  # noqa: E712
+        .join(
+            UserJobStatus,
+            (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+        )
+        .where(Job.status == "active")
+        .where(UserJobStatus.status == "active")
     )
 
     if not _spec_has_constraints(spec):
         if limit is not None:
-            stmt = stmt.order_by(ValidJob.created_at.desc()).limit(limit).offset(offset)
+            stmt = stmt.order_by(Job.created_at.desc()).limit(limit).offset(offset)
         return stmt
 
     json_text_fields = [
@@ -250,9 +269,9 @@ def _build_search_query(
     ]
 
     text_fields = [
-        ValidJob.title, ValidJob.company, ValidJob.location,
-        ValidJob.description, ValidJob.domain, ValidJob.source_url,
-        ValidJob.experience_level, ValidJob.industry,
+        Job.title, Job.company, Job.location,
+        Job.description, Job.domain, Job.source_url,
+        Job.experience_level, Job.industry,
         JobExtraction.title, JobExtraction.company, JobExtraction.location,
         JobExtraction.description, JobExtraction.employment_type,
         JobExtraction.salary_range, JobExtraction.remote_policy,
@@ -294,37 +313,37 @@ def _build_search_query(
             stmt = stmt.where(clause)
 
     if spec.title_contains_any:
-        title_fields = [ValidJob.title, JobExtraction.title]
+        title_fields = [Job.title, JobExtraction.title]
         clause = _ilike_any_on_fields(title_fields, spec.title_contains_any)
         if clause is not None:
             stmt = stmt.where(clause)
 
     if spec.company_contains_any:
-        company_fields = [ValidJob.company, JobExtraction.company]
+        company_fields = [Job.company, JobExtraction.company]
         clause = _ilike_any_on_fields(company_fields, spec.company_contains_any)
         if clause is not None:
             stmt = stmt.where(clause)
 
     if spec.location_contains_any:
-        location_fields = [ValidJob.location, JobExtraction.location]
+        location_fields = [Job.location, JobExtraction.location]
         clause = _ilike_any_on_fields(location_fields, spec.location_contains_any)
         if clause is not None:
             stmt = stmt.where(clause)
 
     if spec.domain_contains_any:
-        domain_fields = [ValidJob.domain, ValidJob.source_url]
+        domain_fields = [Job.domain, Job.source_url]
         clause = _ilike_any_on_fields(domain_fields, spec.domain_contains_any)
         if clause is not None:
             stmt = stmt.where(clause)
 
     if spec.experience_level_any:
-        exp_fields = [ValidJob.experience_level, JobExtraction.experience_level]
+        exp_fields = [Job.experience_level, JobExtraction.experience_level]
         clause = _ilike_any_on_fields(exp_fields, spec.experience_level_any)
         if clause is not None:
             stmt = stmt.where(clause)
 
     if spec.industry_any:
-        ind_fields = [ValidJob.industry, JobExtraction.industry]
+        ind_fields = [Job.industry, JobExtraction.industry]
         clause = _ilike_any_on_fields(ind_fields, spec.industry_any)
         if clause is not None:
             stmt = stmt.where(clause)
@@ -332,7 +351,7 @@ def _build_search_query(
     if spec.remote_policy_any:
         remote_fields = [
             JobExtraction.remote_policy,
-            ValidJob.location,
+            Job.location,
             JobExtraction.location,
         ]
         clause = _ilike_any_on_fields(remote_fields, spec.remote_policy_any)
@@ -352,7 +371,7 @@ def _build_search_query(
             stmt = stmt.where(clause)
 
     if limit is not None:
-        stmt = stmt.order_by(ValidJob.created_at.desc()).limit(limit).offset(offset)
+        stmt = stmt.order_by(Job.created_at.desc()).limit(limit).offset(offset)
     return stmt
 
 
@@ -367,11 +386,11 @@ async def apply_job_search_spec(
     """
     Run the AI-generated search spec against the database.
     Returns (list_of_job_dicts, total_matching_count).
-    Each dict contains the full ValidJob data + extraction/match metadata needed by the frontend.
+    Each dict contains the full Job data + extraction/match metadata needed by the frontend.
     """
 
     select_columns = [
-        ValidJob,
+        Job,
         JobExtraction.status.label("ext_status"),
         JobExtraction.is_job_posting,
         JobMatchResult.overall_score,
@@ -385,7 +404,7 @@ async def apply_job_search_spec(
     )
 
     count_stmt = _build_search_query(
-        user_id, spec, select_columns=[func.count(ValidJob.id)], limit=None,
+        user_id, spec, select_columns=[func.count(Job.id)], limit=None,
     )
 
     result = await session.execute(data_stmt)
@@ -418,7 +437,8 @@ async def apply_job_search_spec(
             "click_count": getattr(job, "click_count", 0) or 0,
             "applied_at": applied_at.isoformat() if applied_at else None,
             "applied_by_name": applied_by_name,
-            "is_active": job.is_active,
+            "sheet_posted_at": job.sheet_posted_at.isoformat() if job.sheet_posted_at else None,
+            "status": job.status,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "updated_at": job.updated_at.isoformat() if job.updated_at else None,
         })

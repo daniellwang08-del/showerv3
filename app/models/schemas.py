@@ -147,7 +147,7 @@ class JobSubmissionRequest(BaseModel):
 class JobSearchQuerySpec(BaseModel):
     """
     Structured job search criteria produced by OpenAI from natural language.
-    Applied server-side against valid_jobs + job_extractions + match scores.
+    Applied server-side against jobs + job_extractions + match scores.
     """
 
     rationale: str | None = Field(default=None, description="Short explanation of how the query was interpreted")
@@ -180,7 +180,7 @@ class AiJobSearchResponse(BaseModel):
     total_matching: int
 
 
-class ValidJobResponse(BaseModel):
+class JobResponse(BaseModel):
     id: str
     source_url: str
     normalized_url: str
@@ -202,17 +202,62 @@ class ValidJobResponse(BaseModel):
     click_count: int = 0
     applied_at: datetime | None = None
     applied_by_name: str | None = None
-    is_active: bool
+    sheet_posted_at: datetime | None = None
+    status: str
     created_at: datetime
     updated_at: datetime
 
 
-class ValidJobIdsBatchRequest(BaseModel):
-    valid_job_ids: list[str] = Field(..., min_length=1, max_length=200)
+class DashboardJobResponse(BaseModel):
+    """Processed job from the jobs table, with per-user status and pipeline state."""
+    id: str
+    source_url: str
+    normalized_url: str
+    domain: str
+    title: str | None
+    company: str
+    location: str | None
+    description: str | None
+    posted_date: datetime | None
+    experience_level: str | None
+    industry: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    extraction_id: str | None = None
+    extraction_status: str | None = None
+    is_job_posting: bool | None = None
+    match_overall_score: int | None = None
+    match_in_progress: bool = False
+    resume_build_status: str | None = None
+    content_generation_status: str | None = None
+    resume_pdf_status: str | None = None
+    resume_pdf_path: str | None = None
+    cover_letter_pdf_status: str | None = None
+    cover_letter_pdf_path: str | None = None
+    applied_at: datetime | None = None
+    applied_by_name: str | None = None
+    user_status: str | None = None
+    source: str | None = None
+    is_remote: bool = False
+    salary_raw: str | None = None
+    job_type: str | None = None
+
+
+class DashboardJobsPage(BaseModel):
+    items: list[DashboardJobResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
+class JobIdsBatchRequest(BaseModel):
+    job_ids: list[str] = Field(..., min_length=1, max_length=200)
 
 
 class JobMatchResponse(BaseModel):
-    valid_job_id: str
+    job_id: str
     overall_score: int
     dimension_scores: dict
     summary: str
@@ -232,7 +277,9 @@ class JobPromotionInfo(BaseModel):
 
 class ResumeBuildStatusResponse(BaseModel):
     """Per-file status of the resume/cover letter build pipeline."""
-    valid_job_id: str
+    job_id: str
+    content_generation_status: str = "pending"
+    content_generation_error: str | None = None
     resume_docx_status: str = "pending"
     resume_pdf_status: str = "pending"
     cover_letter_docx_status: str = "pending"
@@ -248,7 +295,7 @@ class JobAnalysisResponse(BaseModel):
     Unified payload for the job analysis panel: scraped/structured posting + optional match result.
     """
 
-    valid_job_id: str
+    job_id: str
     extraction_id: str | None
     extraction_status: ExtractionStatus | None
     source_url: str
@@ -262,25 +309,22 @@ class JobAnalysisResponse(BaseModel):
     resume_build: ResumeBuildStatusResponse | None = None
 
 
-class InvalidJobResponse(BaseModel):
-    id: str
+class DuplicatedJobResponse(BaseModel):
+    """Per-user duplicated/hidden job entry from user_job_status joined with jobs."""
+    user_job_status_id: str
+    job_id: str
     source_url: str
-    normalized_url: str
     domain: str
     title: str | None
     company: str
     location: str | None
-    description: str | None
     posted_date: datetime | None
-    experience_level: str | None
-    industry: str | None
-    duplicate_of_job_id: str | None
-    duplication_reason: str | None
-    similarity_score: float | None
-    similarity_hash: str | None
-    is_active: bool
+    status: str
+    exclusion_type: str | None = None
+    duplicated_because_id: str | None = None
+    reason: str | None = None
+    match_score_at_decision: float | None = None
     created_at: datetime
-    updated_at: datetime
 
 
 class JobSubmissionResponse(BaseModel):

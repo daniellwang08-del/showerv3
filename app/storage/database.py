@@ -1,7 +1,8 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import text
+from sqlalchemy import text, inspect as sa_inspect
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.models.database import Base
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -37,6 +38,22 @@ async def init_database() -> None:
 
         async with _engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+
+        # Only run create_all on a truly empty database (no tables yet).
+        # Once Alembic migrations have been applied the schema is managed
+        # exclusively by Alembic and create_all must be skipped to avoid
+        # conflicts with already-existing tables/types.
+        async with _engine.connect() as conn:
+            existing_tables = await conn.run_sync(
+                lambda sync_conn: sa_inspect(sync_conn).get_table_names()
+            )
+
+        if not existing_tables:
+            logger.info("database_empty_running_create_all")
+            async with _engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        else:
+            logger.info("database_tables_exist_skipping_create_all", table_count=len(existing_tables))
 
         _initialized = True
         logger.info("database_initialized", url=settings.database_url.split("@")[-1] if "@" in settings.database_url else settings.database_url)

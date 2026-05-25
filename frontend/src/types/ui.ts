@@ -26,32 +26,42 @@ export type SubmittedUrlItem = {
   appliedAt?: number;
   /** Full name stored when marked applied (server: profile name → account name → email). */
   appliedBy?: string;
-  posted_date_ms?: number; // new field for optional sort by job posted date
-  table?: 'valid' | 'invalid';
+  posted_date_ms?: number;
+  sheet_posted_at?: number | null;
+  table?: 'active' | 'duplicated';
+  /** Duplication / exclusion metadata (populated for duplicated-table items) */
+  duplication_reason?: string | null;
+  similarity_score?: number | null;
+  /** Exclusion type */
+  exclusion_type?: import('./index').ExclusionType;
+  /** Job ID used for restore (always available for duplicated items) */
+  valid_job_id_for_restore?: string | null;
+  company?: string | null;
+  title?: string | null;
 };
 
 export type ModalState =
   | null
   | {
       kind: 'edit';
-      table: 'valid' | 'invalid';
+      table: 'active' | 'duplicated';
       id: string;
       currentUrl: string;
     }
   | {
       kind: 'reportInvalid';
-      table: 'valid' | 'invalid';
+      table: 'active' | 'duplicated';
       id: string;
       currentUrl: string;
     }
   | {
       kind: 'reportDuplicate';
-      table: 'valid' | 'invalid';
+      table: 'active' | 'duplicated';
       id: string;
       currentUrl: string;
     }
   | {
-      kind: 'replaceInvalid';
+      kind: 'replaceJob';
       invalidJobId: string;
       invalidUrl: string;
       validJobId: string;
@@ -59,7 +69,7 @@ export type ModalState =
     }
   | {
       kind: 'delete';
-      table: 'valid' | 'invalid';
+      table: 'active' | 'duplicated';
       id: string;
       currentUrl: string;
     }

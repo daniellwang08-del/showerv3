@@ -4,7 +4,7 @@ import { parseServerDateTime, toFiniteTimeMs } from './serverDate';
 /** Default page size for job lists (matches chat-style incremental loading). */
 export const JOB_PAGE_SIZE = 300;
 
-export type ValidJobApiRow = {
+export type JobApiRow = {
   id: string;
   source_url: string;
   created_at: string;
@@ -20,21 +20,31 @@ export type ValidJobApiRow = {
   applied_by_name?: string | null;
   appliedAt?: string | null;
   applied_by?: string | null;
+  sheet_posted_at?: string | null;
 };
 
-export type InvalidJobApiRow = {
-  id: string;
+export type DuplicatedJobApiRow = {
+  user_job_status_id: string;
+  job_id: string;
   source_url: string;
-  duplicate_of_job_id: string | null;
-  duplication_reason: string | null;
+  domain: string;
+  title?: string | null;
+  company?: string | null;
+  location?: string | null;
+  posted_date?: string | null;
+  status: string;
+  exclusion_type?: import('../types/index').ExclusionType;
+  duplicated_because_id?: string | null;
+  reason?: string | null;
+  match_score_at_decision?: number | null;
   created_at: string;
 };
 
-export function mapValidJobRow(j: ValidJobApiRow): SubmittedUrlItem {
+export function mapJobRow(j: JobApiRow): SubmittedUrlItem {
   const scrapedMs = j.scraped_at ? parseServerDateTime(j.scraped_at) : undefined;
   const createdMs = parseServerDateTime(j.created_at) ?? 0;
   const postedDateMs = j.posted_date ? parseServerDateTime(j.posted_date) : undefined;
-  const raw = j as ValidJobApiRow & { appliedAt?: string | null; applied_by?: string | null };
+  const raw = j as JobApiRow & { appliedAt?: string | null; applied_by?: string | null };
   const appliedRaw = raw.applied_at ?? raw.appliedAt;
   const nameRaw = raw.applied_by_name ?? raw.applied_by;
   const appliedAtParsed = toFiniteTimeMs(appliedRaw ?? undefined);
@@ -55,19 +65,25 @@ export function mapValidJobRow(j: ValidJobApiRow): SubmittedUrlItem {
     posted_date_ms: postedDateMs,
     appliedAt: appliedAtParsed,
     appliedBy: nameRaw?.trim() ? nameRaw.trim() : undefined,
-    table: 'valid',
+    sheet_posted_at: j.sheet_posted_at ? parseServerDateTime(j.sheet_posted_at) : undefined,
+    table: 'active',
   };
 }
 
-export function mapInvalidJobRow(j: InvalidJobApiRow): SubmittedUrlItem {
+export function mapDuplicatedJobRow(j: DuplicatedJobApiRow): SubmittedUrlItem {
   return {
-    id: j.id,
+    id: j.user_job_status_id,
     url: j.source_url,
-    message: j.duplication_reason ?? 'Duplicate job detected',
-    job_id: j.id,
-    duplicate_job_id: j.duplicate_of_job_id,
+    message: j.reason ?? 'Duplicate job detected',
+    job_id: j.job_id,
+    duplicate_job_id: j.duplicated_because_id ?? null,
     created_at_ms: Date.parse(j.created_at),
-    table: 'invalid',
+    table: 'duplicated',
+    duplication_reason: j.reason,
+    exclusion_type: j.exclusion_type ?? null,
+    valid_job_id_for_restore: j.job_id,
+    company: j.company ?? null,
+    title: j.title ?? null,
   };
 }
 
@@ -89,10 +105,10 @@ function mergeWithAuthoritativeWindow(prev: SubmittedUrlItem[], fresh: Submitted
   return Array.from(map.values()).sort((a, b) => b.created_at_ms - a.created_at_ms);
 }
 
-export function mergeValidJobs(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
+export function mergeActiveJobs(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
   return mergeWithAuthoritativeWindow(prev, fresh);
 }
 
-export function mergeInvalidJobs(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
+export function mergeDuplicatedJobs(prev: SubmittedUrlItem[], fresh: SubmittedUrlItem[]): SubmittedUrlItem[] {
   return mergeWithAuthoritativeWindow(prev, fresh);
 }

@@ -4,6 +4,8 @@ import type { ModalState, SubmittedUrlItem } from '../types/ui';
 import { useJobsStore } from './jobsStore';
 import { useUIStore } from './uiStore';
 
+const tableToApiPath = (t: 'active' | 'duplicated') => (t === 'duplicated' ? 'invalid' : 'valid');
+
 type ModalStoreState = {
   modal: ModalState;
   modalUrl: string;
@@ -46,7 +48,7 @@ export const useModalStore = create<ModalStoreState>((set, get) => ({
       modalError: '',
       modalSubmitting: false,
       modalUrl: next
-        ? next.kind === 'replaceInvalid'
+        ? next.kind === 'replaceJob'
           ? next.invalidUrl
           : 'currentUrl' in next
             ? next.currentUrl
@@ -84,46 +86,58 @@ export const useModalStore = create<ModalStoreState>((set, get) => ({
       jobs.clearSubmitFeedback();
 
       if (modal.kind === 'promoteInvalidToValid') {
-        const res = await apiClient.post<{ valid_job_id: string }>(`/jobs/invalid/${modal.id}/promote-to-valid`, {
+        const res = await apiClient.post<{ job_id: string }>(`/jobs/invalid/${modal.id}/promote-to-valid`, {
           reason: modalReason.trim(),
         });
+        jobs.removeDuplicateUrlsByIds([modal.id]);
         await jobs.refreshLists({ showLoading: false, reset: true });
-        const newId = res.data?.valid_job_id;
+        const newId = res.data?.job_id;
         closeModal();
         if (newId) ui.setJobAnalysisValidJobId(newId);
         return;
       }
 
       if (modal.kind === 'edit') {
-        await apiClient.patch(`/jobs/${modal.table}/${modal.id}/url`, { url: modalUrl });
+        const apiPath = tableToApiPath(modal.table);
+        await apiClient.patch(`/jobs/${apiPath}/${modal.id}/url`, { url: modalUrl });
       }
 
       if (modal.kind === 'reportInvalid') {
-        await apiClient.post(`/jobs/${modal.table}/${modal.id}/report-invalid`, {
+        const apiPath = tableToApiPath(modal.table);
+        await apiClient.post(`/jobs/${apiPath}/${modal.id}/report-invalid`, {
           duplication_reason: modalReason.trim() ? modalReason.trim() : null,
         });
       }
 
       if (modal.kind === 'reportDuplicate') {
-        await apiClient.post(`/jobs/${modal.table}/${modal.id}/report-duplicate`, {
+        const apiPath = tableToApiPath(modal.table);
+        await apiClient.post(`/jobs/${apiPath}/${modal.id}/report-duplicate`, {
           duplicate_of_job_id: modalDuplicateOf.trim() ? modalDuplicateOf.trim() : null,
           duplication_reason: modalReason.trim() ? modalReason.trim() : null,
         });
       }
 
       if (modal.kind === 'delete') {
-        await apiClient.delete(`/jobs/${modal.table}/${modal.id}`);
+        if (modal.table === 'duplicated') {
+          await apiClient.post('/jobs/invalid/dismiss/batch', { user_job_status_ids: [modal.id] });
+          jobs.removeDuplicateUrlsByIds([modal.id]);
+        } else {
+          await apiClient.delete(`/jobs/valid/${modal.id}`);
+        }
       }
 
-      if (modal.kind === 'replaceInvalid') {
+      if (modal.kind === 'replaceJob') {
         await apiClient.patch(`/jobs/valid/${modal.validJobId}/url`, { url: modal.invalidUrl });
-        await apiClient.delete(`/jobs/invalid/${modal.invalidJobId}`);
+        await apiClient.post('/jobs/invalid/dismiss/batch', { user_job_status_ids: [modal.invalidJobId] });
+        jobs.removeDuplicateUrlsByIds([modal.invalidJobId]);
       }
 
       await jobs.refreshLists({ showLoading: false, reset: true });
       closeModal();
     } catch (e: any) {
-      set({ modalError: e.response?.data?.detail || 'Action failed' });
+      const detail = e?.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : 'Action failed';
+      set({ modalError: msg });
     } finally {
       set({ modalSubmitting: false });
       ui.setOpenMenu(null);
@@ -131,20 +145,25 @@ export const useModalStore = create<ModalStoreState>((set, get) => ({
   },
 
   openEditModal: (item) =>
-    get().openModal({ kind: 'edit', table: 'valid', id: item.id, currentUrl: item.url }),
+    get().openModal({ kind: 'edit', table: 'active', id: item.id, currentUrl: item.url }),
 
   openReportInvalidModal: (item) =>
-    get().openModal({ kind: 'reportInvalid', table: 'valid', id: item.id, currentUrl: item.url }),
+    get().openModal({ kind: 'reportInvalid', table: 'active', id: item.id, currentUrl: item.url }),
 
   openReportDuplicateModal: (item) =>
-    get().openModal({ kind: 'reportDuplicate', table: 'valid', id: item.id, currentUrl: item.url }),
+    get().openModal({ kind: 'reportDuplicate', table: 'active', id: item.id, currentUrl: item.url }),
 
   openDeleteModal: (item) =>
-    get().openModal({ kind: 'delete', table: item.table ?? 'valid', id: item.id, currentUrl: item.url }),
+    get().openModal({
+      kind: 'delete',
+      table: item.table ?? 'active',
+      id: item.id,
+      currentUrl: item.url,
+    }),
 
   openPromoteModal: (item) =>
     get().openModal({ kind: 'promoteInvalidToValid', id: item.id, currentUrl: item.url }),
 
   openReplaceModal: (invalidJobId, invalidUrl, validJobId, validUrl) =>
-    get().openModal({ kind: 'replaceInvalid', invalidJobId, invalidUrl, validJobId, validUrl }),
+    get().openModal({ kind: 'replaceJob', invalidJobId, invalidUrl, validJobId, validUrl }),
 }));

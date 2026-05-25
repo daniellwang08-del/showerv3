@@ -103,6 +103,18 @@ class Settings(BaseSettings):
     openai_temperature: float = 0.1
     # HTTP timeout for each OpenAI request (stay below worker job_timeout so jobs fail cleanly).
     openai_timeout_seconds: float = 240.0
+    # Concurrent arq jobs on the analysis worker (each job = one OpenAI call).
+    analysis_worker_max_jobs: int = 6
+    # Max parallel OpenAI calls when attachment text is split into chunks.
+    openai_attachment_max_concurrent: int = 4
+    phase_a_max_tokens: int = 8192
+    phase_b_max_tokens: int = 12288
+    auto_generate_tailored_content: bool = True
+
+    langfuse_secret_key: str = Field(default="")
+    langfuse_public_key: str = Field(default="")
+    langfuse_base_url: str = Field(default="https://cloud.langfuse.com")
+    langfuse_enabled: bool = Field(default=True)
 
     browser_pool_size: int = 5
     browser_timeout_ms: int = 30000
@@ -117,6 +129,8 @@ class Settings(BaseSettings):
 
     extraction_cache_ttl_seconds: int = 3600
     dedup_window_hours: int = 24
+    default_dedup_recycle_days: int = Field(default=60, ge=1, le=3650)
+    default_min_match_score: int = Field(default=0, ge=0, le=100)
 
     proxy_enabled: bool = False
     proxy_url: str | None = None
@@ -124,10 +138,17 @@ class Settings(BaseSettings):
     auth_password: str = Field(default="")
     auth_secret_key: str = Field(default="")
 
+    google_sheets_credentials_path: str = Field(default="google_credentials.json")
+
     resume_output_root: str = Field(default="./resume_output")
     libreoffice_path: str | None = Field(default=None)
     resume_template_path: str = Field(default="app/templates/resume_template.docx")
     cover_letter_template_path: str = Field(default="app/templates/cover_letter_template.docx")
+
+    # Scraper module settings (scrapy joblinks integration)
+    adzuna_app_id: str = Field(default="")
+    adzuna_app_key: str = Field(default="")
+    scraper_proxy_list_path: str = Field(default="")
 
 
 @lru_cache

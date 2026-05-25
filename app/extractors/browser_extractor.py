@@ -37,6 +37,7 @@ _COOKIE_BUTTON_NAMES: tuple[str, ...] = (
     "Agree to all",
     "Allow all",
     "Got it",
+    "OK for me",
 )
 
 _ATS_EMBED_HOST_MARKERS: tuple[str, ...] = (
@@ -113,7 +114,10 @@ VIEWPORTS = [
     {"width": 1440, "height": 900},
 ]
 
-BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font", "stylesheet"})
+BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
+BLOCKED_RESOURCE_TYPES_STRICT = frozenset({"image", "media", "font", "stylesheet"})
+
+WTTJ_HOST_MARKER = "welcometothejungle.com"
 
 BLOCKED_URLS = [
     "google-analytics.com",
@@ -176,7 +180,7 @@ class BrowserPool:
         logger.info("browser_pool_closed")
 
     @asynccontextmanager
-    async def acquire_page(self) -> AsyncGenerator[Page, None]:
+    async def acquire_page(self, target_url: str = "") -> AsyncGenerator[Page, None]:
         if not self._initialized or not self._browser or not self._semaphore:
             raise BrowserError("Browser pool not initialized")
 
@@ -198,16 +202,32 @@ class BrowserPool:
             """)
 
             page = await context.new_page()
-            await page.route("**/*", self._route_handler)
+            await page.route("**/*", self._make_route_handler(target_url))
 
             try:
                 yield page
             finally:
                 await context.close()
 
+    def _make_route_handler(self, target_url: str):
+        block_stylesheets = WTTJ_HOST_MARKER not in (target_url or "").lower()
+
+        async def route_handler(route):
+            request = route.request
+            blocked_types = BLOCKED_RESOURCE_TYPES_STRICT if block_stylesheets else BLOCKED_RESOURCE_TYPES
+            if request.resource_type in blocked_types:
+                await route.abort()
+                return
+            if any(blocked in request.url for blocked in BLOCKED_URLS):
+                await route.abort()
+                return
+            await route.continue_()
+
+        return route_handler
+
     async def _route_handler(self, route):
         request = route.request
-        if request.resource_type in BLOCKED_RESOURCE_TYPES:
+        if request.resource_type in BLOCKED_RESOURCE_TYPES_STRICT:
             await route.abort()
             return
         if any(blocked in request.url for blocked in BLOCKED_URLS):
@@ -279,15 +299,17 @@ class BrowserExtractor(BaseExtractor):
             )
 
         try:
-            async with pool.acquire_page() as page:
+            async with pool.acquire_page(url) as page:
+                is_wttj = WTTJ_HOST_MARKER in (url or "").lower()
+                wait_until = "networkidle" if is_wttj else "domcontentloaded"
                 await page.goto(
                     url,
-                    wait_until="domcontentloaded",
+                    wait_until=wait_until,
                     timeout=self._settings.browser_timeout_ms,
                 )
 
                 await _dismiss_cookie_consent(page)
-                await self._wait_for_content(page)
+                await self._wait_for_content(page, is_wttj=is_wttj)
 
                 if "apply.workable.com" in (url or "").lower():
                     await _dismiss_cookie_consent(page)
@@ -330,10 +352,12 @@ class BrowserExtractor(BaseExtractor):
                 error=str(e),
             )
 
-    async def _wait_for_content(self, page: Page) -> None:
+    async def _wait_for_content(self, page: Page, *, is_wttj: bool = False) -> None:
         await _dismiss_cookie_consent(page)
 
         content_selectors = [
+            "[data-testid='job-page']",
+            "[data-testid='job-description']",
             "[data-automation='jobDescription']",
             "[data-ui='job-description']",
             "[class*='job-description']",
@@ -364,7 +388,7 @@ class BrowserExtractor(BaseExtractor):
         stable_rounds_needed = 2
         sample_interval_s = 0.6
         max_wait_s = 12.0
-        spa_max_wait_s = 25.0
+        spa_max_wait_s = 25.0 if not is_wttj else 35.0
 
         observed_last = -1
         stable_rounds = 0
@@ -444,16 +468,23 @@ class BrowserExtractor(BaseExtractor):
         """
         Extract plain text from main page and all ATS-related child frames.
 
-        Takes the longest text among: main page text and any ATS iframe text.
-        This avoids the complex ranking system — the longest meaningful content
-        from a known source wins.
+        Strategy:
+        1. Collect text from the main page and from any non-application ATS
+           iframes (real JD bodies).
+        2. Collect text from ``/job_app`` iframes (Greenhouse application form
+           shells) separately — these usually contain *only* the apply UI, but
+           on careers pages that embed Greenhouse the JD itself is rendered
+           inside the same iframe.
+        3. Prefer non-application text.  Fall back to job_app text only when
+           the main-page candidates are too thin to be a real JD.
         """
-        candidates: list[str] = []
+        primary: list[str] = []
+        job_app_fallback: list[str] = []
 
         main_html = await page.content()
         main_text = plain_text_from_document_html(main_html)
         if main_text:
-            candidates.append(main_text)
+            primary.append(main_text)
 
         try:
             for frame in page.frames:
@@ -463,22 +494,33 @@ class BrowserExtractor(BaseExtractor):
                     fu = frame.url or ""
                     if not fu or fu.startswith("about:") or "chrome-extension:" in fu:
                         continue
-                    is_ats = any(m in fu.lower() for m in _ATS_EMBED_HOST_MARKERS)
+                    flow = fu.lower()
+                    is_ats = any(m in flow for m in _ATS_EMBED_HOST_MARKERS)
                     if not is_ats:
-                        continue
-                    if "job_app" in fu.lower() or "/embed/job_app" in fu.lower():
                         continue
                     fh = await frame.content()
                     frame_text = plain_text_from_document_html(fh)
-                    if frame_text and len(frame_text) >= 50:
-                        candidates.append(frame_text)
+                    if not frame_text or len(frame_text) < 50:
+                        continue
+                    if "job_app" in flow or "/embed/job_app" in flow:
+                        job_app_fallback.append(frame_text)
+                    else:
+                        primary.append(frame_text)
                 except Exception as e:
                     logger.debug("browser_iframe_text_skip", error=str(e))
                     continue
         except Exception:
             pass
 
-        if not candidates:
-            return ""
+        if primary:
+            best_primary = max(primary, key=len)
+            if len(best_primary) >= 400 or not job_app_fallback:
+                return best_primary
+            # Primary text is thin — see if the job_app iframe has richer content.
+            best_fallback = max(job_app_fallback, key=len)
+            return best_fallback if len(best_fallback) > len(best_primary) else best_primary
 
-        return max(candidates, key=len)
+        if job_app_fallback:
+            return max(job_app_fallback, key=len)
+
+        return ""

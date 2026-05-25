@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
-import { ProfilesManagementPage } from '../../components/ProfilesManagementPage';
-import Header from '../../components/Header';
-import SideDrawer from '../../components/SideDrawer';
+import { ProfilesManagementPage } from '../../components/extraction/ProfilesManagementPage';
+import Header from '../../components/extraction/Header';
+import SideDrawer from '../../components/extraction/SideDrawer';
 
 type Props = {
   onBack: () => void;

@@ -6,24 +6,43 @@ import { parseServerDateTime } from '../utils/serverDate';
 import { logger } from '../utils/logger';
 import {
   JOB_PAGE_SIZE,
-  mapInvalidJobRow,
-  mapValidJobRow,
-  mergeInvalidJobs,
-  mergeValidJobs,
-  type InvalidJobApiRow,
-  type ValidJobApiRow,
+  mapDuplicatedJobRow,
+  mapJobRow,
+  mergeDuplicatedJobs,
+  mergeActiveJobs,
+  type DuplicatedJobApiRow,
+  type JobApiRow,
 } from '../utils/jobListPagination';
 import { runWithConcurrencyLimit } from '../utils/asyncPool';
 import type { AttachmentFlowStatus } from '../types/ui';
+
+/** Extract a renderable error string from an Axios error (FastAPI 422 returns detail as an array of objects). */
+function extractErrorMessage(err: any, fallback: string): string {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    return typeof first === 'string' ? first : (first?.msg ?? fallback);
+  }
+  return fallback;
+}
 
 const ATTACHMENT_SUBMIT_CONCURRENCY = 30;
 
 let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const REFRESH_DEBOUNCE_MS = 400;
 
+type InvalidCounts = {
+  duplicates: number;
+  low_score: number;
+  total: number;
+};
+
 type JobsState = {
   uniqueUrls: SubmittedUrlItem[];
   duplicateUrls: SubmittedUrlItem[];
+  lowScoreUrls: SubmittedUrlItem[];
+  invalidCounts: InvalidCounts;
 
   loadingLists: boolean;
   isInitialLoad: boolean;
@@ -35,6 +54,10 @@ type JobsState = {
   invalidNextOffset: number;
   invalidHasMore: boolean;
   loadingMoreInvalid: boolean;
+
+  lowScoreNextOffset: number;
+  lowScoreHasMore: boolean;
+  loadingMoreLowScore: boolean;
 
   url: string;
   loading: boolean;
@@ -55,6 +78,7 @@ type JobsState = {
   debouncedRefresh: () => void;
   loadMoreValidJobs: () => Promise<void>;
   loadMoreInvalidJobs: () => Promise<void>;
+  loadMoreLowScoreJobs: () => Promise<void>;
 
   submitJob: (submittedUrl: string) => Promise<void>;
   submitAttachmentFiles: (files: File[]) => Promise<void>;
@@ -65,6 +89,10 @@ type JobsState = {
   recordJobClick: (item: SubmittedUrlItem) => Promise<void>;
   openSelectedUrls: (items: SubmittedUrlItem[]) => Promise<void>;
 
+  /** Remove entries from invalid panels immediately (optimistic UI). */
+  removeDuplicateUrlsByIds: (ids: string[]) => void;
+  removeLowScoreUrlsByIds: (ids: string[]) => void;
+
   batchDeleteValid: (items: SubmittedUrlItem[]) => Promise<void>;
   openBatchDeleteConfirm: (items: SubmittedUrlItem[]) => void;
   closeBatchDeleteConfirm: () => void;
@@ -74,12 +102,19 @@ type JobsState = {
   rerunMatchAnalysis: (items: SubmittedUrlItem[]) => Promise<void>;
   batchRescrapePipeline: (items: SubmittedUrlItem[]) => Promise<void>;
 
+  postToSheet: (items: SubmittedUrlItem[]) => Promise<void>;
+
   updateValidJob: (id: string, patch: Partial<SubmittedUrlItem>) => void;
+
+  /** Remove a per-user policy exclusion so the job re-appears in the active pool. */
+  restoreExcludedJob: (item: SubmittedUrlItem) => Promise<void>;
 };
 
 export const useJobsStore = create<JobsState>((set, get) => ({
   uniqueUrls: [],
   duplicateUrls: [],
+  lowScoreUrls: [],
+  invalidCounts: { duplicates: 0, low_score: 0, total: 0 },
   loadingLists: false,
   isInitialLoad: true,
 
@@ -90,6 +125,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   invalidNextOffset: 0,
   invalidHasMore: false,
   loadingMoreInvalid: false,
+
+  lowScoreNextOffset: 0,
+  lowScoreHasMore: false,
+  loadingMoreLowScore: false,
 
   url: '',
   loading: false,
@@ -115,27 +154,41 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     try {
       if (shouldShowLoading) set({ loadingLists: true });
 
-      const [validRes, invalidRes] = await Promise.all([
-        apiClient.get<ValidJobApiRow[]>(`/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=0`),
-        apiClient.get<InvalidJobApiRow[]>(`/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0`),
+      const [validRes, invalidRes, lowScoreRes, countsRes] = await Promise.all([
+        apiClient.get<JobApiRow[]>(`/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=0`),
+        apiClient.get<DuplicatedJobApiRow[]>(
+          `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=duplicates`,
+        ),
+        apiClient.get<DuplicatedJobApiRow[]>(
+          `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=low_score`,
+        ),
+        apiClient.get<InvalidCounts>('/jobs/invalid/counts'),
       ]);
 
-      const mappedValid = (validRes.data ?? []).map((j) => mapValidJobRow(j));
-      const mappedInvalid = (invalidRes.data ?? []).map((j) => mapInvalidJobRow(j));
+      const mappedValid = (validRes.data ?? []).map((j) => mapJobRow(j));
+      const mappedInvalid = (invalidRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
+      const mappedLowScore = (lowScoreRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
+      const counts = countsRes.data ?? { duplicates: mappedInvalid.length, low_score: mappedLowScore.length, total: 0 };
 
       if (reset) {
         set({
           uniqueUrls: mappedValid,
           duplicateUrls: mappedInvalid,
+          lowScoreUrls: mappedLowScore,
+          invalidCounts: counts,
           validNextOffset: mappedValid.length,
           validHasMore: mappedValid.length === JOB_PAGE_SIZE,
           invalidNextOffset: mappedInvalid.length,
           invalidHasMore: mappedInvalid.length === JOB_PAGE_SIZE,
+          lowScoreNextOffset: mappedLowScore.length,
+          lowScoreHasMore: mappedLowScore.length === JOB_PAGE_SIZE,
         });
       } else {
         set((state) => ({
-          uniqueUrls: mergeValidJobs(state.uniqueUrls, mappedValid),
-          duplicateUrls: mergeInvalidJobs(state.duplicateUrls, mappedInvalid),
+          uniqueUrls: mergeActiveJobs(state.uniqueUrls, mappedValid),
+          duplicateUrls: mergeDuplicatedJobs(state.duplicateUrls, mappedInvalid),
+          lowScoreUrls: mergeDuplicatedJobs(state.lowScoreUrls, mappedLowScore),
+          invalidCounts: counts,
         }));
       }
       set({ isInitialLoad: false });
@@ -159,10 +212,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     if (!validHasMore || loadingMoreValid) return;
     set({ loadingMoreValid: true });
     try {
-      const res = await apiClient.get<ValidJobApiRow[]>(
+      const res = await apiClient.get<JobApiRow[]>(
         `/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=${validNextOffset}`,
       );
-      const chunk = (res.data ?? []).map((j) => mapValidJobRow(j));
+      const chunk = (res.data ?? []).map((j) => mapJobRow(j));
       if (chunk.length === 0) {
         set({ validHasMore: false });
         return;
@@ -194,10 +247,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     if (!invalidHasMore || loadingMoreInvalid) return;
     set({ loadingMoreInvalid: true });
     try {
-      const res = await apiClient.get<InvalidJobApiRow[]>(
-        `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=${invalidNextOffset}`,
+      const res = await apiClient.get<DuplicatedJobApiRow[]>(
+        `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=${invalidNextOffset}&category=duplicates`,
       );
-      const chunk = (res.data ?? []).map((j) => mapInvalidJobRow(j));
+      const chunk = (res.data ?? []).map((j) => mapDuplicatedJobRow(j));
       if (chunk.length === 0) {
         set({ invalidHasMore: false });
         return;
@@ -221,6 +274,41 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       // silent
     } finally {
       set({ loadingMoreInvalid: false });
+    }
+  },
+
+  loadMoreLowScoreJobs: async () => {
+    const { lowScoreHasMore, loadingMoreLowScore, lowScoreNextOffset } = get();
+    if (!lowScoreHasMore || loadingMoreLowScore) return;
+    set({ loadingMoreLowScore: true });
+    try {
+      const res = await apiClient.get<DuplicatedJobApiRow[]>(
+        `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=${lowScoreNextOffset}&category=low_score`,
+      );
+      const chunk = (res.data ?? []).map((j) => mapDuplicatedJobRow(j));
+      if (chunk.length === 0) {
+        set({ lowScoreHasMore: false });
+        return;
+      }
+      set((state) => {
+        const seen = new Set(state.lowScoreUrls.map((j) => j.id));
+        const merged = [...state.lowScoreUrls];
+        for (const j of chunk) {
+          if (!seen.has(j.id)) {
+            seen.add(j.id);
+            merged.push(j);
+          }
+        }
+        return {
+          lowScoreUrls: merged.sort((a, b) => b.created_at_ms - a.created_at_ms),
+          lowScoreNextOffset: state.lowScoreNextOffset + chunk.length,
+          lowScoreHasMore: chunk.length === JOB_PAGE_SIZE,
+        };
+      });
+    } catch {
+      // silent
+    } finally {
+      set({ loadingMoreLowScore: false });
     }
   },
 
@@ -255,7 +343,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
                   job_id: response.job_id,
                   duplicate_job_id: response.duplicate_job_id,
                   created_at_ms: Date.now(),
-                  table: 'invalid' as const,
+                  table: 'duplicated' as const,
                 },
                 ...state.duplicateUrls,
               ],
@@ -273,7 +361,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         set({ url: '' });
       }
     } catch (error: any) {
-      set({ submitError: error.response?.data?.detail || 'Error submitting job', submitNotice: '' });
+      set({ submitError: extractErrorMessage(error, 'Error submitting job'), submitNotice: '' });
     } finally {
       set({ loading: false });
     }
@@ -337,7 +425,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         });
       }
     } catch (error: any) {
-      const msg = error.response?.data?.detail || 'Attachment processing failed';
+      const msg = extractErrorMessage(error, 'Attachment processing failed');
       set({ submitError: msg });
       throw error;
     } finally {
@@ -346,43 +434,43 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   },
 
   markApplied: async (items: SubmittedUrlItem[]) => {
-    const valid_job_ids = [...new Set(items.filter((i) => i.table === 'valid').map((i) => i.id))];
-    if (valid_job_ids.length === 0) return;
+    const job_ids = [...new Set(items.filter((i) => i.table === 'active').map((i) => i.id))];
+    if (job_ids.length === 0) return;
     try {
       const res = await apiClient.post<{ marked: number; applied_by_name: string; applied_at?: string }>(
         '/jobs/valid/applied/batch',
-        { valid_job_ids },
+        { job_ids },
       );
       const label = res.data?.applied_by_name?.trim() ?? '';
       const serverAt = res.data?.applied_at ? parseServerDateTime(res.data.applied_at) : undefined;
       const appliedMs = serverAt ?? Date.now();
       set((state) => ({
         uniqueUrls: state.uniqueUrls.map((job) =>
-          valid_job_ids.includes(job.id)
+          job_ids.includes(job.id)
             ? { ...job, appliedAt: appliedMs, appliedBy: label || job.appliedBy }
             : job,
         ),
       }));
       await get().refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
-      set({ submitError: error.response?.data?.detail || 'Failed to save applied status' });
+      set({ submitError: extractErrorMessage(error, 'Failed to save applied status') });
       throw error;
     }
   },
 
   markUnapplied: async (items: SubmittedUrlItem[]) => {
-    const valid_job_ids = [...new Set(items.filter((i) => i.table === 'valid').map((i) => i.id))];
-    if (valid_job_ids.length === 0) return;
+    const job_ids = [...new Set(items.filter((i) => i.table === 'active').map((i) => i.id))];
+    if (job_ids.length === 0) return;
     try {
-      await apiClient.post('/jobs/valid/unapplied/batch', { valid_job_ids });
+      await apiClient.post('/jobs/valid/unapplied/batch', { job_ids });
       set((state) => ({
         uniqueUrls: state.uniqueUrls.map((job) =>
-          valid_job_ids.includes(job.id) ? { ...job, appliedAt: undefined, appliedBy: undefined } : job,
+          job_ids.includes(job.id) ? { ...job, appliedAt: undefined, appliedBy: undefined } : job,
         ),
       }));
       await get().refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
-      set({ submitError: error.response?.data?.detail || 'Failed to clear applied status' });
+      set({ submitError: extractErrorMessage(error, 'Failed to clear applied status') });
       throw error;
     }
   },
@@ -392,12 +480,12 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       await apiClient.post(`/jobs/valid/${item.id}/rescrape`, { url: item.url });
       await get().refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
-      set({ submitError: error.response?.data?.detail || 'Failed to rescrape job' });
+      set({ submitError: extractErrorMessage(error, 'Failed to rescrape job') });
     }
   },
 
   recordJobClick: async (item: SubmittedUrlItem) => {
-    if (item.table !== 'valid') return;
+    if (item.table !== 'active') return;
     const jobId = item.id;
     const prevCount = item.click_count ?? 0;
     set((state) => ({
@@ -433,7 +521,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
 
     await Promise.all(
       uniqueItems.map(async (item) => {
-        if (item.table !== 'valid') return;
+        if (item.table !== 'active') return;
         try {
           const res = await apiClient.post<{ click_count: number }>(`/jobs/valid/${item.id}/click`);
           const serverCount = res.data?.click_count;
@@ -448,12 +536,38 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     );
   },
 
+  removeDuplicateUrlsByIds: (ids: string[]) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    set((state) => ({
+      duplicateUrls: state.duplicateUrls.filter((d) => !idSet.has(d.id)),
+      invalidCounts: {
+        ...state.invalidCounts,
+        duplicates: Math.max(0, state.invalidCounts.duplicates - ids.length),
+        total: Math.max(0, state.invalidCounts.total - ids.length),
+      },
+    }));
+  },
+
+  removeLowScoreUrlsByIds: (ids: string[]) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    set((state) => ({
+      lowScoreUrls: state.lowScoreUrls.filter((d) => !idSet.has(d.id)),
+      invalidCounts: {
+        ...state.invalidCounts,
+        low_score: Math.max(0, state.invalidCounts.low_score - ids.length),
+        total: Math.max(0, state.invalidCounts.total - ids.length),
+      },
+    }));
+  },
+
   batchDeleteValid: async (itemsToDelete: SubmittedUrlItem[]) => {
     logger.info('ui_batch_delete_started', { count: itemsToDelete.length });
     try {
       set({ loadingLists: true });
       for (const item of itemsToDelete) {
-        const table = item.table || 'valid';
+        const table = item.table === 'duplicated' ? 'invalid' : 'valid';
         try {
           await apiClient.delete(`/jobs/${table}/${item.id}`);
         } catch (error) {
@@ -482,15 +596,21 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   executeBatchDeleteInvalid: async () => {
     const { batchDeletePending } = get();
     if (!batchDeletePending?.length) return;
+
+    const idsToRemove = batchDeletePending.map((i) => i.id);
     set({ batchDeleteSubmitting: true, batchDeleteError: '' });
+
     try {
-      await apiClient.post('/jobs/invalid/delete/batch', {
-        invalid_job_ids: batchDeletePending.map((i) => i.id),
+      await apiClient.post('/jobs/invalid/dismiss/batch', {
+        user_job_status_ids: idsToRemove,
       });
+
+      get().removeDuplicateUrlsByIds(idsToRemove);
+      get().removeLowScoreUrlsByIds(idsToRemove);
       set({ batchDeletePending: null });
       await get().refreshLists({ showLoading: false, reset: true });
     } catch (error: any) {
-      set({ batchDeleteError: error.response?.data?.detail || 'Failed to delete duplicate jobs' });
+      set({ batchDeleteError: extractErrorMessage(error, 'Failed to dismiss duplicate jobs') });
     } finally {
       set({ batchDeleteSubmitting: false });
     }
@@ -508,10 +628,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   },
 
   rerunMatchAnalysis: async (items: SubmittedUrlItem[]) => {
-    const valid_job_ids = [...new Set(items.map((i) => i.id).filter(Boolean))];
-    if (valid_job_ids.length === 0) return;
+    const job_ids = [...new Set(items.map((i) => i.id).filter(Boolean))];
+    if (job_ids.length === 0) return;
     try {
-      await apiClient.post('/jobs/valid/match/rerun', { valid_job_ids });
+      await apiClient.post('/jobs/valid/match/rerun', { job_ids });
       void get().refreshLists({ showLoading: false, reset: false });
     } catch {
       // ignore
@@ -519,13 +639,60 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   },
 
   batchRescrapePipeline: async (items: SubmittedUrlItem[]) => {
-    const valid_job_ids = [...new Set(items.filter((i) => i.table === 'valid').map((i) => i.id))];
-    if (valid_job_ids.length === 0) return;
+    const job_ids = [...new Set(items.filter((i) => i.table === 'active').map((i) => i.id))];
+    if (job_ids.length === 0) return;
     try {
-      await apiClient.post('/jobs/valid/rescrape/batch', { valid_job_ids });
+      await apiClient.post('/jobs/valid/rescrape/batch', { job_ids });
       await get().refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
-      set({ submitError: error.response?.data?.detail || 'Failed to queue re-scrape' });
+      set({ submitError: extractErrorMessage(error, 'Failed to queue re-scrape') });
+    }
+  },
+
+  postToSheet: async (items: SubmittedUrlItem[]) => {
+    const job_ids = [...new Set(items.filter((i) => i.table === 'active').map((i) => i.id))];
+    if (job_ids.length === 0) return;
+
+    const { useUIStore } = await import('./uiStore');
+    const notify = useUIStore.getState().notify;
+
+    try {
+      const { data } = await apiClient.post('/sheets/post-jobs', { job_ids });
+      const posted: number = data.posted_count ?? 0;
+      const alreadyInSheet: number = data.skipped_already_in_sheet ?? 0;
+
+      if (posted > 0 && alreadyInSheet === 0) {
+        notify('success', `Posted ${posted} job${posted > 1 ? 's' : ''} to Google Sheet`);
+      } else if (posted > 0 && alreadyInSheet > 0) {
+        notify('warning', `${posted} job${posted > 1 ? 's' : ''} posted newly, ${alreadyInSheet} already in the sheet — skipped.`);
+      } else if (posted === 0 && alreadyInSheet > 0) {
+        notify('info', `${alreadyInSheet === 1 ? 'This job is' : `All ${alreadyInSheet} jobs are`} already in the sheet.`);
+      } else {
+        notify('warning', 'No jobs were posted to the sheet.');
+      }
+
+      await get().refreshLists({ showLoading: false, reset: false });
+    } catch (error: any) {
+      notify('error', extractErrorMessage(error, 'Failed to post to Google Sheet'), 8000);
+    }
+  },
+
+  restoreExcludedJob: async (item: SubmittedUrlItem) => {
+    const jobId = item.valid_job_id_for_restore;
+    if (!jobId) return;
+    const { useUIStore: _uiStore } = await import('./uiStore');
+    const notify = _uiStore.getState().notify;
+    try {
+      await apiClient.delete(`/jobs/user-exclusions/${jobId}`);
+      if (item.exclusion_type === 'below_min_score') {
+        get().removeLowScoreUrlsByIds([item.id]);
+      } else {
+        get().removeDuplicateUrlsByIds([item.id]);
+      }
+      notify('success', 'Job restored to your active pool');
+      void get().refreshLists({ showLoading: false, reset: false });
+    } catch (err: any) {
+      notify('error', extractErrorMessage(err, 'Failed to restore job'));
     }
   },
 

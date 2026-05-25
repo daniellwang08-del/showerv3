@@ -1,22 +1,57 @@
 """
-AI-powered job-profile match analysis.
-A single OpenAI call produces both the match scoring and the structured job content.
+AI-powered job-profile match analysis (two-phase).
+
+Phase A: validation + structured extraction + match scoring.
+Phase B: tailored resume JSON + cover letter (deferred).
 """
 
 import json
 import re
 from openai import AsyncOpenAI
 from app.core.config import get_settings
-from app.core.openai_client import get_openai_client
+from app.core.openai_client import get_openai_client_for_user
 from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
-from app.prompts.job_match_prompt import JOB_MATCH_SYSTEM_PROMPT, JOB_MATCH_USER_TEMPLATE
+from app.prompts.job_match_phase_a_prompt import (
+    JOB_MATCH_PHASE_A_SYSTEM_PROMPT,
+    JOB_MATCH_PHASE_A_USER_TEMPLATE,
+)
+from app.prompts.job_match_phase_b_prompt import (
+    JOB_MATCH_PHASE_B_SYSTEM_PROMPT,
+    JOB_MATCH_PHASE_B_USER_TEMPLATE,
+)
 from app.models.schemas import JobDescriptionSchema
+
+try:
+    from langfuse import observe  # type: ignore[import-unresolved]
+except ImportError:
+    from functools import wraps
+    def observe(**_kw):  # noqa: E303
+        def _decorator(fn):
+            @wraps(fn)
+            async def _wrapper(*a, **k):
+                return await fn(*a, **k)
+            return _wrapper
+        return _decorator
 
 logger = get_logger(__name__)
 
 MAX_JOB_LENGTH = 15000
 MAX_PROFILE_LENGTH = 16000
+
+EMPTY_MATCH_RESULT = {
+    "overall_score": 0,
+    "dimension_scores": {
+        "industry_alignment": 0,
+        "experience_match": 0,
+        "technical_skills": 0,
+        "work_environment": 0,
+    },
+    "summary": "No candidate profile provided. Please add your profile to analyze job match.",
+    "strengths": [],
+    "gaps": ["Missing candidate profile"],
+    "recommendation": "poor_match",
+}
 
 
 def _build_job_text(
@@ -47,8 +82,22 @@ def _build_job_text(
     return "\n".join(parts) if parts else "No job details available."
 
 
+def build_structured_context(structured_job: JobDescriptionSchema | None) -> str:
+    if not structured_job:
+        return "No structured job data available."
+    parts = [
+        f"Title: {structured_job.title or 'Unknown'}",
+        f"Company: {structured_job.company or 'Unknown'}",
+        f"Location: {structured_job.location or 'Unknown'}",
+    ]
+    if structured_job.experience_level:
+        parts.append(f"Experience level: {structured_job.experience_level}")
+    if structured_job.industry:
+        parts.append(f"Industry: {structured_job.industry}")
+    return "\n".join(parts)
+
+
 def _truncate(text: str, max_len: int, suffix: str = "...") -> str:
-    """Truncate text to max length."""
     if not text or len(text) <= max_len:
         return text or ""
     text = re.sub(r"\s+", " ", text).strip()
@@ -68,15 +117,13 @@ def _list_of_strings(value) -> list[str]:
 
 
 def _parse_match_section(parsed: dict) -> dict:
-    """Validate and normalize the match section of the combined response."""
     overall = int(parsed.get("overall_score", 0))
     dims = parsed.get("dimension_scores", {})
     required_dims = [
-        "role_fit",
-        "skills_match",
-        "experience_level",
-        "education_certifications",
-        "location_work_style",
+        "industry_alignment",
+        "experience_match",
+        "technical_skills",
+        "work_environment",
     ]
     for d in required_dims:
         if d not in dims:
@@ -101,14 +148,11 @@ def _parse_match_section(parsed: dict) -> dict:
 
 
 def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
-    """Build a JobDescriptionSchema from the structured_job section. Returns None on failure."""
     try:
         description = str(parsed.get("description", "")).strip()
         if not description:
             description = "No description available"
-
         title = str(parsed.get("title", "")).strip() or "Unknown Position"
-
         return JobDescriptionSchema(
             title=title,
             company=(str(parsed["company"]).strip() if parsed.get("company") else None),
@@ -129,7 +173,6 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
 
 
 def _parse_tailored_resume(parsed: dict | None) -> dict | None:
-    """Extract and validate the tailored_resume section. Returns None on failure."""
     if not parsed or not isinstance(parsed, dict):
         return None
     try:
@@ -165,7 +208,6 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
                 project_name = str(raw_pn).strip() if raw_pn not in (None, "", "None", "null") else None
                 raw_pd = entry.get("project_description")
                 project_desc = str(raw_pd).strip() if raw_pd not in (None, "", "None", "null") else None
-
                 experience.append({
                     "company_name": company,
                     "job_title": title,
@@ -185,7 +227,6 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
 
 
 def _parse_cover_letter(parsed: dict | None) -> dict | None:
-    """Extract the cover_letter section. Returns None on failure."""
     if not parsed or not isinstance(parsed, dict):
         return None
     body = str(parsed.get("body", "")).strip()
@@ -194,100 +235,129 @@ def _parse_cover_letter(parsed: dict | None) -> dict | None:
     return {"body": body}
 
 
-async def analyze_job_match(
-    job_text: str,
-    profile_text: str,
-) -> tuple[dict, JobDescriptionSchema | None, bool, dict | None, dict | None]:
-    """
-    Single LLM call that returns match result, structured job content,
-    job posting validation, tailored resume content, and cover letter.
-
-    Returns ``(match_result_dict, structured_job_or_None, is_job_posting,
-               tailored_resume_or_None, cover_letter_or_None)``.
-    Raises AIParsingError on complete failure.
-    """
-    client: AsyncOpenAI = get_openai_client()
+async def _call_openai_json(
+    *,
+    system_prompt: str,
+    user_content: str,
+    max_tokens: int,
+    observe_name: str,
+    user_id: str | None = None,
+) -> dict:
+    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
     settings = get_settings()
-
-    job_truncated = _truncate(job_text, MAX_JOB_LENGTH)
-    profile_truncated = _truncate(profile_text, MAX_PROFILE_LENGTH)
-
-    if not profile_truncated.strip():
-        return (
-            {
-                "overall_score": 0,
-                "dimension_scores": {
-                    "role_fit": 0,
-                    "skills_match": 0,
-                    "experience_level": 0,
-                    "education_certifications": 0,
-                    "location_work_style": 0,
-                },
-                "summary": "No candidate profile provided. Please add your profile to analyze job match.",
-                "strengths": [],
-                "gaps": ["Missing candidate profile"],
-                "recommendation": "poor_match",
-            },
-            None,
-            False,
-            None,
-            None,
-        )
-
-    user_content = JOB_MATCH_USER_TEMPLATE.format(
-        job_text=job_truncated,
-        profile_text=profile_truncated,
-    )
-
-    combined_max_tokens = max(settings.openai_max_tokens, 16384)
-    combined_max_tokens = min(combined_max_tokens, 32768)
-
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[
-                {"role": "system", "content": JOB_MATCH_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
             temperature=0.2,
-            max_tokens=combined_max_tokens,
+            max_tokens=max_tokens,
             response_format={"type": "json_object"},
         )
-
         result_text = response.choices[0].message.content
         if not result_text:
             raise AIParsingError("Empty response from AI model")
-
-        parsed = json.loads(result_text)
-
-        is_job_posting = bool(parsed.get("is_job_posting", False))
-
-        match_section = parsed.get("match") or parsed
-        structured_section = parsed.get("structured_job")
-
-        match_result = _parse_match_section(match_section)
-
-        structured_job: JobDescriptionSchema | None = None
-        if structured_section and isinstance(structured_section, dict):
-            structured_job = _parse_structured_job_section(structured_section)
-        else:
-            logger.warning("structured_job_section_missing_from_combined_response")
-
-        tailored_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
-        cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
-
-        if not tailored_resume:
-            logger.warning("tailored_resume_section_missing_or_invalid")
-        if not cover_letter:
-            logger.warning("cover_letter_section_missing_or_invalid")
-
-        return match_result, structured_job, is_job_posting, tailored_resume, cover_letter
-
+        return json.loads(result_text)
     except json.JSONDecodeError as e:
-        logger.error("job_match_json_error", error=str(e))
-        raise AIParsingError(f"Failed to parse job match response: {e}")
+        logger.error("job_match_json_error", observe=observe_name, error=str(e))
+        raise AIParsingError(f"Failed to parse AI response: {e}")
     except AIParsingError:
         raise
     except Exception as e:
-        logger.error("job_match_failed", error=str(e))
+        logger.error("job_match_openai_failed", observe=observe_name, error=str(e))
         raise AIParsingError(str(e))
+
+
+@observe(name="analyze_job_match_phase_a")
+async def analyze_job_match_phase_a(
+    job_text: str,
+    profile_text: str,
+    *,
+    user_id: str | None = None,
+) -> tuple[dict, JobDescriptionSchema | None, bool]:
+    """
+    Phase A: validation, structured job extraction, and match scoring.
+    Returns (match_result_dict, structured_job_or_None, is_job_posting).
+    """
+    settings = get_settings()
+    job_truncated = _truncate(job_text, MAX_JOB_LENGTH)
+    profile_truncated = _truncate(profile_text, MAX_PROFILE_LENGTH)
+
+    if not profile_truncated.strip():
+        return dict(EMPTY_MATCH_RESULT), None, False
+
+    user_content = JOB_MATCH_PHASE_A_USER_TEMPLATE.format(
+        job_text=job_truncated,
+        profile_text=profile_truncated,
+    )
+    phase_a_max = max(settings.openai_max_tokens, settings.phase_a_max_tokens)
+    phase_a_max = min(phase_a_max, 16384)
+
+    parsed = await _call_openai_json(
+        system_prompt=JOB_MATCH_PHASE_A_SYSTEM_PROMPT,
+        user_content=user_content,
+        max_tokens=phase_a_max,
+        observe_name="phase_a",
+        user_id=user_id,
+    )
+
+    is_job_posting = bool(parsed.get("is_job_posting", False))
+    match_section = parsed.get("match") or parsed
+    match_result = _parse_match_section(match_section)
+
+    structured_job: JobDescriptionSchema | None = None
+    structured_section = parsed.get("structured_job")
+    if structured_section and isinstance(structured_section, dict):
+        structured_job = _parse_structured_job_section(structured_section)
+    else:
+        logger.warning("structured_job_section_missing_from_phase_a_response")
+
+    return match_result, structured_job, is_job_posting
+
+
+@observe(name="generate_tailored_content_phase_b")
+async def generate_tailored_content_phase_b(
+    job_text: str,
+    profile_text: str,
+    *,
+    structured_context: str = "",
+    match_summary: str = "",
+    user_id: str | None = None,
+) -> tuple[dict | None, dict | None]:
+    """
+    Phase B: tailored resume JSON and cover letter body.
+    Returns (tailored_resume_or_None, cover_letter_or_None).
+    """
+    settings = get_settings()
+    job_truncated = _truncate(job_text, MAX_JOB_LENGTH)
+    profile_truncated = _truncate(profile_text, MAX_PROFILE_LENGTH)
+
+    if not profile_truncated.strip():
+        return None, None
+
+    user_content = JOB_MATCH_PHASE_B_USER_TEMPLATE.format(
+        job_text=job_truncated,
+        profile_text=profile_truncated,
+        structured_context=structured_context or "No structured job data available.",
+        match_summary=match_summary or "No match summary available.",
+    )
+    phase_b_max = max(settings.openai_max_tokens, settings.phase_b_max_tokens)
+    phase_b_max = min(phase_b_max, 32768)
+
+    parsed = await _call_openai_json(
+        system_prompt=JOB_MATCH_PHASE_B_SYSTEM_PROMPT,
+        user_content=user_content,
+        max_tokens=phase_b_max,
+        observe_name="phase_b",
+        user_id=user_id,
+    )
+
+    tailored_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
+    cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
+    if not tailored_resume:
+        logger.warning("tailored_resume_section_missing_or_invalid")
+    if not cover_letter:
+        logger.warning("cover_letter_section_missing_or_invalid")
+    return tailored_resume, cover_letter

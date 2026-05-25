@@ -2,16 +2,14 @@ import asyncio
 import traceback
 from arq import create_pool
 from arq.connections import RedisSettings, ArqRedis
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
 from app.models.schemas import ExtractionStatus
-from app.models.database import ValidJob, InvalidJob
+from app.models.database import Job
 from app.services.extraction_service import ExtractionService
 from app.services.job_match_orchestrator import clear_job_match_progress
 from app.storage.database import get_session
-from app.storage.repository import JobExtractionRepository, ValidJobRepository, JobMatchInProgressRepository
+from app.storage.repository import JobExtractionRepository, JobRepository, JobMatchInProgressRepository
 from app.api.websocket import publish_ws_event
 
 logger = get_logger(__name__)
@@ -19,62 +17,8 @@ logger = get_logger(__name__)
 EXTRACTION_QUEUE = "job_extraction"
 ANALYSIS_QUEUE = "job_analysis"
 RESUME_BUILD_QUEUE = "resume_build"
-
-
-async def _move_valid_job_to_invalid(extraction_id: str, reason: str, user_id: str | None) -> str | None:
-    """Move the valid job linked to this extraction to invalid_jobs. Returns invalid_job.id or None."""
-    try:
-        async with get_session() as session:
-            valid_repo = ValidJobRepository(session)
-            valid_job = await valid_repo.get_by_extraction_id(extraction_id)
-            if not valid_job or not valid_job.is_active:
-                return None
-
-            invalid_job = InvalidJob(
-                source_url=valid_job.source_url,
-                normalized_url=valid_job.normalized_url,
-                domain=valid_job.domain,
-                title=valid_job.title,
-                company=valid_job.company,
-                location=valid_job.location,
-                description=valid_job.description,
-                posted_date=valid_job.posted_date,
-                experience_level=valid_job.experience_level,
-                industry=valid_job.industry,
-                duplicate_of_job_id=None,
-                duplication_reason=reason,
-                similarity_score=None,
-                similarity_hash=valid_job.similarity_hash,
-                raw_metadata=valid_job.raw_metadata or {},
-                is_active=True,
-            )
-            valid_job.is_active = False
-            session.add(invalid_job)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                return None
-
-            logger.info(
-                "extraction_site_unreachable_moved_to_invalid",
-                extraction_id=extraction_id,
-                valid_job_id=valid_job.id,
-                invalid_job_id=invalid_job.id,
-                reason=reason,
-            )
-            if user_id:
-                await publish_ws_event({
-                    "type": "extraction_failed",
-                    "user_id": user_id,
-                    "job_id": extraction_id,
-                    "url": valid_job.source_url,
-                    "error": reason,
-                })
-            return invalid_job.id
-    except Exception as e:
-        logger.warning("move_to_invalid_failed", extraction_id=extraction_id, error=str(e))
-        return None
+SCRAPER_QUEUE = "job_scraper_crawl"
+SAVE_QUEUE = "job_save"
 
 
 async def _mark_extraction_failed_cancelled(job_id: str) -> None:
@@ -134,40 +78,50 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
 
             if user_id:
                 async with get_session() as session:
-                    valid_repo = ValidJobRepository(session)
-                    valid_job = await valid_repo.get_by_extraction_id(job_id)
-                    if valid_job:
+                    job_repo = JobRepository(session)
+                    job = await job_repo.get_by_extraction_id(job_id)
+                    if job:
                         try:
                             progress_repo = JobMatchInProgressRepository(session)
-                            await progress_repo.add(valid_job.id, user_id)
+                            await progress_repo.add(job.id, user_id)
                             await session.commit()
-                            pending_match_progress = (valid_job.id, user_id)
+                            pending_match_progress = (job.id, user_id)
                             pool = await get_analysis_pool()
                             await pool.enqueue_job(
                                 "analyze_job_match",
-                                valid_job.id,
+                                job.id,
                                 user_id,
                                 job_id,
                             )
                             await pool.close()
-                            logger.info("job_match_enqueued", valid_job_id=valid_job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
+                            logger.info("job_match_enqueued", valid_job_id=job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
                             pending_match_progress = None
                         except Exception as enq_err:
-                            await progress_repo.remove(valid_job.id, user_id)
+                            await progress_repo.remove(job.id, user_id)
                             await session.commit()
                             pending_match_progress = None
-                            logger.warning("job_match_enqueue_failed", valid_job_id=valid_job.id, error=str(enq_err))
+                            logger.warning("job_match_enqueue_failed", valid_job_id=job.id, error=str(enq_err))
 
         elif result.get("status") == "failed":
             error_msg = result.get("error", "Unknown error")
             logger.error("extract_job_failed", job_id=job_id, url=url, error=error_msg)
 
             if result.get("site_unreachable"):
-                await _move_valid_job_to_invalid(
-                    job_id,
-                    reason=f"Site unreachable — {error_msg[:200]}",
-                    user_id=user_id,
-                )
+                reason = f"Site unreachable — {error_msg[:200]}"
+                async with get_session() as session:
+                    job_repo = JobRepository(session)
+                    job = await job_repo.get_by_extraction_id(job_id)
+                    if job:
+                        job.status = "extraction_failed"
+                        await session.commit()
+                        if user_id:
+                            await publish_ws_event({
+                                "type": "extraction_failed",
+                                "user_id": user_id,
+                                "job_id": job_id,
+                                "url": url,
+                                "error": reason,
+                            })
             elif user_id:
                 await publish_ws_event({
                     "type": "extraction_failed",
@@ -229,30 +183,173 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
         result = await run_job_match_analysis(valid_job_id, user_id, extraction_id=extraction_id)
         if result:
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
-            await publish_ws_event({
-                "type": "match_completed",
-                "user_id": user_id,
-                "valid_job_id": valid_job_id,
-                "overall_score": result.get("overall_score"),
-                "recommendation": result.get("recommendation"),
-            })
+            pool = await get_save_pool()
+            await pool.enqueue_job("save_analyzed_job", valid_job_id, user_id, extraction_id, result)
+            await pool.close()
         return result
     except asyncio.CancelledError:
         await clear_job_match_progress(valid_job_id, user_id)
-        await publish_ws_event({
-            "type": "match_failed",
-            "user_id": user_id,
-            "valid_job_id": valid_job_id,
-            "error": "Cancelled or timed out",
-        })
         raise
     except Exception as e:
         logger.exception("worker_analyze_job_match_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
         await clear_job_match_progress(valid_job_id, user_id)
+        return None
+    finally:
+        clear_logging_context()
+
+
+async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
+                            extraction_id: str | None, match_data: dict) -> dict | None:
+    """Save analyzed job match result with per-user dedup lock.
+
+    Uses an in-task wait loop for the Redis lock instead of arq Retry so that
+    lock-contention does NOT consume max_tries (which would permanently drop
+    jobs after 10 lock-busy retries).
+    """
+    from app.services.post_analysis_dedup import run_post_analysis_dedup
+    from app.storage.user_repository import UserRepository
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="save_analyzed_job", job_id=job_id, user_id=user_id)
+    logger.info("worker_save_analyzed_job_started", job_id=job_id, user_id=user_id)
+
+    redis = ctx.get("redis")
+    lock_key = f"job_save_lock:{user_id}"
+    lock_ttl = 120
+
+    if redis:
+        max_wait = 90
+        poll_interval = 1.5
+        waited = 0.0
+        while waited < max_wait:
+            acquired = await redis.set(lock_key, "1", nx=True, ex=lock_ttl)
+            if acquired:
+                break
+            logger.debug("save_lock_waiting", job_id=job_id, user_id=user_id, waited=round(waited, 1))
+            await asyncio.sleep(poll_interval)
+            waited += poll_interval
+        else:
+            logger.error("save_lock_timeout", job_id=job_id, user_id=user_id, waited=max_wait)
+            await clear_job_match_progress(job_id, user_id)
+            await publish_ws_event({
+                "type": "match_failed",
+                "user_id": user_id,
+                "valid_job_id": job_id,
+                "error": "Timed out waiting for save lock",
+            })
+            return None
+
+    try:
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            recycle_days = await user_repo.get_dedup_recycle_days(user_id)
+            min_match_score = await user_repo.get_effective_min_match_score(user_id)
+
+        dedup_result = await run_post_analysis_dedup(
+            job_id, user_id, match_data, extraction_id,
+            recycle_days=recycle_days,
+            min_match_score=min_match_score,
+        )
+
+        action = dedup_result.get("action", "saved_active")
+
+        await clear_job_match_progress(job_id, user_id)
+
+        await publish_ws_event({
+            "type": "match_completed",
+            "user_id": user_id,
+            "valid_job_id": job_id,
+            "overall_score": match_data.get("overall_score"),
+            "recommendation": match_data.get("recommendation"),
+        })
+
+        if action == "saved_duplicated":
+            await publish_ws_event({
+                "type": "job_excluded_for_user",
+                "user_id": user_id,
+                "valid_job_id": job_id,
+                "exclusion_type": dedup_result.get("exclusion_type"),
+                "reason": dedup_result.get("reason"),
+            })
+
+        if action == "saved_active" and match_data.get("should_run_phase_b"):
+            try:
+                pool = await get_analysis_pool()
+                await pool.enqueue_job("generate_tailored_content", job_id, user_id, extraction_id)
+                await pool.close()
+            except Exception as e:
+                logger.warning("tailored_content_enqueue_from_save_failed", job_id=job_id, error=str(e))
+
+        # Google Sheets auto-post disabled for now
+        # if action != "skipped" and match_data.get("overall_score") is not None:
+        #     try:
+        #         from app.services.google_sheets_service import auto_post_if_eligible
+        #         await auto_post_if_eligible(user_id, job_id, int(match_data["overall_score"]))
+        #     except Exception as e:
+        #         logger.warning("google_sheets_auto_post_from_save_failed", job_id=job_id, error=str(e))
+
+        logger.info("worker_save_analyzed_job_completed", job_id=job_id, action=action)
+        return dedup_result
+    except Exception as e:
+        logger.exception("worker_save_analyzed_job_failed", job_id=job_id, error=str(e))
+        await clear_job_match_progress(job_id, user_id)
         await publish_ws_event({
             "type": "match_failed",
             "user_id": user_id,
-            "valid_job_id": valid_job_id,
+            "valid_job_id": job_id,
+            "error": str(e),
+        })
+        return None
+    finally:
+        if redis:
+            await redis.delete(lock_key)
+        clear_logging_context()
+
+
+async def generate_tailored_content(
+    ctx: dict,
+    job_id: str,
+    user_id: str,
+    extraction_id: str | None = None,
+) -> dict | None:
+    from app.services.job_match_orchestrator import run_tailored_content_generation
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="generate_tailored_content", valid_job_id=job_id, user_id=user_id)
+    logger.info("worker_generate_tailored_content_started", valid_job_id=job_id, user_id=user_id)
+
+    await publish_ws_event({
+        "type": "tailored_content_started",
+        "user_id": user_id,
+        "valid_job_id": job_id,
+    })
+
+    try:
+        result = await run_tailored_content_generation(
+            job_id, user_id, extraction_id=extraction_id
+        )
+        if result:
+            logger.info("worker_generate_tailored_content_completed", valid_job_id=job_id)
+        return result
+    except asyncio.CancelledError:
+        await publish_ws_event({
+            "type": "tailored_content_failed",
+            "user_id": user_id,
+            "valid_job_id": job_id,
+            "error": "Cancelled or timed out",
+        })
+        raise
+    except Exception as e:
+        logger.exception(
+            "worker_generate_tailored_content_failed",
+            valid_job_id=job_id,
+            user_id=user_id,
+            error=str(e),
+        )
+        await publish_ws_event({
+            "type": "tailored_content_failed",
+            "user_id": user_id,
+            "valid_job_id": job_id,
             "error": str(e),
         })
         return None
@@ -260,52 +357,201 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
         clear_logging_context()
 
 
-async def build_resume_task(ctx: dict, valid_job_id: str, user_id: str) -> dict | None:
+async def build_resume_task(ctx: dict, job_id: str, user_id: str) -> dict | None:
     from app.services.resume_build_orchestrator import run_resume_build
 
     set_request_id(new_request_id())
-    bind_logging_context(worker_job_type="build_resume", valid_job_id=valid_job_id, user_id=user_id)
-    logger.info("worker_build_resume_started", valid_job_id=valid_job_id, user_id=user_id)
+    bind_logging_context(worker_job_type="build_resume", valid_job_id=job_id, user_id=user_id)
+    logger.info("worker_build_resume_started", valid_job_id=job_id, user_id=user_id)
 
     await publish_ws_event({
         "type": "resume_build_started",
         "user_id": user_id,
-        "valid_job_id": valid_job_id,
+        "valid_job_id": job_id,
     })
 
     try:
-        result = await run_resume_build(valid_job_id, user_id)
+        result = await run_resume_build(job_id, user_id)
         if result:
-            logger.info("worker_build_resume_completed", valid_job_id=valid_job_id, files=list(result.keys()))
+            logger.info("worker_build_resume_completed", valid_job_id=job_id, files=list(result.keys()))
             await publish_ws_event({
                 "type": "resume_build_completed",
                 "user_id": user_id,
-                "valid_job_id": valid_job_id,
+                "valid_job_id": job_id,
             })
         return result
     except asyncio.CancelledError:
         await publish_ws_event({
             "type": "resume_build_failed",
             "user_id": user_id,
-            "valid_job_id": valid_job_id,
+            "valid_job_id": job_id,
             "error": "Cancelled or timed out",
         })
         raise
     except Exception as e:
-        logger.exception("worker_build_resume_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
+        logger.exception("worker_build_resume_failed", valid_job_id=job_id, user_id=user_id, error=str(e))
         await publish_ws_event({
             "type": "resume_build_failed",
             "user_id": user_id,
-            "valid_job_id": valid_job_id,
+            "valid_job_id": job_id,
             "error": str(e),
         })
         return None
+    finally:
+        clear_logging_context()
+
+
+async def _promote_and_publish(
+    spider_name: str,
+    scrape_run_id: str | None,
+    user_id: str | None,
+) -> dict | None:
+    """Bridge scraped_jobs -> JobExtraction + Job and enqueue extraction.
+    Publishes a single `scrape_promoted` WS event with the stats.  Returns
+    the stats dict, or None when there's nothing to promote.
+    """
+    if not scrape_run_id:
+        logger.warning(
+            "scrape_promote_skipped_no_run_id",
+            spider_name=spider_name,
+        )
+        return None
+    try:
+        from app.services.scrape_promoter import promote_scrape_run
+        stats = await promote_scrape_run(scrape_run_id, user_id=user_id)
+    except Exception as e:
+        logger.exception(
+            "scrape_promote_failed",
+            spider_name=spider_name,
+            scrape_run_id=scrape_run_id,
+            error=str(e),
+        )
+        return None
+
+    if user_id:
+        await publish_ws_event({
+            "type": "scrape_promoted",
+            "user_id": user_id,
+            "spider_name": spider_name,
+            "stats": stats,
+        })
+    return stats
+
+
+async def run_scraper_task(ctx: dict, spider_name: str, user_id: str, **spider_args) -> dict:
+    """arq task: run a spider (or all) and publish progress via WebSocket.
+
+    After each spider finishes its scrape_runs row, the freshly written
+    ``scraped_jobs`` rows are bridged into the extraction lifecycle via
+    ``scrape_promoter.promote_scrape_run`` — they become ``JobExtraction``
+    (PENDING) + ``Job`` rows and ``extract_job`` is enqueued on the
+    extraction queue.  From that point on, scraped jobs flow through the
+    same pipeline as manually submitted URLs.
+    """
+    from app.scraper.runner import run_spider, run_all_spiders, ALL_SPIDERS
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="run_scraper", spider_name=spider_name, user_id=user_id)
+    logger.info("worker_scraper_started", spider_name=spider_name)
+
+    await publish_ws_event({
+        "type": "sync_started",
+        "user_id": user_id,
+        "spider_name": spider_name,
+    })
+
+    try:
+        if spider_name == "all":
+            async def on_progress(name, index, total, result):
+                await publish_ws_event({
+                    "type": "sync_progress",
+                    "user_id": user_id,
+                    "spider_name": name,
+                    "current": index,
+                    "total": total,
+                    "success": result.get("success", False),
+                })
+                if result.get("success"):
+                    await _promote_and_publish(
+                        spider_name=name,
+                        scrape_run_id=result.get("scrape_run_id"),
+                        user_id=user_id,
+                    )
+
+            results = await run_all_spiders(on_progress=on_progress)
+            promotion_totals = {
+                "new": 0, "linked_existing": 0, "blocked": 0,
+                "skipped_invalid_url": 0, "failed": 0, "enqueued": 0,
+                "total": 0,
+            }
+            summary = {
+                "spider": "all",
+                "total": len(results),
+                "succeeded": sum(1 for r in results if r.get("success")),
+                "failed": sum(1 for r in results if not r.get("success")),
+                "promotion": promotion_totals,
+                "results": results,
+            }
+        else:
+            kwargs = dict(spider_args)
+            if not kwargs:
+                for name, defaults in ALL_SPIDERS:
+                    if name == spider_name:
+                        kwargs = defaults
+                        break
+            result = await run_spider(spider_name, **kwargs)
+            promotion_stats = None
+            if result.get("success"):
+                promotion_stats = await _promote_and_publish(
+                    spider_name=spider_name,
+                    scrape_run_id=result.get("scrape_run_id"),
+                    user_id=user_id,
+                )
+            result["promotion"] = promotion_stats
+            summary = result
+
+        await publish_ws_event({
+            "type": "sync_completed",
+            "user_id": user_id,
+            "spider_name": spider_name,
+            "summary": summary,
+        })
+
+        logger.info("worker_scraper_completed", spider_name=spider_name)
+        return summary
+
+    except asyncio.CancelledError:
+        await publish_ws_event({
+            "type": "sync_failed",
+            "user_id": user_id,
+            "spider_name": spider_name,
+            "error": "Cancelled or timed out",
+        })
+        raise
+    except Exception as e:
+        logger.exception("worker_scraper_failed", spider_name=spider_name, error=str(e))
+        await publish_ws_event({
+            "type": "sync_failed",
+            "user_id": user_id,
+            "spider_name": spider_name,
+            "error": str(e),
+        })
+        return {"spider": spider_name, "success": False, "error": str(e)}
     finally:
         clear_logging_context()
 
 
 def _redis_settings() -> RedisSettings:
     return RedisSettings.from_dsn(get_settings().redis_url)
+
+
+async def _flush_langfuse(ctx: dict) -> None:
+    """Flush pending Langfuse traces before the worker shuts down."""
+    try:
+        from langfuse import get_client
+        get_client().flush()
+    except Exception:
+        pass
 
 
 class ExtractionWorkerSettings:
@@ -315,15 +561,28 @@ class ExtractionWorkerSettings:
     queue_name = EXTRACTION_QUEUE
     job_timeout = 300
     max_tries = 1
+    on_shutdown = _flush_langfuse
 
 
 class AnalysisWorkerSettings:
     """arq settings for the AI match analysis pipeline (API-heavy: OpenAI)."""
-    functions = [analyze_job_match]
+    functions = [analyze_job_match, generate_tailored_content]
     redis_settings = _redis_settings
     queue_name = ANALYSIS_QUEUE
+    job_timeout = 360
+    max_jobs = get_settings().analysis_worker_max_jobs
+    max_tries = 1
+    on_shutdown = _flush_langfuse
+
+
+class SaveWorkerSettings:
+    """arq settings for the sequential job save pipeline (per-user lock)."""
+    functions = [save_analyzed_job]
+    redis_settings = _redis_settings
+    queue_name = SAVE_QUEUE
     job_timeout = 120
     max_tries = 1
+    on_shutdown = _flush_langfuse
 
 
 class ResumeBuildWorkerSettings:
@@ -333,6 +592,7 @@ class ResumeBuildWorkerSettings:
     queue_name = RESUME_BUILD_QUEUE
     job_timeout = 180
     max_tries = 1
+    on_shutdown = _flush_langfuse
 
 
 async def get_extraction_pool() -> ArqRedis:
@@ -349,8 +609,31 @@ async def get_analysis_pool() -> ArqRedis:
     )
 
 
+async def get_save_pool() -> ArqRedis:
+    return await create_pool(
+        _redis_settings(),
+        default_queue_name=SAVE_QUEUE,
+    )
+
+
 async def get_resume_build_pool() -> ArqRedis:
     return await create_pool(
         _redis_settings(),
         default_queue_name=RESUME_BUILD_QUEUE,
+    )
+
+
+class ScraperWorkerSettings:
+    """arq settings for the scraper crawl pipeline (subprocess-based Scrapy)."""
+    functions = [run_scraper_task]
+    redis_settings = _redis_settings
+    queue_name = SCRAPER_QUEUE
+    job_timeout = 3600
+    max_tries = 1
+
+
+async def get_scraper_pool() -> ArqRedis:
+    return await create_pool(
+        _redis_settings(),
+        default_queue_name=SCRAPER_QUEUE,
     )

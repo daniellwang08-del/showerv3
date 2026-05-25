@@ -39,6 +39,20 @@ class User(Base):
     # Cached OpenAI-ready text (updated on profile save)
     profile_openai_cache = Column(Text, nullable=True)
 
+    # Deduplication recycle window: jobs older than this many days are treated
+    # as "fresh" at their company — a new posting won't be auto-excluded even
+    # if the user already applied to an older posting there. Default 60 days.
+    dedup_recycle_days = Column(Integer, default=60, nullable=False, server_default="60")
+    dedup_recycle_mode = Column(String(20), default="default", nullable=False, server_default="default")
+
+    # OpenAI: "default" uses server OPENAI_API_KEY; "custom" uses encrypted user key.
+    openai_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
+    openai_api_key_encrypted = Column(Text, nullable=True)
+
+    # Minimum match score: jobs below threshold are hidden (below_min_score exclusion).
+    min_match_score_mode = Column(String(20), default="default", nullable=False, server_default="default")
+    min_match_score = Column(Integer, default=0, nullable=False, server_default="0")
+
     __table_args__ = (
         Index("ix_users_email", "email"),
         Index("ix_users_is_active", "is_active"),
@@ -71,6 +85,7 @@ class JobExtraction(Base):
     raw_metadata = Column(JSON, default=dict)
     raw_html = Column(Text, nullable=True)
     is_job_posting = Column(Boolean, nullable=True)
+    raw_plain_text = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -83,8 +98,9 @@ class JobExtraction(Base):
     )
 
 
-class ValidJob(Base):
-    __tablename__ = "valid_jobs"
+class Job(Base):
+    """Unified job table — every submitted/scraped job lives here exactly once."""
+    __tablename__ = "jobs"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_url = Column(Text, nullable=False)
@@ -102,54 +118,64 @@ class ValidJob(Base):
     extraction_id = Column(String(36), nullable=True, index=True)
     scraped_at = Column(DateTime, nullable=True)
     click_count = Column(Integer, default=0, nullable=False)
-    is_active = Column(Boolean, default=True)
+    sheet_posted_at = Column(DateTime, nullable=True)
+    status = Column(String(30), default="active", nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (
-        Index("ix_valid_jobs_company", "company"),
-        Index("ix_valid_jobs_domain_company", "domain", "company"),
-        Index("ix_valid_jobs_created_at", "created_at"),
+        Index("ix_jobs_company", "company"),
+        Index("ix_jobs_domain_company", "domain", "company"),
+        Index("ix_jobs_created_at", "created_at"),
     )
 
 
-class InvalidJob(Base):
-    __tablename__ = "invalid_jobs"
+class UserJobStatus(Base):
+    """Per-user job status — tracks whether a job is active, duplicated, or
+    hidden for a specific user.  Replaces the old user_job_exclusions,
+    user_dismissed_duplicates, and per-user aspects of invalid_jobs.
+    """
+    __tablename__ = "user_job_status"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    source_url = Column(Text, nullable=False)
-    normalized_url = Column(String(2048), nullable=False, index=True)
-    domain = Column(String(255), nullable=False, index=True)
-    title = Column(String(500), nullable=True)
-    company = Column(String(500), nullable=False)
-    location = Column(String(500), nullable=True)
-    description = Column(Text, nullable=True)
-    posted_date = Column(DateTime, nullable=True)
-    experience_level = Column(String(100), nullable=True)
-    industry = Column(String(200), nullable=True)
-    raw_metadata = Column(JSON, default=dict)
-    duplicate_of_job_id = Column(String(36), nullable=True, index=True)
-    duplication_reason = Column(String(500), nullable=True)
-    similarity_score = Column(Float, nullable=True)
-    similarity_hash = Column(String(64), nullable=True, index=True)
-    is_active = Column(Boolean, default=True)
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_id = Column(
+        String(36),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(String(30), nullable=False)
+    duplicated_because_id = Column(
+        String(36),
+        ForeignKey("jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    exclusion_type = Column(String(50), nullable=True)
+    reason = Column(Text, nullable=True)
+    match_score_at_decision = Column(Float, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (
-        Index("ix_invalid_jobs_company", "company"),
-        Index("ix_invalid_jobs_domain_company", "domain", "company"),
-        Index("ix_invalid_jobs_duplicate_of", "duplicate_of_job_id"),
-        Index("ix_invalid_jobs_created_at", "created_at"),
+        UniqueConstraint("user_id", "job_id", name="uq_user_job_status"),
+        Index("ix_ujs_user_id", "user_id"),
+        Index("ix_ujs_job_id", "job_id"),
+        Index("ix_ujs_user_status", "user_id", "status"),
     )
 
 
 class JobMatchResult(Base):
-    """Cached AI job–profile match analysis result."""
+    """Cached AI job-profile match analysis result."""
     __tablename__ = "job_match_results"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    valid_job_id = Column(String(36), ForeignKey("valid_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     overall_score = Column(Integer, nullable=False)
     dimension_scores = Column(JSON, nullable=False)
@@ -160,7 +186,7 @@ class JobMatchResult(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("valid_job_id", "user_id", name="uq_job_match_valid_job_user"),
+        UniqueConstraint("job_id", "user_id", name="uq_job_match_job_user"),
     )
 
 
@@ -169,28 +195,28 @@ class JobMatchInProgress(Base):
     __tablename__ = "job_match_in_progress"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    valid_job_id = Column(String(36), ForeignKey("valid_jobs.id", ondelete="CASCADE"), nullable=False)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("valid_job_id", "user_id", name="uq_job_match_progress_valid_job_user"),
+        UniqueConstraint("job_id", "user_id", name="uq_job_match_progress_job_user"),
     )
 
 
 class ValidJobUserApplication(Base):
-    """Per-user mark that the user applied to this valid job posting (UI + persistence)."""
+    """Per-user mark that the user applied to this job posting (UI + persistence)."""
     __tablename__ = "valid_job_user_applications"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    valid_job_id = Column(String(36), ForeignKey("valid_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     applied_at = Column(DateTime, server_default=func.now(), nullable=False)
     applied_by_name = Column(String(300), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("user_id", "valid_job_id", name="uq_valid_job_user_application"),
-        Index("ix_valid_job_user_applications_user_valid", "user_id", "valid_job_id"),
+        UniqueConstraint("user_id", "job_id", name="uq_job_user_application"),
+        Index("ix_job_user_applications_user_job", "user_id", "job_id"),
     )
 
 
@@ -199,7 +225,7 @@ class ResumeBuildResult(Base):
     __tablename__ = "resume_build_results"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    valid_job_id = Column(String(36), ForeignKey("valid_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
     resume_docx_status = Column(String(20), default="pending", nullable=False)
@@ -215,14 +241,37 @@ class ResumeBuildResult(Base):
     tailored_resume_data = Column(JSON, nullable=True)
     cover_letter_data = Column(JSON, nullable=True)
 
+    content_generation_status = Column(String(20), default="pending", nullable=False)
+    content_generation_error = Column(Text, nullable=True)
+
     output_directory = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("valid_job_id", "user_id", name="uq_resume_build_valid_job_user"),
+        UniqueConstraint("job_id", "user_id", name="uq_resume_build_job_user"),
     )
+
+
+class GoogleSheetsConfig(Base):
+    """Per-user Google Sheets integration settings.
+
+    tab_groups stores a list of groups, where each group is a list of tab names.
+    E.g. [["CHELL", "Victor"], ["Adekunle", "Elsie"]]
+    Jobs round-robin between groups; all tabs in a group receive the same URL.
+    """
+    __tablename__ = "google_sheets_config"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    spreadsheet_url = Column(Text, nullable=False)
+    spreadsheet_id = Column(String(255), nullable=False)
+    tab_groups = Column(JSON, default=list)
+    round_robin_index = Column(Integer, default=0)
+    auto_post_threshold = Column(Integer, default=75)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class APIPatternRegistry(Base):

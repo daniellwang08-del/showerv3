@@ -13,6 +13,12 @@ so they can be scaled and deployed separately.
 import argparse
 import asyncio
 import sys
+from pathlib import Path
+
+# Load .env into os.environ BEFORE any app imports.  Third-party SDKs like
+# Langfuse read credentials from os.environ at import time.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from app.core.logging import setup_logging
 
@@ -28,10 +34,15 @@ from arq import run_worker
 from app.tasks.worker import (
     ExtractionWorkerSettings,
     AnalysisWorkerSettings,
+    SaveWorkerSettings,
     ResumeBuildWorkerSettings,
+    ScraperWorkerSettings,
     extract_job,
     analyze_job_match,
+    generate_tailored_content,
+    save_analyzed_job,
     build_resume_task,
+    run_scraper_task,
 )
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
@@ -93,11 +104,22 @@ class ExtractionWorkerConfig(ExtractionWorkerSettings):
 class AnalysisWorkerConfig(AnalysisWorkerSettings):
     on_startup = analysis_startup
     on_shutdown = analysis_shutdown
-    functions = [analyze_job_match]
+    functions = [analyze_job_match, generate_tailored_content]
     queue_name = AnalysisWorkerSettings.queue_name
     job_timeout = AnalysisWorkerSettings.job_timeout
+    max_jobs = AnalysisWorkerSettings.max_jobs
     max_tries = AnalysisWorkerSettings.max_tries
     redis_settings = AnalysisWorkerSettings.redis_settings()
+
+
+class SaveWorkerConfig(SaveWorkerSettings):
+    on_startup = analysis_startup
+    on_shutdown = analysis_shutdown
+    functions = [save_analyzed_job]
+    queue_name = SaveWorkerSettings.queue_name
+    job_timeout = SaveWorkerSettings.job_timeout
+    max_tries = SaveWorkerSettings.max_tries
+    redis_settings = SaveWorkerSettings.redis_settings()
 
 
 # ── Resume build worker lifecycle (DB only, no browser/HTTP) ───────────────
@@ -124,22 +146,70 @@ class ResumeBuildWorkerConfig(ResumeBuildWorkerSettings):
     redis_settings = ResumeBuildWorkerSettings.redis_settings()
 
 
+# ── Scraper worker lifecycle (DB only — spiders run as subprocesses) ───────
+
+async def scraper_startup(ctx):
+    logger.info("scraper_worker_startup_begin")
+    await init_database()
+    logger.info("scraper_worker_startup_complete")
+
+
+async def scraper_shutdown(ctx):
+    logger.info("scraper_worker_shutdown_begin")
+    await close_database()
+    logger.info("scraper_worker_shutdown_complete")
+
+
+class ScraperWorkerConfig(ScraperWorkerSettings):
+    on_startup = scraper_startup
+    on_shutdown = scraper_shutdown
+    functions = [run_scraper_task]
+    queue_name = ScraperWorkerSettings.queue_name
+    job_timeout = ScraperWorkerSettings.job_timeout
+    max_tries = ScraperWorkerSettings.max_tries
+    redis_settings = ScraperWorkerSettings.redis_settings()
+
+
 WORKER_CONFIGS = {
     "extraction": ExtractionWorkerConfig,
     "analysis": AnalysisWorkerConfig,
+    "save": SaveWorkerConfig,
     "resume": ResumeBuildWorkerConfig,
+    "scraper": ScraperWorkerConfig,
 }
 
 
 if __name__ == "__main__":
+    import os
+    from pathlib import Path
+
     parser = argparse.ArgumentParser(
         description="Start an arq worker for one pipeline.",
     )
     parser.add_argument(
         "mode",
         choices=list(WORKER_CONFIGS.keys()),
-        help="Which pipeline to run: 'extraction' (scraping), 'analysis' (OpenAI match), or 'resume' (document builder).",
+        help="Which pipeline to run: 'extraction' (scraping), 'analysis' (OpenAI Phase A + B), or 'resume' (document builder).",
     )
     args = parser.parse_args()
     logger.info("worker_launching", mode=args.mode)
-    run_worker(WORKER_CONFIGS[args.mode])
+
+    config = WORKER_CONFIGS[args.mode]
+
+    def _reload_enabled() -> bool:
+        app_env = os.environ.get("APP_ENV", "local").lower()
+        default = "0" if app_env == "production" else "1"
+        return os.environ.get("RELOAD", default).lower() in ("1", "true", "yes")
+
+    if _reload_enabled():
+        from watchfiles import run_process
+
+        watch_path = str(Path(__file__).resolve().parent / "app")
+
+        def _run_worker() -> None:
+            run_worker(config)
+
+        print(f"[reload] Watching {watch_path} — {args.mode} worker restarts on code changes.")
+        run_process(watch_path, target=_run_worker)
+    else:
+        run_worker(config)

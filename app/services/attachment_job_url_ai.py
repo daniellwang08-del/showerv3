@@ -4,13 +4,26 @@ Use OpenAI to extract job-related URLs from plain text (from attachments).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client
+from app.core.openai_client import get_openai_client_for_user
 from app.services.url_manager import URLManager
+
+try:
+    from langfuse import observe
+except ImportError:
+    from functools import wraps
+    def observe(**_kw):  # noqa: E303
+        def _decorator(fn):
+            @wraps(fn)
+            async def _wrapper(*a, **k):
+                return await fn(*a, **k)
+            return _wrapper
+        return _decorator
 
 logger = get_logger(__name__)
 
@@ -58,16 +71,17 @@ def _validate_and_normalize_url(url: str) -> str | None:
     return url.strip()
 
 
-async def extract_job_urls_from_text_combined(text: str) -> list[str]:
+@observe(name="extract_job_urls_from_text")
+async def extract_job_urls_from_text_combined(text: str, *, user_id: str | None = None) -> list[str]:
     """
-    Run OpenAI on one or more chunks, merge and dedupe by normalized URL.
+    Run OpenAI on one or more chunks in parallel (bounded), merge and dedupe by normalized URL.
     """
     text = text.strip()
     if not text:
         return []
 
     settings = get_settings()
-    client = get_openai_client()
+    client = await get_openai_client_for_user(user_id)
 
     chunks: list[str] = []
     if len(text) <= _CHUNK_CHARS:
@@ -76,41 +90,46 @@ async def extract_job_urls_from_text_combined(text: str) -> list[str]:
         for i in range(0, len(text), _CHUNK_CHARS):
             chunks.append(text[i : i + _CHUNK_CHARS])
 
-    seen: set[str] = set()
-    ordered: list[str] = []
+    sem = asyncio.Semaphore(max(1, settings.openai_attachment_max_concurrent))
 
-    for idx, chunk in enumerate(chunks):
+    async def _extract_chunk(idx: int, chunk: str) -> list[str]:
         user_msg = (
             f"Document part {idx + 1} of {len(chunks)}.\n\nExtract job-related URLs as specified.\n\n{chunk}"
         )
-        try:
-            resp = await client.chat.completions.create(
-                model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.1,
-            )
-        except Exception as e:
-            logger.exception("attachment_url_ai_openai_failed", part=idx + 1)
-            raise AIParsingError(f"OpenAI request failed: {e}") from e
+        async with sem:
+            try:
+                resp = await client.chat.completions.create(
+                    model=settings.openai_model,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.1,
+                )
+            except Exception as e:
+                logger.exception("attachment_url_ai_openai_failed", part=idx + 1)
+                raise AIParsingError(f"OpenAI request failed: {e}") from e
 
         choice = resp.choices[0].message.content
         if not choice:
-            continue
+            return []
         try:
-            raw_urls = _parse_urls_payload(choice)
+            return _parse_urls_payload(choice)
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning("attachment_url_ai_bad_json", part=idx + 1, error=str(e))
-            continue
+            return []
 
+    chunk_results = await asyncio.gather(
+        *(_extract_chunk(idx, chunk) for idx, chunk in enumerate(chunks))
+    )
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw_urls in chunk_results:
         for u in raw_urls:
             norm = _validate_and_normalize_url(u)
-            if not norm:
-                continue
-            if norm in seen:
+            if not norm or norm in seen:
                 continue
             seen.add(norm)
             ordered.append(norm)

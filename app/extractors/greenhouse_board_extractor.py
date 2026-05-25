@@ -27,16 +27,17 @@ _BOARD_JOBS_IN_PATH = re.compile(
     r"(?:boards|job-boards|jobs)\.greenhouse\.io/([^/\"'\s<>]+)/jobs/(\d+)",
     re.IGNORECASE,
 )
-_JOBS_NUMERIC_PATH = re.compile(r"/jobs/(\d+)(?:\?|$|/)", re.IGNORECASE)
+_JOBS_NUMERIC_PATH = re.compile(r"/jobs/(\d+)(?:[/?#]|$)", re.IGNORECASE)
 _GH_JID_QUERY = re.compile(r"[?&]gh_jid=(\d+)", re.IGNORECASE)
+_EMBED_FOR_QUERY = re.compile(r"[?&]for=([^&\"'\s<>]+)", re.IGNORECASE)
 
 _TOKEN_FROM_HTML_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"job-boards\.greenhouse\.io/embed/[^\"'\s<>]*[?&]for=([^&\"'\s<>]+)",
+        r"(?:job-boards|boards)\.greenhouse\.io/embed/[^\"'\s<>]*[?&]for=([^&\"'\s<>]+)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"boards\.greenhouse\.io/([^/\"'\s<>]+)/jobs/",
+        r"(?:boards|job-boards)\.greenhouse\.io/([^/\"'\s<>]+)/jobs/",
         re.IGNORECASE,
     ),
     re.compile(
@@ -45,6 +46,11 @@ _TOKEN_FROM_HTML_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(
         r"greenhouse\.io/embed/job_app\?[^\"'\s<>]*[?&]for=([^&\"'\s<>]+)",
+        re.IGNORECASE,
+    ),
+    # data-board / data-host attributes used by GH's embedded job board widget
+    re.compile(
+        r"data-(?:board|host|board-token|for)=[\"']([a-z0-9_-]+)[\"']",
         re.IGNORECASE,
     ),
 )
@@ -67,10 +73,16 @@ def parse_greenhouse_job_id_from_url(url: str) -> str | None:
 def greenhouse_board_tokens_from_url(url: str) -> list[str]:
     if not url:
         return []
+    tokens: list[str] = []
     m = _BOARD_JOBS_IN_PATH.search(url)
     if m:
-        return [m.group(1).strip()]
-    return []
+        tokens.append(m.group(1).strip())
+    embed_m = _EMBED_FOR_QUERY.search(url)
+    if embed_m and "greenhouse.io" in url.lower():
+        tok = embed_m.group(1).strip()
+        if tok and tok not in tokens:
+            tokens.append(tok)
+    return tokens
 
 
 def extract_greenhouse_board_tokens_from_html(html: str | None) -> list[str]:
@@ -114,7 +126,11 @@ class GreenhouseBoardExtractor(BaseExtractor):
             return False
         if greenhouse_board_tokens_from_url(url):
             return True
-        if html and ("greenhouse" in html.lower() or "gh_jid" in url.lower()):
+        # ?gh_jid=N on a careers page strongly implies Greenhouse, even before
+        # the HTML loads — let extract() try HTML token discovery.
+        if "gh_jid" in (url or "").lower():
+            return True
+        if html and "greenhouse" in html.lower():
             return True
         return False
 

@@ -15,6 +15,11 @@ export interface WsEvent {
   reason?: string;
   company?: string;
   file_type?: string;
+  spider_name?: string;
+  current?: number;
+  total?: number;
+  success?: boolean;
+  summary?: Record<string, unknown>;
 }
 
 type WsEventHandler = (event: WsEvent) => void;
@@ -72,7 +77,7 @@ export function useWebSocket(
         if (data.type === 'pong') return;
         onEventRef.current(data);
       } catch {
-        // ignore unparseable messages
+        // ignore
       }
     };
 

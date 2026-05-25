@@ -1,16 +1,17 @@
 import uuid
 
-from sqlalchemy import select, update, and_, delete
+from sqlalchemy import select, update, and_, delete, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import (
     JobExtraction,
     APIPatternRegistry,
-    ValidJob,
+    Job,
     JobMatchResult,
     JobMatchInProgress,
     ValidJobUserApplication,
     ResumeBuildResult,
+    UserJobStatus,
 )
 from app.models.schemas import ExtractionStatus, ExtractionMethod, JobDescriptionSchema
 from app.core.logging import get_logger
@@ -80,6 +81,7 @@ class JobExtractionRepository:
             "employment_type": None,
             "salary_range": None,
             "description": None,
+            "raw_plain_text": None,
             "responsibilities": [],
             "requirements": [],
             "benefits": [],
@@ -144,10 +146,6 @@ class JobExtractionRepository:
     ) -> None:
         """
         Persist LLM-structured job content and mark extraction COMPLETED.
-
-        Called by the analysis orchestrator after the LLM structures the content.
-        ``extraction_repo_method`` is optional — when None the previously stored
-        method (set during extraction) is preserved.
         """
         limits = _JOB_EXTRACTION_LIMITS
         now = _utcnow()
@@ -189,12 +187,19 @@ class JobExtractionRepository:
         )
 
     async def update_is_job_posting(self, job_id: str, is_job_posting: bool) -> None:
-        """Store the LLM-determined is_job_posting flag without changing other fields."""
         await self._session.execute(
             update(JobExtraction)
             .where(JobExtraction.id == job_id)
             .values(is_job_posting=is_job_posting, updated_at=_utcnow())
         )
+
+    async def save_raw_plain_text(self, job_id: str, plain_text: str) -> None:
+        await self._session.execute(
+            update(JobExtraction)
+            .where(JobExtraction.id == job_id, JobExtraction.raw_plain_text.is_(None))
+            .values(raw_plain_text=plain_text, updated_at=_utcnow())
+        )
+        logger.debug("repository_save_raw_plain_text", job_id=job_id, length=len(plain_text))
 
     async def get_pending_jobs(self, limit: int = 100) -> Sequence[JobExtraction]:
         result = await self._session.execute(
@@ -212,9 +217,6 @@ class JobExtractionRepository:
         *,
         source: str = "job_match_analysis",
     ) -> None:
-        """
-        Replace posting fields with LLM-structured job content and drop raw page capture.
-        """
         extraction = await self.get_by_id(job_id)
         if not extraction:
             return
@@ -225,7 +227,6 @@ class JobExtractionRepository:
         extraction.location = _truncate_for_db(job_data.location, limits["location"]) or extraction.location
         extraction.employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])
         extraction.salary_range = _truncate_for_db(job_data.salary_range, limits["salary_range"])
-        # Job-match LLM often sees the same thin text as the user; do not replace a longer extraction.
         old_desc = (extraction.description or "").strip()
         new_desc = (job_data.description or "").strip()
         if len(new_desc) > len(old_desc) or len(old_desc) < 300:
@@ -246,47 +247,58 @@ class JobExtractionRepository:
         await self._session.flush()
 
 
-class ValidJobRepository:
+class JobRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
     async def mark_scraped_by_extraction_id(self, extraction_id: str) -> None:
         await self._session.execute(
-            update(ValidJob)
-            .where(ValidJob.extraction_id == extraction_id)
+            update(Job)
+            .where(Job.extraction_id == extraction_id)
             .values(scraped_at=_utcnow())
         )
 
-    async def get_by_extraction_id(self, extraction_id: str) -> ValidJob | None:
+    async def get_by_extraction_id(self, extraction_id: str) -> Job | None:
         result = await self._session.execute(
-            select(ValidJob).where(ValidJob.extraction_id == extraction_id).limit(1)
+            select(Job).where(Job.extraction_id == extraction_id).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id(self, job_id: str) -> Job | None:
+        result = await self._session.execute(
+            select(Job).where(Job.id == job_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_normalized_url(self, normalized_url: str) -> Job | None:
+        result = await self._session.execute(
+            select(Job)
+            .where(Job.normalized_url == normalized_url, Job.status == "active")
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
     async def update_from_structured_extraction(
         self,
-        valid_job_id: str,
+        job_id: str,
         job_data: JobDescriptionSchema,
     ) -> None:
-        """
-        Keep valid_jobs in sync with enriched structured extraction content.
-        """
-        result = await self._session.execute(select(ValidJob).where(ValidJob.id == valid_job_id))
-        valid_job = result.scalar_one_or_none()
-        if not valid_job:
+        result = await self._session.execute(select(Job).where(Job.id == job_id))
+        job = result.scalar_one_or_none()
+        if not job:
             return
 
-        valid_job.title = _truncate_for_db(job_data.title, 500) or valid_job.title
-        valid_job.company = _truncate_for_db(job_data.company, 500) or valid_job.company
-        valid_job.location = _truncate_for_db(job_data.location, 500) or valid_job.location
-        old_vj = (valid_job.description or "").strip()
+        job.title = _truncate_for_db(job_data.title, 500) or job.title
+        job.company = _truncate_for_db(job_data.company, 500) or job.company
+        job.location = _truncate_for_db(job_data.location, 500) or job.location
+        old_vj = (job.description or "").strip()
         new_vj = (job_data.description or "").strip()
         if len(new_vj) > len(old_vj) or len(old_vj) < 300:
-            valid_job.description = sanitize_for_postgres_text(job_data.description)
-        valid_job.posted_date = job_data.posted_date or valid_job.posted_date
-        valid_job.experience_level = _truncate_for_db(job_data.experience_level, 100) or valid_job.experience_level
-        valid_job.industry = _truncate_for_db(job_data.industry, 200) or valid_job.industry
-        valid_job.updated_at = _utcnow()
+            job.description = sanitize_for_postgres_text(job_data.description)
+        job.posted_date = job_data.posted_date or job.posted_date
+        job.experience_level = _truncate_for_db(job_data.experience_level, 100) or job.experience_level
+        job.industry = _truncate_for_db(job_data.industry, 200) or job.industry
+        job.updated_at = _utcnow()
         await self._session.flush()
 
 
@@ -294,29 +306,28 @@ class JobMatchRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get(self, valid_job_id: str, user_id: str) -> JobMatchResult | None:
+    async def get(self, job_id: str, user_id: str) -> JobMatchResult | None:
         result = await self._session.execute(
             select(JobMatchResult).where(
-                JobMatchResult.valid_job_id == valid_job_id,
+                JobMatchResult.job_id == job_id,
                 JobMatchResult.user_id == user_id,
             )
         )
         return result.scalar_one_or_none()
 
-    async def delete(self, valid_job_id: str, user_id: str) -> None:
-        """Remove cached match so a rerun can show processing and store a fresh score."""
+    async def delete(self, job_id: str, user_id: str) -> None:
         from sqlalchemy import delete
 
         await self._session.execute(
             delete(JobMatchResult).where(
-                JobMatchResult.valid_job_id == valid_job_id,
+                JobMatchResult.job_id == job_id,
                 JobMatchResult.user_id == user_id,
             )
         )
 
     async def upsert(
         self,
-        valid_job_id: str,
+        job_id: str,
         user_id: str,
         overall_score: int,
         dimension_scores: dict,
@@ -325,7 +336,7 @@ class JobMatchRepository:
         gaps: list,
         recommendation: str,
     ) -> JobMatchResult:
-        existing = await self.get(valid_job_id, user_id)
+        existing = await self.get(job_id, user_id)
         if existing:
             existing.overall_score = overall_score
             existing.dimension_scores = dimension_scores
@@ -339,7 +350,7 @@ class JobMatchRepository:
             return existing
         rec = recommendation if recommendation is None else str(recommendation)[:50]
         row = JobMatchResult(
-            valid_job_id=valid_job_id,
+            job_id=job_id,
             user_id=user_id,
             overall_score=overall_score,
             dimension_scores=dimension_scores,
@@ -357,30 +368,28 @@ class JobMatchInProgressRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def add(self, valid_job_id: str, user_id: str) -> JobMatchInProgress:
-        """Mark job match as in progress. Idempotent and race-safe."""
+    async def add(self, job_id: str, user_id: str) -> JobMatchInProgress:
         stmt = (
             pg_insert(JobMatchInProgress)
-            .values(id=str(uuid.uuid4()), valid_job_id=valid_job_id, user_id=user_id)
+            .values(id=str(uuid.uuid4()), job_id=job_id, user_id=user_id)
             .on_conflict_do_nothing(
-                index_elements=[JobMatchInProgress.valid_job_id, JobMatchInProgress.user_id]
+                index_elements=[JobMatchInProgress.job_id, JobMatchInProgress.user_id]
             )
         )
         await self._session.execute(stmt)
         existing = await self._session.execute(
             select(JobMatchInProgress).where(
-                JobMatchInProgress.valid_job_id == valid_job_id,
+                JobMatchInProgress.job_id == job_id,
                 JobMatchInProgress.user_id == user_id,
             )
         )
         return existing.scalar_one()
 
-    async def remove(self, valid_job_id: str, user_id: str) -> None:
-        """Remove in-progress marker when analysis completes."""
+    async def remove(self, job_id: str, user_id: str) -> None:
         from sqlalchemy import delete
         await self._session.execute(
             delete(JobMatchInProgress).where(
-                JobMatchInProgress.valid_job_id == valid_job_id,
+                JobMatchInProgress.job_id == job_id,
                 JobMatchInProgress.user_id == user_id,
             )
         )
@@ -393,27 +402,27 @@ class ValidJobUserApplicationRepository:
     async def upsert_batch(
         self,
         user_id: str,
-        valid_job_ids: Sequence[str],
+        job_ids: Sequence[str],
         applied_by_name: str,
     ) -> int:
         label = (applied_by_name or "Unknown")[:300]
         now = _utcnow()
         n = 0
-        for jid in valid_job_ids:
-            job = await self._session.get(ValidJob, jid)
-            if not job or not job.is_active:
+        for jid in job_ids:
+            job = await self._session.get(Job, jid)
+            if not job or job.status != "active":
                 continue
             stmt = (
                 pg_insert(ValidJobUserApplication)
                 .values(
                     id=str(uuid.uuid4()),
                     user_id=user_id,
-                    valid_job_id=jid,
+                    job_id=jid,
                     applied_at=now,
                     applied_by_name=label,
                 )
                 .on_conflict_do_update(
-                    index_elements=[ValidJobUserApplication.user_id, ValidJobUserApplication.valid_job_id],
+                    index_elements=[ValidJobUserApplication.user_id, ValidJobUserApplication.job_id],
                     set_={"applied_at": now, "applied_by_name": label},
                 )
             )
@@ -421,11 +430,11 @@ class ValidJobUserApplicationRepository:
             n += 1
         return n
 
-    async def delete_batch(self, user_id: str, valid_job_ids: Sequence[str]) -> int:
+    async def delete_batch(self, user_id: str, job_ids: Sequence[str]) -> int:
         r = await self._session.execute(
             delete(ValidJobUserApplication).where(
                 ValidJobUserApplication.user_id == user_id,
-                ValidJobUserApplication.valid_job_id.in_(list(valid_job_ids)),
+                ValidJobUserApplication.job_id.in_(list(job_ids)),
             )
         )
         return int(r.rowcount or 0)
@@ -435,10 +444,10 @@ class ResumeBuildRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get(self, valid_job_id: str, user_id: str) -> ResumeBuildResult | None:
+    async def get(self, job_id: str, user_id: str) -> ResumeBuildResult | None:
         result = await self._session.execute(
             select(ResumeBuildResult).where(
-                ResumeBuildResult.valid_job_id == valid_job_id,
+                ResumeBuildResult.job_id == job_id,
                 ResumeBuildResult.user_id == user_id,
             )
         )
@@ -446,17 +455,23 @@ class ResumeBuildRepository:
 
     async def upsert(
         self,
-        valid_job_id: str,
+        job_id: str,
         user_id: str,
         tailored_resume_data: dict | None = None,
         cover_letter_data: dict | None = None,
+        *,
+        content_generation_status: str | None = None,
     ) -> ResumeBuildResult:
-        existing = await self.get(valid_job_id, user_id)
+        existing = await self.get(job_id, user_id)
         if existing:
             if tailored_resume_data is not None:
                 existing.tailored_resume_data = tailored_resume_data
             if cover_letter_data is not None:
                 existing.cover_letter_data = cover_letter_data
+            if content_generation_status is not None:
+                existing.content_generation_status = content_generation_status
+                if content_generation_status != "failed":
+                    existing.content_generation_error = None
             existing.resume_docx_status = "pending"
             existing.resume_pdf_status = "pending"
             existing.cover_letter_docx_status = "pending"
@@ -472,14 +487,81 @@ class ResumeBuildRepository:
             return existing
 
         row = ResumeBuildResult(
-            valid_job_id=valid_job_id,
+            job_id=job_id,
             user_id=user_id,
             tailored_resume_data=tailored_resume_data,
             cover_letter_data=cover_letter_data,
+            content_generation_status=content_generation_status or "pending",
         )
         self._session.add(row)
         await self._session.flush()
         return row
+
+    async def ensure_content_placeholder(
+        self,
+        job_id: str,
+        user_id: str,
+        *,
+        status: str = "pending",
+    ) -> ResumeBuildResult:
+        existing = await self.get(job_id, user_id)
+        if existing:
+            existing.content_generation_status = status
+            existing.content_generation_error = None
+            existing.updated_at = _utcnow()
+            await self._session.flush()
+            return existing
+        row = ResumeBuildResult(
+            job_id=job_id,
+            user_id=user_id,
+            content_generation_status=status,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def mark_content_generating(self, job_id: str, user_id: str) -> None:
+        row = await self.get(job_id, user_id)
+        if not row:
+            row = await self.ensure_content_placeholder(job_id, user_id, status="processing")
+        row.content_generation_status = "processing"
+        row.content_generation_error = None
+        row.updated_at = _utcnow()
+        await self._session.flush()
+
+    async def complete_content_generation(
+        self,
+        job_id: str,
+        user_id: str,
+        *,
+        tailored_resume_data: dict,
+        cover_letter_data: dict | None,
+    ) -> ResumeBuildResult:
+        row = await self.upsert(
+            job_id,
+            user_id,
+            tailored_resume_data=tailored_resume_data,
+            cover_letter_data=cover_letter_data,
+            content_generation_status="completed",
+        )
+        return row
+
+    async def fail_content_generation(
+        self,
+        job_id: str,
+        user_id: str,
+        error: str,
+    ) -> None:
+        row = await self.get(job_id, user_id)
+        if not row:
+            row = await self.ensure_content_placeholder(job_id, user_id, status="failed")
+        row.content_generation_status = "failed"
+        row.content_generation_error = _truncate_for_db(error, 1500)
+        row.updated_at = _utcnow()
+        await self._session.flush()
+
+    async def mark_content_skipped(self, job_id: str, user_id: str) -> None:
+        await self.ensure_content_placeholder(job_id, user_id, status="skipped")
 
     async def update_file_status(
         self,
@@ -509,6 +591,100 @@ class ResumeBuildRepository:
             row.output_directory = directory
             row.updated_at = _utcnow()
             await self._session.flush()
+
+
+class UserJobStatusRepository:
+    """Manages per-user job status (active, duplicated, manual_hidden)."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def get(self, user_id: str, job_id: str) -> UserJobStatus | None:
+        result = await self._session.execute(
+            select(UserJobStatus).where(
+                UserJobStatus.user_id == user_id,
+                UserJobStatus.job_id == job_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert(
+        self,
+        *,
+        user_id: str,
+        job_id: str,
+        status: str,
+        exclusion_type: str | None = None,
+        duplicated_because_id: str | None = None,
+        reason: str | None = None,
+        match_score_at_decision: float | None = None,
+    ) -> UserJobStatus:
+        existing = await self.get(user_id, job_id)
+        if existing:
+            existing.status = status
+            existing.exclusion_type = exclusion_type
+            existing.duplicated_because_id = duplicated_because_id
+            existing.reason = _truncate_for_db(reason, 1500) if reason else reason
+            existing.match_score_at_decision = match_score_at_decision
+            existing.updated_at = _utcnow()
+            await self._session.flush()
+            return existing
+        row = UserJobStatus(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            job_id=job_id,
+            status=status,
+            exclusion_type=exclusion_type,
+            duplicated_because_id=duplicated_because_id,
+            reason=_truncate_for_db(reason, 1500) if reason else reason,
+            match_score_at_decision=match_score_at_decision,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def delete(self, user_id: str, job_id: str) -> bool:
+        result = await self._session.execute(
+            delete(UserJobStatus).where(
+                UserJobStatus.user_id == user_id,
+                UserJobStatus.job_id == job_id,
+            )
+        )
+        return bool(result.rowcount)
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        *,
+        statuses: list[str] | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[UserJobStatus]:
+        stmt = select(UserJobStatus).where(UserJobStatus.user_id == user_id)
+        if statuses:
+            stmt = stmt.where(UserJobStatus.status.in_(statuses))
+        stmt = stmt.order_by(UserJobStatus.created_at.desc()).limit(limit).offset(offset)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_excluded_job_ids(self, user_id: str) -> set[str]:
+        result = await self._session.execute(
+            select(UserJobStatus.job_id).where(
+                UserJobStatus.user_id == user_id,
+                UserJobStatus.status.in_(["duplicated", "manual_hidden"]),
+            )
+        )
+        return {row[0] for row in result.all()}
+
+    async def is_excluded(self, user_id: str, job_id: str) -> bool:
+        result = await self._session.execute(
+            select(UserJobStatus.id).where(
+                UserJobStatus.user_id == user_id,
+                UserJobStatus.job_id == job_id,
+                UserJobStatus.status.in_(["duplicated", "manual_hidden"]),
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
 
 class APIPatternRepository:

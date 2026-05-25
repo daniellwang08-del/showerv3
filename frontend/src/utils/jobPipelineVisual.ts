@@ -22,7 +22,7 @@ function isExtracted(item: SubmittedUrlItem): boolean {
  * — 3/4 + amber: AI profile match in progress.
  */
 export function getJobPipelineVisual(item: SubmittedUrlItem): JobPipelineVisual | null {
-  if (item.table !== 'valid') return null;
+  if (item.table !== 'active') return null;
 
   const ext = item.extraction_status;
   if (ext === 'failed') {

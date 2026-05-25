@@ -19,11 +19,19 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+# Load .env into os.environ BEFORE any app imports.  Third-party SDKs like
+# Langfuse read credentials from os.environ at import time; pydantic-settings
+# only populates its own model and never writes to os.environ.
+from pathlib import Path as _Path
+from dotenv import load_dotenv as _load_dotenv
+_load_dotenv(_Path(__file__).resolve().parent.parent / ".env")
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.api.routes import router
+from app.api.scraper_routes import scraper_router
 from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
@@ -45,6 +53,33 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("database_init_failed", error=str(e))
         raise
+
+    # Clean up stale scrape_runs left in 'running' state from a previous
+    # process that was killed before it could call PostgresPipeline.close_spider().
+    # Without this, GET /scraper/sync/status returns "running" forever after
+    # a hard app restart, keeping the sync button stuck in the loading state.
+    try:
+        from app.storage.database import get_session
+        from sqlalchemy import text as _sa_text
+        async with get_session() as _sess:
+            result = await _sess.execute(
+                _sa_text(
+                    "UPDATE scrape_runs "
+                    "SET status = 'interrupted', "
+                    "    finished_at = now() "
+                    "WHERE status = 'running'"
+                )
+            )
+            rows = result.rowcount
+            await _sess.commit()
+            if rows:
+                logger.warning(
+                    "startup_stale_runs_cleaned",
+                    count=rows,
+                    reason="Runs were left in 'running' state from a previous process restart",
+                )
+    except Exception as e:
+        logger.warning("startup_stale_runs_cleanup_failed", error=str(e))
 
     try:
         await init_http_client()
@@ -83,6 +118,12 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("application_stopping")
+
+    try:
+        from langfuse import get_client  # type: ignore[import-unresolved]
+        get_client().flush()
+    except Exception:
+        pass
 
     try:
         await ws_manager.stop_redis_subscriber()
@@ -157,6 +198,7 @@ def create_app() -> FastAPI:
         return Response(status_code=204)
 
     app.include_router(router, prefix="/api/v1")
+    app.include_router(scraper_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 
     return app

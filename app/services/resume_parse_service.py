@@ -14,7 +14,19 @@ from openai import AsyncOpenAI
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client
+from app.core.openai_client import get_openai_client_for_user
+
+try:
+    from langfuse import observe
+except ImportError:
+    from functools import wraps
+    def observe(**_kw):  # noqa: E303
+        def _decorator(fn):
+            @wraps(fn)
+            async def _wrapper(*a, **k):
+                return await fn(*a, **k)
+            return _wrapper
+        return _decorator
 from app.models.profile_schemas import (
     ResumeCertBlock,
     ResumeEducationBlock,
@@ -383,12 +395,14 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     return draft
 
 
+@observe(name="call_openai_resume")
 async def _call_openai_resume(
     *,
     user_text: str | None,
     image_base64_pngs: list[str] | None,
+    user_id: str | None = None,
 ) -> ResumeExtractedDraft:
-    client: AsyncOpenAI = get_openai_client()
+    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
     settings = get_settings()
 
     sys_msg = (
@@ -464,7 +478,8 @@ async def _call_openai_resume(
         raise AIParsingError("Failed to parse extracted profile JSON") from e
 
 
-async def parse_resume_bytes(*, raw: bytes, filename: str) -> ResumeParseResponse:
+@observe(name="parse_resume_bytes")
+async def parse_resume_bytes(*, raw: bytes, filename: str, user_id: str | None = None) -> ResumeParseResponse:
     if len(raw) > MAX_RESUME_BYTES:
         raise ValueError(f"File too large (max {MAX_RESUME_BYTES // (1024 * 1024)} MB).")
 
@@ -480,7 +495,7 @@ async def parse_resume_bytes(*, raw: bytes, filename: str) -> ResumeParseRespons
                     "Could not read this PDF. Install PyMuPDF for better support: pip install pymupdf"
                 )
             text = _clip_resume_text(text, warnings)
-            draft = await _call_openai_resume(user_text=text, image_base64_pngs=None)
+            draft = await _call_openai_resume(user_text=text, image_base64_pngs=None, user_id=user_id)
             warnings.append(
                 "PDF parsed as plain text (install pymupdf for page images / vision). Run: pip install pymupdf"
             )
@@ -491,14 +506,14 @@ async def parse_resume_bytes(*, raw: bytes, filename: str) -> ResumeParseRespons
         if not images:
             raise ValueError("Could not render PDF pages")
         try:
-            draft = await _call_openai_resume(user_text=None, image_base64_pngs=images)
+            draft = await _call_openai_resume(user_text=None, image_base64_pngs=images, user_id=user_id)
         except Exception as e:
             logger.warning("resume_pdf_vision_failed_trying_text", error=str(e))
             text = pdf_to_plain_text_any(raw)
             if not text.strip():
                 raise
             text = _clip_resume_text(text, warnings)
-            draft = await _call_openai_resume(user_text=text, image_base64_pngs=None)
+            draft = await _call_openai_resume(user_text=text, image_base64_pngs=None, user_id=user_id)
             warnings.append("PDF was parsed from extracted text (vision path failed or model has no vision).")
         return ResumeParseResponse(draft=draft, source_kind="pdf", warnings=warnings)
 
@@ -506,6 +521,6 @@ async def parse_resume_bytes(*, raw: bytes, filename: str) -> ResumeParseRespons
     if not text.strip():
         raise ValueError("No text found in DOCX")
     text = _clip_resume_text(text, warnings)
-    draft = await _call_openai_resume(user_text=text, image_base64_pngs=None)
+    draft = await _call_openai_resume(user_text=text, image_base64_pngs=None, user_id=user_id)
     warnings.append("DOCX was parsed from text; use PDF for pixel-perfect layout.")
     return ResumeParseResponse(draft=draft, source_kind="docx", warnings=warnings)

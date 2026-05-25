@@ -99,3 +99,8 @@ class ExtractionCache:
             return bool(await r.exists(key))
         finally:
             await r.aclose()
+
+
+async def invalidate_extraction_cache(job_id: str) -> None:
+    """Remove cached plain text after extraction reset or rerun."""
+    await ExtractionCache().delete(job_id)

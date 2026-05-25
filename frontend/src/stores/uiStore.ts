@@ -4,7 +4,14 @@ import type { SubmittedUrlItem } from '../types/ui';
 import { useJobsStore } from './jobsStore';
 import { useModalStore } from './modalStore';
 
-type OpenMenu = { table: 'valid' | 'invalid'; id: string } | null;
+type OpenMenu = { table: 'active' | 'duplicated'; id: string } | null;
+
+export type NotificationKind = 'success' | 'warning' | 'error' | 'info';
+export type Notification = {
+  id: string;
+  kind: NotificationKind;
+  message: string;
+};
 
 type UIState = {
   openMenu: OpenMenu;
@@ -12,12 +19,16 @@ type UIState = {
   pendingScrollValidJobId: string | null;
   jobAnalysisValidJobId: string | null;
   wsRefreshKey: number;
+  notifications: Notification[];
 
   setOpenMenu: (menu: OpenMenu) => void;
-  toggleMenu: (table: 'valid' | 'invalid', id: string) => void;
+  toggleMenu: (table: 'active' | 'duplicated', id: string) => void;
   setJobAnalysisValidJobId: (id: string | null) => void;
   closeDetail: () => void;
   bumpWsRefreshKey: () => void;
+
+  notify: (kind: NotificationKind, message: string, autoDismissMs?: number) => void;
+  dismissNotification: (id: string) => void;
 
   scrollToValidJob: (jobId: string) => void;
   clearPendingScroll: () => void;
@@ -29,12 +40,15 @@ type UIState = {
   replaceDuplicate: (item: SubmittedUrlItem) => void;
 };
 
+let _notifCounter = 0;
+
 export const useUIStore = create<UIState>((set, get) => ({
   openMenu: null,
   compareValidJobId: null,
   pendingScrollValidJobId: null,
   jobAnalysisValidJobId: null,
   wsRefreshKey: 0,
+  notifications: [],
 
   setOpenMenu: (menu) => set({ openMenu: menu }),
 
@@ -53,6 +67,17 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   bumpWsRefreshKey: () => set((s) => ({ wsRefreshKey: s.wsRefreshKey + 1 })),
 
+  notify: (kind, message, autoDismissMs = 5000) => {
+    const id = `notif-${++_notifCounter}`;
+    set((s) => ({ notifications: [...s.notifications, { id, kind, message }] }));
+    if (autoDismissMs > 0) {
+      window.setTimeout(() => get().dismissNotification(id), autoDismissMs);
+    }
+  },
+
+  dismissNotification: (id) =>
+    set((s) => ({ notifications: s.notifications.filter((n) => n.id !== id) })),
+
   scrollToValidJob: (jobId: string) => {
     set({ compareValidJobId: jobId, pendingScrollValidJobId: jobId });
     window.setTimeout(() => set({ compareValidJobId: null }), 3000);
@@ -61,7 +86,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   clearPendingScroll: () => set({ pendingScrollValidJobId: null }),
 
   openJobAnalysis: (item) => {
-    if (item.table === 'valid' && item.extraction_id) {
+    if (item.table === 'active' && item.extraction_id) {
       set({ jobAnalysisValidJobId: item.id });
     }
   },
