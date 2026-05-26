@@ -20,6 +20,9 @@ export interface Job {
  *  'no_score_comparison'   – first analyzed job at company wins; others excluded
  *  'below_min_score'       – match score below user's minimum threshold
  *  'strict_similarity'     – same title and company
+ *  'same_url'              – identical URL already active for user
+ *  'extraction_failed'     – expired/invalid posting could not be extracted
+ *  'blocked_domain'        – domain blocked at submit
  */
 export type ExclusionType =
   | 'applied_company'
@@ -28,6 +31,9 @@ export type ExclusionType =
   | 'no_score_comparison'
   | 'below_min_score'
   | 'strict_similarity'
+  | 'same_url'
+  | 'extraction_failed'
+  | 'blocked_domain'
   | 'manual_invalid'
   | 'manual_duplicate'
   | null;

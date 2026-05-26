@@ -6,10 +6,10 @@ entirely based on same-company comparisons within the user's recycle window.
 
 Rules (applied in order):
   0. Minimum match score — score below user's threshold → duplicated (below_min_score).
-  A. Strict similarity — same title + same company → duplicated (also checks score
-     proximity < 2 pts when both jobs have scores, but same title alone is sufficient).
-  B. Applied at same company — user already applied within recycle window → duplicated.
-  C. Score comparison — keep the higher-scoring job active; mark the other duplicated.
+  1. Same URL — another active job with identical normalized_url → duplicated (same_url).
+  2. Strict similarity — same title + same company → duplicated.
+  3. Applied at same company — user already applied within recycle window → duplicated.
+  4. Score comparison — keep the higher-scoring job active; mark the other duplicated.
 """
 
 from __future__ import annotations
@@ -17,11 +17,18 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
 from app.models.database import Job, JobMatchResult, ValidJobUserApplication, UserJobStatus
-from app.services.min_match_score_reconcile import BELOW_MIN_SCORE_EXCLUSION
-from app.storage.repository import JobMatchRepository, UserJobStatusRepository, _truncate_for_db
+from app.services.job_exclusion_types import (
+    APPLIED_COMPANY_EXCLUSION,
+    BELOW_MIN_SCORE_EXCLUSION,
+    LOWER_SCORE_EXCLUSION,
+    SAME_URL_EXCLUSION,
+    STRICT_SIMILARITY_EXCLUSION,
+    SUPERSEDED_BY_HIGHER_EXCLUSION,
+)
+from app.storage.repository import JobMatchRepository, UserJobStatusRepository
 from app.storage.database import get_session
 from app.api.websocket import publish_ws_event
 from app.core.logging import get_logger
@@ -107,9 +114,73 @@ def _normalize_title(title: str | None) -> str:
     if not title:
         return ""
     lowered = title.strip().lower()
-    if lowered in {"none", "null", "unknown", "unknown position", "n/a", "na"}:
+    if lowered in {"none", "null", "unknown", "unknown position", "n/a", "na", "untitled", "untitled job"}:
         return ""
     return _TITLE_STRIP_RE.sub("", lowered).strip()
+
+
+async def _find_same_url_active_duplicate(
+    session,
+    *,
+    user_id: str,
+    job_id: str,
+    normalized_url: str | None,
+) -> Job | None:
+    url = (normalized_url or "").strip()
+    if not url:
+        return None
+    result = await session.execute(
+        select(Job)
+        .join(
+            UserJobStatus,
+            and_(
+                UserJobStatus.job_id == Job.id,
+                UserJobStatus.user_id == user_id,
+                UserJobStatus.status == "active",
+            ),
+        )
+        .where(
+            Job.status == "active",
+            Job.normalized_url == url,
+            Job.id != job_id,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _list_active_peer_jobs(
+    session,
+    *,
+    user_id: str,
+    job_id: str,
+    employer_key: str,
+    recycle_days: int,
+) -> list[Job]:
+    """Active jobs for this user at the same employer within the recycle window."""
+    if not employer_key:
+        return []
+
+    result = await session.execute(
+        select(Job)
+        .join(
+            UserJobStatus,
+            and_(
+                UserJobStatus.job_id == Job.id,
+                UserJobStatus.user_id == user_id,
+                UserJobStatus.status == "active",
+            ),
+        )
+        .where(
+            Job.status == "active",
+            Job.id != job_id,
+        )
+    )
+    return [
+        job
+        for job in result.scalars().all()
+        if resolve_employer_key(job) == employer_key and _within_recycle_window(job, recycle_days)
+    ]
 
 
 async def run_post_analysis_dedup(
@@ -125,14 +196,12 @@ async def run_post_analysis_dedup(
     overall_score = match_data.get("overall_score", 0)
 
     async with get_session() as session:
-        # Load the current job
         row = await session.execute(select(Job).where(Job.id == job_id))
         current_job = row.scalar_one_or_none()
         if not current_job:
             logger.warning("post_analysis_dedup_job_not_found", job_id=job_id)
             return {"action": "skipped", "reason": "job_not_found"}
 
-        # Rule 0: below minimum match score threshold
         if min_match_score > 0 and overall_score < min_match_score:
             logger.info(
                 "post_analysis_dedup_below_min_score",
@@ -155,76 +224,77 @@ async def run_post_analysis_dedup(
                 ),
             )
 
+        url_duplicate = await _find_same_url_active_duplicate(
+            session,
+            user_id=user_id,
+            job_id=job_id,
+            normalized_url=current_job.normalized_url,
+        )
+        if url_duplicate:
+            logger.info(
+                "post_analysis_dedup_same_url",
+                job_id=job_id,
+                existing_job_id=url_duplicate.id,
+                user_id=user_id,
+            )
+            return await _save_duplicated(
+                session,
+                job_id=job_id,
+                user_id=user_id,
+                match_data=match_data,
+                overall_score=overall_score,
+                duplicated_because_id=url_duplicate.id,
+                exclusion_type=SAME_URL_EXCLUSION,
+                reason="Same job URL already exists in your active list.",
+            )
+
         employer_key = resolve_employer_key(current_job)
         if not employer_key:
-            # No company info — save directly as active
             return await _save_active(session, job_id, user_id, match_data, overall_score)
 
-        # Find all same-company jobs within recycle window that have a user_job_status row
-        all_jobs_result = await session.execute(
-            select(Job).where(Job.status == "active")
+        same_company_jobs = await _list_active_peer_jobs(
+            session,
+            user_id=user_id,
+            job_id=job_id,
+            employer_key=employer_key,
+            recycle_days=recycle_days,
         )
-        same_company_jobs = [
-            j for j in all_jobs_result.scalars().all()
-            if j.id != job_id
-            and resolve_employer_key(j) == employer_key
-            and _within_recycle_window(j, recycle_days)
-        ]
 
-        # Filter to those that already have a user_job_status row for this user
-        if same_company_jobs:
-            pool_ids = [j.id for j in same_company_jobs]
-            ujs_result = await session.execute(
-                select(UserJobStatus).where(
-                    UserJobStatus.user_id == user_id,
-                    UserJobStatus.job_id.in_(pool_ids),
-                )
-            )
-            ujs_by_job = {ujs.job_id: ujs for ujs in ujs_result.scalars().all()}
-            same_company_jobs = [j for j in same_company_jobs if j.id in ujs_by_job]
-
-        # Step 2: No same-company jobs → save as active
         if not same_company_jobs:
             return await _save_active(session, job_id, user_id, match_data, overall_score)
 
-        # Rule A: Strict similarity — same title + company → duplicated
-        # If the existing job has a match score, also require score diff < 2.0.
-        # If no match score exists (e.g. deleted by rerun), same title alone is enough.
         current_title_norm = _normalize_title(current_job.title)
         for existing_job in same_company_jobs:
             existing_title_norm = _normalize_title(existing_job.title)
-            if current_title_norm and existing_title_norm and current_title_norm == existing_title_norm:
-                match_row = await session.execute(
-                    select(JobMatchResult).where(
-                        JobMatchResult.job_id == existing_job.id,
-                        JobMatchResult.user_id == user_id,
-                    )
-                )
-                existing_match = match_row.scalar_one_or_none()
-                if existing_match is None or abs(existing_match.overall_score - overall_score) < 2.0:
-                    existing_score_str = str(existing_match.overall_score) if existing_match else "n/a"
-                    logger.info(
-                        "post_analysis_dedup_strict_similarity",
-                        job_id=job_id,
-                        existing_job_id=existing_job.id,
-                        existing_score=existing_score_str,
-                        new_score=overall_score,
-                    )
-                    return await _save_duplicated(
-                        session,
-                        job_id=job_id,
-                        user_id=user_id,
-                        match_data=match_data,
-                        overall_score=overall_score,
-                        duplicated_because_id=existing_job.id,
-                        exclusion_type="strict_similarity",
-                        reason=(
-                            f"Same title and company"
-                            + (f" with nearly identical score (diff < 2.0 vs existing {existing_match.overall_score}%)." if existing_match else ".")
-                        ),
-                    )
+            if not (current_title_norm and existing_title_norm and current_title_norm == existing_title_norm):
+                continue
 
-        # Rule B: Applied at same company
+            match_row = await session.execute(
+                select(JobMatchResult).where(
+                    JobMatchResult.job_id == existing_job.id,
+                    JobMatchResult.user_id == user_id,
+                )
+            )
+            existing_match = match_row.scalar_one_or_none()
+            existing_score_str = str(existing_match.overall_score) if existing_match else "n/a"
+            logger.info(
+                "post_analysis_dedup_strict_similarity",
+                job_id=job_id,
+                existing_job_id=existing_job.id,
+                existing_score=existing_score_str,
+                new_score=overall_score,
+            )
+            return await _save_duplicated(
+                session,
+                job_id=job_id,
+                user_id=user_id,
+                match_data=match_data,
+                overall_score=overall_score,
+                duplicated_because_id=existing_job.id,
+                exclusion_type=STRICT_SIMILARITY_EXCLUSION,
+                reason="Same title and company as an existing active posting.",
+            )
+
         pool_ids = [j.id for j in same_company_jobs]
         applied_result = await session.execute(
             select(ValidJobUserApplication).where(
@@ -242,14 +312,13 @@ async def run_post_analysis_dedup(
                 match_data=match_data,
                 overall_score=overall_score,
                 duplicated_because_id=applied_job_id,
-                exclusion_type="applied_company",
+                exclusion_type=APPLIED_COMPANY_EXCLUSION,
                 reason=(
                     f"User already applied to another posting at this company "
                     f"within the {recycle_days}-day recycle window."
                 ),
             )
 
-        # Rule C: Score comparison (unapplied)
         match_rows_result = await session.execute(
             select(JobMatchResult).where(
                 JobMatchResult.user_id == user_id,
@@ -264,14 +333,13 @@ async def run_post_analysis_dedup(
         best_existing_score = best_existing.overall_score
 
         if overall_score > best_existing_score:
-            # New job is better — save as active, flip old best to duplicated
             result = await _save_active(session, job_id, user_id, match_data, overall_score)
             ujs_repo = UserJobStatusRepository(session)
             await ujs_repo.upsert(
                 user_id=user_id,
                 job_id=best_existing.job_id,
                 status="duplicated",
-                exclusion_type="superseded_by_higher",
+                exclusion_type=SUPERSEDED_BY_HIGHER_EXCLUSION,
                 duplicated_because_id=job_id,
                 reason=(
                     f"Superseded by a higher-scoring posting at the same company "
@@ -284,25 +352,24 @@ async def run_post_analysis_dedup(
                 "user_id": user_id,
                 "job_id": best_existing.job_id,
                 "status": "duplicated",
-                "exclusion_type": "superseded_by_higher",
+                "exclusion_type": SUPERSEDED_BY_HIGHER_EXCLUSION,
             })
             result["flipped_job_id"] = best_existing.job_id
             return result
-        else:
-            # New job is equal or worse — mark as duplicated
-            return await _save_duplicated(
-                session,
-                job_id=job_id,
-                user_id=user_id,
-                match_data=match_data,
-                overall_score=overall_score,
-                duplicated_because_id=best_existing.job_id,
-                exclusion_type="lower_score",
-                reason=(
-                    f"Lower or equal match score ({overall_score}% vs "
-                    f"{best_existing_score}%) at the same company."
-                ),
-            )
+
+        return await _save_duplicated(
+            session,
+            job_id=job_id,
+            user_id=user_id,
+            match_data=match_data,
+            overall_score=overall_score,
+            duplicated_because_id=best_existing.job_id,
+            exclusion_type=LOWER_SCORE_EXCLUSION,
+            reason=(
+                f"Lower or equal match score ({overall_score}% vs "
+                f"{best_existing_score}%) at the same company."
+            ),
+        )
 
 
 async def _save_active(
@@ -401,4 +468,5 @@ async def _save_duplicated(
         "score": overall_score,
         "exclusion_type": exclusion_type,
         "duplicated_because_id": duplicated_because_id,
+        "reason": reason,
     }

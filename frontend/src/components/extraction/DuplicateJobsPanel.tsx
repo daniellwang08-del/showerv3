@@ -32,6 +32,9 @@ const EXCLUSION_TYPE_LABELS: Record<NonNullable<ExclusionType>, string> = {
   no_score_comparison: 'Auto-excluded',
   below_min_score: 'Low match',
   strict_similarity: 'Same title',
+  same_url: 'Same URL',
+  extraction_failed: 'Extraction failed',
+  blocked_domain: 'Blocked domain',
   manual_invalid: 'Hidden',
   manual_duplicate: 'Manual dup',
 };
@@ -43,6 +46,9 @@ const EXCLUSION_TYPE_COLORS: Record<NonNullable<ExclusionType>, string> = {
   no_score_comparison: 'bg-slate-100 text-slate-600 border-slate-200',
   below_min_score: 'bg-rose-100 text-rose-800 border-rose-200',
   strict_similarity: 'bg-blue-100 text-blue-800 border-blue-200',
+  same_url: 'bg-cyan-100 text-cyan-800 border-cyan-200',
+  extraction_failed: 'bg-slate-200 text-slate-800 border-slate-300',
+  blocked_domain: 'bg-zinc-200 text-zinc-800 border-zinc-300',
   manual_invalid: 'bg-rose-100 text-rose-800 border-rose-200',
   manual_duplicate: 'bg-orange-100 text-orange-800 border-orange-200',
 };
@@ -228,28 +234,63 @@ export function DuplicateJobsPanel({
   onClosePanel,
   children,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<'duplicates' | 'low_score'>('duplicates');
+  const [activeTab, setActiveTab] = useState<'duplicates' | 'low_score' | 'extraction_failed'>('duplicates');
 
   const loadingLists = useJobsStore((s) => s.loadingLists);
   const duplicateItems = useJobsStore((s) => s.duplicateUrls);
   const lowScoreItems = useJobsStore((s) => s.lowScoreUrls);
+  const extractionFailedItems = useJobsStore((s) => s.extractionFailedUrls);
   const invalidCounts = useJobsStore((s) => s.invalidCounts);
   const duplicateListHasMore = useJobsStore((s) => s.invalidHasMore);
   const lowScoreListHasMore = useJobsStore((s) => s.lowScoreHasMore);
+  const extractionFailedListHasMore = useJobsStore((s) => s.extractionFailedHasMore);
   const loadingMoreDuplicates = useJobsStore((s) => s.loadingMoreInvalid);
   const loadingMoreLowScore = useJobsStore((s) => s.loadingMoreLowScore);
+  const loadingMoreExtractionFailed = useJobsStore((s) => s.loadingMoreExtractionFailed);
   const onLoadMoreDuplicates = useJobsStore((s) => s.loadMoreInvalidJobs);
   const onLoadMoreLowScore = useJobsStore((s) => s.loadMoreLowScoreJobs);
+  const onLoadMoreExtractionFailed = useJobsStore((s) => s.loadMoreExtractionFailedJobs);
   const onBatchDeleteInvalid = useJobsStore((s) => s.openBatchDeleteConfirm);
 
-  const items = activeTab === 'low_score' ? lowScoreItems : duplicateItems;
-  const duplicateListHasMoreActive = activeTab === 'low_score' ? lowScoreListHasMore : duplicateListHasMore;
-  const loadingMoreActive = activeTab === 'low_score' ? loadingMoreLowScore : loadingMoreDuplicates;
-  const onLoadMoreActive = activeTab === 'low_score' ? onLoadMoreLowScore : onLoadMoreDuplicates;
+  const items =
+    activeTab === 'low_score'
+      ? lowScoreItems
+      : activeTab === 'extraction_failed'
+        ? extractionFailedItems
+        : duplicateItems;
+  const duplicateListHasMoreActive =
+    activeTab === 'low_score'
+      ? lowScoreListHasMore
+      : activeTab === 'extraction_failed'
+        ? extractionFailedListHasMore
+        : duplicateListHasMore;
+  const loadingMoreActive =
+    activeTab === 'low_score'
+      ? loadingMoreLowScore
+      : activeTab === 'extraction_failed'
+        ? loadingMoreExtractionFailed
+        : loadingMoreDuplicates;
+  const onLoadMoreActive =
+    activeTab === 'low_score'
+      ? onLoadMoreLowScore
+      : activeTab === 'extraction_failed'
+        ? onLoadMoreExtractionFailed
+        : onLoadMoreDuplicates;
   const duplicatesLoadedCount = duplicateItems.length;
   const lowScoreLoadedCount = lowScoreItems.length;
-  const tabCount = activeTab === 'low_score' ? invalidCounts.low_score : invalidCounts.duplicates;
-  const loadedCount = activeTab === 'low_score' ? lowScoreLoadedCount : duplicatesLoadedCount;
+  const extractionFailedLoadedCount = extractionFailedItems.length;
+  const tabCount =
+    activeTab === 'low_score'
+      ? invalidCounts.low_score
+      : activeTab === 'extraction_failed'
+        ? invalidCounts.extraction_failed
+        : invalidCounts.duplicates;
+  const loadedCount =
+    activeTab === 'low_score'
+      ? lowScoreLoadedCount
+      : activeTab === 'extraction_failed'
+        ? extractionFailedLoadedCount
+        : duplicatesLoadedCount;
 
   const openMenuRaw = useUIStore((s) => s.openMenu);
   const openMenuId = openMenuRaw?.table === 'duplicated' ? openMenuRaw.id : null;
@@ -348,7 +389,7 @@ export function DuplicateJobsPanel({
               <h2 className="text-lg font-bold text-slate-900">Hidden jobs</h2>
             </div>
             <p className="mt-1 text-sm text-slate-500">
-              Review duplicates and jobs below your match score threshold
+              Review duplicates, low-match jobs, and failed extractions
             </p>
 
             <div className="mt-3 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
@@ -389,6 +430,26 @@ export function DuplicateJobsPanel({
                 {invalidCounts.low_score > 0 && (
                   <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
                     {invalidCounts.low_score}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('extraction_failed');
+                  setSelectedIds(new Set());
+                }}
+                className={[
+                  'rounded-md px-3 py-1.5 text-xs font-semibold transition',
+                  activeTab === 'extraction_failed'
+                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                    : 'text-slate-500 hover:text-slate-700',
+                ].join(' ')}
+              >
+                Extraction failed
+                {invalidCounts.extraction_failed > 0 && (
+                  <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">
+                    {invalidCounts.extraction_failed}
                   </span>
                 )}
               </button>

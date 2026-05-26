@@ -44,6 +44,7 @@ const REFRESH_DEBOUNCE_MS = 400;
 type InvalidCounts = {
   duplicates: number;
   low_score: number;
+  extraction_failed: number;
   total: number;
 };
 
@@ -51,6 +52,7 @@ type JobsState = {
   uniqueUrls: SubmittedUrlItem[];
   duplicateUrls: SubmittedUrlItem[];
   lowScoreUrls: SubmittedUrlItem[];
+  extractionFailedUrls: SubmittedUrlItem[];
   invalidCounts: InvalidCounts;
 
   loadingLists: boolean;
@@ -67,6 +69,10 @@ type JobsState = {
   lowScoreNextOffset: number;
   lowScoreHasMore: boolean;
   loadingMoreLowScore: boolean;
+
+  extractionFailedNextOffset: number;
+  extractionFailedHasMore: boolean;
+  loadingMoreExtractionFailed: boolean;
 
   url: string;
   loading: boolean;
@@ -88,6 +94,7 @@ type JobsState = {
   loadMoreValidJobs: () => Promise<void>;
   loadMoreInvalidJobs: () => Promise<void>;
   loadMoreLowScoreJobs: () => Promise<void>;
+  loadMoreExtractionFailedJobs: () => Promise<void>;
 
   submitJob: (submittedUrl: string) => Promise<void>;
   submitAttachmentFiles: (files: File[]) => Promise<void>;
@@ -101,6 +108,7 @@ type JobsState = {
   /** Remove entries from invalid panels immediately (optimistic UI). */
   removeDuplicateUrlsByIds: (ids: string[]) => void;
   removeLowScoreUrlsByIds: (ids: string[]) => void;
+  removeExtractionFailedUrlsByIds: (ids: string[]) => void;
 
   batchDeleteValid: (items: SubmittedUrlItem[]) => Promise<void>;
   openBatchDeleteConfirm: (items: SubmittedUrlItem[]) => void;
@@ -123,7 +131,8 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   uniqueUrls: [],
   duplicateUrls: [],
   lowScoreUrls: [],
-  invalidCounts: { duplicates: 0, low_score: 0, total: 0 },
+  extractionFailedUrls: [],
+  invalidCounts: { duplicates: 0, low_score: 0, extraction_failed: 0, total: 0 },
   loadingLists: false,
   isInitialLoad: true,
 
@@ -138,6 +147,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   lowScoreNextOffset: 0,
   lowScoreHasMore: false,
   loadingMoreLowScore: false,
+
+  extractionFailedNextOffset: 0,
+  extractionFailedHasMore: false,
+  loadingMoreExtractionFailed: false,
 
   url: '',
   loading: false,
@@ -163,7 +176,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     try {
       if (shouldShowLoading) set({ loadingLists: true });
 
-      const [validRes, invalidRes, lowScoreRes, countsRes] = await Promise.all([
+      const [validRes, invalidRes, lowScoreRes, extractionFailedRes, countsRes] = await Promise.all([
         apiClient.get<JobApiRow[]>(`/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=0`),
         apiClient.get<DuplicatedJobApiRow[]>(
           `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=duplicates`,
@@ -171,19 +184,29 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         apiClient.get<DuplicatedJobApiRow[]>(
           `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=low_score`,
         ),
+        apiClient.get<DuplicatedJobApiRow[]>(
+          `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=extraction_failed`,
+        ),
         apiClient.get<InvalidCounts>('/jobs/invalid/counts'),
       ]);
 
       const mappedValid = (validRes.data ?? []).map((j) => mapJobRow(j));
       const mappedInvalid = (invalidRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
       const mappedLowScore = (lowScoreRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
-      const counts = countsRes.data ?? { duplicates: mappedInvalid.length, low_score: mappedLowScore.length, total: 0 };
+      const mappedExtractionFailed = (extractionFailedRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
+      const counts = countsRes.data ?? {
+        duplicates: mappedInvalid.length,
+        low_score: mappedLowScore.length,
+        extraction_failed: mappedExtractionFailed.length,
+        total: mappedInvalid.length + mappedLowScore.length + mappedExtractionFailed.length,
+      };
 
       if (reset) {
         set({
           uniqueUrls: mappedValid,
           duplicateUrls: mappedInvalid,
           lowScoreUrls: mappedLowScore,
+          extractionFailedUrls: mappedExtractionFailed,
           invalidCounts: counts,
           validNextOffset: mappedValid.length,
           validHasMore: mappedValid.length === JOB_PAGE_SIZE,
@@ -191,12 +214,15 @@ export const useJobsStore = create<JobsState>((set, get) => ({
           invalidHasMore: mappedInvalid.length === JOB_PAGE_SIZE,
           lowScoreNextOffset: mappedLowScore.length,
           lowScoreHasMore: mappedLowScore.length === JOB_PAGE_SIZE,
+          extractionFailedNextOffset: mappedExtractionFailed.length,
+          extractionFailedHasMore: mappedExtractionFailed.length === JOB_PAGE_SIZE,
         });
       } else {
         set((state) => ({
           uniqueUrls: mergeActiveJobs(state.uniqueUrls, mappedValid),
           duplicateUrls: mergeDuplicatedJobs(state.duplicateUrls, mappedInvalid),
           lowScoreUrls: mergeDuplicatedJobs(state.lowScoreUrls, mappedLowScore),
+          extractionFailedUrls: mergeDuplicatedJobs(state.extractionFailedUrls, mappedExtractionFailed),
           invalidCounts: counts,
         }));
       }
@@ -318,6 +344,41 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       // silent
     } finally {
       set({ loadingMoreLowScore: false });
+    }
+  },
+
+  loadMoreExtractionFailedJobs: async () => {
+    const { extractionFailedHasMore, loadingMoreExtractionFailed, extractionFailedNextOffset } = get();
+    if (!extractionFailedHasMore || loadingMoreExtractionFailed) return;
+    set({ loadingMoreExtractionFailed: true });
+    try {
+      const res = await apiClient.get<DuplicatedJobApiRow[]>(
+        `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=${extractionFailedNextOffset}&category=extraction_failed`,
+      );
+      const chunk = (res.data ?? []).map((j) => mapDuplicatedJobRow(j));
+      if (chunk.length === 0) {
+        set({ extractionFailedHasMore: false });
+        return;
+      }
+      set((state) => {
+        const seen = new Set(state.extractionFailedUrls.map((j) => j.id));
+        const merged = [...state.extractionFailedUrls];
+        for (const j of chunk) {
+          if (!seen.has(j.id)) {
+            seen.add(j.id);
+            merged.push(j);
+          }
+        }
+        return {
+          extractionFailedUrls: merged.sort((a, b) => b.created_at_ms - a.created_at_ms),
+          extractionFailedNextOffset: state.extractionFailedNextOffset + chunk.length,
+          extractionFailedHasMore: chunk.length === JOB_PAGE_SIZE,
+        };
+      });
+    } catch {
+      // silent
+    } finally {
+      set({ loadingMoreExtractionFailed: false });
     }
   },
 
@@ -573,6 +634,19 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     }));
   },
 
+  removeExtractionFailedUrlsByIds: (ids: string[]) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    set((state) => ({
+      extractionFailedUrls: state.extractionFailedUrls.filter((d) => !idSet.has(d.id)),
+      invalidCounts: {
+        ...state.invalidCounts,
+        extraction_failed: Math.max(0, state.invalidCounts.extraction_failed - ids.length),
+        total: Math.max(0, state.invalidCounts.total - ids.length),
+      },
+    }));
+  },
+
   batchDeleteValid: async (itemsToDelete: SubmittedUrlItem[]) => {
     logger.info('ui_batch_delete_started', { count: itemsToDelete.length });
     try {
@@ -618,6 +692,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
 
       get().removeDuplicateUrlsByIds(idsToRemove);
       get().removeLowScoreUrlsByIds(idsToRemove);
+      get().removeExtractionFailedUrlsByIds(idsToRemove);
       set({ batchDeletePending: null });
       await get().refreshLists({ showLoading: false, reset: true });
     } catch (error: any) {

@@ -30,7 +30,7 @@ export function ScraperDashboard() {
 
   // Duplicates modal + floating button
   const [dupOpen, setDupOpen] = useState(false);
-  const duplicateCount = useJobsStore((s) => s.invalidCounts.duplicates);
+  const duplicateCount = useJobsStore((s) => s.invalidCounts.total);
   const refreshLists    = useJobsStore((s) => s.refreshLists);
   const floating       = useFloatingButtonPosition('job_scraper:scraper_dup_btn_pos:v1');
 

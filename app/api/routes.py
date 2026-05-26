@@ -2058,7 +2058,7 @@ async def rescrape_valid_job(
 async def get_duplicated_jobs(
     limit: int = 50,
     offset: int = 0,
-    category: str = Query("duplicates", pattern="^(duplicates|low_score)$"),
+    category: str = Query("duplicates", pattern="^(duplicates|low_score|extraction_failed)$"),
     current_user: dict = Depends(get_current_user),
 ) -> list[DuplicatedJobResponse]:
     """Get duplicated/hidden jobs for the current user from user_job_status."""
@@ -2078,10 +2078,15 @@ async def get_duplicated_jobs(
         )
         if category == "low_score":
             stmt = stmt.where(UserJobStatus.exclusion_type == "below_min_score")
+        elif category == "extraction_failed":
+            stmt = stmt.where(UserJobStatus.exclusion_type == "extraction_failed")
         else:
             stmt = stmt.where(
                 (UserJobStatus.exclusion_type.is_(None))
-                | (UserJobStatus.exclusion_type != "below_min_score")
+                | (
+                    (UserJobStatus.exclusion_type != "below_min_score")
+                    & (UserJobStatus.exclusion_type != "extraction_failed")
+                )
             )
         stmt = (
             stmt.order_by(UserJobStatus.created_at.desc())
@@ -2125,6 +2130,11 @@ async def get_invalid_job_counts(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """Counts for duplicates modal tabs."""
+    from app.services.job_exclusion_types import (
+        BELOW_MIN_SCORE_EXCLUSION,
+        EXTRACTION_FAILED_EXCLUSION,
+    )
+
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -2139,19 +2149,26 @@ async def get_invalid_job_counts(
             )
         )
         low_score = (await session.execute(
-            base.where(UserJobStatus.exclusion_type == "below_min_score")
+            base.where(UserJobStatus.exclusion_type == BELOW_MIN_SCORE_EXCLUSION)
+        )).scalar_one()
+        extraction_failed = (await session.execute(
+            base.where(UserJobStatus.exclusion_type == EXTRACTION_FAILED_EXCLUSION)
         )).scalar_one()
         duplicates = (await session.execute(
             base.where(
                 (UserJobStatus.exclusion_type.is_(None))
-                | (UserJobStatus.exclusion_type != "below_min_score")
+                | (
+                    (UserJobStatus.exclusion_type != BELOW_MIN_SCORE_EXCLUSION)
+                    & (UserJobStatus.exclusion_type != EXTRACTION_FAILED_EXCLUSION)
+                )
             )
         )).scalar_one()
 
     return {
         "duplicates": duplicates,
         "low_score": low_score,
-        "total": duplicates + low_score,
+        "extraction_failed": extraction_failed,
+        "total": duplicates + low_score + extraction_failed,
     }
 
 

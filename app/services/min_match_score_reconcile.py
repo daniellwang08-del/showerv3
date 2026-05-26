@@ -12,7 +12,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-BELOW_MIN_SCORE_EXCLUSION = "below_min_score"
+from app.services.job_exclusion_types import BELOW_MIN_SCORE_EXCLUSION
 
 
 def _visible_in_dashboard_filter(user_id: str):

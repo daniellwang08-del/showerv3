@@ -57,6 +57,11 @@ function App() {
       void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
     }
 
+    if (event.type === 'job_excluded_for_user' || event.type === 'extraction_failed') {
+      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
+      useScraperStore.getState().bgRefreshJobs();
+    }
+
     const pipelineEvents = [
       'extraction_completed',
       'extraction_failed',

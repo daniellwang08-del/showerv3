@@ -40,6 +40,28 @@ async def _mark_extraction_failed_cancelled(job_id: str) -> None:
         logger.warning("extraction_cancel_cleanup_failed", job_id=job_id, error=str(e))
 
 
+async def _hide_extraction_failure_for_user(
+    extraction_id: str,
+    user_id: str | None,
+    error: str,
+) -> None:
+    if not user_id:
+        return
+    async with get_session() as session:
+        from app.services.extraction_failure_handler import mark_extraction_failed_for_user
+
+        job_repo = JobRepository(session)
+        job = await job_repo.get_by_extraction_id(extraction_id)
+        if job:
+            await mark_extraction_failed_for_user(
+                session,
+                job_id=job.id,
+                user_id=user_id,
+                error=error,
+            )
+            await session.commit()
+
+
 async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = None) -> dict:
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="extract_job", extraction_id=job_id, target_url=url, user_id=user_id)
@@ -106,29 +128,19 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
             error_msg = result.get("error", "Unknown error")
             logger.error("extract_job_failed", job_id=job_id, url=url, error=error_msg)
 
+            reason = error_msg
             if result.get("site_unreachable"):
                 reason = f"Site unreachable — {error_msg[:200]}"
-                async with get_session() as session:
-                    job_repo = JobRepository(session)
-                    job = await job_repo.get_by_extraction_id(job_id)
-                    if job:
-                        job.status = "extraction_failed"
-                        await session.commit()
-                        if user_id:
-                            await publish_ws_event({
-                                "type": "extraction_failed",
-                                "user_id": user_id,
-                                "job_id": job_id,
-                                "url": url,
-                                "error": reason,
-                            })
-            elif user_id:
+
+            if user_id:
+                await _hide_extraction_failure_for_user(job_id, user_id, reason)
+
                 await publish_ws_event({
                     "type": "extraction_failed",
                     "user_id": user_id,
                     "job_id": job_id,
                     "url": url,
-                    "error": error_msg,
+                    "error": reason,
                 })
         return result
     except asyncio.CancelledError:
@@ -136,6 +148,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
         if pending_match_progress:
             await clear_job_match_progress(pending_match_progress[0], pending_match_progress[1])
         if user_id:
+            await _hide_extraction_failure_for_user(job_id, user_id, "Cancelled or timed out")
             await publish_ws_event({
                 "type": "extraction_failed",
                 "user_id": user_id,
@@ -154,6 +167,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
             traceback=tb,
         )
         if user_id:
+            await _hide_extraction_failure_for_user(job_id, user_id, str(e))
             await publish_ws_event({
                 "type": "extraction_failed",
                 "user_id": user_id,
