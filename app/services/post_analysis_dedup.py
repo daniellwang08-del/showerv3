@@ -106,7 +106,10 @@ def _normalize_title(title: str | None) -> str:
     """Lowercase, strip whitespace, remove punctuation for comparison."""
     if not title:
         return ""
-    return _TITLE_STRIP_RE.sub("", title.strip().lower()).strip()
+    lowered = title.strip().lower()
+    if lowered in {"none", "null", "unknown", "unknown position", "n/a", "na"}:
+        return ""
+    return _TITLE_STRIP_RE.sub("", lowered).strip()
 
 
 async def run_post_analysis_dedup(

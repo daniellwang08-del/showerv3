@@ -20,6 +20,7 @@ from app.services.job_match_service import (
     build_structured_context,
 )
 from app.services.extraction_cache import ExtractionCache
+from app.services.job_field_utils import parse_job_title
 from app.storage.database import get_session
 from app.storage.repository import (
     JobExtractionRepository,
@@ -313,7 +314,7 @@ async def run_tailored_content_generation(
             structured_job: JobDescriptionSchema | None = None
             if extraction and extraction.description:
                 structured_job = JobDescriptionSchema(
-                    title=extraction.title or "Unknown Position",
+                    title=parse_job_title(extraction.title),
                     company=extraction.company,
                     location=extraction.location,
                     employment_type=extraction.employment_type,

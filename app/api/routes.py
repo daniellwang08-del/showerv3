@@ -62,6 +62,7 @@ from datetime import datetime, timedelta, timezone
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 from app.services.attachment_text_extract import combine_file_texts, extract_text_from_bytes
 from app.services.attachment_job_url_ai import extract_job_urls_from_text_combined
+from app.services.job_field_utils import resolve_job_display_title
 from app.storage.repository import _utcnow
 
 router = APIRouter()
@@ -812,9 +813,13 @@ async def get_extraction(job_id: str) -> ExtractionResponse:
 
 def _build_response(extraction) -> ExtractionResponse:
     job_data = None
-    if extraction.status == ExtractionStatus.COMPLETED and extraction.title:
+    display_title = resolve_job_display_title(
+        job_title=extraction.title,
+        description=extraction.description,
+    )
+    if extraction.status == ExtractionStatus.COMPLETED and display_title:
         job_data = JobDescriptionSchema(
-            title=extraction.title,
+            title=display_title,
             company=extraction.company,
             location=extraction.location,
             employment_type=extraction.employment_type,
@@ -1607,9 +1612,13 @@ async def get_job_analysis_panel(
                 extraction_method = extraction.extraction_method
                 is_job_posting = extraction.is_job_posting
                 content_enriched_by_ai = _ai_enriched_extraction(extraction)
-                if extraction.status == ExtractionStatus.COMPLETED and extraction.title:
+                display_title = resolve_job_display_title(
+                    job_title=extraction.title,
+                    description=extraction.description,
+                )
+                if extraction.status == ExtractionStatus.COMPLETED and display_title:
                     job_data = JobDescriptionSchema(
-                        title=extraction.title,
+                        title=display_title,
                         company=extraction.company,
                         location=extraction.location,
                         employment_type=extraction.employment_type,
@@ -2048,8 +2057,9 @@ async def get_duplicated_jobs(
 
     async with get_session() as session:
         stmt = (
-            select(UserJobStatus, Job)
+            select(UserJobStatus, Job, JobExtraction)
             .join(Job, UserJobStatus.job_id == Job.id)
+            .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
             .where(UserJobStatus.user_id == user_id)
             .where(UserJobStatus.status == "duplicated")
         )
@@ -2073,7 +2083,16 @@ async def get_duplicated_jobs(
                 job_id=job.id,
                 source_url=job.source_url,
                 domain=job.domain,
-                title=job.title,
+                title=resolve_job_display_title(
+                    job_title=job.title,
+                    extraction_title=extraction.title if extraction else None,
+                    submitted_title=(
+                        (job.raw_metadata or {}).get("submitted_data", {}).get("title")
+                        if isinstance(job.raw_metadata, dict)
+                        else None
+                    ),
+                    description=extraction.description if extraction else job.description,
+                ),
                 company=job.company,
                 location=job.location,
                 posted_date=job.posted_date,
@@ -2084,7 +2103,7 @@ async def get_duplicated_jobs(
                 match_score_at_decision=ujs.match_score_at_decision,
                 created_at=ujs.created_at,
             )
-            for ujs, job in rows
+            for ujs, job, extraction in rows
         ]
 
 
@@ -2134,8 +2153,9 @@ async def get_invalid_job(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     async with get_session() as session:
         stmt = (
-            select(UserJobStatus, Job)
+            select(UserJobStatus, Job, JobExtraction)
             .join(Job, UserJobStatus.job_id == Job.id)
+            .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
             .where(UserJobStatus.id == job_id)
             .where(UserJobStatus.user_id == user_id)
         )
@@ -2145,13 +2165,22 @@ async def get_invalid_job(
             logger.warning("get_invalid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Invalid job not found")
 
-        ujs, job = row
+        ujs, job, extraction = row
         return DuplicatedJobResponse(
             user_job_status_id=ujs.id,
             job_id=job.id,
             source_url=job.source_url,
             domain=job.domain,
-            title=job.title,
+            title=resolve_job_display_title(
+                job_title=job.title,
+                extraction_title=extraction.title if extraction else None,
+                submitted_title=(
+                    (job.raw_metadata or {}).get("submitted_data", {}).get("title")
+                    if isinstance(job.raw_metadata, dict)
+                    else None
+                ),
+                description=extraction.description if extraction else job.description,
+            ),
             company=job.company,
             location=job.location,
             posted_date=job.posted_date,

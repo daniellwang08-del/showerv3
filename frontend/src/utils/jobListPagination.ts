@@ -71,6 +71,9 @@ export function mapJobRow(j: JobApiRow): SubmittedUrlItem {
 }
 
 export function mapDuplicatedJobRow(j: DuplicatedJobApiRow): SubmittedUrlItem {
+  const rawTitle = j.title ?? null;
+  const title =
+    rawTitle && !/^(none|null|unknown position)$/i.test(rawTitle.trim()) ? rawTitle : null;
   return {
     id: j.user_job_status_id,
     url: j.source_url,
@@ -83,7 +86,7 @@ export function mapDuplicatedJobRow(j: DuplicatedJobApiRow): SubmittedUrlItem {
     exclusion_type: j.exclusion_type ?? null,
     valid_job_id_for_restore: j.job_id,
     company: j.company ?? null,
-    title: j.title ?? null,
+    title,
   };
 }
 

@@ -522,9 +522,13 @@ export function DuplicateJobsPanel({
                             title={item.url}
                             onContextMenu={(e) => e.preventDefault()}
                           >
-                            {item.title && (
+                            {item.title ? (
                               <div className="truncate text-xs font-medium text-slate-800 hover:text-blue-700 hover:underline">
                                 {item.title}
+                              </div>
+                            ) : (
+                              <div className="truncate text-xs font-medium text-slate-500 italic">
+                                Untitled job
                               </div>
                             )}
                             <div className="truncate text-[10px] text-slate-500 hover:text-blue-500 hover:underline">

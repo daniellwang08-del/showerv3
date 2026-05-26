@@ -14,6 +14,10 @@ from app.models.database import (
     UserJobStatus,
 )
 from app.models.schemas import ExtractionStatus, ExtractionMethod, JobDescriptionSchema
+from app.services.job_field_utils import (
+    clean_optional_job_field,
+    infer_title_from_description,
+)
 from app.core.logging import get_logger
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 from datetime import datetime, timezone
@@ -47,6 +51,11 @@ def _truncate_for_db(value: str | None, max_len: int) -> str | None:
     if not s:
         return None
     return s[:max_len] if len(s) > max_len else s
+
+
+def _truncate_job_title_for_db(value: str | None, max_len: int = 500) -> str | None:
+    cleaned = clean_optional_job_field(value)
+    return _truncate_for_db(cleaned, max_len)
 
 
 class JobExtractionRepository:
@@ -157,9 +166,14 @@ class JobExtractionRepository:
         if job_data.raw_metadata:
             metadata.update(job_data.raw_metadata)
 
+        resolved_title = _truncate_job_title_for_db(job_data.title, limits["title"])
+        if not resolved_title:
+            recovered = infer_title_from_description(job_data.description)
+            resolved_title = _truncate_for_db(recovered, limits["title"]) if recovered else None
+
         values: dict = {
             "status": ExtractionStatus.COMPLETED,
-            "title": _truncate_for_db(job_data.title, limits["title"]),
+            "title": resolved_title,
             "company": _truncate_for_db(job_data.company, limits["company"]),
             "location": _truncate_for_db(job_data.location, limits["location"]),
             "employment_type": _truncate_for_db(job_data.employment_type, limits["employment_type"]),
@@ -222,7 +236,13 @@ class JobExtractionRepository:
             return
 
         limits = _JOB_EXTRACTION_LIMITS
-        extraction.title = _truncate_for_db(job_data.title, limits["title"]) or extraction.title
+        clean_title = _truncate_job_title_for_db(job_data.title, limits["title"])
+        if clean_title:
+            extraction.title = clean_title
+        else:
+            recovered = infer_title_from_description(job_data.description)
+            if recovered:
+                extraction.title = _truncate_for_db(recovered, limits["title"]) or extraction.title
         extraction.company = _truncate_for_db(job_data.company, limits["company"]) or extraction.company
         extraction.location = _truncate_for_db(job_data.location, limits["location"]) or extraction.location
         extraction.employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])
@@ -288,7 +308,13 @@ class JobRepository:
         if not job:
             return
 
-        job.title = _truncate_for_db(job_data.title, 500) or job.title
+        clean_title = _truncate_job_title_for_db(job_data.title, 500)
+        if clean_title:
+            job.title = clean_title
+        else:
+            recovered = infer_title_from_description(job_data.description)
+            if recovered:
+                job.title = _truncate_for_db(recovered, 500) or job.title
         job.company = _truncate_for_db(job_data.company, 500) or job.company
         job.location = _truncate_for_db(job_data.location, 500) or job.location
         old_vj = (job.description or "").strip()

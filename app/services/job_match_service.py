@@ -21,6 +21,11 @@ from app.prompts.job_match_phase_b_prompt import (
     JOB_MATCH_PHASE_B_USER_TEMPLATE,
 )
 from app.models.schemas import JobDescriptionSchema
+from app.services.job_field_utils import (
+    clean_optional_job_field,
+    infer_title_from_description,
+    parse_job_title,
+)
 from app.storage.database import get_session
 from app.storage.user_repository import UserRepository
 
@@ -137,12 +142,22 @@ def _finalize_structured_job_description(
     """Normalize LLM-produced description formatting for display."""
     if not structured_job:
         return structured_job
+
+    updates: dict = {}
     description = _normalize_description_formatting(structured_job.description or "")
-    if not description:
+    if description and description != structured_job.description:
+        updates["description"] = description
+
+    title = clean_optional_job_field(structured_job.title)
+    if not title:
+        inferred = infer_title_from_description(description or structured_job.description)
+        updates["title"] = inferred or "Unknown Position"
+    elif title != structured_job.title:
+        updates["title"] = title
+
+    if not updates:
         return structured_job
-    if description == structured_job.description:
-        return structured_job
-    return structured_job.model_copy(update={"description": description})
+    return structured_job.model_copy(update=updates)
 
 
 def _list_of_strings(value) -> list[str]:
@@ -193,13 +208,13 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
         description = str(parsed.get("description", "")).strip()
         if not description:
             description = "No description available"
-        title = str(parsed.get("title", "")).strip() or "Unknown Position"
+        title = parse_job_title(parsed.get("title"))
         return JobDescriptionSchema(
             title=title,
-            company=(str(parsed["company"]).strip() if parsed.get("company") else None),
-            location=(str(parsed["location"]).strip() if parsed.get("location") else None),
-            employment_type=(str(parsed["employment_type"]).strip() if parsed.get("employment_type") else None),
-            salary_range=(str(parsed["salary_range"]).strip() if parsed.get("salary_range") else None),
+            company=clean_optional_job_field(parsed.get("company")),
+            location=clean_optional_job_field(parsed.get("location")),
+            employment_type=clean_optional_job_field(parsed.get("employment_type")),
+            salary_range=clean_optional_job_field(parsed.get("salary_range")),
             description=description,
             responsibilities=_list_of_strings(parsed.get("responsibilities")),
             requirements=_list_of_strings(parsed.get("requirements")),
