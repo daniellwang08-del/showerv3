@@ -3386,17 +3386,31 @@ class SheetsPostJobsRequest(BaseModel):
     job_ids: list[str] = Field(..., min_length=1, max_length=200)
 
 
+class SheetsAutoPostThresholdRequest(BaseModel):
+    auto_post_threshold: int = Field(ge=0, le=100)
+
+
+@router.get("/sheets/status", dependencies=[Depends(get_current_user)])
+async def get_sheets_status():
+    """Server-side Google Sheets credentials readiness."""
+    from app.services.google_sheets_service import get_server_status
+
+    return get_server_status()
+
+
 @router.get("/sheets/tabs", dependencies=[Depends(get_current_user)])
 async def get_sheets_tabs(url: str = Query(..., min_length=10)):
-    """Fetch all tab names from a Google Spreadsheet URL."""
-    from app.services.google_sheets_service import get_all_tabs
+    """Verify spreadsheet access and fetch all tab names."""
+    from app.services.google_sheets_service import SpreadsheetAccessError, verify_spreadsheet
+
     try:
-        tabs = await get_all_tabs(url)
-        return {"tabs": tabs}
+        return await verify_spreadsheet(url)
     except FileNotFoundError as e:
         raise HTTPException(status_code=500, detail="Google credentials file not configured. " + str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except SpreadsheetAccessError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.error("sheets_get_tabs_failed", error=str(e))
         raise HTTPException(status_code=502, detail=f"Could not read spreadsheet: {e}")
@@ -3413,11 +3427,15 @@ async def get_sheets_config(current_user: dict = Depends(get_current_user)):
     config = await get_user_config(user_id)
     if not config:
         return {"configured": False}
+    tab_groups = config.tab_groups or []
+    assigned_tabs = [t for group in tab_groups for t in group]
     return {
         "configured": True,
         "spreadsheet_url": config.spreadsheet_url,
-        "tab_groups": config.tab_groups or [],
+        "tab_groups": tab_groups,
         "auto_post_threshold": config.auto_post_threshold,
+        "group_count": len(tab_groups),
+        "assigned_tab_count": len(assigned_tabs),
     }
 
 
@@ -3463,7 +3481,53 @@ async def save_sheets_config(
         "spreadsheet_url": config.spreadsheet_url,
         "tab_groups": config.tab_groups,
         "auto_post_threshold": config.auto_post_threshold,
+        "group_count": len(config.tab_groups or []),
+        "assigned_tab_count": len([t for g in (config.tab_groups or []) for t in g]),
     }
+
+
+@router.patch("/sheets/config/auto-post-threshold", dependencies=[Depends(get_current_user)])
+async def patch_sheets_auto_post_threshold(
+    body: SheetsAutoPostThresholdRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update auto-post match score threshold without changing tab groups."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    from app.services.google_sheets_service import update_auto_post_threshold
+
+    try:
+        config = await update_auto_post_threshold(user_id, body.auto_post_threshold)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("sheets_patch_auto_post_threshold_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to update auto-post threshold: {e}")
+
+    tab_groups = config.tab_groups or []
+    return {
+        "success": True,
+        "auto_post_threshold": config.auto_post_threshold,
+        "spreadsheet_url": config.spreadsheet_url,
+        "tab_groups": tab_groups,
+        "group_count": len(tab_groups),
+        "assigned_tab_count": len([t for g in tab_groups for t in g]),
+    }
+
+
+@router.delete("/sheets/config", dependencies=[Depends(get_current_user)])
+async def delete_sheets_config(current_user: dict = Depends(get_current_user)):
+    """Disconnect Google Sheets integration for the current user."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    from app.services.google_sheets_service import delete_user_config
+
+    removed = await delete_user_config(user_id)
+    return {"success": True, "removed": removed}
 
 
 @router.post("/sheets/post-jobs", dependencies=[Depends(get_current_user)])

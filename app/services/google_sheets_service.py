@@ -75,16 +75,96 @@ def _extract_spreadsheet_id(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _credentials_path() -> Path:
+    settings = get_settings()
+    creds_path = Path(settings.google_sheets_credentials_path)
+    if not creds_path.is_absolute():
+        creds_path = Path(__file__).resolve().parent.parent.parent / creds_path
+    return creds_path
+
+
+def get_service_account_email() -> str | None:
+    """Return service account email from credentials JSON, if configured."""
+    creds_path = _credentials_path()
+    if not creds_path.exists():
+        return None
+    try:
+        import json
+
+        data = json.loads(creds_path.read_text(encoding="utf-8"))
+        email = data.get("client_email")
+        return email if isinstance(email, str) and email.strip() else None
+    except Exception as e:
+        logger.warning("google_sheets_read_credentials_email_failed", error=str(e))
+        return None
+
+
+def get_server_status() -> dict:
+    """Server-side readiness for Google Sheets (no spreadsheet URL required)."""
+    creds_path = _credentials_path()
+    configured = creds_path.exists()
+    return {
+        "server_configured": configured,
+        "service_account_email": get_service_account_email() if configured else None,
+    }
+
+
+class SpreadsheetAccessError(Exception):
+    """Raised when a spreadsheet URL cannot be accessed."""
+
+    def __init__(self, message: str, *, code: str = "access_denied"):
+        super().__init__(message)
+        self.code = code
+
+
+def classify_spreadsheet_error(exc: Exception, *, service_account_email: str | None = None) -> SpreadsheetAccessError:
+    """Map Google/gspread failures to user-facing SpreadsheetAccessError."""
+    if isinstance(exc, SpreadsheetAccessError):
+        return exc
+
+    msg = str(exc).lower()
+    share_hint = (
+        f" Share the spreadsheet with {service_account_email} (Editor access)."
+        if service_account_email
+        else " Share the spreadsheet with the service account email shown in Settings."
+    )
+
+    if isinstance(exc, gspread.exceptions.SpreadsheetNotFound):
+        return SpreadsheetAccessError(
+            "Spreadsheet not found. Check the URL or sharing permissions." + share_hint,
+            code="not_found",
+        )
+
+    if isinstance(exc, gspread.exceptions.APIError):
+        status = exc.response.status_code if hasattr(exc, "response") and exc.response else None
+        if status in (403, 404):
+            return SpreadsheetAccessError(
+                "Cannot access spreadsheet." + share_hint,
+                code="permission_denied" if status == 403 else "not_found",
+            )
+        if status == 429:
+            return SpreadsheetAccessError(
+                "Google Sheets rate limit reached. Try again in a minute.",
+                code="rate_limited",
+            )
+
+    if "permission" in msg or "403" in msg or "forbidden" in msg:
+        return SpreadsheetAccessError("Cannot access spreadsheet." + share_hint, code="permission_denied")
+    if "not found" in msg or "404" in msg:
+        return SpreadsheetAccessError(
+            "Spreadsheet not found. Check the URL." + share_hint,
+            code="not_found",
+        )
+
+    return SpreadsheetAccessError(f"Could not read spreadsheet: {exc}", code="unknown")
+
+
 def _get_client() -> gspread.Client:
     global _gc
     if _gc is not None:
         return _gc
 
-    settings = get_settings()
-    creds_path = Path(settings.google_sheets_credentials_path)
-    if not creds_path.is_absolute():
-        creds_path = Path(__file__).resolve().parent.parent.parent / creds_path
-
+    creds_path = _credentials_path()
     if not creds_path.exists():
         raise FileNotFoundError(f"Google credentials file not found: {creds_path}")
 
@@ -221,13 +301,33 @@ def _sync_write_rows(
     return outcomes
 
 
-async def get_all_tabs(spreadsheet_url: str) -> list[str]:
-    """Fetch all tab names from a Google Spreadsheet URL."""
+async def verify_spreadsheet(spreadsheet_url: str) -> dict:
+    """Validate spreadsheet access and return tab metadata."""
     spreadsheet_id = _extract_spreadsheet_id(spreadsheet_url)
     if not spreadsheet_id:
         raise ValueError(f"Could not extract spreadsheet ID from URL: {spreadsheet_url}")
 
-    return await asyncio.to_thread(_sync_get_all_tabs, spreadsheet_id)
+    creds_path = _credentials_path()
+    if not creds_path.exists():
+        raise FileNotFoundError(f"Google credentials file not found: {creds_path}")
+
+    service_email = get_service_account_email()
+    try:
+        tabs = await asyncio.to_thread(_sync_get_all_tabs, spreadsheet_id)
+    except Exception as e:
+        raise classify_spreadsheet_error(e, service_account_email=service_email) from e
+
+    return {
+        "tabs": tabs,
+        "tab_count": len(tabs),
+        "spreadsheet_id": spreadsheet_id,
+    }
+
+
+async def get_all_tabs(spreadsheet_url: str) -> list[str]:
+    """Fetch all tab names from a Google Spreadsheet URL."""
+    result = await verify_spreadsheet(spreadsheet_url)
+    return result["tabs"]
 
 
 async def get_all_tabs_by_id(spreadsheet_id: str) -> list[str]:
@@ -245,6 +345,19 @@ async def get_user_config(user_id: str, session: AsyncSession | None = None) -> 
         return await _fetch(session)
     async with get_session() as s:
         return await _fetch(s)
+
+
+async def delete_user_config(user_id: str) -> bool:
+    """Remove the user's Google Sheets integration config."""
+    async with get_session() as session:
+        r = await session.execute(
+            select(GoogleSheetsConfig).where(GoogleSheetsConfig.user_id == user_id)
+        )
+        config = r.scalar_one_or_none()
+        if not config:
+            return False
+        await session.delete(config)
+        return True
 
 
 async def save_config(
@@ -268,7 +381,7 @@ async def save_config(
             config.spreadsheet_url = spreadsheet_url
             config.spreadsheet_id = spreadsheet_id
             config.tab_groups = tab_groups
-            config.auto_post_threshold = auto_post_threshold
+            config.auto_post_threshold = _clamp_auto_post_threshold(auto_post_threshold)
         else:
             import uuid
             config = GoogleSheetsConfig(
@@ -278,10 +391,29 @@ async def save_config(
                 spreadsheet_id=spreadsheet_id,
                 tab_groups=tab_groups,
                 round_robin_index=0,
-                auto_post_threshold=auto_post_threshold,
+                auto_post_threshold=_clamp_auto_post_threshold(auto_post_threshold),
             )
             session.add(config)
 
+        await session.flush()
+        return config
+
+
+def _clamp_auto_post_threshold(value: int) -> int:
+    return max(0, min(100, int(value)))
+
+
+async def update_auto_post_threshold(user_id: str, auto_post_threshold: int) -> GoogleSheetsConfig:
+    """Update only the auto-post threshold for an existing integration."""
+    threshold = _clamp_auto_post_threshold(auto_post_threshold)
+    async with get_session() as session:
+        r = await session.execute(
+            select(GoogleSheetsConfig).where(GoogleSheetsConfig.user_id == user_id)
+        )
+        config = r.scalar_one_or_none()
+        if not config:
+            raise ValueError("Google Sheets integration is not configured")
+        config.auto_post_threshold = threshold
         await session.flush()
         return config
 
