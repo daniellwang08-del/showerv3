@@ -59,6 +59,19 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     ),
     resume_tailoring_output_contract: String(data.resume_tailoring_output_contract ?? ''),
     resume_tailoring_prompt_max_length: Number(data.resume_tailoring_prompt_max_length ?? 12000),
+    resume_template_status: (data.resume_template_status as UserSettings['resume_template_status']) ?? 'missing',
+    resume_template_source_filename: (data.resume_template_source_filename as string | null | undefined) ?? null,
+    resume_template_error: (data.resume_template_error as string | null | undefined) ?? null,
+    resume_template_profile_work_count:
+      data.resume_template_profile_work_count != null
+        ? Number(data.resume_template_profile_work_count)
+        : null,
+    resume_template_analyzed_at: (data.resume_template_analyzed_at as string | null | undefined) ?? null,
+    resume_template_ready: Boolean(data.resume_template_ready),
+    profile_work_count: Number(data.profile_work_count ?? 0),
+    validation_errors: Array.isArray(data.validation_errors)
+      ? (data.validation_errors as string[])
+      : [],
   };
 }
 

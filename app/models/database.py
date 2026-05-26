@@ -57,6 +57,16 @@ class User(Base):
     resume_tailoring_prompt_mode = Column(String(20), default="default", nullable=False, server_default="default")
     resume_tailoring_prompt_custom = Column(Text, nullable=True)
 
+    # Per-user resume DOCX template (blueprint-driven document generation).
+    resume_template_status = Column(String(30), default="missing", nullable=False, server_default="missing")
+    resume_template_source_path = Column(Text, nullable=True)
+    resume_template_working_path = Column(Text, nullable=True)
+    resume_template_blueprint = Column(JSON, nullable=True)
+    resume_template_error = Column(Text, nullable=True)
+    resume_template_source_filename = Column(String(500), nullable=True)
+    resume_template_profile_work_count = Column(Integer, nullable=True)
+    resume_template_analyzed_at = Column(DateTime, nullable=True)
+
     __table_args__ = (
         Index("ix_users_email", "email"),
         Index("ix_users_is_active", "is_active"),

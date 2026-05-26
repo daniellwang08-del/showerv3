@@ -72,7 +72,7 @@ export function SubmitForm() {
               e.target.value = '';
             }}
           />
-          <div className="flex min-h-11 min-w-0 flex-1 overflow-hidden rounded-t-lg border border-[rgba(147,197,253,0.8)] bg-[rgba(255,255,255,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] transition-[border-color,box-shadow,background-color] duration-[180ms] focus-within:border-[rgba(59,130,246,0.95)] focus-within:bg-white focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.85)] sm:rounded-l-lg sm:rounded-r-none">
+          <div className="flex h-11 min-w-0 flex-1 overflow-hidden rounded-t-lg border border-[rgba(147,197,253,0.8)] bg-[rgba(255,255,255,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] transition-[border-color,box-shadow,background-color] duration-[180ms] focus-within:border-[rgba(59,130,246,0.95)] focus-within:bg-white focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.85)] sm:rounded-l-lg sm:rounded-r-none">
             <button
               type="button"
               disabled={busy}
@@ -80,7 +80,7 @@ export function SubmitForm() {
               title="Attach Word, Excel, Markdown, text, or HTML — URLs will be detected with AI"
               aria-label="Attach documents to import job URLs"
               className={[
-                'flex w-11 shrink-0 items-center justify-center border-r border-[rgba(147,197,253,0.65)] bg-gradient-to-b from-white to-slate-50/90 text-slate-500',
+                'flex h-full w-11 shrink-0 items-center justify-center border-r border-[rgba(147,197,253,0.65)] bg-gradient-to-b from-white to-slate-50/90 text-slate-500',
                 'shadow-[inset_-1px_0_0_rgba(255,255,255,0.9)] transition-colors duration-150',
                 'hover:bg-blue-50/80 hover:text-blue-700',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/35',
@@ -99,11 +99,11 @@ export function SubmitForm() {
               <AttachmentJobProgress status={attachmentFlow} />
             ) : hasPendingAttachment ? (
               <div
-                className="flex min-w-0 flex-1 items-center gap-2 bg-gradient-to-r from-blue-50/95 via-sky-50/60 to-white py-2 pl-2 pr-1"
+                className="flex h-full min-w-0 flex-1 items-center gap-2 bg-gradient-to-r from-blue-50/95 via-sky-50/60 to-white pl-2 pr-1"
                 title={attachmentTitle}
               >
                 <FileText className="h-4 w-4 shrink-0 text-blue-600" strokeWidth={2} aria-hidden />
-                <span className="min-w-0 flex-1 truncate text-left text-sm font-medium text-slate-800">
+                <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-none text-slate-800">
                   {attachmentLabel}
                 </span>
                 <button
@@ -124,7 +124,7 @@ export function SubmitForm() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 disabled={busy}
-                className="min-w-0 flex-1 border-0 bg-transparent py-2.5 pl-2 pr-3 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-500 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-full min-w-0 flex-1 border-0 bg-transparent py-0 pl-2 pr-3 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-500 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="https://boards.greenhouse.io/..."
                 required
                 autoComplete="off"

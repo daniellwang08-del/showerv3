@@ -1,0 +1,196 @@
+"""Build render context dict from user profile, tailored JSON, and job metadata."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.models.database import Job, User
+from app.services.job_field_utils import parse_job_title
+
+
+def _format_period(start: str | None, end: str | None) -> str:
+    s = (start or "").strip()
+    e = (end or "").strip()
+    if s and e:
+        return f"{s} – {e}"
+    return s or e or ""
+
+
+def _format_phone(user: User) -> str:
+    cc = (getattr(user, "phone_country_code", None) or "").strip()
+    num = (getattr(user, "phone_number", None) or "").strip()
+    if cc and num:
+        return f"{cc} {num}".strip()
+    return num or cc
+
+
+def _full_name(user: User) -> str:
+    parts = [
+        (getattr(user, "name_first", None) or "").strip(),
+        (getattr(user, "name_middle", None) or "").strip(),
+        (getattr(user, "name_last", None) or "").strip(),
+    ]
+    return " ".join(p for p in parts if p).strip()
+
+
+def _profile_work_rows(user: User) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in getattr(user, "work_experience", None) or []:
+        if not isinstance(item, dict):
+            continue
+        company = (item.get("company_name") or "").strip()
+        title = (item.get("job_title") or "").strip()
+        if not company and not title:
+            continue
+        rows.append(
+            {
+                "company_name": company,
+                "job_title": title,
+                "period": _format_period(item.get("period_start"), item.get("period_end")),
+                "location": (item.get("location") or "").strip(),
+                "job_type": (item.get("job_type") or "").strip(),
+                "description": (item.get("description") or "").strip(),
+            }
+        )
+    return rows
+
+
+def _merge_tailored_work_experience(profile_rows: list[dict], tailored_rows: list[dict]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for idx, profile_row in enumerate(profile_rows):
+        tailored = tailored_rows[idx] if idx < len(tailored_rows) else {}
+        if not isinstance(tailored, dict):
+            tailored = {}
+        bullets = []
+        for b in tailored.get("bullets") or []:
+            if isinstance(b, str) and b.strip():
+                bullets.append(b.strip())
+        merged.append(
+            {
+                "company_name": (tailored.get("company_name") or profile_row.get("company_name") or "").strip(),
+                "job_title": (tailored.get("job_title") or profile_row.get("job_title") or "").strip(),
+                "period": profile_row.get("period") or "",
+                "location": profile_row.get("location") or "",
+                "project_name": (tailored.get("project_name") or None),
+                "project_description": (tailored.get("project_description") or profile_row.get("description") or "").strip(),
+                "bullets": bullets,
+            }
+        )
+    return merged
+
+
+def build_render_context(
+    user: User,
+    tailored: dict[str, Any],
+    job: Job | None = None,
+) -> dict[str, Any]:
+    profile_rows = _profile_work_rows(user)
+    tailored_rows = tailored.get("work_experience") if isinstance(tailored.get("work_experience"), list) else []
+    work_experience = _merge_tailored_work_experience(profile_rows, tailored_rows)
+
+    skills: list[dict[str, str]] = []
+    for item in tailored.get("technical_skills") or []:
+        if not isinstance(item, dict):
+            continue
+        cat = str(item.get("category") or "").strip()
+        vals = str(item.get("skills") or "").strip()
+        if cat and vals:
+            skills.append({"category": cat, "skills": vals})
+
+    education: list[dict[str, str]] = []
+    for item in getattr(user, "education", None) or []:
+        if not isinstance(item, dict):
+            continue
+        uni = (item.get("university_name") or "").strip()
+        degree = (item.get("degree") or "").strip()
+        if uni or degree:
+            education.append(
+                {
+                    "university_name": uni,
+                    "degree": degree,
+                    "period": _format_period(item.get("period_start"), item.get("period_end")),
+                    "mark": (item.get("mark") or "").strip(),
+                }
+            )
+
+    certificates: list[dict[str, str]] = []
+    for item in getattr(user, "certificates", None) or []:
+        if isinstance(item, dict):
+            name = (item.get("name") or "").strip()
+            if name:
+                certificates.append({"name": name})
+
+    return {
+        "profile": {
+            "full_name": _full_name(user),
+            "title": (getattr(user, "profile_title", None) or "").strip(),
+            "email": (getattr(user, "profile_email", None) or getattr(user, "email", None) or "").strip(),
+            "phone": _format_phone(user),
+            "linkedin": (getattr(user, "linkedin_url", None) or "").strip(),
+            "github": (getattr(user, "github_url", None) or "").strip(),
+            "summary": (getattr(user, "profile_summary", None) or "").strip(),
+            "work_experience": profile_rows,
+            "education": education,
+            "certificates": certificates,
+        },
+        "tailored": {
+            "profile_summary": str(tailored.get("profile_summary") or "").strip(),
+            "technical_skills": skills,
+            "work_experience": work_experience,
+        },
+        "job": {
+            "company": (job.company if job else None) or "Unknown",
+            "title": parse_job_title(job.title if job else None),
+            "location": (job.location if job else None) or "",
+        },
+    }
+
+
+def resolve_context_path(context: dict[str, Any], path: str) -> Any:
+    if not path:
+        return None
+    cur: Any = context
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def build_preview_tailored(user: User) -> dict[str, Any]:
+    """Sample tailored payload for template preview (no job-specific AI output)."""
+    profile_rows = _profile_work_rows(user)
+    skills: list[dict[str, str]] = []
+    for item in getattr(user, "technical_skills", None) or []:
+        if not isinstance(item, dict):
+            continue
+        cat = str(item.get("category") or "").strip()
+        vals = str(item.get("skills") or "").strip()
+        if cat and vals:
+            skills.append({"category": cat, "skills": vals})
+    if not skills:
+        skills = [{"category": "Core skills", "skills": "Leadership, communication, problem solving"}]
+
+    work: list[dict[str, Any]] = []
+    for row in profile_rows:
+        desc = (row.get("description") or "").strip()
+        if not desc:
+            desc = f"Sample accomplishments at {row.get('company_name') or 'the organization'}."
+        work.append(
+            {
+                "company_name": row.get("company_name") or "",
+                "job_title": row.get("job_title") or "",
+                "project_description": desc,
+                "bullets": ["Delivered measurable outcomes aligned with role requirements."],
+            }
+        )
+
+    summary = (getattr(user, "profile_summary", None) or "").strip()
+    if not summary:
+        summary = "Experienced professional with a track record of delivering results."
+
+    return {
+        "profile_summary": summary,
+        "technical_skills": skills,
+        "work_experience": work,
+    }

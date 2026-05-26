@@ -144,6 +144,8 @@ class Settings(BaseSettings):
     libreoffice_path: str | None = Field(default=None)
     resume_template_path: str = Field(default="app/templates/resume_template.docx")
     cover_letter_template_path: str = Field(default="app/templates/cover_letter_template.docx")
+    user_templates_root: str = Field(default="./user_templates")
+    resume_template_max_bytes: int = Field(default=5_000_000, ge=100_000, le=20_000_000)
 
     # Scraper module settings (scrapy joblinks integration)
     adzuna_app_id: str = Field(default="")

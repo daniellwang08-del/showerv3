@@ -15,7 +15,7 @@ export function AttachmentJobProgress({ status }: Props) {
 
   return (
     <div
-      className="flex min-h-11 min-w-0 flex-1 flex-col justify-center gap-2 px-3 py-2"
+      className="flex h-full min-w-0 flex-1 items-center gap-2 px-2 sm:px-3"
       role="progressbar"
       aria-valuemin={0}
       aria-valuemax={100}
@@ -27,27 +27,31 @@ export function AttachmentJobProgress({ status }: Props) {
       }
       aria-busy
     >
-      <div className="flex min-w-0 items-baseline justify-between gap-2 text-[11px] leading-tight sm:text-xs">
-        <span className="min-w-0 truncate font-semibold text-slate-800">{status.message}</span>
-        {isSubmitting && status.total > 0 ? (
-          <span className="shrink-0 tabular-nums font-semibold text-blue-700">
-            {status.submitted} / {status.total}
+      <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+        <div className="flex min-w-0 items-center justify-between gap-2 leading-none">
+          <span className="min-w-0 truncate text-[10px] font-semibold text-slate-800 sm:text-[11px]">
+            {status.message}
           </span>
-        ) : null}
-      </div>
+          {isSubmitting && status.total > 0 ? (
+            <span className="shrink-0 text-[10px] font-semibold tabular-nums text-blue-700 sm:text-[11px]">
+              {status.submitted}/{status.total}
+            </span>
+          ) : null}
+        </div>
 
-      <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-slate-200/90 shadow-[inset_0_1px_2px_rgba(15,23,42,0.08)] ring-1 ring-slate-300/35">
-        {status.phase === 'upload_extract' ? (
-          <div
-            className="attachment-bar-indeterminate absolute inset-y-0 w-[38%] rounded-full bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 shadow-sm"
-            aria-hidden
-          />
-        ) : (
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 shadow-[0_0_12px_rgba(37,99,235,0.35)] transition-[width] duration-300 ease-out"
-            style={{ width: `${pct ?? 0}%` }}
-          />
-        )}
+        <div className="relative h-1 w-full overflow-hidden rounded-full bg-slate-200/90 shadow-[inset_0_1px_1px_rgba(15,23,42,0.06)] ring-1 ring-slate-300/30">
+          {status.phase === 'upload_extract' ? (
+            <div
+              className="attachment-bar-indeterminate absolute inset-y-0 w-[38%] rounded-full bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600"
+              aria-hidden
+            />
+          ) : (
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 transition-[width] duration-300 ease-out"
+              style={{ width: `${pct ?? 0}%` }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

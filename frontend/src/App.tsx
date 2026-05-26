@@ -9,6 +9,7 @@ import { AppShell } from './components/layout/AppShell';
 import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ResumeTemplateBuilderPage } from './pages/ResumeTemplateBuilderPage';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { JobActionModal } from './components/extraction/JobActionModal';
@@ -150,6 +151,7 @@ function App() {
           <Route path="/scraper" element={<ScraperDashboard />} />
           <Route path="/profile" element={<ProfilePage user={user} onLogout={logout} />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings/resume-template" element={<ResumeTemplateBuilderPage />} />
           <Route path="*" element={<Navigate to="/scraper" replace />} />
         </Route>
       </Routes>

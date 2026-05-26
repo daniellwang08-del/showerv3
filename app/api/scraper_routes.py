@@ -703,80 +703,45 @@ async def get_scraped_job(job_id: str, user=Depends(_get_current_user)):
 
 
 @scraper_router.get("/stats", response_model=ScraperStatsResponse)
-async def get_scraper_stats(user=Depends(_get_current_user)):
-    """Aggregate statistics for the scraper dashboard."""
-    from sqlalchemy import text
+async def get_scraper_stats(
+    user=Depends(_get_current_user),
+    timezone: str | None = Query(None, description="IANA timezone for today's counts (browser local time)"),
+):
+    """Aggregate statistics aligned with the user's jobs dashboard."""
+    from app.services.dashboard_stats import fetch_dashboard_stats
+    from app.utils.date_bounds import day_bounds_for_timezone
+
+    user_id = user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    day_start, day_end = day_bounds_for_timezone(timezone)
 
     async with get_session() as session:
-        total_result = await session.execute(text("SELECT COUNT(*) FROM scraped_jobs"))
-        total_jobs = total_result.scalar() or 0
-
-        remote_result = await session.execute(
-            text("SELECT COUNT(*) FROM scraped_jobs WHERE is_remote = true")
+        data = await fetch_dashboard_stats(
+            session,
+            user_id,
+            day_start=day_start,
+            day_end=day_end,
         )
-        total_remote = remote_result.scalar() or 0
-
-        today_result = await session.execute(text(
-            "SELECT COUNT(*) FROM scraped_jobs WHERE scraped_at >= CURRENT_DATE"
-        ))
-        today_scraped = today_result.scalar() or 0
-
-        today_remote_result = await session.execute(text(
-            "SELECT COUNT(*) FROM scraped_jobs "
-            "WHERE scraped_at >= CURRENT_DATE AND is_remote = TRUE"
-        ))
-        today_remote = today_remote_result.scalar() or 0
-
-        today_posted_result = await session.execute(text(
-            "SELECT COUNT(*) FROM scraped_jobs "
-            "WHERE posted_at >= CURRENT_DATE AND posted_at < CURRENT_DATE + INTERVAL '1 day'"
-        ))
-        today_posted = today_posted_result.scalar() or 0
-
-        extracted_result = await session.execute(text(
-            "SELECT COUNT(*) FROM scraped_jobs sj "
-            "JOIN job_extractions je ON je.id = sj.promoted_extraction_id "
-            "WHERE LOWER(je.status::text) = 'completed'"
-        ))
-        extracted_jobs = extracted_result.scalar() or 0
-
-        # job_extractions has no job_id column; link via jobs.source_url
-        ready_result = await session.execute(text(
-            "SELECT COUNT(DISTINCT sj.id) FROM scraped_jobs sj "
-            "JOIN job_extractions je ON je.id = sj.promoted_extraction_id "
-            "JOIN jobs vj ON LOWER(vj.source_url) IN "
-            "    (LOWER(sj.url), LOWER(COALESCE(sj.origin_url, ''))) "
-            "JOIN resume_build_results rb ON rb.job_id = vj.id "
-            "WHERE LOWER(je.status::text) = 'completed'"
-        ))
-        ready_jobs = ready_result.scalar() or 0
-
-        source_result = await session.execute(text(
-            "SELECT source, COUNT(*) as cnt, MAX(scraped_at) as latest "
-            "FROM scraped_jobs GROUP BY source ORDER BY cnt DESC"
-        ))
-        sources = [
-            SourceStats(source=row.source, count=row.cnt, latest_scraped=row.latest)
-            for row in source_result
-        ]
-
-        runs_result = await session.execute(text(
-            "SELECT id, spider_name, started_at, finished_at, items_scraped, "
-            "items_new, items_updated, errors, status "
-            "FROM scrape_runs ORDER BY started_at DESC LIMIT 10"
-        ))
-        recent_runs = [dict(row._mapping) for row in runs_result]
 
         return ScraperStatsResponse(
-            total_jobs=total_jobs,
-            total_remote=total_remote,
-            today_scraped=today_scraped,
-            today_remote=today_remote,
-            today_posted=today_posted,
-            extracted_jobs=extracted_jobs,
-            ready_jobs=ready_jobs,
-            sources=sources,
-            recent_runs=recent_runs,
+            total_jobs=data["total_jobs"],
+            total_remote=data["total_remote"],
+            today_scraped=data["today_scraped"],
+            today_remote=data["today_remote"],
+            today_posted=data["today_posted"],
+            extracted_jobs=data["extracted_jobs"],
+            ready_jobs=data["ready_jobs"],
+            sources=[
+                SourceStats(
+                    source=row["source"],
+                    count=row["count"],
+                    latest_scraped=row["latest_scraped"],
+                )
+                for row in data["sources"]
+            ],
+            recent_runs=data["recent_runs"],
         )
 
 

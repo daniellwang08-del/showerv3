@@ -306,6 +306,23 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
         clear_logging_context()
 
 
+async def analyze_resume_template(ctx: dict, user_id: str, reason: str = "upload") -> None:
+    from app.services.resume_template_service import run_template_analysis
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="analyze_resume_template", user_id=user_id)
+    logger.info("worker_analyze_resume_template_started", user_id=user_id, reason=reason)
+    try:
+        await run_template_analysis(user_id, reason)
+        logger.info("worker_analyze_resume_template_completed", user_id=user_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.exception("worker_analyze_resume_template_failed", user_id=user_id, error=str(e))
+    finally:
+        clear_logging_context()
+
+
 async def generate_tailored_content(
     ctx: dict,
     job_id: str,
@@ -566,7 +583,7 @@ class ExtractionWorkerSettings:
 
 class AnalysisWorkerSettings:
     """arq settings for the AI match analysis pipeline (API-heavy: OpenAI)."""
-    functions = [analyze_job_match, generate_tailored_content]
+    functions = [analyze_job_match, generate_tailored_content, analyze_resume_template]
     redis_settings = _redis_settings
     queue_name = ANALYSIS_QUEUE
     job_timeout = 360

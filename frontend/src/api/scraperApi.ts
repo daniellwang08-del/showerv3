@@ -44,7 +44,8 @@ export async function fetchScrapedJob(id: string) {
 }
 
 export async function fetchScraperStats(): Promise<ScraperStats> {
-  const { data } = await apiClient.get('/scraper/stats');
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const { data } = await apiClient.get('/scraper/stats', { params: { timezone } });
   return data;
 }
 

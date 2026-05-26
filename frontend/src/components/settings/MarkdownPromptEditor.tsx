@@ -130,13 +130,21 @@ export function MarkdownPromptEditor({
   );
 }
 
-export function MarkdownPromptPreview({ value }: { value: string }) {
+export function MarkdownPromptPreview({
+  value,
+  className = '',
+}: {
+  value: string;
+  className?: string;
+}) {
   const safeValue = value ?? '';
   if (!safeValue.trim()) {
     return <p className="text-sm italic text-slate-400">No instructions available.</p>;
   }
   return (
-    <div className="page-scroll-y-auto max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+    <div
+      className={`rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 ${className}`.trim()}
+    >
       <ReactMarkdown components={markdownComponents}>{safeValue}</ReactMarkdown>
     </div>
   );

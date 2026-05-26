@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Response, status, Cookie, File, UploadFile, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from app.services.auth_service import AuthService
 from app.models.schemas import (
@@ -26,6 +27,7 @@ from app.models.schemas import (
 )
 from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
 from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest, ResumeParseResponse
+from app.models.resume_template_schemas import ResumeTemplateBlueprintUpdateRequest
 from app.storage.database import get_session, check_database_connection
 from app.storage.repository import (
     JobExtractionRepository,
@@ -421,10 +423,21 @@ async def put_profile(
 
     async with get_session() as session:
         repo = UserRepository(session)
-        user = await repo.update_profile(user_id, _request_to_profile_data(request))
+        user, should_reanalyze = await repo.update_profile(user_id, _request_to_profile_data(request))
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        await session.refresh(user)
+        await session.commit()
+
+    if should_reanalyze:
+        from app.services.resume_template_service import schedule_template_analysis
+
+        await schedule_template_analysis(user_id, reason="profile_work_count_changed")
+
+    async with get_session() as session:
+        repo = UserRepository(session)
+        user = await repo.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         return _user_to_profile_response(user)
 
 
@@ -2245,6 +2258,14 @@ class UserSettingsResponse(BaseModel):
     default_resume_tailoring_prompt_instructions: str
     resume_tailoring_output_contract: str
     resume_tailoring_prompt_max_length: int
+    resume_template_status: str
+    resume_template_source_filename: str | None = None
+    resume_template_error: str | None = None
+    resume_template_profile_work_count: int | None = None
+    resume_template_analyzed_at: datetime | None = None
+    resume_template_ready: bool = False
+    profile_work_count: int = 0
+    validation_errors: list[str] = Field(default_factory=list)
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -2482,6 +2503,178 @@ async def update_user_settings(
 
     logger.info("user_settings_saved", user_id=user_id)
     return UserSettingsResponse(**data)
+
+
+@router.get(
+    "/settings/resume-template/requirements",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_resume_template_requirements(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_template_schemas import ResumeTemplateRequirementsResponse
+    from app.services.resume_template_requirements import get_template_requirements
+    from app.services.resume_template_service import count_work_roles
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    profile_work_count = count_work_roles(user) if user else 0
+    return ResumeTemplateRequirementsResponse(
+        **get_template_requirements(user=user, profile_work_count=profile_work_count).model_dump()
+    )
+
+
+@router.get(
+    "/settings/resume-template",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_resume_template_status(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
+    from app.services.resume_template_service import template_status_payload
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return ResumeTemplateStatusResponse(**template_status_payload(user))
+
+
+@router.post(
+    "/settings/resume-template/upload",
+    dependencies=[Depends(get_current_user)],
+)
+async def upload_resume_template(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
+    from app.services.resume_template_service import (
+        save_uploaded_template,
+        schedule_template_analysis,
+        template_status_payload,
+    )
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    raw = await file.read()
+    filename = file.filename or "template.docx"
+    try:
+        await save_uploaded_template(user_id, raw, filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await schedule_template_analysis(user_id, reason="upload")
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    return ResumeTemplateStatusResponse(**template_status_payload(user))
+
+
+@router.put(
+    "/settings/resume-template/blueprint",
+    dependencies=[Depends(get_current_user)],
+)
+async def update_resume_template_blueprint(
+    body: ResumeTemplateBlueprintUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
+    from app.services.resume_template_service import update_user_blueprint
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        payload = await update_user_blueprint(user_id, body.blueprint)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ResumeTemplateStatusResponse(**payload)
+
+
+@router.post(
+    "/settings/resume-template/reanalyze",
+    dependencies=[Depends(get_current_user)],
+)
+async def reanalyze_resume_template(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
+    from app.services.resume_template_service import (
+        schedule_template_analysis,
+        template_status_payload,
+    )
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        if not user or not getattr(user, "resume_template_source_path", None):
+            raise HTTPException(status_code=400, detail="Upload a template before re-analyzing.")
+
+    await schedule_template_analysis(user_id, reason="manual_reanalyze")
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    return ResumeTemplateStatusResponse(**template_status_payload(user))
+
+
+@router.get(
+    "/settings/resume-template/variables",
+    dependencies=[Depends(get_current_user)],
+)
+async def list_resume_template_variables(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_variable_registry import list_template_variables
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return {"variables": list_template_variables()}
+
+
+@router.post(
+    "/settings/resume-template/preview",
+    dependencies=[Depends(get_current_user)],
+)
+async def preview_resume_template(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_template_service import generate_template_preview_docx
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        preview_path = await generate_template_preview_docx(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_template_preview_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate preview.")
+
+    return FileResponse(
+        path=str(preview_path),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="resume-template-preview.docx",
+    )
 
 
 @router.get(

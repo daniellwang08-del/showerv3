@@ -12,6 +12,11 @@ from app.prompts.job_match_phase_b_prompt import (
 )
 from app.utils.profile_converter import user_profile_to_openai_text
 from app.utils.secret_encryption import decrypt_secret, encrypt_secret, mask_api_key
+from app.services.resume_template_service import (
+    count_work_roles,
+    mark_template_stale_if_work_count_changed,
+    template_status_payload,
+)
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -96,11 +101,15 @@ class UserRepository:
             return True
         return False
 
-    async def update_profile(self, user_id: str, data: dict) -> User | None:
-        """Update user's single profile (stored on User model)."""
+    async def update_profile(self, user_id: str, data: dict) -> tuple[User | None, bool]:
+        """Update user's single profile (stored on User model).
+
+        Returns (user, should_reanalyze_template).
+        """
         user = await self.get_by_id(user_id)
         if not user:
-            return None
+            return None, False
+        old_work_count = count_work_roles(user)
         name = _profile_display_name(
             data.get("name_first"),
             data.get("name_middle"),
@@ -123,9 +132,17 @@ class UserRepository:
         user.certificates = data.get("certificates") or []
         user.extra = data.get("extra") or []
         user.profile_openai_cache = user_profile_to_openai_text(user)
+        new_work_count = count_work_roles(user)
+        should_reanalyze = mark_template_stale_if_work_count_changed(user, new_work_count)
+        if should_reanalyze and old_work_count != new_work_count:
+            user.resume_template_profile_work_count = old_work_count
         await self.session.flush()
-        logger.info("profile_updated", user_id=user_id)
-        return user
+        logger.info(
+            "profile_updated",
+            user_id=user_id,
+            should_reanalyze_template=should_reanalyze,
+        )
+        return user, should_reanalyze
 
     async def get_profile_openai_text(self, user_id: str) -> str:
         """
@@ -281,6 +298,7 @@ class UserRepository:
             "default_resume_tailoring_prompt_instructions": JOB_MATCH_PHASE_B_INSTRUCTIONS.strip(),
             "resume_tailoring_output_contract": JOB_MATCH_PHASE_B_OUTPUT_CONTRACT.strip(),
             "resume_tailoring_prompt_max_length": RESUME_TAILORING_PROMPT_MAX_LENGTH,
+            **template_status_payload(user),
         }
 
     async def update_user_settings(

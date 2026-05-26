@@ -64,6 +64,9 @@ pnpm-debug.log*
 # Generated resume/cover letter files
 resume_output/
 
+# Per-user uploaded resume template DOCX files
+user_templates/
+
 # Local debug dumps and scratch scripts
 ashby_response.html
 debug_*.py

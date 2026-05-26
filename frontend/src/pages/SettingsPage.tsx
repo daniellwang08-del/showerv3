@@ -26,6 +26,7 @@ import {
 import type { SettingsMode, UserSettings } from '../types/settings';
 import { RESUME_TAILORING_PROMPT_MIN_LENGTH } from '../types/settings';
 import { MarkdownPromptEditor, MarkdownPromptPreview } from '../components/settings/MarkdownPromptEditor';
+import { ResumeTemplateSection } from '../components/settings/ResumeTemplateSection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
@@ -552,7 +553,8 @@ export function SettingsPage() {
       ) : loadError ? (
         <p className="text-sm text-rose-700">{loadError}</p>
       ) : (
-        <div className="grid gap-5 xl:grid-cols-2">
+        <div className="space-y-5">
+          <div className="grid gap-5 xl:grid-cols-3 items-start">
           {/* OpenAI */}
           <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start gap-4">
@@ -602,7 +604,7 @@ export function SettingsPage() {
                         placeholder="sk-…"
                         value={openaiKeyInput}
                         onChange={(e) => handleOpenaiKeyChange(e.target.value)}
-                        className="mt-1 w-full max-w-md rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono text-slate-800 shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono text-slate-800 shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                       />
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -662,113 +664,6 @@ export function SettingsPage() {
             </div>
           </section>
 
-          {/* Dedup */}
-          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white">
-                <RefreshCw className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-slate-900">Company check cycle</h2>
-                  <ModeToggle
-                    value={dedupMode}
-                    onChange={(m) => {
-                      setDedupMode(m);
-                      setDedupSaveMsg('');
-                    }}
-                    disabled={dedupSaving}
-                  />
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  Days before a new posting at the same company is treated as fresh again.
-                </p>
-
-                {dedupMode === 'default' ? (
-                  <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 text-sm text-indigo-900">
-                    System default: <strong>{defaultDedup} days</strong>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-4">
-                    <div>
-                      <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-700">
-                        <label htmlFor="dedup-slider">Recycle period</label>
-                        <span className="tabular-nums text-indigo-700">{dedupDays} days</span>
-                      </div>
-                      <input
-                        id="dedup-slider"
-                        type="range"
-                        min={1}
-                        max={DEDUP_SLIDER_MAX}
-                        value={sliderValue}
-                        onChange={(e) => handleDedupDaysChange(Number(e.target.value))}
-                        className="h-2 w-full max-w-md cursor-pointer accent-indigo-600"
-                      />
-                      <div className="mt-1 flex max-w-md justify-between text-[10px] text-slate-400">
-                        <span>1d</span>
-                        <span>{DEDUP_SLIDER_MAX}d</span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-end gap-3">
-                      <div>
-                        <label htmlFor="dedup-days" className="text-xs font-semibold text-slate-700">
-                          Exact days
-                        </label>
-                        <div className="mt-1 flex items-center gap-2">
-                          <input
-                            id="dedup-days"
-                            type="number"
-                            min={1}
-                            max={3650}
-                            value={dedupDays}
-                            onChange={(e) => handleDedupDaysChange(Number(e.target.value) || 1)}
-                            className="w-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                          />
-                          <span className="text-sm text-slate-500">days</span>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2 pb-[2px]">
-                        {DEDUP_PRESETS.map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            onClick={() => handleDedupDaysChange(preset)}
-                            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                              dedupDays === preset
-                                ? 'border-indigo-400 bg-indigo-100 text-indigo-800'
-                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                            }`}
-                          >
-                            {preset}d
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {dedupDays > DEDUP_SLIDER_MAX && (
-                      <p className="text-xs text-slate-500">
-                        Values above {DEDUP_SLIDER_MAX} days: use the number field (max 3650).
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveDedup()}
-                    disabled={!dedupSaveEnabled || dedupSaving}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {dedupSaving ? 'Saving…' : 'Save check cycle'}
-                  </button>
-                </div>
-
-                {dedupSaveMsg && <SectionMessage ok={dedupSaveOk} text={dedupSaveMsg} />}
-              </div>
-            </div>
-          </section>
-
           {/* Min match score */}
           <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start gap-4">
@@ -814,9 +709,9 @@ export function SettingsPage() {
                         max={100}
                         value={minScore}
                         onChange={(e) => handleMinScoreChange(Number(e.target.value))}
-                        className="h-2 w-full max-w-md cursor-pointer accent-rose-600"
+                        className="h-2 w-full cursor-pointer accent-rose-600"
                       />
-                      <div className="mt-1 flex max-w-md justify-between text-[10px] text-slate-400">
+                      <div className="mt-1 flex w-full justify-between text-[10px] text-slate-400">
                         <span>0</span>
                         <span>100</span>
                       </div>
@@ -926,7 +821,7 @@ export function SettingsPage() {
                 )}
 
                 {minScoreCheckResult && (
-                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-2 2xl:grid-cols-4">
                     {[
                       ['Analyzed visible', minScoreCheckResult.analyzed_visible_count],
                       ['Would hide', minScoreCheckResult.would_hide_count],
@@ -949,13 +844,126 @@ export function SettingsPage() {
             </div>
           </section>
 
-          {/* Resume tailoring prompt */}
+          {/* Company check cycle */}
           <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white">
+                <RefreshCw className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-bold text-slate-900">Company check cycle</h2>
+                  <ModeToggle
+                    value={dedupMode}
+                    onChange={(m) => {
+                      setDedupMode(m);
+                      setDedupSaveMsg('');
+                    }}
+                    disabled={dedupSaving}
+                  />
+                </div>
+                <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                  Days before a new posting at the same company is treated as fresh again.
+                </p>
+
+                {dedupMode === 'default' ? (
+                  <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 text-sm text-indigo-900">
+                    System default: <strong>{defaultDedup} days</strong>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-700">
+                        <label htmlFor="dedup-slider">Recycle period</label>
+                        <span className="tabular-nums text-indigo-700">{dedupDays} days</span>
+                      </div>
+                      <input
+                        id="dedup-slider"
+                        type="range"
+                        min={1}
+                        max={DEDUP_SLIDER_MAX}
+                        value={sliderValue}
+                        onChange={(e) => handleDedupDaysChange(Number(e.target.value))}
+                        className="h-2 w-full cursor-pointer accent-indigo-600"
+                      />
+                      <div className="mt-1 flex w-full justify-between text-[10px] text-slate-400">
+                        <span>1d</span>
+                        <span>{DEDUP_SLIDER_MAX}d</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div>
+                        <label htmlFor="dedup-days" className="text-xs font-semibold text-slate-700">
+                          Exact days
+                        </label>
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            id="dedup-days"
+                            type="number"
+                            min={1}
+                            max={3650}
+                            value={dedupDays}
+                            onChange={(e) => handleDedupDaysChange(Number(e.target.value) || 1)}
+                            className="w-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          />
+                          <span className="text-sm text-slate-500">days</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2 pb-[2px]">
+                        {DEDUP_PRESETS.map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => handleDedupDaysChange(preset)}
+                            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                              dedupDays === preset
+                                ? 'border-indigo-400 bg-indigo-100 text-indigo-800'
+                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                            }`}
+                          >
+                            {preset}d
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {dedupDays > DEDUP_SLIDER_MAX && (
+                      <p className="text-xs text-slate-500">
+                        Values above {DEDUP_SLIDER_MAX} days: use the number field (max 3650).
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveDedup()}
+                    disabled={!dedupSaveEnabled || dedupSaving}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {dedupSaving ? 'Saving…' : 'Save check cycle'}
+                  </button>
+                </div>
+
+                {dedupSaveMsg && <SectionMessage ok={dedupSaveOk} text={dedupSaveMsg} />}
+              </div>
+            </div>
+          </section>
+
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-2 items-stretch">
+          {/* Résumé template */}
+          <ResumeTemplateSection />
+
+          {/* Resume tailoring prompt */}
+          <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex min-h-0 flex-1 items-start gap-4">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white">
                 <FileText className="h-5 w-5" />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-lg font-bold text-slate-900">Resume tailoring prompt</h2>
                   <ModeToggle
@@ -969,16 +977,19 @@ export function SettingsPage() {
                 </p>
 
                 {promptMode === 'default' ? (
-                  <div className="mt-4 space-y-3">
+                  <div className="mt-4 flex flex-1 flex-col space-y-3">
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
                       Using the built-in resume tailoring instructions.
                     </div>
-                    <div>
+                    <div className="flex min-h-0 flex-1 flex-col">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Built-in instructions
                       </p>
-                      <div className="mt-2">
-                        <MarkdownPromptPreview value={defaultPromptInstructions} />
+                      <div className="mt-2 min-h-0 flex-1">
+                        <MarkdownPromptPreview
+                          value={defaultPromptInstructions}
+                          className="h-full"
+                        />
                       </div>
                     </div>
                   </div>
@@ -1046,6 +1057,7 @@ export function SettingsPage() {
               </div>
             </div>
           </section>
+          </div>
         </div>
       )}
       </div>

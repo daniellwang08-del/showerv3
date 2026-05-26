@@ -40,6 +40,7 @@ from app.tasks.worker import (
     extract_job,
     analyze_job_match,
     generate_tailored_content,
+    analyze_resume_template,
     save_analyzed_job,
     build_resume_task,
     run_scraper_task,
@@ -104,7 +105,7 @@ class ExtractionWorkerConfig(ExtractionWorkerSettings):
 class AnalysisWorkerConfig(AnalysisWorkerSettings):
     on_startup = analysis_startup
     on_shutdown = analysis_shutdown
-    functions = [analyze_job_match, generate_tailored_content]
+    functions = [analyze_job_match, generate_tailored_content, analyze_resume_template]
     queue_name = AnalysisWorkerSettings.queue_name
     job_timeout = AnalysisWorkerSettings.job_timeout
     max_jobs = AnalysisWorkerSettings.max_jobs
