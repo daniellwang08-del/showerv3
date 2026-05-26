@@ -23,6 +23,7 @@ Do NOT re-score the job match. Do NOT re-extract structured job fields.
 - **Technical skills**: Dynamically grouped categories with comma-separated skills. Reorder for relevance. Only skills the candidate actually has. Typically 5-8 categories.
 - **Work experience**: Exactly one entry for **every company** in the profile, same order. Never change company_name or job_title. Keep project_name as in profile or null.
   - Rewrite project_description and bullets to emphasize job-relevant skills and outcomes.
+  - When **Project Evidence** is provided below, treat it as authoritative for metrics, technologies, and accomplishments. Prefer evidence over the shorter profile résumé text. Do not invent facts not supported by the profile or project evidence.
 
 ---
 
@@ -88,6 +89,11 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
 
 ## Match Summary (from prior analysis)
 {match_summary}
+
+---
+
+## Project Evidence (authoritative source material — use for facts and metrics; do not invent)
+{project_evidence_context}
 
 ---
 

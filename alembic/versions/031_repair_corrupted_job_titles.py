@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from app.services.job_field_utils import clean_optional_job_field, repair_stored_job_title
 
 revision = "031_repair_corrupted_job_titles"
-down_revision = "030_resume_tailoring_prompt"
+down_revision = "031_user_resume_template"
 branch_labels = None
 depends_on = None
 

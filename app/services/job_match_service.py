@@ -45,6 +45,7 @@ logger = get_logger(__name__)
 
 MAX_JOB_LENGTH = 15000
 MAX_PROFILE_LENGTH = 16000
+MAX_EVIDENCE_LENGTH = 15000
 
 EMPTY_MATCH_RESULT = {
     "overall_score": 0,
@@ -381,6 +382,7 @@ async def generate_tailored_content_phase_b(
     *,
     structured_context: str = "",
     match_summary: str = "",
+    project_evidence_context: str = "",
     user_id: str | None = None,
 ) -> tuple[dict | None, dict | None]:
     """
@@ -390,6 +392,10 @@ async def generate_tailored_content_phase_b(
     settings = get_settings()
     job_truncated = _truncate_job_text_preserve_layout(job_text, MAX_JOB_LENGTH)
     profile_truncated = _truncate(profile_text, MAX_PROFILE_LENGTH)
+    evidence_truncated = _truncate(
+        project_evidence_context or "No project source evidence available.",
+        MAX_EVIDENCE_LENGTH,
+    )
 
     if not profile_truncated.strip():
         return None, None
@@ -399,6 +405,7 @@ async def generate_tailored_content_phase_b(
         profile_text=profile_truncated,
         structured_context=structured_context or "No structured job data available.",
         match_summary=match_summary or "No match summary available.",
+        project_evidence_context=evidence_truncated,
     )
     phase_b_max = max(settings.openai_max_tokens, settings.phase_b_max_tokens)
     phase_b_max = min(phase_b_max, 32768)

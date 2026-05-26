@@ -31,6 +31,8 @@ from app.storage.repository import (
     _truncate_for_db,
 )
 from app.storage.user_repository import UserRepository
+from app.storage.profile_source_document_repository import ProfileSourceDocumentRepository
+from app.services.profile_evidence_service import extract_job_evidence_pack
 from app.api.websocket import publish_ws_event
 
 logger = get_logger(__name__)
@@ -331,7 +333,36 @@ async def run_tailored_content_generation(
             match_row = await match_repo.get(job_id, user_id)
             match_summary = (match_row.summary if match_row else None) or ""
 
+            user = await UserRepository(session).get_by_id(user_id)
+            source_docs = await ProfileSourceDocumentRepository(session).list_completed_for_user(user_id)
+
         structured_context = build_structured_context(structured_job)
+
+        project_evidence_context = "No project source evidence available."
+        if user and source_docs:
+            try:
+                project_evidence_context = await extract_job_evidence_pack(
+                    job_text=job_text,
+                    structured_job=structured_job,
+                    match_summary=match_summary,
+                    user=user,
+                    docs=source_docs,
+                    user_id=user_id,
+                )
+                logger.info(
+                    "phase_b_pre_evidence_ready",
+                    job_id=job_id,
+                    user_id=user_id,
+                    doc_count=len(source_docs),
+                    evidence_chars=len(project_evidence_context),
+                )
+            except Exception as e:
+                logger.warning(
+                    "phase_b_pre_evidence_failed",
+                    job_id=job_id,
+                    user_id=user_id,
+                    error=str(e),
+                )
 
         try:
             tailored_resume, cover_letter = await generate_tailored_content_phase_b(
@@ -339,6 +370,7 @@ async def run_tailored_content_generation(
                 profile_text,
                 structured_context=structured_context,
                 match_summary=match_summary,
+                project_evidence_context=project_evidence_context,
                 user_id=user_id,
             )
         except Exception as e:

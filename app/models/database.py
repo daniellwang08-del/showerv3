@@ -73,6 +73,34 @@ class User(Base):
     )
 
 
+class ProfileSourceDocument(Base):
+    """Per-user project source documents for resume tailoring (C: structured on upload)."""
+    __tablename__ = "profile_source_documents"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    filename = Column(String(500), nullable=False)
+    source_kind = Column(String(20), nullable=False)
+    company_name = Column(String(200), nullable=True)
+    extracted_text = Column(Text, nullable=True)
+    structured_data = Column(JSON, nullable=True)
+    char_count = Column(Integer, default=0, nullable=False, server_default="0")
+    project_count = Column(Integer, default=0, nullable=False, server_default="0")
+    parse_status = Column(String(20), default="pending", nullable=False, server_default="pending")
+    parse_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_psd_user_parse_status", "user_id", "parse_status"),
+    )
+
+
 class JobExtraction(Base):
     __tablename__ = "job_extractions"
 

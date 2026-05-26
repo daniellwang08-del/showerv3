@@ -27,6 +27,12 @@ from app.models.schemas import (
 )
 from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
 from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest, ResumeParseResponse
+from app.models.profile_source_schemas import (
+    ProfileSourceDocumentListResponse,
+    ProfileSourceDocumentResponse,
+    ProfileSourceDocumentUpdateRequest,
+    ProfileSourceDocumentUploadResponse,
+)
 from app.models.resume_template_schemas import ResumeTemplateBlueprintUpdateRequest
 from app.storage.database import get_session, check_database_connection
 from app.storage.repository import (
@@ -496,6 +502,140 @@ async def get_profile_openai_text(current_user: dict = Depends(get_current_user)
         repo = UserRepository(session)
         text = await repo.get_profile_openai_text(user_id)
         return {"profile_openai_text": text}
+
+
+@router.get(
+    "/profile/source-documents",
+    response_model=ProfileSourceDocumentListResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def list_profile_source_documents(
+    current_user: dict = Depends(get_current_user),
+) -> ProfileSourceDocumentListResponse:
+    """List uploaded project source documents for resume tailoring."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.profile_source_document_service import list_source_documents
+
+    documents = await list_source_documents(user_id)
+    return ProfileSourceDocumentListResponse(documents=documents)
+
+
+@router.post(
+    "/profile/source-documents",
+    response_model=ProfileSourceDocumentUploadResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def upload_profile_source_document(
+    file: UploadFile = File(...),
+    company_name: str | None = Query(default=None, max_length=200),
+    current_user: dict = Depends(get_current_user),
+) -> ProfileSourceDocumentUploadResponse:
+    """Upload a PDF/DOCX with detailed per-company project descriptions."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+    from app.services.profile_source_document_service import upload_and_parse_source_document
+
+    try:
+        result = await upload_and_parse_source_document(
+            user_id=user_id,
+            raw=raw,
+            filename=file.filename or "document",
+            company_name_hint=company_name,
+        )
+        logger.info(
+            "profile_source_document_uploaded",
+            user_id=user_id,
+            doc_id=result.document.id,
+            parse_status=result.document.parse_status,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except AIParsingError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e) or "Document parsing failed.",
+        )
+    except Exception as e:
+        logger.exception("profile_source_document_upload_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Upload failed. See server logs for details.",
+        )
+
+
+@router.patch(
+    "/profile/source-documents/{doc_id}",
+    response_model=ProfileSourceDocumentResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def update_profile_source_document(
+    doc_id: str,
+    request: ProfileSourceDocumentUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> ProfileSourceDocumentResponse:
+    """Update the linked company for a project source document."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.profile_source_document_service import update_source_document_company
+
+    updated = await update_source_document_company(
+        user_id=user_id,
+        doc_id=doc_id,
+        company_name=request.company_name,
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return updated
+
+
+@router.post(
+    "/profile/source-documents/{doc_id}/reparse",
+    response_model=ProfileSourceDocumentResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def reparse_profile_source_document(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> ProfileSourceDocumentResponse:
+    """Re-run structured parse on a stored source document."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.profile_source_document_service import reparse_source_document
+
+    updated = await reparse_source_document(user_id=user_id, doc_id=doc_id)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return updated
+
+
+@router.delete(
+    "/profile/source-documents/{doc_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(get_current_user)],
+)
+async def delete_profile_source_document(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> Response:
+    """Delete a project source document."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.profile_source_document_service import delete_source_document
+
+    deleted = await delete_source_document(user_id=user_id, doc_id=doc_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def _try_pool(pool_factory, label: str):
