@@ -6,10 +6,12 @@ entirely based on same-company comparisons within the user's recycle window.
 
 Rules (applied in order):
   0. Minimum match score — score below user's threshold → duplicated (below_min_score).
-  1. Same URL — another active job with identical normalized_url → duplicated (same_url).
-  2. Strict similarity — same title + same company → duplicated.
-  3. Applied at same company — user already applied within recycle window → duplicated.
-  4. Score comparison — keep the higher-scoring job active; mark the other duplicated.
+  1. US location filter — non-US structured location → duplicated (non_us_location).
+     Missing/ambiguous location → duplicated (location_unknown) for review in Duplicates tab.
+  2. Same URL — another active job with identical normalized_url → duplicated (same_url).
+  3. Strict similarity — same title + same company → duplicated.
+  4. Applied at same company — user already applied within recycle window → duplicated.
+  5. Score comparison — keep the higher-scoring job active; mark the other duplicated.
 """
 
 from __future__ import annotations
@@ -19,15 +21,18 @@ from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import and_, select
 
-from app.models.database import Job, JobMatchResult, ValidJobUserApplication, UserJobStatus
+from app.models.database import Job, JobMatchResult, ValidJobUserApplication, UserJobStatus, JobExtraction
 from app.services.job_exclusion_types import (
     APPLIED_COMPANY_EXCLUSION,
     BELOW_MIN_SCORE_EXCLUSION,
+    LOCATION_UNKNOWN_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
+    NON_US_LOCATION_EXCLUSION,
     SAME_URL_EXCLUSION,
     STRICT_SIMILARITY_EXCLUSION,
     SUPERSEDED_BY_HIGHER_EXCLUSION,
 )
+from app.services.job_location_classifier import LocationVerdict, classify_job_location
 from app.storage.repository import JobMatchRepository, UserJobStatusRepository
 from app.storage.database import get_session
 from app.api.websocket import publish_ws_event
@@ -221,6 +226,55 @@ async def run_post_analysis_dedup(
                 reason=(
                     f"Match score {overall_score}% is below your minimum threshold "
                     f"({min_match_score}%)."
+                ),
+            )
+
+        extraction = None
+        if current_job.extraction_id:
+            extraction_row = await session.execute(
+                select(JobExtraction).where(JobExtraction.id == current_job.extraction_id)
+            )
+            extraction = extraction_row.scalar_one_or_none()
+
+        location_verdict, location_detail = classify_job_location(
+            current_job.location,
+            remote_policy=extraction.remote_policy if extraction else None,
+        )
+        if location_verdict == LocationVerdict.NON_US:
+            logger.info(
+                "post_analysis_dedup_non_us_location",
+                job_id=job_id,
+                user_id=user_id,
+                location=current_job.location,
+            )
+            return await _save_duplicated(
+                session,
+                job_id=job_id,
+                user_id=user_id,
+                match_data=match_data,
+                overall_score=overall_score,
+                duplicated_because_id=None,
+                exclusion_type=NON_US_LOCATION_EXCLUSION,
+                reason=f"Non-US job location ({location_detail}).",
+            )
+        if location_verdict == LocationVerdict.UNKNOWN:
+            logger.info(
+                "post_analysis_dedup_location_unknown",
+                job_id=job_id,
+                user_id=user_id,
+                location=current_job.location,
+            )
+            return await _save_duplicated(
+                session,
+                job_id=job_id,
+                user_id=user_id,
+                match_data=match_data,
+                overall_score=overall_score,
+                duplicated_because_id=None,
+                exclusion_type=LOCATION_UNKNOWN_EXCLUSION,
+                reason=(
+                    f"Job location could not be verified as US ({location_detail}). "
+                    "Review in Duplicates."
                 ),
             )
 

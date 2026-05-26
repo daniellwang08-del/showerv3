@@ -210,6 +210,54 @@ def _open_spreadsheet(spreadsheet_id: str) -> gspread.Spreadsheet:
     return sh
 
 
+def _normalize_tab_key(name: str) -> str:
+    """Normalize tab title for fuzzy comparison (trim, collapse spaces, casefold)."""
+    return " ".join(str(name).strip().split()).casefold()
+
+
+def _resolve_worksheet_name(tab_name: str, available_titles: list[str]) -> str | None:
+    """Map a configured tab name to the exact worksheet title in the spreadsheet."""
+    if tab_name in available_titles:
+        return tab_name
+    stripped = tab_name.strip()
+    if stripped in available_titles:
+        return stripped
+    norm_map = {_normalize_tab_key(title): title for title in available_titles}
+    return norm_map.get(_normalize_tab_key(tab_name))
+
+
+def _resolve_worksheet(tab_name: str, ws_map: dict[str, gspread.Worksheet]) -> gspread.Worksheet | None:
+    canonical = _resolve_worksheet_name(tab_name, list(ws_map.keys()))
+    if canonical is None:
+        return None
+    return ws_map.get(canonical)
+
+
+def _canonicalize_tab_groups(
+    tab_groups: list[list[str]], available_titles: list[str]
+) -> tuple[list[list[str]], list[str]]:
+    """Rewrite tab group names to exact spreadsheet titles; return warnings for unknown tabs."""
+    warnings: list[str] = []
+    canonical_groups: list[list[str]] = []
+    for group in tab_groups:
+        canon_group: list[str] = []
+        for tab in group:
+            resolved = _resolve_worksheet_name(tab, available_titles)
+            if resolved is None:
+                warnings.append(
+                    f"Tab '{tab}' was not found in the spreadsheet. "
+                    f"Available tabs: {available_titles}"
+                )
+                canon_group.append(tab)
+            elif resolved != tab:
+                warnings.append(f"Tab '{tab}' matched spreadsheet tab '{resolved}'.")
+                canon_group.append(resolved)
+            else:
+                canon_group.append(tab)
+        canonical_groups.append(canon_group)
+    return canonical_groups, warnings
+
+
 def _fetch_worksheet_map(sh: gspread.Spreadsheet) -> dict[str, gspread.Worksheet]:
     """Fetch all worksheets in a single API call, return {title: Worksheet}."""
     all_ws = _api_call_with_retry(sh.worksheets)
@@ -245,7 +293,7 @@ def _sync_get_tab_states(
 
     results: dict[str, tuple[int, set[str]]] = {}
     for tab_name in tab_names:
-        ws = ws_map.get(tab_name)
+        ws = _resolve_worksheet(tab_name, ws_map)
         if ws is None:
             logger.error(
                 "google_sheets_tab_not_found",
@@ -263,12 +311,19 @@ def _sync_get_tab_states(
     return results
 
 
+def _quote_sheet_range(tab_title: str, a1: str) -> str:
+    escaped = tab_title.replace("'", "''")
+    return f"'{escaped}'!{a1}"
+
+
+_WRITE_BATCH_SIZE = 50
+
+
 def _sync_write_rows(
     spreadsheet_id: str, writes: list[tuple[str, int, str]]
 ) -> list[tuple[str, int, bool]]:
-    """Batch writes using a single Spreadsheet object.
+    """Write rows using batched values updates to reduce API quota usage.
 
-    Fetches the worksheet list once (1 API call), then writes to each tab.
     *writes* is a list of (tab_name, row, url) tuples.
     Returns (tab_name, row, success) for each.
     """
@@ -277,8 +332,10 @@ def _sync_write_rows(
 
     date_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
     outcomes: list[tuple[str, int, bool]] = []
+    resolved_writes: list[tuple[str, str, int, str]] = []
+
     for tab_name, row, url in writes:
-        ws = ws_map.get(tab_name)
+        ws = _resolve_worksheet(tab_name, ws_map)
         if ws is None:
             logger.error(
                 "google_sheets_tab_not_found_for_write",
@@ -287,17 +344,31 @@ def _sync_write_rows(
             )
             outcomes.append((tab_name, row, False))
             continue
+        resolved_writes.append((tab_name, ws.title, row, url))
+
+    for batch_start in range(0, len(resolved_writes), _WRITE_BATCH_SIZE):
+        chunk = resolved_writes[batch_start : batch_start + _WRITE_BATCH_SIZE]
+        payload = {
+            "valueInputOption": "USER_ENTERED",
+            "data": [
+                {
+                    "range": _quote_sheet_range(title, f"B{row}:C{row}"),
+                    "values": [[date_str, url]],
+                }
+                for _tab_name, title, row, url in chunk
+            ],
+        }
         try:
-            _api_call_with_retry(
-                ws.update,
-                f"B{row}:C{row}",
-                [[date_str, url]],
-                value_input_option="USER_ENTERED",
-            )
-            outcomes.append((tab_name, row, True))
+            _api_call_with_retry(sh.values_batch_update, payload)
+            for tab_name, _title, row, _url in chunk:
+                outcomes.append((tab_name, row, True))
         except Exception as e:
-            logger.error("google_sheets_write_failed", tab=tab_name, row=row, error=str(e))
-            outcomes.append((tab_name, row, False))
+            logger.error("google_sheets_batch_write_failed", error=str(e), batch_size=len(chunk))
+            for tab_name, _title, row, _url in chunk:
+                outcomes.append((tab_name, row, False))
+        if batch_start + _WRITE_BATCH_SIZE < len(resolved_writes):
+            time.sleep(_API_CALL_GAP)
+
     return outcomes
 
 
@@ -429,7 +500,13 @@ async def distribute_jobs(user_id: str, job_ids: list[str]) -> dict:
     Returns a summary dict with posted, skipped_already_in_sheet, and
     skipped_not_found counts.
     """
-    summary: dict = {"posted": [], "skipped_already_in_sheet": 0, "skipped_not_found": 0}
+    summary: dict = {
+        "posted": [],
+        "partial": [],
+        "failed": [],
+        "skipped_already_in_sheet": 0,
+        "skipped_not_found": 0,
+    }
 
     async with get_session() as session:
         config = await get_user_config(user_id, session)
@@ -514,10 +591,12 @@ async def distribute_jobs(user_id: str, job_ids: list[str]) -> dict:
                 write_outcomes[(tab_name, row)] = ok
 
         for job_id, group_idx, job_tabs in job_write_plan:
+            expected_tabs = [t for t, _r in job_tabs]
             posted_tabs = [t for t, r in job_tabs if write_outcomes.get((t, r), False)]
             posted_rows = [r for t, r in job_tabs if write_outcomes.get((t, r), False)]
+            failed_tabs = [t for t in expected_tabs if t not in posted_tabs]
 
-            if posted_tabs:
+            if len(posted_tabs) == len(expected_tabs):
                 r = await session.execute(
                     select(Job).where(Job.id == job_id)
                 )
@@ -535,6 +614,31 @@ async def distribute_jobs(user_id: str, job_ids: list[str]) -> dict:
                     "google_sheets_job_posted",
                     job_id=job_id,
                     tabs=posted_tabs,
+                )
+            elif posted_tabs:
+                summary["partial"].append({
+                    "job_id": job_id,
+                    "group_index": group_idx,
+                    "tabs": posted_tabs,
+                    "rows": posted_rows,
+                    "failed_tabs": failed_tabs,
+                })
+                logger.warning(
+                    "google_sheets_job_partially_posted",
+                    job_id=job_id,
+                    tabs=posted_tabs,
+                    failed_tabs=failed_tabs,
+                )
+            else:
+                summary["failed"].append({
+                    "job_id": job_id,
+                    "group_index": group_idx,
+                    "failed_tabs": failed_tabs,
+                })
+                logger.error(
+                    "google_sheets_job_post_failed",
+                    job_id=job_id,
+                    failed_tabs=failed_tabs,
                 )
 
         config.round_robin_index = idx

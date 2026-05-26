@@ -6,6 +6,7 @@ import type {
   SheetsConfigSaveResult,
   SheetsStatus,
   SheetsVerifyResult,
+  PostJobsToSheetResult,
 } from '../types/googleSheets';
 
 export async function fetchSheetsStatus(): Promise<SheetsStatus> {
@@ -42,5 +43,12 @@ export async function saveAutoPostThreshold(
 
 export async function disconnectSheets(): Promise<{ success: boolean; removed: boolean }> {
   const { data } = await apiClient.delete<{ success: boolean; removed: boolean }>('/sheets/config');
+  return data;
+}
+
+export async function postJobsToSheet(jobIds: string[]): Promise<PostJobsToSheetResult> {
+  const { data } = await apiClient.post<PostJobsToSheetResult>('/sheets/post-jobs', {
+    job_ids: jobIds,
+  });
   return data;
 }

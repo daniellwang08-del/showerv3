@@ -28,6 +28,7 @@ import { RESUME_TAILORING_PROMPT_MIN_LENGTH } from '../types/settings';
 import { MarkdownPromptEditor, MarkdownPromptPreview } from '../components/settings/MarkdownPromptEditor';
 import { ResumeTemplateSection } from '../components/settings/ResumeTemplateSection';
 import { GoogleSheetsSettingsSection } from '../components/settings/GoogleSheetsSettingsSection';
+import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
@@ -543,7 +544,7 @@ export function SettingsPage() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
             <p className="text-sm text-slate-500">
-              OpenAI, company check cycle, match score threshold, Google Sheets, and resume tailoring prompt are saved separately.
+              OpenAI, company check cycle, match score threshold, job sync, Google Sheets, and resume tailoring prompt are saved separately.
             </p>
           </div>
         </div>
@@ -955,6 +956,8 @@ export function SettingsPage() {
           </div>
 
           <GoogleSheetsSettingsSection />
+
+          <JobSyncSettingsSection />
 
           <div className="grid gap-5 xl:grid-cols-2 items-stretch">
           {/* Résumé template */}

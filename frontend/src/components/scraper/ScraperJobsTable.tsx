@@ -20,12 +20,14 @@ import {
   ClipboardCopy,
   ClipboardCheck,
   ClipboardX,
+  Table2,
 } from 'lucide-react';
 import { Badge } from '../shared/Badge';
 import { ConfirmDialog } from '../extraction/ConfirmDialog';
 import { JobAnalysisModal } from './JobAnalysisModal';
 import { DocumentPreviewModal, type PreviewDocType } from './DocumentPreviewModal';
 import { useScraperStore } from '../../stores/scraperStore';
+import { fetchSheetsConfig } from '../../api/googleSheetsApi';
 import { apiClient } from '../../api/client';
 import type { DashboardJob, ExtractionStatus } from '../../types/scraper';
 import { dashboardJobMarkedApplied, dashboardJobRowSurfaceClass, dashboardJobStickyCellClass } from '../../utils/appliedStatus';
@@ -42,6 +44,10 @@ interface ScraperJobsTableProps {
     id: string;
     applied_at: string | null;
     applied_by_name: string | null;
+  }>) => void;
+  onSheetPostedStateChange?: (patches: Array<{
+    id: string;
+    sheet_posted_at: string | null;
   }>) => void;
 }
 
@@ -278,7 +284,7 @@ function DocsCell({ job }: { job: DashboardJob }) {
 
 function clampMenuPos(x: number, y: number): { x: number; y: number } {
   const MENU_W = 212;
-  const MENU_H = 320;
+  const MENU_H = 360;
   const PAD = 8;
   return {
     x: Math.min(x, window.innerWidth  - MENU_W - PAD),
@@ -355,7 +361,20 @@ function MatchScoreBadge({ score }: { score: number }) {
   );
 }
 
+function SheetPostedBadge({ postedAt }: { postedAt: string }) {
+  return (
+    <span
+      title={`Posted to Google Sheet${postedAt ? ` · ${relativeTime(postedAt)}` : ''}`}
+      className="inline-flex items-center gap-0.5 rounded border border-emerald-200 bg-emerald-50 px-1 py-0.5 text-[9px] font-semibold leading-none text-emerald-700"
+    >
+      <Table2 size={9} className="shrink-0" />
+      Sheet
+    </span>
+  );
+}
+
 function StatusCell({ job }: { job: DashboardJob }) {
+  const sheetBadge = job.sheet_posted_at ? <SheetPostedBadge postedAt={job.sheet_posted_at} /> : null;
   const contentGenActive =
     job.content_generation_status === 'pending' || job.content_generation_status === 'processing';
   const resumeBuildActive =
@@ -364,7 +383,10 @@ function StatusCell({ job }: { job: DashboardJob }) {
   if (job.match_overall_score != null) {
     return (
       <div className="flex h-[40px] flex-col items-start justify-center">
-        <MatchScoreBadge score={job.match_overall_score} />
+        <div className="flex flex-wrap items-center gap-1">
+          <MatchScoreBadge score={job.match_overall_score} />
+          {sheetBadge}
+        </div>
         {(contentGenActive || resumeBuildActive) && (
           <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-600 animate-pulse mt-0.5">
             <Sparkles size={9} />Resume…
@@ -377,6 +399,7 @@ function StatusCell({ job }: { job: DashboardJob }) {
   const dots = processingDots(job);
   return (
     <div className="flex h-[40px] flex-col justify-center gap-1">
+      {sheetBadge && <div>{sheetBadge}</div>}
       <div className="flex h-[10px] items-center gap-2">
         {dots.map((dot) => <StatusDot key={dot.label} {...dot} />)}
       </div>
@@ -405,7 +428,10 @@ interface ContextMenuProps {
   onRerun: (jobs: DashboardJob[]) => void;
   onMarkApplied: (jobs: DashboardJob[]) => void;
   onMarkUnapplied: (jobs: DashboardJob[]) => void;
+  onPostToSheet: (jobs: DashboardJob[]) => void;
   onDelete: (jobs: DashboardJob[]) => void;
+  sheetsConfigured: boolean;
+  postingToSheet: boolean;
 }
 
 function ContextMenu({
@@ -418,7 +444,10 @@ function ContextMenu({
   onRerun,
   onMarkApplied,
   onMarkUnapplied,
+  onPostToSheet,
   onDelete,
+  sheetsConfigured,
+  postingToSheet,
 }: ContextMenuProps) {
   const multi = targets.length > 1;
   const label = multi ? `${targets.length} jobs` : (job.title ? `"${job.title.slice(0, 28)}${job.title.length > 28 ? '…' : ''}"` : 'this job');
@@ -489,6 +518,15 @@ function ContextMenu({
     ...appliedMenuItems,
     'divider' as const,
     {
+      icon: postingToSheet ? <Loader2 size={13} className="animate-spin" /> : <Table2 size={13} />,
+      label: multi
+        ? `Post ${targets.length} jobs to Google Sheet`
+        : 'Post to Google Sheet',
+      disabled: !sheetsConfigured || postingToSheet,
+      onClick: () => { onPostToSheet(targets); onClose(); },
+    },
+    'divider' as const,
+    {
       icon: isRunning ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />,
       label: multi ? `Rerun ${targets.length} jobs` : (job.extraction_id ? 'Rerun extraction' : 'Run extraction'),
       disabled: isRunning && !multi,
@@ -524,6 +562,11 @@ function ContextMenu({
             key={item.label}
             type="button"
             disabled={item.disabled}
+            title={
+              item.disabled && item.label.includes('Google Sheet') && !sheetsConfigured
+                ? 'Configure Google Sheets in Settings first'
+                : undefined
+            }
             onClick={item.onClick}
             className={[
               'flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors',
@@ -616,6 +659,7 @@ export function ScraperJobsTable({
   onSort,
   rowOffset = 0,
   onAppliedStateChange,
+  onSheetPostedStateChange,
 }: ScraperJobsTableProps) {
   const rerunJob         = useScraperStore((s) => s.rerunJob);
   const deleteJob        = useScraperStore((s) => s.deleteJob);
@@ -623,6 +667,8 @@ export function ScraperJobsTable({
   const batchRerunJobs   = useScraperStore((s) => s.batchRerunJobs);
   const markJobsApplied  = useScraperStore((s) => s.markJobsApplied);
   const markJobsUnapplied = useScraperStore((s) => s.markJobsUnapplied);
+  const postJobsToSheet  = useScraperStore((s) => s.postJobsToSheet);
+  const optimisticMarkJobsSheetPosted = useScraperStore((s) => s.optimisticMarkJobsSheetPosted);
   const optimisticMarkJobsApplied = useScraperStore((s) => s.optimisticMarkJobsApplied);
 
   // Instant applied UI — local state avoids unstable Zustand selectors (infinite re-render loop).
@@ -677,6 +723,8 @@ export function ScraperJobsTable({
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [deleteError,      setDeleteError]      = useState<string | null>(null);
   const [toast,            setToast]            = useState<{ kind: 'success' | 'warning' | 'error'; text: string } | null>(null);
+  const [sheetsConfigured, setSheetsConfigured] = useState(false);
+  const [postingToSheet,   setPostingToSheet]   = useState(false);
 
   // ── Selection state ───────────────────────────────────────────────────────
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
@@ -740,6 +788,18 @@ export function ScraperJobsTable({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [contextMenu]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSheetsConfig()
+      .then((config) => {
+        if (!cancelled) setSheetsConfigured(Boolean(config.configured));
+      })
+      .catch(() => {
+        if (!cancelled) setSheetsConfigured(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // ── Row mouse handlers ────────────────────────────────────────────────────
   const handleRowMouseDown = useCallback((e: React.MouseEvent, job: DashboardJob) => {
@@ -887,6 +947,34 @@ export function ScraperJobsTable({
     optimisticMarkJobsApplied,
     setAppliedUiOverrides,
     clearAppliedUiOverrides,
+    showToast,
+  ]);
+
+  const handlePostToSheet = useCallback((targets: DashboardJob[]) => {
+    const ids = targets.map((t) => t.id);
+    if (ids.length === 0) return;
+
+    flushSync(() => {
+      optimisticMarkJobsSheetPosted(ids);
+      setSelectedIds(new Set());
+      setIsSelectingMode(false);
+      onSheetPostedStateChange?.(
+        ids.map((id) => ({ id, sheet_posted_at: new Date().toISOString() })),
+      );
+    });
+
+    setPostingToSheet(true);
+    void postJobsToSheet(ids).then((res) => {
+      setPostingToSheet(false);
+      showToast(res.ok ? 'success' : 'error', res.message);
+      if (!res.ok) {
+        void useScraperStore.getState().bgRefreshJobs();
+      }
+    });
+  }, [
+    optimisticMarkJobsSheetPosted,
+    onSheetPostedStateChange,
+    postJobsToSheet,
     showToast,
   ]);
 
@@ -1250,7 +1338,10 @@ export function ScraperJobsTable({
           onRerun={(targets) => void handleRerunMany(targets)}
           onMarkApplied={(targets) => void handleMarkApplied(targets)}
           onMarkUnapplied={(targets) => void handleMarkUnapplied(targets)}
+          onPostToSheet={(targets) => void handlePostToSheet(targets)}
           onDelete={(targets) => handleDeleteMany(targets)}
+          sheetsConfigured={sheetsConfigured}
+          postingToSheet={postingToSheet}
         />
       )}
 

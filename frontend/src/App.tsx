@@ -37,13 +37,22 @@ function App() {
   const executeBatchDeleteInvalid = useJobsStore((s) => s.executeBatchDeleteInvalid);
 
   const handleWsEvent = useCallback((event: WsEvent) => {
-    const scraperEvents = ['sync_started', 'sync_progress', 'sync_completed', 'sync_failed'];
+    const scraperEvents = [
+      'sync_started',
+      'sync_spider_started',
+      'sync_activity',
+      'sync_progress',
+      'sync_completed',
+      'sync_failed',
+    ];
     if (scraperEvents.includes(event.type)) {
+      useScraperStore.getState().handleSyncWsEvent(event);
       if (event.type === 'sync_completed' || event.type === 'sync_failed') {
         useScraperStore.getState().loadJobs();
         useScraperStore.getState().loadStats();
         useScraperStore.getState().checkSyncStatus();
       }
+      return;
     }
 
     if (event.type === 'scrape_promoted') {

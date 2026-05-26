@@ -1,7 +1,26 @@
 import scrapy
 from abc import abstractmethod
+from datetime import date, datetime, timezone
 
 from app.scraper.items import JobItem
+
+
+def _parse_sync_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10:
+            parsed = datetime.strptime(text, "%Y-%m-%d")
+        else:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    except ValueError:
+        return None
 
 
 class BaseJobSpider(scrapy.Spider):
@@ -22,11 +41,44 @@ class BaseJobSpider(scrapy.Spider):
     base_url: str = ""
 
     def __init__(self, query: str = "", location: str = "", pages: int = 5,
-                 max_pages: int = None, *args, **kwargs):
+                 max_pages: int = None, posted_since: str | None = None,
+                 posted_until: str | None = None, fresh: str | None = None,
+                 *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.query = query
         self.search_location = location
         self.max_pages = int(max_pages) if max_pages is not None else int(pages)
+        self.posted_since = _parse_sync_date(posted_since)
+        self.posted_until = _parse_sync_date(posted_until)
+        if self.posted_until is not None:
+            self.posted_until = self.posted_until.replace(hour=23, minute=59, second=59)
+        self._fresh_mode = str(fresh).lower() in ("1", "true", "yes") if fresh else False
+
+    def _posted_in_range(self, posted_at: datetime | None) -> bool:
+        if posted_at is None:
+            return True
+        dt = posted_at
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        if self.posted_since and dt < self.posted_since:
+            return False
+        if self.posted_until and dt > self.posted_until:
+            return False
+        return True
+
+    def _page_too_old(self, posted_dates: list[datetime | None]) -> bool:
+        """True when every dated job on the page is before posted_since."""
+        if not self.posted_since:
+            return False
+        dated = [d for d in posted_dates if d is not None]
+        if not dated:
+            return False
+        normalized = []
+        for dt in dated:
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            normalized.append(dt)
+        return max(normalized) < self.posted_since
 
     @abstractmethod
     def parse_listing(self, response):

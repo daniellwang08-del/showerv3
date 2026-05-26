@@ -196,6 +196,7 @@ export function ScraperAISearch({
         cover_letter_pdf_path: null,
         applied_at: raw.applied_at != null ? String(raw.applied_at) : null,
         applied_by_name: raw.applied_by_name != null ? String(raw.applied_by_name) : null,
+        sheet_posted_at: raw.sheet_posted_at != null ? String(raw.sheet_posted_at) : null,
         user_status: null,
         source: null,
         is_remote: false,

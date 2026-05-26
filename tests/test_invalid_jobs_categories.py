@@ -9,8 +9,11 @@ from app.models.database import Job, User, UserJobStatus
 from app.services.job_exclusion_types import (
     BELOW_MIN_SCORE_EXCLUSION,
     EXTRACTION_FAILED_EXCLUSION,
+    LOCATION_UNKNOWN_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
+    NON_US_LOCATION_EXCLUSION,
     STRICT_SIMILARITY_EXCLUSION,
+    sql_filter_for_invalid_category,
 )
 from app.storage.database import close_database, get_session, init_database
 
@@ -54,13 +57,7 @@ async def _seed_hidden_job(
 
 
 def _duplicates_tab_filter():
-    return (
-        (UserJobStatus.exclusion_type.is_(None))
-        | (
-            (UserJobStatus.exclusion_type != BELOW_MIN_SCORE_EXCLUSION)
-            & (UserJobStatus.exclusion_type != EXTRACTION_FAILED_EXCLUSION)
-        )
-    )
+    return sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "duplicates")
 
 
 async def _count_for_user(session, user_id: str, *, filter_clause) -> int:
@@ -95,6 +92,12 @@ async def test_duplicates_tab_excludes_low_score_and_extraction_failed():
         failed_id = await _seed_hidden_job(
             session, user_id=user_id, exclusion_type=EXTRACTION_FAILED_EXCLUSION
         )
+        non_us_id = await _seed_hidden_job(
+            session, user_id=user_id, exclusion_type=NON_US_LOCATION_EXCLUSION
+        )
+        unknown_id = await _seed_hidden_job(
+            session, user_id=user_id, exclusion_type=LOCATION_UNKNOWN_EXCLUSION
+        )
 
         dup_count = await _count_for_user(session, user_id, filter_clause=_duplicates_tab_filter())
         low_count = await _count_for_user(
@@ -108,7 +111,7 @@ async def test_duplicates_tab_excludes_low_score_and_extraction_failed():
             filter_clause=UserJobStatus.exclusion_type == EXTRACTION_FAILED_EXCLUSION,
         )
 
-        assert dup_count == 2
+        assert dup_count == 3
         assert low_count == 1
         assert failed_count == 1
 
@@ -120,6 +123,7 @@ async def test_duplicates_tab_excludes_low_score_and_extraction_failed():
             )
         )
         dup_job_ids = {row[0] for row in dup_rows.all()}
-        assert dup_job_ids == {strict_id, lower_id}
+        assert dup_job_ids == {strict_id, lower_id, unknown_id}
         assert low_score_id not in dup_job_ids
         assert failed_id not in dup_job_ids
+        assert non_us_id not in dup_job_ids

@@ -5,11 +5,11 @@ available spiders, and triggering sync (spider runs) via arq.
 """
 
 import json
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import date, datetime, timezone
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -170,12 +170,45 @@ class ScrapeRunResponse(BaseModel):
 
 class SyncRequest(BaseModel):
     spider_name: str = "all"
+    sync_mode: Literal["incremental", "date_backfill"] = "incremental"
+    spider_names: list[str] | None = None
+    posted_since: date | None = None
+    posted_until: date | None = None
+
+    @model_validator(mode="after")
+    def _validate_sync(self):
+        if self.sync_mode == "date_backfill" and self.posted_since is None:
+            raise ValueError("posted_since is required when sync_mode is date_backfill")
+        if (
+            self.posted_since is not None
+            and self.posted_until is not None
+            and self.posted_since > self.posted_until
+        ):
+            raise ValueError("posted_since must be on or before posted_until")
+        return self
+
+
+class SyncPlatformInfo(BaseModel):
+    name: str
+    label: str
+    requires_auth: bool = False
+
+
+class SyncCheckpointInfo(BaseModel):
+    spider_name: str
+    marker_job_ids: list | dict
+    updated_at: Optional[datetime] = None
 
 
 class SyncStatusResponse(BaseModel):
     status: str
     spider_name: Optional[str] = None
     message: str = ""
+    items_scraped: int = 0
+    items_new: int = 0
+    items_updated: int = 0
+    started_at: Optional[datetime] = None
+    elapsed_seconds: Optional[int] = None
 
 
 class SpiderInfo(BaseModel):
@@ -780,37 +813,108 @@ async def list_scrape_runs(
 @scraper_router.post("/sync", response_model=SyncStatusResponse)
 async def trigger_sync(body: SyncRequest, user=Depends(_get_current_user)):
     """Queue a spider run via arq."""
-    from app.scraper.runner import check_spider_auth, SPIDER_META
+    from app.scraper.runner import check_spider_auth
+    from app.services.scraper_sync_service import build_run_plan
     from app.tasks.worker import get_scraper_pool
 
-    spider = body.spider_name
     user_id = user.get("user_id", "")
 
-    if spider != "all" and spider in SPIDER_META:
-        auth_check = check_spider_auth(spider)
+    try:
+        plan = build_run_plan(
+            spider_name=body.spider_name,
+            spider_names=body.spider_names,
+            sync_mode=body.sync_mode,
+            posted_since=body.posted_since,
+            posted_until=body.posted_until,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    for name, _kwargs in plan:
+        auth_check = check_spider_auth(name)
         if auth_check["requires_auth"] and not auth_check["ok"]:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Spider '{spider}' requires authentication but no session is configured. "
+                    f"Spider '{name}' requires authentication but no session is configured. "
                     f"Run this command first: {auth_check['auth_setup_command']}"
                 ),
             )
 
+    spider = body.spider_name
+    if body.spider_names:
+        spider = "all" if len(body.spider_names) > 1 else body.spider_names[0]
+
     try:
         pool = await get_scraper_pool()
-        await pool.enqueue_job("run_scraper_task", spider, str(user_id))
+        await pool.enqueue_job(
+            "run_scraper_task",
+            spider,
+            str(user_id),
+            sync_mode=body.sync_mode,
+            posted_since=body.posted_since.isoformat() if body.posted_since else None,
+            posted_until=body.posted_until.isoformat() if body.posted_until else None,
+            spider_names=body.spider_names,
+        )
         await pool.close()
 
-        logger.info("scraper_sync_enqueued", spider=spider, user_id=str(user_id))
+        mode_label = "date-range" if body.sync_mode == "date_backfill" else "incremental"
+        platform_count = len(plan)
+        logger.info(
+            "scraper_sync_enqueued",
+            spider=spider,
+            sync_mode=body.sync_mode,
+            platform_count=platform_count,
+            user_id=str(user_id),
+        )
         return SyncStatusResponse(
             status="queued",
             spider_name=spider,
-            message=f"Spider '{spider}' has been queued for execution.",
+            message=(
+                f"{mode_label.capitalize()} sync queued for "
+                f"{platform_count} platform{'s' if platform_count != 1 else ''}."
+            ),
         )
     except Exception as e:
         logger.error("scraper_sync_enqueue_failed", error=str(e))
         raise HTTPException(status_code=503, detail=f"Failed to queue scraper: {e}")
+
+
+@scraper_router.get("/sync/platforms", response_model=list[SyncPlatformInfo])
+async def list_sync_platforms_endpoint(user=Depends(_get_current_user)):
+    """Platforms available for manual date-range sync."""
+    from app.services.scraper_sync_service import list_sync_platforms
+
+    return [SyncPlatformInfo(**row) for row in list_sync_platforms()]
+
+
+@scraper_router.get("/sync/checkpoints", response_model=list[SyncCheckpointInfo])
+async def list_sync_checkpoints(user=Depends(_get_current_user)):
+    """Latest checkpoint marker job IDs saved after each spider run."""
+    from sqlalchemy import text
+
+    async with get_session() as session:
+        result = await session.execute(
+            text(
+                "SELECT spider_name, marker_job_ids, updated_at "
+                "FROM scrape_checkpoints ORDER BY spider_name"
+            )
+        )
+        rows = result.mappings().all()
+
+    checkpoints: list[SyncCheckpointInfo] = []
+    for row in rows:
+        raw = row["marker_job_ids"]
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        checkpoints.append(
+            SyncCheckpointInfo(
+                spider_name=row["spider_name"],
+                marker_job_ids=raw,
+                updated_at=row.get("updated_at"),
+            )
+        )
+    return checkpoints
 
 
 @scraper_router.get("/sync/status", response_model=SyncStatusResponse)
@@ -845,14 +949,39 @@ async def get_sync_status(user=Depends(_get_current_user)):
         await session.commit()
 
         result = await session.execute(
-            text("SELECT id, spider_name FROM scrape_runs WHERE status = 'running' LIMIT 1")
+            text(
+                "SELECT spider_name, items_scraped, items_new, items_updated, started_at "
+                "FROM scrape_runs WHERE status = 'running' "
+                "ORDER BY started_at DESC LIMIT 1"
+            )
         )
-        row = result.first()
+        row = result.mappings().first()
         if row:
+            started_at = row.get("started_at")
+            elapsed = None
+            if started_at is not None:
+                from datetime import timezone as tz
+                now = datetime.now(tz.utc).replace(tzinfo=None)
+                if getattr(started_at, "tzinfo", None) is not None:
+                    started_at = started_at.astimezone(tz.utc).replace(tzinfo=None)
+                elapsed = max(0, int((now - started_at).total_seconds()))
+            items_scraped = int(row.get("items_scraped") or 0)
+            items_new = int(row.get("items_new") or 0)
+            items_updated = int(row.get("items_updated") or 0)
+            spider = row["spider_name"]
             return SyncStatusResponse(
                 status="running",
-                spider_name=row.spider_name,
-                message=f"Spider '{row.spider_name}' is currently running.",
+                spider_name=spider,
+                items_scraped=items_scraped,
+                items_new=items_new,
+                items_updated=items_updated,
+                started_at=started_at,
+                elapsed_seconds=elapsed,
+                message=(
+                    f"Spider '{spider}' running — {items_scraped} scraped"
+                    + (f" ({elapsed}s elapsed)" if elapsed is not None else "")
+                    + ".",
+                ),
             )
         return SyncStatusResponse(status="idle", message="No spider is currently running.")
 

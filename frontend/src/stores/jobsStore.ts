@@ -43,6 +43,7 @@ const REFRESH_DEBOUNCE_MS = 400;
 
 type InvalidCounts = {
   duplicates: number;
+  non_us: number;
   low_score: number;
   extraction_failed: number;
   total: number;
@@ -51,6 +52,7 @@ type InvalidCounts = {
 type JobsState = {
   uniqueUrls: SubmittedUrlItem[];
   duplicateUrls: SubmittedUrlItem[];
+  nonUsUrls: SubmittedUrlItem[];
   lowScoreUrls: SubmittedUrlItem[];
   extractionFailedUrls: SubmittedUrlItem[];
   invalidCounts: InvalidCounts;
@@ -65,6 +67,10 @@ type JobsState = {
   invalidNextOffset: number;
   invalidHasMore: boolean;
   loadingMoreInvalid: boolean;
+
+  nonUsNextOffset: number;
+  nonUsHasMore: boolean;
+  loadingMoreNonUs: boolean;
 
   lowScoreNextOffset: number;
   lowScoreHasMore: boolean;
@@ -93,6 +99,7 @@ type JobsState = {
   debouncedRefresh: () => void;
   loadMoreValidJobs: () => Promise<void>;
   loadMoreInvalidJobs: () => Promise<void>;
+  loadMoreNonUsJobs: () => Promise<void>;
   loadMoreLowScoreJobs: () => Promise<void>;
   loadMoreExtractionFailedJobs: () => Promise<void>;
 
@@ -107,6 +114,7 @@ type JobsState = {
 
   /** Remove entries from invalid panels immediately (optimistic UI). */
   removeDuplicateUrlsByIds: (ids: string[]) => void;
+  removeNonUsUrlsByIds: (ids: string[]) => void;
   removeLowScoreUrlsByIds: (ids: string[]) => void;
   removeExtractionFailedUrlsByIds: (ids: string[]) => void;
 
@@ -130,9 +138,10 @@ type JobsState = {
 export const useJobsStore = create<JobsState>((set, get) => ({
   uniqueUrls: [],
   duplicateUrls: [],
+  nonUsUrls: [],
   lowScoreUrls: [],
   extractionFailedUrls: [],
-  invalidCounts: { duplicates: 0, low_score: 0, extraction_failed: 0, total: 0 },
+  invalidCounts: { duplicates: 0, non_us: 0, low_score: 0, extraction_failed: 0, total: 0 },
   loadingLists: false,
   isInitialLoad: true,
 
@@ -143,6 +152,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   invalidNextOffset: 0,
   invalidHasMore: false,
   loadingMoreInvalid: false,
+
+  nonUsNextOffset: 0,
+  nonUsHasMore: false,
+  loadingMoreNonUs: false,
 
   lowScoreNextOffset: 0,
   lowScoreHasMore: false,
@@ -176,10 +189,13 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     try {
       if (shouldShowLoading) set({ loadingLists: true });
 
-      const [validRes, invalidRes, lowScoreRes, extractionFailedRes, countsRes] = await Promise.all([
+      const [validRes, invalidRes, nonUsRes, lowScoreRes, extractionFailedRes, countsRes] = await Promise.all([
         apiClient.get<JobApiRow[]>(`/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=0`),
         apiClient.get<DuplicatedJobApiRow[]>(
           `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=duplicates`,
+        ),
+        apiClient.get<DuplicatedJobApiRow[]>(
+          `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=non_us`,
         ),
         apiClient.get<DuplicatedJobApiRow[]>(
           `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=0&category=low_score`,
@@ -192,19 +208,22 @@ export const useJobsStore = create<JobsState>((set, get) => ({
 
       const mappedValid = (validRes.data ?? []).map((j) => mapJobRow(j));
       const mappedInvalid = (invalidRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
+      const mappedNonUs = (nonUsRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
       const mappedLowScore = (lowScoreRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
       const mappedExtractionFailed = (extractionFailedRes.data ?? []).map((j) => mapDuplicatedJobRow(j));
       const counts = countsRes.data ?? {
         duplicates: mappedInvalid.length,
+        non_us: mappedNonUs.length,
         low_score: mappedLowScore.length,
         extraction_failed: mappedExtractionFailed.length,
-        total: mappedInvalid.length + mappedLowScore.length + mappedExtractionFailed.length,
+        total: mappedInvalid.length + mappedNonUs.length + mappedLowScore.length + mappedExtractionFailed.length,
       };
 
       if (reset) {
         set({
           uniqueUrls: mappedValid,
           duplicateUrls: mappedInvalid,
+          nonUsUrls: mappedNonUs,
           lowScoreUrls: mappedLowScore,
           extractionFailedUrls: mappedExtractionFailed,
           invalidCounts: counts,
@@ -212,6 +231,8 @@ export const useJobsStore = create<JobsState>((set, get) => ({
           validHasMore: mappedValid.length === JOB_PAGE_SIZE,
           invalidNextOffset: mappedInvalid.length,
           invalidHasMore: mappedInvalid.length === JOB_PAGE_SIZE,
+          nonUsNextOffset: mappedNonUs.length,
+          nonUsHasMore: mappedNonUs.length === JOB_PAGE_SIZE,
           lowScoreNextOffset: mappedLowScore.length,
           lowScoreHasMore: mappedLowScore.length === JOB_PAGE_SIZE,
           extractionFailedNextOffset: mappedExtractionFailed.length,
@@ -221,6 +242,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         set((state) => ({
           uniqueUrls: mergeActiveJobs(state.uniqueUrls, mappedValid),
           duplicateUrls: mergeDuplicatedJobs(state.duplicateUrls, mappedInvalid),
+          nonUsUrls: mergeDuplicatedJobs(state.nonUsUrls, mappedNonUs),
           lowScoreUrls: mergeDuplicatedJobs(state.lowScoreUrls, mappedLowScore),
           extractionFailedUrls: mergeDuplicatedJobs(state.extractionFailedUrls, mappedExtractionFailed),
           invalidCounts: counts,
@@ -309,6 +331,41 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       // silent
     } finally {
       set({ loadingMoreInvalid: false });
+    }
+  },
+
+  loadMoreNonUsJobs: async () => {
+    const { nonUsHasMore, loadingMoreNonUs, nonUsNextOffset } = get();
+    if (!nonUsHasMore || loadingMoreNonUs) return;
+    set({ loadingMoreNonUs: true });
+    try {
+      const res = await apiClient.get<DuplicatedJobApiRow[]>(
+        `/jobs/invalid?limit=${JOB_PAGE_SIZE}&offset=${nonUsNextOffset}&category=non_us`,
+      );
+      const chunk = (res.data ?? []).map((j) => mapDuplicatedJobRow(j));
+      if (chunk.length === 0) {
+        set({ nonUsHasMore: false });
+        return;
+      }
+      set((state) => {
+        const seen = new Set(state.nonUsUrls.map((j) => j.id));
+        const merged = [...state.nonUsUrls];
+        for (const j of chunk) {
+          if (!seen.has(j.id)) {
+            seen.add(j.id);
+            merged.push(j);
+          }
+        }
+        return {
+          nonUsUrls: merged.sort((a, b) => b.created_at_ms - a.created_at_ms),
+          nonUsNextOffset: state.nonUsNextOffset + chunk.length,
+          nonUsHasMore: chunk.length === JOB_PAGE_SIZE,
+        };
+      });
+    } catch {
+      // silent
+    } finally {
+      set({ loadingMoreNonUs: false });
     }
   },
 
@@ -621,6 +678,19 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     }));
   },
 
+  removeNonUsUrlsByIds: (ids: string[]) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    set((state) => ({
+      nonUsUrls: state.nonUsUrls.filter((d) => !idSet.has(d.id)),
+      invalidCounts: {
+        ...state.invalidCounts,
+        non_us: Math.max(0, state.invalidCounts.non_us - ids.length),
+        total: Math.max(0, state.invalidCounts.total - ids.length),
+      },
+    }));
+  },
+
   removeLowScoreUrlsByIds: (ids: string[]) => {
     if (ids.length === 0) return;
     const idSet = new Set(ids);
@@ -691,6 +761,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       });
 
       get().removeDuplicateUrlsByIds(idsToRemove);
+      get().removeNonUsUrlsByIds(idsToRemove);
       get().removeLowScoreUrlsByIds(idsToRemove);
       get().removeExtractionFailedUrlsByIds(idsToRemove);
       set({ batchDeletePending: null });
@@ -772,6 +843,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       await apiClient.delete(`/jobs/user-exclusions/${jobId}`);
       if (item.exclusion_type === 'below_min_score') {
         get().removeLowScoreUrlsByIds([item.id]);
+      } else if (item.exclusion_type === 'non_us_location') {
+        get().removeNonUsUrlsByIds([item.id]);
+      } else if (item.exclusion_type === 'extraction_failed') {
+        get().removeExtractionFailedUrlsByIds([item.id]);
       } else {
         get().removeDuplicateUrlsByIds([item.id]);
       }

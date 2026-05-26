@@ -49,7 +49,8 @@ start "Scraper Worker" cmd /k "cd /d "%~dp0" && set APP_ENV=%APP_ENV% && set REL
 
 :: Frontend dev server (Vite HMR — hot reload built in)
 echo [7/7] Starting frontend dev server...
-start "Frontend (port 5173)" cmd /k "cd /d "%~dp0\frontend" && npm run dev"
+for /f "delims=" %%i in ('venv\Scripts\python.exe scripts\lan_urls.py --ip 2^>nul') do set LAN_HOST=%%i
+start "Frontend (port 5173)" cmd /k "cd /d "%~dp0\frontend" && set LAN_HOST=%LAN_HOST% && npm run dev"
 
 echo.
 echo ============================================
@@ -58,6 +59,11 @@ echo.
 echo   Backend API:  http://localhost:8000
 echo   Frontend:     http://localhost:5173
 echo   API Docs:     http://localhost:8000/docs
+venv\Scripts\python.exe scripts\lan_urls.py
+echo.
+echo   Other devices on your Wi-Fi/LAN can open the Frontend LAN URL above.
+echo   Use port 5173 only — do not share http://^<ip^>:8000 with other users.
+echo   If the page does not load, allow port 5173 in Windows Firewall.
 if "%RELOAD%"=="1" (
   echo.
   echo   Tip: edit files under app/ and save — API and workers restart automatically.

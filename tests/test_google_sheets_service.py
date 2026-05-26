@@ -98,6 +98,69 @@ def test_clamp_auto_post_threshold():
     assert gs._clamp_auto_post_threshold(75) == 75
 
 
+def test_resolve_worksheet_name_exact_and_whitespace():
+    available = ["CHELL(Kevin)", " Timmy(Zeyu)"]
+    assert gs._resolve_worksheet_name("CHELL(Kevin)", available) == "CHELL(Kevin)"
+    assert gs._resolve_worksheet_name("Timmy(Zeyu)", available) == " Timmy(Zeyu)"
+    assert gs._resolve_worksheet_name(" Timmy(Zeyu) ", available) == " Timmy(Zeyu)"
+    assert gs._resolve_worksheet_name("Timi(Zeyu)", available) is None
+
+
+def test_canonicalize_tab_groups_rewrites_whitespace_mismatch():
+    available = [" Timmy(Zeyu)", "Tab A"]
+    groups, warnings = gs._canonicalize_tab_groups([["Timmy(Zeyu)", "Tab A"]], available)
+    assert groups == [[" Timmy(Zeyu)", "Tab A"]]
+    assert any("matched spreadsheet tab" in w for w in warnings)
+
+
+def test_canonicalize_tab_groups_unknown_tab():
+    available = [" Timmy(Zeyu)"]
+    groups, warnings = gs._canonicalize_tab_groups([["Timi(Zeyu)"]], available)
+    assert groups == [["Timi(Zeyu)"]]
+    assert any("was not found" in w for w in warnings)
+
+
+def test_sync_write_rows_uses_batch_update(monkeypatch):
+    class FakeWorksheet:
+        def __init__(self, title: str):
+            self.title = title
+
+    class FakeSpreadsheet:
+        def __init__(self):
+            self.batch_calls: list[dict] = []
+
+        def worksheets(self):
+            return [FakeWorksheet(" Timmy(Zeyu)")]
+
+        def values_batch_update(self, payload):
+            self.batch_calls.append(payload)
+
+    fake_sh = FakeSpreadsheet()
+    monkeypatch.setattr(gs, "_open_spreadsheet", lambda _sid: fake_sh)
+    monkeypatch.setattr(gs, "_api_call_with_retry", lambda fn, *args, **kwargs: fn(*args, **kwargs))
+
+    outcomes = gs._sync_write_rows(
+        "sheet-id",
+        [("Timmy(Zeyu)", 10, "https://example.com/job/1")],
+    )
+    assert outcomes == [("Timmy(Zeyu)", 10, True)]
+    assert len(fake_sh.batch_calls) == 1
+    assert fake_sh.batch_calls[0]["data"][0]["range"] == "' Timmy(Zeyu)'!B10:C10"
+
+
+def test_sync_write_rows_unknown_tab():
+    class FakeSpreadsheet:
+        def worksheets(self):
+            return []
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(gs, "_open_spreadsheet", lambda _sid: FakeSpreadsheet())
+    monkeypatch.setattr(gs, "_api_call_with_retry", lambda fn, *args, **kwargs: fn(*args, **kwargs))
+    outcomes = gs._sync_write_rows("sheet-id", [("Missing", 5, "https://x.test")])
+    assert outcomes == [("Missing", 5, False)]
+    monkeypatch.undo()
+
+
 @pytest.mark.asyncio
 async def test_update_auto_post_threshold_success(monkeypatch):
     class FakeConfig:

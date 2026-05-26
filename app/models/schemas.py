@@ -237,6 +237,7 @@ class DashboardJobResponse(BaseModel):
     cover_letter_pdf_path: str | None = None
     applied_at: datetime | None = None
     applied_by_name: str | None = None
+    sheet_posted_at: datetime | None = None
     user_status: str | None = None
     source: str | None = None
     is_remote: bool = False

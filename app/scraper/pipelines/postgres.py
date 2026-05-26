@@ -18,6 +18,25 @@ class PostgresPipeline:
         self.scrape_run = None
         self.items_new = 0
         self.items_updated = 0
+        self._progress_flush_every = 5
+
+    def _flush_run_counters(self, spider, *, force: bool = False) -> None:
+        if not self.scrape_run:
+            return
+        total = self.items_new + self.items_updated
+        if not force and total % self._progress_flush_every != 0:
+            return
+        self.scrape_run.items_scraped = total
+        self.scrape_run.items_new = self.items_new
+        self.scrape_run.items_updated = self.items_updated
+        self.session.commit()
+        spider.logger.info(
+            "ScrapeRun %s progress: %d scraped (%d new, %d updated)",
+            self.scrape_run.id,
+            total,
+            self.items_new,
+            self.items_updated,
+        )
 
     def open_spider(self, spider):
         db_url = spider.settings.get("DATABASE_URL")
@@ -37,10 +56,8 @@ class PostgresPipeline:
 
     def close_spider(self, spider):
         if self.scrape_run:
+            self._flush_run_counters(spider, force=True)
             self.scrape_run.finished_at = utcnow_naive()
-            self.scrape_run.items_scraped = self.items_new + self.items_updated
-            self.scrape_run.items_new = self.items_new
-            self.scrape_run.items_updated = self.items_updated
             self.scrape_run.status = "success"
             self.session.commit()
             spider.logger.info(
@@ -77,5 +94,7 @@ class PostgresPipeline:
             self.session.add(posting)
             self.session.commit()
             self.items_new += 1
+
+        self._flush_run_counters(spider)
 
         return item

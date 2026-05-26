@@ -7,6 +7,9 @@ import type {
   ScrapeRun,
   SyncStatus,
   SpiderInfo,
+  SyncPlatform,
+  SyncCheckpoint,
+  SyncTriggerOptions,
   RerunExtractionResponse,
   DeleteScrapedJobResponse,
   DashboardJobsPage,
@@ -59,8 +62,30 @@ export async function fetchScrapeRuns(limit = 20): Promise<ScrapeRun[]> {
   return data;
 }
 
-export async function triggerSync(spiderName = 'all'): Promise<SyncStatus> {
-  const { data } = await apiClient.post('/scraper/sync', { spider_name: spiderName });
+export async function triggerSync(
+  spiderNameOrOptions: string | SyncTriggerOptions = 'all',
+): Promise<SyncStatus> {
+  const body: SyncTriggerOptions =
+    typeof spiderNameOrOptions === 'string'
+      ? { spider_name: spiderNameOrOptions, sync_mode: 'incremental' }
+      : {
+          spider_name: spiderNameOrOptions.spider_name ?? 'all',
+          sync_mode: spiderNameOrOptions.sync_mode ?? 'incremental',
+          spider_names: spiderNameOrOptions.spider_names,
+          posted_since: spiderNameOrOptions.posted_since,
+          posted_until: spiderNameOrOptions.posted_until,
+        };
+  const { data } = await apiClient.post('/scraper/sync', body);
+  return data;
+}
+
+export async function fetchSyncPlatforms(): Promise<SyncPlatform[]> {
+  const { data } = await apiClient.get('/scraper/sync/platforms');
+  return data;
+}
+
+export async function fetchSyncCheckpoints(): Promise<SyncCheckpoint[]> {
+  const { data } = await apiClient.get('/scraper/sync/checkpoints');
   return data;
 }
 

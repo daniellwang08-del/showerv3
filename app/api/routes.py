@@ -1299,6 +1299,7 @@ async def get_dashboard_jobs(
                     cover_letter_pdf_path=cl_pdf_path,
                     applied_at=applied_at,
                     applied_by_name=applied_by_name,
+                    sheet_posted_at=job.sheet_posted_at,
                     user_status=ujs_status,
                     source=meta.get("source"),
                     is_remote=bool(meta.get("is_remote", False)),
@@ -2058,7 +2059,7 @@ async def rescrape_valid_job(
 async def get_duplicated_jobs(
     limit: int = 50,
     offset: int = 0,
-    category: str = Query("duplicates", pattern="^(duplicates|low_score|extraction_failed)$"),
+    category: str = Query("duplicates", pattern="^(duplicates|low_score|extraction_failed|non_us)$"),
     current_user: dict = Depends(get_current_user),
 ) -> list[DuplicatedJobResponse]:
     """Get duplicated/hidden jobs for the current user from user_job_status."""
@@ -2068,6 +2069,8 @@ async def get_duplicated_jobs(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     logger.debug("get_duplicated_jobs", limit=limit, offset=offset, user_id=user_id, category=category)
 
+    from app.services.job_exclusion_types import sql_filter_for_invalid_category
+
     async with get_session() as session:
         stmt = (
             select(UserJobStatus, Job, JobExtraction)
@@ -2075,19 +2078,8 @@ async def get_duplicated_jobs(
             .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
             .where(UserJobStatus.user_id == user_id)
             .where(UserJobStatus.status == "duplicated")
+            .where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, category))
         )
-        if category == "low_score":
-            stmt = stmt.where(UserJobStatus.exclusion_type == "below_min_score")
-        elif category == "extraction_failed":
-            stmt = stmt.where(UserJobStatus.exclusion_type == "extraction_failed")
-        else:
-            stmt = stmt.where(
-                (UserJobStatus.exclusion_type.is_(None))
-                | (
-                    (UserJobStatus.exclusion_type != "below_min_score")
-                    & (UserJobStatus.exclusion_type != "extraction_failed")
-                )
-            )
         stmt = (
             stmt.order_by(UserJobStatus.created_at.desc())
             .limit(limit)
@@ -2130,10 +2122,7 @@ async def get_invalid_job_counts(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """Counts for duplicates modal tabs."""
-    from app.services.job_exclusion_types import (
-        BELOW_MIN_SCORE_EXCLUSION,
-        EXTRACTION_FAILED_EXCLUSION,
-    )
+    from app.services.job_exclusion_types import sql_filter_for_invalid_category
 
     user_id = current_user.get("user_id")
     if not user_id:
@@ -2149,27 +2138,40 @@ async def get_invalid_job_counts(
             )
         )
         low_score = (await session.execute(
-            base.where(UserJobStatus.exclusion_type == BELOW_MIN_SCORE_EXCLUSION)
+            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "low_score"))
         )).scalar_one()
         extraction_failed = (await session.execute(
-            base.where(UserJobStatus.exclusion_type == EXTRACTION_FAILED_EXCLUSION)
+            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "extraction_failed"))
+        )).scalar_one()
+        non_us = (await session.execute(
+            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "non_us"))
         )).scalar_one()
         duplicates = (await session.execute(
-            base.where(
-                (UserJobStatus.exclusion_type.is_(None))
-                | (
-                    (UserJobStatus.exclusion_type != BELOW_MIN_SCORE_EXCLUSION)
-                    & (UserJobStatus.exclusion_type != EXTRACTION_FAILED_EXCLUSION)
-                )
-            )
+            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "duplicates"))
         )).scalar_one()
 
     return {
         "duplicates": duplicates,
         "low_score": low_score,
         "extraction_failed": extraction_failed,
-        "total": duplicates + low_score + extraction_failed,
+        "non_us": non_us,
+        "total": duplicates + low_score + extraction_failed + non_us,
     }
+
+
+@router.post("/jobs/reconcile-locations", dependencies=[Depends(get_current_user)])
+async def reconcile_job_locations(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Move visible active jobs with non-US or unverified locations into hidden lists."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    from app.services.job_location_reconcile import reconcile_job_locations_for_user
+
+    result = await reconcile_job_locations_for_user(user_id)
+    return {"success": True, **result}
 
 
 @router.get("/jobs/invalid/{job_id}", response_model=DuplicatedJobResponse, dependencies=[Depends(get_current_user)])
@@ -3449,7 +3451,12 @@ async def save_sheets_config(
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    from app.services.google_sheets_service import save_config, get_all_tabs
+    from app.services.google_sheets_service import (
+        save_config,
+        get_all_tabs,
+        _resolve_worksheet_name,
+        _canonicalize_tab_groups,
+    )
 
     # get_all_tabs uses a 60-second TTL cache, so this won't make a fresh API
     # call if the user just loaded the modal (which already fetched tabs).
@@ -3463,13 +3470,26 @@ async def save_sheets_config(
         logger.error("sheets_validate_tabs_failed", error=str(e))
         raise HTTPException(status_code=400, detail=f"Cannot access spreadsheet: {e}")
 
-    all_assigned = [t for group in body.tab_groups for t in group]
-    invalid_tabs = [t for t in all_assigned if t not in tabs]
+    canonical_groups, tab_warnings = _canonicalize_tab_groups(body.tab_groups, tabs)
+    invalid_tabs = [
+        tab
+        for group in body.tab_groups
+        for tab in group
+        if _resolve_worksheet_name(tab, tabs) is None
+    ]
     if invalid_tabs:
-        raise HTTPException(status_code=400, detail=f"Tabs not found in spreadsheet: {invalid_tabs}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Tabs not found in spreadsheet: {invalid_tabs}",
+                "available_tabs": tabs,
+            },
+        )
 
     try:
-        config = await save_config(user_id, body.spreadsheet_url, body.tab_groups, body.auto_post_threshold)
+        config = await save_config(
+            user_id, body.spreadsheet_url, canonical_groups, body.auto_post_threshold
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -3483,6 +3503,7 @@ async def save_sheets_config(
         "auto_post_threshold": config.auto_post_threshold,
         "group_count": len(config.tab_groups or []),
         "assigned_tab_count": len([t for g in (config.tab_groups or []) for t in g]),
+        "tab_warnings": tab_warnings,
     }
 
 
@@ -3560,9 +3581,13 @@ async def post_jobs_to_sheet(
     return {
         "success": True,
         "posted_count": len(summary["posted"]),
+        "partial_count": len(summary.get("partial", [])),
+        "failed_count": len(summary.get("failed", [])),
         "skipped_already_in_sheet": summary["skipped_already_in_sheet"],
         "skipped_not_found": summary["skipped_not_found"],
         "results": summary["posted"],
+        "partial_results": summary.get("partial", []),
+        "failed_results": summary.get("failed", []),
     }
 
 

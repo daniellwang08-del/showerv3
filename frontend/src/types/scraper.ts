@@ -73,6 +73,7 @@ export interface DashboardJob {
   cover_letter_pdf_path: string | null;
   applied_at: string | null;
   applied_by_name: string | null;
+  sheet_posted_at: string | null;
   user_status: string | null;
   source: string | null;
   is_remote: boolean;
@@ -156,6 +157,41 @@ export interface SyncStatus {
   status: 'queued' | 'running' | 'idle';
   spider_name: string | null;
   message: string;
+  items_scraped?: number;
+  items_new?: number;
+  items_updated?: number;
+  started_at?: string | null;
+  elapsed_seconds?: number | null;
+}
+
+export interface SyncProgress {
+  spiderName: string | null;
+  current: number;
+  total: number;
+  itemsScraped: number;
+  itemsNew: number;
+  elapsedSeconds: number;
+  message: string;
+}
+
+export interface SyncPlatform {
+  name: string;
+  label: string;
+  requires_auth: boolean;
+}
+
+export interface SyncCheckpoint {
+  spider_name: string;
+  marker_job_ids: string[] | Record<string, string[]>;
+  updated_at: string | null;
+}
+
+export interface SyncTriggerOptions {
+  spider_name?: string;
+  sync_mode?: 'incremental' | 'date_backfill';
+  spider_names?: string[];
+  posted_since?: string;
+  posted_until?: string;
 }
 
 export interface SpiderInfo {

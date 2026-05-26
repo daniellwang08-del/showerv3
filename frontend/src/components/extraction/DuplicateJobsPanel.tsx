@@ -34,6 +34,8 @@ const EXCLUSION_TYPE_LABELS: Record<NonNullable<ExclusionType>, string> = {
   strict_similarity: 'Same title',
   same_url: 'Same URL',
   extraction_failed: 'Extraction failed',
+  non_us_location: 'Non-US',
+  location_unknown: 'Location review',
   blocked_domain: 'Blocked domain',
   manual_invalid: 'Hidden',
   manual_duplicate: 'Manual dup',
@@ -48,6 +50,8 @@ const EXCLUSION_TYPE_COLORS: Record<NonNullable<ExclusionType>, string> = {
   strict_similarity: 'bg-blue-100 text-blue-800 border-blue-200',
   same_url: 'bg-cyan-100 text-cyan-800 border-cyan-200',
   extraction_failed: 'bg-slate-200 text-slate-800 border-slate-300',
+  non_us_location: 'bg-orange-100 text-orange-800 border-orange-200',
+  location_unknown: 'bg-amber-100 text-amber-900 border-amber-200',
   blocked_domain: 'bg-zinc-200 text-zinc-800 border-zinc-300',
   manual_invalid: 'bg-rose-100 text-rose-800 border-rose-200',
   manual_duplicate: 'bg-orange-100 text-orange-800 border-orange-200',
@@ -234,10 +238,11 @@ export function DuplicateJobsPanel({
   onClosePanel,
   children,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<'duplicates' | 'low_score' | 'extraction_failed'>('duplicates');
+  const [activeTab, setActiveTab] = useState<'duplicates' | 'non_us' | 'low_score' | 'extraction_failed'>('duplicates');
 
   const loadingLists = useJobsStore((s) => s.loadingLists);
   const duplicateItems = useJobsStore((s) => s.duplicateUrls);
+  const nonUsItems = useJobsStore((s) => s.nonUsUrls);
   const lowScoreItems = useJobsStore((s) => s.lowScoreUrls);
   const extractionFailedItems = useJobsStore((s) => s.extractionFailedUrls);
   const invalidCounts = useJobsStore((s) => s.invalidCounts);
@@ -250,47 +255,53 @@ export function DuplicateJobsPanel({
   const onLoadMoreDuplicates = useJobsStore((s) => s.loadMoreInvalidJobs);
   const onLoadMoreLowScore = useJobsStore((s) => s.loadMoreLowScoreJobs);
   const onLoadMoreExtractionFailed = useJobsStore((s) => s.loadMoreExtractionFailedJobs);
+  const nonUsListHasMore = useJobsStore((s) => s.nonUsHasMore);
+  const loadingMoreNonUs = useJobsStore((s) => s.loadingMoreNonUs);
+  const onLoadMoreNonUs = useJobsStore((s) => s.loadMoreNonUsJobs);
   const onBatchDeleteInvalid = useJobsStore((s) => s.openBatchDeleteConfirm);
 
-  const items =
-    activeTab === 'low_score'
-      ? lowScoreItems
-      : activeTab === 'extraction_failed'
-        ? extractionFailedItems
-        : duplicateItems;
+  const tabItems =
+    activeTab === 'non_us'
+      ? nonUsItems
+      : activeTab === 'low_score'
+        ? lowScoreItems
+        : activeTab === 'extraction_failed'
+          ? extractionFailedItems
+          : duplicateItems;
   const duplicateListHasMoreActive =
-    activeTab === 'low_score'
-      ? lowScoreListHasMore
-      : activeTab === 'extraction_failed'
-        ? extractionFailedListHasMore
-        : duplicateListHasMore;
+    activeTab === 'non_us'
+      ? nonUsListHasMore
+      : activeTab === 'low_score'
+        ? lowScoreListHasMore
+        : activeTab === 'extraction_failed'
+          ? extractionFailedListHasMore
+          : duplicateListHasMore;
   const loadingMoreActive =
-    activeTab === 'low_score'
-      ? loadingMoreLowScore
-      : activeTab === 'extraction_failed'
-        ? loadingMoreExtractionFailed
-        : loadingMoreDuplicates;
+    activeTab === 'non_us'
+      ? loadingMoreNonUs
+      : activeTab === 'low_score'
+        ? loadingMoreLowScore
+        : activeTab === 'extraction_failed'
+          ? loadingMoreExtractionFailed
+          : loadingMoreDuplicates;
   const onLoadMoreActive =
-    activeTab === 'low_score'
-      ? onLoadMoreLowScore
-      : activeTab === 'extraction_failed'
-        ? onLoadMoreExtractionFailed
-        : onLoadMoreDuplicates;
-  const duplicatesLoadedCount = duplicateItems.length;
-  const lowScoreLoadedCount = lowScoreItems.length;
-  const extractionFailedLoadedCount = extractionFailedItems.length;
+    activeTab === 'non_us'
+      ? onLoadMoreNonUs
+      : activeTab === 'low_score'
+        ? onLoadMoreLowScore
+        : activeTab === 'extraction_failed'
+          ? onLoadMoreExtractionFailed
+          : onLoadMoreDuplicates;
   const tabCount =
-    activeTab === 'low_score'
-      ? invalidCounts.low_score
-      : activeTab === 'extraction_failed'
-        ? invalidCounts.extraction_failed
-        : invalidCounts.duplicates;
-  const loadedCount =
-    activeTab === 'low_score'
-      ? lowScoreLoadedCount
-      : activeTab === 'extraction_failed'
-        ? extractionFailedLoadedCount
-        : duplicatesLoadedCount;
+    activeTab === 'non_us'
+      ? invalidCounts.non_us
+      : activeTab === 'low_score'
+        ? invalidCounts.low_score
+        : activeTab === 'extraction_failed'
+          ? invalidCounts.extraction_failed
+          : invalidCounts.duplicates;
+  const loadedCount = tabItems.length;
+  const items = tabItems;
 
   const openMenuRaw = useUIStore((s) => s.openMenu);
   const openMenuId = openMenuRaw?.table === 'duplicated' ? openMenuRaw.id : null;
@@ -416,6 +427,26 @@ export function DuplicateJobsPanel({
               <button
                 type="button"
                 onClick={() => {
+                  setActiveTab('non_us');
+                  setSelectedIds(new Set());
+                }}
+                className={[
+                  'rounded-md px-3 py-1.5 text-xs font-semibold transition',
+                  activeTab === 'non_us'
+                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                    : 'text-slate-500 hover:text-slate-700',
+                ].join(' ')}
+              >
+                Non-US
+                {invalidCounts.non_us > 0 && (
+                  <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700">
+                    {invalidCounts.non_us}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   setActiveTab('low_score');
                   setSelectedIds(new Set());
                 }}
@@ -525,12 +556,22 @@ export function DuplicateJobsPanel({
             ) : items.length === 0 ? (
               <div className="p-8 text-center">
                 <p className="text-sm font-medium text-slate-600">
-                  {activeTab === 'low_score' ? 'No low-match jobs.' : 'No duplicates yet.'}
+                  {activeTab === 'non_us'
+                    ? 'No non-US jobs.'
+                    : activeTab === 'low_score'
+                      ? 'No low-match jobs.'
+                      : activeTab === 'extraction_failed'
+                        ? 'No extraction failures.'
+                        : 'No duplicates yet.'}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {activeTab === 'low_score'
-                    ? 'Jobs below your minimum match score will appear here after AI analysis.'
-                    : 'Potential duplicate jobs will appear here after AI analysis.'}
+                  {activeTab === 'non_us'
+                    ? 'Jobs outside the United States are moved here after AI analysis.'
+                    : activeTab === 'low_score'
+                      ? 'Jobs below your minimum match score will appear here after AI analysis.'
+                      : activeTab === 'extraction_failed'
+                        ? 'Expired or invalid postings that failed extraction appear here.'
+                        : 'Potential duplicate jobs and jobs needing location review appear here after AI analysis.'}
                 </p>
               </div>
             ) : (
@@ -641,7 +682,14 @@ export function DuplicateJobsPanel({
                 </>
               ) : (
                 <span className="text-center text-[10px] text-slate-500">
-                  Scroll for more {activeTab === 'low_score' ? 'low-match jobs' : 'duplicates'}
+                  Scroll for more{' '}
+                  {activeTab === 'non_us'
+                    ? 'non-US jobs'
+                    : activeTab === 'low_score'
+                      ? 'low-match jobs'
+                      : activeTab === 'extraction_failed'
+                        ? 'extraction failures'
+                        : 'duplicates'}
                 </span>
               )}
             </div>

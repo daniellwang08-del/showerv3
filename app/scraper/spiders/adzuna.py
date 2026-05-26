@@ -268,9 +268,29 @@ class AdzunaSpider(BaseJobSpider):
             return
 
         job_ids = [str(j.get("id", "")) for j in jobs]
+        page_posted_dates = []
+        for job in jobs:
+            created = job.get("created")
+            if created:
+                try:
+                    page_posted_dates.append(
+                        datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+                    )
+                except ValueError:
+                    pass
 
         if page == 1:
             self._page1_ids_by_title[title] = [jid for jid in job_ids if jid]
+
+        if self._page_too_old(page_posted_dates):
+            self.logger.info(
+                "[%s] Page %d jobs are older than posted_since — stopping pagination",
+                title,
+                page,
+            )
+            for job in jobs:
+                yield from self._parse_job_data(job)
+            return
 
         title_markers = self._marker_ids_by_title.get(title, set())
         marker_hit_on_page = False

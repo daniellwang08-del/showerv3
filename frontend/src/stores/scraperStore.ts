@@ -4,6 +4,7 @@ import type {
   ScraperStats,
   SpiderInfo,
   SyncStatus,
+  SyncProgress,
 } from '../types/scraper';
 import {
   fetchDashboardJobs,
@@ -12,6 +13,7 @@ import {
   fetchSyncStatus,
   triggerSync,
 } from '../api/scraperApi';
+import { postJobsToSheet as postJobsToSheetApi } from '../api/googleSheetsApi';
 import { apiClient } from '../api/client';
 import { toFiniteTimeMs } from '../utils/serverDate';
 
@@ -169,6 +171,7 @@ interface ScraperState {
 
   syncStatus: SyncStatus | null;
   syncing: boolean;
+  syncProgress: SyncProgress | null;
 
   sourceFilter: string;
   searchQuery: string;
@@ -184,6 +187,17 @@ interface ScraperState {
   loadStats: () => Promise<void>;
   loadSpiders: () => Promise<void>;
   checkSyncStatus: () => Promise<void>;
+  handleSyncWsEvent: (event: {
+    type: string;
+    spider_name?: string;
+    current?: number;
+    total?: number;
+    items_scraped?: number;
+    items_new?: number;
+    elapsed_seconds?: number;
+    success?: boolean;
+    error?: string;
+  }) => void;
   startSync: (spiderName?: string) => Promise<void>;
 
   rerunJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
@@ -194,6 +208,8 @@ interface ScraperState {
   optimisticMarkJobsApplied: (jobIds: string[], applied: boolean) => void;
   markJobsApplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   markJobsUnapplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
+  optimisticMarkJobsSheetPosted: (jobIds: string[]) => void;
+  postJobsToSheet: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
 
   setPage: (page: number) => void;
   setPerPage: (perPage: number) => void;
@@ -228,6 +244,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
 
   syncStatus: null,
   syncing: false,
+  syncProgress: null,
 
   sourceFilter: '',
   searchQuery: '',
@@ -313,19 +330,135 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   checkSyncStatus: async () => {
     try {
       const status = await fetchSyncStatus();
-      set({ syncStatus: status, syncing: status.status === 'running' });
+      const running = status.status === 'running';
+      set({
+        syncStatus: status,
+        syncing: running,
+        syncProgress: running
+          ? {
+              spiderName: status.spider_name,
+              current: get().syncProgress?.current ?? 0,
+              total: get().syncProgress?.total ?? 0,
+              itemsScraped: status.items_scraped ?? 0,
+              itemsNew: status.items_new ?? 0,
+              elapsedSeconds: status.elapsed_seconds ?? 0,
+              message: status.message,
+            }
+          : null,
+      });
     } catch {
       /* ignore */
     }
   },
 
+  handleSyncWsEvent: (event) => {
+    if (event.type === 'sync_started') {
+      set({
+        syncing: true,
+        syncProgress: {
+          spiderName: event.spider_name ?? null,
+          current: 0,
+          total: event.total ?? 0,
+          itemsScraped: 0,
+          itemsNew: 0,
+          elapsedSeconds: 0,
+          message: 'Sync queued…',
+        },
+      });
+      return;
+    }
+
+    if (event.type === 'sync_spider_started') {
+      const spider = event.spider_name ?? null;
+      const current = event.current ?? 0;
+      const total = event.total ?? 0;
+      set({
+        syncing: true,
+        syncProgress: {
+          spiderName: spider,
+          current,
+          total,
+          itemsScraped: 0,
+          itemsNew: 0,
+          elapsedSeconds: 0,
+          message: total > 0
+            ? `Running ${spider ?? 'spider'} (${current}/${total})…`
+            : `Running ${spider ?? 'spider'}…`,
+        },
+      });
+      return;
+    }
+
+    if (event.type === 'sync_activity') {
+      const prev = get().syncProgress;
+      const spider = event.spider_name ?? prev?.spiderName ?? null;
+      const itemsScraped = event.items_scraped ?? prev?.itemsScraped ?? 0;
+      const itemsNew = event.items_new ?? prev?.itemsNew ?? 0;
+      const elapsed = event.elapsed_seconds ?? prev?.elapsedSeconds ?? 0;
+      const current = prev?.current ?? 0;
+      const total = prev?.total ?? 0;
+      set({
+        syncing: true,
+        syncProgress: {
+          spiderName: spider,
+          current,
+          total,
+          itemsScraped,
+          itemsNew,
+          elapsedSeconds: elapsed,
+          message: `${spider ?? 'Spider'}: ${itemsScraped} scraped (${itemsNew} new) · ${elapsed}s`,
+        },
+      });
+      return;
+    }
+
+    if (event.type === 'sync_progress') {
+      const prev = get().syncProgress;
+      const spider = event.spider_name ?? prev?.spiderName ?? null;
+      const current = event.current ?? prev?.current ?? 0;
+      const total = event.total ?? prev?.total ?? 0;
+      const ok = event.success !== false;
+      set({
+        syncing: current < total,
+        syncProgress: current < total
+          ? {
+              spiderName: spider,
+              current,
+              total,
+              itemsScraped: prev?.itemsScraped ?? 0,
+              itemsNew: prev?.itemsNew ?? 0,
+              elapsedSeconds: prev?.elapsedSeconds ?? 0,
+              message: ok
+                ? `Finished ${spider ?? 'spider'} (${current}/${total})`
+                : `${spider ?? 'Spider'} failed (${current}/${total})`,
+            }
+          : prev,
+      });
+      return;
+    }
+
+    if (event.type === 'sync_completed' || event.type === 'sync_failed') {
+      set({
+        syncing: false,
+        syncProgress: null,
+        syncStatus: {
+          status: 'idle',
+          spider_name: null,
+          message: event.type === 'sync_completed'
+            ? 'Sync completed.'
+            : (event.error ? `Sync failed: ${event.error}` : 'Sync failed.'),
+        },
+      });
+    }
+  },
+
   startSync: async (spiderName = 'all') => {
-    set({ syncing: true });
+    set({ syncing: true, syncProgress: { spiderName: spiderName, current: 0, total: 0, itemsScraped: 0, itemsNew: 0, elapsedSeconds: 0, message: 'Queueing sync…' } });
     try {
       const status = await triggerSync(spiderName);
       set({ syncStatus: status });
     } catch {
-      set({ syncing: false });
+      set({ syncing: false, syncProgress: null });
     }
   },
 
@@ -557,6 +690,58 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         set({ jobs: restoreAppliedFields(get().jobs, snapshot, idSet) });
       }
       return { ok: false, message: extractErrorMessage(err, 'Failed to unmark as applied.') };
+    }
+  },
+
+  optimisticMarkJobsSheetPosted: (jobIds) => {
+    const idSet = new Set(jobIds.filter(Boolean));
+    if (idSet.size === 0) return;
+    const now = new Date().toISOString();
+    set({
+      jobs: get().jobs.map((j) =>
+        idSet.has(j.id) ? { ...j, sheet_posted_at: j.sheet_posted_at ?? now } : j,
+      ),
+    });
+  },
+
+  postJobsToSheet: async (jobIds) => {
+    const unique = [...new Set(jobIds.filter(Boolean))];
+    if (unique.length === 0) {
+      return { ok: false, message: 'No jobs selected to post.' };
+    }
+
+    try {
+      const data = await postJobsToSheetApi(unique);
+      const posted = data.posted_count ?? 0;
+      const partial = data.partial_count ?? 0;
+      const failed = data.failed_count ?? 0;
+      const alreadyInSheet = data.skipped_already_in_sheet ?? 0;
+      const notFound = data.skipped_not_found ?? 0;
+
+      const fullyPostedIds = (data.results ?? [])
+        .map((row) => String(row.job_id ?? ''))
+        .filter(Boolean);
+      if (fullyPostedIds.length > 0) {
+        get().optimisticMarkJobsSheetPosted(fullyPostedIds);
+      }
+      void get().bgRefreshJobs();
+
+      const parts: string[] = [];
+      if (posted > 0) parts.push(`Posted ${posted} job${posted === 1 ? '' : 's'} fully`);
+      if (partial > 0) {
+        parts.push(`${partial} partially posted (check tab names in Settings)`);
+      }
+      if (failed > 0) parts.push(`${failed} failed to post`);
+      if (alreadyInSheet > 0) parts.push(`${alreadyInSheet} already in sheet`);
+      if (notFound > 0) parts.push(`${notFound} not found`);
+
+      if (parts.length > 0) {
+        const ok = failed === 0 && partial === 0;
+        return { ok, message: `${parts.join('; ')}.` };
+      }
+      return { ok: false, message: 'No jobs were posted to the Google Sheet.' };
+    } catch (err) {
+      return { ok: false, message: extractErrorMessage(err, 'Failed to post to Google Sheet.') };
     }
   },
 

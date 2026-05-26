@@ -318,11 +318,34 @@ class JobrightSpider(BaseJobSpider):
             for item in jobs
         ]
 
+        page_posted_dates = []
+        for item in jobs:
+            publish_time = item.get("jobResult", {}).get("publishTime")
+            if publish_time:
+                try:
+                    page_posted_dates.append(
+                        datetime.strptime(str(publish_time), "%Y-%m-%d %H:%M:%S").replace(
+                            tzinfo=timezone.utc
+                        )
+                    )
+                except (ValueError, TypeError):
+                    pass
+
         # Save page 1 IDs for checkpoint — always from sort=1 (most recent)
         # regardless of which sort modes are active. In fresh mode we still
         # save markers so the next incremental run has them.
         if page == 1 and sort_condition == INCREMENTAL_SORT and not self._page1_ids:
             self._page1_ids = [jid for jid in job_ids if jid]
+
+        if self._page_too_old(page_posted_dates):
+            self.logger.info(
+                "[sort=%s] Page %d jobs are older than posted_since — stopping pagination",
+                sort_label,
+                page,
+            )
+            for item in jobs:
+                yield from self._parse_job_item(item)
+            return
 
         # Checkpoint marker detection — only in incremental mode (sort=1 only)
         marker_hit_on_page = False

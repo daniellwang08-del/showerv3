@@ -117,6 +117,9 @@ class RemoteRocketshipSpider(BaseJobSpider):
 
     def _load_checkpoint(self):
         """Load marker job IDs from the last successful run."""
+        if self._fresh_mode:
+            self.logger.info("Fresh mode — ignoring checkpoints")
+            return
         db_url = self.settings.get("DATABASE_URL")
         engine = get_engine(db_url)
         Base.metadata.create_all(engine)
@@ -288,24 +291,26 @@ class RemoteRocketshipSpider(BaseJobSpider):
             self.logger.info("Page %d returned 0 jobs — stopping", page)
             return
 
-        # Collect job IDs for checkpoint and marker detection
         job_ids = [str(j.get("id", "")) for j in jobs]
 
         if page == 1:
             self._page1_ids = job_ids[:]
 
-        # Yield jobs, stopping at the first marker hit
         marker_hit_on_page = False
-        for job, jid in zip(jobs, job_ids):
-            if jid and jid in self._marker_ids:
-                self.logger.info(
-                    "Checkpoint marker %s found on page %d — caught up with previous run",
-                    jid, page,
-                )
-                marker_hit_on_page = True
-                self._marker_hit = True
-                break
-            yield from self._parse_job_data(job)
+        if not self._fresh_mode and self._marker_ids:
+            for job, jid in zip(jobs, job_ids):
+                if jid and jid in self._marker_ids:
+                    self.logger.info(
+                        "Checkpoint marker %s found on page %d — caught up with previous run",
+                        jid, page,
+                    )
+                    marker_hit_on_page = True
+                    self._marker_hit = True
+                    break
+                yield from self._parse_job_data(job)
+        else:
+            for job in jobs:
+                yield from self._parse_job_data(job)
 
         if marker_hit_on_page:
             return

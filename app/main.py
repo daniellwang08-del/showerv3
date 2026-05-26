@@ -43,9 +43,37 @@ from app.core.logging import setup_logging, get_logger
 logger = get_logger(__name__)
 
 
+def _install_windows_accept_noise_filter() -> None:
+    """Suppress benign WinError 64 noise when clients drop TCP during accept (Windows)."""
+    if sys.platform != "win32":
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    previous = loop.get_exception_handler()
+
+    def handler(inner_loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        exc = context.get("exception")
+        if isinstance(exc, OSError) and getattr(exc, "winerror", None) == 64:
+            return
+        message = context.get("message", "")
+        if "Accept failed on a socket" in message:
+            return
+        if previous is not None:
+            previous(inner_loop, context)
+        else:
+            inner_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    _install_windows_accept_noise_filter()
     logger.info("application_starting")
 
     try:
@@ -166,13 +194,28 @@ def create_app() -> FastAPI:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+    extra_origins = os.environ.get("CORS_EXTRA_ORIGINS", "")
+    if extra_origins:
+        origins.extend(o.strip().rstrip("/") for o in extra_origins.split(",") if o.strip())
+
     frontend_url = os.environ.get("FRONTEND_URL")
     if frontend_url:
         origins.append(frontend_url.rstrip("/"))
 
+    # Local dev: allow any private-LAN origin (e.g. http://172.20.1.140:5173).
+    allow_origin_regex = None
+    if settings.app_env == "local" or settings.debug:
+        allow_origin_regex = (
+            r"https?://"
+            r"(localhost|127\.0\.0\.1|\[::1\]|"
+            r"(?:10|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3})"
+            r"(?::\d+)?"
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
+        allow_origin_regex=allow_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

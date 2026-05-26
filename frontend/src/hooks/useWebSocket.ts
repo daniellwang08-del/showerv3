@@ -20,6 +20,12 @@ export interface WsEvent {
   total?: number;
   success?: boolean;
   summary?: Record<string, unknown>;
+  sync_mode?: string;
+  platforms?: string[];
+  items_scraped?: number;
+  items_new?: number;
+  items_updated?: number;
+  elapsed_seconds?: number;
 }
 
 type WsEventHandler = (event: WsEvent) => void;

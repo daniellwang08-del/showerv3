@@ -21,6 +21,7 @@ export function ScraperDashboard() {
     stats, statsLoading,
     spiders,
     syncing,
+    syncProgress,
     sortField, sortOrder,
     loadJobs, bgRefreshJobs, loadStats, loadSpiders, checkSyncStatus, startSync,
     setPage, setPerPage, setSort,
@@ -70,6 +71,26 @@ export function ScraperDashboard() {
     });
   }, []);
 
+  const handleSheetPostedStateChange = useCallback((patches: Array<{
+    id: string;
+    sheet_posted_at: string | null;
+  }>) => {
+    if (patches.length === 0) return;
+    setAiSearch((prev) => {
+      if (!prev.active || prev.results.length === 0) return prev;
+      const byId = new Map(patches.map((p) => [p.id, p]));
+      let changed = false;
+      const results = prev.results.map((row) => {
+        const patch = byId.get(row.id);
+        if (!patch) return row;
+        if (row.sheet_posted_at === patch.sheet_posted_at) return row;
+        changed = true;
+        return { ...row, sheet_posted_at: patch.sheet_posted_at };
+      });
+      return changed ? { ...prev, results } : prev;
+    });
+  }, []);
+
   const activeJobs = jobs.filter((j) => j.user_status !== 'duplicated' && j.user_status !== 'manual_hidden');
   const displayedJobs: DashboardJob[] = aiSearch.active ? aiSearch.results : activeJobs;
 
@@ -79,14 +100,21 @@ export function ScraperDashboard() {
     loadSpiders();
     checkSyncStatus();
     refreshLists();
-    // One-time backfill: re-run company dedup for all existing jobs.
-    // Flag is set BEFORE the async POST to prevent React StrictMode double-fire.
-    // The actual refresh happens via the WS `company_policy_reconcile_completed` event.
     const RECONCILE_FLAG = 'company_policy_reconciled_v1';
     if (!sessionStorage.getItem(RECONCILE_FLAG)) {
       sessionStorage.setItem(RECONCILE_FLAG, 'pending');
       void apiClient.post('/jobs/valid/reconcile-company-policy').catch(() => {
         sessionStorage.removeItem(RECONCILE_FLAG);
+      });
+    }
+    const LOCATION_RECONCILE_FLAG = 'location_reconciled_v1';
+    if (!sessionStorage.getItem(LOCATION_RECONCILE_FLAG)) {
+      sessionStorage.setItem(LOCATION_RECONCILE_FLAG, 'pending');
+      void apiClient.post('/jobs/reconcile-locations').then(() => {
+        refreshLists({ showLoading: false, reset: true });
+        loadJobs();
+      }).catch(() => {
+        sessionStorage.removeItem(LOCATION_RECONCILE_FLAG);
       });
     }
   }, []);
@@ -118,6 +146,14 @@ export function ScraperDashboard() {
     };
   }, [jobs]);
 
+  useEffect(() => {
+    if (!syncing) return;
+    const id = window.setInterval(() => {
+      void checkSyncStatus();
+    }, 10000);
+    return () => window.clearInterval(id);
+  }, [syncing, checkSyncStatus]);
+
   const handleSync = useCallback((spiderName?: string) => {
     startSync(spiderName);
   }, [startSync]);
@@ -133,7 +169,7 @@ export function ScraperDashboard() {
             Browse and manage processed job listings across all platforms.
           </p>
         </div>
-        <SyncButton syncing={syncing} spiders={spiders} onSync={handleSync} />
+        <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} onSync={handleSync} />
       </div>
 
       <ScraperStatsBar stats={stats} loading={statsLoading} />
@@ -174,6 +210,7 @@ export function ScraperDashboard() {
         onSort={aiSearch.active ? () => {} : setSort}
         rowOffset={aiSearch.active ? 0 : (page - 1) * perPage}
         onAppliedStateChange={handleAppliedStateChange}
+        onSheetPostedStateChange={handleSheetPostedStateChange}
       />
 
       {/* Pagination only when not in AI search mode */}

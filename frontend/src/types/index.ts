@@ -22,6 +22,8 @@ export interface Job {
  *  'strict_similarity'     – same title and company
  *  'same_url'              – identical URL already active for user
  *  'extraction_failed'     – expired/invalid posting could not be extracted
+ *  'non_us_location'       – structured location is outside the United States
+ *  'location_unknown'        – location missing or could not be verified as US
  *  'blocked_domain'        – domain blocked at submit
  */
 export type ExclusionType =
@@ -33,6 +35,8 @@ export type ExclusionType =
   | 'strict_similarity'
   | 'same_url'
   | 'extraction_failed'
+  | 'non_us_location'
+  | 'location_unknown'
   | 'blocked_domain'
   | 'manual_invalid'
   | 'manual_duplicate'

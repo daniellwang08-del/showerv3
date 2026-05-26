@@ -8,7 +8,9 @@ from sqlalchemy import select
 from app.models.database import Job, JobMatchResult, User, UserJobStatus
 from app.services.job_exclusion_types import (
     BELOW_MIN_SCORE_EXCLUSION,
+    LOCATION_UNKNOWN_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
+    NON_US_LOCATION_EXCLUSION,
     SAME_URL_EXCLUSION,
     STRICT_SIMILARITY_EXCLUSION,
 )
@@ -48,6 +50,7 @@ async def _add_job(
     url: str,
     company: str,
     title: str,
+    location: str | None = None,
     with_active_ujs: bool = True,
 ) -> Job:
     job = Job(
@@ -57,6 +60,7 @@ async def _add_job(
         domain="example.com",
         title=title,
         company=company,
+        location=location,
         status="active",
     )
     session.add(job)
@@ -102,6 +106,7 @@ async def test_same_url_duplicate_is_hidden_in_duplicates_tab():
             url=url,
             company="Acme Corp",
             title="Software Engineer",
+            location="San Francisco, CA",
         )
         incoming = await _add_job(
             session,
@@ -109,6 +114,7 @@ async def test_same_url_duplicate_is_hidden_in_duplicates_tab():
             url=url,
             company="Acme Corp",
             title="Software Engineer",
+            location="San Francisco, CA",
         )
         incoming_id = incoming.id
         existing_id = existing.id
@@ -145,6 +151,7 @@ async def test_strict_similarity_marks_second_job_duplicated():
             url=f"https://example.com/a/{uuid.uuid4()}",
             company="Acme Corp",
             title="Software Engineer",
+            location="Austin, TX",
         )
         second = await _add_job(
             session,
@@ -152,6 +159,7 @@ async def test_strict_similarity_marks_second_job_duplicated():
             url=f"https://example.com/b/{uuid.uuid4()}",
             company="Acme Corp",
             title="Software Engineer",
+            location="Austin, TX",
         )
         await _add_match(session, first.id, user_id, 70)
         first_id = first.id
@@ -187,6 +195,7 @@ async def test_unknown_company_with_same_url_still_deduplicates():
             url=url,
             company="Unknown",
             title="Untitled",
+            location="Denver, CO",
         )
         incoming = await _add_job(
             session,
@@ -194,6 +203,7 @@ async def test_unknown_company_with_same_url_still_deduplicates():
             url=url,
             company="Unknown",
             title="Untitled",
+            location="Denver, CO",
         )
         incoming_id = incoming.id
 
@@ -240,6 +250,7 @@ async def test_lower_score_duplicate_when_company_matches():
             url=f"https://example.com/a/{uuid.uuid4()}",
             company="Acme Corp",
             title="Backend Engineer",
+            location="Boston, MA",
         )
         second = await _add_job(
             session,
@@ -247,6 +258,7 @@ async def test_lower_score_duplicate_when_company_matches():
             url=f"https://example.com/b/{uuid.uuid4()}",
             company="Acme Corp",
             title="Frontend Engineer",
+            location="Boston, MA",
         )
         await _add_match(session, first.id, user_id, 80)
         second_id = second.id
@@ -259,3 +271,74 @@ async def test_lower_score_duplicate_when_company_matches():
     )
     assert result["action"] == "saved_duplicated"
     assert result["exclusion_type"] == LOWER_SCORE_EXCLUSION
+
+
+@pytest.mark.asyncio
+async def test_non_us_location_is_hidden_in_non_us_tab():
+    async with get_session() as session:
+        user_id = await _seed_user(session)
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/fr/{uuid.uuid4()}",
+            company="Acme",
+            title="Engineer",
+            location="Paris, France",
+        )
+        job_id = job.id
+
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        _match_data(82),
+        extraction_id=None,
+    )
+    assert result["action"] == "saved_duplicated"
+    assert result["exclusion_type"] == NON_US_LOCATION_EXCLUSION
+
+
+@pytest.mark.asyncio
+async def test_unknown_location_is_hidden_in_duplicates_tab():
+    async with get_session() as session:
+        user_id = await _seed_user(session)
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/remote/{uuid.uuid4()}",
+            company="Acme",
+            title="Engineer",
+            location="Remote",
+        )
+        job_id = job.id
+
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        _match_data(82),
+        extraction_id=None,
+    )
+    assert result["action"] == "saved_duplicated"
+    assert result["exclusion_type"] == LOCATION_UNKNOWN_EXCLUSION
+
+
+@pytest.mark.asyncio
+async def test_us_location_passes_location_filter_before_dedup():
+    async with get_session() as session:
+        user_id = await _seed_user(session)
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/us/{uuid.uuid4()}",
+            company="Acme",
+            title="Engineer",
+            location="Austin, TX",
+        )
+        job_id = job.id
+
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        _match_data(82),
+        extraction_id=None,
+    )
+    assert result["action"] == "saved_active"

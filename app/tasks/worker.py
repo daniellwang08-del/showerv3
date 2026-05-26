@@ -469,7 +469,15 @@ async def _promote_and_publish(
     return stats
 
 
-async def run_scraper_task(ctx: dict, spider_name: str, user_id: str, **spider_args) -> dict:
+async def run_scraper_task(
+    ctx: dict,
+    spider_name: str,
+    user_id: str,
+    sync_mode: str = "incremental",
+    posted_since: str | None = None,
+    posted_until: str | None = None,
+    spider_names: list[str] | None = None,
+) -> dict:
     """arq task: run a spider (or all) and publish progress via WebSocket.
 
     After each spider finishes its scrape_runs row, the freshly written
@@ -479,67 +487,121 @@ async def run_scraper_task(ctx: dict, spider_name: str, user_id: str, **spider_a
     extraction queue.  From that point on, scraped jobs flow through the
     same pipeline as manually submitted URLs.
     """
-    from app.scraper.runner import run_spider, run_all_spiders, ALL_SPIDERS
+    from datetime import date
+
+    from app.scraper.runner import check_spider_auth, run_spiders_from_plan
+    from app.services.scraper_sync_service import build_run_plan
 
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="run_scraper", spider_name=spider_name, user_id=user_id)
-    logger.info("worker_scraper_started", spider_name=spider_name)
+
+    since = date.fromisoformat(posted_since) if posted_since else None
+    until = date.fromisoformat(posted_until) if posted_until else None
+    try:
+        plan = build_run_plan(
+            spider_name=spider_name,
+            spider_names=spider_names,
+            sync_mode=sync_mode,  # type: ignore[arg-type]
+            posted_since=since,
+            posted_until=until,
+        )
+    except ValueError as e:
+        logger.error("worker_scraper_invalid_plan", error=str(e))
+        return {"spider": spider_name, "success": False, "error": str(e)}
+
+    for name, _kwargs in plan:
+        auth_check = check_spider_auth(name)
+        if auth_check["requires_auth"] and not auth_check["ok"]:
+            cmd = auth_check["auth_setup_command"]
+            message = f"Spider '{name}' requires authentication. Run: {cmd}"
+            logger.error("worker_scraper_auth_required", spider_name=name)
+            return {
+                "spider": spider_name,
+                "success": False,
+                "error": "auth_required",
+                "message": message,
+            }
+
+    logger.info(
+        "worker_scraper_started",
+        spider_name=spider_name,
+        sync_mode=sync_mode,
+        platform_count=len(plan),
+        platforms=[name for name, _ in plan],
+    )
 
     await publish_ws_event({
         "type": "sync_started",
         "user_id": user_id,
         "spider_name": spider_name,
+        "sync_mode": sync_mode,
+        "total": len(plan),
+        "platforms": [name for name, _ in plan],
     })
 
     try:
-        if spider_name == "all":
-            async def on_progress(name, index, total, result):
-                await publish_ws_event({
-                    "type": "sync_progress",
-                    "user_id": user_id,
-                    "spider_name": name,
-                    "current": index,
-                    "total": total,
-                    "success": result.get("success", False),
-                })
-                if result.get("success"):
-                    await _promote_and_publish(
-                        spider_name=name,
-                        scrape_run_id=result.get("scrape_run_id"),
-                        user_id=user_id,
-                    )
+        promotions: dict[str, dict | None] = {}
 
-            results = await run_all_spiders(on_progress=on_progress)
-            promotion_totals = {
-                "new": 0, "linked_existing": 0, "blocked": 0,
-                "skipped_invalid_url": 0, "failed": 0, "enqueued": 0,
-                "total": 0,
-            }
-            summary = {
-                "spider": "all",
-                "total": len(results),
-                "succeeded": sum(1 for r in results if r.get("success")),
-                "failed": sum(1 for r in results if not r.get("success")),
-                "promotion": promotion_totals,
-                "results": results,
-            }
-        else:
-            kwargs = dict(spider_args)
-            if not kwargs:
-                for name, defaults in ALL_SPIDERS:
-                    if name == spider_name:
-                        kwargs = defaults
-                        break
-            result = await run_spider(spider_name, **kwargs)
-            promotion_stats = None
+        async def publish_spider_activity(stats: dict) -> None:
+            await publish_ws_event({
+                "type": "sync_activity",
+                "user_id": user_id,
+                "spider_name": stats.get("spider_name"),
+                "items_scraped": stats.get("items_scraped", 0),
+                "items_new": stats.get("items_new", 0),
+                "items_updated": stats.get("items_updated", 0),
+                "elapsed_seconds": stats.get("elapsed_seconds", 0),
+            })
+
+        async def on_spider_start(name: str, index: int, total: int) -> None:
+            logger.info(
+                "worker_scraper_spider_start",
+                spider_name=name,
+                current=index,
+                total=total,
+            )
+            await publish_ws_event({
+                "type": "sync_spider_started",
+                "user_id": user_id,
+                "spider_name": name,
+                "current": index,
+                "total": total,
+            })
+
+        async def on_progress(name, index, total, result):
+            await publish_ws_event({
+                "type": "sync_progress",
+                "user_id": user_id,
+                "spider_name": name,
+                "current": index,
+                "total": total,
+                "success": result.get("success", False),
+            })
             if result.get("success"):
-                promotion_stats = await _promote_and_publish(
-                    spider_name=spider_name,
+                promotions[name] = await _promote_and_publish(
+                    spider_name=name,
                     scrape_run_id=result.get("scrape_run_id"),
                     user_id=user_id,
                 )
-            result["promotion"] = promotion_stats
-            summary = result
+
+        results = await run_spiders_from_plan(
+            plan,
+            on_progress=on_progress,
+            on_spider_start=on_spider_start,
+            spider_progress_callback=publish_spider_activity,
+        )
+        if len(plan) == 1:
+            summary = dict(results[0])
+            summary["promotion"] = promotions.get(plan[0][0])
+        else:
+            summary = {
+                "spider": spider_name,
+                "sync_mode": sync_mode,
+                "total": len(results),
+                "succeeded": sum(1 for r in results if r.get("success")),
+                "failed": sum(1 for r in results if not r.get("success")),
+                "results": results,
+            }
 
         await publish_ws_event({
             "type": "sync_completed",

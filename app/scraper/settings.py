@@ -61,6 +61,7 @@ ITEM_PIPELINES = {
     "app.scraper.pipelines.validation.ValidationPipeline": 100,
     "app.scraper.pipelines.cleaning.CleaningPipeline": 200,
     "app.scraper.pipelines.dedup.DedupPipeline": 300,
+    "app.scraper.pipelines.posted_date_filter.PostedDateFilterPipeline": 350,
     "app.scraper.pipelines.postgres.PostgresPipeline": 400,
 }
 
