@@ -25,8 +25,12 @@ function toPayload(data: ProfileFormData) {
     linkedin_url: data.linkedin_url.trim(),
     github_url: emptyToNull(data.github_url),
     profile_summary: data.profile_summary.trim(),
-    technical_skills: data.technical_skills.map((t) => ({ category: t.category.trim(), skills: t.skills.trim() })),
-    work_experience: data.work_experience.map((w) => ({
+    technical_skills: data.technical_skills
+      .filter((t) => t.category.trim() && t.skills.trim())
+      .map((t) => ({ category: t.category.trim(), skills: t.skills.trim() })),
+    work_experience: data.work_experience
+      .filter((w) => w.company_name.trim() && w.job_title.trim())
+      .map((w) => ({
       company_name: w.company_name.trim(),
       job_title: w.job_title.trim(),
       period_start: emptyToNull(w.period_start),
@@ -35,7 +39,9 @@ function toPayload(data: ProfileFormData) {
       job_type: emptyToNull(w.job_type) || null,
       description: emptyToNull(w.description),
     })),
-    education: data.education.map((e) => ({
+    education: data.education
+      .filter((e) => e.university_name.trim() && e.degree.trim())
+      .map((e) => ({
       university_name: e.university_name.trim(),
       degree: e.degree.trim(),
       mark: emptyToNull(e.mark),
@@ -44,7 +50,9 @@ function toPayload(data: ProfileFormData) {
       location: emptyToNull(e.location),
       description: emptyToNull(e.description),
     })),
-    certificates: data.certificates.map((c) => ({ name: c.name.trim() })),
+    certificates: data.certificates
+      .filter((c) => c.name.trim())
+      .map((c) => ({ name: c.name.trim() })),
     extra: data.extra.filter((x) => x.trim()),
   };
 }

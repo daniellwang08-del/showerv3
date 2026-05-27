@@ -35,7 +35,7 @@ from docx.text.paragraph import Paragraph
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.services.docx_structure import replace_tag_in_document
+from app.utils.resume_text_format import parse_bold_markers
 
 logger = get_logger(__name__)
 
@@ -76,6 +76,45 @@ def _get_template_rPr(anchor_p) -> OxmlElement | None:
         if rPr is not None:
             return deepcopy(rPr)
     return None
+
+
+def _runs_from_marked_text(
+    text: str,
+    rPr_template: OxmlElement | None,
+    *,
+    prefix: str = "",
+) -> list[OxmlElement]:
+    """Build Word runs from text that may contain ``**bold**`` markers."""
+    segments = parse_bold_markers(text or "")
+    runs: list[OxmlElement] = []
+    if prefix:
+        runs.append(_make_run(prefix, rPr_template, bold=False))
+    for segment, is_bold in segments:
+        if not segment:
+            continue
+        runs.append(_make_run(segment, rPr_template, bold=is_bold))
+    if not runs and prefix:
+        runs.append(_make_run(prefix, rPr_template, bold=False))
+    return runs
+
+
+def _set_paragraph_marked_text(paragraph: Paragraph, text: str, *, tag: str | None = None) -> None:
+    """Replace paragraph content with runs that honor ``**bold**`` markers."""
+    p_xml = paragraph._p
+    rPr_tpl = _get_template_rPr(p_xml)
+    full = "".join(run.text for run in paragraph.runs)
+    if tag:
+        full = full.replace(tag, text)
+    else:
+        full = text
+
+    pPr = p_xml.find(qn("w:pPr"))
+    for child in list(p_xml):
+        if child is not pPr:
+            p_xml.remove(child)
+
+    for run_el in _runs_from_marked_text(full, rPr_tpl):
+        p_xml.append(run_el)
 
 
 def _make_run(text: str, rPr_template: OxmlElement | None = None, bold: bool = False) -> OxmlElement:
@@ -257,7 +296,7 @@ def _build_skills_elements(skills: list[dict], anchor_p) -> list[OxmlElement]:
         vals = item.get("skills", "")
         runs = [
             _make_run(f"{cat}: ", rPr_tpl, bold=True),
-            _make_run(vals, rPr_tpl, bold=False),
+            *_runs_from_marked_text(vals, rPr_tpl),
         ]
         result.append(_make_paragraph_from_anchor(anchor_p, runs))
     return result
@@ -292,9 +331,7 @@ def _build_experience_elements(
 
     desc = exp.get("project_description", "")
     if desc:
-        p = _make_paragraph_from_anchor(anchor_p, [
-            _make_run(desc, rPr_tpl, bold=False),
-        ])
+        p = _make_paragraph_from_anchor(anchor_p, _runs_from_marked_text(desc, rPr_tpl))
         paragraphs.append(p)
 
     bullets = exp.get("bullets", [])
@@ -305,7 +342,7 @@ def _build_experience_elements(
         paragraphs.append(label_p)
 
         for bullet_text in bullets:
-            bullet_runs = [_make_run(f"• {bullet_text}", rPr_tpl, bold=False)]
+            bullet_runs = _runs_from_marked_text(str(bullet_text), rPr_tpl, prefix="• ")
             bp = _make_paragraph_from_anchor(anchor_p, bullet_runs)
             paragraphs.append(bp)
 
@@ -339,7 +376,7 @@ def fill_resume_template(
     summary = tailored.get("profile_summary", "")
     anchor = _find_paragraph_with_tag(doc, "{{PROFILE_SUMMARY}}")
     if anchor:
-        _replace_inline_tag(anchor, "{{PROFILE_SUMMARY}}", summary)
+        _set_paragraph_marked_text(anchor, summary, tag="{{PROFILE_SUMMARY}}")
 
     # Technical skills — replace with multiple skill-category paragraphs
     skills = tailored.get("technical_skills", [])
@@ -385,7 +422,7 @@ def fill_resume_template(
                 desc = exp.get("project_description", "")
                 if desc:
                     body_elements.append(_make_paragraph_from_anchor(
-                        exp_anchor._p, [_make_run(desc, rPr_tpl)]
+                        exp_anchor._p, _runs_from_marked_text(desc, rPr_tpl)
                     ))
 
                 bullets = exp.get("bullets", [])
@@ -395,7 +432,7 @@ def fill_resume_template(
                     ))
                     for bt in bullets:
                         body_elements.append(_make_paragraph_from_anchor(
-                            exp_anchor._p, [_make_run(f"• {bt}", rPr_tpl)]
+                            exp_anchor._p, _runs_from_marked_text(str(bt), rPr_tpl, prefix="• ")
                         ))
 
                 if body_elements:

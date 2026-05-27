@@ -102,6 +102,18 @@ def build_structured_context(structured_job: JobDescriptionSchema | None) -> str
         parts.append(f"Experience level: {structured_job.experience_level}")
     if structured_job.industry:
         parts.append(f"Industry: {structured_job.industry}")
+    if structured_job.remote_policy:
+        parts.append(f"Remote policy: {structured_job.remote_policy}")
+    if structured_job.requirements:
+        parts.append("\nKey requirements (prioritize these in tailored content):")
+        for req in structured_job.requirements[:15]:
+            if isinstance(req, str) and req.strip():
+                parts.append(f"- {req.strip()}")
+    if structured_job.responsibilities:
+        parts.append("\nKey responsibilities (mirror language where truthful):")
+        for resp in structured_job.responsibilities[:15]:
+            if isinstance(resp, str) and resp.strip():
+                parts.append(f"- {resp.strip()}")
     return "\n".join(parts)
 
 
@@ -265,6 +277,16 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
                 project_name = str(raw_pn).strip() if raw_pn not in (None, "", "None", "null") else None
                 raw_pd = entry.get("project_description")
                 project_desc = str(raw_pd).strip() if raw_pd not in (None, "", "None", "null") else None
+                role_index = len(experience)
+                min_bullets = 7 if role_index < 3 else 4
+                if len(bullets) < min_bullets:
+                    logger.warning(
+                        "tailored_resume_bullet_count_below_minimum",
+                        company=company,
+                        role_index=role_index,
+                        bullet_count=len(bullets),
+                        minimum=min_bullets,
+                    )
                 experience.append({
                     "company_name": company,
                     "job_title": title,

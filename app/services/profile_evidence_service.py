@@ -42,6 +42,7 @@ MAX_BATCH_SOURCE_CHARS = 25_000
 MAX_EVIDENCE_BULLETS_PER_COMPANY = 12
 
 EVIDENCE_SYSTEM_PROMPT = """You extract job-relevant evidence from a candidate's detailed project source material.
+This evidence will be used to write rich, high-impact tailored resume bullets — extract depth, not summaries.
 
 Return ONLY valid JSON with this shape:
 {
@@ -49,19 +50,25 @@ Return ONLY valid JSON with this shape:
     {
       "company_name": "<string>",
       "relevant_projects": ["<project name>", ...],
-      "evidence_bullets": ["<1-3 sentence bullet with concrete facts, metrics, technologies>", ...],
-      "technologies_to_emphasize": ["<tech>", ...]
+      "evidence_bullets": ["<resume-ready bullet: action + scope + tech + outcome>", ...],
+      "technologies_to_emphasize": ["<tech>", ...],
+      "scope_signals": ["<team size, users, scale, budget, geography, etc.>", ...],
+      "job_keywords_matched": ["<phrases from the job this evidence supports>", ...]
     }
   ]
 }
 
 Rules:
 - Use ONLY facts present in the source material. Do not invent metrics, tools, or outcomes.
-- Select projects and bullets that best align with the target job description and requirements.
-- Each evidence_bullet must be resume-ready (action + scope + outcome when available).
-- Prefer quantified results when they appear in the source.
+- Select projects and bullets that best align with the target job requirements and responsibilities.
+- Each evidence_bullet must be resume-ready and substantive (1-3 sentences when needed for clarity):
+  - Start with a strong action verb (Led, Architected, Delivered, Scaled, Reduced, Migrated).
+  - Include what was built, how (technologies/patterns), and impact (metrics when available).
+- Prefer quantified results (%, latency, throughput, cost, revenue, users, error rates, time saved).
+- Extract scope_signals when present: team size, system scale, transaction volume, data size, uptime, etc.
+- Map evidence to job_keywords_matched using phrases from the job posting the evidence genuinely supports.
 - Include one entry per company provided in the input; if nothing is relevant, return empty arrays for that company.
-- Limit evidence_bullets to at most 10 per company — prioritize the strongest alignment.
+- Limit evidence_bullets to at most 12 per company — for companies with rich source material, extract enough distinct bullets to support 7+ tailored resume lines for recent roles.
 """
 
 
@@ -207,6 +214,16 @@ def format_evidence_pack(companies_data: list[dict[str, Any]]) -> str:
             tech_list = [str(t).strip() for t in techs if str(t).strip()]
             if tech_list:
                 lines.append("Technologies to emphasize: " + ", ".join(tech_list))
+        scope = entry.get("scope_signals") or []
+        if isinstance(scope, list):
+            scope_list = [str(s).strip() for s in scope if str(s).strip()]
+            if scope_list:
+                lines.append("Scope: " + "; ".join(scope_list[:5]))
+        keywords = entry.get("job_keywords_matched") or []
+        if isinstance(keywords, list):
+            kw_list = [str(k).strip() for k in keywords if str(k).strip()]
+            if kw_list:
+                lines.append("Job alignment: " + ", ".join(kw_list[:8]))
         if len(lines) > 1:
             sections.append("\n".join(lines))
     if not sections:
