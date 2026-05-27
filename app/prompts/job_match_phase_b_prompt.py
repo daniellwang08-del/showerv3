@@ -24,6 +24,24 @@ Do NOT re-score the job match. Do NOT re-extract structured job fields.
 - **Work experience**: Exactly one entry for **every company** in the profile, same order. Never change company_name or job_title. Keep project_name as in profile or null.
   - Rewrite project_description and bullets to emphasize job-relevant skills and outcomes.
   - When **Project Evidence** is provided below, treat it as authoritative for metrics, technologies, and accomplishments. Prefer evidence over the shorter profile résumé text. Do not invent facts not supported by the profile or project evidence.
+  - Each company experience must have at least 4 bullet points.
+  - Rewrite my resume specifically for this job
+  - Preserve factual accuracy, do not invent experience
+  - Optimize for ATS keyword matching
+  - Prioritize the most relevant experience
+  - Rewrite bullet points to align with the job description
+  - Emphasize matching technologies, architecture patterns, and domain experience
+  - Keep strong measurable impact
+  - Keep the tone concise, technical, and senior-level
+  - Make the resume sound like a strong direct fit for the role
+  - Remove or reduce less relevant content
+  - Keep bullet points achievement-oriented
+  - Use modern senior/staff-level resume style
+  - Avoid generic buzzwords and fluff
+  - Do NOT use em dashes
+  - Keep bullet points concise but high impact
+  - Preserve chronology and company names
+  - Do not hallucinate technologies or projects
 
 ---
 
