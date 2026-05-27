@@ -1,6 +1,7 @@
 export type SettingsMode = 'default' | 'custom';
 
 export type ResumeTemplateStatus = 'missing' | 'processing' | 'ready' | 'stale' | 'failed';
+export type CoverLetterTemplateStatus = 'missing' | 'processing' | 'ready' | 'failed';
 
 export interface UserSettings {
   openai_key_mode: SettingsMode;
@@ -21,12 +22,22 @@ export interface UserSettings {
   default_resume_tailoring_prompt_instructions: string;
   resume_tailoring_output_contract: string;
   resume_tailoring_prompt_max_length: number;
+  cover_letter_prompt_mode: SettingsMode;
+  cover_letter_prompt_instructions: string;
+  cover_letter_prompt_instructions_custom: string;
+  default_cover_letter_prompt_instructions: string;
+  cover_letter_prompt_max_length: number;
   resume_template_status: ResumeTemplateStatus;
   resume_template_source_filename: string | null;
   resume_template_error: string | null;
   resume_template_profile_work_count: number | null;
   resume_template_analyzed_at: string | null;
   resume_template_ready: boolean;
+  cover_letter_template_status: CoverLetterTemplateStatus;
+  cover_letter_template_source_filename: string | null;
+  cover_letter_template_error: string | null;
+  cover_letter_template_analyzed_at: string | null;
+  cover_letter_template_ready: boolean;
   profile_work_count: number;
   validation_errors: string[];
 }
@@ -41,6 +52,9 @@ export interface UserSettingsUpdate {
   min_match_score?: number;
   resume_tailoring_prompt_mode?: SettingsMode;
   resume_tailoring_prompt_custom?: string;
+  cover_letter_prompt_mode?: SettingsMode;
+  cover_letter_prompt_custom?: string;
 }
 
 export const RESUME_TAILORING_PROMPT_MIN_LENGTH = 50;
+export const COVER_LETTER_PROMPT_MIN_LENGTH = 50;

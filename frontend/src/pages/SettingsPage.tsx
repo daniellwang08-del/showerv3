@@ -5,6 +5,7 @@ import {
   FileText,
   KeyRound,
   Loader2,
+  Mail,
   RefreshCw,
   Search,
   Settings2,
@@ -18,15 +19,22 @@ import {
   saveMinMatchScoreSettings,
   saveOpenAiSettings,
   saveResumeTailoringPromptSettings,
+  saveCoverLetterPromptSettings,
+  fetchCoverLetterPromptDefaults,
   testOpenAiKey,
   previewMinMatchScore,
   applyMinMatchScore,
   type MinMatchScorePreview,
 } from '../api/settingsApi';
 import type { SettingsMode, UserSettings } from '../types/settings';
-import { RESUME_TAILORING_PROMPT_MIN_LENGTH } from '../types/settings';
+import { RESUME_TAILORING_PROMPT_MIN_LENGTH, COVER_LETTER_PROMPT_MIN_LENGTH } from '../types/settings';
+import {
+  BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS,
+  BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH,
+} from '../constants/builtinCoverLetterPrompt';
 import { MarkdownPromptEditor, MarkdownPromptPreview } from '../components/settings/MarkdownPromptEditor';
 import { ResumeTemplateSection } from '../components/settings/ResumeTemplateSection';
+import { CoverLetterTemplateSection } from '../components/settings/CoverLetterTemplateSection';
 import { GoogleSheetsSettingsSection } from '../components/settings/GoogleSheetsSettingsSection';
 import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
@@ -41,6 +49,16 @@ function resolveStoredPromptText(data: Pick<UserSettings, 'resume_tailoring_prom
   return (
     data.resume_tailoring_prompt_instructions_custom ||
     data.default_resume_tailoring_prompt_instructions ||
+    ''
+  );
+}
+
+function resolveStoredCoverLetterPromptText(
+  data: Pick<UserSettings, 'cover_letter_prompt_instructions_custom' | 'default_cover_letter_prompt_instructions'>,
+) {
+  return (
+    data.cover_letter_prompt_instructions_custom ||
+    data.default_cover_letter_prompt_instructions ||
     ''
   );
 }
@@ -131,6 +149,14 @@ export function SettingsPage() {
   const [promptSaveMsg, setPromptSaveMsg] = useState('');
   const [promptSaveOk, setPromptSaveOk] = useState(false);
 
+  // Cover letter prompt section state
+  const [coverPromptMode, setCoverPromptMode] = useState<SettingsMode>('default');
+  const [coverPromptText, setCoverPromptText] = useState('');
+  const [coverPromptSaving, setCoverPromptSaving] = useState(false);
+  const [coverPromptSaveMsg, setCoverPromptSaveMsg] = useState('');
+  const [coverPromptSaveOk, setCoverPromptSaveOk] = useState(false);
+  const [coverPromptDefaults, setCoverPromptDefaults] = useState(BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS);
+
   const applySettings = useCallback((data: UserSettings) => {
     setSettings(data);
     setOpenaiMode(data.openai_key_mode);
@@ -140,6 +166,8 @@ export function SettingsPage() {
     setMinScore(data.min_match_score_custom);
     setPromptMode(data.resume_tailoring_prompt_mode ?? 'default');
     setPromptText(resolveStoredPromptText(data));
+    setCoverPromptMode(data.cover_letter_prompt_mode ?? 'default');
+    setCoverPromptText(resolveStoredCoverLetterPromptText(data));
     setOpenaiKeyInput('');
     setOpenaiTestOk(null);
     setOpenaiTestMsg('');
@@ -167,6 +195,23 @@ export function SettingsPage() {
   }, [load]);
 
   useEffect(() => {
+    const fromSettings =
+      settings?.default_cover_letter_prompt_instructions?.trim() ||
+      settings?.cover_letter_prompt_instructions?.trim() ||
+      '';
+    if (fromSettings) {
+      setCoverPromptDefaults(fromSettings);
+      return;
+    }
+    if (!settings) return;
+    void fetchCoverLetterPromptDefaults()
+      .then((data) => {
+        setCoverPromptDefaults(data.default_instructions.trim() || BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS);
+      })
+      .catch(() => setCoverPromptDefaults(BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS));
+  }, [settings]);
+
+  useEffect(() => {
     if (!openaiSaveOk) return;
     const t = window.setTimeout(() => setOpenaiSaveOk(false), 3000);
     return () => window.clearTimeout(t);
@@ -190,6 +235,12 @@ export function SettingsPage() {
     return () => window.clearTimeout(t);
   }, [promptSaveOk]);
 
+  useEffect(() => {
+    if (!coverPromptSaveOk) return;
+    const t = window.setTimeout(() => setCoverPromptSaveOk(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [coverPromptSaveOk]);
+
   const defaultDedup = settings?.default_dedup_recycle_days ?? 60;
   const defaultMinScore = settings?.default_min_match_score ?? 0;
   const savedOpenaiMode = settings?.openai_key_mode ?? 'default';
@@ -207,6 +258,19 @@ export function SettingsPage() {
   const defaultPromptInstructions = settings?.default_resume_tailoring_prompt_instructions ?? '';
   const promptMaxLength = settings?.resume_tailoring_prompt_max_length ?? 12000;
   const safePromptText = promptText ?? '';
+  const savedCoverPromptMode = settings?.cover_letter_prompt_mode ?? 'default';
+  const savedCoverPromptText = resolveStoredCoverLetterPromptText({
+    cover_letter_prompt_instructions_custom: settings?.cover_letter_prompt_instructions_custom ?? '',
+    default_cover_letter_prompt_instructions: settings?.default_cover_letter_prompt_instructions ?? '',
+  });
+  const defaultCoverPromptInstructions =
+    settings?.default_cover_letter_prompt_instructions?.trim() ||
+    coverPromptDefaults ||
+    settings?.cover_letter_prompt_instructions?.trim() ||
+    BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS;
+  const coverPromptMaxLength =
+    settings?.cover_letter_prompt_max_length ?? BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH;
+  const safeCoverPromptText = coverPromptText ?? '';
 
   const openaiKeyDirty = openaiKeyInput.trim().length > 0;
 
@@ -531,6 +595,63 @@ export function SettingsPage() {
     }
   };
 
+  const coverPromptTrimmed = safeCoverPromptText.trim();
+  const savedCoverPromptTextTrimmed = savedCoverPromptText.trim();
+  const coverPromptChanged =
+    coverPromptMode !== savedCoverPromptMode ||
+    (coverPromptMode === 'custom' && coverPromptTrimmed !== savedCoverPromptTextTrimmed);
+  const coverPromptValidLength =
+    coverPromptTrimmed.length >= COVER_LETTER_PROMPT_MIN_LENGTH &&
+    coverPromptTrimmed.length <= coverPromptMaxLength;
+  const coverPromptSaveEnabled =
+    coverPromptMode === 'default'
+      ? savedCoverPromptMode !== 'default'
+      : coverPromptChanged && coverPromptValidLength;
+
+  const handleCoverPromptModeChange = (mode: SettingsMode) => {
+    setCoverPromptMode(mode);
+    setCoverPromptSaveMsg('');
+    if (mode === 'custom' && !coverPromptTrimmed) {
+      setCoverPromptText(defaultCoverPromptInstructions);
+    }
+  };
+
+  const handleResetCoverPrompt = () => {
+    setCoverPromptText(defaultCoverPromptInstructions);
+    setCoverPromptSaveMsg('');
+  };
+
+  const handleSaveCoverPrompt = async () => {
+    if (!settings || !coverPromptSaveEnabled) return;
+    setCoverPromptSaving(true);
+    setCoverPromptSaveMsg('');
+    try {
+      const data =
+        coverPromptMode === 'default'
+          ? await saveCoverLetterPromptSettings({ cover_letter_prompt_mode: 'default' })
+          : await saveCoverLetterPromptSettings({
+              cover_letter_prompt_mode: 'custom',
+              cover_letter_prompt_custom: coverPromptTrimmed,
+            });
+      applySettings(data);
+      setCoverPromptSaveOk(true);
+      setCoverPromptSaveMsg(
+        coverPromptMode === 'default'
+          ? 'Using the built-in cover letter prompt for new generations.'
+          : 'Custom cover letter prompt saved. Rerun jobs to regenerate documents.',
+      );
+    } catch (err: unknown) {
+      setCoverPromptSaveOk(false);
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setCoverPromptSaveMsg(typeof msg === 'string' ? msg : 'Failed to save cover letter prompt.');
+    } finally {
+      setCoverPromptSaving(false);
+    }
+  };
+
   const sliderValue = Math.min(dedupDays, DEDUP_SLIDER_MAX);
 
   return (
@@ -544,7 +665,7 @@ export function SettingsPage() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
             <p className="text-sm text-slate-500">
-              OpenAI, company check cycle, match score threshold, job sync, Google Sheets, and resume tailoring prompt are saved separately.
+              OpenAI, company check cycle, match score threshold, job sync, Google Sheets, resume/cover letter prompts, and templates are saved separately.
             </p>
           </div>
         </div>
@@ -963,6 +1084,9 @@ export function SettingsPage() {
           {/* Résumé template */}
           <ResumeTemplateSection />
 
+          {/* Cover letter template */}
+          <CoverLetterTemplateSection />
+
           {/* Resume tailoring prompt */}
           <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex min-h-0 flex-1 items-start gap-4">
@@ -979,7 +1103,7 @@ export function SettingsPage() {
                   />
                 </div>
                 <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  Controls how AI writes tailored resume content and cover letter bodies during job analysis.
+                  Controls how AI writes tailored resume content during job analysis.
                 </p>
 
                 {promptMode === 'default' ? (
@@ -987,15 +1111,12 @@ export function SettingsPage() {
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
                       Using the built-in resume tailoring instructions.
                     </div>
-                    <div className="flex min-h-0 flex-1 flex-col">
+                    <div className="flex flex-col">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Built-in instructions
                       </p>
-                      <div className="mt-2 min-h-0 flex-1">
-                        <MarkdownPromptPreview
-                          value={defaultPromptInstructions}
-                          className="h-full"
-                        />
+                      <div className="mt-2 max-h-96 overflow-y-auto">
+                        <MarkdownPromptPreview value={defaultPromptInstructions} />
                       </div>
                     </div>
                   </div>
@@ -1055,11 +1176,109 @@ export function SettingsPage() {
 
                 {promptMode === 'custom' && (
                   <p className="mt-2 text-xs text-slate-500">
-                    Changes apply to future tailored resume and cover letter generations. Rerun a job to regenerate documents.
+                    Changes apply to future tailored resume generations. Rerun a job to regenerate documents.
                   </p>
                 )}
 
                 {promptSaveMsg && <SectionMessage ok={promptSaveOk} text={promptSaveMsg} />}
+              </div>
+            </div>
+          </section>
+
+          {/* Cover letter prompt */}
+          <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex min-h-0 flex-1 items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-purple-600 text-white">
+                <Mail className="h-5 w-5" />
+              </div>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-bold text-slate-900">Cover letter prompt</h2>
+                  <ModeToggle
+                    value={coverPromptMode}
+                    onChange={handleCoverPromptModeChange}
+                    disabled={coverPromptSaving}
+                  />
+                </div>
+                <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                  Controls how AI writes cover letter bodies. Greeting and signature come from your cover letter template.
+                </p>
+
+                {coverPromptMode === 'default' ? (
+                  <div className="mt-4 flex flex-1 flex-col space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                      Using the built-in cover letter instructions.
+                    </div>
+                    <div className="flex flex-col">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Built-in instructions
+                      </p>
+                      <div className="mt-2 max-h-96 overflow-y-auto">
+                        <MarkdownPromptPreview value={defaultCoverPromptInstructions} />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <label htmlFor="cover-letter-prompt" className="text-xs font-semibold text-slate-700">
+                          Custom instructions (Markdown)
+                        </label>
+                        <span
+                          className={`text-xs tabular-nums ${
+                            coverPromptValidLength ? 'text-slate-500' : 'text-rose-600'
+                          }`}
+                        >
+                          {coverPromptTrimmed.length.toLocaleString()} / {coverPromptMaxLength.toLocaleString()}
+                        </span>
+                      </div>
+                      <MarkdownPromptEditor
+                        id="cover-letter-prompt"
+                        value={safeCoverPromptText}
+                        maxLength={coverPromptMaxLength}
+                        disabled={coverPromptSaving}
+                        onChange={(next) => {
+                          setCoverPromptText(next);
+                          setCoverPromptSaveMsg('');
+                        }}
+                      />
+                      {!coverPromptValidLength && coverPromptTrimmed.length > 0 && (
+                        <p className="mt-2 text-xs text-rose-600">
+                          Prompt must be between {COVER_LETTER_PROMPT_MIN_LENGTH} and{' '}
+                          {coverPromptMaxLength.toLocaleString()} characters.
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetCoverPrompt}
+                      disabled={coverPromptSaving}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Reset to built-in default
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveCoverPrompt()}
+                    disabled={!coverPromptSaveEnabled || coverPromptSaving}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {coverPromptSaving ? 'Saving…' : 'Save cover letter prompt'}
+                  </button>
+                </div>
+
+                {coverPromptMode === 'custom' && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Changes apply to future cover letter generations. Rerun a job to regenerate documents.
+                  </p>
+                )}
+
+                {coverPromptSaveMsg && <SectionMessage ok={coverPromptSaveOk} text={coverPromptSaveMsg} />}
               </div>
             </div>
           </section>

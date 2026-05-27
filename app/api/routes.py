@@ -2417,12 +2417,22 @@ class UserSettingsResponse(BaseModel):
     default_resume_tailoring_prompt_instructions: str
     resume_tailoring_output_contract: str
     resume_tailoring_prompt_max_length: int
+    cover_letter_prompt_mode: str
+    cover_letter_prompt_instructions: str
+    cover_letter_prompt_instructions_custom: str
+    default_cover_letter_prompt_instructions: str
+    cover_letter_prompt_max_length: int
     resume_template_status: str
     resume_template_source_filename: str | None = None
     resume_template_error: str | None = None
     resume_template_profile_work_count: int | None = None
     resume_template_analyzed_at: datetime | None = None
     resume_template_ready: bool = False
+    cover_letter_template_status: str = "missing"
+    cover_letter_template_source_filename: str | None = None
+    cover_letter_template_error: str | None = None
+    cover_letter_template_analyzed_at: datetime | None = None
+    cover_letter_template_ready: bool = False
     profile_work_count: int = 0
     validation_errors: list[str] = Field(default_factory=list)
 
@@ -2437,6 +2447,8 @@ class UserSettingsUpdateRequest(BaseModel):
     min_match_score: int | None = Field(default=None, ge=0, le=100)
     resume_tailoring_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     resume_tailoring_prompt_custom: str | None = Field(default=None, max_length=12000)
+    cover_letter_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
+    cover_letter_prompt_custom: str | None = Field(default=None, max_length=12000)
 
 
 class OpenAiKeyTestRequest(BaseModel):
@@ -2653,6 +2665,8 @@ async def update_user_settings(
                 min_match_score=body.min_match_score,
                 resume_tailoring_prompt_mode=body.resume_tailoring_prompt_mode,
                 resume_tailoring_prompt_custom=body.resume_tailoring_prompt_custom,
+                cover_letter_prompt_mode=body.cover_letter_prompt_mode,
+                cover_letter_prompt_custom=body.cover_letter_prompt_custom,
             )
             await session.commit()
         except ValueError as e:
@@ -2833,6 +2847,130 @@ async def preview_resume_template(
         path=str(preview_path),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename="resume-template-preview.docx",
+    )
+
+
+@router.get(
+    "/settings/cover-letter-prompt/defaults",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_cover_letter_prompt_defaults_endpoint(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.cover_letter_prompt_schemas import CoverLetterPromptDefaultsResponse
+    from app.prompts.cover_letter_prompt import get_cover_letter_prompt_defaults
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return CoverLetterPromptDefaultsResponse(**get_cover_letter_prompt_defaults())
+
+
+@router.get(
+    "/settings/cover-letter-template/requirements",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_cover_letter_template_requirements(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.cover_letter_template_schemas import CoverLetterTemplateRequirements
+    from app.services.cover_letter_template_service import get_cover_letter_requirements
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return CoverLetterTemplateRequirements.model_validate(get_cover_letter_requirements())
+
+
+@router.get(
+    "/settings/cover-letter-template",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_cover_letter_template_status(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.cover_letter_template_schemas import CoverLetterTemplateStatusResponse
+    from app.services.cover_letter_template_service import template_status_payload
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return CoverLetterTemplateStatusResponse(**template_status_payload(user))
+
+
+@router.post(
+    "/settings/cover-letter-template/upload",
+    dependencies=[Depends(get_current_user)],
+)
+async def upload_cover_letter_template(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.cover_letter_template_schemas import CoverLetterTemplateStatusResponse
+    from app.services.cover_letter_template_service import save_uploaded_cover_letter_template
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    raw = await file.read()
+    filename = file.filename or "cover_letter_template.docx"
+    try:
+        payload = await save_uploaded_cover_letter_template(user_id, raw, filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return CoverLetterTemplateStatusResponse(**payload)
+
+
+@router.post(
+    "/settings/cover-letter-template/revalidate",
+    dependencies=[Depends(get_current_user)],
+)
+async def revalidate_cover_letter_template(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.cover_letter_template_schemas import CoverLetterTemplateStatusResponse
+    from app.services.cover_letter_template_service import revalidate_cover_letter_template as revalidate
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        payload = await revalidate(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return CoverLetterTemplateStatusResponse(**payload)
+
+
+@router.post(
+    "/settings/cover-letter-template/preview",
+    dependencies=[Depends(get_current_user)],
+)
+async def preview_cover_letter_template(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.cover_letter_template_service import generate_cover_letter_preview_docx
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        preview_path = await generate_cover_letter_preview_docx(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("cover_letter_template_preview_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate preview.")
+
+    return FileResponse(
+        path=str(preview_path),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="cover-letter-template-preview.docx",
     )
 
 

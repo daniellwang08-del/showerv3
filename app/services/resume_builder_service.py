@@ -11,6 +11,9 @@ Placeholders recognised in the resume template:
 
 Placeholders recognised in the cover letter template:
   {{COVER_LETTER_BODY}} — multi-paragraph body (inline within same paragraph)
+  {{DATE}}, {{FULL_NAME}}, {{PROFILE_TITLE}}, {{EMAIL}}, {{PHONE}}, {{LINKEDIN}},
+  {{GITHUB}}, {{JOB_COMPANY}}, {{JOB_TITLE}}, {{JOB_LOCATION}}
+  Dot-notation aliases: {{profile.full_name}}, {{job.company}}, etc.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from docx.text.paragraph import Paragraph
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services.docx_structure import replace_tag_in_document
 
 logger = get_logger(__name__)
 
@@ -418,17 +422,25 @@ def fill_cover_letter_template(
     template_path: Path,
     output_path: Path,
     cover_letter_body: str,
+    *,
+    context: dict[str, Any] | None = None,
 ) -> Path:
-    """Fill cover letter template with generated body.
+    """Fill cover letter template with profile/job placeholders and generated body.
 
-    The template has a paragraph containing:
+    The template typically has a paragraph containing:
         Dear Hiring Manager,<br><br>{{COVER_LETTER_BODY}}
     We split {{COVER_LETTER_BODY}} into separate paragraphs inserted after
     the anchor, preserving the greeting.
     """
     doc = Document(str(template_path))
 
-    # Split {{COVER_LETTER_BODY}} into separate paragraphs
+    if context:
+        from app.services.cover_letter_template_service import build_cover_letter_tag_map
+
+        tag_map = build_cover_letter_tag_map(context)
+        for tag, value in sorted(tag_map.items(), key=lambda item: len(item[0]), reverse=True):
+            replace_tag_in_document(doc, tag, value)
+
     body_parts = [p.strip() for p in cover_letter_body.split("\n\n") if p.strip()]
     if body_parts:
         body_anchor = _find_paragraph_with_tag(doc, "{{COVER_LETTER_BODY}}")

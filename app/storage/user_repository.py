@@ -3,9 +3,14 @@ from sqlalchemy import select
 from app.models.database import User
 from app.services.auth_service import AuthService
 from app.core.config import get_settings
+from app.prompts.cover_letter_prompt import (
+    COVER_LETTER_INSTRUCTIONS,
+    COVER_LETTER_PROMPT_MAX_LENGTH,
+    COVER_LETTER_PROMPT_MIN_LENGTH,
+)
 from app.prompts.job_match_phase_b_prompt import (
-    JOB_MATCH_PHASE_B_INSTRUCTIONS,
     JOB_MATCH_PHASE_B_OUTPUT_CONTRACT,
+    RESUME_TAILORING_INSTRUCTIONS,
     RESUME_TAILORING_PROMPT_MAX_LENGTH,
     RESUME_TAILORING_PROMPT_MIN_LENGTH,
     build_phase_b_system_prompt,
@@ -17,6 +22,7 @@ from app.services.resume_template_service import (
     mark_template_stale_if_work_count_changed,
     template_status_payload,
 )
+from app.services.cover_letter_template_service import template_status_payload as cover_letter_template_status_payload
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -221,23 +227,49 @@ class UserRepository:
             )
         return cleaned
 
+    @staticmethod
+    def _validate_cover_letter_instructions(text: str) -> str:
+        cleaned = text.strip()
+        if len(cleaned) < COVER_LETTER_PROMPT_MIN_LENGTH:
+            raise ValueError(
+                f"Cover letter prompt must be at least {COVER_LETTER_PROMPT_MIN_LENGTH} characters"
+            )
+        if len(cleaned) > COVER_LETTER_PROMPT_MAX_LENGTH:
+            raise ValueError(
+                f"Cover letter prompt must be at most {COVER_LETTER_PROMPT_MAX_LENGTH:,} characters"
+            )
+        return cleaned
+
     def _resume_tailoring_instructions_for_user(self, user: User | None) -> str:
         mode = getattr(user, "resume_tailoring_prompt_mode", None) or "default" if user else "default"
         if mode == "custom":
             custom = (getattr(user, "resume_tailoring_prompt_custom", None) or "").strip()
             if custom:
                 return custom
-        return JOB_MATCH_PHASE_B_INSTRUCTIONS.strip()
+        return RESUME_TAILORING_INSTRUCTIONS.strip()
+
+    def _cover_letter_instructions_for_user(self, user: User | None) -> str:
+        mode = getattr(user, "cover_letter_prompt_mode", None) or "default" if user else "default"
+        if mode == "custom":
+            custom = (getattr(user, "cover_letter_prompt_custom", None) or "").strip()
+            if custom:
+                return custom
+        return COVER_LETTER_INSTRUCTIONS.strip()
 
     async def get_effective_resume_tailoring_system_prompt(self, user_id: str) -> str:
         """Return Phase B system prompt (editable instructions + locked output contract)."""
         user = await self.get_by_id(user_id)
-        instructions = self._resume_tailoring_instructions_for_user(user)
-        return build_phase_b_system_prompt(instructions)
+        resume_instructions = self._resume_tailoring_instructions_for_user(user)
+        cover_letter_instructions = self._cover_letter_instructions_for_user(user)
+        return build_phase_b_system_prompt(resume_instructions, cover_letter_instructions)
 
     async def get_effective_resume_tailoring_instructions(self, user_id: str) -> str:
         user = await self.get_by_id(user_id)
         return self._resume_tailoring_instructions_for_user(user)
+
+    async def get_effective_cover_letter_instructions(self, user_id: str) -> str:
+        user = await self.get_by_id(user_id)
+        return self._cover_letter_instructions_for_user(user)
 
     async def update_dedup_recycle_days(self, user_id: str, days: int) -> bool:
         """Update dedup_recycle_days (1–3650). Returns True on success."""
@@ -279,6 +311,9 @@ class UserRepository:
         prompt_mode = getattr(user, "resume_tailoring_prompt_mode", None) or "default"
         stored_custom_prompt = (getattr(user, "resume_tailoring_prompt_custom", None) or "").strip()
         effective_instructions = self._resume_tailoring_instructions_for_user(user)
+        cover_letter_prompt_mode = getattr(user, "cover_letter_prompt_mode", None) or "default"
+        stored_custom_cover_letter_prompt = (getattr(user, "cover_letter_prompt_custom", None) or "").strip()
+        effective_cover_letter_instructions = self._cover_letter_instructions_for_user(user)
         return {
             "openai_key_mode": mode,
             "openai_key_configured": has_custom_key,
@@ -295,10 +330,16 @@ class UserRepository:
             "resume_tailoring_prompt_mode": prompt_mode,
             "resume_tailoring_prompt_instructions": effective_instructions,
             "resume_tailoring_prompt_instructions_custom": stored_custom_prompt,
-            "default_resume_tailoring_prompt_instructions": JOB_MATCH_PHASE_B_INSTRUCTIONS.strip(),
+            "default_resume_tailoring_prompt_instructions": RESUME_TAILORING_INSTRUCTIONS.strip(),
             "resume_tailoring_output_contract": JOB_MATCH_PHASE_B_OUTPUT_CONTRACT.strip(),
             "resume_tailoring_prompt_max_length": RESUME_TAILORING_PROMPT_MAX_LENGTH,
+            "cover_letter_prompt_mode": cover_letter_prompt_mode,
+            "cover_letter_prompt_instructions": effective_cover_letter_instructions,
+            "cover_letter_prompt_instructions_custom": stored_custom_cover_letter_prompt,
+            "default_cover_letter_prompt_instructions": COVER_LETTER_INSTRUCTIONS.strip(),
+            "cover_letter_prompt_max_length": COVER_LETTER_PROMPT_MAX_LENGTH,
             **template_status_payload(user),
+            **cover_letter_template_status_payload(user),
         }
 
     async def update_user_settings(
@@ -314,6 +355,8 @@ class UserRepository:
         min_match_score: int | None = None,
         resume_tailoring_prompt_mode: str | None = None,
         resume_tailoring_prompt_custom: str | None = None,
+        cover_letter_prompt_mode: str | None = None,
+        cover_letter_prompt_custom: str | None = None,
     ) -> dict | None:
         user = await self.get_by_id(user_id)
         if not user:
@@ -363,6 +406,16 @@ class UserRepository:
             validated = self._validate_resume_tailoring_instructions(resume_tailoring_prompt_custom)
             user.resume_tailoring_prompt_custom = validated
             user.resume_tailoring_prompt_mode = "custom"
+
+        if cover_letter_prompt_mode is not None:
+            if cover_letter_prompt_mode not in ("default", "custom"):
+                raise ValueError("cover_letter_prompt_mode must be 'default' or 'custom'")
+            user.cover_letter_prompt_mode = cover_letter_prompt_mode
+
+        if cover_letter_prompt_custom is not None:
+            validated = self._validate_cover_letter_instructions(cover_letter_prompt_custom)
+            user.cover_letter_prompt_custom = validated
+            user.cover_letter_prompt_mode = "custom"
 
         await self.session.flush()
         logger.info("user_settings_updated", user_id=user_id)
