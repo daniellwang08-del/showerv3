@@ -9,7 +9,6 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app.core.config import get_settings
 from app.core.logging import bind_logging_context, get_logger
 from app.models.database import Job
 from app.storage.database import get_session
@@ -20,6 +19,7 @@ from app.services.resume_builder_service import (
     convert_docx_to_pdf,
     build_output_directory,
 )
+from app.services.cover_letter_template_service import resolve_cover_letter_template_path
 from app.services.resume_blueprint_renderer import fill_user_resume_template
 from app.services.resume_context_builder import build_render_context
 from app.services.resume_template_service import user_template_ready_for_build
@@ -39,7 +39,6 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
     per-file progress via the resume WebSocket channel.
     """
     bind_logging_context(job_id=job_id, user_id=user_id)
-    settings = get_settings()
 
     try:
         async with get_session() as session:
@@ -78,7 +77,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
             out_dir = build_output_directory(first, last, company, position)
             await repo.set_output_directory(build.id, str(out_dir))
 
-            cl_template = Path(settings.cover_letter_template_path)
+            cl_template = resolve_cover_letter_template_path(user)
 
             resume_docx_name = f"{person_name} Resume.docx"
             resume_pdf_name = f"{person_name} Resume.pdf"
@@ -173,7 +172,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                     })
 
             # --- Cover Letter DOCX ---
-            if cover_data and cover_data.get("body") and cl_template.exists():
+            if cover_data and cover_data.get("body") and cl_template and cl_template.exists():
                 try:
                     await repo.update_file_status(build.id, "cover_letter_docx", "processing")
                     await publish_resume_event({
@@ -187,6 +186,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                         cl_template,
                         out_dir / cl_docx_name,
                         cover_data["body"],
+                        context=render_context,
                     )
                     await repo.update_file_status(build.id, "cover_letter_docx", "completed", path=str(cl_docx))
                     results["cover_letter_docx"] = str(cl_docx)
