@@ -51,7 +51,7 @@ function downloadBlob(blob: Blob, filename: string) {
 function RequirementsPanel({ requirements }: { requirements: CoverLetterTemplateRequirements }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-3 text-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Template placeholders</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Required placeholder</p>
       <ul className="mt-2 space-y-1.5">
         {requirements.required_tags.map((p) => (
           <li key={p.tag} className="text-xs text-slate-800">
@@ -59,12 +59,6 @@ function RequirementsPanel({ requirements }: { requirements: CoverLetterTemplate
               {p.tag}
             </code>{' '}
             <span className="text-slate-600">{p.description}</span>
-          </li>
-        ))}
-        {requirements.optional_tags.slice(0, 6).map((p) => (
-          <li key={p.tag} className="text-xs text-slate-700">
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-medium text-slate-800">{p.tag}</code>{' '}
-            <span className="text-slate-500">{p.description}</span>
           </li>
         ))}
       </ul>
@@ -218,9 +212,9 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
             {!loading && statusBadge(status)}
           </div>
           <p className="mt-1 text-sm leading-relaxed text-slate-600">
-            Upload your own Word cover letter layout. AI fills{' '}
-            <code className="rounded bg-slate-100 px-1 text-xs">{'{{COVER_LETTER_BODY}}'}</code> per job; profile
-            and job placeholders update automatically.
+            Upload your Word cover letter layout with your fixed letterhead, greeting, and signature.
+            AI fills only{' '}
+            <code className="rounded bg-slate-100 px-1 text-xs">{'{{COVER_LETTER_BODY}}'}</code> per job.
           </p>
 
           {loading ? (
@@ -241,7 +235,8 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
 
               {status === 'missing' && (
                 <p className="text-xs text-slate-500">
-                  Until you upload a template, the system default cover letter layout is used.
+                  Upload a .docx with <code className="rounded bg-slate-100 px-1">{'{{COVER_LETTER_BODY}}'}</code>{' '}
+                  before cover letter documents can be generated for jobs.
                 </p>
               )}
 
@@ -304,10 +299,10 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
                   </button>
                 )}
 
-                {(status === 'ready' || status === 'missing') && (
+                {status === 'ready' && (
                   <button
                     type="button"
-                    disabled={previewing}
+                    disabled={previewing || !statusData?.cover_letter_template_ready}
                     onClick={() => void handlePreview()}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                   >

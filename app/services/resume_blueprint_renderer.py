@@ -19,7 +19,10 @@ from app.services.docx_structure import (
     replace_tag_in_document,
     slice_body_elements,
 )
-from app.services.resume_builder_service import fill_resume_template
+from app.services.resume_builder_service import (
+    _save_docx_preserving_template_layout,
+    fill_resume_template,
+)
 from app.services.resume_context_builder import resolve_context_path
 
 logger = get_logger(__name__)
@@ -167,6 +170,6 @@ def fill_user_resume_template(
         logger.warning("resume_template_unresolved_tags", tags=leftover[:10])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_path))
+    _save_docx_preserving_template_layout(doc, template_path, output_path)
     logger.info("user_resume_docx_created", path=str(output_path))
     return output_path

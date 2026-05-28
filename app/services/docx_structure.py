@@ -58,11 +58,45 @@ def build_document_outline(doc: Document, *, max_blocks: int = 200) -> str:
     return "\n".join(lines)
 
 
+def _paragraphs_in_block(container: Any) -> list[Paragraph]:
+    paragraphs: list[Paragraph] = []
+    for paragraph in container.paragraphs:
+        paragraphs.append(paragraph)
+    for table in getattr(container, "tables", []):
+        for row in table.rows:
+            for cell in row.cells:
+                paragraphs.extend(cell.paragraphs)
+    return paragraphs
+
+
+def iter_document_paragraphs(doc: Document) -> list[Paragraph]:
+    """All paragraphs in body, tables, and section headers/footers."""
+    paragraphs = _paragraphs_in_block(doc)
+    for section in doc.sections:
+        for attr in (
+            "header",
+            "footer",
+            "first_page_header",
+            "first_page_footer",
+            "even_page_header",
+            "even_page_footer",
+        ):
+            try:
+                part = getattr(section, attr, None)
+            except ValueError:
+                continue
+            if part is None:
+                continue
+            paragraphs.extend(_paragraphs_in_block(part))
+    return paragraphs
+
+
 def find_tags_in_document(doc: Document) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
-    for block in iter_body_blocks(doc):
-        for match in TAG_PATTERN.findall(block.get("text") or ""):
+    for paragraph in iter_document_paragraphs(doc):
+        text = paragraph_text(paragraph)
+        for match in TAG_PATTERN.findall(text):
             if match not in seen:
                 seen.add(match)
                 found.append(match)
@@ -103,23 +137,15 @@ def insert_cloned_blocks_after(doc: Document, anchor_index: int, elements: list)
 
 
 def replace_tag_in_document(doc: Document, tag: str, value: str) -> int:
-    """Replace all occurrences of *tag* in paragraphs and table cells."""
+    """Replace all occurrences of *tag* in body, tables, and section headers/footers."""
     replacements = 0
-    for paragraph in doc.paragraphs:
-        if tag in paragraph_text(paragraph):
-            for run in paragraph.runs:
-                if tag in run.text:
-                    run.text = run.text.replace(tag, value)
-                    replacements += 1
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    if tag in paragraph_text(paragraph):
-                        for run in paragraph.runs:
-                            if tag in run.text:
-                                run.text = run.text.replace(tag, value)
-                                replacements += 1
+    for paragraph in iter_document_paragraphs(doc):
+        if tag not in paragraph_text(paragraph):
+            continue
+        for run in paragraph.runs:
+            if tag in run.text:
+                run.text = run.text.replace(tag, value)
+                replacements += 1
     return replacements
 
 

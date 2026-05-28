@@ -299,13 +299,6 @@ async def run_tailored_content_generation(
             ext_repo = JobExtractionRepository(session)
             match_repo = JobMatchRepository(session)
 
-            row = await resume_repo.get(job_id, user_id)
-            if row and row.content_generation_status == "completed" and row.tailored_resume_data:
-                logger.info("tailored_content_already_completed", job_id=job_id)
-                if row.tailored_resume_data:
-                    await _enqueue_resume_doc_build(job_id, user_id)
-                return row.tailored_resume_data
-
             extraction = await ext_repo.get_by_id(ext_id)
             if extraction and extraction.is_job_posting is False:
                 await resume_repo.mark_content_skipped(job_id, user_id)

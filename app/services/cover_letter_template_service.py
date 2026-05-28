@@ -20,7 +20,6 @@ from app.models.cover_letter_template_schemas import (
 from app.models.database import User
 from app.services.docx_structure import find_tags_in_document
 from app.services.resume_builder_service import fill_cover_letter_template
-from app.services.resume_context_builder import build_preview_tailored, build_render_context
 from app.services.resume_template_service import user_template_dir
 from app.storage.database import get_session
 
@@ -44,35 +43,22 @@ def get_cover_letter_requirements() -> CoverLetterTemplateRequirements:
                 required=True,
             ),
         ],
-        optional_tags=[
-            CoverLetterPlaceholderSpec(tag="{{DATE}}", description="Today's date (e.g. May 25, 2026)."),
-            CoverLetterPlaceholderSpec(tag="{{FULL_NAME}}", description="Candidate full name from profile."),
-            CoverLetterPlaceholderSpec(tag="{{PROFILE_TITLE}}", description="Professional title from profile."),
-            CoverLetterPlaceholderSpec(tag="{{EMAIL}}", description="Email from profile."),
-            CoverLetterPlaceholderSpec(tag="{{PHONE}}", description="Phone from profile."),
-            CoverLetterPlaceholderSpec(tag="{{LINKEDIN}}", description="LinkedIn URL from profile."),
-            CoverLetterPlaceholderSpec(tag="{{GITHUB}}", description="GitHub URL from profile."),
-            CoverLetterPlaceholderSpec(tag="{{JOB_COMPANY}}", description="Target job company name."),
-            CoverLetterPlaceholderSpec(tag="{{JOB_TITLE}}", description="Target job title."),
-            CoverLetterPlaceholderSpec(tag="{{JOB_LOCATION}}", description="Target job location."),
-            CoverLetterPlaceholderSpec(
-                tag="{{profile.full_name}}",
-                description="Alternate dot-notation alias for profile fields (also {{job.company}}, etc.).",
-            ),
-        ],
+        optional_tags=[],
         layout_example=(
-            "{{FULL_NAME}}\n"
-            "{{EMAIL}} | {{PHONE}}\n\n"
-            "{{DATE}}\n\n"
+            "Your Name\n"
+            "your.email@example.com | (555) 555-5555\n\n"
+            "May 22, 2026\n\n"
             "Dear Hiring Manager,\n\n"
             "{{COVER_LETTER_BODY}}\n\n"
             "Sincerely,\n"
-            "{{FULL_NAME}}"
+            "Your Name"
         ),
         notes=[
             "Upload a .docx with your own layout, fonts, and header/footer styling.",
-            "Keep static greeting and signature in the template; AI fills only the body placeholder.",
-            "If no custom template is uploaded, the system default cover letter template is used.",
+            "Put your name, contact details, date, greeting, and signature as fixed text in the template.",
+            "Only {{COVER_LETTER_BODY}} is filled per job — the AI writes the letter body paragraphs.",
+            "Place {{COVER_LETTER_BODY}} in the main document body (not a floating text box).",
+            "Uploading copies your template exactly; headers, graphics, and layout are preserved.",
         ],
     )
 
@@ -84,6 +70,11 @@ def user_cover_letter_template_dir(user_id: str) -> Path:
 
 
 def user_cover_letter_template_ready(user: User | None) -> bool:
+    """True when the user has an uploaded, validated cover letter template on disk."""
+    return user_cover_letter_template_ready_for_build(user)
+
+
+def user_cover_letter_template_ready_for_build(user: User | None) -> bool:
     if not user:
         return False
     status = getattr(user, "cover_letter_template_status", None) or "missing"
@@ -111,57 +102,22 @@ def validate_cover_letter_template_docx(source_path: Path) -> tuple[list[str], l
             "Add it where the AI-generated letter body should appear."
         )
 
-    optional_present = {
-        "{{DATE}}",
-        "{{FULL_NAME}}",
-        "{{JOB_COMPANY}}",
-        "{{JOB_TITLE}}",
-    }
-    if not any(tag in detected for tag in optional_present):
+    other_tags = [tag for tag in detected if tag != REQUIRED_BODY_TAG]
+    if other_tags:
         warnings.append(
-            "No profile or job placeholders detected. Consider adding {{FULL_NAME}}, {{DATE}}, "
-            "{{JOB_COMPANY}}, or {{JOB_TITLE}} so documents update automatically."
+            "Only {{COVER_LETTER_BODY}} is filled automatically. "
+            f"These placeholders will appear literally unless you replace them with fixed text: "
+            f"{', '.join(other_tags)}."
         )
 
     return errors, warnings, detected
 
 
-def build_cover_letter_tag_map(context: dict[str, Any]) -> dict[str, str]:
-    """Scalar placeholder values for cover letter templates."""
-    profile = context.get("profile") or {}
-    job = context.get("job") or {}
-    date_str = datetime.now().strftime("%B %d, %Y")
-
-    flat = {
-        "{{DATE}}": date_str,
-        "{{FULL_NAME}}": str(profile.get("full_name") or ""),
-        "{{PROFILE_TITLE}}": str(profile.get("title") or ""),
-        "{{EMAIL}}": str(profile.get("email") or ""),
-        "{{PHONE}}": str(profile.get("phone") or ""),
-        "{{LINKEDIN}}": str(profile.get("linkedin") or ""),
-        "{{GITHUB}}": str(profile.get("github") or ""),
-        "{{JOB_COMPANY}}": str(job.get("company") or ""),
-        "{{JOB_TITLE}}": str(job.get("title") or ""),
-        "{{JOB_LOCATION}}": str(job.get("location") or ""),
-    }
-
-    for key, value in profile.items():
-        if isinstance(value, str):
-            flat[f"{{{{profile.{key}}}}}"] = value
-    for key, value in job.items():
-        if isinstance(value, str):
-            flat[f"{{{{job.{key}}}}}"] = value
-
-    return flat
-
-
 def resolve_cover_letter_template_path(user: User | None) -> Path | None:
-    """User template when ready; otherwise system default if present."""
-    settings = get_settings()
-    if user_cover_letter_template_ready(user):
-        return Path(getattr(user, "cover_letter_template_working_path"))  # type: ignore[arg-type]
-    default = Path(settings.cover_letter_template_path)
-    return default if default.exists() else None
+    """Return the user's validated working template path, or None if not ready."""
+    if not user_cover_letter_template_ready_for_build(user):
+        return None
+    return Path(getattr(user, "cover_letter_template_working_path"))  # type: ignore[arg-type]
 
 
 def template_status_payload(user: User | None) -> dict[str, Any]:
@@ -292,32 +248,23 @@ async def generate_cover_letter_preview_docx(user_id: str) -> Path:
         if not user:
             raise ValueError("User not found")
 
+        if not user_cover_letter_template_ready_for_build(user):
+            raise ValueError(
+                "Upload and validate your cover letter template in Settings before previewing."
+            )
         template_path = resolve_cover_letter_template_path(user)
         if not template_path or not template_path.exists():
-            raise ValueError("No cover letter template available. Upload one in Settings.")
-
-        tailored = build_preview_tailored(user)
-        context = build_render_context(user, tailored, job=None)
-        context["job"] = {
-            "company": "Example Company",
-            "title": "Senior Software Engineer",
-            "location": "Remote",
-        }
+            raise ValueError("Cover letter template file is missing on disk. Re-upload in Settings.")
 
         preview_dir = user_cover_letter_template_dir(user_id)
         preview_path = preview_dir / "preview.docx"
         sample_body = (
-            "I am writing to express my interest in the Senior Software Engineer role at Example Company. "
+            "I am writing to express my interest in this role. "
             "My background aligns closely with the requirements outlined in the posting.\n\n"
             "In recent roles I have delivered scalable systems, led cross-functional initiatives, "
             "and contributed measurable business outcomes. I would welcome the opportunity to bring "
             "that experience to your team.\n\n"
             "Thank you for your consideration. I look forward to discussing how I can contribute."
         )
-        fill_cover_letter_template(
-            template_path,
-            preview_path,
-            sample_body,
-            context=context,
-        )
+        fill_cover_letter_template(template_path, preview_path, sample_body)
         return preview_path

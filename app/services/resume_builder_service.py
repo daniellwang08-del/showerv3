@@ -10,10 +10,8 @@ Placeholders recognised in the resume template:
   {{EXP_1}} … {{EXP_N}} — replaced by per-company experience blocks
 
 Placeholders recognised in the cover letter template:
-  {{COVER_LETTER_BODY}} — multi-paragraph body (inline within same paragraph)
-  {{DATE}}, {{FULL_NAME}}, {{PROFILE_TITLE}}, {{EMAIL}}, {{PHONE}}, {{LINKEDIN}},
-  {{GITHUB}}, {{JOB_COMPANY}}, {{JOB_TITLE}}, {{JOB_LOCATION}}
-  Dot-notation aliases: {{profile.full_name}}, {{job.company}}, etc.
+  {{COVER_LETTER_BODY}} — AI-generated body only; all letterhead, greeting, and signature
+  are fixed text in the user's uploaded template.
 """
 
 from __future__ import annotations
@@ -22,6 +20,7 @@ import platform
 import re
 import shutil
 import subprocess
+import zipfile
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -32,14 +31,22 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
 from docx.text.paragraph import Paragraph
+from lxml import etree
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services.docx_structure import iter_document_paragraphs
 from app.utils.resume_text_format import parse_bold_markers
 
 logger = get_logger(__name__)
 
 WNS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+COVER_LETTER_BODY_TAG = "{{COVER_LETTER_BODY}}"
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+
+def _w(tag: str) -> str:
+    return f"{{{WNS}}}{tag}"
 
 
 # ── Low-level XML helpers ──────────────────────────────────────────────────
@@ -158,7 +165,7 @@ def _make_paragraph_from_anchor(anchor_p, runs: list[OxmlElement]) -> OxmlElemen
 
 def _find_paragraph_with_tag(doc: Document, tag: str) -> Paragraph | None:
     """Find the first paragraph whose combined run text contains *tag*."""
-    for p in doc.paragraphs:
+    for p in iter_document_paragraphs(doc):
         full = "".join(run.text for run in p.runs)
         if tag in full:
             return p
@@ -362,6 +369,103 @@ def _clean_leftover_exp_placeholders(doc: Document) -> None:
                 run.text = pattern.sub("", run.text)
 
 
+# ── Layout-preserving DOCX serialization ───────────────────────────────────
+
+RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+HEADER_REL_TYPE = f"{OFFICE_REL_NS}/header"
+FOOTER_REL_TYPE = f"{OFFICE_REL_NS}/footer"
+
+
+def _read_template_header_footer_rids(template_path: Path) -> set[str]:
+    """Return the set of rIds in the template that legitimately point to a
+    real ``word/header*.xml`` or ``word/footer*.xml`` part. Any other
+    header/footer reference in the modified output is a phantom one injected
+    by python-docx that must be stripped to avoid layout shifts.
+    """
+    try:
+        with zipfile.ZipFile(template_path, "r") as zf:
+            try:
+                rels_xml = zf.read("word/_rels/document.xml.rels")
+            except KeyError:
+                return set()
+    except zipfile.BadZipFile:
+        return set()
+
+    root = etree.fromstring(rels_xml)
+    rids: set[str] = set()
+    for rel in root.findall(f"{{{RELS_NS}}}Relationship"):
+        rel_type = rel.get("Type")
+        if rel_type in (HEADER_REL_TYPE, FOOTER_REL_TYPE):
+            rid = rel.get("Id")
+            if rid:
+                rids.add(rid)
+    return rids
+
+
+def _strip_phantom_header_footer_refs(root: etree._Element, allowed_rids: set[str]) -> None:
+    """Remove ``<w:headerReference>`` / ``<w:footerReference>`` entries whose
+    ``r:id`` is not in *allowed_rids*. These are the phantom references
+    python-docx injects on save — keeping only ones the user truly authored.
+    """
+    rid_attr = f"{{{OFFICE_REL_NS}}}id"
+    for ref_tag in (_w("headerReference"), _w("footerReference")):
+        for ref in root.iter(ref_tag):
+            rid = ref.get(rid_attr)
+            if rid not in allowed_rids:
+                parent = ref.getparent()
+                if parent is not None:
+                    parent.remove(ref)
+
+
+def _save_docx_preserving_template_layout(
+    doc: Document,
+    template_path: Path,
+    output_path: Path,
+) -> None:
+    """Write *doc* to *output_path* without inheriting python-docx's package mutations.
+
+    ``python-docx`` rewrites the full DOCX package on ``doc.save()`` and
+    auto-injects empty ``<w:headerReference>``/``<w:footerReference>`` entries
+    into every ``<w:sectPr>`` plus phantom ``word/header*.xml`` /
+    ``word/footer*.xml`` files into the archive. Word/LibreOffice then
+    reserves header/footer space on every page even though those files are
+    empty — pushing the body content down and visibly shifting the user's
+    designed layout.
+
+    Strategy:
+      1. Serialize the in-memory document (with all placeholder replacements)
+         using lxml so we keep the modified body content but skip
+         ``doc.save()`` entirely (avoiding package-level mutations).
+      2. Strip any ``<w:headerReference>`` / ``<w:footerReference>`` whose
+         ``r:id`` does NOT correspond to a real header/footer relationship in
+         the original template's ``word/_rels/document.xml.rels``. Genuine
+         user-authored references are preserved.
+      3. Copy the original template file byte-for-byte to *output_path*
+         (preserves ``[Content_Types].xml``, all ``word/_rels``, fonts,
+         styles, images, theme, custom XML, and any real header/footer files).
+      4. Replace ONLY ``word/document.xml`` inside that zip with the cleaned
+         XML so no package-level metadata or phantom parts leak through.
+    """
+    new_root_xml = etree.tostring(doc.element)
+    new_root = etree.fromstring(new_root_xml)
+    if new_root.find(_w("body")) is None:
+        raise RuntimeError("Modified resume document is missing <w:body>.")
+
+    allowed_rids = _read_template_header_footer_rids(template_path)
+    _strip_phantom_header_footer_refs(new_root, allowed_rids)
+
+    final_xml = etree.tostring(
+        new_root,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+
+    shutil.copy2(template_path, output_path)
+    _replace_docx_internal(output_path, "word/document.xml", final_xml)
+
+
 # ── Public API ─────────────────────────────────────────────────────────────
 
 def fill_resume_template(
@@ -450,48 +554,196 @@ def fill_resume_template(
 
     _clean_leftover_exp_placeholders(doc)
 
-    doc.save(str(output_path))
+    _save_docx_preserving_template_layout(doc, template_path, output_path)
     logger.info("resume_docx_created", path=str(output_path))
     return output_path
+
+
+def _paragraph_text_from_xml(p_el: etree._Element) -> str:
+    return "".join(t.text or "" for t in p_el.iter(_w("t")))
+
+
+def _iter_document_body_paragraphs(body_el: etree._Element):
+    for child in body_el:
+        local = child.tag.split("}")[-1]
+        if local == "p":
+            yield child
+        elif local == "tbl":
+            for tc in child.iter(_w("tc")):
+                for p_el in tc.findall(_w("p")):
+                    yield p_el
+
+
+def _extract_anchor_rpr(p_el: etree._Element) -> etree._Element | None:
+    """Return a deep copy of the most representative ``<w:rPr>`` for new runs.
+
+    Preference order:
+      1. The ``<w:rPr>`` of the first run that contains visible text in *p_el*.
+      2. The ``<w:rPr>`` of any run.
+      3. The paragraph-level default run formatting at ``<w:pPr>/<w:rPr>``.
+    """
+    runs = p_el.findall(_w("r"))
+    for r in runs:
+        if r.find(_w("t")) is not None:
+            rpr = r.find(_w("rPr"))
+            if rpr is not None:
+                return deepcopy(rpr)
+    for r in runs:
+        rpr = r.find(_w("rPr"))
+        if rpr is not None:
+            return deepcopy(rpr)
+    p_pr = p_el.find(_w("pPr"))
+    if p_pr is not None:
+        rpr = p_pr.find(_w("rPr"))
+        if rpr is not None:
+            return deepcopy(rpr)
+    return None
+
+
+def _clear_paragraph_content(p_el: etree._Element) -> etree._Element | None:
+    p_pr = p_el.find(_w("pPr"))
+    for child in list(p_el):
+        if child is not p_pr:
+            p_el.remove(child)
+    return p_pr
+
+
+def _append_text_run(
+    p_el: etree._Element,
+    text: str,
+    rpr_template: etree._Element | None,
+) -> None:
+    """Append a single ``<w:r><w:t>`` to *p_el* preserving font formatting."""
+    if not text:
+        return
+    run = etree.SubElement(p_el, _w("r"))
+    if rpr_template is not None:
+        run.append(deepcopy(rpr_template))
+    t_el = etree.SubElement(run, _w("t"))
+    t_el.set(XML_SPACE, "preserve")
+    t_el.text = text
+
+
+def _append_break(p_el: etree._Element, rpr_template: etree._Element | None) -> None:
+    """Append a soft line break (``<w:br/>``) carrying the same run formatting."""
+    run = etree.SubElement(p_el, _w("r"))
+    if rpr_template is not None:
+        run.append(deepcopy(rpr_template))
+    etree.SubElement(run, _w("br"))
+
+
+def _append_text_with_breaks(
+    p_el: etree._Element,
+    text: str,
+    rpr_template: etree._Element | None,
+) -> None:
+    """Append text where literal ``\\n`` characters become Word soft breaks."""
+    if not text:
+        return
+    lines = text.split("\n")
+    for idx, line in enumerate(lines):
+        if idx > 0:
+            _append_break(p_el, rpr_template)
+        if line:
+            _append_text_run(p_el, line, rpr_template)
+
+
+def _make_body_paragraph(
+    text: str,
+    p_pr: etree._Element | None,
+    rpr_template: etree._Element | None,
+) -> etree._Element:
+    """Build a ``<w:p>`` that inherits paragraph + run formatting from the anchor."""
+    new_p = etree.Element(_w("p"))
+    if p_pr is not None:
+        new_p.insert(0, deepcopy(p_pr))
+    _append_text_with_breaks(new_p, text, rpr_template)
+    return new_p
+
+
+def _replace_docx_internal(path: Path, internal: str, data: bytes) -> None:
+    tmp_path = path.with_name(path.name + ".tmp")
+    with zipfile.ZipFile(path, "r") as zin, zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            payload = data if info.filename == internal else zin.read(info.filename)
+            zout.writestr(info, payload)
+    tmp_path.replace(path)
+
+
+def _patch_cover_letter_document_xml(document_xml: bytes, body_parts: list[str]) -> bytes:
+    root = etree.fromstring(document_xml)
+    body_el = root.find(_w("body"))
+    if body_el is None:
+        raise RuntimeError("Invalid cover letter template: missing document body.")
+
+    tag = COVER_LETTER_BODY_TAG
+    anchor: etree._Element | None = None
+    for p_el in _iter_document_body_paragraphs(body_el):
+        if tag in _paragraph_text_from_xml(p_el):
+            anchor = p_el
+            break
+
+    if anchor is None:
+        raise RuntimeError(
+            f"Placeholder {tag} was not found in the document body. "
+            "Add it to the main letter area of your template (not only in a text box)."
+        )
+
+    full_text = _paragraph_text_from_xml(anchor)
+    before, _, after = full_text.partition(tag)
+
+    rpr_template = _extract_anchor_rpr(anchor)
+    p_pr = _clear_paragraph_content(anchor)
+
+    prefix = before.rstrip("\n")
+    if prefix.strip():
+        _append_text_with_breaks(anchor, prefix, rpr_template)
+
+    cursor = anchor
+    for part in body_parts:
+        new_p = _make_body_paragraph(part, p_pr, rpr_template)
+        cursor.addnext(new_p)
+        cursor = new_p
+
+    suffix = after.lstrip("\n")
+    if suffix.strip():
+        cursor.addnext(_make_body_paragraph(suffix, p_pr, rpr_template))
+
+    return etree.tostring(
+        root,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
 
 
 def fill_cover_letter_template(
     template_path: Path,
     output_path: Path,
     cover_letter_body: str,
-    *,
-    context: dict[str, Any] | None = None,
 ) -> Path:
-    """Fill cover letter template with profile/job placeholders and generated body.
+    """Fill the cover letter template with AI-generated body text only.
 
-    The template typically has a paragraph containing:
-        Dear Hiring Manager,<br><br>{{COVER_LETTER_BODY}}
-    We split {{COVER_LETTER_BODY}} into separate paragraphs inserted after
-    the anchor, preserving the greeting.
+    Copies the template byte-for-byte except ``word/document.xml``, so headers,
+    footers, drawings, and styles are preserved. Only ``{{COVER_LETTER_BODY}}`` is
+    replaced — including when Word split the placeholder across multiple runs.
+
+    The inserted paragraphs inherit the anchor paragraph's run formatting
+    (``<w:rPr>``: font family, size, color, language) so the body uses the same
+    typography the user designed in their template. Single ``\\n`` characters
+    inside a paragraph are emitted as ``<w:br/>`` soft line breaks (used by the
+    sign-off block: ``Best regards,\\nFull Name``).
     """
-    doc = Document(str(template_path))
+    body_parts = [p.strip("\r ") for p in cover_letter_body.split("\n\n") if p.strip()]
+    if not body_parts:
+        raise RuntimeError("Cover letter body is empty — nothing to insert into the template.")
 
-    if context:
-        from app.services.cover_letter_template_service import build_cover_letter_tag_map
+    shutil.copy2(template_path, output_path)
+    with zipfile.ZipFile(output_path, "r") as zf:
+        document_xml = zf.read("word/document.xml")
 
-        tag_map = build_cover_letter_tag_map(context)
-        for tag, value in sorted(tag_map.items(), key=lambda item: len(item[0]), reverse=True):
-            replace_tag_in_document(doc, tag, value)
-
-    body_parts = [p.strip() for p in cover_letter_body.split("\n\n") if p.strip()]
-    if body_parts:
-        body_anchor = _find_paragraph_with_tag(doc, "{{COVER_LETTER_BODY}}")
-        if body_anchor:
-            rPr_tpl = _get_template_rPr(body_anchor._p)
-            body_elements = []
-            for part in body_parts:
-                p = OxmlElement("w:p")
-                _clone_pPr(body_anchor._p, p)
-                p.append(_make_run(part, rPr_tpl))
-                body_elements.append(p)
-            _split_anchor_around_tag(doc, "{{COVER_LETTER_BODY}}", body_elements)
-
-    doc.save(str(output_path))
+    patched_xml = _patch_cover_letter_document_xml(document_xml, body_parts)
+    _replace_docx_internal(output_path, "word/document.xml", patched_xml)
     logger.info("cover_letter_docx_created", path=str(output_path))
     return output_path
 

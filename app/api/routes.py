@@ -63,7 +63,7 @@ from app.models.database import (
     ValidJobUserApplication,
     ResumeBuildResult,
 )
-from sqlalchemy import select, func, update as sa_update, nullslast
+from sqlalchemy import select, func, update as sa_update, nullslast, text
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -2025,6 +2025,13 @@ async def rerun_job_match_batch(
                 continue
 
             await match_repo.delete(job_id, user_id)
+            await session.execute(
+                text(
+                    "DELETE FROM resume_build_results "
+                    "WHERE job_id = :job_id AND user_id = :uid"
+                ),
+                {"job_id": job_id, "uid": user_id},
+            )
 
             r = await session.execute(select(Job).where(Job.id == job_id, Job.status == "active"))
             job = r.scalar_one_or_none()

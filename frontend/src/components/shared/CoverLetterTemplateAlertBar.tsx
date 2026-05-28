@@ -9,13 +9,13 @@ const POLL_MS = 4000;
 function statusMessage(status: CoverLetterTemplateStatus, error?: string | null): string {
   switch (status) {
     case 'missing':
-      return 'Upload your cover letter template in Settings. AI tailoring will still run, but cover letters will use the default layout until your template is ready.';
+      return 'Upload your cover letter template in Settings. AI tailoring will still run, but cover letter documents may fail until a template is ready.';
     case 'processing':
-      return 'Your cover letter template is being validated. AI tailoring will still run, but cover letters will use the default layout until validation completes.';
+      return 'Your cover letter template is being validated. AI tailoring will still run, but cover letter documents may fail until validation completes.';
     case 'failed':
       return error
-        ? `Cover letter template is not ready: ${error}. AI tailoring will still run, but cover letters will use the default layout until it is fixed.`
-        : 'Cover letter template validation failed. Fix it in Settings — AI tailoring will still run, but cover letters will use the default layout.';
+        ? `Cover letter template is not ready: ${error}. AI tailoring will still run, but cover letter documents may fail.`
+        : 'Cover letter template validation failed. Fix it in Settings — AI tailoring will still run, but cover letter documents may fail.';
     default:
       return '';
   }
