@@ -10,6 +10,7 @@ import { Pagination } from '../components/shared/Pagination';
 import { ScraperAISearch, type AiSearchState } from '../components/scraper/ScraperAISearch';
 import { SubmitForm } from '../components/extraction/SubmitForm';
 import { DuplicatesModal } from '../components/scraper/DuplicatesModal';
+import { CoverLetterTemplateAlertBar } from '../components/shared/CoverLetterTemplateAlertBar';
 import { ResumeTemplateAlertBar } from '../components/shared/ResumeTemplateAlertBar';
 import { useFloatingButtonPosition } from '../hooks/useFloatingButtonPosition';
 import { AlertTriangle, Sparkles, Link } from 'lucide-react';
@@ -175,6 +176,7 @@ export function ScraperDashboard() {
       <ScraperStatsBar stats={stats} loading={statsLoading} />
 
       <ResumeTemplateAlertBar />
+      <CoverLetterTemplateAlertBar />
 
       {/* ── AI search + Add job URL ──────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">

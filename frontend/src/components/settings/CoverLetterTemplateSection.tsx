@@ -207,7 +207,7 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
   const requirements = statusData?.requirements;
 
   return (
-    <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <section id="cover-letter-template" className="h-full scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex items-start gap-4">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-600 to-cyan-700 text-white">
           <Mail className="h-5 w-5" />

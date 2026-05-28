@@ -2,22 +2,25 @@
 Phase B: tailored resume content and cover letter generation (deferred after Phase A).
 """
 
+from app.prompts.cover_letter_prompt import COVER_LETTER_INSTRUCTIONS
+
 RESUME_TAILORING_PROMPT_MIN_LENGTH = 50
 RESUME_TAILORING_PROMPT_MAX_LENGTH = 12000
 
-JOB_MATCH_PHASE_B_INSTRUCTIONS = """You are an elite resume writer and technical career strategist.
-Your goal is to produce a **strong, job-winning tailored resume** — rich in concrete impact, aligned to the posting,
-and truthful to the candidate's background.
-
+_PHASE_B_SHARED_HEADER = """You are an elite resume writer and technical career strategist.
 Using the job description, structured job context, match summary, candidate profile, and **Project Evidence**
 (when provided), produce **two outputs** in one JSON response:
 
-1. **Tailored Resume Content** — job-optimized profile summary, technical skills, and work experience.
-2. **Cover Letter** — professional cover letter body.
+1. **Tailored Resume Content** — Task 1 below.
+2. **Cover Letter** — Task 2 below.
 
 Do NOT re-score the job match. Do NOT re-extract structured job fields.
 
 ---
+"""
+
+RESUME_TAILORING_INSTRUCTIONS = """Your goal is to produce a **strong, job-winning tailored resume** — rich in concrete impact, aligned to the posting,
+and truthful to the candidate's background.
 
 ## Overall strategy
 
@@ -65,7 +68,7 @@ The document builder converts ``**text**`` into **bold** formatting. Use this fo
 
 ## Task 1 — Tailored Resume Content
 
-### Profile summary (3–5 sentences)
+### Profile summary (5–7 sentences)
 Write a compelling executive summary that a recruiter would skim in 10 seconds:
 - Open with **years of experience + core identity** aligned to this role (e.g. "Senior backend engineer with 12+ years…").
 - Name the **target domain or product type** from the job when the profile supports it.
@@ -107,16 +110,11 @@ Write a compelling executive summary that a recruiter would skim in 10 seconds:
 - When Project Evidence lists technologies_to_emphasize for a company, reflect them in that company's bullets.
 - Each bullet should be **substantive** (often 1–2 sentences) — not one-line placeholders.
 
-**Truthfulness:** Every metric, tool, and outcome must appear in the profile or Project Evidence. If no metric exists, describe scope and outcome qualitatively — do not invent numbers.
+**Truthfulness:** Every metric, tool, and outcome must appear in the profile or Project Evidence. If no metric exists, describe scope and outcome qualitatively — do not invent numbers."""
 
----
-
-## Task 2 — Cover Letter (3–4 paragraphs, body only)
-
-- **Paragraph 1:** Role + company by name; why this opportunity fits the candidate's trajectory (domain, product, tech).
-- **Paragraph 2–3:** Two or three **specific proof points** drawn from the strongest aligned roles (use evidence-backed wins).
-- **Paragraph 4 (optional, brief):** Close with enthusiasm and fit — no greeting ("Dear…") or sign-off ("Sincerely…").
-- Tone: confident, specific, professional — not generic or repetitive of the resume summary verbatim."""
+JOB_MATCH_PHASE_B_INSTRUCTIONS = (
+    f"{_PHASE_B_SHARED_HEADER}{RESUME_TAILORING_INSTRUCTIONS.strip()}\n\n---\n\n{COVER_LETTER_INSTRUCTIONS.strip()}"
+)
 
 JOB_MATCH_PHASE_B_OUTPUT_CONTRACT = """
 ---
@@ -146,15 +144,17 @@ Return ONLY valid JSON:
 }"""
 
 
-def build_phase_b_system_prompt(instructions: str) -> str:
-    """Combine user-editable instructions with the locked JSON output contract."""
-    cleaned = instructions.strip()
-    if not cleaned:
-        cleaned = JOB_MATCH_PHASE_B_INSTRUCTIONS.strip()
-    return f"{cleaned}{JOB_MATCH_PHASE_B_OUTPUT_CONTRACT}"
+def build_phase_b_system_prompt(
+    resume_instructions: str,
+    cover_letter_instructions: str = "",
+) -> str:
+    """Combine resume + cover letter instructions with the locked JSON output contract."""
+    resume = resume_instructions.strip() or RESUME_TAILORING_INSTRUCTIONS.strip()
+    cover = cover_letter_instructions.strip() or COVER_LETTER_INSTRUCTIONS.strip()
+    return f"{_PHASE_B_SHARED_HEADER}{resume}\n\n---\n\n{cover}{JOB_MATCH_PHASE_B_OUTPUT_CONTRACT}"
 
 
-JOB_MATCH_PHASE_B_SYSTEM_PROMPT = build_phase_b_system_prompt(JOB_MATCH_PHASE_B_INSTRUCTIONS)
+JOB_MATCH_PHASE_B_SYSTEM_PROMPT = build_phase_b_system_prompt("", "")
 
 JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
 {job_text}
