@@ -433,11 +433,15 @@ class ValidJobUserApplicationRepository:
     ) -> int:
         label = (applied_by_name or "Unknown")[:300]
         now = _utcnow()
-        n = 0
-        for jid in job_ids:
-            job = await self._session.get(Job, jid)
-            if not job or job.status != "active":
-                continue
+
+        valid_result = await self._session.execute(
+            select(Job.id).where(Job.id.in_(list(job_ids)), Job.status == "active")
+        )
+        valid_ids = {row[0] for row in valid_result.all()}
+        if not valid_ids:
+            return 0
+
+        for jid in valid_ids:
             stmt = (
                 pg_insert(ValidJobUserApplication)
                 .values(
@@ -453,8 +457,7 @@ class ValidJobUserApplicationRepository:
                 )
             )
             await self._session.execute(stmt)
-            n += 1
-        return n
+        return len(valid_ids)
 
     async def delete_batch(self, user_id: str, job_ids: Sequence[str]) -> int:
         r = await self._session.execute(

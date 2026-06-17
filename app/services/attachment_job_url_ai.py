@@ -10,7 +10,7 @@ import re
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 from app.services.url_manager import URLManager
 
 try:
@@ -81,7 +81,7 @@ async def extract_job_urls_from_text_combined(text: str, *, user_id: str | None 
         return []
 
     settings = get_settings()
-    client = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
 
     chunks: list[str] = []
     if len(text) <= _CHUNK_CHARS:

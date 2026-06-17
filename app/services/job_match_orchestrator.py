@@ -127,22 +127,19 @@ async def enqueue_tailored_content_generation(
     try:
         from app.tasks.worker import get_analysis_pool, ANALYSIS_QUEUE
         pool = await get_analysis_pool()
-        try:
-            await pool.enqueue_job(
-                "generate_tailored_content",
-                job_id,
-                user_id,
-                extraction_id,
-            )
-            logger.info(
-                "tailored_content_enqueued",
-                job_id=job_id,
-                user_id=user_id,
-                queue=ANALYSIS_QUEUE,
-            )
-            return True
-        finally:
-            await pool.close()
+        await pool.enqueue_job(
+            "generate_tailored_content",
+            job_id,
+            user_id,
+            extraction_id,
+        )
+        logger.info(
+            "tailored_content_enqueued",
+            job_id=job_id,
+            user_id=user_id,
+            queue=ANALYSIS_QUEUE,
+        )
+        return True
     except Exception as e:
         logger.warning(
             "tailored_content_enqueue_failed",
@@ -158,7 +155,6 @@ async def _enqueue_resume_doc_build(job_id: str, user_id: str) -> None:
         from app.tasks.worker import get_resume_build_pool
         pool = await get_resume_build_pool()
         await pool.enqueue_job("build_resume_task", job_id, user_id)
-        await pool.close()
         logger.info("resume_build_enqueued", job_id=job_id)
     except Exception as enq_err:
         logger.warning("resume_build_enqueue_failed", job_id=job_id, error=str(enq_err))
@@ -288,16 +284,14 @@ async def run_tailored_content_generation(
             return None
         ext_id, job_text, profile_text = loaded
 
-        if not (profile_text or "").strip():
-            async with get_session() as session:
-                resume_repo = ResumeBuildRepository(session)
-                await resume_repo.mark_content_skipped(job_id, user_id)
-            return None
-
         async with get_session() as session:
             resume_repo = ResumeBuildRepository(session)
             ext_repo = JobExtractionRepository(session)
             match_repo = JobMatchRepository(session)
+
+            if not (profile_text or "").strip():
+                await resume_repo.mark_content_skipped(job_id, user_id)
+                return None
 
             extraction = await ext_repo.get_by_id(ext_id)
             if extraction and extraction.is_job_posting is False:
@@ -374,8 +368,7 @@ async def run_tailored_content_generation(
                 error=str(e),
             )
             async with get_session() as session:
-                resume_repo = ResumeBuildRepository(session)
-                await resume_repo.fail_content_generation(job_id, user_id, str(e))
+                await ResumeBuildRepository(session).fail_content_generation(job_id, user_id, str(e))
             await publish_ws_event({
                 "type": "tailored_content_failed",
                 "user_id": user_id,
@@ -386,15 +379,13 @@ async def run_tailored_content_generation(
 
         if not tailored_resume:
             async with get_session() as session:
-                resume_repo = ResumeBuildRepository(session)
-                await resume_repo.fail_content_generation(
+                await ResumeBuildRepository(session).fail_content_generation(
                     job_id, user_id, "Tailored resume section missing or invalid"
                 )
             return None
 
         async with get_session() as session:
-            resume_repo = ResumeBuildRepository(session)
-            await resume_repo.complete_content_generation(
+            await ResumeBuildRepository(session).complete_content_generation(
                 job_id,
                 user_id,
                 tailored_resume_data=tailored_resume,

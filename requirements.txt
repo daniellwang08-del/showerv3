@@ -45,5 +45,4 @@ scrapy>=2.11
 scrapy-playwright>=0.0.40
 curl_cffi>=0.7
 selectolax>=0.3
-apscheduler>=3.10
 python-dotenv>=1.0.0

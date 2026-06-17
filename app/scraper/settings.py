@@ -5,7 +5,6 @@ same PostgreSQL instance as the rest of the application.
 """
 
 import os
-from pathlib import Path
 
 BOT_NAME = "scraper"
 
@@ -63,18 +62,6 @@ ITEM_PIPELINES = {
     "app.scraper.pipelines.dedup.DedupPipeline": 300,
     "app.scraper.pipelines.posted_date_filter.PostedDateFilterPipeline": 350,
     "app.scraper.pipelines.postgres.PostgresPipeline": 400,
-}
-
-# --- Feeds (JSON backup alongside DB) -------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-os.makedirs(_PROJECT_ROOT / "data", exist_ok=True)
-
-FEEDS = {
-    str(_PROJECT_ROOT / "data" / "%(name)s_%(time)s.jsonl"): {
-        "format": "jsonlines",
-        "encoding": "utf-8",
-        "overwrite": False,
-    },
 }
 
 # --- Logging ---------------------------------------------------------------

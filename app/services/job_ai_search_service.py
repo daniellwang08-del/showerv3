@@ -9,13 +9,13 @@ import json
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
+
 from sqlalchemy import select, or_, and_, func, cast, String, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 
 try:
     from langfuse import observe
@@ -132,7 +132,7 @@ def _spec_has_constraints(spec: JobSearchQuerySpec) -> bool:
 
 @observe(name="interpret_job_search_prompt")
 async def interpret_job_search_prompt(prompt: str, *, user_id: str | None = None) -> JobSearchQuerySpec:
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     settings = get_settings()
 
     user_msg = f'User search request:\n"""{prompt.strip()}"""\n\nRespond with the JSON object only.'

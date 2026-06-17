@@ -264,14 +264,13 @@ class ValidJobUserApplication(Base):
     __tablename__ = "valid_job_user_applications"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     applied_at = Column(DateTime, server_default=func.now(), nullable=False)
     applied_by_name = Column(String(300), nullable=False)
 
     __table_args__ = (
         UniqueConstraint("user_id", "job_id", name="uq_job_user_application"),
-        Index("ix_job_user_applications_user_job", "user_id", "job_id"),
     )
 
 
@@ -280,8 +279,8 @@ class ResumeBuildResult(Base):
     __tablename__ = "resume_build_results"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     resume_docx_status = Column(String(20), default="pending", nullable=False)
     resume_pdf_status = Column(String(20), default="pending", nullable=False)

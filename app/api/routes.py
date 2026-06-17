@@ -63,7 +63,7 @@ from app.models.database import (
     ValidJobUserApplication,
     ResumeBuildResult,
 )
-from sqlalchemy import select, func, update as sa_update, nullslast, text
+from sqlalchemy import delete as sa_delete, select, func, update as sa_update, nullslast, text
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -125,29 +125,11 @@ async def _purge_job_cascade(session, job_id: str) -> bool:
 
     extraction_id = job.extraction_id
 
-    match_rows = await session.execute(
-        select(JobMatchResult).where(JobMatchResult.job_id == job_id)
-    )
-    for row in match_rows.scalars().all():
-        await session.delete(row)
-
-    progress_rows = await session.execute(
-        select(JobMatchInProgress).where(JobMatchInProgress.job_id == job_id)
-    )
-    for row in progress_rows.scalars().all():
-        await session.delete(row)
-
-    app_rows = await session.execute(
-        select(ValidJobUserApplication).where(ValidJobUserApplication.job_id == job_id)
-    )
-    for row in app_rows.scalars().all():
-        await session.delete(row)
-
-    ujs_rows = await session.execute(
-        select(UserJobStatus).where(UserJobStatus.job_id == job_id)
-    )
-    for row in ujs_rows.scalars().all():
-        await session.delete(row)
+    await session.execute(sa_delete(JobMatchResult).where(JobMatchResult.job_id == job_id))
+    await session.execute(sa_delete(JobMatchInProgress).where(JobMatchInProgress.job_id == job_id))
+    await session.execute(sa_delete(ValidJobUserApplication).where(ValidJobUserApplication.job_id == job_id))
+    await session.execute(sa_delete(UserJobStatus).where(UserJobStatus.job_id == job_id))
+    await session.execute(sa_delete(ResumeBuildResult).where(ResumeBuildResult.job_id == job_id))
 
     await session.delete(job)
 
@@ -159,12 +141,7 @@ async def _purge_job_cascade(session, job_id: str) -> bool:
             ).limit(1)
         )
         if other_ref.scalar_one_or_none() is None:
-            extraction_result = await session.execute(
-                select(JobExtraction).where(JobExtraction.id == extraction_id)
-            )
-            extraction = extraction_result.scalar_one_or_none()
-            if extraction:
-                await session.delete(extraction)
+            await session.execute(sa_delete(JobExtraction).where(JobExtraction.id == extraction_id))
     return True
 
 
@@ -694,8 +671,6 @@ async def enqueue_extraction(
             return
         except Exception as e:
             logger.warning("extraction_redis_enqueue_failed", extraction_id=extraction_id, error=str(e))
-        finally:
-            await pool.close()
 
     if background_tasks:
         background_tasks.add_task(process_extraction_sync, extraction_id, url, user_id)
@@ -734,8 +709,6 @@ async def enqueue_job_match_analysis(
             return
         except Exception as e:
             logger.warning("job_match_redis_enqueue_failed", job_id=job_id, error=str(e))
-        finally:
-            await pool.close()
 
     if background_tasks:
         from app.services.job_match_orchestrator import run_job_match_analysis
@@ -796,7 +769,7 @@ async def health_check() -> HealthResponse:
         pool = await try_get_extraction_pool()
         if pool:
             redis_connected = True
-            await pool.close()
+            await pool.ping()
     except Exception:
         pass
 
@@ -1419,7 +1392,6 @@ async def get_dashboard_jobs(
                     title=job.title,
                     company=job.company,
                     location=job.location,
-                    description=job.description,
                     posted_date=job.posted_date,
                     experience_level=job.experience_level,
                     industry=job.industry,
@@ -1516,7 +1488,6 @@ async def get_valid_jobs(
                 title=job.title,
                 company=job.company,
                 location=job.location,
-                description=job.description,
                 posted_date=job.posted_date,
                 experience_level=job.experience_level,
                 industry=job.industry,
@@ -2062,33 +2033,30 @@ async def rerun_job_match_batch(
     pool = await try_get_analysis_pool()
     if pool:
         redis_failed: list[str] = []
-        try:
-            for jid in enqueued_ids:
-                try:
-                    await pool.enqueue_job("analyze_job_match", jid, user_id)
-                except Exception as e:
-                    logger.warning(
-                        "job_match_rerun_redis_enqueue_failed",
-                        job_id=jid,
-                        error=str(e),
-                    )
-                    redis_failed.append(jid)
-            if not redis_failed:
-                logger.info(
-                    "job_match_rerun_batch_redis",
-                    user_id=user_id,
-                    count=len(enqueued_ids),
-                    skipped=len(skipped),
+        for jid in enqueued_ids:
+            try:
+                await pool.enqueue_job("analyze_job_match", jid, user_id)
+            except Exception as e:
+                logger.warning(
+                    "job_match_rerun_redis_enqueue_failed",
+                    job_id=jid,
+                    error=str(e),
                 )
-                return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
-            logger.warning(
-                "job_match_rerun_batch_redis_partial",
+                redis_failed.append(jid)
+        if not redis_failed:
+            logger.info(
+                "job_match_rerun_batch_redis",
                 user_id=user_id,
-                redis_failed=len(redis_failed),
+                count=len(enqueued_ids),
+                skipped=len(skipped),
             )
-            ids_for_in_process = redis_failed
-        finally:
-            await pool.close()
+            return {"status": "queued", "enqueued": len(enqueued_ids), "enqueued_ids": enqueued_ids, "skipped": skipped}
+        logger.warning(
+            "job_match_rerun_batch_redis_partial",
+            user_id=user_id,
+            redis_failed=len(redis_failed),
+        )
+        ids_for_in_process = redis_failed
 
     if background_tasks:
         background_tasks.add_task(_fallback_match_batch_parallel, user_id, ids_for_in_process)
@@ -2268,34 +2236,40 @@ async def get_duplicated_jobs(
 async def get_invalid_job_counts(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Counts for duplicates modal tabs."""
-    from app.services.job_exclusion_types import sql_filter_for_invalid_category
+    """Counts for duplicates modal tabs — single query with conditional aggregation."""
+    from app.services.job_exclusion_types import (
+        BELOW_MIN_SCORE_EXCLUSION,
+        EXTRACTION_FAILED_EXCLUSION,
+        NON_US_LOCATION_EXCLUSION,
+        _EXCLUDED_FROM_DUPLICATES_TAB,
+    )
 
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
     async with get_session() as session:
-        base = (
-            select(func.count())
+        et = UserJobStatus.exclusion_type
+        row = (await session.execute(
+            select(
+                func.count().filter(et == BELOW_MIN_SCORE_EXCLUSION).label("low_score"),
+                func.count().filter(et == EXTRACTION_FAILED_EXCLUSION).label("extraction_failed"),
+                func.count().filter(et == NON_US_LOCATION_EXCLUSION).label("non_us"),
+                func.count().filter(
+                    (et.is_(None)) | (et.notin_(list(_EXCLUDED_FROM_DUPLICATES_TAB)))
+                ).label("duplicates"),
+            )
             .select_from(UserJobStatus)
             .where(
                 UserJobStatus.user_id == user_id,
                 UserJobStatus.status == "duplicated",
             )
-        )
-        low_score = (await session.execute(
-            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "low_score"))
-        )).scalar_one()
-        extraction_failed = (await session.execute(
-            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "extraction_failed"))
-        )).scalar_one()
-        non_us = (await session.execute(
-            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "non_us"))
-        )).scalar_one()
-        duplicates = (await session.execute(
-            base.where(sql_filter_for_invalid_category(UserJobStatus.exclusion_type, "duplicates"))
-        )).scalar_one()
+        )).one()
+
+        low_score = row.low_score
+        extraction_failed = row.extraction_failed
+        non_us = row.non_us
+        duplicates = row.duplicates
 
     return {
         "duplicates": duplicates,
@@ -3419,6 +3393,23 @@ async def report_invalid_as_duplicate(
         return {"success": True}
 
 
+@router.post("/jobs/valid/delete/batch", dependencies=[Depends(get_current_user)])
+async def batch_delete_valid_jobs(body: dict) -> dict:
+    """Delete multiple valid jobs in a single request."""
+    job_ids = body.get("job_ids", [])
+    if not job_ids:
+        return {"deleted": 0}
+    deleted = 0
+    async with get_session() as session:
+        for jid in job_ids:
+            ok = await _purge_job_cascade(session, jid)
+            if ok:
+                deleted += 1
+        await session.commit()
+    logger.info("batch_delete_valid_jobs", deleted=deleted, requested=len(job_ids))
+    return {"deleted": deleted}
+
+
 @router.delete("/jobs/valid/{job_id}", dependencies=[Depends(get_current_user)])
 async def delete_valid_job(job_id: str) -> dict:
     async with get_session() as session:
@@ -3606,7 +3597,6 @@ async def trigger_resume_build(
         from app.tasks.worker import get_resume_build_pool
         pool = await get_resume_build_pool()
         await pool.enqueue_job("build_resume_task", job_id, user_id)
-        await pool.close()
         return {"success": True, "message": "Resume build enqueued"}
 
     from app.services.job_match_orchestrator import enqueue_tailored_content_generation

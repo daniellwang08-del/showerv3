@@ -27,7 +27,7 @@ import json
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
+
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 
 try:
     from langfuse import observe
@@ -250,7 +250,7 @@ async def interpret_scraper_search_prompt(
     user_id: str | None = None,
 ) -> ScraperJobSearchQuerySpec:
     """Convert a natural language prompt into a structured ScraperJobSearchQuerySpec."""
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     settings = get_settings()
 
     user_msg = f'User search request:\n"""{prompt.strip()}"""\n\nRespond with the JSON object only.'

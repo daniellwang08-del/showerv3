@@ -1,5 +1,6 @@
 """
-Multi-provider async LLM client with automatic Anthropic fallback.
+Multi-provider async LLM client with automatic Anthropic fallback
+and circuit breaker.
 
 The public surface intentionally mimics the subset of OpenAI's Chat
 Completions API used across the codebase, so existing call sites do not need
@@ -21,6 +22,13 @@ API key is configured, the same request is transparently retried against
 Anthropic Claude with equivalent semantics (system prompt extraction,
 JSON-object prefill, etc.).
 
+A circuit breaker tracks consecutive OpenAI failures.  After
+``LLM_CIRCUIT_BREAKER_THRESHOLD`` (default 3) consecutive errors the breaker
+trips OPEN and subsequent requests skip OpenAI entirely for
+``LLM_CIRCUIT_BREAKER_COOLDOWN_SECONDS`` (default 300 s / 5 min), going
+straight to Anthropic without wasting a round-trip on a known-bad endpoint.
+After the cooldown, one probe request tests whether OpenAI has recovered.
+
 The wrapper preserves Langfuse OpenAI tracing when available — only the
 fallback branch bypasses Langfuse (Anthropic is not auto-instrumented here).
 """
@@ -29,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json as json_lib
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -84,6 +93,113 @@ OPENAI_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
     _openai_pkg.APITimeoutError,
     _openai_pkg.InternalServerError,
 )
+
+
+# ── Circuit breaker ───────────────────────────────────────────────────────
+#
+# Three-state pattern: CLOSED → OPEN → HALF_OPEN → CLOSED.
+#
+# CLOSED  – normal operation, every request tries OpenAI first.
+# OPEN    – OpenAI is known-bad; skip it and go straight to Anthropic.
+#           After a configurable cooldown, transition to HALF_OPEN.
+# HALF_OPEN – allow ONE probe request to OpenAI.
+#           If it succeeds → CLOSED (recovered).
+#           If it fails   → OPEN   (fresh cooldown).
+#
+# Each LLMFallbackClient instance owns its own _CircuitBreaker so that
+# different API-key combos track failures independently.
+
+
+class _CircuitBreaker:
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+    def __init__(self, threshold: int, cooldown: float) -> None:
+        self._threshold = max(1, threshold)
+        self._cooldown = max(0.0, cooldown)
+        self._consecutive_failures = 0
+        self._state = self.CLOSED
+        self._opened_at: float = 0.0
+        self._last_error_type: str = ""
+        # Concurrency guard: the arq worker runs up to max_jobs concurrent
+        # tasks in one asyncio event loop.  Without a guard, all concurrent
+        # tasks pass ``should_attempt_primary()`` before any of them calls
+        # ``record_failure()``, so they ALL hit OpenAI even though the very
+        # first response would have tripped the breaker.
+        #
+        # ``_probe_in_flight`` ensures that when the breaker transitions
+        # from OPEN → HALF_OPEN, only ONE task gets the probe slot.  All
+        # others see OPEN and skip directly to Anthropic.
+        self._probe_in_flight: bool = False
+
+    @property
+    def state(self) -> str:
+        if self._state == self.OPEN and self._cooldown_elapsed:
+            self._state = self.HALF_OPEN
+        return self._state
+
+    @property
+    def _cooldown_elapsed(self) -> bool:
+        return time.monotonic() - self._opened_at >= self._cooldown
+
+    @property
+    def cooldown_remaining(self) -> float:
+        if self._state != self.OPEN:
+            return 0.0
+        return max(0.0, self._cooldown - (time.monotonic() - self._opened_at))
+
+    def should_attempt_primary(self) -> bool:
+        """Return True when a request should be sent to OpenAI.
+
+        In HALF_OPEN state, only the first caller gets ``True`` (the probe).
+        Subsequent concurrent callers see ``False`` until the probe resolves.
+        """
+        s = self.state
+        if s == self.CLOSED:
+            return True
+        if s == self.HALF_OPEN:
+            if self._probe_in_flight:
+                return False
+            self._probe_in_flight = True
+            return True
+        return False
+
+    def record_success(self) -> None:
+        prev = self._state
+        self._probe_in_flight = False
+        if prev != self.CLOSED:
+            logger.info(
+                "llm_circuit_breaker_recovered",
+                previous_state=prev,
+                total_failures_before_recovery=self._consecutive_failures,
+            )
+        self._consecutive_failures = 0
+        self._state = self.CLOSED
+        self._last_error_type = ""
+
+    def record_failure(self, error: Exception) -> None:
+        self._consecutive_failures += 1
+        self._last_error_type = type(error).__name__
+        if self._consecutive_failures >= self._threshold:
+            was_closed = self._state == self.CLOSED
+            self._state = self.OPEN
+            self._opened_at = time.monotonic()
+            self._probe_in_flight = False
+            if was_closed:
+                logger.warning(
+                    "llm_circuit_breaker_tripped",
+                    consecutive_failures=self._consecutive_failures,
+                    cooldown_seconds=self._cooldown,
+                    last_error_type=self._last_error_type,
+                )
+            else:
+                logger.info(
+                    "llm_circuit_breaker_probe_failed",
+                    consecutive_failures=self._consecutive_failures,
+                    cooldown_seconds=self._cooldown,
+                    last_error_type=self._last_error_type,
+                )
 
 
 # ── OpenAI-shape response object (so call sites can read .choices[0].message.content) ─
@@ -371,6 +487,12 @@ class LLMFallbackClient:
     Exposes ``client.chat.completions.create(**openai_shape_kwargs)``. On a
     recoverable OpenAI error and when Anthropic is configured, the same
     request is retried against Anthropic with equivalent semantics.
+
+    A circuit breaker prevents wasting time on a known-bad OpenAI endpoint.
+    After ``threshold`` consecutive failures the breaker trips OPEN and all
+    requests skip OpenAI for ``cooldown`` seconds, going directly to
+    Anthropic.  After the cooldown a single probe request tests whether
+    OpenAI has recovered.
     """
 
     def __init__(
@@ -381,6 +503,11 @@ class LLMFallbackClient:
         self._openai = openai_client
         self._anthropic = anthropic_client
         self.chat = _ChatNamespace(self)
+        settings = get_settings()
+        self._cb = _CircuitBreaker(
+            threshold=settings.llm_circuit_breaker_threshold,
+            cooldown=settings.llm_circuit_breaker_cooldown_seconds,
+        )
 
     @property
     def has_primary(self) -> bool:
@@ -394,16 +521,38 @@ class LLMFallbackClient:
         settings = get_settings()
         primary_error: Exception | None = None
 
-        if self._openai is not None:
+        # Decide whether to attempt OpenAI.  When the circuit breaker is
+        # OPEN we skip OpenAI entirely — unless there is no fallback, in
+        # which case trying a possibly-broken OpenAI is better than giving
+        # up immediately.
+        skip_primary = (
+            self._openai is not None
+            and self.has_fallback
+            and not self._cb.should_attempt_primary()
+        )
+
+        if skip_primary:
+            logger.debug(
+                "llm_openai_skipped_circuit_open",
+                circuit_state=self._cb.state,
+                cooldown_remaining=round(self._cb.cooldown_remaining, 1),
+            )
+
+        if self._openai is not None and not skip_primary:
             try:
-                return await self._openai.chat.completions.create(**kwargs)
+                result = await self._openai.chat.completions.create(**kwargs)
+                self._cb.record_success()
+                return result
             except OPENAI_FALLBACK_ERRORS as e:
                 primary_error = e
+                self._cb.record_failure(e)
                 logger.warning(
                     "llm_openai_failed_will_try_fallback",
                     error_type=type(e).__name__,
                     error=str(e)[:300],
                     fallback_available=self.has_fallback,
+                    circuit_state=self._cb.state,
+                    consecutive_failures=self._cb._consecutive_failures,
                 )
 
         if not self.has_fallback:
@@ -417,8 +566,6 @@ class LLMFallbackClient:
         max_tokens = int(kwargs.get("max_tokens") or settings.anthropic_max_tokens)
         temperature = kwargs.get("temperature")
         response_format = kwargs.get("response_format")
-        # Caller-supplied model names like "gpt-4.1" can't be honoured by
-        # Anthropic — always use the configured ANTHROPIC_MODEL.
         anthropic_model = settings.anthropic_model
 
         try:
@@ -435,6 +582,7 @@ class LLMFallbackClient:
                 provider="anthropic",
                 model=anthropic_model,
                 openai_error=type(primary_error).__name__ if primary_error else None,
+                openai_skipped=skip_primary,
             )
             return result
         except Exception as fallback_exc:
@@ -446,12 +594,6 @@ class LLMFallbackClient:
                 if primary_error
                 else None,
             )
-            # Surface a combined error so the operator can see both why the
-            # primary failed AND why the fallback failed. We previously
-            # re-raised only the OpenAI error, which made it look like the
-            # Anthropic fallback was not running at all (it WAS running, it
-            # just hit a separate issue — usually a malformed JSON or an
-            # invalid Anthropic key).
             if primary_error is not None:
                 combined = AIParsingError(
                     "Both LLM providers failed. "

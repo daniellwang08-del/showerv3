@@ -864,7 +864,6 @@ async def trigger_sync(body: SyncRequest, user=Depends(_get_current_user)):
             posted_until=body.posted_until.isoformat() if body.posted_until else None,
             spider_names=body.spider_names,
         )
-        await pool.close()
 
         mode_label = "date-range" if body.sync_mode == "date_backfill" else "incremental"
         platform_count = len(plan)

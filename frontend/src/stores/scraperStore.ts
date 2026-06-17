@@ -184,7 +184,13 @@ interface ScraperState {
   bgRefreshJobs: () => Promise<void>;
   /** Reload dashboard from page 1 after manual job submit. */
   refreshAfterJobSubmit: () => Promise<void>;
-  loadStats: () => Promise<void>;
+  /**
+   * Refresh dashboard stats.
+   * Pass `{ silent: true }` for background refreshes (pipeline/poll events) so the
+   * stats bar never flips into its skeleton state — which would unmount/remount
+   * every tile and replay the count-up animation from 0 on each job-status change.
+   */
+  loadStats: (opts?: { silent?: boolean }) => Promise<void>;
   loadSpiders: () => Promise<void>;
   checkSyncStatus: () => Promise<void>;
   handleSyncWsEvent: (event: {
@@ -308,8 +314,10 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     void get().loadStats();
   },
 
-  loadStats: async () => {
-    set({ statsLoading: true });
+  loadStats: async (opts) => {
+    // Only show the skeleton on the very first load. Background refreshes keep the
+    // existing tiles mounted so unchanged numbers don't flash / re-animate.
+    if (!opts?.silent && get().stats === null) set({ statsLoading: true });
     try {
       const stats = await fetchScraperStats();
       set({ stats, statsLoading: false });

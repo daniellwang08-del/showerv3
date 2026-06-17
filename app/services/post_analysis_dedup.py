@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 
 from app.models.database import Job, JobMatchResult, ValidJobUserApplication, UserJobStatus, JobExtraction
 from app.services.job_exclusion_types import (
@@ -161,12 +161,20 @@ async def _list_active_peer_jobs(
     job_id: str,
     employer_key: str,
     recycle_days: int,
+    company_name: str | None = None,
+    domain: str | None = None,
 ) -> list[Job]:
-    """Active jobs for this user at the same employer within the recycle window."""
+    """Active jobs for this user at the same employer within the recycle window.
+
+    Uses SQL-level company/domain pre-filtering so the database returns only
+    plausible candidates instead of every active job for the user.
+    """
     if not employer_key:
         return []
 
-    result = await session.execute(
+    cutoff = _utcnow() - timedelta(days=recycle_days)
+
+    stmt = (
         select(Job)
         .join(
             UserJobStatus,
@@ -179,12 +187,24 @@ async def _list_active_peer_jobs(
         .where(
             Job.status == "active",
             Job.id != job_id,
+            func.coalesce(Job.posted_date, Job.created_at) >= cutoff,
         )
     )
+
+    # Pre-filter by company name or domain at the SQL level so we don't load
+    # every active job into Python.  The exact employer_key match is still
+    # verified in Python since it involves URL-slug parsing that can't be
+    # expressed in SQL easily.
+    if company_name:
+        stmt = stmt.where(func.lower(Job.company) == company_name.lower())
+    elif domain:
+        stmt = stmt.where(Job.domain == domain)
+
+    result = await session.execute(stmt)
     return [
         job
         for job in result.scalars().all()
-        if resolve_employer_key(job) == employer_key and _within_recycle_window(job, recycle_days)
+        if resolve_employer_key(job) == employer_key
     ]
 
 
@@ -193,14 +213,21 @@ async def run_post_analysis_dedup(
     user_id: str,
     match_data: dict,
     extraction_id: str | None,
-    recycle_days: int = 60,
-    min_match_score: int = 0,
+    recycle_days: int | None = None,
+    min_match_score: int | None = None,
 ) -> dict:
     """Returns {"action": "saved_active"|"saved_duplicated"|"skipped", ...}"""
 
     overall_score = match_data.get("overall_score", 0)
 
     async with get_session() as session:
+        if recycle_days is None or min_match_score is None:
+            from app.storage.user_repository import UserRepository
+            user_repo = UserRepository(session)
+            if recycle_days is None:
+                recycle_days = await user_repo.get_dedup_recycle_days(user_id)
+            if min_match_score is None:
+                min_match_score = await user_repo.get_effective_min_match_score(user_id)
         row = await session.execute(select(Job).where(Job.id == job_id))
         current_job = row.scalar_one_or_none()
         if not current_job:
@@ -312,6 +339,8 @@ async def run_post_analysis_dedup(
             job_id=job_id,
             employer_key=employer_key,
             recycle_days=recycle_days,
+            company_name=current_job.company,
+            domain=current_job.domain,
         )
 
         if not same_company_jobs:

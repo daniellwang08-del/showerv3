@@ -10,11 +10,11 @@ import re
 from io import BytesIO
 from typing import Any
 
-from openai import AsyncOpenAI
+
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 
 try:
     from langfuse import observe
@@ -402,7 +402,7 @@ async def _call_openai_resume(
     image_base64_pngs: list[str] | None,
     user_id: str | None = None,
 ) -> ResumeExtractedDraft:
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     settings = get_settings()
 
     sys_msg = (

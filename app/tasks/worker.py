@@ -77,7 +77,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
 
     pending_match_progress: tuple[str, str] | None = None
     try:
-        service = ExtractionService()
+        service: ExtractionService = ctx.get("extraction_service") or ExtractionService()
         result = await service.process_job(job_id, url)
 
         if result.get("status") == "extracted":
@@ -115,7 +115,6 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                                 user_id,
                                 job_id,
                             )
-                            await pool.close()
                             logger.info("job_match_enqueued", valid_job_id=job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
                             pending_match_progress = None
                         except Exception as enq_err:
@@ -199,7 +198,6 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
             pool = await get_save_pool()
             await pool.enqueue_job("save_analyzed_job", valid_job_id, user_id, extraction_id, result)
-            await pool.close()
         return result
     except asyncio.CancelledError:
         await clear_job_match_progress(valid_job_id, user_id)
@@ -221,7 +219,6 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
     jobs after 10 lock-busy retries).
     """
     from app.services.post_analysis_dedup import run_post_analysis_dedup
-    from app.storage.user_repository import UserRepository
 
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="save_analyzed_job", job_id=job_id, user_id=user_id)
@@ -254,15 +251,8 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
             return None
 
     try:
-        async with get_session() as session:
-            user_repo = UserRepository(session)
-            recycle_days = await user_repo.get_dedup_recycle_days(user_id)
-            min_match_score = await user_repo.get_effective_min_match_score(user_id)
-
         dedup_result = await run_post_analysis_dedup(
             job_id, user_id, match_data, extraction_id,
-            recycle_days=recycle_days,
-            min_match_score=min_match_score,
         )
 
         action = dedup_result.get("action", "saved_active")
@@ -290,17 +280,8 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
             try:
                 pool = await get_analysis_pool()
                 await pool.enqueue_job("generate_tailored_content", job_id, user_id, extraction_id)
-                await pool.close()
             except Exception as e:
                 logger.warning("tailored_content_enqueue_from_save_failed", job_id=job_id, error=str(e))
-
-        # Google Sheets auto-post disabled for now
-        # if action != "skipped" and match_data.get("overall_score") is not None:
-        #     try:
-        #         from app.services.google_sheets_service import auto_post_if_eligible
-        #         await auto_post_if_eligible(user_id, job_id, int(match_data["overall_score"]))
-        #     except Exception as e:
-        #         logger.warning("google_sheets_auto_post_from_save_failed", job_id=job_id, error=str(e))
 
         logger.info("worker_save_analyzed_job_completed", job_id=job_id, action=action)
         return dedup_result
@@ -647,6 +628,13 @@ async def _flush_langfuse(ctx: dict) -> None:
         pass
 
 
+async def _extraction_worker_startup(ctx: dict) -> None:
+    """Pre-create a singleton ExtractionService for reuse across jobs."""
+    ctx["extraction_service"] = ExtractionService()
+    from app.services.extraction_cache import init_redis_pool
+    await init_redis_pool()
+
+
 class ExtractionWorkerSettings:
     """arq settings for the extraction pipeline (I/O-heavy: HTTP + Playwright)."""
     functions = [extract_job]
@@ -654,7 +642,13 @@ class ExtractionWorkerSettings:
     queue_name = EXTRACTION_QUEUE
     job_timeout = 300
     max_tries = 1
+    on_startup = _extraction_worker_startup
     on_shutdown = _flush_langfuse
+
+
+async def _analysis_worker_startup(ctx: dict) -> None:
+    from app.services.extraction_cache import init_redis_pool
+    await init_redis_pool()
 
 
 class AnalysisWorkerSettings:
@@ -665,6 +659,7 @@ class AnalysisWorkerSettings:
     job_timeout = 360
     max_jobs = get_settings().analysis_worker_max_jobs
     max_tries = 1
+    on_startup = _analysis_worker_startup
     on_shutdown = _flush_langfuse
 
 
@@ -688,32 +683,55 @@ class ResumeBuildWorkerSettings:
     on_shutdown = _flush_langfuse
 
 
+# ── Shared long-lived arq pools (one per queue, lazily created) ──────────────
+_shared_pools: dict[str, ArqRedis] = {}
+
+
+async def _get_shared_pool(queue: str) -> ArqRedis:
+    """Return a long-lived ArqRedis pool for *queue*, creating it on first use.
+
+    Callers must NOT close the returned pool — it is shared across the process.
+    """
+    pool = _shared_pools.get(queue)
+    if pool is not None:
+        try:
+            await pool.ping()
+            return pool
+        except Exception:
+            _shared_pools.pop(queue, None)
+    pool = await create_pool(_redis_settings(), default_queue_name=queue)
+    _shared_pools[queue] = pool
+    return pool
+
+
+async def close_shared_pools() -> None:
+    """Gracefully close all shared arq pools (call at shutdown)."""
+    for q, pool in list(_shared_pools.items()):
+        try:
+            await pool.close()
+        except Exception:
+            pass
+    _shared_pools.clear()
+
+
 async def get_extraction_pool() -> ArqRedis:
-    return await create_pool(
-        _redis_settings(),
-        default_queue_name=EXTRACTION_QUEUE,
-    )
+    return await _get_shared_pool(EXTRACTION_QUEUE)
 
 
 async def get_analysis_pool() -> ArqRedis:
-    return await create_pool(
-        _redis_settings(),
-        default_queue_name=ANALYSIS_QUEUE,
-    )
+    return await _get_shared_pool(ANALYSIS_QUEUE)
 
 
 async def get_save_pool() -> ArqRedis:
-    return await create_pool(
-        _redis_settings(),
-        default_queue_name=SAVE_QUEUE,
-    )
+    return await _get_shared_pool(SAVE_QUEUE)
 
 
 async def get_resume_build_pool() -> ArqRedis:
-    return await create_pool(
-        _redis_settings(),
-        default_queue_name=RESUME_BUILD_QUEUE,
-    )
+    return await _get_shared_pool(RESUME_BUILD_QUEUE)
+
+
+async def get_scraper_pool() -> ArqRedis:
+    return await _get_shared_pool(SCRAPER_QUEUE)
 
 
 class ScraperWorkerSettings:
@@ -723,10 +741,3 @@ class ScraperWorkerSettings:
     queue_name = SCRAPER_QUEUE
     job_timeout = 3600
     max_tries = 1
-
-
-async def get_scraper_pool() -> ArqRedis:
-    return await create_pool(
-        _redis_settings(),
-        default_queue_name=SCRAPER_QUEUE,
-    )

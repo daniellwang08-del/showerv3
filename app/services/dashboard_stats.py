@@ -58,89 +58,47 @@ async def fetch_dashboard_stats(
     join = _dashboard_join(user_id)
     visible = _visible_job_clause(user_id)
     added_at = _job_added_at_expr()
+    is_remote = _is_remote_expr()
 
-    total_jobs = (
+    # Single query with conditional aggregation instead of 7 separate COUNTs
+    ext_join = join.outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
+    rb_join = ext_join.outerjoin(
+        ResumeBuildResult,
+        and_(
+            ResumeBuildResult.job_id == Job.id,
+            ResumeBuildResult.user_id == user_id,
+        ),
+    )
+
+    stats_row = (
         await session.execute(
-            select(func.count())
-            .select_from(join)
+            select(
+                func.count().label("total_jobs"),
+                func.count().filter(is_remote == True).label("total_remote"),  # noqa: E712
+                func.count().filter(
+                    and_(added_at >= day_start, added_at < day_end)
+                ).label("today_added"),
+                func.count().filter(
+                    and_(added_at >= day_start, added_at < day_end, is_remote == True)  # noqa: E712
+                ).label("today_remote"),
+                func.count().filter(
+                    and_(
+                        Job.posted_date.is_not(None),
+                        Job.posted_date >= day_start,
+                        Job.posted_date < day_end,
+                    )
+                ).label("today_posted"),
+                func.count().filter(
+                    JobExtraction.status == ExtractionStatus.COMPLETED
+                ).label("extracted_jobs"),
+                func.count().filter(
+                    ResumeBuildResult.resume_docx_status == "completed"
+                ).label("ready_jobs"),
+            )
+            .select_from(rb_join)
             .where(visible)
         )
-    ).scalar() or 0
-
-    total_remote = (
-        await session.execute(
-            select(func.count())
-            .select_from(join)
-            .where(visible, _is_remote_expr() == True)  # noqa: E712
-        )
-    ).scalar() or 0
-
-    today_added = (
-        await session.execute(
-            select(func.count())
-            .select_from(join)
-            .where(
-                visible,
-                added_at >= day_start,
-                added_at < day_end,
-            )
-        )
-    ).scalar() or 0
-
-    today_remote = (
-        await session.execute(
-            select(func.count())
-            .select_from(join)
-            .where(
-                visible,
-                added_at >= day_start,
-                added_at < day_end,
-                _is_remote_expr() == True,  # noqa: E712
-            )
-        )
-    ).scalar() or 0
-
-    today_posted = (
-        await session.execute(
-            select(func.count())
-            .select_from(join)
-            .where(
-                visible,
-                Job.posted_date.is_not(None),
-                Job.posted_date >= day_start,
-                Job.posted_date < day_end,
-            )
-        )
-    ).scalar() or 0
-
-    extracted_jobs = (
-        await session.execute(
-            select(func.count())
-            .select_from(
-                join.outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
-            )
-            .where(visible, JobExtraction.status == ExtractionStatus.COMPLETED)
-        )
-    ).scalar() or 0
-
-    ready_jobs = (
-        await session.execute(
-            select(func.count())
-            .select_from(
-                join.outerjoin(
-                    ResumeBuildResult,
-                    and_(
-                        ResumeBuildResult.job_id == Job.id,
-                        ResumeBuildResult.user_id == user_id,
-                    ),
-                )
-            )
-            .where(
-                visible,
-                ResumeBuildResult.resume_docx_status == "completed",
-            )
-        )
-    ).scalar() or 0
+    ).one()
 
     source_expr = _job_source_expr()
     source_rows = (
@@ -176,13 +134,13 @@ async def fetch_dashboard_stats(
     recent_runs = [dict(row._mapping) for row in runs_result]
 
     return {
-        "total_jobs": total_jobs,
-        "total_remote": total_remote,
-        "today_scraped": today_added,
-        "today_remote": today_remote,
-        "today_posted": today_posted,
-        "extracted_jobs": extracted_jobs,
-        "ready_jobs": ready_jobs,
+        "total_jobs": stats_row.total_jobs or 0,
+        "total_remote": stats_row.total_remote or 0,
+        "today_scraped": stats_row.today_added or 0,
+        "today_remote": stats_row.today_remote or 0,
+        "today_posted": stats_row.today_posted or 0,
+        "extracted_jobs": stats_row.extracted_jobs or 0,
+        "ready_jobs": stats_row.ready_jobs or 0,
         "sources": sources,
         "recent_runs": recent_runs,
     }

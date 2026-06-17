@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import {
   Layers,
   Sun,
@@ -7,6 +7,7 @@ import {
   Sparkles,
   FileText,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { ScraperStats } from '../../types/scraper';
 
 // ---------------------------------------------------------------------------
@@ -30,17 +31,24 @@ function fmt(n: number): string {
 // ---------------------------------------------------------------------------
 
 function useAnimatedNumber(target: number, duration = 700): number {
-  const [value, setValue] = useState(0);
-  const rafRef = useRef<number>(0);
   const safeTarget = safe(target);
+  const [value, setValue] = useState(0);
+  // Mirror the current displayed value so each animation tweens FROM where we are
+  // now (previous value) TO the new target — never resetting to 0. This means a
+  // single stat changing only nudges that one number; unchanged numbers stay put.
+  const valueRef = useRef(0);
+  const rafRef = useRef<number>(0);
 
   useEffect(() => {
-    if (safeTarget === 0) { setValue(0); return; }
+    const from = valueRef.current;
+    if (from === safeTarget) return;
     const start = performance.now();
     const tick = (now: number) => {
       const t = Math.min((now - start) / duration, 1);
       const eased = 1 - Math.pow(1 - t, 3);
-      setValue(safe(Math.round(eased * safeTarget)));
+      const next = safe(Math.round(from + (safeTarget - from) * eased));
+      valueRef.current = next;
+      setValue(next);
       if (t < 1) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -102,8 +110,10 @@ function relativeShort(dateStr: string | null): string {
 interface UnifiedTileProps {
   /** Gradient classes for the avatar square + top accent line */
   gradient: string;
-  /** Content rendered inside the avatar square */
-  avatar: React.ReactNode;
+  /** Abbreviation text rendered inside the avatar square (platform tiles) */
+  abbr?: string;
+  /** Lucide icon rendered inside the avatar square (metric tiles) */
+  icon?: LucideIcon;
   /** Main numeric value */
   value: number;
   /** Short label below the number */
@@ -118,9 +128,13 @@ interface UnifiedTileProps {
   title?: string;
 }
 
-function UnifiedTile({
+// Memoised: with only primitive props (no inline JSX nodes), a tile re-renders
+// solely when its OWN data changes — so a status update that bumps one stat does
+// not re-render the other tiles.
+const UnifiedTile = memo(function UnifiedTile({
   gradient,
-  avatar,
+  abbr,
+  icon: Icon,
   value,
   label,
   sub,
@@ -140,7 +154,7 @@ function UnifiedTile({
 
       {/* Avatar square */}
       <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${gradient} text-white shadow-sm`}>
-        {avatar}
+        {Icon ? <Icon size={17} strokeWidth={2.5} /> : <span className="text-[11px] font-black">{abbr}</span>}
       </div>
 
       {/* Value + label */}
@@ -162,14 +176,14 @@ function UnifiedTile({
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Hero tile — center column, visibly larger
 // ---------------------------------------------------------------------------
 
 interface HeroTileProps {
-  icon: React.ReactNode;
+  icon: LucideIcon;
   value: number;
   label: string;
   sub?: string;
@@ -178,7 +192,7 @@ interface HeroTileProps {
   delay?: number;
 }
 
-function HeroTile({ icon, value, label, sub, gradient, textColor, delay = 0 }: HeroTileProps) {
+const HeroTile = memo(function HeroTile({ icon: Icon, value, label, sub, gradient, textColor, delay = 0 }: HeroTileProps) {
   return (
     <div
       className="relative flex h-[132px] w-36 flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-white/70 bg-white/90 px-4 shadow-md backdrop-blur-sm"
@@ -190,7 +204,7 @@ function HeroTile({ icon, value, label, sub, gradient, textColor, delay = 0 }: H
       <div className={`absolute top-0 left-5 right-5 h-0.5 rounded-full bg-gradient-to-r ${gradient}`} />
 
       <div className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br ${gradient} text-white shadow-md`}>
-        {icon}
+        <Icon size={21} strokeWidth={2.5} />
       </div>
       <span className={`text-2xl font-black tabular-nums leading-none ${textColor}`}>
         <AnimatedNumber value={value} />
@@ -201,7 +215,7 @@ function HeroTile({ icon, value, label, sub, gradient, textColor, delay = 0 }: H
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Divider
@@ -231,7 +245,7 @@ interface ScraperStatsBarProps {
   loading: boolean;
 }
 
-export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
+export const ScraperStatsBar = memo(function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
 
   if (loading || !stats) {
     return (
@@ -269,7 +283,7 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
             <UnifiedTile
               key={src.source}
               gradient={meta.gradient}
-              avatar={<span className="text-[11px] font-black">{meta.abbr}</span>}
+              abbr={meta.abbr}
               value={src.count}
               label={meta.label}
               textColor="text-slate-700"
@@ -286,7 +300,7 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
       {/* ── CENTER: Hero tiles ────────────────────────────────────────── */}
       <div className="flex shrink-0 items-center gap-8">
         <HeroTile
-          icon={<Sun size={21} strokeWidth={2.5} />}
+          icon={Sun}
           value={safe(stats.today_scraped)}
           label="Today's Jobs"
           sub={stats.today_remote > 0 ? `${safe(stats.today_remote)} remote` : undefined}
@@ -295,7 +309,7 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
           delay={0}
         />
         <HeroTile
-          icon={<Sparkles size={21} strokeWidth={2.5} />}
+          icon={Sparkles}
           value={safe(stats.ready_jobs)}
           label="Ready to Apply"
           sub={totalJobs > 0 ? `of ${fmt(totalJobs)}` : undefined}
@@ -311,7 +325,7 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
       <div className="flex flex-1 flex-wrap items-center justify-end gap-3">
         <UnifiedTile
           gradient="from-blue-500 to-indigo-600"
-          avatar={<Layers size={17} strokeWidth={2.5} />}
+          icon={Layers}
           value={totalJobs}
           label="Total Jobs"
           textColor="text-blue-700"
@@ -319,7 +333,7 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
         />
         <UnifiedTile
           gradient="from-violet-500 to-purple-600"
-          avatar={<Wifi size={17} strokeWidth={2.5} />}
+          icon={Wifi}
           value={safe(stats.total_remote)}
           label="Remote"
           sub={remoteRatio > 0 ? `${remoteRatio}%` : undefined}
@@ -328,7 +342,7 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
         />
         <UnifiedTile
           gradient="from-indigo-500 to-blue-600"
-          avatar={<CheckCircle2 size={17} strokeWidth={2.5} />}
+          icon={CheckCircle2}
           value={safe(stats.extracted_jobs)}
           label="Extracted"
           textColor="text-indigo-700"
@@ -336,7 +350,7 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
         />
         <UnifiedTile
           gradient="from-emerald-400 to-green-500"
-          avatar={<FileText size={17} strokeWidth={2.5} />}
+          icon={FileText}
           value={safe(stats.ready_jobs)}
           label="With Resume"
           textColor="text-emerald-700"
@@ -346,4 +360,4 @@ export function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
 
     </div>
   );
-}
+});

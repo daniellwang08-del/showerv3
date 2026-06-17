@@ -188,7 +188,7 @@ class JobResponse(BaseModel):
     title: str | None
     company: str
     location: str | None
-    description: str | None
+    description: str | None = None
     posted_date: datetime | None
     experience_level: str | None
     industry: str | None
@@ -217,7 +217,7 @@ class DashboardJobResponse(BaseModel):
     title: str | None
     company: str
     location: str | None
-    description: str | None
+    description: str | None = None
     posted_date: datetime | None
     experience_level: str | None
     industry: str | None

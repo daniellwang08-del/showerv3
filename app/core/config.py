@@ -131,6 +131,10 @@ class Settings(BaseSettings):
     # When true, the shared LLM client transparently retries failed OpenAI calls
     # with Anthropic. Disable to require explicit OpenAI-only usage.
     llm_fallback_enabled: bool = True
+    # Circuit breaker: after this many consecutive OpenAI failures, skip OpenAI
+    # entirely and go straight to Anthropic for `llm_circuit_breaker_cooldown_seconds`.
+    llm_circuit_breaker_threshold: int = Field(default=3, ge=1, le=100)
+    llm_circuit_breaker_cooldown_seconds: float = Field(default=300.0, ge=10.0)
 
     langfuse_secret_key: str = Field(default="")
     langfuse_public_key: str = Field(default="")

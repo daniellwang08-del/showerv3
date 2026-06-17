@@ -1,6 +1,7 @@
 import httpx
 import asyncio
 import random
+import time
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -23,6 +24,51 @@ try:
     _ACCEPT_ENCODING = "gzip, deflate, br"
 except ImportError:
     _ACCEPT_ENCODING = "gzip, deflate"
+
+class _TokenBucket:
+    """Simple async token-bucket rate limiter.
+
+    Only sleeps when the rate limit is actually being exceeded, unlike
+    unconditional asyncio.sleep() on every request.
+    """
+
+    def __init__(self, rate: float, burst: int = 1) -> None:
+        self._rate = rate
+        self._burst = burst
+        self._tokens = float(burst)
+        self._last = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last
+            self._tokens = min(self._burst, self._tokens + elapsed * self._rate)
+            self._last = now
+
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return
+
+            wait = (1.0 - self._tokens) / self._rate
+            self._tokens = 0.0
+            self._last = now + wait
+        await asyncio.sleep(wait)
+
+
+_rate_limiter: _TokenBucket | None = None
+
+
+def _get_rate_limiter() -> _TokenBucket:
+    global _rate_limiter
+    if _rate_limiter is None:
+        settings = get_settings()
+        _rate_limiter = _TokenBucket(
+            rate=settings.rate_limit_requests_per_second,
+            burst=max(1, settings.max_concurrent_requests),
+        )
+    return _rate_limiter
+
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
@@ -132,7 +178,7 @@ class HTTPService:
             raise NetworkError("HTTP client not initialized")
 
         async with _semaphore:
-            await asyncio.sleep(1 / self._settings.rate_limit_requests_per_second)
+            await _get_rate_limiter().acquire()
 
             try:
                 headers = get_random_headers()
@@ -360,7 +406,7 @@ class HTTPService:
             raise NetworkError("HTTP client not initialized")
 
         async with _semaphore:
-            await asyncio.sleep(1 / self._settings.rate_limit_requests_per_second)
+            await _get_rate_limiter().acquire()
             req_headers = headers or get_json_headers()
             response = await _client.post(url, json=body, headers=req_headers)
             logger.info(
@@ -377,7 +423,7 @@ class HTTPService:
             raise NetworkError("HTTP client not initialized")
 
         async with _semaphore:
-            await asyncio.sleep(1 / self._settings.rate_limit_requests_per_second)
+            await _get_rate_limiter().acquire()
 
             try:
                 headers = get_json_headers()
@@ -417,7 +463,7 @@ class HTTPService:
             raise NetworkError("HTTP client not initialized")
 
         async with _semaphore:
-            await asyncio.sleep(1 / self._settings.rate_limit_requests_per_second)
+            await _get_rate_limiter().acquire()
 
             headers = get_random_headers()
             response = await _client.get(url, headers=headers)

@@ -9,12 +9,12 @@ import json
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
+
 
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 from app.models.database import ProfileSourceDocument, User
 from app.models.schemas import JobDescriptionSchema
 from app.utils.company_name_utils import company_names_match, normalize_company_name
@@ -239,7 +239,7 @@ async def _call_evidence_extraction(
     company_names: list[str],
     user_id: str | None,
 ) -> list[dict[str, Any]]:
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     settings = get_settings()
     user_msg = (
         f"Target job:\n{job_context}\n\n"

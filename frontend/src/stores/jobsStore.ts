@@ -96,6 +96,8 @@ type JobsState = {
   clearSubmitFeedback: () => void;
 
   refreshLists: (opts?: { showLoading?: boolean; reset?: boolean }) => Promise<void>;
+  refreshValid: () => Promise<void>;
+  refreshInvalidCounts: () => Promise<void>;
   debouncedRefresh: () => void;
   loadMoreValidJobs: () => Promise<void>;
   loadMoreInvalidJobs: () => Promise<void>;
@@ -253,6 +255,32 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       // silent
     } finally {
       if (shouldShowLoading) set({ loadingLists: false });
+    }
+  },
+
+  refreshValid: async () => {
+    try {
+      const [validRes, countsRes] = await Promise.all([
+        apiClient.get<JobApiRow[]>(`/jobs/valid?limit=${JOB_PAGE_SIZE}&offset=0`),
+        apiClient.get<InvalidCounts>('/jobs/invalid/counts'),
+      ]);
+      const mappedValid = (validRes.data ?? []).map((j) => mapJobRow(j));
+      const counts = countsRes.data;
+      set((state) => ({
+        uniqueUrls: mergeActiveJobs(state.uniqueUrls, mappedValid),
+        ...(counts ? { invalidCounts: counts } : {}),
+      }));
+    } catch {
+      // silent
+    }
+  },
+
+  refreshInvalidCounts: async () => {
+    try {
+      const countsRes = await apiClient.get<InvalidCounts>('/jobs/invalid/counts');
+      if (countsRes.data) set({ invalidCounts: countsRes.data });
+    } catch {
+      // silent
     }
   },
 
@@ -580,7 +608,6 @@ export const useJobsStore = create<JobsState>((set, get) => ({
             : job,
         ),
       }));
-      await get().refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
       set({ submitError: extractErrorMessage(error, 'Failed to save applied status') });
       throw error;
@@ -597,7 +624,6 @@ export const useJobsStore = create<JobsState>((set, get) => ({
           job_ids.includes(job.id) ? { ...job, appliedAt: undefined, appliedBy: undefined } : job,
         ),
       }));
-      await get().refreshLists({ showLoading: false, reset: false });
     } catch (error: any) {
       set({ submitError: extractErrorMessage(error, 'Failed to clear applied status') });
       throw error;
@@ -607,7 +633,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   rescrapeJob: async (item: SubmittedUrlItem) => {
     try {
       await apiClient.post(`/jobs/valid/${item.id}/rescrape`, { url: item.url });
-      await get().refreshLists({ showLoading: false, reset: false });
+      await get().refreshValid();
     } catch (error: any) {
       set({ submitError: extractErrorMessage(error, 'Failed to rescrape job') });
     }
@@ -721,14 +747,17 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     logger.info('ui_batch_delete_started', { count: itemsToDelete.length });
     try {
       set({ loadingLists: true });
-      for (const item of itemsToDelete) {
-        const table = item.table === 'duplicated' ? 'invalid' : 'valid';
-        try {
-          await apiClient.delete(`/jobs/${table}/${item.id}`);
-        } catch (error) {
-          logger.error('ui_batch_delete_item_failed', { job_id: item.id, table, error: String(error) });
-        }
+      const validIds = itemsToDelete.filter((i) => i.table === 'active').map((i) => i.id);
+      const invalidIds = itemsToDelete.filter((i) => i.table === 'duplicated').map((i) => i.id);
+
+      const requests: Promise<unknown>[] = [];
+      if (validIds.length > 0) {
+        requests.push(apiClient.post('/jobs/valid/delete/batch', { job_ids: validIds }));
       }
+      if (invalidIds.length > 0) {
+        requests.push(apiClient.post('/jobs/invalid/dismiss/batch', { user_job_status_ids: invalidIds }));
+      }
+      await Promise.all(requests);
       await get().refreshLists({ showLoading: false, reset: true });
     } catch (error) {
       logger.error('ui_batch_delete_failed', { error: String(error) });
@@ -778,7 +807,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       await apiClient.post(`/jobs/valid/${item.id}/match`, null, {
         params: { force: opts?.force === true },
       });
-      void get().refreshLists({ showLoading: false, reset: false });
+      void get().refreshValid();
     } catch {
       // ignore
     }
@@ -789,7 +818,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     if (job_ids.length === 0) return;
     try {
       await apiClient.post('/jobs/valid/match/rerun', { job_ids });
-      void get().refreshLists({ showLoading: false, reset: false });
+      void get().refreshValid();
     } catch {
       // ignore
     }
@@ -800,7 +829,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     if (job_ids.length === 0) return;
     try {
       await apiClient.post('/jobs/valid/rescrape/batch', { job_ids });
-      await get().refreshLists({ showLoading: false, reset: false });
+      await get().refreshValid();
     } catch (error: any) {
       set({ submitError: extractErrorMessage(error, 'Failed to queue re-scrape') });
     }
@@ -828,7 +857,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         notify('warning', 'No jobs were posted to the sheet.');
       }
 
-      await get().refreshLists({ showLoading: false, reset: false });
+      await get().refreshValid();
     } catch (error: any) {
       notify('error', extractErrorMessage(error, 'Failed to post to Google Sheet'), 8000);
     }
@@ -851,7 +880,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         get().removeDuplicateUrlsByIds([item.id]);
       }
       notify('success', 'Job restored to your active pool');
-      void get().refreshLists({ showLoading: false, reset: false });
+      void get().refreshValid();
     } catch (err: any) {
       notify('error', extractErrorMessage(err, 'Failed to restore job'));
     }

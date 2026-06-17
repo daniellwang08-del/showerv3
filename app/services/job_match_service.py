@@ -7,9 +7,9 @@ Phase B: tailored resume JSON + cover letter (deferred).
 
 import json
 import re
-from openai import AsyncOpenAI
+
 from app.core.config import get_settings
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
 from app.prompts.job_match_phase_a_prompt import (
@@ -322,7 +322,7 @@ async def _call_openai_json(
     observe_name: str,
     user_id: str | None = None,
 ) -> dict:
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     settings = get_settings()
     try:
         response = await client.chat.completions.create(

@@ -98,18 +98,15 @@ async def _enqueue_extraction(
     try:
         from app.tasks.worker import get_extraction_pool, EXTRACTION_QUEUE
         pool = await get_extraction_pool()
-        try:
-            await pool.enqueue_job("extract_job", extraction_id, target_url, user_id)
-            logger.info(
-                "scrape_promoter_enqueued",
-                extraction_id=extraction_id,
-                target_url=target_url,
-                user_id=user_id,
-                queue=EXTRACTION_QUEUE,
-            )
-            return True
-        finally:
-            await pool.close()
+        await pool.enqueue_job("extract_job", extraction_id, target_url, user_id)
+        logger.info(
+            "scrape_promoter_enqueued",
+            extraction_id=extraction_id,
+            target_url=target_url,
+            user_id=user_id,
+            queue=EXTRACTION_QUEUE,
+        )
+        return True
     except Exception as e:
         logger.warning(
             "scrape_promoter_enqueue_failed",

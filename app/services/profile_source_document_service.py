@@ -8,12 +8,12 @@ import json
 import re
 from typing import Any
 
-from openai import AsyncOpenAI
+
 
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 from app.models.database import ProfileSourceDocument
 from app.models.profile_source_schemas import (
     ProfileSourceDocumentResponse,
@@ -182,7 +182,7 @@ async def parse_source_document_structured(
     profile_companies: list[str],
     user_id: str | None = None,
 ) -> SourceDocumentStructured:
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     settings = get_settings()
     clipped = _truncate(text, MAX_PARSE_TEXT_CHARS)
     profile_hint = ""

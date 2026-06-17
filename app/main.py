@@ -37,6 +37,8 @@ from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
 from app.extractors.browser_extractor import init_browser_pool, close_browser_pool
+from app.services.extraction_cache import init_redis_pool, close_redis_pool
+from app.tasks.worker import close_shared_pools
 from app.core.config import get_settings
 from app.core.logging import setup_logging, get_logger
 
@@ -110,6 +112,11 @@ async def lifespan(app: FastAPI):
         logger.warning("startup_stale_runs_cleanup_failed", error=str(e))
 
     try:
+        await init_redis_pool()
+    except Exception as e:
+        logger.warning("redis_pool_init_failed", error=str(e))
+
+    try:
         await init_http_client()
     except Exception as e:
         logger.error("http_client_init_failed", error=str(e))
@@ -137,7 +144,6 @@ async def lifespan(app: FastAPI):
         pool = await get_extraction_pool()
         await pool.ping()
         redis_ok = True
-        await pool.close()
     except Exception:
         pass
     if redis_ok:
@@ -176,6 +182,16 @@ async def lifespan(app: FastAPI):
 
     try:
         await close_http_client()
+    except Exception:
+        pass
+
+    try:
+        await close_shared_pools()
+    except Exception:
+        pass
+
+    try:
+        await close_redis_pool()
     except Exception:
         pass
 

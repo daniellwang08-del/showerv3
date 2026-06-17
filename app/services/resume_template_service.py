@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
-from openai import AsyncOpenAI
+
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.core.openai_client import get_openai_client_for_user
+from app.core.llm_client import get_llm_client_for_user
 from app.models.database import User
 from app.models.resume_template_schemas import (
     FieldBinding,
@@ -247,7 +247,7 @@ async def _call_openai_validation(
     user: User | None = None,
 ) -> ResumeTemplateAiValidation | None:
     settings = get_settings()
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     blueprint_json = blueprint.model_dump(exclude={"ai_validation"})
     user_content = RESUME_TEMPLATE_VALIDATION_USER_TEMPLATE.format(
         requirements_summary=_requirements_summary_for_prompt(profile_work_count, user=user),
@@ -350,7 +350,7 @@ async def _call_openai_blueprint(
     user_id: str,
 ) -> ResumeTemplateBlueprint | None:
     settings = get_settings()
-    client: AsyncOpenAI = await get_openai_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id)
     user_content = RESUME_TEMPLATE_STRUCTURE_USER_TEMPLATE.format(
         outline=outline,
         detected_tags=", ".join(detected_tags) or "(none)",
@@ -536,10 +536,7 @@ async def schedule_template_analysis(user_id: str, reason: str = "upload") -> No
     from app.tasks.worker import get_analysis_pool
 
     pool = await get_analysis_pool()
-    try:
-        await pool.enqueue_job("analyze_resume_template", user_id, reason)
-    finally:
-        await pool.close()
+    await pool.enqueue_job("analyze_resume_template", user_id, reason)
 
 
 def template_status_payload(user: User | None) -> dict[str, Any]:

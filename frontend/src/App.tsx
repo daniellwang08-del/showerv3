@@ -49,7 +49,7 @@ function App() {
       useScraperStore.getState().handleSyncWsEvent(event);
       if (event.type === 'sync_completed' || event.type === 'sync_failed') {
         useScraperStore.getState().loadJobs();
-        useScraperStore.getState().loadStats();
+        void useScraperStore.getState().loadStats({ silent: true });
         useScraperStore.getState().checkSyncStatus();
       }
       return;
@@ -57,7 +57,7 @@ function App() {
 
     if (event.type === 'scrape_promoted') {
       useScraperStore.getState().loadJobs();
-      useScraperStore.getState().loadStats();
+      void useScraperStore.getState().loadStats({ silent: true });
       void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
     }
 
@@ -86,12 +86,12 @@ function App() {
     ];
     if (pipelineEvents.includes(event.type)) {
       useScraperStore.getState().bgRefreshJobs();
-      useScraperStore.getState().loadStats();
+      void useScraperStore.getState().loadStats({ silent: true });
     }
 
     if (event.type === 'company_policy_reconcile_completed') {
       useScraperStore.getState().bgRefreshJobs();
-      useScraperStore.getState().loadStats();
+      void useScraperStore.getState().loadStats({ silent: true });
       void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
     }
   }, []);
