@@ -113,9 +113,21 @@ class AnalysisWorkerConfig(AnalysisWorkerSettings):
     redis_settings = AnalysisWorkerSettings.redis_settings()
 
 
+async def save_startup(ctx):
+    logger.info("save_worker_startup_begin")
+    await init_database()
+    logger.info("save_worker_startup_complete")
+
+
+async def save_shutdown(ctx):
+    logger.info("save_worker_shutdown_begin")
+    await close_database()
+    logger.info("save_worker_shutdown_complete")
+
+
 class SaveWorkerConfig(SaveWorkerSettings):
-    on_startup = analysis_startup
-    on_shutdown = analysis_shutdown
+    on_startup = save_startup
+    on_shutdown = save_shutdown
     functions = [save_analyzed_job]
     queue_name = SaveWorkerSettings.queue_name
     job_timeout = SaveWorkerSettings.job_timeout
@@ -180,8 +192,34 @@ WORKER_CONFIGS = {
 }
 
 
+# IMPORTANT: this function MUST stay at module scope.
+#
+# `watchfiles.run_process` uses ``multiprocessing.get_context('spawn').Process``,
+# which is the only available start method on Windows. ``spawn`` pickles the
+# target callable by ``(module, qualname)``; the child re-imports the module
+# (as ``__mp_main__``) and looks the function up by name on that module.
+#
+# A function defined inside ``if __name__ == "__main__":`` is never bound on
+# ``__mp_main__`` (the guard is False during the spawn re-import), so unpickling
+# fails with::
+#
+#     AttributeError: Can't get attribute '<func>' on
+#     <module '__mp_main__' from 'run_worker.py'>
+#
+# Keep this defined at module level and accept the worker mode as a plain
+# string so pickling stores just ``(run_worker, _watchfiles_worker_target)``
+# plus a str arg — both trivially importable in the spawned child.
+def _watchfiles_worker_target(mode: str) -> None:
+    config = WORKER_CONFIGS[mode]
+    logger.info(
+        "worker_process_starting",
+        mode=mode,
+        queue=config.queue_name,
+    )
+    run_worker(config)
+
+
 if __name__ == "__main__":
-    import os
     from pathlib import Path
 
     parser = argparse.ArgumentParser(
@@ -193,24 +231,31 @@ if __name__ == "__main__":
         help="Which pipeline to run: 'extraction' (scraping), 'analysis' (OpenAI Phase A + B), or 'resume' (document builder).",
     )
     args = parser.parse_args()
-    logger.info("worker_launching", mode=args.mode)
-
     config = WORKER_CONFIGS[args.mode]
+    logger.info("worker_launching", mode=args.mode, queue=config.queue_name)
 
-    def _reload_enabled() -> bool:
-        app_env = os.environ.get("APP_ENV", "local").lower()
-        default = "0" if app_env == "production" else "1"
-        return os.environ.get("RELOAD", default).lower() in ("1", "true", "yes")
+    from app.core.dev_reload import worker_reload_enabled
 
-    if _reload_enabled():
+    if worker_reload_enabled():
         from watchfiles import run_process
+        from watchfiles.filters import PythonFilter
 
         watch_path = str(Path(__file__).resolve().parent / "app")
-
-        def _run_worker() -> None:
-            run_worker(config)
-
-        print(f"[reload] Watching {watch_path} — {args.mode} worker restarts on code changes.")
-        run_process(watch_path, target=_run_worker)
+        print(
+            f"[reload] Watching {watch_path} — {args.mode} worker restarts on .py changes "
+            f"(debounced). Set WORKER_RELOAD=0 for a stable worker."
+        )
+        run_process(
+            watch_path,
+            target=_watchfiles_worker_target,
+            args=(args.mode,),
+            watch_filter=PythonFilter(),
+            debounce=5_000,
+            grace_period=3.0,
+        )
     else:
+        print(
+            f"[worker] {args.mode} on queue '{config.queue_name}' "
+            f"(hot-reload off; set WORKER_RELOAD=1 to watch app/)"
+        )
         run_worker(config)

@@ -12,7 +12,12 @@ function isPrivateIpv4(ip: string): boolean {
 }
 
 function detectLanHost(): string | undefined {
-  const fromEnv = process.env.VITE_HMR_HOST || process.env.LAN_HOST
+  // IMPORTANT: trim() defends against the Windows CMD trap where
+  //   `set LAN_HOST=%VALUE% && npm run dev`
+  // captures the space before `&&` into the value. Without this trim,
+  // a stray space produced HMR URLs like `ws://172.20.1.140%20:5173/...`
+  // which silently broke websocket reconnection.
+  const fromEnv = (process.env.VITE_HMR_HOST || process.env.LAN_HOST || '').trim()
   if (fromEnv) return fromEnv
 
   const candidates: string[] = []
@@ -20,7 +25,7 @@ function detectLanHost(): string | undefined {
   for (const name of Object.keys(nets)) {
     for (const net of nets[name] ?? []) {
       if (net.family === 'IPv4' && !net.internal && net.address) {
-        candidates.push(net.address)
+        candidates.push(net.address.trim())
       }
     }
   }

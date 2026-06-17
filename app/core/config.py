@@ -37,11 +37,20 @@ class Settings(BaseSettings):
     )
 
     app_env: str = Field(default="local")
+    # uvicorn watches app/ when True (see app.core.dev_reload.api_reload_enabled).
+    reload: bool = True
+    # arq workers watch app/ when True (independent of reload; default off).
+    worker_reload: bool = False
 
     app_name: str = "Job Description Scraper"
     app_version: str = "1.0.0"
     debug: bool = True
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    @field_validator("app_env")
+    @classmethod
+    def _strip_app_env(cls, v: str) -> str:
+        return v.strip()
     # When True, SQLAlchemy logs every SQL statement (very noisy). Not tied to `debug`.
     sqlalchemy_echo: bool = False
 
@@ -110,6 +119,18 @@ class Settings(BaseSettings):
     phase_a_max_tokens: int = 8192
     phase_b_max_tokens: int = 16384
     auto_generate_tailored_content: bool = True
+
+    # Anthropic Claude — used as automatic fallback when OpenAI is unavailable
+    # (insufficient_quota, rate-limit, auth failure, connection/timeout error).
+    # Leave anthropic_api_key empty to disable fallback entirely.
+    anthropic_api_key: str = Field(default="")
+    anthropic_model: str = "claude-sonnet-4-5-20250929"
+    anthropic_max_tokens: int = 4096
+    # Per-request HTTP timeout for Anthropic calls (mirrors openai_timeout_seconds).
+    anthropic_timeout_seconds: float = 240.0
+    # When true, the shared LLM client transparently retries failed OpenAI calls
+    # with Anthropic. Disable to require explicit OpenAI-only usage.
+    llm_fallback_enabled: bool = True
 
     langfuse_secret_key: str = Field(default="")
     langfuse_public_key: str = Field(default="")

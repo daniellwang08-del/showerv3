@@ -115,6 +115,17 @@ async def lifespan(app: FastAPI):
         logger.error("http_client_init_failed", error=str(e))
 
     try:
+        # Visibility: on Windows the loop MUST be ProactorEventLoop for
+        # Playwright to spawn its Node driver. If this log shows
+        # SelectorEventLoop, uvicorn's WindowsSelectorEventLoopPolicy
+        # override has re-broken things (start_server.py passes loop="none"
+        # specifically to prevent that). See start_server.py docstring.
+        _loop = asyncio.get_running_loop()
+        logger.info(
+            "asyncio_loop_in_use",
+            loop_type=type(_loop).__name__,
+            platform=sys.platform,
+        )
         await init_browser_pool()
     except Exception as e:
         err_msg = str(e) or f"{type(e).__name__}"

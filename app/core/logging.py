@@ -121,7 +121,23 @@ def setup_logging() -> None:
         force=True,
     )
 
-    logging.getLogger("arq.worker").setLevel(logging.WARNING)
+    # arq logs "Starting worker for N functions" at INFO — keep visible so
+    # workers do not look hung after startup_complete.
+    logging.getLogger("arq.worker").setLevel(logging.INFO)
+
+    # watchfiles emits "rust notify timeout" / "all changes filtered out" at
+    # DEBUG every ~5s when LOG_LEVEL=DEBUG; passlib logs handler registration
+    # the same way. Neither indicates a failure.
+    for _noisy in (
+        "watchfiles",
+        "watchfiles.main",
+        "watchfiles.run",
+        "watchfiles.watcher",
+        "passlib",
+        "asyncio",
+        "multipart",
+    ):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
     logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)

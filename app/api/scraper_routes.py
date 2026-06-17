@@ -211,6 +211,14 @@ class SyncStatusResponse(BaseModel):
     elapsed_seconds: Optional[int] = None
 
 
+def _sync_running_message(spider: str, items_scraped: int, elapsed_seconds: int | None) -> str:
+    """Human-readable status line for GET /scraper/sync/status (running branch)."""
+    msg = f"Spider '{spider}' running — {items_scraped} scraped"
+    if elapsed_seconds is not None:
+        msg += f" ({elapsed_seconds}s elapsed)"
+    return msg + "."
+
+
 class SpiderInfo(BaseModel):
     name: str
     label: str
@@ -977,11 +985,7 @@ async def get_sync_status(user=Depends(_get_current_user)):
                 items_updated=items_updated,
                 started_at=started_at,
                 elapsed_seconds=elapsed,
-                message=(
-                    f"Spider '{spider}' running — {items_scraped} scraped"
-                    + (f" ({elapsed}s elapsed)" if elapsed is not None else "")
-                    + ".",
-                ),
+                message=_sync_running_message(spider, items_scraped, elapsed),
             )
         return SyncStatusResponse(status="idle", message="No spider is currently running.")
 

@@ -7,6 +7,17 @@ up automatically. Set RELOAD=0 to disable, or APP_ENV=production (reload off by 
 
 On Windows, reload spawns a child process that imports app.main (which sets the
 Proactor event loop policy before asyncio is used), so Playwright still works.
+
+We pass ``loop="none"`` to uvicorn. Without it, uvicorn's ``Config.setup_event_loop``
+calls ``uvicorn.loops.asyncio.asyncio_setup(use_subprocess=True)`` whenever
+``reload=True`` on Windows, which executes
+``asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())`` and CLOBBERS
+the Proactor policy we set above. The selector loop on Windows does not implement
+``_make_subprocess_transport`` (it raises ``NotImplementedError`` from
+``BaseEventLoop``), so Playwright's ``asyncio.create_subprocess_exec`` call to
+spawn the Node driver fails with ``NotImplementedError`` and the browser pool
+init aborts. With ``loop="none"`` uvicorn skips its own policy setup and our
+Proactor policy survives, giving Playwright a working subprocess transport.
 """
 from __future__ import annotations
 
@@ -26,14 +37,10 @@ if sys.platform == "win32":
 sys.path.insert(0, str(ROOT))
 
 
-def _env_flag(name: str, default: str) -> bool:
-    return os.environ.get(name, default).lower() in ("1", "true", "yes")
-
-
 def _reload_enabled() -> bool:
-    app_env = os.environ.get("APP_ENV", "local").lower()
-    default = "0" if app_env == "production" else "1"
-    return _env_flag("RELOAD", default)
+    from app.core.dev_reload import api_reload_enabled
+
+    return api_reload_enabled()
 
 
 def _api_host() -> str:
@@ -71,4 +78,8 @@ if __name__ == "__main__":
         port=port,
         reload=use_reload,
         reload_dirs=reload_dirs if use_reload else None,
+        # See module docstring: prevents uvicorn from overwriting our
+        # Proactor policy with SelectorEventLoopPolicy on Windows+reload,
+        # which would otherwise break Playwright's subprocess spawn.
+        loop="none",
     )

@@ -161,6 +161,13 @@ def _make_paragraph_from_anchor(anchor_p, runs: list[OxmlElement]) -> OxmlElemen
     return new_p
 
 
+def _make_empty_spacer_paragraph(anchor_p) -> OxmlElement:
+    """Build an empty paragraph inheriting *anchor_p*'s pPr so it renders as a
+    single blank line at body line-height. Used to add visual breathing room
+    between sections (e.g., description ↔ Key Contributions)."""
+    return _make_paragraph_from_anchor(anchor_p, [])
+
+
 # ── Placeholder replacement logic ──────────────────────────────────────────
 
 def _find_paragraph_with_tag(doc: Document, tag: str) -> Paragraph | None:
@@ -343,6 +350,9 @@ def _build_experience_elements(
 
     bullets = exp.get("bullets", [])
     if bullets:
+        if desc:
+            paragraphs.append(_make_empty_spacer_paragraph(anchor_p))
+
         label_p = _make_paragraph_from_anchor(anchor_p, [
             _make_run("Key Contributions:", rPr_tpl, bold=False),
         ])
@@ -531,6 +541,9 @@ def fill_resume_template(
 
                 bullets = exp.get("bullets", [])
                 if bullets:
+                    if desc:
+                        body_elements.append(_make_empty_spacer_paragraph(exp_anchor._p))
+
                     body_elements.append(_make_paragraph_from_anchor(
                         exp_anchor._p, [_make_run("Key Contributions:", rPr_tpl)]
                     ))

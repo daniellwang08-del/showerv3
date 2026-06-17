@@ -8,6 +8,11 @@ cssselect==1.2.0
 pydantic==2.10.4
 pydantic-settings==2.7.1
 openai==1.59.5
+anthropic>=0.39.0
+# Tolerant JSON parser used to repair LLM JSON responses (handles unescaped
+# quotes/newlines inside long string fields, trailing commas, etc.) before
+# the calling service runs strict json.loads().
+json-repair>=0.30.0
 langfuse>=4.5.0
 arq==0.26.1
 redis==5.2.1
