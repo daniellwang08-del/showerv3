@@ -49,6 +49,16 @@ class User(Base):
     openai_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
     openai_api_key_encrypted = Column(Text, nullable=True)
 
+    # Active LLM provider powering this user's AI work ("openai" | "anthropic" | "gemini").
+    llm_provider = Column(String(20), default="openai", nullable=False, server_default="openai")
+
+    # Anthropic / Gemini bring-your-own keys (mode "default" uses the server key;
+    # "custom" uses the encrypted user-provided key). Mirrors the OpenAI pattern.
+    anthropic_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
+    anthropic_api_key_encrypted = Column(Text, nullable=True)
+    gemini_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
+    gemini_api_key_encrypted = Column(Text, nullable=True)
+
     # Minimum match score: jobs below threshold are hidden (below_min_score exclusion).
     min_match_score_mode = Column(String(20), default="default", nullable=False, server_default="default")
     min_match_score = Column(Integer, default=0, nullable=False, server_default="0")

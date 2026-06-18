@@ -128,8 +128,20 @@ class Settings(BaseSettings):
     anthropic_max_tokens: int = 4096
     # Per-request HTTP timeout for Anthropic calls (mirrors openai_timeout_seconds).
     anthropic_timeout_seconds: float = 240.0
-    # When true, the shared LLM client transparently retries failed OpenAI calls
-    # with Anthropic. Disable to require explicit OpenAI-only usage.
+    # Google Gemini — selectable as a primary provider or as a fallback. Uses
+    # Google's OpenAI-compatible endpoint so the existing OpenAI SDK is reused
+    # (no extra dependency). Leave gemini_api_key empty to disable Gemini.
+    gemini_api_key: str = Field(default="")
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    gemini_timeout_seconds: float = 240.0
+
+    # Provider used when a user hasn't explicitly chosen one ("openai" | "anthropic" | "gemini").
+    default_llm_provider: Literal["openai", "anthropic", "gemini"] = "openai"
+
+    # When true, the shared LLM client transparently retries the user's chosen
+    # provider against the other configured providers on a recoverable error.
+    # Disable to use only the selected provider (no cross-provider fallback).
     llm_fallback_enabled: bool = True
     # Circuit breaker: after this many consecutive OpenAI failures, skip OpenAI
     # entirely and go straight to Anthropic for `llm_circuit_breaker_cooldown_seconds`.

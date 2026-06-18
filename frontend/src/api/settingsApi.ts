@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { SettingsMode, UserSettings, UserSettingsUpdate } from '../types/settings';
+import type { LlmProvider, SettingsMode, UserSettings, UserSettingsUpdate } from '../types/settings';
 
 export interface OpenAiKeyTestResult {
   ok: boolean;
@@ -43,6 +43,19 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     openai_key_configured: Boolean(data.openai_key_configured),
     openai_key_hint: (data.openai_key_hint as string | null | undefined) ?? null,
     system_openai_available: Boolean(data.system_openai_available),
+    llm_provider: (data.llm_provider as LlmProvider) ?? 'openai',
+    default_llm_provider: (data.default_llm_provider as LlmProvider) ?? 'openai',
+    available_providers: Array.isArray(data.available_providers)
+      ? (data.available_providers as LlmProvider[])
+      : ['openai'],
+    anthropic_key_mode: (data.anthropic_key_mode as SettingsMode) ?? 'default',
+    anthropic_key_configured: Boolean(data.anthropic_key_configured),
+    anthropic_key_hint: (data.anthropic_key_hint as string | null | undefined) ?? null,
+    system_anthropic_available: Boolean(data.system_anthropic_available),
+    gemini_key_mode: (data.gemini_key_mode as SettingsMode) ?? 'default',
+    gemini_key_configured: Boolean(data.gemini_key_configured),
+    gemini_key_hint: (data.gemini_key_hint as string | null | undefined) ?? null,
+    system_gemini_available: Boolean(data.system_gemini_available),
     dedup_recycle_mode: (data.dedup_recycle_mode as SettingsMode) ?? 'default',
     dedup_recycle_days: Number(data.dedup_recycle_days ?? 60),
     dedup_recycle_days_custom: Number(data.dedup_recycle_days_custom ?? 60),
@@ -105,6 +118,42 @@ export async function testOpenAiKey(openaiApiKey?: string): Promise<OpenAiKeyTes
     openai_api_key: openaiApiKey?.trim() || undefined,
   });
   return data;
+}
+
+export async function testProviderKey(
+  provider: LlmProvider,
+  apiKey?: string,
+): Promise<OpenAiKeyTestResult> {
+  const { data } = await apiClient.post<OpenAiKeyTestResult>('/settings/llm/test', {
+    provider,
+    api_key: apiKey?.trim() || undefined,
+  });
+  return data;
+}
+
+export async function setActiveLlmProvider(provider: LlmProvider): Promise<UserSettings> {
+  return updateUserSettings({ llm_provider: provider });
+}
+
+export async function saveProviderKeySettings(
+  provider: 'anthropic' | 'gemini',
+  body: {
+    mode: SettingsMode;
+    apiKey?: string;
+    clear?: boolean;
+  },
+): Promise<UserSettings> {
+  const payload: UserSettingsUpdate = {};
+  if (provider === 'anthropic') {
+    payload.anthropic_key_mode = body.mode;
+    if (body.apiKey) payload.anthropic_api_key = body.apiKey;
+    if (body.clear) payload.clear_anthropic_api_key = true;
+  } else {
+    payload.gemini_key_mode = body.mode;
+    if (body.apiKey) payload.gemini_api_key = body.apiKey;
+    if (body.clear) payload.clear_gemini_api_key = true;
+  }
+  return updateUserSettings(payload);
 }
 
 export async function saveOpenAiSettings(

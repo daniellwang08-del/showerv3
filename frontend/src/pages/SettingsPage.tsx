@@ -37,6 +37,7 @@ import { ResumeTemplateSection } from '../components/settings/ResumeTemplateSect
 import { CoverLetterTemplateSection } from '../components/settings/CoverLetterTemplateSection';
 import { GoogleSheetsSettingsSection } from '../components/settings/GoogleSheetsSettingsSection';
 import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
+import { ProviderKeySection } from '../components/settings/ProviderKeySection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
@@ -1075,6 +1076,13 @@ export function SettingsPage() {
           </section>
 
           </div>
+
+          {settings && (
+            <div className="grid gap-5 xl:grid-cols-2 items-start">
+              <ProviderKeySection provider="anthropic" settings={settings} onSaved={applySettings} />
+              <ProviderKeySection provider="gemini" settings={settings} onSaved={applySettings} />
+            </div>
+          )}
 
           <GoogleSheetsSettingsSection />
 

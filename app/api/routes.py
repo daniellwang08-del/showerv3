@@ -2384,6 +2384,17 @@ class UserSettingsResponse(BaseModel):
     openai_key_configured: bool
     openai_key_hint: str | None = None
     system_openai_available: bool
+    llm_provider: str = "openai"
+    default_llm_provider: str = "openai"
+    available_providers: list[str] = Field(default_factory=lambda: ["openai"])
+    anthropic_key_mode: str = "default"
+    anthropic_key_configured: bool = False
+    anthropic_key_hint: str | None = None
+    system_anthropic_available: bool = False
+    gemini_key_mode: str = "default"
+    gemini_key_configured: bool = False
+    gemini_key_hint: str | None = None
+    system_gemini_available: bool = False
     dedup_recycle_mode: str
     dedup_recycle_days: int
     dedup_recycle_days_custom: int
@@ -2422,6 +2433,13 @@ class UserSettingsUpdateRequest(BaseModel):
     openai_key_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     openai_api_key: str | None = Field(default=None, max_length=512)
     clear_openai_api_key: bool = False
+    llm_provider: str | None = Field(default=None, pattern="^(openai|anthropic|gemini)$")
+    anthropic_key_mode: str | None = Field(default=None, pattern="^(default|custom)$")
+    anthropic_api_key: str | None = Field(default=None, max_length=512)
+    clear_anthropic_api_key: bool = False
+    gemini_key_mode: str | None = Field(default=None, pattern="^(default|custom)$")
+    gemini_api_key: str | None = Field(default=None, max_length=512)
+    clear_gemini_api_key: bool = False
     dedup_recycle_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     dedup_recycle_days: int | None = Field(default=None, ge=1, le=3650)
     min_match_score_mode: str | None = Field(default=None, pattern="^(default|custom)$")
@@ -2440,6 +2458,12 @@ class OpenAiKeyTestRequest(BaseModel):
 class OpenAiKeyTestResponse(BaseModel):
     ok: bool
     message: str
+
+
+class LlmKeyTestRequest(BaseModel):
+    """Test a provider key before save. Omit api_key to test the user's stored key."""
+    provider: str = Field(..., pattern="^(openai|anthropic|gemini)$")
+    api_key: str | None = Field(default=None, max_length=512)
 
 
 class MinMatchScorePreviewSample(BaseModel):
@@ -2601,6 +2625,43 @@ async def test_openai_key_endpoint(
     return OpenAiKeyTestResponse(ok=ok, message=message)
 
 
+@router.post(
+    "/settings/llm/test",
+    response_model=OpenAiKeyTestResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def test_llm_provider_key_endpoint(
+    body: LlmKeyTestRequest,
+    current_user: dict = Depends(get_current_user),
+) -> OpenAiKeyTestResponse:
+    from app.services.llm_key_test import test_provider_api_key
+    from app.utils.secret_encryption import decrypt_secret
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    provider = body.provider.strip().lower()
+    key_to_test = (body.api_key or "").strip()
+    if not key_to_test:
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_id(user_id)
+            encrypted = getattr(user, f"{provider}_api_key_encrypted", None) if user else None
+            if not encrypted:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Enter an API key to test, or save one first.",
+                )
+            try:
+                key_to_test = decrypt_secret(encrypted)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+    ok, message = await test_provider_api_key(provider, key_to_test)
+    return OpenAiKeyTestResponse(ok=ok, message=message)
+
+
 @router.get(
     "/settings",
     response_model=UserSettingsResponse,
@@ -2640,6 +2701,13 @@ async def update_user_settings(
                 openai_key_mode=body.openai_key_mode,
                 openai_api_key=body.openai_api_key,
                 clear_openai_api_key=body.clear_openai_api_key,
+                llm_provider=body.llm_provider,
+                anthropic_key_mode=body.anthropic_key_mode,
+                anthropic_api_key=body.anthropic_api_key,
+                clear_anthropic_api_key=body.clear_anthropic_api_key,
+                gemini_key_mode=body.gemini_key_mode,
+                gemini_api_key=body.gemini_api_key,
+                clear_gemini_api_key=body.clear_gemini_api_key,
                 dedup_recycle_mode=body.dedup_recycle_mode,
                 dedup_recycle_days=body.dedup_recycle_days,
                 min_match_score_mode=body.min_match_score_mode,

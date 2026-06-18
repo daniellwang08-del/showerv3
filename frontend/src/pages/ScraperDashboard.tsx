@@ -6,6 +6,7 @@ import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { ScraperStatsBar } from '../components/scraper/ScraperStatsBar';
 import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
 import { SyncButton } from '../components/scraper/SyncButton';
+import { LlmProviderSelector } from '../components/scraper/LlmProviderSelector';
 import { Pagination } from '../components/shared/Pagination';
 import { ScraperAISearch, type AiSearchState } from '../components/scraper/ScraperAISearch';
 import { SubmitForm } from '../components/extraction/SubmitForm';
@@ -170,7 +171,10 @@ export function ScraperDashboard() {
             Browse and manage processed job listings across all platforms.
           </p>
         </div>
-        <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} onSync={handleSync} />
+        <div className="flex items-start gap-2">
+          <LlmProviderSelector />
+          <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} onSync={handleSync} />
+        </div>
       </div>
 
       <ScraperStatsBar stats={stats} loading={statsLoading} />

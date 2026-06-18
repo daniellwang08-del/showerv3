@@ -15,6 +15,7 @@ from app.prompts.job_match_phase_b_prompt import (
     RESUME_TAILORING_PROMPT_MIN_LENGTH,
     build_phase_b_system_prompt,
 )
+from app.core.exceptions import AIParsingError
 from app.utils.profile_converter import user_profile_to_openai_text
 from app.utils.secret_encryption import decrypt_secret, encrypt_secret, mask_api_key
 from app.services.resume_template_service import (
@@ -314,11 +315,19 @@ class UserRepository:
         cover_letter_prompt_mode = getattr(user, "cover_letter_prompt_mode", None) or "default"
         stored_custom_cover_letter_prompt = (getattr(user, "cover_letter_prompt_custom", None) or "").strip()
         effective_cover_letter_instructions = self._cover_letter_instructions_for_user(user)
+        active_provider = (getattr(user, "llm_provider", None) or "").strip().lower()
+        if active_provider not in self.LLM_PROVIDERS:
+            active_provider = settings.default_llm_provider
         return {
             "openai_key_mode": mode,
             "openai_key_configured": has_custom_key,
             "openai_key_hint": key_hint,
             "system_openai_available": bool(settings.openai_api_key),
+            "llm_provider": active_provider,
+            "default_llm_provider": settings.default_llm_provider,
+            "available_providers": self._available_providers(user),
+            **self._provider_key_info(user, "anthropic"),
+            **self._provider_key_info(user, "gemini"),
             "dedup_recycle_mode": dedup_mode,
             "dedup_recycle_days": effective_days,
             "dedup_recycle_days_custom": custom_days,
@@ -349,6 +358,13 @@ class UserRepository:
         openai_key_mode: str | None = None,
         openai_api_key: str | None = None,
         clear_openai_api_key: bool = False,
+        llm_provider: str | None = None,
+        anthropic_key_mode: str | None = None,
+        anthropic_api_key: str | None = None,
+        clear_anthropic_api_key: bool = False,
+        gemini_key_mode: str | None = None,
+        gemini_api_key: str | None = None,
+        clear_gemini_api_key: bool = False,
         dedup_recycle_mode: str | None = None,
         dedup_recycle_days: int | None = None,
         min_match_score_mode: str | None = None,
@@ -378,6 +394,27 @@ class UserRepository:
                 raise ValueError("OpenAI API key looks too short")
             user.openai_api_key_encrypted = encrypt_secret(key)
             user.openai_key_mode = "custom"
+
+        if llm_provider is not None:
+            normalized = llm_provider.strip().lower()
+            if normalized not in self.LLM_PROVIDERS:
+                raise ValueError("llm_provider must be 'openai', 'anthropic', or 'gemini'")
+            user.llm_provider = normalized
+
+        self._apply_provider_key_update(
+            user,
+            "anthropic",
+            mode=anthropic_key_mode,
+            api_key=anthropic_api_key,
+            clear=clear_anthropic_api_key,
+        )
+        self._apply_provider_key_update(
+            user,
+            "gemini",
+            mode=gemini_key_mode,
+            api_key=gemini_api_key,
+            clear=clear_gemini_api_key,
+        )
 
         if dedup_recycle_mode is not None:
             if dedup_recycle_mode not in ("default", "custom"):
@@ -435,3 +472,106 @@ class UserRepository:
                 "OpenAI API key not configured. Add your key in Settings or contact the administrator."
             )
         return settings.openai_api_key
+
+    # ── Multi-provider LLM key resolution ─────────────────────────────────
+
+    LLM_PROVIDERS = ("openai", "anthropic", "gemini")
+
+    @staticmethod
+    def _provider_mode_attr(provider: str) -> str:
+        return f"{provider}_key_mode"
+
+    @staticmethod
+    def _provider_key_attr(provider: str) -> str:
+        return f"{provider}_api_key_encrypted"
+
+    @staticmethod
+    def _system_key_for_provider(provider: str) -> str:
+        settings = get_settings()
+        return {
+            "openai": settings.openai_api_key,
+            "anthropic": settings.anthropic_api_key,
+            "gemini": settings.gemini_api_key,
+        }.get(provider, "") or ""
+
+    async def resolve_llm_provider(self, user_id: str) -> str:
+        """Return the user's selected LLM provider (defaults to server default)."""
+        settings = get_settings()
+        user = await self.get_by_id(user_id)
+        provider = (getattr(user, "llm_provider", None) or "").strip().lower() if user else ""
+        if provider in self.LLM_PROVIDERS:
+            return provider
+        return settings.default_llm_provider
+
+    async def resolve_provider_api_key(self, user_id: str, provider: str) -> str:
+        """Return the usable API key for ``provider`` (custom user key or server key).
+
+        Returns "" when no key is available — never raises — so the multi-provider
+        client can simply skip unconfigured providers.
+        """
+        provider = (provider or "").strip().lower()
+        if provider not in self.LLM_PROVIDERS:
+            return ""
+        user = await self.get_by_id(user_id)
+        mode = (getattr(user, self._provider_mode_attr(provider), None) or "default") if user else "default"
+        if mode == "custom" and user:
+            encrypted = getattr(user, self._provider_key_attr(provider), None)
+            if encrypted:
+                try:
+                    return decrypt_secret(encrypted)
+                except ValueError:
+                    return ""
+        return self._system_key_for_provider(provider)
+
+    def _provider_key_info(self, user: User | None, provider: str) -> dict:
+        """Return UI-facing key metadata for a provider (mode/configured/hint/system)."""
+        mode = (getattr(user, self._provider_mode_attr(provider), None) or "default") if user else "default"
+        encrypted = getattr(user, self._provider_key_attr(provider), None) if user else None
+        has_custom_key = bool(encrypted)
+        key_hint: str | None = None
+        if mode == "custom" and has_custom_key:
+            try:
+                key_hint = mask_api_key(decrypt_secret(encrypted))
+            except ValueError:
+                key_hint = "••••••••"
+        return {
+            f"{provider}_key_mode": mode,
+            f"{provider}_key_configured": has_custom_key,
+            f"{provider}_key_hint": key_hint,
+            f"system_{provider}_available": bool(self._system_key_for_provider(provider)),
+        }
+
+    def _available_providers(self, user: User | None) -> list[str]:
+        """Providers with a usable key (custom user key or configured server key)."""
+        available: list[str] = []
+        for provider in self.LLM_PROVIDERS:
+            info = self._provider_key_info(user, provider)
+            if info[f"{provider}_key_configured"] or info[f"system_{provider}_available"]:
+                available.append(provider)
+        return available
+
+    def _apply_provider_key_update(
+        self,
+        user: User,
+        provider: str,
+        *,
+        mode: str | None,
+        api_key: str | None,
+        clear: bool,
+    ) -> None:
+        mode_attr = self._provider_mode_attr(provider)
+        key_attr = self._provider_key_attr(provider)
+        if mode is not None:
+            if mode not in ("default", "custom"):
+                raise ValueError(f"{provider}_key_mode must be 'default' or 'custom'")
+            setattr(user, mode_attr, mode)
+            if mode == "default":
+                setattr(user, key_attr, None)
+        if clear:
+            setattr(user, key_attr, None)
+        if api_key is not None:
+            key = api_key.strip()
+            if len(key) < 20:
+                raise ValueError(f"{provider.capitalize()} API key looks too short")
+            setattr(user, key_attr, encrypt_secret(key))
+            setattr(user, mode_attr, "custom")

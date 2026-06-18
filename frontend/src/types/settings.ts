@@ -1,5 +1,15 @@
 export type SettingsMode = 'default' | 'custom';
 
+export type LlmProvider = 'openai' | 'anthropic' | 'gemini';
+
+export const LLM_PROVIDERS: LlmProvider[] = ['openai', 'anthropic', 'gemini'];
+
+export const LLM_PROVIDER_LABELS: Record<LlmProvider, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  gemini: 'Gemini',
+};
+
 export type ResumeTemplateStatus = 'missing' | 'processing' | 'ready' | 'stale' | 'failed';
 export type CoverLetterTemplateStatus = 'missing' | 'processing' | 'ready' | 'failed';
 
@@ -8,6 +18,17 @@ export interface UserSettings {
   openai_key_configured: boolean;
   openai_key_hint: string | null;
   system_openai_available: boolean;
+  llm_provider: LlmProvider;
+  default_llm_provider: LlmProvider;
+  available_providers: LlmProvider[];
+  anthropic_key_mode: SettingsMode;
+  anthropic_key_configured: boolean;
+  anthropic_key_hint: string | null;
+  system_anthropic_available: boolean;
+  gemini_key_mode: SettingsMode;
+  gemini_key_configured: boolean;
+  gemini_key_hint: string | null;
+  system_gemini_available: boolean;
   dedup_recycle_mode: SettingsMode;
   dedup_recycle_days: number;
   dedup_recycle_days_custom: number;
@@ -46,6 +67,13 @@ export interface UserSettingsUpdate {
   openai_key_mode?: SettingsMode;
   openai_api_key?: string;
   clear_openai_api_key?: boolean;
+  llm_provider?: LlmProvider;
+  anthropic_key_mode?: SettingsMode;
+  anthropic_api_key?: string;
+  clear_anthropic_api_key?: boolean;
+  gemini_key_mode?: SettingsMode;
+  gemini_api_key?: string;
+  clear_gemini_api_key?: boolean;
   dedup_recycle_mode?: SettingsMode;
   dedup_recycle_days?: number;
   min_match_score_mode?: SettingsMode;

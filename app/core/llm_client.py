@@ -43,6 +43,7 @@ from typing import Any
 
 import httpx
 import openai as _openai_pkg
+import anthropic as _anthropic_pkg
 from anthropic import AsyncAnthropic
 
 from app.core.config import get_settings
@@ -92,6 +93,20 @@ OPENAI_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
     _openai_pkg.APIConnectionError,
     _openai_pkg.APITimeoutError,
     _openai_pkg.InternalServerError,
+)
+
+# Gemini is reached through the OpenAI-compatible endpoint using the OpenAI SDK,
+# so it raises the same ``openai.*`` exception types — reuse the same set.
+GEMINI_FALLBACK_ERRORS: tuple[type[Exception], ...] = OPENAI_FALLBACK_ERRORS
+
+# Equivalent recoverable-error classification for a primary Anthropic provider.
+ANTHROPIC_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
+    _anthropic_pkg.RateLimitError,
+    _anthropic_pkg.AuthenticationError,
+    _anthropic_pkg.PermissionDeniedError,
+    _anthropic_pkg.APIConnectionError,
+    _anthropic_pkg.APITimeoutError,
+    _anthropic_pkg.InternalServerError,
 )
 
 
@@ -348,6 +363,52 @@ def _normalize_anthropic_json(raw_text: str) -> str:
     return candidate
 
 
+def _coerce_json_object(raw_text: str) -> str:
+    """Best-effort coerce arbitrary model output into a single valid JSON object.
+
+    Unlike ``_normalize_anthropic_json`` this does NOT assume a prefilled ``{``.
+    Used for the Gemini (OpenAI-compatible) path, where JSON mode is requested
+    but the model may still wrap output in a ```` ```json ```` fence or append
+    trailing prose. Strategy mirrors the Anthropic recovery: strip fences →
+    extract the outermost balanced object → strict parse → json-repair.
+    """
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3].rstrip()
+
+    candidate = _extract_first_json_object(text)
+
+    try:
+        json_lib.loads(candidate)
+        return candidate
+    except json_lib.JSONDecodeError:
+        pass
+
+    if _repair_json is not None:
+        try:
+            repaired = _repair_json(candidate, return_objects=False)
+            if isinstance(repaired, (bytes, bytearray)):
+                repaired = repaired.decode("utf-8", errors="replace")
+            repaired = str(repaired or "").strip()
+            if repaired:
+                try:
+                    json_lib.loads(repaired)
+                    logger.warning(
+                        "gemini_json_repaired",
+                        original_len=len(candidate),
+                        repaired_len=len(repaired),
+                    )
+                    return repaired
+                except json_lib.JSONDecodeError:
+                    pass
+        except Exception as repair_exc:  # noqa: BLE001 - best-effort
+            logger.warning("gemini_json_repair_failed", error=str(repair_exc)[:200])
+
+    return candidate
+
+
 def _extract_first_json_object(text: str) -> str:
     """Return the first balanced ``{...}`` substring of ``text``.
 
@@ -465,6 +526,104 @@ async def _call_anthropic(
     )
 
 
+# ── Provider adapters ─────────────────────────────────────────────────────
+#
+# Each adapter exposes ``async create(**openai_shape_kwargs) -> response`` and a
+# ``recoverable_errors`` tuple used by the fallback loop. OpenAI and Gemini both
+# speak the OpenAI Chat Completions API (Gemini via Google's OpenAI-compatible
+# endpoint), so they share the same SDK; Anthropic uses its native Messages API.
+#
+# Every adapter overrides the incoming ``model`` kwarg with its own provider's
+# configured model, so existing call sites can keep passing ``settings.openai_model``.
+
+LLM_PROVIDERS: tuple[str, ...] = ("openai", "anthropic", "gemini")
+
+
+class _OpenAIAdapter:
+    """OpenAI (or any OpenAI-compatible endpoint) returning the native response.
+
+    Used for the ``openai`` provider so Langfuse tracing on the underlying
+    client is preserved.
+    """
+
+    name = "openai"
+    recoverable_errors = OPENAI_FALLBACK_ERRORS
+
+    def __init__(self, client: AsyncOpenAI, model: str) -> None:
+        self._client = client
+        self._model = model
+
+    async def create(self, **kwargs: Any) -> Any:
+        kwargs = dict(kwargs)
+        kwargs["model"] = self._model
+        return await self._client.chat.completions.create(**kwargs)
+
+
+class _GeminiAdapter:
+    """Gemini via the OpenAI-compatible endpoint.
+
+    Returns a normalised ``_ChatCompletion`` so a JSON-mode response is coerced
+    into a strictly-parseable object (Gemini occasionally wraps JSON in a fence
+    or appends trailing text), mirroring the Anthropic JSON recovery.
+    """
+
+    name = "gemini"
+    recoverable_errors = GEMINI_FALLBACK_ERRORS
+
+    def __init__(self, client: AsyncOpenAI, model: str) -> None:
+        self._client = client
+        self._model = model
+
+    async def create(self, **kwargs: Any) -> Any:
+        kwargs = dict(kwargs)
+        kwargs["model"] = self._model
+        response_format = kwargs.get("response_format")
+        json_mode = bool(response_format) and (response_format or {}).get("type") == "json_object"
+
+        resp = await self._client.chat.completions.create(**kwargs)
+        text = ""
+        try:
+            text = resp.choices[0].message.content or ""
+        except (AttributeError, IndexError):
+            text = ""
+        if json_mode:
+            text = _coerce_json_object(text)
+
+        usage_obj = getattr(resp, "usage", None)
+        in_t = int(getattr(usage_obj, "prompt_tokens", 0) or 0)
+        out_t = int(getattr(usage_obj, "completion_tokens", 0) or 0)
+        return _ChatCompletion(
+            id=str(getattr(resp, "id", "") or ""),
+            model=str(getattr(resp, "model", self._model) or self._model),
+            choices=[_Choice(index=0, message=_Message(content=text))],
+            usage=_Usage(prompt_tokens=in_t, completion_tokens=out_t, total_tokens=in_t + out_t),
+            provider="gemini",
+        )
+
+
+class _AnthropicAdapter:
+    name = "anthropic"
+    recoverable_errors = ANTHROPIC_FALLBACK_ERRORS
+
+    def __init__(self, client: AsyncAnthropic, model: str, default_max_tokens: int) -> None:
+        self._client = client
+        self._model = model
+        self._default_max_tokens = default_max_tokens
+
+    async def create(self, **kwargs: Any) -> Any:
+        return await _call_anthropic(
+            self._client,
+            model=self._model,
+            messages=kwargs.get("messages") or [],
+            max_tokens=int(kwargs.get("max_tokens") or self._default_max_tokens),
+            temperature=kwargs.get("temperature"),
+            response_format=kwargs.get("response_format"),
+        )
+
+
+_Adapter = _OpenAIAdapter | _GeminiAdapter | _AnthropicAdapter
+
+
 # ── Public wrapper that looks like AsyncOpenAI ────────────────────────────
 
 
@@ -482,26 +641,21 @@ class _ChatNamespace:
 
 
 class LLMFallbackClient:
-    """Drop-in replacement for ``AsyncOpenAI`` with Anthropic fallback.
+    """Drop-in replacement for ``AsyncOpenAI`` with multi-provider fallback.
 
-    Exposes ``client.chat.completions.create(**openai_shape_kwargs)``. On a
-    recoverable OpenAI error and when Anthropic is configured, the same
-    request is retried against Anthropic with equivalent semantics.
+    Exposes ``client.chat.completions.create(**openai_shape_kwargs)``. The
+    user-selected provider is the *primary*; on a recoverable error (and when
+    ``llm_fallback_enabled``) the same request is retried against each other
+    configured provider in order.
 
-    A circuit breaker prevents wasting time on a known-bad OpenAI endpoint.
+    A circuit breaker prevents wasting time on a known-bad primary endpoint.
     After ``threshold`` consecutive failures the breaker trips OPEN and all
-    requests skip OpenAI for ``cooldown`` seconds, going directly to
-    Anthropic.  After the cooldown a single probe request tests whether
-    OpenAI has recovered.
+    requests skip the primary for ``cooldown`` seconds, going directly to the
+    fallbacks.  After the cooldown a single probe request tests recovery.
     """
 
-    def __init__(
-        self,
-        openai_client: AsyncOpenAI | None,
-        anthropic_client: AsyncAnthropic | None,
-    ) -> None:
-        self._openai = openai_client
-        self._anthropic = anthropic_client
+    def __init__(self, adapters: list[_Adapter]) -> None:
+        self._adapters = adapters
         self.chat = _ChatNamespace(self)
         settings = get_settings()
         self._cb = _CircuitBreaker(
@@ -510,98 +664,103 @@ class LLMFallbackClient:
         )
 
     @property
+    def primary_provider(self) -> str | None:
+        return self._adapters[0].name if self._adapters else None
+
+    @property
     def has_primary(self) -> bool:
-        return self._openai is not None
+        return len(self._adapters) >= 1
 
     @property
     def has_fallback(self) -> bool:
-        return self._anthropic is not None
+        return len(self._adapters) >= 2
 
     async def _chat_completions_create(self, **kwargs: Any) -> Any:
-        settings = get_settings()
+        if not self._adapters:
+            raise AIParsingError(
+                "No LLM provider configured. Set an API key for OpenAI, Anthropic, or Gemini."
+            )
+
+        primary = self._adapters[0]
+        fallbacks = self._adapters[1:]
         primary_error: Exception | None = None
 
-        # Decide whether to attempt OpenAI.  When the circuit breaker is
-        # OPEN we skip OpenAI entirely — unless there is no fallback, in
-        # which case trying a possibly-broken OpenAI is better than giving
-        # up immediately.
-        skip_primary = (
-            self._openai is not None
-            and self.has_fallback
-            and not self._cb.should_attempt_primary()
-        )
-
+        # When the circuit breaker is OPEN we skip the primary entirely — unless
+        # there is no fallback, in which case trying a possibly-broken primary is
+        # better than giving up immediately.
+        skip_primary = bool(fallbacks) and not self._cb.should_attempt_primary()
         if skip_primary:
             logger.debug(
-                "llm_openai_skipped_circuit_open",
+                "llm_primary_skipped_circuit_open",
+                provider=primary.name,
                 circuit_state=self._cb.state,
                 cooldown_remaining=round(self._cb.cooldown_remaining, 1),
             )
 
-        if self._openai is not None and not skip_primary:
+        if not skip_primary:
             try:
-                result = await self._openai.chat.completions.create(**kwargs)
+                result = await primary.create(**kwargs)
                 self._cb.record_success()
                 return result
-            except OPENAI_FALLBACK_ERRORS as e:
+            except primary.recoverable_errors as e:
                 primary_error = e
                 self._cb.record_failure(e)
                 logger.warning(
-                    "llm_openai_failed_will_try_fallback",
+                    "llm_primary_failed_will_try_fallback",
+                    provider=primary.name,
                     error_type=type(e).__name__,
                     error=str(e)[:300],
-                    fallback_available=self.has_fallback,
+                    fallback_available=bool(fallbacks),
                     circuit_state=self._cb.state,
                     consecutive_failures=self._cb._consecutive_failures,
                 )
 
-        if not self.has_fallback:
+        if not fallbacks:
             if primary_error is not None:
                 raise primary_error
-            raise AIParsingError(
-                "No LLM provider available. Set OPENAI_API_KEY or ANTHROPIC_API_KEY."
-            )
+            raise AIParsingError("No LLM provider available for this request.")
 
-        messages = kwargs.get("messages") or []
-        max_tokens = int(kwargs.get("max_tokens") or settings.anthropic_max_tokens)
-        temperature = kwargs.get("temperature")
-        response_format = kwargs.get("response_format")
-        anthropic_model = settings.anthropic_model
-
-        try:
-            result = await _call_anthropic(
-                self._anthropic,  # type: ignore[arg-type]
-                model=anthropic_model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                response_format=response_format,
-            )
-            logger.info(
-                "llm_fallback_used",
-                provider="anthropic",
-                model=anthropic_model,
-                openai_error=type(primary_error).__name__ if primary_error else None,
-                openai_skipped=skip_primary,
-            )
-            return result
-        except Exception as fallback_exc:
-            logger.exception(
-                "llm_anthropic_fallback_failed",
-                error=str(fallback_exc)[:300],
-                fallback_error_type=type(fallback_exc).__name__,
-                primary_error_type=type(primary_error).__name__
-                if primary_error
-                else None,
-            )
-            if primary_error is not None:
-                combined = AIParsingError(
-                    "Both LLM providers failed. "
-                    f"OpenAI: {type(primary_error).__name__}: {str(primary_error)[:200]}. "
-                    f"Anthropic: {type(fallback_exc).__name__}: {str(fallback_exc)[:200]}."
+        last_fallback_error: Exception | None = None
+        for fb in fallbacks:
+            try:
+                result = await fb.create(**kwargs)
+                logger.info(
+                    "llm_fallback_used",
+                    provider=fb.name,
+                    primary=primary.name,
+                    primary_error=type(primary_error).__name__ if primary_error else None,
+                    primary_skipped=skip_primary,
                 )
-                raise combined from fallback_exc
-            raise
+                return result
+            except Exception as fb_exc:  # noqa: BLE001 - try every fallback
+                last_fallback_error = fb_exc
+                logger.warning(
+                    "llm_fallback_provider_failed",
+                    provider=fb.name,
+                    error_type=type(fb_exc).__name__,
+                    error=str(fb_exc)[:300],
+                )
+                continue
+
+        logger.exception(
+            "llm_all_providers_failed",
+            primary=primary.name,
+            primary_error_type=type(primary_error).__name__ if primary_error else None,
+            last_fallback_error_type=type(last_fallback_error).__name__
+            if last_fallback_error
+            else None,
+        )
+        parts: list[str] = []
+        if primary_error is not None:
+            parts.append(f"{primary.name}: {type(primary_error).__name__}: {str(primary_error)[:200]}")
+        if last_fallback_error is not None:
+            parts.append(
+                f"fallback: {type(last_fallback_error).__name__}: {str(last_fallback_error)[:200]}"
+            )
+        combined = AIParsingError("All LLM providers failed. " + " | ".join(parts))
+        if last_fallback_error is not None:
+            raise combined from last_fallback_error
+        raise combined
 
 
 # ── Construction & caching ────────────────────────────────────────────────
@@ -610,9 +769,9 @@ class LLMFallbackClient:
 _clients: dict[str, LLMFallbackClient] = {}
 
 
-def _cache_key(openai_key: str, anthropic_key: str) -> str:
-    h = hashlib.sha256(f"{openai_key}|{anthropic_key}".encode()).hexdigest()
-    return h[:24]
+def _cache_key(provider: str, openai_key: str, anthropic_key: str, gemini_key: str) -> str:
+    raw = f"{provider}|{openai_key}|{anthropic_key}|{gemini_key}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
 def _build_openai_client(api_key: str) -> AsyncOpenAI | None:
@@ -622,6 +781,24 @@ def _build_openai_client(api_key: str) -> AsyncOpenAI | None:
     t = settings.openai_timeout_seconds
     return AsyncOpenAI(
         api_key=api_key,
+        max_retries=0,
+        timeout=httpx.Timeout(t, connect=min(30.0, t)),
+    )
+
+
+def _build_gemini_client(api_key: str) -> AsyncOpenAI | None:
+    if not api_key:
+        return None
+    settings = get_settings()
+    t = settings.gemini_timeout_seconds
+    # Plain OpenAI SDK pointed at Google's OpenAI-compatible endpoint. We use the
+    # base ``openai.AsyncOpenAI`` (not the Langfuse wrapper) to avoid attributing
+    # Gemini calls to OpenAI in traces.
+    from openai import AsyncOpenAI as _BaseAsyncOpenAI
+
+    return _BaseAsyncOpenAI(
+        api_key=api_key,
+        base_url=settings.gemini_base_url,
         max_retries=0,
         timeout=httpx.Timeout(t, connect=min(30.0, t)),
     )
@@ -639,49 +816,92 @@ def _build_anthropic_client(api_key: str) -> AsyncAnthropic | None:
     )
 
 
+def _build_adapter(provider: str, api_key: str) -> _Adapter | None:
+    if not api_key:
+        return None
+    settings = get_settings()
+    if provider == "openai":
+        client = _build_openai_client(api_key)
+        return _OpenAIAdapter(client, settings.openai_model) if client else None
+    if provider == "gemini":
+        client = _build_gemini_client(api_key)
+        return _GeminiAdapter(client, settings.gemini_model) if client else None
+    if provider == "anthropic":
+        client = _build_anthropic_client(api_key)
+        return (
+            _AnthropicAdapter(client, settings.anthropic_model, settings.anthropic_max_tokens)
+            if client
+            else None
+        )
+    return None
+
+
+def _normalize_provider(provider: str | None) -> str:
+    p = (provider or "").strip().lower()
+    if p in LLM_PROVIDERS:
+        return p
+    return get_settings().default_llm_provider
+
+
 def get_llm_client(
     *,
+    provider: str | None = None,
     openai_api_key: str | None = None,
     anthropic_api_key: str | None = None,
+    gemini_api_key: str | None = None,
 ) -> LLMFallbackClient:
     """Return a cached multi-provider client.
 
-    Either key may be empty; at least one must be present. When
-    ``llm_fallback_enabled`` is False the Anthropic key is ignored (so the
-    behaviour matches the previous OpenAI-only flow).
+    ``provider`` is the user's preferred primary provider; the others act as
+    ordered fallbacks when ``llm_fallback_enabled`` is True. Any key may be
+    empty; at least one configured provider must remain.
+
+    For each key argument: ``None`` → fall back to the server env value;
+    ``""`` → explicit disable for that provider.
     """
     settings = get_settings()
-    # ``None`` → fall back to settings; ``""`` → explicit disable.
-    o_key = (
-        openai_api_key if openai_api_key is not None else settings.openai_api_key or ""
-    ).strip()
-    a_key = (
-        anthropic_api_key
-        if anthropic_api_key is not None
-        else settings.anthropic_api_key or ""
-    ).strip()
+    provider = _normalize_provider(provider)
 
+    def _resolve(arg: str | None, env_default: str) -> str:
+        return (arg if arg is not None else (env_default or "")).strip()
+
+    keys = {
+        "openai": _resolve(openai_api_key, settings.openai_api_key),
+        "anthropic": _resolve(anthropic_api_key, settings.anthropic_api_key),
+        "gemini": _resolve(gemini_api_key, settings.gemini_api_key),
+    }
+
+    # Primary first, then the remaining providers in a stable order. When
+    # fallback is disabled, only the selected provider is used.
+    order = [provider] + [p for p in LLM_PROVIDERS if p != provider]
     if not settings.llm_fallback_enabled:
-        a_key = ""
+        order = [provider]
 
-    if not o_key and not a_key:
+    if not any(keys[p] for p in order):
         raise AIParsingError(
-            "No LLM provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY."
+            "No LLM provider configured. Set an API key for OpenAI, Anthropic, or Gemini."
         )
 
-    ck = _cache_key(o_key, a_key)
+    ck = _cache_key(provider, keys["openai"], keys["anthropic"], keys["gemini"])
     if ck in _clients:
         return _clients[ck]
 
-    client = LLMFallbackClient(
-        openai_client=_build_openai_client(o_key),
-        anthropic_client=_build_anthropic_client(a_key),
-    )
+    adapters: list[_Adapter] = []
+    for p in order:
+        adapter = _build_adapter(p, keys[p])
+        if adapter is not None:
+            adapters.append(adapter)
+
+    if not adapters:
+        raise AIParsingError("No LLM provider available for this request.")
+
+    client = LLMFallbackClient(adapters)
     _clients[ck] = client
     logger.info(
         "llm_client_initialized",
-        openai_available=client.has_primary,
-        anthropic_available=client.has_fallback,
+        primary_provider=client.primary_provider,
+        providers=[a.name for a in adapters],
+        fallback_enabled=settings.llm_fallback_enabled,
         langfuse_tracing=_LANGFUSE_AVAILABLE and settings.langfuse_enabled,
     )
     return client
@@ -690,21 +910,27 @@ def get_llm_client(
 async def get_llm_client_for_user(user_id: str | None) -> LLMFallbackClient:
     """Resolve the LLM client for a user.
 
-    The OpenAI key follows the existing per-user resolution (custom key
-    when the user opted in, otherwise the system key). Anthropic is always
-    sourced from the server's ``ANTHROPIC_API_KEY`` env var — users cannot
-    bring their own Anthropic key yet, but they automatically benefit from
-    the operator's fallback when their OpenAI quota is exhausted.
+    The user's selected provider becomes the primary. Each provider's key
+    follows per-user resolution (a custom encrypted key when opted in, else the
+    server env key). The other configured providers remain available as
+    ordered fallbacks when ``llm_fallback_enabled``.
     """
-    settings = get_settings()
-    a_key = settings.anthropic_api_key
     if not user_id:
-        return get_llm_client(anthropic_api_key=a_key)
+        return get_llm_client()
 
     from app.storage.database import get_session
     from app.storage.user_repository import UserRepository
 
     async with get_session() as session:
         repo = UserRepository(session)
-        openai_key = await repo.resolve_openai_api_key(user_id)
-    return get_llm_client(openai_api_key=openai_key, anthropic_api_key=a_key)
+        provider = await repo.resolve_llm_provider(user_id)
+        openai_key = await repo.resolve_provider_api_key(user_id, "openai")
+        anthropic_key = await repo.resolve_provider_api_key(user_id, "anthropic")
+        gemini_key = await repo.resolve_provider_api_key(user_id, "gemini")
+
+    return get_llm_client(
+        provider=provider,
+        openai_api_key=openai_key,
+        anthropic_api_key=anthropic_key,
+        gemini_api_key=gemini_key,
+    )
