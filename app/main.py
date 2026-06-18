@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.api.routes import router
 from app.api.scraper_routes import scraper_router
+from app.api.assistant_routes import assistant_router
 from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
@@ -229,14 +230,18 @@ def create_app() -> FastAPI:
     if frontend_url:
         origins.append(frontend_url.rstrip("/"))
 
-    # Local dev: allow any private-LAN origin (e.g. http://172.20.1.140:5173).
+    # Local dev: allow any private-LAN origin (e.g. http://172.20.1.140:5173) and
+    # browser-extension origins (chrome-extension://, moz-extension://) so the
+    # job-assistant extension can call the API during development. In production,
+    # extension origins must be added explicitly via CORS_EXTRA_ORIGINS.
     allow_origin_regex = None
     if settings.app_env == "local" or settings.debug:
         allow_origin_regex = (
-            r"https?://"
+            r"(?:https?://"
             r"(localhost|127\.0\.0\.1|\[::1\]|"
             r"(?:10|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3})"
             r"(?::\d+)?"
+            r"|(?:chrome-extension|moz-extension)://[a-zA-Z0-9]+)"
         )
 
     app.add_middleware(
@@ -269,6 +274,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router, prefix="/api/v1")
     app.include_router(scraper_router, prefix="/api/v1")
+    app.include_router(assistant_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 
     return app

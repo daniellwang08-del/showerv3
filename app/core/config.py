@@ -174,6 +174,9 @@ class Settings(BaseSettings):
 
     auth_password: str = Field(default="")
     auth_secret_key: str = Field(default="")
+    # Lifetime (days) of the long-lived bearer token issued to non-cookie clients
+    # (e.g. the browser extension) when they request `long_lived` at login.
+    extension_token_expire_days: int = Field(default=30, ge=1, le=365)
 
     google_sheets_credentials_path: str = Field(default="google_credentials.json")
 

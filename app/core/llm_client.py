@@ -38,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import json as json_lib
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -526,6 +527,39 @@ async def _call_anthropic(
     )
 
 
+async def _stream_anthropic(
+    client: AsyncAnthropic,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    temperature: float | None,
+) -> AsyncIterator[str]:
+    """Stream plain-text deltas from the Anthropic Messages API.
+
+    Mirrors ``_call_anthropic`` but yields text incrementally. JSON mode is not
+    supported here — this path is for free-text assistant chat only.
+    """
+    system_text, anthropic_messages = _split_system_and_messages(messages)
+    if not anthropic_messages:
+        raise AIParsingError("LLM stream received no user/assistant messages.")
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": anthropic_messages,
+    }
+    if system_text:
+        kwargs["system"] = system_text
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+
+    async with client.messages.stream(**kwargs) as stream:
+        async for text in stream.text_stream:
+            if text:
+                yield text
+
+
 # ── Provider adapters ─────────────────────────────────────────────────────
 #
 # Each adapter exposes ``async create(**openai_shape_kwargs) -> response`` and a
@@ -557,6 +591,10 @@ class _OpenAIAdapter:
         kwargs = dict(kwargs)
         kwargs["model"] = self._model
         return await self._client.chat.completions.create(**kwargs)
+
+    async def stream(self, **kwargs: Any) -> AsyncIterator[str]:
+        async for delta in _stream_openai_compatible(self._client, self._model, **kwargs):
+            yield delta
 
 
 class _GeminiAdapter:
@@ -600,6 +638,10 @@ class _GeminiAdapter:
             provider="gemini",
         )
 
+    async def stream(self, **kwargs: Any) -> AsyncIterator[str]:
+        async for delta in _stream_openai_compatible(self._client, self._model, **kwargs):
+            yield delta
+
 
 class _AnthropicAdapter:
     name = "anthropic"
@@ -619,6 +661,39 @@ class _AnthropicAdapter:
             temperature=kwargs.get("temperature"),
             response_format=kwargs.get("response_format"),
         )
+
+    async def stream(self, **kwargs: Any) -> AsyncIterator[str]:
+        async for delta in _stream_anthropic(
+            self._client,
+            model=self._model,
+            messages=kwargs.get("messages") or [],
+            max_tokens=int(kwargs.get("max_tokens") or self._default_max_tokens),
+            temperature=kwargs.get("temperature"),
+        ):
+            yield delta
+
+
+def _stream_openai_compatible(
+    client: AsyncOpenAI, model: str, **kwargs: Any
+) -> AsyncIterator[str]:
+    """Yield text deltas from an OpenAI-compatible chat-completions stream."""
+
+    async def _gen() -> AsyncIterator[str]:
+        call_kwargs = dict(kwargs)
+        call_kwargs["model"] = model
+        call_kwargs["stream"] = True
+        # JSON mode is incompatible with the free-text streaming path.
+        call_kwargs.pop("response_format", None)
+        stream = await client.chat.completions.create(**call_kwargs)
+        async for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta.content
+            except (AttributeError, IndexError):
+                delta = None
+            if delta:
+                yield delta
+
+    return _gen()
 
 
 _Adapter = _OpenAIAdapter | _GeminiAdapter | _AnthropicAdapter
@@ -761,6 +836,68 @@ class LLMFallbackClient:
         if last_fallback_error is not None:
             raise combined from last_fallback_error
         raise combined
+
+    async def stream_chat(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+    ) -> AsyncIterator[str]:
+        """Stream a free-text assistant answer as incremental text deltas.
+
+        The user-selected provider is tried first; if it fails *before* emitting
+        any token (and a fallback is configured) the next provider is tried.
+        Once any text has been streamed we cannot safely switch providers, so a
+        mid-stream failure is propagated.
+        """
+        if not self._adapters:
+            raise AIParsingError(
+                "No LLM provider configured. Set an API key for OpenAI, Anthropic, or Gemini."
+            )
+
+        primary = self._adapters[0]
+        fallbacks = self._adapters[1:]
+        skip_primary = bool(fallbacks) and not self._cb.should_attempt_primary()
+
+        providers = ([] if skip_primary else [primary]) + fallbacks
+        last_error: Exception | None = None
+
+        for adapter in providers:
+            produced = False
+            try:
+                async for delta in adapter.stream(
+                    messages=messages, temperature=temperature, max_tokens=max_tokens
+                ):
+                    produced = True
+                    yield delta
+                if adapter is primary:
+                    self._cb.record_success()
+                return
+            except Exception as exc:  # noqa: BLE001 - try every provider until one streams
+                last_error = exc
+                if adapter is primary:
+                    self._cb.record_failure(exc)
+                if produced:
+                    # Partial output already delivered; cannot fall back cleanly.
+                    logger.warning(
+                        "llm_stream_failed_after_partial",
+                        provider=adapter.name,
+                        error=str(exc)[:300],
+                    )
+                    raise
+                logger.warning(
+                    "llm_stream_provider_failed",
+                    provider=adapter.name,
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:300],
+                )
+                continue
+
+        raise AIParsingError(
+            "All LLM providers failed (streaming). "
+            + (f"{type(last_error).__name__}: {str(last_error)[:200]}" if last_error else "")
+        )
 
 
 # ── Construction & caching ────────────────────────────────────────────────

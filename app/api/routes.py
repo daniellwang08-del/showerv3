@@ -145,8 +145,24 @@ async def _purge_job_cascade(session, job_id: str) -> bool:
     return True
 
 
+def _extract_bearer_token(request: Request) -> str | None:
+    """Return the JWT from an `Authorization: Bearer <token>` header, if present.
+
+    Non-cookie clients (e.g. the browser extension) authenticate this way; the
+    web app continues to rely on the HttpOnly `access_token` cookie.
+    """
+    header = request.headers.get("authorization") or request.headers.get("Authorization")
+    if not header:
+        return None
+    parts = header.split(" ", 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip():
+        return parts[1].strip()
+    return None
+
+
 async def get_current_user(request: Request):
-    token = request.cookies.get("access_token")
+    # Prefer the cookie (web app); fall back to a Bearer header (extension/API clients).
+    token = request.cookies.get("access_token") or _extract_bearer_token(request)
     if not token:
         logger.warning("auth_required_missing_token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -210,7 +226,10 @@ async def signup(request: SignupRequest, response: Response) -> AuthResponse:
                 success=True,
                 message="Account created successfully",
                 email=user.email,
-                user_id=user.id
+                user_id=user.id,
+                access_token=access_token,
+                token_type="bearer",
+                expires_in=86400,
             )
         except IntegrityError:
             await session.rollback()
@@ -245,24 +264,37 @@ async def login(request: LoginRequest, response: Response) -> AuthResponse:
                 detail="Invalid email or password"
             )
         
-        # Create access token
-        access_token = AuthService.create_access_token(data={"sub": user.email, "user_id": user.id})
+        # Long-lived token for non-cookie clients (extension); default 24h otherwise.
+        if request.long_lived:
+            expires_seconds = settings.extension_token_expire_days * 86400
+            expires_delta = timedelta(days=settings.extension_token_expire_days)
+        else:
+            expires_seconds = 86400
+            expires_delta = None
+
+        access_token = AuthService.create_access_token(
+            data={"sub": user.email, "user_id": user.id},
+            expires_delta=expires_delta,
+        )
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
-            max_age=86400,
+            max_age=expires_seconds,
             samesite="lax",
             secure=settings.app_env == "production",
         )
         
-        logger.info("user_login_success", email=user.email, user_id=user.id)
+        logger.info("user_login_success", email=user.email, user_id=user.id, long_lived=request.long_lived)
         
         return AuthResponse(
             success=True,
             message="Logged in successfully",
             email=user.email,
-            user_id=user.id
+            user_id=user.id,
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=expires_seconds,
         )
 
 

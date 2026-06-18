@@ -39,6 +39,16 @@ echo.
 :: `ws://172.20.1.140%20:5173/?token=...`, and how APP_ENV ended up as
 :: "local " in worker tracebacks. Do not "simplify" these quotes away.
 
+:: Stop any previously launched API/worker processes so a fresh start always
+:: serves the latest code. Closing the old service windows does NOT kill their
+:: detached python children, which keep holding port 8000 (the new server then
+:: silently loses the port race and the stale code keeps answering). We scope
+:: the kill to this project's start_server.py / run_worker.py processes, their
+:: uvicorn reload children, and whatever currently owns port 8000.
+echo [0/7] Stopping any existing API/worker processes...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $p=Get-CimInstance Win32_Process; $s=$p | Where-Object { $_.CommandLine -match 'start_server\.py|run_worker\.py' }; $ids=$s | ForEach-Object { $_.ProcessId }; $f=$p | Where-Object { $_.CommandLine -match 'multiprocessing-fork' -and $ids -contains $_.ParentProcessId }; $s + $f | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }"
+timeout /t 2 /nobreak >nul
+
 :: Backend API server
 echo [1/7] Starting backend API server...
 start "Backend API (port 8000)" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "RELOAD=%RELOAD%" && venv\Scripts\python.exe start_server.py"

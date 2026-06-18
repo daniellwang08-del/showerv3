@@ -338,6 +338,56 @@ class GoogleSheetsConfig(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class ApplicationSession(Base):
+    """Per-user in-progress job application worked on through the assistant
+    extension. Holds a snapshot of the structured job description so the
+    extension can keep working (and chatting) about a job until the user
+    completes or removes it. One session per (user, job).
+    """
+    __tablename__ = "application_sessions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    # "in_progress" while the user is applying; "completed" once they finish.
+    status = Column(String(20), default="in_progress", nullable=False, server_default="in_progress")
+    # Snapshot of the structured JD (title/company/responsibilities/...) at the
+    # time the session started, so it stays stable for the duration of applying.
+    job_snapshot = Column(JSON, nullable=True)
+    job_url = Column(Text, nullable=True)
+    job_title = Column(String(500), nullable=True)
+    company = Column(String(500), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "job_id", name="uq_application_session_user_job"),
+        Index("ix_application_sessions_user_status", "user_id", "status"),
+    )
+
+
+class AssistantMessage(Base):
+    """A single turn in the job-specific assistant conversation. The
+    conversation is identified by (user_id, job_id); messages are ordered by
+    created_at. Persisted so reopening a job restores the chat.
+    """
+    __tablename__ = "assistant_messages"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # "user" | "assistant"
+    content = Column(Text, nullable=False)
+    # Optional answer-style metadata used to render the question that produced
+    # this answer (e.g. {"style": "concise", "field_type": "textarea"}).
+    meta = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_assistant_messages_user_job", "user_id", "job_id", "created_at"),
+    )
+
+
 class APIPatternRegistry(Base):
     __tablename__ = "api_pattern_registry"
 

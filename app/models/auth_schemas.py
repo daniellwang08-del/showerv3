@@ -26,7 +26,10 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=8, max_length=255)
-    
+    # Non-cookie clients (e.g. the browser extension) set this to receive a
+    # long-lived bearer token so the user stays signed in across restarts.
+    long_lived: bool = Field(default=False)
+
     @field_validator("email")
     @classmethod
     def validate_email(cls, v: str) -> str:
@@ -41,6 +44,11 @@ class AuthResponse(BaseModel):
     message: str
     email: str | None = None
     user_id: str | None = None
+    # Bearer token for non-cookie clients (e.g. browser extension). The web app
+    # ignores this and relies on the HttpOnly access_token cookie instead.
+    access_token: str | None = None
+    token_type: str | None = None
+    expires_in: int | None = None
 
 
 class UserResponse(BaseModel):

@@ -1,0 +1,63 @@
+/* Autofill picker overlay. High z-index, never intercepts pointer events so the
+   element under the cursor is always the page's own element. */
+
+.jaf-overlay-box {
+  position: fixed;
+  z-index: 2147483646;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+  border-radius: 4px;
+  transition: all 0.03s linear;
+}
+.jaf-overlay-box[data-level="valid"] {
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.14);
+}
+.jaf-overlay-box[data-level="invalid"],
+.jaf-overlay-box[data-level="shadow"] {
+  border-color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+.jaf-overlay-box[data-level="group"],
+.jaf-overlay-box[data-level="custom"],
+.jaf-overlay-box[data-level="file"] {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
+}
+
+.jaf-overlay-badge {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #fff;
+  background: #2563eb;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.jaf-overlay-badge[data-level="valid"] {
+  background: #16a34a;
+}
+.jaf-overlay-badge[data-level="invalid"],
+.jaf-overlay-badge[data-level="shadow"] {
+  background: #dc2626;
+}
+.jaf-overlay-badge[data-level="group"],
+.jaf-overlay-badge[data-level="custom"],
+.jaf-overlay-badge[data-level="file"] {
+  background: #d97706;
+}
+
+.jaf-selected {
+  outline: 2px dashed #2563eb !important;
+  outline-offset: 2px !important;
+}
+.jaf-filled {
+  outline: 2px solid #16a34a !important;
+  outline-offset: 2px !important;
+  transition: outline-color 0.3s ease;
+}
