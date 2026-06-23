@@ -51,13 +51,3 @@
 .jaf-overlay-badge[data-level="file"] {
   background: #d97706;
 }
-
-.jaf-selected {
-  outline: 2px dashed #2563eb !important;
-  outline-offset: 2px !important;
-}
-.jaf-filled {
-  outline: 2px solid #16a34a !important;
-  outline-offset: 2px !important;
-  transition: outline-color 0.3s ease;
-}

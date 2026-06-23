@@ -151,6 +151,13 @@ export const nextJob = (after) =>
 export const markApplied = (jobIds) =>
   apiFetch("/jobs/valid/applied/batch", { method: "POST", body: { job_ids: jobIds } });
 
+// Hide a job from the active list (e.g. the posting expired / link is dead).
+export const reportJobInvalid = (jobId, reason) =>
+  apiFetch(`/jobs/valid/${jobId}/report-invalid`, {
+    method: "POST",
+    body: { duplication_reason: reason },
+  });
+
 // ── autofill ────────────────────────────────────────────────────────────────
 
 // fields: structured per-control specs. preferences: { answer_strategy?, resume_source? }
@@ -160,6 +167,12 @@ export const autofill = (jobId, fields, preferences) =>
     method: "POST",
     body: { job_id: jobId, fields, ...(preferences ? { preferences } : {}) },
   });
+
+// Canonical structured profile for deterministic platform engines (Workday).
+// resumeSource: "original" | "tailored". Returns the merged profile object the
+// Workday engine maps to fixed selectors.
+export const getAutofillProfile = (jobId, resumeSource = "original") =>
+  apiFetch(`/assistant/autofill-profile?job_id=${encodeURIComponent(jobId)}&resume_source=${encodeURIComponent(resumeSource)}`);
 
 // Download a generated resume/cover-letter file as base64 (for attaching to a
 // page's <input type=file> via DataTransfer in the content script).

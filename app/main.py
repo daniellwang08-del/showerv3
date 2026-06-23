@@ -37,7 +37,7 @@ from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
-from app.extractors.browser_extractor import init_browser_pool, close_browser_pool
+from app.extractors.browser_extractor import start_browser_pool_warmup, close_browser_pool
 from app.services.extraction_cache import init_redis_pool, close_redis_pool
 from app.tasks.worker import close_shared_pools
 from app.core.config import get_settings
@@ -134,10 +134,15 @@ async def lifespan(app: FastAPI):
             loop_type=type(_loop).__name__,
             platform=sys.platform,
         )
-        await init_browser_pool()
+        # Warm up Playwright in the background instead of awaiting it here.
+        # uvicorn binds the listening socket only AFTER this lifespan startup
+        # returns, so a slow browser launch would leave port 8000 unbound and
+        # make the frontend WS proxy log ECONNREFUSED until it finished. The
+        # browser extractor lazily awaits this warm-up on first use.
+        start_browser_pool_warmup()
     except Exception as e:
         err_msg = str(e) or f"{type(e).__name__}"
-        logger.warning("browser_pool_init_failed", error=err_msg)
+        logger.warning("browser_pool_warmup_start_failed", error=err_msg)
 
     redis_ok = False
     try:

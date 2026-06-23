@@ -180,6 +180,16 @@ class Settings(BaseSettings):
 
     google_sheets_credentials_path: str = Field(default="google_credentials.json")
 
+    # Default GPA written to optional "Overall Result (GPA)" application fields when
+    # the profile has no stored value (Workday). Applied only when the field exists
+    # and is empty; a stored profile GPA always takes precedence. Blank disables it.
+    autofill_default_gpa: str = Field(default="3.7")
+
+    # Default Field of Study written to the optional Workday "Field of Study" prompt
+    # when it cannot be derived from the candidate's degree text. The candidate can
+    # change it manually on the form. Blank disables the fallback.
+    autofill_default_field_of_study: str = Field(default="Computer Engineering")
+
     resume_output_root: str = Field(default="./resume_output")
     libreoffice_path: str | None = Field(default=None)
     resume_template_path: str = Field(default="app/templates/resume_template.docx")

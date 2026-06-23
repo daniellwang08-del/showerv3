@@ -261,6 +261,13 @@ def _build_autofill_prompt(
         '"kind": <string>, "option": <string|null>, "option_values": [<string>], '
         '"file_role": <string|null>, "needs_user": <bool>, "reason": <string|null>}]}]}\n'
         "- Return one controls entry for EVERY cid you were given, echoing its cid exactly.\n"
+        "- Repeating entries (education / work history): when several controls share the same "
+        "label but their cid ends with a numeric index (e.g. 'school--0', 'degree--0', "
+        "'discipline--0', then 'school--1', 'degree--1', 'discipline--1', ...), each index is one "
+        "repeated entry. Map the candidate's entries to indices IN ORDER: the FIRST education "
+        "(or employer) in the profile -> index 0, the second -> index 1, and so on. Fill EVERY "
+        "indexed control the profile has an entry for, never leave a later index blank while an "
+        "earlier one is filled, and never repeat the same entry across two indices.\n"
         "- When a control's 'options' array is non-empty (or it has option choices in the html), "
         "'value' and 'option' MUST be EXACTLY one of those option strings (copy it verbatim). "
         "Never invent an option.\n"
@@ -313,6 +320,23 @@ def _build_autofill_prompt(
         "joining a talent community, agreeing to terms): choose the affirmative / agree option.\n"
         "  * Residence state / location: use the candidate's profile location; if it is unknown "
         "and the field is required, use the job's state/region, else a common US state.\n"
+        "  * A single 'Location' / 'Where are you based' field (especially a city autocomplete / "
+        "combobox): output ONLY 'City, State' (e.g. 'Newark, CA'); outside the US use "
+        "'City, Country'. Do NOT include the street address, ZIP / postal code, or the full "
+        "mailing address even when the profile has them.\n"
+        "  * Work arrangement / location preference: the candidate PREFERS REMOTE work. For an "
+        "'ideal office setting' / remote-vs-hybrid-vs-onsite / work-arrangement question, choose "
+        "the Remote option (or the most-remote option available, e.g. Remote over Hybrid over "
+        "On-site).\n"
+        "  * Job-search stage / status / availability: the candidate is ACTIVELY job searching "
+        "(started recently, about 2 weeks ago) and is available to start in the near term. For a "
+        "'where are you in your job search' / availability / notice-period question, pick the "
+        "option that reflects actively searching and near-term availability (e.g. 'Immediate' or "
+        "'Within 30 Days'); NEVER pick an 'I am just exploring' / 'not looking' / long-timeline "
+        "option.\n"
+        "  * Seniority / level preference: the candidate targets SENIOR or STAFF level roles. For "
+        "a desired-level / seniority / job-level question, choose the Senior or Staff option (the "
+        "closest available).\n"
         "- Answer with a POSITIVE bias: for eligibility, availability, willingness, and "
         "qualification questions, choose the affirmative / eligible option unless the profile "
         "clearly contradicts it.\n"
@@ -381,6 +405,9 @@ class ApplicationSessionOut(BaseModel):
 
 class ApplicationSessionDetailOut(ApplicationSessionOut):
     messages: list[AssistantMessageOut] = Field(default_factory=list)
+    # Set once the user has marked this job applied; lets the client hide the
+    # autofill UI for jobs that are already submitted.
+    applied_at: str | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -403,7 +430,7 @@ class AutofillConstraints(BaseModel):
 
 
 class AutofillControlIn(BaseModel):
-    cid: str = Field(..., min_length=1, max_length=64)
+    cid: str = Field(..., min_length=1, max_length=256)
     # text|email|tel|url|number|date|textarea|select|radio|checkbox|contenteditable|custom|file
     kind: str = Field(default="text", max_length=30)
     label: str = Field(default="", max_length=600)
@@ -412,7 +439,9 @@ class AutofillControlIn(BaseModel):
     options: list[str] = Field(default_factory=list, max_length=MAX_OPTIONS_PER_CONTROL)
     constraints: AutofillConstraints = Field(default_factory=AutofillConstraints)
     is_file: bool = False
-    accept: str | None = Field(default=None, max_length=300)
+    # Some ATSs (SmartRecruiters) list dozens of allowed extensions here, so the
+    # raw accept string can run many hundreds of characters; keep a generous cap.
+    accept: str | None = Field(default=None, max_length=2000)
 
 
 class AutofillFieldIn(BaseModel):
@@ -732,6 +761,12 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
             opts,
             includes=["not a protected veteran", "am not a veteran", "i am not", "not a veteran", "not a protected"],
         )
+    if "armed force" in low or re.search(r"\bserved in the armed", low):
+        return _pick_option(
+            opts,
+            includes=["no, i have not served", "have not served", "not served", "i have not served"],
+            excludes=["armed forces of the united states", "noaa", "usphs"],
+        )
     if "disab" in low:
         return _pick_option(
             opts,
@@ -886,6 +921,11 @@ async def assistant_autofill(
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         profile_text = user.profile_openai_cache or ""
+        # The resume-style profile cache omits the candidate's home address, so
+        # append it for address/city/state/postal form fields to fill from.
+        addr_text = _contact_address_text(getattr(user, "address", None))
+        if addr_text:
+            profile_text = (profile_text + "\n\n" + addr_text).strip()
 
         sess = (
             await session.execute(
@@ -939,6 +979,461 @@ async def assistant_autofill(
 
     results = _parse_autofill_results(text, req.fields)
     return AutofillResponse(results=results)
+
+
+# ── canonical autofill profile (deterministic engines, e.g. Workday) ─────────
+#
+# Platform engines that map a structured profile to fixed selectors (Workday's
+# data-automation-id fields) need a single canonical object rather than free
+# text. This endpoint assembles it from the user's structured profile, merges
+# the tailored resume narrative for work experience when requested, normalizes
+# dates to MM/YYYY, and fills EEO defaults. Address is emitted (empty) so the
+# engine is ready the moment an address source exists.
+
+# EEO / demographic defaults (mirror the LLM autofill prompt's defaults).
+_EEO_DEFAULTS = {
+    "gender": "Male",
+    "ethnicity": "Asian",
+    "hispanicLatino": False,
+    "veteran": False,
+    "disability": False,
+    "authorized": True,
+    "sponsorship": False,
+}
+
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_PRESENT_RE = re.compile(r"present|current|now|ongoing", re.I)
+
+
+def _address_for_autofill(addr: Any) -> dict:
+    """Map the user's saved address to the canonical autofill shape. Country
+    defaults to the US when unset (matches the engine's other US defaults)."""
+    a = addr if isinstance(addr, dict) else {}
+
+    def _s(key, default=""):
+        v = a.get(key)
+        return v.strip() if isinstance(v, str) and v.strip() else default
+
+    return {
+        "line1": _s("line1"),
+        "line2": _s("line2"),
+        "city": _s("city"),
+        "state": _s("state"),
+        "postalCode": _s("postal_code"),
+        "country": _s("country", "United States of America"),
+    }
+
+
+def _contact_address_text(addr: Any) -> str:
+    """Readable mailing-address block for the LLM autofill prompt. The profile
+    text cache (profile_openai_cache) is resume-style and omits the candidate's
+    home address, so address/city/state/postal form fields had no source to fill
+    from. This injects the structured address so they can be answered."""
+    a = _address_for_autofill(addr)
+    street = " ".join(p for p in [a.get("line1"), a.get("line2")] if p).strip()
+    rows = [
+        ("Street address", street),
+        ("City", a.get("city")),
+        ("State/Province", a.get("state")),
+        ("Postal/ZIP code", a.get("postalCode")),
+        ("Country", a.get("country")),
+    ]
+    lines = [f"- {label}: {val}" for label, val in rows if val]
+    if not lines:
+        return ""
+    return "## Contact Address\n" + "\n".join(lines)
+
+
+def _eeo_for_autofill(prefs: Any) -> dict:
+    """Map the user's saved EEO preferences to the canonical autofill shape,
+    falling back to defaults for any unspecified (blank / None) field."""
+    p = prefs if isinstance(prefs, dict) else {}
+
+    def _str(key, default):
+        v = p.get(key)
+        return v.strip() if isinstance(v, str) and v.strip() else default
+
+    def _bool(key, default):
+        v = p.get(key)
+        return v if isinstance(v, bool) else default
+
+    return {
+        "gender": _str("gender", _EEO_DEFAULTS["gender"]),
+        "ethnicity": _str("race", _EEO_DEFAULTS["ethnicity"]),
+        "hispanicLatino": _bool("hispanic_latino", _EEO_DEFAULTS["hispanicLatino"]),
+        "veteran": _bool("veteran_status", _EEO_DEFAULTS["veteran"]),
+        "disability": _bool("disability_status", _EEO_DEFAULTS["disability"]),
+        "authorized": _bool("work_authorized", _EEO_DEFAULTS["authorized"]),
+        "sponsorship": _bool("needs_sponsorship", _EEO_DEFAULTS["sponsorship"]),
+    }
+
+
+def _to_mmyyyy(period: Any) -> str:
+    """Best-effort normalize a free-form period string to MM/YYYY (or '')."""
+    s = str(period or "").strip()
+    if not s or _PRESENT_RE.search(s):
+        return ""
+    m = re.search(r"\b(\d{1,2})[/\-.](\d{4})\b", s)  # MM/YYYY or M-YYYY
+    if m:
+        mm = max(1, min(12, int(m.group(1))))
+        return f"{mm:02d}/{m.group(2)}"
+    m = re.search(r"\b(\d{4})[/\-.](\d{1,2})\b", s)  # YYYY-MM
+    if m:
+        mm = max(1, min(12, int(m.group(2))))
+        return f"{mm:02d}/{m.group(1)}"
+    m = re.search(r"([A-Za-z]{3,})\.?\s*,?\s*(\d{4})", s)  # Mon YYYY
+    if m:
+        mon = _MONTHS.get(m.group(1)[:3].lower())
+        if mon:
+            return f"{mon:02d}/{m.group(2)}"
+    m = re.search(r"\b(\d{4})\b", s)  # bare year -> Jan of that year
+    if m:
+        return f"01/{m.group(1)}"
+    return s
+
+
+def _is_current_period(period_end: Any) -> bool:
+    s = str(period_end or "").strip()
+    return (not s) or bool(_PRESENT_RE.search(s))
+
+
+def _split_skills(technical_skills: list) -> list[str]:
+    """Flatten profile technical_skills ([{category, skills}]) into individual
+    skill tokens for Workday's type-to-add skills box."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for block in technical_skills or []:
+        if not isinstance(block, dict):
+            continue
+        for tok in str(block.get("skills", "")).split(","):
+            tok = tok.strip()
+            key = tok.lower()
+            if tok and key not in seen:
+                seen.add(key)
+                out.append(tok)
+    return out[:50]
+
+
+def _tailored_description(block: dict) -> str:
+    """Compose a Role Description from tailored project_description + bullets."""
+    parts: list[str] = []
+    pd = str(block.get("project_description") or "").strip()
+    if pd:
+        parts.append(pd)
+    for b in block.get("bullets") or []:
+        if isinstance(b, str) and b.strip():
+            parts.append(f"- {b.strip()}")
+    return "\n".join(parts)
+
+
+# Markdown emphasis/links the resume renders but a plain-text form field must not
+# show. NOTE: only PAIRED **bold** / __bold__ / `code` are stripped — lone
+# underscores/asterisks are preserved so technical identifiers (e.g. feature_store)
+# and bullet hyphens stay intact.
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_IMG_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.DOTALL)
+_MD_CODE_RE = re.compile(r"`([^`]+)`")
+_MD_HEAD_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s*")
+_MD_QUOTE_RE = re.compile(r"(?m)^\s{0,3}>\s?")
+_MD_BULLET_RE = re.compile(r"(?m)^(\s*)[*+]\s+")
+
+
+def _plain_text(text: Any) -> str:
+    """Strip Markdown so the value is clean, typeable plain text for a form field
+    (Workday Role Description, etc.). Keeps line breaks and '- ' bullets."""
+    s = str(text or "")
+    if not s:
+        return ""
+    s = _MD_IMG_RE.sub(r"\1", s)
+    s = _MD_LINK_RE.sub(r"\1", s)
+    s = _MD_BOLD_RE.sub(lambda m: m.group(1) or m.group(2) or "", s)
+    s = _MD_CODE_RE.sub(r"\1", s)
+    s = _MD_HEAD_RE.sub("", s)
+    s = _MD_QUOTE_RE.sub("", s)
+    s = _MD_BULLET_RE.sub(r"\1- ", s)
+    s = s.replace("**", "")  # any stray/unbalanced bold markers
+    # Trim trailing spaces per line; collapse 3+ blank lines to a single blank.
+    s = "\n".join(line.rstrip() for line in s.split("\n"))
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _match_profile_block(profile_we: list, company: str, idx: int) -> dict:
+    """Find the profile work block for a tailored entry by company name, then
+    fall back to positional order (the tailored list mirrors profile order)."""
+    cl = (company or "").strip().lower()
+    if cl:
+        for p in profile_we:
+            if isinstance(p, dict) and str(p.get("company_name", "")).strip().lower() == cl:
+                return p
+    if 0 <= idx < len(profile_we) and isinstance(profile_we[idx], dict):
+        return profile_we[idx]
+    return {}
+
+
+def _build_work_experience(profile_we: list, tailored_we: list | None, resume_source: str) -> list[dict]:
+    profile_we = [p for p in (profile_we or []) if isinstance(p, dict)]
+    use_tailored = resume_source == "tailored" and tailored_we
+    if not use_tailored:
+        return [
+            {
+                "company": str(p.get("company_name") or ""),
+                "title": str(p.get("job_title") or ""),
+                "location": str(p.get("location") or ""),
+                "startMMYYYY": _to_mmyyyy(p.get("period_start")),
+                "endMMYYYY": _to_mmyyyy(p.get("period_end")),
+                "current": _is_current_period(p.get("period_end")),
+                "description": _plain_text(p.get("description")),
+            }
+            for p in profile_we
+        ]
+
+    out: list[dict] = []
+    for i, t in enumerate(tailored_we):
+        if not isinstance(t, dict):
+            continue
+        prof = _match_profile_block(profile_we, t.get("company_name", ""), i)
+        # Dates/location: prefer enriched tailored fields, fall back to profile.
+        start = t.get("period_start") or prof.get("period_start")
+        end = t.get("period_end") if t.get("period_end") is not None else prof.get("period_end")
+        loc = t.get("location") or prof.get("location")
+        out.append(
+            {
+                "company": str(t.get("company_name") or ""),
+                "title": str(t.get("job_title") or ""),
+                "location": str(loc or ""),
+                "startMMYYYY": _to_mmyyyy(start),
+                "endMMYYYY": _to_mmyyyy(end),
+                "current": _is_current_period(end),
+                "description": _plain_text(_tailored_description(t)),
+            }
+        )
+    return out
+
+
+def _home_location_str(addr: Any) -> str:
+    """Compact 'City, State, Country' string for the candidate's home, used to
+    pick the company office nearest to them."""
+    a = _address_for_autofill(addr)
+    parts = [a.get("city"), a.get("state"), a.get("country")]
+    return ", ".join(p for p in parts if p)
+
+
+async def _llm_company_locations(companies: list[str], home: str, user_id: str) -> dict[str, str]:
+    """Ask the LLM for each company's office location nearest the candidate's home
+    (falling back to its headquarters). Returns {company_lower: location}. Never
+    raises — returns {} on any failure so autofill keeps working."""
+    if not companies:
+        return {}
+    settings = get_settings()
+    system_prompt = (
+        "You map past employers to a plausible office location for a job application form. "
+        "For EACH company, given the candidate's home location, return the company's real office "
+        "location (format: 'City, State/Province, Country') that is geographically NEAREST to the "
+        "candidate's home. If the company has no office near the candidate, or you are unsure, "
+        "return its primary global HEADQUARTERS location instead. Use only real, well-known "
+        "locations; never invent one. Respond ONLY with a JSON object mapping each company name "
+        "(exactly as given) to its location string."
+    )
+    user_content = json.dumps(
+        {"home_location": home or "Unknown", "companies": companies}, ensure_ascii=False
+    )
+    try:
+        client = await get_llm_client_for_user(user_id)
+        resp = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.1,
+            max_tokens=1024,
+            response_format={"type": "json_object"},
+        )
+        raw = json.loads(resp.choices[0].message.content or "{}")
+    except Exception as exc:  # noqa: BLE001 - enrichment is best-effort
+        logger.warning("autofill_location_enrich_failed", user_id=user_id, error=str(exc)[:200])
+        return {}
+    out: dict[str, str] = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if isinstance(k, str) and isinstance(v, str) and v.strip():
+                out[k.strip().lower()] = v.strip()
+    return out
+
+
+async def _enrich_work_locations(
+    work: list[dict], home: str, cache: dict, user_id: str
+) -> tuple[list[dict], dict]:
+    """Fill empty work-experience locations using a per-company cache, resolving any
+    misses via the LLM. Company office is job-independent, so the resolved values are
+    cached (keyed by lowercased company) for reuse. Returns (work, updated_cache)."""
+    cache = {str(k).lower(): v for k, v in (cache or {}).items() if isinstance(v, str)}
+    missing: list[str] = []
+    for w in work:
+        if str(w.get("location") or "").strip():
+            continue
+        company = str(w.get("company") or "").strip()
+        if not company:
+            continue
+        key = company.lower()
+        if cache.get(key):
+            w["location"] = cache[key]
+        else:
+            missing.append(company)
+    if missing:
+        resolved = await _llm_company_locations(sorted(set(missing)), home, user_id)
+        for w in work:
+            if str(w.get("location") or "").strip():
+                continue
+            company = str(w.get("company") or "").strip()
+            key = company.lower()
+            if resolved.get(key):
+                w["location"] = resolved[key]
+                cache[key] = resolved[key]
+    return work, cache
+
+
+def _build_education(
+    education: list, default_gpa: str = "", default_field_of_study: str = ""
+) -> list[dict]:
+    fallback_gpa = str(default_gpa or "").strip()
+    fallback_field = str(default_field_of_study or "").strip()
+    out: list[dict] = []
+    for e in education or []:
+        if not isinstance(e, dict):
+            continue
+        degree = str(e.get("degree") or "")
+        gpa = str(e.get("mark") or "").strip() or fallback_gpa
+        out.append(
+            {
+                "school": str(e.get("university_name") or ""),
+                "degree": degree,
+                # ALWAYS the configured standard default — never derived from the
+                # candidate's degree/education text (their stored fields are free-form
+                # and don't match Workday's fixed option list). The candidate can
+                # change it manually on the form. Blank default leaves it empty.
+                "fieldOfStudy": fallback_field,
+                "startMMYYYY": _to_mmyyyy(e.get("period_start")),
+                "endMMYYYY": _to_mmyyyy(e.get("period_end")),
+                "gpa": gpa,
+            }
+        )
+    return out
+
+
+class AutofillProfileResponse(BaseModel):
+    resumeSource: str = "original"
+    name: dict = Field(default_factory=dict)
+    contact: dict = Field(default_factory=dict)
+    address: dict = Field(default_factory=dict)
+    websites: dict = Field(default_factory=dict)
+    skills: list[str] = Field(default_factory=list)
+    workExperience: list[dict] = Field(default_factory=list)
+    education: list[dict] = Field(default_factory=list)
+    eeo: dict = Field(default_factory=dict)
+    howDidYouHear: str = "LinkedIn"
+    # AI-generated cover letter body (same text used to fill the cover letter
+    # DOCX), so engines can populate a cover-letter textarea verbatim. Empty when
+    # no cover letter was generated for this job.
+    coverLetter: str = ""
+
+
+@assistant_router.get("/assistant/autofill-profile", response_model=AutofillProfileResponse)
+async def assistant_autofill_profile(
+    job_id: str = Query(..., min_length=1, max_length=36),
+    resume_source: str = Query("original"),
+    current_user: dict = Depends(get_current_user),
+) -> AutofillProfileResponse:
+    """Canonical structured profile for deterministic platform engines (Workday).
+    Static fields come from the user's structured profile; work-experience
+    narrative is merged from the tailored resume when resume_source='tailored'
+    (dates/location always sourced authoritatively, falling back to the profile
+    for content tailored before date-enrichment)."""
+    user_id = _require_user_id(current_user)
+    resume_source = "tailored" if str(resume_source).lower() == "tailored" else "original"
+    settings = get_settings()
+
+    async with get_session() as session:
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        # Load the build row for BOTH sources: it carries the tailored work
+        # narrative (tailored source) and the per-company office-location cache.
+        build_id = None
+        build_data: dict = {}
+        cover_letter_body = ""
+        build_row = (
+            await session.execute(
+                select(ResumeBuildResult).where(
+                    ResumeBuildResult.user_id == user_id,
+                    ResumeBuildResult.job_id == job_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if build_row:
+            build_id = build_row.id
+            build_data = build_row.tailored_resume_data if isinstance(build_row.tailored_resume_data, dict) else {}
+            if isinstance(build_row.cover_letter_data, dict):
+                cover_letter_body = str(build_row.cover_letter_data.get("body") or "").strip()
+        tailored_we = build_data.get("work_experience") if resume_source == "tailored" else None
+
+        home_location = _home_location_str(getattr(user, "address", None))
+        profile_we = user.work_experience or []
+        education = user.education or []
+        user_first = user.name_first or ""
+        user_last = user.name_last or ""
+        user_email = user.profile_email or user.email or ""
+        user_phone = str(user.phone_number or "")
+        phone_cc = re.sub(r"\D", "", str(user.phone_country_code or "")) or "1"
+        linkedin = user.linkedin_url or ""
+        github = user.github_url or ""
+        address = _address_for_autofill(getattr(user, "address", None))
+        skills = _split_skills(user.technical_skills or [])
+        eeo = _eeo_for_autofill(getattr(user, "eeo_preferences", None))
+
+    work = _build_work_experience(profile_we, tailored_we, resume_source)
+
+    # Enrich empty work locations (nearest company office / HQ), cached per company.
+    loc_cache = build_data.get("autofill_locations") if isinstance(build_data.get("autofill_locations"), dict) else {}
+    work, new_cache = await _enrich_work_locations(work, home_location, loc_cache, user_id)
+    if build_id and new_cache != loc_cache:
+        try:
+            async with get_session() as session:
+                row = await session.get(ResumeBuildResult, build_id)
+                if row:
+                    merged = dict(row.tailored_resume_data) if isinstance(row.tailored_resume_data, dict) else {}
+                    merged["autofill_locations"] = new_cache
+                    row.tailored_resume_data = merged
+                    await session.commit()
+        except Exception as exc:  # noqa: BLE001 - cache write is best-effort
+            logger.warning("autofill_location_cache_write_failed", user_id=user_id, error=str(exc)[:200])
+
+    return AutofillProfileResponse(
+        resumeSource=resume_source,
+        name={"first": user_first, "last": user_last, "preferred": ""},
+        contact={
+            "email": user_email,
+            "phone": user_phone,
+            "phoneCountryCode": phone_cc,
+            "phoneDeviceType": "Mobile",
+        },
+        address=address,
+        websites={"linkedin": linkedin, "github": github, "other": ""},
+        skills=skills,
+        workExperience=work,
+        education=_build_education(
+            education, settings.autofill_default_gpa, settings.autofill_default_field_of_study
+        ),
+        eeo=eeo,
+        howDidYouHear="LinkedIn",
+        coverLetter=cover_letter_body,
+    )
 
 
 # ── application sessions ────────────────────────────────────────────────────
@@ -1031,9 +1526,19 @@ async def get_session_detail(
             )
         ).scalars().all()
 
+        applied_at = (
+            await session.execute(
+                select(ValidJobUserApplication.applied_at).where(
+                    ValidJobUserApplication.user_id == user_id,
+                    ValidJobUserApplication.job_id == job_id,
+                )
+            )
+        ).scalar_one_or_none()
+
         base = _session_to_out(s)
         return ApplicationSessionDetailOut(
             **base.model_dump(),
+            applied_at=_iso(applied_at) if applied_at else None,
             messages=[
                 AssistantMessageOut(
                     id=m.id, role=m.role, content=m.content, meta=m.meta, created_at=_iso(m.created_at)

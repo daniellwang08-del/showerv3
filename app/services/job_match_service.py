@@ -277,6 +277,17 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
                 project_name = str(raw_pn).strip() if raw_pn not in (None, "", "None", "null") else None
                 raw_pd = entry.get("project_description")
                 project_desc = str(raw_pd).strip() if raw_pd not in (None, "", "None", "null") else None
+
+                # Immutable factual fields copied verbatim from the profile so the
+                # tailored content is self-sufficient for structured autofill
+                # (Workday etc. needs dates + location). Empty period_end = current.
+                def _clean_factual(v):
+                    s = str(v).strip() if v not in (None, "None", "null") else ""
+                    return s or None
+
+                period_start = _clean_factual(entry.get("period_start"))
+                period_end = _clean_factual(entry.get("period_end"))
+                location = _clean_factual(entry.get("location"))
                 role_index = len(experience)
                 min_bullets = 7 if role_index < 3 else 4
                 if len(bullets) < min_bullets:
@@ -290,6 +301,9 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
                 experience.append({
                     "company_name": company,
                     "job_title": title,
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "location": location,
                     "project_name": project_name or None,
                     "project_description": project_desc or None,
                     "bullets": bullets,

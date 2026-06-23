@@ -85,7 +85,7 @@ Write a compelling executive summary that a recruiter would skim in 10 seconds:
 
 ### Work experience — one entry per profile company, same order
 
-**Immutable fields:** `company_name`, `job_title`, and `project_name` (exactly as in profile, or null).
+**Immutable fields:** `company_name`, `job_title`, `project_name` (exactly as in profile, or null), and the factual `period_start`, `period_end`, `location` (copied VERBATIM from the matching profile work_experience entry — never alter, invent, or reorder these; an empty `period_end` means the role is current).
 
 **project_description** (2–4 sentences per role):
 - Describe the **business context**, **system/product scope**, and **your ownership** for that role.
@@ -132,6 +132,9 @@ Return ONLY valid JSON:
       {
         "company_name": "<string>",
         "job_title": "<string>",
+        "period_start": "<string copied verbatim from profile, or empty>",
+        "period_end": "<string copied verbatim from profile, or empty if current>",
+        "location": "<string copied verbatim from profile, or empty>",
         "project_name": "<string or null>",
         "project_description": "<string>",
         "bullets": ["<string — min 7 for 3 most recent companies, min 4 for all others>", ...]

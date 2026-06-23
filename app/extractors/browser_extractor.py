@@ -243,18 +243,70 @@ class BrowserPool:
 
 
 _browser_pool: BrowserPool | None = None
+_warmup_task: "asyncio.Task[None] | None" = None
 
 
 async def init_browser_pool() -> None:
+    """Create and initialize the global browser pool.
+
+    Idempotent: a pool that is already initialized is never clobbered, so this
+    is safe to call from both the background warm-up and any lazy on-demand
+    path.
+    """
     global _browser_pool
-    _browser_pool = BrowserPool()
-    await _browser_pool.initialize()
-    if not _browser_pool._initialized:
-        _browser_pool = None
+    if _browser_pool is not None and _browser_pool._initialized:
+        return
+    pool = BrowserPool()
+    await pool.initialize()
+    _browser_pool = pool if pool._initialized else None
+
+
+def start_browser_pool_warmup() -> "asyncio.Task[None]":
+    """Launch browser-pool initialization in the background.
+
+    Playwright's browser launch can take tens of seconds (especially on
+    Windows). uvicorn binds its listening socket only AFTER the FastAPI
+    lifespan startup returns, so awaiting the launch there leaves port 8000
+    unbound and the frontend's WebSocket proxy logs ECONNREFUSED until it
+    finishes. Warming up in the background lets the server accept connections
+    immediately; callers use ensure_browser_pool() to await readiness on demand.
+    """
+    global _warmup_task
+    if _warmup_task is None or _warmup_task.done():
+        _warmup_task = asyncio.create_task(init_browser_pool())
+    return _warmup_task
+
+
+async def ensure_browser_pool() -> BrowserPool | None:
+    """Return a ready pool, awaiting an in-flight background warm-up if needed.
+
+    Returns None when the pool is unavailable (e.g. the browser failed to
+    launch on this platform), so callers can degrade gracefully.
+    """
+    if _browser_pool is not None and _browser_pool._initialized:
+        return _browser_pool
+    task = _warmup_task
+    if task is not None:
+        try:
+            await task
+        except asyncio.CancelledError:
+            return None
+        except Exception:
+            return None
+    if _browser_pool is not None and _browser_pool._initialized:
+        return _browser_pool
+    return None
 
 
 async def close_browser_pool() -> None:
-    global _browser_pool
+    global _browser_pool, _warmup_task
+    if _warmup_task is not None and not _warmup_task.done():
+        _warmup_task.cancel()
+        try:
+            await _warmup_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    _warmup_task = None
     if _browser_pool:
         await _browser_pool.close()
         _browser_pool = None
@@ -281,16 +333,12 @@ class BrowserExtractor(BaseExtractor):
         return ExtractionMethod.BROWSER_RENDER
 
     async def can_extract(self, url: str, html: str | None = None) -> bool:
-        try:
-            get_browser_pool()
-            return True
-        except BrowserError:
-            return False
+        pool = await ensure_browser_pool()
+        return pool is not None
 
     async def extract(self, url: str, html: str | None = None) -> ExtractionResult:
-        try:
-            pool = get_browser_pool()
-        except BrowserError:
+        pool = await ensure_browser_pool()
+        if pool is None:
             logger.warning("browser_extraction_skipped", url=url, reason="Browser pool not available")
             return ExtractionResult(
                 success=False,

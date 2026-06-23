@@ -36,6 +36,14 @@
     if (el.closest) {
       const ctrl = el.closest('[class*="select__control"], [class*="select-control"], [class*="Select-control"]');
       if (ctrl) return ctrl;
+      // Emotion-styled react-select (RecruiterFlow, etc.) ships opaque class
+      // names like "css-1wq9ix5-control" with no "select" prefix, so the control
+      // container is the nearest *-control ancestor of the combobox input. Without
+      // this, the input itself becomes the root: openCombo fires on the input
+      // instead of the control (the menu never opens, so option harvesting reads
+      // nothing) and comboHasSelection/comboSelectionText always report empty.
+      const emo = el.closest('[class*="-control"]');
+      if (emo) return emo;
       const cb = el.closest('[role="combobox"]');
       if (cb && cb.tagName !== "INPUT") return cb;
     }
@@ -48,12 +56,46 @@
 
   function isMultiCombo(root, input) {
     try {
-      if (root && root.querySelector && root.querySelector('[class*="--is-multi"]')) return true;
+      if (root && root.querySelector && root.querySelector('[class*="--is-multi"], [class*="multiValue"], [class*="multi-value"]'))
+        return true;
       const el = input || root;
       if (el && el.getAttribute && el.getAttribute("aria-multiselectable") === "true") return true;
-      if (root && root.closest && root.closest('[class*="--is-multi"]')) return true;
+      if (root && root.closest) {
+        if (root.closest('[class*="--is-multi"]')) return true;
+        // RecruiterFlow (and similar emotion-styled react-selects) emit opaque
+        // class names with NO --is-multi / aria-multiselectable marker. Their only
+        // reliable multi signal is the field wrapper: ".multi-select-input-wrapper"
+        // vs ".single-select-input-wrapper". Without this every multi widget is
+        // mistaken for a single-select, so the model picks one value (ignoring
+        // "select all" / "pick 2") and the writer never enters multi mode.
+        if (root.closest(".multi-select-input-wrapper")) return true;
+        if (root.closest(".single-select-input-wrapper")) return false;
+      }
     } catch {}
     return false;
+  }
+
+  // Labels of the currently selected chips in a multi-select control. Used to
+  // verify each pick committed and to skip values that are already present.
+  // Emotion names the chip parts "...-multiValue", "...-multiValueLabel" and
+  // "...-multiValueRemove"; collect the label text and drop the remove "x".
+  function chipTexts(root) {
+    const out = [];
+    try {
+      (root.querySelectorAll('[class*="multiValue"], [class*="multi-value"]') || []).forEach((n) => {
+        const cls = String(n.className && n.className.baseVal !== undefined ? n.className.baseVal : n.className || "");
+        if (/multiValueRemove|multiValue__remove|multi-value__remove|multi-value-remove/i.test(cls)) return;
+        const t = normText(clean(n.innerText || n.textContent));
+        if (t) out.push(t);
+      });
+    } catch {}
+    return [...new Set(out)];
+  }
+
+  function chipMatches(root, want) {
+    const w = normText(want);
+    if (!w) return false;
+    return chipTexts(root).some((t) => t === w || t.includes(w) || w.includes(t));
   }
 
   // react-select's empty-state notice matches our [class*="-option"] selector;
@@ -249,13 +291,29 @@
     if (!list.length) return false;
     const input = comboInput(root);
     for (const value of list) {
+      // Already a chip for this value (e.g. retry) -> skip.
+      if (chipMatches(root, value)) continue;
       try {
         // type + Enter per value; react-select keeps the menu open in multi mode.
         await typeAndEnter(input, root, value);
       } catch {}
+      // Verify the chip actually landed. type+Enter silently no-ops when the
+      // typed text doesn't auto-highlight an option, which is exactly how these
+      // fields ended up empty. Fall back to opening the menu and clicking the
+      // matching option node directly.
+      const added = await waitUntil(() => (chipMatches(root, value) ? true : null), 600, 50);
+      if (!added) {
+        try {
+          openCombo(input, root);
+          await waitUntil(() => (scopedOptionNodes(input, root).length ? true : null), 700, 50);
+          const opt = pickOption(scopedOptionNodes(input, root), value);
+          if (opt) clickOption(opt);
+          await waitUntil(() => (chipMatches(root, value) ? true : null), 500, 50);
+        } catch {}
+      }
     }
     closeMenu(input, root);
-    return comboHasSelection(root);
+    return chipTexts(root).length > 0;
   }
 
   AF.registerDriver({
@@ -309,14 +367,16 @@
       return harvestOptions(root);
     },
     async write(root, answer) {
-      const multi = isMultiCombo(root, comboInput(root));
-      if (multi) {
-        const values =
-          Array.isArray(answer.option_values) && answer.option_values.length
-            ? answer.option_values
-            : [answer.option || answer.value].filter(Boolean);
-        return writeMulti(root, values);
-      }
+      const values =
+        Array.isArray(answer.option_values) && answer.option_values.length
+          ? answer.option_values
+          : [answer.option || answer.value].filter(Boolean);
+      // Treat as multi when the widget reports it OR the model returned several
+      // values: RecruiterFlow's multi widget (css-dktw4y-container) carries no
+      // detectable --is-multi marker, so a "select all / pick 2" answer would
+      // otherwise commit only its first value.
+      const multi = isMultiCombo(root, comboInput(root)) || values.length > 1;
+      if (multi) return writeMulti(root, values);
       return writeSingle(root, answer.option || answer.value || "");
     },
   });

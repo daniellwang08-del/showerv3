@@ -138,6 +138,8 @@ class UserRepository:
         user.education = data.get("education") or []
         user.certificates = data.get("certificates") or []
         user.extra = data.get("extra") or []
+        user.eeo_preferences = data.get("eeo_preferences") or {}
+        user.address = data.get("address") or {}
         user.profile_openai_cache = user_profile_to_openai_text(user)
         new_work_count = count_work_roles(user)
         should_reanalyze = mark_template_stale_if_work_count_changed(user, new_work_count)

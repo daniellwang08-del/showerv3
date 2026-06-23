@@ -11,13 +11,37 @@
   const { clean, labelText, cidFor, diag } = AF.dom;
 
   const ANCHOR_SEL =
-    'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="combobox"], .iti';
+    'input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="combobox"], .iti, .yes-no-inputs, [class*="_yesno_"], spl-radio-group';
 
   // cid -> { driver, root, spec, handle }
   const controls = new Map();
 
   function reset() {
     controls.clear();
+  }
+
+  // Skip controls that aren't actually rendered (display:none / inside a hidden
+  // wrapper). Some forms ship hidden helper inputs alongside the real ones (e.g.
+  // ApplyToJob's hidden "paste resume" textarea and its pre-reveal file input);
+  // filling those would conflict with the visible fields. offsetParent is null
+  // for display:none subtrees; position:fixed elements legitimately have a null
+  // offsetParent, so they're kept.
+  function isRendered(el) {
+    if (!el) return false;
+    if (el.offsetParent !== null) return true;
+    try {
+      // offsetParent is null for display:none subtrees, position:fixed elements,
+      // AND (in some engines) controls inside a shadow root. A non-zero layout
+      // rect means the element is actually laid out and visible — true for fixed
+      // and shadow-hosted controls (SmartRecruiters' spl-* inputs), still false
+      // for display:none helpers (which collapse to a 0x0 rect).
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 || r.height > 0) return true;
+      const s = getComputedStyle(el);
+      return s.position === "fixed" && s.display !== "none" && s.visibility !== "hidden";
+    } catch {
+      return true;
+    }
   }
 
   function uniqueCid(base) {
@@ -27,18 +51,80 @@
     return base + "#" + i;
   }
 
+  // Shadow-piercing platforms (SmartRecruiters) build every field from custom
+  // elements whose real <input>/<textarea> sits in a declarative shadow root, so
+  // querySelectorAll (which never crosses shadow boundaries) finds nothing. When
+  // such a platform is active, walk into every open shadowRoot. Gated off for
+  // every other engine, which treat shadow DOM as unsupported, so their detection
+  // path is byte-for-byte unchanged.
+  function deepCollectActive() {
+    try {
+      return typeof AF.deepCollect === "function" && AF.deepCollect();
+    } catch {
+      return false;
+    }
+  }
+
+  // Subtrees the generic LLM pass must NOT claim on a deep-collect platform:
+  //  - oc-experience / oc-education : repeating rows owned by the deterministic
+  //    prep (Add -> fill -> Save); harvesting their autocompletes here would
+  //    fight the prep.
+  //  - oc-location-autocomplete(-wrapper) : optional free-text location pickers
+  //    (no custom values) we intentionally skip.
+  //  - oc-easy-apply : the "Easy Apply" resume drop zone (a second file input).
+  //  - spl-autocomplete (NON-question) / spl-select / spl-dropdown-search : the
+  //    geocoded location & country pickers, whose inner role="combobox" box would
+  //    otherwise be mistaken for a react-select and harvest a 240-entry list.
+  //    Screening-question dropdowns (spl-autocomplete[id^="question_"]) are the
+  //    ONE exception — the sr-select driver owns those, so they're NOT excluded.
+  //    NOTE: do NOT exclude spl-dropdown itself — on screening questions the
+  //    combobox <input> lives INSIDE <spl-dropdown class="c-spl-autocomplete-dropdown">
+  //    (ancestor of the input, NOT the portaled overlay menu). Excluding spl-dropdown
+  //    skips the entire subtree and yields comboboxes: 0 on the screening step.
+  //    The portaled option list is a <div class="c-spl-dropdown-menu-wrapper">.
+  //  - spl-select-option : an option's deep nested shadow (truncate/tooltip/...)
+  //    has no fillable control; the sr-select driver harvests labels itself.
+  const DEEP_EXCLUDE_SEL =
+    "oc-experience, oc-education, oc-location-autocomplete, oc-location-autocomplete-wrapper, oc-easy-apply, spl-autocomplete:not([id^='question_']), spl-select, spl-dropdown-search, spl-select-option";
+
+  function collectAnchors(regionEl) {
+    if (!deepCollectActive()) {
+      const anchors = [];
+      if (regionEl.matches && regionEl.matches(ANCHOR_SEL)) anchors.push(regionEl);
+      if (regionEl.querySelectorAll) regionEl.querySelectorAll(ANCHOR_SEL).forEach((n) => anchors.push(n));
+      return anchors;
+    }
+    const out = [];
+    const visit = (el) => {
+      if (!el || el.nodeType !== 1) return;
+      if (el.matches && el.matches(DEEP_EXCLUDE_SEL)) return; // skip the whole subtree
+      if (el.matches && el.matches(ANCHOR_SEL)) out.push(el);
+      if (el.shadowRoot) {
+        for (const c of el.shadowRoot.children) visit(c);
+      }
+      const kids = el.children;
+      if (kids) for (const c of kids) visit(c);
+    };
+    if (regionEl.nodeType === 1) visit(regionEl);
+    else if (regionEl.children) for (const c of regionEl.children) visit(c);
+    return out;
+  }
+
   // Claim controls within regionEl. `consumed` (a shared WeakSet) prevents a
   // child element of an already-claimed widget — or a control already claimed
   // under another selected block — from being claimed twice.
   function detect(regionEl, consumed) {
     const drivers = AF.orderedDrivers();
-    const anchors = [];
-    if (regionEl.matches && regionEl.matches(ANCHOR_SEL)) anchors.push(regionEl);
-    if (regionEl.querySelectorAll) regionEl.querySelectorAll(ANCHOR_SEL).forEach((n) => anchors.push(n));
+    const anchors = collectAnchors(regionEl);
 
     const claims = [];
     for (const anchor of anchors) {
       if (consumed.has(anchor)) continue;
+      // Skip hidden helper inputs — EXCEPT file inputs, which are almost always
+      // hidden behind a styled drop zone (RecruiterFlow's #fileInput is permanently
+      // display:none) yet must still be claimed so the resume can be attached.
+      const isFileInput = anchor.tagName === "INPUT" && (anchor.type || "").toLowerCase() === "file";
+      if (!isFileInput && !isRendered(anchor)) continue;
       for (const driver of drivers) {
         let root = null;
         try {
@@ -149,17 +235,19 @@
       } catch {}
       controls.set(cid, { driver, root, spec, handle });
 
-      // Open custom dropdowns and inline their harvested options into the DOM.
+      // Open each custom dropdown (Greenhouse-style), harvest its options, inject
+      // them as <ul data-af-options-for> for the LLM html snapshot, and carry the
+      // same list in meta.options for backend clamping / EEO defaults.
+      let harvested = [];
       if (!filled && driver.harvestOptions) {
-        let opts = [];
         try {
-          opts = await driver.harvestOptions(root);
+          harvested = await driver.harvestOptions(root);
         } catch {
-          opts = [];
+          harvested = [];
         }
-        if (opts && opts.length) {
+        if (harvested.length) {
           try {
-            const ul = AF.dom.buildOptionList(cid, opts);
+            const ul = AF.dom.buildOptionList(cid, harvested);
             root.appendChild(ul);
             injected.push(ul);
           } catch {}
@@ -177,6 +265,9 @@
       if (spec.multi) meta.multi = true;
       if (spec.is_file) meta.is_file = true;
       if (spec.accept) meta.accept = spec.accept;
+      const opts = harvested.length ? harvested : spec.options || [];
+      if (opts.length) meta.options = opts;
+      if (spec.constraints && Object.keys(spec.constraints).length) meta.constraints = spec.constraints;
       controlsMeta.push(meta);
     }
 
@@ -186,13 +277,25 @@
         ul.remove();
       } catch {}
     }
-    diag("extract DOM", JSON.stringify(labelText(regionEl)).slice(0, 60), controlsMeta.length, "controls,", html.length, "chars");
+    diag(
+      "extract DOM",
+      JSON.stringify(labelText(regionEl)).slice(0, 60),
+      controlsMeta.length,
+      "controls,",
+      html.length,
+      "chars",
+      controlsMeta.map((c) => ({ cid: c.cid, kind: c.kind, opts: (c.options || []).length }))
+    );
     return { handle, label: labelText(regionEl), controls: controlsMeta, html };
   }
 
   function relocate(cid) {
     const entry = controls.get(cid);
-    if (entry && entry.root && document.contains(entry.root)) return entry.root;
+    // isConnected (not document.contains) so a control living in a shadow root —
+    // SmartRecruiters' inner inputs — is recognized as still on the page; a
+    // shadow node is connected to the document but is NOT a document descendant,
+    // so document.contains() returns false for it and would discard a live root.
+    if (entry && entry.root && entry.root.isConnected) return entry.root;
     let el = null;
     try {
       el = document.querySelector('[data-autofill-cid="' + CSS.escape(String(cid)) + '"]');
@@ -248,6 +351,13 @@
       for (const c of r.controls || []) {
         const res = await writeOne(c, files);
         if (res) report.push(res);
+        // Yield a macrotask between controls. Each write ends in a blur that
+        // commits the field into the form's (Apollo/React) state asynchronously;
+        // writing many controls in one synchronous burst lets React batch those
+        // commits into a single render where shared form-state merges clobber each
+        // other, leaving some just-written fields reading as "missing required
+        // field". A real gap flushes each commit before the next write.
+        await new Promise((r2) => setTimeout(r2, 12));
       }
     }
     return report;

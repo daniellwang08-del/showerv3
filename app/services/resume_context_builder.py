@@ -2,10 +2,42 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.models.database import Job, User
 from app.services.job_field_utils import parse_job_title
+
+
+# Markdown stripping: LLM-tailored text (bullets, summaries, project descriptions)
+# often arrives with **bold**/`code`/[link](url) markup. The resume document and
+# its DOCX/PDF export render text VERBATIM, so this markup would show literally
+# (e.g. "**Java**") and, worse, gets re-parsed back into Workday's plain-text
+# Role Description by its resume parser. Strip it to clean, typable plain text.
+_MD_IMG_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.DOTALL)
+_MD_CODE_RE = re.compile(r"`([^`]+)`")
+_MD_HEAD_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s*")
+_MD_QUOTE_RE = re.compile(r"(?m)^\s{0,3}>\s?")
+_MD_BULLET_RE = re.compile(r"(?m)^(\s*)[*+]\s+")
+
+
+def _plain_text(text: Any) -> str:
+    s = str(text or "")
+    if not s:
+        return ""
+    s = _MD_IMG_RE.sub(r"\1", s)
+    s = _MD_LINK_RE.sub(r"\1", s)
+    s = _MD_BOLD_RE.sub(lambda m: m.group(1) or m.group(2) or "", s)
+    s = _MD_CODE_RE.sub(r"\1", s)
+    s = _MD_HEAD_RE.sub("", s)
+    s = _MD_QUOTE_RE.sub("", s)
+    s = _MD_BULLET_RE.sub(r"\1- ", s)
+    s = s.replace("**", "")  # any stray/unbalanced bold markers
+    s = "\n".join(line.rstrip() for line in s.split("\n"))
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 
 def _format_period(start: str | None, end: str | None) -> str:
@@ -64,7 +96,9 @@ def _merge_tailored_work_experience(profile_rows: list[dict], tailored_rows: lis
         bullets = []
         for b in tailored.get("bullets") or []:
             if isinstance(b, str) and b.strip():
-                bullets.append(b.strip())
+                cleaned = _plain_text(b)
+                if cleaned:
+                    bullets.append(cleaned)
         merged.append(
             {
                 "company_name": (tailored.get("company_name") or profile_row.get("company_name") or "").strip(),
@@ -72,7 +106,7 @@ def _merge_tailored_work_experience(profile_rows: list[dict], tailored_rows: lis
                 "period": profile_row.get("period") or "",
                 "location": profile_row.get("location") or "",
                 "project_name": (tailored.get("project_name") or None),
-                "project_description": (tailored.get("project_description") or profile_row.get("description") or "").strip(),
+                "project_description": _plain_text(tailored.get("project_description") or profile_row.get("description") or ""),
                 "bullets": bullets,
             }
         )
@@ -92,8 +126,8 @@ def build_render_context(
     for item in tailored.get("technical_skills") or []:
         if not isinstance(item, dict):
             continue
-        cat = str(item.get("category") or "").strip()
-        vals = str(item.get("skills") or "").strip()
+        cat = _plain_text(item.get("category"))
+        vals = _plain_text(item.get("skills"))
         if cat and vals:
             skills.append({"category": cat, "skills": vals})
 
@@ -134,7 +168,7 @@ def build_render_context(
             "certificates": certificates,
         },
         "tailored": {
-            "profile_summary": str(tailored.get("profile_summary") or "").strip(),
+            "profile_summary": _plain_text(tailored.get("profile_summary")),
             "technical_skills": skills,
             "work_experience": work_experience,
         },

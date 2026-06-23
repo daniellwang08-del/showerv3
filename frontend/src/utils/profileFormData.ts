@@ -4,6 +4,8 @@ import type {
   WorkExperienceBlock,
   EducationBlock,
   CertificateBlock,
+  EEOPreferences,
+  AddressInfo,
   UserProfile,
 } from '../types/profile';
 
@@ -27,6 +29,58 @@ export const emptyEducation = (): EducationBlock => ({
   description: '',
 });
 export const emptyCert = (): CertificateBlock => ({ name: '' });
+export const emptyEEO = (): EEOPreferences => ({
+  gender: '',
+  race: '',
+  hispanic_latino: null,
+  veteran_status: null,
+  disability_status: null,
+  work_authorized: null,
+  needs_sponsorship: null,
+});
+
+/** Normalize a stored tri-state yes/no value into true | false | null. */
+function toTriState(v: unknown): boolean | null {
+  if (v === true || v === false) return v;
+  return null;
+}
+
+export const emptyAddress = (): AddressInfo => ({
+  line1: '',
+  line2: '',
+  city: '',
+  state: '',
+  postal_code: '',
+  country: 'United States of America',
+});
+
+function addressToForm(raw: UserProfile['address']): AddressInfo {
+  const a = (raw ?? {}) as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const hasAny = ['line1', 'line2', 'city', 'state', 'postal_code', 'country'].some((k) => str(a[k]).trim());
+  return {
+    line1: str(a.line1),
+    line2: str(a.line2),
+    city: str(a.city),
+    state: str(a.state),
+    postal_code: str(a.postal_code),
+    // Default country only for a brand-new (empty) address.
+    country: str(a.country) || (hasAny ? '' : 'United States of America'),
+  };
+}
+
+function eeoToForm(raw: UserProfile['eeo_preferences']): EEOPreferences {
+  const e = (raw ?? {}) as Record<string, unknown>;
+  return {
+    gender: typeof e.gender === 'string' ? e.gender : '',
+    race: typeof e.race === 'string' ? e.race : '',
+    hispanic_latino: toTriState(e.hispanic_latino),
+    veteran_status: toTriState(e.veteran_status),
+    disability_status: toTriState(e.disability_status),
+    work_authorized: toTriState(e.work_authorized),
+    needs_sponsorship: toTriState(e.needs_sponsorship),
+  };
+}
 
 export function profileToForm(p: UserProfile | null): ProfileFormData {
   if (!p) {
@@ -46,6 +100,8 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
       education: [emptyEducation()],
       certificates: [emptyCert()],
       extra: [''],
+      eeo_preferences: emptyEEO(),
+      address: emptyAddress(),
     };
   }
   const ts = (p.technical_skills?.length ? p.technical_skills : [emptyTechSkill()]) as TechnicalSkillBlock[];
@@ -85,5 +141,7 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
     })),
     certificates: cert.map((x) => ({ name: (x as CertificateBlock).name ?? '' })),
     extra,
+    eeo_preferences: eeoToForm(p.eeo_preferences),
+    address: addressToForm(p.address),
   };
 }

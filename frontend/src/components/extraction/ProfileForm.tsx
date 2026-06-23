@@ -22,11 +22,13 @@ import {
   Pencil,
   CheckCircle,
   X,
+  ShieldCheck,
+  MapPin,
 } from 'lucide-react';
 import { COUNTRY_CODES } from '../../constants/countryCodes';
-import type { ProfileFormData } from '../../types/profile';
+import type { ProfileFormData, EEOPreferences } from '../../types/profile';
 import type { UserProfile } from '../../types/profile';
-import { JOB_TYPES, isValidJobArrangement } from '../../types/profile';
+import { JOB_TYPES, isValidJobArrangement, GENDER_OPTIONS, RACE_OPTIONS } from '../../types/profile';
 import {
   profileToForm,
   emptyTechSkill,
@@ -51,7 +53,7 @@ function validatePhone(s: string): boolean {
   return /^[\d\s\-+()]{7,25}$/.test(s.trim());
 }
 
-type SectionId = 'contact' | 'summary' | 'skills' | 'work' | 'education' | 'certificates' | 'extra';
+type SectionId = 'contact' | 'summary' | 'skills' | 'work' | 'education' | 'certificates' | 'extra' | 'eeo' | 'address';
 
 function defaultSectionEditing(allEditing: boolean): Record<SectionId, boolean> {
   return {
@@ -62,6 +64,8 @@ function defaultSectionEditing(allEditing: boolean): Record<SectionId, boolean> 
     education: allEditing,
     certificates: allEditing,
     extra: allEditing,
+    eeo: allEditing,
+    address: allEditing,
   };
 }
 
@@ -210,6 +214,10 @@ function mergeSection(base: ProfileFormData, draft: ProfileFormData, section: Se
       return { ...base, certificates: draft.certificates };
     case 'extra':
       return { ...base, extra: draft.extra };
+    case 'eeo':
+      return { ...base, eeo_preferences: draft.eeo_preferences };
+    case 'address':
+      return { ...base, address: draft.address };
     default:
       return base;
   }
@@ -539,6 +547,75 @@ type Props = {
   profile: UserProfile | null;
   onSubmit: (data: ProfileFormData) => Promise<void>;
 };
+
+// Voluntary yes/no answer with an explicit "unspecified" state (null) so we can
+// distinguish "no" from "not provided" (the latter falls back to engine defaults).
+function TriStateToggle({
+  value,
+  onChange,
+  yesLabel = 'Yes',
+  noLabel = 'No',
+}: {
+  value: boolean | null | undefined;
+  onChange: (v: boolean | null) => void;
+  yesLabel?: string;
+  noLabel?: string;
+}) {
+  const opts: Array<{ v: boolean | null; label: string }> = [
+    { v: true, label: yesLabel },
+    { v: false, label: noLabel },
+    { v: null, label: 'Unspecified' },
+  ];
+  const current = value ?? null;
+  return (
+    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+      {opts.map((o) => {
+        const active = current === o.v;
+        return (
+          <button
+            key={String(o.v)}
+            type="button"
+            onClick={() => onChange(o.v)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              active ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white'
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const EEO_YESNO_FIELDS: Array<{ key: keyof EEOPreferences; label: string; yesLabel?: string; noLabel?: string }> = [
+  { key: 'hispanic_latino', label: 'Hispanic or Latino' },
+  { key: 'veteran_status', label: 'Protected veteran', yesLabel: 'I am a veteran', noLabel: 'Not a veteran' },
+  { key: 'disability_status', label: 'Disability status', yesLabel: 'Have a disability', noLabel: 'No disability' },
+  { key: 'work_authorized', label: 'Authorized to work in the country' },
+  { key: 'needs_sponsorship', label: 'Require visa sponsorship' },
+];
+
+const ADDRESS_FIELDS: Array<{
+  key: keyof ProfileFormData['address'];
+  label: string;
+  placeholder?: string;
+  autoComplete?: string;
+  full?: boolean;
+}> = [
+  { key: 'line1', label: 'Address line 1', placeholder: '123 Main St', autoComplete: 'address-line1', full: true },
+  { key: 'line2', label: 'Address line 2', placeholder: 'Apt, suite, unit (optional)', autoComplete: 'address-line2', full: true },
+  { key: 'city', label: 'City', placeholder: 'San Francisco', autoComplete: 'address-level2' },
+  { key: 'state', label: 'State / Province', placeholder: 'California', autoComplete: 'address-level1' },
+  { key: 'postal_code', label: 'Postal code', placeholder: '94105', autoComplete: 'postal-code' },
+  { key: 'country', label: 'Country', placeholder: 'United States of America', autoComplete: 'country-name' },
+];
+
+function triLabel(v: boolean | null | undefined, yes = 'Yes', no = 'No'): string {
+  if (v === true) return yes;
+  if (v === false) return no;
+  return '—';
+}
 
 export function ProfileForm({ profile, onSubmit }: Props) {
   const [form, setForm] = useState<ProfileFormData>(() => profileToForm(profile));
@@ -1384,6 +1461,111 @@ export function ProfileForm({ profile, onSubmit }: Props) {
           <Plus className="h-4 w-4 transition group-hover:rotate-90" />
           Add line
         </button>
+      </ProfileSection>
+
+      <ProfileSection
+        layoutClassName="h-full xl:col-span-2"
+        icon={ShieldCheck}
+        title="EEO / demographics (voluntary)"
+        hint="Used only to auto-fill voluntary disclosure questions on application forms (e.g. Workday). Leave anything as Unspecified to use sensible defaults."
+        sectionId="eeo"
+        isEditing={sectionEditing.eeo}
+        onEdit={() => setSectionEditing((s) => ({ ...s, eeo: true }))}
+        onCancel={() => cancelSectionEdit('eeo')}
+        onSave={() => saveSection('eeo')}
+        saving={savingSection === 'eeo'}
+        viewContent={
+          <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            <div className="flex justify-between gap-3 border-b border-slate-100 py-1">
+              <dt className="text-slate-500">Gender</dt>
+              <dd className="font-medium text-slate-800">{form.eeo_preferences.gender?.trim() || '—'}</dd>
+            </div>
+            <div className="flex justify-between gap-3 border-b border-slate-100 py-1">
+              <dt className="text-slate-500">Race / Ethnicity</dt>
+              <dd className="font-medium text-slate-800">{form.eeo_preferences.race?.trim() || '—'}</dd>
+            </div>
+            {EEO_YESNO_FIELDS.map((f) => (
+              <div key={f.key} className="flex justify-between gap-3 border-b border-slate-100 py-1">
+                <dt className="text-slate-500">{f.label}</dt>
+                <dd className="font-medium text-slate-800">
+                  {triLabel(form.eeo_preferences[f.key] as boolean | null | undefined, f.yesLabel, f.noLabel)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        }
+      >
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label className={labelCls}>Gender</label>
+            <FancySelect
+              value={form.eeo_preferences.gender ?? ''}
+              onChange={(next) => update('eeo_preferences', { ...form.eeo_preferences, gender: next })}
+              options={GENDER_OPTIONS.map((o) => ({ value: o, label: o }))}
+              placeholder="Select or leave blank"
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Race / Ethnicity</label>
+            <FancySelect
+              value={form.eeo_preferences.race ?? ''}
+              onChange={(next) => update('eeo_preferences', { ...form.eeo_preferences, race: next })}
+              options={RACE_OPTIONS.map((o) => ({ value: o, label: o }))}
+              placeholder="Select or leave blank"
+            />
+          </div>
+          {EEO_YESNO_FIELDS.map((f) => (
+            <div key={f.key}>
+              <label className={labelCls}>{f.label}</label>
+              <div>
+                <TriStateToggle
+                  value={form.eeo_preferences[f.key] as boolean | null | undefined}
+                  onChange={(v) => update('eeo_preferences', { ...form.eeo_preferences, [f.key]: v })}
+                  yesLabel={f.yesLabel}
+                  noLabel={f.noLabel}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </ProfileSection>
+
+      <ProfileSection
+        layoutClassName="h-full xl:col-span-2"
+        icon={MapPin}
+        title="Address"
+        hint="Used to auto-fill the Address / City / State / Postal Code fields on application forms (e.g. Workday)."
+        sectionId="address"
+        isEditing={sectionEditing.address}
+        onEdit={() => setSectionEditing((s) => ({ ...s, address: true }))}
+        onCancel={() => cancelSectionEdit('address')}
+        onSave={() => saveSection('address')}
+        saving={savingSection === 'address'}
+        viewContent={
+          <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            {ADDRESS_FIELDS.map((f) => (
+              <div key={f.key} className="flex justify-between gap-3 border-b border-slate-100 py-1">
+                <dt className="text-slate-500">{f.label}</dt>
+                <dd className="font-medium text-slate-800">{form.address[f.key]?.trim() || '—'}</dd>
+              </div>
+            ))}
+          </dl>
+        }
+      >
+        <div className="grid gap-5 sm:grid-cols-2">
+          {ADDRESS_FIELDS.map((f) => (
+            <div key={f.key} className={f.full ? 'sm:col-span-2' : ''}>
+              <label className={labelCls}>{f.label}</label>
+              <input
+                className={inputCls}
+                value={form.address[f.key] ?? ''}
+                onChange={(e) => update('address', { ...form.address, [f.key]: e.target.value })}
+                placeholder={f.placeholder}
+                autoComplete={f.autoComplete}
+              />
+            </div>
+          ))}
+        </div>
       </ProfileSection>
 
       </div>

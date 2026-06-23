@@ -9,11 +9,27 @@
 
   const SKIP_INPUT_TYPES = ["hidden", "submit", "button", "image", "reset"];
 
+  // Write a value the way a user does: focus → type → blur. The trailing blur is
+  // critical for controlled forms (e.g. Ashby) that only commit a field into
+  // their *validated* state on blur — and React delegates onBlur from the native,
+  // bubbling **focusout** event, NOT "blur" (blur doesn't bubble, so React 17+
+  // never listens to it). A real el.blur() fires that focusout; we fall back to a
+  // dispatched focusout when the element couldn't take focus.
   function setTextInput(el, value) {
-    el.focus();
+    let focused = false;
+    try {
+      el.focus({ preventScroll: true });
+      focused = document.activeElement === el;
+    } catch {}
     setNativeValue(el, value);
     fireInput(el);
-    el.dispatchEvent(new Event("blur", { bubbles: true }));
+    if (focused) {
+      try {
+        el.blur();
+      } catch {}
+    } else {
+      el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    }
     return true;
   }
 
@@ -37,6 +53,24 @@
   }
 
   // ── <select> ────────────────────────────────────────────────────────────
+  // A <select> usually ships a pre-selected placeholder as its first option
+  // ("No answer", "-- Select --", ...). Crucially the placeholder often has a
+  // NON-empty value (ApplyToJob uses value="0" / "resumator_no_selection"), so a
+  // bare value check wrongly reports the control as already filled and we skip
+  // it. Detect the placeholder by its option text/value so we still answer it.
+  function isPlaceholderSelected(sel) {
+    const opt = sel.selectedOptions && sel.selectedOptions[0];
+    if (!opt) return true;
+    if (!clean(opt.value)) return true; // empty value = nothing chosen
+    const t = normText(opt.text);
+    if (!t) return true;
+    if (/no answer|please select|select one|select an option|choose one/.test(t)) return true;
+    if (/^--/.test(t) || /^-+$/.test(t)) return true; // "-- No answer --", "----"
+    if (/^(select|choose|none|n\/a)$/.test(t)) return true;
+    if (/(^|_)no_?selection$/.test(normText(opt.value))) return true; // ATS sentinel
+    return false;
+  }
+
   function selectOption(sel, want) {
     const w = clean(want).toLowerCase();
     if (!w) return false;
@@ -93,7 +127,8 @@
       };
     },
     isFilled(root) {
-      return root.selectedOptions ? root.selectedOptions.length > 0 && clean(root.value) !== "" : clean(root.value) !== "";
+      if (root.multiple) return !!(root.selectedOptions && root.selectedOptions.length);
+      return !isPlaceholderSelected(root);
     },
     async write(root, answer) {
       const multi = !!root.multiple;

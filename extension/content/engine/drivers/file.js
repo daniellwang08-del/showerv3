@@ -38,18 +38,54 @@
     type: "file",
     priority: 30,
     match(el) {
-      return el.tagName === "INPUT" && (el.type || "").toLowerCase() === "file" ? el : null;
+      if (el.tagName !== "INPUT" || (el.type || "").toLowerCase() !== "file") return null;
+      // Ashby shows a convenience "Autofill from resume" drop zone ABOVE the form
+      // whose file input parses the resume and overwrites fields. That's not an
+      // application field and fighting it causes races, so never claim it — we
+      // attach to the real Resume field (#_systemfield_resume) instead.
+      if (
+        el.closest &&
+        el.closest(".ashby-application-form-autofill-uploader, .ashby-application-form-autofill-input-root")
+      ) {
+        return null;
+      }
+      // SmartRecruiters ships THREE file inputs: the "Easy Apply" drop zone (its
+      // spl-dropzone host is data-test="apply-with-resume-container"), the avatar
+      // "Upload profile image" button, and the real Resume field
+      // (spl-dropzone[data-test="resume-upload"]). Claim only the resume one.
+      try {
+        const rootNode = el.getRootNode && el.getRootNode();
+        const dzHost = rootNode && rootNode.host; // spl-dropzone when el is in its shadow
+        const dz = dzHost && dzHost.getAttribute && dzHost.getAttribute("data-test");
+        if (dz === "apply-with-resume-container") return null;
+        const al = (el.getAttribute && el.getAttribute("aria-label")) || "";
+        if (/upload profile image|profile image/i.test(al)) return null;
+        if (el.closest && el.closest("oc-file-upload-button, oc-apply-with-resume")) return null;
+      } catch {}
+      return el;
     },
     extract(root) {
       const grp = root.closest && root.closest('[role="group"][aria-labelledby]');
       let label = grp ? textOfIds(grp.getAttribute("aria-labelledby")) : "";
+      // SmartRecruiters' resume dropzone has no group label; name it "Resume" so
+      // the backend maps the candidate's resume file to it.
+      if (!label) {
+        try {
+          const rootNode = root.getRootNode && root.getRootNode();
+          const dz = rootNode && rootNode.host && rootNode.host.getAttribute && rootNode.host.getAttribute("data-test");
+          if (dz === "resume-upload") label = "Resume";
+        } catch {}
+      }
       if (!label) label = labelForControl(root);
       return {
         kind: "file",
         label: label || "File",
         required: !!root.required || (root.getAttribute && root.getAttribute("aria-required") === "true"),
         is_file: true,
-        accept: root.accept || "",
+        // Cap the accept hint: SmartRecruiters' dropzone lists ~60 extensions
+        // (600+ chars), which overflows the backend's accept length cap and 422s
+        // the whole autofill request. The label already identifies the file.
+        accept: String(root.accept || "").slice(0, 280),
       };
     },
     isFilled(root) {

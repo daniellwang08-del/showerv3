@@ -55,6 +55,23 @@ function toPayload(data: ProfileFormData) {
       .filter((c) => c.name.trim())
       .map((c) => ({ name: c.name.trim() })),
     extra: data.extra.filter((x) => x.trim()),
+    eeo_preferences: {
+      gender: emptyToNull(data.eeo_preferences.gender ?? undefined),
+      race: emptyToNull(data.eeo_preferences.race ?? undefined),
+      hispanic_latino: data.eeo_preferences.hispanic_latino ?? null,
+      veteran_status: data.eeo_preferences.veteran_status ?? null,
+      disability_status: data.eeo_preferences.disability_status ?? null,
+      work_authorized: data.eeo_preferences.work_authorized ?? null,
+      needs_sponsorship: data.eeo_preferences.needs_sponsorship ?? null,
+    },
+    address: {
+      line1: emptyToNull(data.address.line1 ?? undefined),
+      line2: emptyToNull(data.address.line2 ?? undefined),
+      city: emptyToNull(data.address.city ?? undefined),
+      state: emptyToNull(data.address.state ?? undefined),
+      postal_code: emptyToNull(data.address.postal_code ?? undefined),
+      country: emptyToNull(data.address.country ?? undefined),
+    },
   };
 }
 

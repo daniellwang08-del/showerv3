@@ -19,6 +19,28 @@ export type EducationBlock = {
 };
 export type CertificateBlock = { name: string };
 
+/** Mailing address used to auto-fill application forms (Workday etc.). */
+export type AddressInfo = {
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+};
+
+/** Voluntary EEO / demographic answers. Yes/No fields are tri-state:
+ *  true = yes, false = no, null/undefined = unspecified (engine default). */
+export type EEOPreferences = {
+  gender?: string | null;
+  race?: string | null;
+  hispanic_latino?: boolean | null;
+  veteran_status?: boolean | null;
+  disability_status?: boolean | null;
+  work_authorized?: boolean | null;
+  needs_sponsorship?: boolean | null;
+};
+
 export type UserProfile = {
   user_id: string;
   name: string;
@@ -37,6 +59,8 @@ export type UserProfile = {
   education: EducationBlock[] | Record<string, unknown>[];
   certificates: CertificateBlock[] | Record<string, unknown>[];
   extra: string[];
+  eeo_preferences?: EEOPreferences | Record<string, unknown> | null;
+  address?: AddressInfo | Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 };
@@ -57,9 +81,24 @@ export type ProfileFormData = {
   education: EducationBlock[];
   certificates: CertificateBlock[];
   extra: string[];
+  eeo_preferences: EEOPreferences;
+  address: AddressInfo;
 };
 
 export const JOB_TYPES = ['onsite', 'hybrid', 'remote'] as const;
+
+/** Option lists for the EEO section selects. */
+export const GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Decline to self-identify'] as const;
+export const RACE_OPTIONS = [
+  'Asian',
+  'White',
+  'Black or African American',
+  'Hispanic or Latino',
+  'Native American or Alaska Native',
+  'Native Hawaiian or Other Pacific Islander',
+  'Two or More Races',
+  'Decline to self-identify',
+] as const;
 
 /** Normalized remote / hybrid / onsite — used for validation and profile completion. */
 export function isValidJobArrangement(s: string | undefined | null): boolean {

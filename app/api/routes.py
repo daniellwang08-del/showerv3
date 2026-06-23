@@ -386,6 +386,8 @@ def _user_to_profile_response(u) -> ProfileResponse:
         education=getattr(u, "education", None) or [],
         certificates=getattr(u, "certificates", None) or [],
         extra=getattr(u, "extra", None) or [],
+        eeo_preferences=getattr(u, "eeo_preferences", None) or {},
+        address=getattr(u, "address", None) or {},
         created_at=u.created_at,
         updated_at=u.updated_at,
     )
@@ -408,6 +410,8 @@ def _request_to_profile_data(req) -> dict:
         "education": [b.model_dump() for b in req.education],
         "certificates": [b.model_dump() for b in req.certificates],
         "extra": list(req.extra),
+        "eeo_preferences": req.eeo_preferences.model_dump(),
+        "address": req.address.model_dump(),
     }
 
 

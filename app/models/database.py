@@ -36,6 +36,17 @@ class User(Base):
     certificates = Column(JSON, default=list)
     extra = Column(JSON, default=list)
 
+    # Voluntary EEO / demographic answers used to auto-fill application forms
+    # (Workday etc.). Object of: gender, race, hispanic_latino, veteran_status,
+    # disability_status, work_authorized, needs_sponsorship. Null/blank fields
+    # fall back to the engine's defaults.
+    eeo_preferences = Column(JSON, default=dict)
+
+    # Mailing address used to auto-fill application forms (Workday requires
+    # Address/City/State/Postal). Object of: line1, line2, city, state,
+    # postal_code, country.
+    address = Column(JSON, default=dict)
+
     # Cached OpenAI-ready text (updated on profile save)
     profile_openai_cache = Column(Text, nullable=True)
 

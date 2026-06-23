@@ -48,6 +48,38 @@ class CertificateBlock(BaseModel):
     name: str = Field(..., min_length=1, max_length=300)
 
 
+class EEOPreferences(BaseModel):
+    """Voluntary EEO / demographic answers. Strings empty -> None; yes/no fields
+    are tri-state booleans (None = unspecified, engine uses its default)."""
+    gender: str | None = Field(default=None, max_length=50)
+    race: str | None = Field(default=None, max_length=100)
+    hispanic_latino: bool | None = None
+    veteran_status: bool | None = None
+    disability_status: bool | None = None
+    work_authorized: bool | None = None
+    needs_sponsorship: bool | None = None
+
+    @field_validator("gender", "race", mode="before")
+    @classmethod
+    def empty_to_none(cls, v):
+        return _empty_to_none(v)
+
+
+class AddressInfo(BaseModel):
+    """Mailing address for application autofill (empty strings -> None)."""
+    line1: str | None = Field(default=None, max_length=200)
+    line2: str | None = Field(default=None, max_length=200)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=120)
+    postal_code: str | None = Field(default=None, max_length=20)
+    country: str | None = Field(default=None, max_length=120)
+
+    @field_validator("line1", "line2", "city", "state", "postal_code", "country", mode="before")
+    @classmethod
+    def empty_to_none(cls, v):
+        return _empty_to_none(v)
+
+
 # ---- Validation helpers ----
 
 def _email_valid(v: str) -> str:
@@ -159,6 +191,8 @@ class ProfileCreateRequest(BaseModel):
     education: list[EducationBlock] = Field(default_factory=list)
     certificates: list[CertificateBlock] = Field(default_factory=list)
     extra: list[str] = Field(default_factory=list)
+    eeo_preferences: EEOPreferences = Field(default_factory=EEOPreferences)
+    address: AddressInfo = Field(default_factory=AddressInfo)
 
     @field_validator("email")
     @classmethod
@@ -210,5 +244,7 @@ class ProfileResponse(BaseModel):
     education: list[dict] = Field(default_factory=list)
     certificates: list[dict] = Field(default_factory=list)
     extra: list[str] = Field(default_factory=list)
+    eeo_preferences: dict = Field(default_factory=dict)
+    address: dict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
