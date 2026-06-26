@@ -1,7 +1,7 @@
 // SmartRecruiters screening-question dropdown driver.
 //
-// Every screening question on the later steps — single-select, yes/no, and the
-// long "pick a range" lists — is the SAME widget: an
+// Every screening question on the later steps - single-select, yes/no, and the
+// long "pick a range" lists - is the SAME widget: an
 //   <spl-autocomplete id="question_<uuid>" name="question_<uuid>">
 // whose choices are <spl-select-option> nodes inside a shadow listbox, each
 // carrying clean text in <spl-truncate title="...">. A custom Lit widget will
@@ -88,7 +88,7 @@
   // Read the option elements out of a resolved menu element. The dropdown body is
   // a <spl-keyboard-list-navigator> with the choices assigned to its
   // <slot name="menu">; the choices themselves are usually <spl-select-option>,
-  // but we DON'T depend on that tag — we also read the slot's assignedElements so
+  // but we DON'T depend on that tag - we also read the slot's assignedElements so
   // any option markup works.
   function optionsInMenu(menu) {
     if (!menu) return [];
@@ -111,7 +111,7 @@
 
   // Resolve options ONLY for `host`'s currently-open menu. Console evidence:
   // - 11 `.c-spl-dropdown-menu-wrapper` nodes exist in the DOM at once
-  // - `wrapper contains sample (deep)? false` — options are NOT descendants of the wrapper
+  // - `wrapper contains sample (deep)? false` - options are NOT descendants of the wrapper
   // - 5 visible `spl-select-option` appear only after THIS input's aria-expanded=true
   // A global spl-select-option scan without scoping assigns wrong/empty options when
   // harvesting many selects sequentially (→ LLM "No options provided in HTML").
@@ -151,7 +151,7 @@
     return [];
   }
   // spl-multiselect-autocomplete renders an ALWAYS-present spl-tags-list wrapper
-  // whose class is `c-spl-multiselect-autocomplete-tags` — the old `[class*="tag"]`
+  // whose class is `c-spl-multiselect-autocomplete-tags` - the old `[class*="tag"]`
   // selector matched that empty shell and reported isFilled=true, so the control
   // was skipped entirely (Value is required on an untouched field).
   function multiselectHasSelection(host) {
@@ -375,7 +375,7 @@
   // is a slotted light child <span slot="label-content">, and whose choices are
   // light-child <spl-radio label="Yes" value="1" role="radio"> custom elements
   // (NO native <input> exists, which is why the group element itself is the
-  // anchor — see ANCHOR_SEL). We pick by matching the answer against each radio's
+  // anchor - see ANCHOR_SEL). We pick by matching the answer against each radio's
   // `label`/`value` and fire a composed click so the Lit handler toggles it.
   function radioOptionEls(group) {
     try {

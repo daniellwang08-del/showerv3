@@ -381,7 +381,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
 .chip.warn { color: var(--warn); border-color: rgba(224, 168, 62, 0.35); }
 .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 
-/* Match score badge — tinted by strength */
+/* Match score badge - tinted by strength */
 .score {
   background: rgba(79, 140, 255, 0.15);
   color: var(--primary);
@@ -411,6 +411,94 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
 }
 .banner.warn { background: rgba(224, 168, 62, 0.12); border-color: rgba(224, 168, 62, 0.4); }
 .banner.ok { background: rgba(47, 191, 113, 0.12); border-color: rgba(47, 191, 113, 0.4); }
+
+/* Post-report notice - sits above chat for quick repeat reporting */
+.chat-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+.report-notice {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 38px 12px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(47, 191, 113, 0.16), rgba(47, 191, 113, 0.05));
+  border: 1px solid rgba(47, 191, 113, 0.38);
+  box-shadow: 0 6px 18px rgba(47, 191, 113, 0.1);
+  animation: report-notice-in 0.28s ease;
+  flex-shrink: 0;
+}
+@keyframes report-notice-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.report-notice-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: rgba(47, 191, 113, 0.2);
+  color: var(--ok);
+  border: 1px solid rgba(47, 191, 113, 0.35);
+}
+.report-notice-icon-svg { display: inline-flex; }
+.report-notice-icon-svg svg { width: 17px; height: 17px; display: block; }
+.report-notice-body { flex: 1; min-width: 0; }
+.report-notice-title { font-size: 13px; font-weight: 700; color: var(--ok); letter-spacing: 0.01em; }
+.report-notice-sub { font-size: 12px; line-height: 1.45; margin-top: 3px; }
+.report-notice-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.report-notice-report {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--warn);
+  background: rgba(224, 168, 62, 0.12);
+  border-color: rgba(224, 168, 62, 0.45);
+}
+.report-notice-report:hover {
+  color: #fff;
+  background: var(--warn);
+  border-color: var(--warn);
+}
+.report-notice-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.report-notice-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
 
 /* Preferences bar (top of Home + Job) */
 .prefs-bar {
@@ -693,7 +781,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
 }
 .chat-empty-icon svg { width: 18px; height: 18px; }
 
-/* Chat controls (Tone / Answer type) — compact inline pills */
+/* Chat controls (Tone / Answer type) - compact inline pills */
 .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .control { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .control-label {

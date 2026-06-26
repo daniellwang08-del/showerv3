@@ -45,7 +45,10 @@ def _format_period(start: str | None, end: str | None) -> str:
     e = (end or "").strip()
     if s and e:
         return f"{s} – {e}"
-    return s or e or ""
+    # An open-ended role (start, no end) is ongoing - show "Present".
+    if s:
+        return f"{s} – Present"
+    return e or ""
 
 
 def _format_phone(user: User) -> str:
@@ -74,6 +77,11 @@ def _profile_work_rows(user: User) -> list[dict[str, Any]]:
         title = (item.get("job_title") or "").strip()
         if not company and not title:
             continue
+        contributions = [
+            str(c).strip()
+            for c in (item.get("contributions") or [])
+            if isinstance(c, (str, int, float)) and str(c).strip()
+        ]
         rows.append(
             {
                 "company_name": company,
@@ -81,6 +89,11 @@ def _profile_work_rows(user: User) -> list[dict[str, Any]]:
                 "period": _format_period(item.get("period_start"), item.get("period_end")),
                 "location": (item.get("location") or "").strip(),
                 "job_type": (item.get("job_type") or "").strip(),
+                "employment_type": (item.get("employment_type") or "").strip(),
+                "project_title": (item.get("project_title") or "").strip(),
+                "project_intro": (item.get("project_intro") or "").strip(),
+                "contributions": contributions,
+                "used_skills": (item.get("used_skills") or "").strip(),
                 "description": (item.get("description") or "").strip(),
             }
         )
@@ -99,18 +112,64 @@ def _merge_tailored_work_experience(profile_rows: list[dict], tailored_rows: lis
                 cleaned = _plain_text(b)
                 if cleaned:
                     bullets.append(cleaned)
+        # Structured profile contributions are the fallback when the LLM omits bullets.
+        if not bullets:
+            for b in profile_row.get("contributions") or []:
+                cleaned = _plain_text(b)
+                if cleaned:
+                    bullets.append(cleaned)
         merged.append(
             {
                 "company_name": (tailored.get("company_name") or profile_row.get("company_name") or "").strip(),
                 "job_title": (tailored.get("job_title") or profile_row.get("job_title") or "").strip(),
                 "period": profile_row.get("period") or "",
                 "location": profile_row.get("location") or "",
-                "project_name": (tailored.get("project_name") or None),
-                "project_description": _plain_text(tailored.get("project_description") or profile_row.get("description") or ""),
+                "employment_type": profile_row.get("employment_type") or "",
+                "job_type": profile_row.get("job_type") or "",
+                "project_name": (tailored.get("project_name") or profile_row.get("project_title") or None),
+                "project_description": _plain_text(
+                    tailored.get("project_description")
+                    or profile_row.get("project_intro")
+                    or profile_row.get("description")
+                    or ""
+                ),
                 "bullets": bullets,
+                "used_skills": _plain_text(tailored.get("used_skills") or profile_row.get("used_skills") or ""),
             }
         )
     return merged
+
+
+def _saved_skills_style(user: User) -> dict[str, Any] | None:
+    raw = getattr(user, "resume_template_design", None)
+    if isinstance(raw, dict):
+        sections = raw.get("sections")
+        if isinstance(sections, dict) and isinstance(sections.get("skills_style"), dict):
+            return sections["skills_style"]
+    return None
+
+
+def _saved_design_colors(user: User) -> dict[str, Any] | None:
+    raw = getattr(user, "resume_template_design", None)
+    if isinstance(raw, dict) and isinstance(raw.get("colors"), dict):
+        return raw["colors"]
+    return None
+
+
+def _saved_experience_style(user: User) -> dict[str, Any] | None:
+    raw = getattr(user, "resume_template_design", None)
+    if isinstance(raw, dict):
+        sections = raw.get("sections")
+        if isinstance(sections, dict) and isinstance(sections.get("experience_style"), dict):
+            return sections["experience_style"]
+    return None
+
+
+def _saved_section_options(user: User) -> dict[str, Any] | None:
+    raw = getattr(user, "resume_template_design", None)
+    if isinstance(raw, dict) and isinstance(raw.get("sections"), dict):
+        return raw["sections"]
+    return None
 
 
 def build_render_context(
@@ -171,6 +230,16 @@ def build_render_context(
             "profile_summary": _plain_text(tailored.get("profile_summary")),
             "technical_skills": skills,
             "work_experience": work_experience,
+            # Skills theme + palette so the fill engine can style skills like the
+            # live preview. Sourced from the user's saved design; the builder preview
+            # overrides these with the design being previewed.
+            "skills_style": tailored.get("skills_style") or _saved_skills_style(user),
+            # Experience theme so the fill engine can style work-experience entries
+            # like the live preview. Builder preview overrides this with the design
+            # being previewed.
+            "experience_style": tailored.get("experience_style") or _saved_experience_style(user),
+            "section_options": tailored.get("section_options") or _saved_section_options(user),
+            "colors": tailored.get("colors") or _saved_design_colors(user),
         },
         "job": {
             "company": (job.company if job else None) or "Unknown",
@@ -207,15 +276,22 @@ def build_preview_tailored(user: User) -> dict[str, Any]:
 
     work: list[dict[str, Any]] = []
     for row in profile_rows:
-        desc = (row.get("description") or "").strip()
-        if not desc:
-            desc = f"Sample accomplishments at {row.get('company_name') or 'the organization'}."
+        intro = (row.get("project_intro") or row.get("description") or "").strip()
+        if not intro:
+            intro = f"Sample accomplishments at {row.get('company_name') or 'the organization'}."
+        contributions = row.get("contributions") or []
+        if not contributions:
+            contributions = ["Delivered measurable outcomes aligned with role requirements."]
         work.append(
             {
                 "company_name": row.get("company_name") or "",
                 "job_title": row.get("job_title") or "",
-                "project_description": desc,
-                "bullets": ["Delivered measurable outcomes aligned with role requirements."],
+                "employment_type": row.get("employment_type") or "",
+                "job_type": row.get("job_type") or "",
+                "project_name": row.get("project_title") or "",
+                "project_description": intro,
+                "bullets": contributions,
+                "used_skills": row.get("used_skills") or "",
             }
         )
 

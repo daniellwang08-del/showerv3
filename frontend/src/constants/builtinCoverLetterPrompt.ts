@@ -1,6 +1,6 @@
 /** Built-in cover letter prompt (keep in sync with app/prompts/cover_letter_prompt.py). */
 export const BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS = [
-  '## Task 2 — Cover Letter',
+  '## Task 2 - Cover Letter',
   '',
   'Generate a professional cover letter body (3-4 short paragraphs).',
   '',

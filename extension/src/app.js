@@ -1,6 +1,7 @@
 import * as api from "./api.js";
 import * as store from "./store.js";
-import { resolveEngine } from "./engines.js";
+import { resolveEngine, autofillPermissionOrigins } from "./engines.js";
+import * as tabMsg from "./tab-messaging.js";
 
 const root = document.getElementById("app");
 
@@ -40,6 +41,7 @@ let state = {
   streaming: false,
   abort: null,
   toast: null,
+  reportNotice: null, // { reportedTitle, reportedCompany } - shown above chat after reporting
   error: null,
   autofill: emptyAutofill(),
 };
@@ -65,6 +67,7 @@ function emptyAutofill() {
     loopStop: false, // user requested the loop to stop
     loopFinished: null, // "review" | "stuck" | "needs_user" | "error" | null
     loopMessage: null, // human-readable outcome shown when the loop ends
+    primaryFrameId: null, // content-script frame that owns the application form (embedded ATS)
   };
 }
 
@@ -90,7 +93,17 @@ let writePassSeq = 0;
 let wdStepWaiter = null;
 
 // Messages from the injected picker/writer content script arrive here.
-function onContentMessage(msg) {
+function scoreAutofillField(field) {
+  let score = (field.controlCount || 0) * 10;
+  const url = (field.frameUrl || "").toLowerCase();
+  if (/greenhouse\.io/.test(url) && /embed\/job_app/.test(url)) score += 1000;
+  else if (/greenhouse\.io/.test(url) && /\/jobs\//.test(url)) score += 900;
+  else if (/greenhouse\.io/.test(url)) score += 500;
+  if ((field.controlCount || 0) > 0) score += 50;
+  return score;
+}
+
+function onContentMessage(msg, sender) {
   if (!msg || !msg.type) return;
   if (msg.type === "AF_FIELDS") {
     if (!extractCollector) return;
@@ -107,14 +120,37 @@ function onContentMessage(msg) {
   }
   if (!state.autofill.active) return;
   if (msg.type === "AF_FIELD_ADDED") {
-    if (state.autofill.fields.some((f) => f.handle === msg.handle)) return;
+    const frameId = sender && sender.frameId != null ? sender.frameId : 0;
     const field = {
       handle: msg.handle,
       label: msg.label || "(field)",
       level: msg.level || "valid",
       controlCount: msg.controlCount || 1,
+      frameId,
+      frameUrl: msg.frameUrl || (sender && sender.url) || "",
     };
-    setAutofill({ fields: [...state.autofill.fields, field] });
+    field._score = scoreAutofillField(field);
+    const autoMode =
+      state.autofill.discovering || !!(state.autofill.engine && state.autofill.engine.autoDiscover);
+    if (autoMode) {
+      const cur = state.autofill.fields[0];
+      const curScore = cur && cur._score != null ? cur._score : -1;
+      if (!cur || field._score >= curScore) {
+        setAutofill({ fields: [field], primaryFrameId: frameId });
+      }
+      return;
+    }
+    const idx = state.autofill.fields.findIndex((f) => f.handle === msg.handle);
+    if (idx >= 0) {
+      const fields = state.autofill.fields.slice();
+      fields[idx] = { ...fields[idx], ...field };
+      setAutofill({ fields, primaryFrameId: frameId });
+      return;
+    }
+    setAutofill({
+      fields: [...state.autofill.fields, field],
+      primaryFrameId: state.autofill.primaryFrameId != null ? state.autofill.primaryFrameId : frameId,
+    });
   } else if (msg.type === "AF_WRITE_RESULT") {
     const statuses = { ...state.autofill.statuses };
     for (const r of msg.report || []) statuses[r.cid] = r.status;
@@ -170,9 +206,14 @@ async function handleWorkdayResolve(msg) {
   };
   try {
     const items = Array.isArray(msg.items) ? msg.items : [];
-    if (!job || !job.job_id || !items.length) return reply({});
-    // Generic: each item carries its own control kind/options (Degree, Field of
-    // Study, and any unmatched Workday question routed here from the engine).
+    if (!job || !job.job_id || !items.length) {
+      console.debug("[workday] WD_RESOLVE skipped:", {
+        hasJob: !!job,
+        jobId: job && job.job_id,
+        itemCount: items.length,
+      });
+      return reply({});
+    }
     const controls = items.map((it) => ({
       cid: String(it.cid),
       kind: it.kind || "select",
@@ -184,19 +225,27 @@ async function handleWorkdayResolve(msg) {
     const values = {};
     for (const f of (resp && resp.results) || []) {
       for (const c of f.controls || []) {
-        if (c.needs_user) continue; // leave for manual review, don't guess
+        if (c.needs_user) continue;
         const v = c.option || c.value;
         if (c.cid && v) values[c.cid] = v;
       }
     }
+    console.debug(
+      "[workday] WD_RESOLVE answered",
+      Object.keys(values).length,
+      "/",
+      items.length,
+      "controls",
+    );
     reply(values);
-  } catch {
+  } catch (err) {
+    console.warn("[workday] WD_RESOLVE failed:", (err && err.message) || err);
     reply({});
   }
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
-  chrome.runtime.onMessage.addListener(onContentMessage);
+  chrome.runtime.onMessage.addListener((msg, sender) => onContentMessage(msg, sender));
 }
 
 // ── DOM helpers ─────────────────────────────────────────────────────────────
@@ -328,7 +377,7 @@ function renderMarkdown(text) {
   return out.join("");
 }
 
-// Strip markdown to plain text for copying — what you copy matches what you read.
+// Strip markdown to plain text for copying - what you copy matches what you read.
 function mdToPlain(text) {
   let s = String(text || "");
   s = s.replace(/```([\s\S]*?)```/g, (_, c) => c.trim());
@@ -442,7 +491,7 @@ async function checkSync() {
 
 async function goHome() {
   await teardownAutofill();
-  setState({ view: "home", job: null });
+  setState({ view: "home", job: null, reportNotice: null });
   await Promise.all([loadQueue(), checkSync()]);
 }
 
@@ -453,7 +502,7 @@ function startOfToday() {
 }
 
 // The dashboard caps per_page at 200, so a single request only returns the 200
-// newest jobs — older "ready to apply" jobs would be cut off. Page through the
+// newest jobs - older "ready to apply" jobs would be cut off. Page through the
 // whole list (newest first) so the Ready tab reflects ALL jobs so far. Capped to
 // keep the side panel responsive even on very large accounts.
 async function fetchAllDashboardJobs(maxPages = 25) {
@@ -531,8 +580,13 @@ async function applyAutoAdvance(value) {
 
 // ── job / chat actions ───────────────────────────────────────────────────────
 
-async function openJob(jobId, { redirect = false } = {}) {
-  setState({ view: "job", job: null, error: null });
+async function openJob(jobId, { redirect = false, keepReportNotice = false } = {}) {
+  setState({
+    view: "job",
+    job: null,
+    error: null,
+    ...(keepReportNotice ? {} : { reportNotice: null }),
+  });
   try {
     await api.createSession(jobId);
     const detail = await api.getSessionDetail(jobId);
@@ -709,6 +763,8 @@ function reportInvalidJob() {
 async function confirmReportInvalid() {
   if (!state.job || !state.modal) return;
   const jobId = state.job.job_id;
+  const reportedTitle = state.job.title || "(untitled job)";
+  const reportedCompany = state.job.company || "";
   setState({ modal: { ...state.modal, busy: true } });
   try {
     await api.reportJobInvalid(jobId, "expired");
@@ -718,18 +774,23 @@ async function confirmReportInvalid() {
     return;
   }
   await teardownAutofill();
-  setState({ modal: null });
-  toast("Reported as expired and removed.");
+  const notice = { reportedTitle, reportedCompany };
+  setState({ modal: null, reportNotice: notice });
   try {
     const nx = await api.nextJob(jobId);
     if (nx && nx.job_id) {
-      await openJob(nx.job_id, { redirect: true });
+      await openJob(nx.job_id, { redirect: true, keepReportNotice: true });
       return;
     }
   } catch {
     /* fall through to Home */
   }
+  toast("Reported as expired. No more ready jobs.");
   await goHome();
+}
+
+function dismissReportNotice() {
+  if (state.reportNotice) setState({ reportNotice: null });
 }
 
 // ── autofill actions ─────────────────────────────────────────────────────────
@@ -741,9 +802,8 @@ async function startAutofill() {
       toast("Open the job application page in the active tab first.");
       return;
     }
-    let origin;
     try {
-      origin = new URL(tab.url).origin + "/*";
+      new URL(tab.url);
     } catch {
       toast("Cannot read the page URL.");
       return;
@@ -756,8 +816,9 @@ async function startAutofill() {
       toast(`${engine.label} engine is not available yet. ${engine.note || "It will get its own dedicated engine."}`);
       return;
     }
-    // Host permission for the page must be requested on this user gesture.
-    const granted = await chrome.permissions.request({ origins: [origin] });
+    // Host permission for the page (and embedded ATS iframe when applicable).
+    const permOrigins = autofillPermissionOrigins(tab.url, engine.platform);
+    const granted = await chrome.permissions.request({ origins: permOrigins });
     if (!granted) {
       toast("Permission to read this page was denied.");
       return;
@@ -767,18 +828,23 @@ async function startAutofill() {
       toast("Could not start autofill on this page.");
       return;
     }
-    // Deterministic engines (Workday) fill straight from the canonical profile —
+    // Deterministic engines (Workday) fill straight from the canonical profile -
     // no manual region selection, no LLM.
     if (engine.mode === "workday") {
       await startWorkdayAutofill(tab, engine);
       return;
     }
     // Auto-discovery engines (Greenhouse): select the page's single application
-    // container and fill it automatically — no manual field tagging.
+    // container and fill it automatically - no manual field tagging.
     if (engine.autoDiscover) {
       setState({ autofill: { ...emptyAutofill(), active: true, discovering: true, tabId: tab.id, engine } });
       try {
-        await chrome.tabs.sendMessage(tab.id, { type: "AF_AUTOSELECT" });
+        await tabMsg.broadcastTabMessage(tab.id, { type: "AF_AUTOSELECT" });
+        // Prefer the Greenhouse embed iframe when the career page is only a shell.
+        const ghFrame = tabMsg.pickGreenhouseFrame(await tabMsg.getTabFrames(tab.id));
+        if (ghFrame && ghFrame.frameId != null) {
+          setAutofill({ primaryFrameId: ghFrame.frameId });
+        }
       } catch {
         /* ignore */
       }
@@ -792,7 +858,7 @@ async function startAutofill() {
       }, 3500);
       return;
     }
-    await chrome.tabs.sendMessage(tab.id, { type: "AF_START" });
+    await tabMsg.broadcastTabMessage(tab.id, { type: "AF_START" });
     setState({ autofill: { ...emptyAutofill(), active: true, picking: true, tabId: tab.id, engine } });
   } catch (err) {
     toast("Autofill could not start: " + ((err && err.message) || err));
@@ -802,7 +868,7 @@ async function startAutofill() {
 // Workday: fetch the canonical structured profile (respecting the user's
 // original/tailored resume preference), optionally attach the generated resume
 // file, and tell the in-page engine to fill the current step. Auto-advance is
-// OFF — the user reviews and clicks Continue between steps.
+// OFF - the user reviews and clicks Continue between steps.
 async function startWorkdayAutofill(tab, engine) {
   const job = state.job;
   if (!job || !job.job_id) {
@@ -825,7 +891,7 @@ async function startWorkdayAutofill(tab, engine) {
   let resumeFile = null;
   try {
     resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
-    console.warn("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)");
+    console.debug("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)");
   } catch (e) {
     console.warn("[workday] resume PDF download failed:", (e && e.message) || e);
     resumeFile = null;
@@ -866,17 +932,23 @@ function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function tabSend(tabId, msg) {
-  return new Promise((resolve) => {
-    try {
-      chrome.tabs.sendMessage(tabId, msg, (resp) => {
-        void chrome.runtime.lastError; // swallow "no receiver" noise
-        resolve(resp || null);
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+function autofillFrameId() {
+  const af = state.autofill;
+  if (af && af.primaryFrameId != null) return af.primaryFrameId;
+  for (const f of (af && af.fields) || []) {
+    if (f.frameId != null && (f.controlCount || 0) > 0) return f.frameId;
+  }
+  return null;
+}
+
+function tabSend(tabId, msg, frameId) {
+  const fid = frameId != null ? frameId : autofillFrameId();
+  if (fid != null) return tabMsg.sendTabMessage(tabId, msg, fid);
+  return tabMsg.sendTabMessage(tabId, msg, 0);
+}
+
+function tabBroadcast(tabId, msg) {
+  return tabMsg.broadcastTabMessage(tabId, msg);
 }
 
 // Wait for the page to finish a WD_RUN fill (resolved via the WD_DONE handler).
@@ -911,14 +983,18 @@ async function focusPageAndFlush(tabId) {
   } catch {
     /* tab/window may be gone */
   }
-  await delay(450); // let the focus event + flush settle
-  await tabSend(tabId, { type: "WD_FLUSH" });
+  await delay(450); // let the focus event settle (may still be false with side panel open)
+  const flush = await tabSend(tabId, { type: "WD_FLUSH" }, 0);
+  try {
+    console.debug("[workday] focusPageAndFlush:", flush);
+  } catch {}
   await delay(150);
 }
 
-async function fillCurrentStep(tabId, profile, resumeFile) {
+async function fillCurrentStep(tabId, profile, resumeFile, extraOptions) {
   const wait = waitWorkdayFill();
-  await tabSend(tabId, { type: "WD_RUN", profile, options: { autoAdvance: false, resumeFile } });
+  const options = { autoAdvance: false, resumeFile, ...(extraOptions || {}) };
+  await tabSend(tabId, { type: "WD_RUN", profile, options }, 0);
   return wait;
 }
 
@@ -928,7 +1004,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
     for (let i = 0; i < WD_MAX_STEPS; i++) {
       if (loopStopped()) return finishLoop("stopped");
 
-      const det = await tabSend(tabId, { type: "WD_DETECT" });
+      const det = await tabSend(tabId, { type: "WD_DETECT" }, 0);
       const step = det && det.step;
       if (!step) return finishLoop(state.autofill.reports.length ? "done" : "none");
       if (step === "review") return finishLoop("review");
@@ -953,43 +1029,43 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         await focusPageAndFlush(tabId);
 
         // Fix anything already flagged before saving.
-        let v = await tabSend(tabId, { type: "WD_VALIDATE" });
+        let v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
-          console.warn(`[workday] auto-advance: ${label} pre-save errors`, v.invalidFields);
+          console.debug(`[workday] auto-advance: ${label} pre-save errors`, v.invalidFields);
           setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
-          const rec = await fillCurrentStep(tabId, profile, resumeFile);
+          const rec = await fillCurrentStep(tabId, profile, resumeFile, { onlyInvalid: v.invalidFields });
           if (rec.error) return finishLoop("error", rec.error);
           await focusPageAndFlush(tabId);
         }
 
         // Try to advance.
         setAutofill({ loopStatus: `Advancing from ${label}…` });
-        const next = await tabSend(tabId, { type: "WD_NEXT" });
+        const next = await tabSend(tabId, { type: "WD_NEXT" }, 0);
         if (next && next.advanced) {
           advanced = true;
           break;
         }
 
-        // Didn't advance — re-validate; Workday likely just revealed errors on Save.
+        // Didn't advance - re-validate; Workday likely just revealed errors on Save.
         await focusPageAndFlush(tabId);
-        v = await tabSend(tabId, { type: "WD_VALIDATE" });
+        v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
-          console.warn(`[workday] auto-advance: ${label} post-save errors`, v.invalidFields);
+          console.debug(`[workday] auto-advance: ${label} post-save errors`, v.invalidFields);
           setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
-          const rec = await fillCurrentStep(tabId, profile, resumeFile);
+          const rec = await fillCurrentStep(tabId, profile, resumeFile, { onlyInvalid: v.invalidFields });
           if (rec.error) return finishLoop("error", rec.error);
           // loop retries the Save with the freshly LLM-filled values
         } else {
-          // No detectable error but it didn't move — maybe a slow navigation.
+          // No detectable error but it didn't move - maybe a slow navigation.
           await delay(1600);
-          const d2 = await tabSend(tabId, { type: "WD_DETECT" });
+          const d2 = await tabSend(tabId, { type: "WD_DETECT" }, 0);
           if (d2 && d2.step && d2.step !== step) {
             advanced = true;
             break;
           }
-          console.warn(`[workday] auto-advance: ${label} did not advance and no errors detected (attempt ${attempt + 1})`);
+          console.debug(`[workday] auto-advance: ${label} did not advance and no errors detected (attempt ${attempt + 1})`);
         }
       }
 
@@ -1000,7 +1076,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
           lastNames.length ? `Couldn't resolve on ${label}: ${lastNames.join(", ")}` : `Couldn't advance past ${label} (no fixable errors detected).`
         );
       }
-      const afterStep = await tabSend(tabId, { type: "WD_DETECT" });
+      const afterStep = await tabSend(tabId, { type: "WD_DETECT" }, 0);
       if (afterStep && afterStep.step === "review") return finishLoop("review");
       await delay(600);
     }
@@ -1012,7 +1088,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
 
 function finishLoop(reason, error) {
   const messages = {
-    review: "Reached the Review step — review and submit when you're ready.",
+    review: "Reached the Review step - review and submit when you're ready.",
     done: "Finished the available steps.",
     none: "No Workday application step was detected on this page.",
     stopped: "Auto-advance stopped.",
@@ -1036,7 +1112,7 @@ function stopAutoAdvance() {
   setAutofill({ loopStop: true, loopStatus: "Stopping…" });
 }
 
-// If no frame contains a Workday step, none reply — surface that after a wait.
+// If no frame contains a Workday step, none reply - surface that after a wait.
 function armWorkdayWatchdog() {
   setTimeout(() => {
     const a = state.autofill;
@@ -1050,7 +1126,7 @@ async function teardownAutofill() {
   const af = state.autofill;
   if (af && af.tabId != null) {
     try {
-      await chrome.tabs.sendMessage(af.tabId, { type: "AF_CLEAR" });
+      await tabBroadcast(af.tabId, { type: "AF_CLEAR" });
     } catch {
       /* tab may be gone */
     }
@@ -1067,7 +1143,8 @@ async function removeAutofillField(handle) {
   const tabId = state.autofill.tabId;
   if (tabId != null) {
     try {
-      await chrome.tabs.sendMessage(tabId, { type: "AF_REMOVE", handle });
+      const field = state.autofill.fields.find((f) => f.handle === handle);
+      await tabSend(tabId, { type: "AF_REMOVE", handle }, field && field.frameId != null ? field.frameId : undefined);
     } catch {
       /* ignore */
     }
@@ -1079,7 +1156,7 @@ async function resumePicking() {
   const tabId = state.autofill.tabId;
   if (tabId == null) return;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "AF_START" });
+    await tabBroadcast(tabId, { type: "AF_START" });
   } catch {
     /* ignore */
   }
@@ -1119,7 +1196,7 @@ async function prepareGreenhouseEducation(tabId) {
     discipline: GREENHOUSE_DEFAULT_DISCIPLINE,
   });
   // Let newly mounted rows / committed selections settle before extraction.
-  await delay(500);
+  await delay(1200);
 }
 
 // ApplyToJob (JazzHR): reveal the hidden resume file input before extraction so
@@ -1222,6 +1299,44 @@ async function prepareSmartRecruiters(tabId) {
   await delay(600);
 }
 
+// Workable: add + Update a repeating Education/Experience entry per profile
+// entry BEFORE the generic fill. Repeating subtrees are excluded from generic
+// detection; personal info / summary / cover letter go to the LLM pass.
+async function prepareWorkable(tabId) {
+  if (!state.job || !state.job.job_id || tabId == null) return;
+  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
+  let experience = [];
+  let education = [];
+  try {
+    const profile = await api.getAutofillProfile(state.job.job_id, resumeSource);
+    if (Array.isArray(profile.workExperience)) {
+      experience = profile.workExperience.map((w) => ({
+        company: (w && w.company) || "",
+        title: (w && w.title) || "",
+        industry: (w && w.industry) || "",
+        description: (w && w.description) || "",
+        start: (w && w.startMMYYYY) || "",
+        end: (w && w.endMMYYYY) || "",
+        current: !!(w && w.current),
+      }));
+    }
+    if (Array.isArray(profile.education)) {
+      education = profile.education.map((e) => ({
+        school: (e && (e.school || e.university_name)) || "",
+        degree: (e && e.degree) || "",
+        field_of_study: (e && e.fieldOfStudy) || "",
+        start: (e && e.startMMYYYY) || "",
+        end: (e && e.endMMYYYY) || "",
+      }));
+    }
+  } catch {
+    experience = [];
+    education = [];
+  }
+  await tabSend(tabId, { type: "AF_WB_PREP", experience, education });
+  await delay(600);
+}
+
 // Fill a cover-letter textarea with the AI-generated cover letter body (the same
 // text used to build the cover letter DOCX), so platforms that take a pasted
 // cover letter get it verbatim instead of an LLM re-write. No-op when no cover
@@ -1263,7 +1378,7 @@ function answerCategory(label) {
 
 // Select engines: replay remembered identity answers (EEO, work authorization,
 // consent) BEFORE extraction. The page fills any control whose category we've
-// cached, marking it filled, so the harvest + LLM pass skips it — no menu
+// cached, marking it filled, so the harvest + LLM pass skips it - no menu
 // opening and no LLM round-trip for questions whose answer never changes.
 // The cache is scoped to the engine's platform: option text learned on one ATS
 // is never replayed on another (their option phrasing / value maps differ), so
@@ -1316,6 +1431,17 @@ function buildPreferences() {
 }
 
 // Ask the content script(s) to extract structured specs for the selected blocks.
+function extractTimeoutMs(handles) {
+  const fields = state.autofill.fields || [];
+  let controls = 0;
+  for (const f of fields) {
+    if (!handles.length || handles.includes(f.handle)) controls += f.controlCount || 0;
+  }
+  // Each unfilled react-select harvest opens/closes a menu (~300–800ms). A 42-control
+  // Greenhouse embed easily exceeds the old 4s cap; scale with control count.
+  return Math.min(120000, Math.max(20000, 6000 + controls * 450));
+}
+
 function extractSpecs(tabId, handles) {
   return new Promise((resolve) => {
     const collected = new Map();
@@ -1327,15 +1453,17 @@ function extractSpecs(tabId, handles) {
       resolve([...collected.values()]);
     };
     extractCollector = { expected: new Set(handles), collected, finish };
+    const frameId = autofillFrameId();
+    const timeoutMs = extractTimeoutMs(handles);
     if (tabId != null) {
       try {
-        chrome.tabs.sendMessage(tabId, { type: "AF_EXTRACT" });
+        if (frameId != null) tabSend(tabId, { type: "AF_EXTRACT", handles }, frameId);
+        else tabBroadcast(tabId, { type: "AF_EXTRACT", handles });
       } catch {
         /* ignore */
       }
     }
-    // Generous timeout: harvesting custom-dropdown options involves opening them.
-    setTimeout(finish, 4000);
+    setTimeout(finish, timeoutMs);
   });
 }
 
@@ -1392,6 +1520,59 @@ async function fetchFilesForResults(jobId, results, specs) {
   return { files, missing };
 }
 
+// Lever parses an uploaded resume and may overwrite name/email/phone - defer the
+// resume file write until every text/select field has been filled.
+function splitLeverResumeWrite(results, files) {
+  let pending = null;
+  const outResults = [];
+  for (const r of results || []) {
+    const controls = [];
+    for (const c of r.controls || []) {
+      if (c.file_role === "resume") {
+        if (files && files[c.cid]) pending = { cid: c.cid, file: files[c.cid] };
+        continue;
+      }
+      controls.push(c);
+    }
+    if (controls.length) outResults.push({ handle: r.handle, controls });
+  }
+  const outFiles = {};
+  for (const [cid, fd] of Object.entries(files || {})) {
+    if (!pending || cid !== pending.cid) outFiles[cid] = fd;
+  }
+  return { results: outResults, files: outFiles, pending };
+}
+
+async function uploadLeverResumeLast(tabId, pending) {
+  if (!pending || !pending.file || tabId == null) return false;
+  try {
+    const res = await tabSend(tabId, { type: "AF_LV_UPLOAD_RESUME", file: pending.file });
+    return !!(res && res.uploaded);
+  } catch {
+    return false;
+  }
+}
+
+async function uploadWorkableResumeLast(tabId, pending) {
+  if (!pending || !pending.file || tabId == null) return false;
+  try {
+    const res = await tabSend(tabId, { type: "AF_WB_UPLOAD_RESUME", file: pending.file });
+    return !!(res && res.uploaded);
+  } catch {
+    return false;
+  }
+}
+
+async function uploadBreezyResumeLast(tabId, pending) {
+  if (!pending || !pending.file || tabId == null) return false;
+  try {
+    const res = await tabSend(tabId, { type: "AF_BZY_UPLOAD_RESUME", file: pending.file });
+    return !!(res && res.uploaded);
+  } catch {
+    return false;
+  }
+}
+
 // Send a write pass to the content script and wait until it reports completion
 // (or a generous timeout). Awaiting completion lets us re-scan the DOM for
 // fields that only render after a prior answer commits.
@@ -1410,7 +1591,7 @@ function writeAndWait(tabId, results, files) {
     writeWaiter = { passId, finish };
     if (tabId != null) {
       try {
-        chrome.tabs.sendMessage(tabId, { type: "AF_WRITE", passId, results, files });
+        tabSend(tabId, { type: "AF_WRITE", passId, results, files });
       } catch {
         /* ignore */
       }
@@ -1425,6 +1606,7 @@ function writeAndWait(tabId, results, files) {
 // "answer X reveals field Y" progressive forms (e.g. Hispanic=No reveals Race).
 const AUTOFILL_MAX_PASSES = 4;
 const SR_MAX_PAGES = 8; // SmartRecruiters multi-step applications: hard cap on steps
+const BZY_MAX_PAGES = 6; // Breezy.hr multi-step applications: hard cap on sections
 
 // Re-run auto-discovery on the current page and wait for the application
 // container to register. Used between SmartRecruiters steps: after clicking
@@ -1443,7 +1625,7 @@ async function rediscoverForm(tabId) {
     if (Date.now() - lastSend > 2200) {
       lastSend = Date.now();
       try {
-        await chrome.tabs.sendMessage(tabId, { type: "AF_AUTOSELECT" });
+        await tabBroadcast(tabId, { type: "AF_AUTOSELECT" });
       } catch {
         /* ignore */
       }
@@ -1482,6 +1664,10 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     setAutofill({ runStatus: "Adding your work & education history…" });
     await prepareSmartRecruiters(tabId);
   }
+  if (eng && eng.platform === "workable" && isFirstPage) {
+    setAutofill({ runStatus: "Adding your work & education history…" });
+    await prepareWorkable(tabId);
+  }
   // Replay remembered identity answers (EEO/work-auth/consent) before extract
   // so those controls are already filled and skip the harvest + LLM pass.
   if (eng && eng.mode === "select") {
@@ -1499,14 +1685,32 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   const attemptedKeys = new Set(); // stable control keys already sent to the LLM (this step)
   let lastSpecs = [];
 
-  for (let pass = 0; pass < AUTOFILL_MAX_PASSES; pass++) {
+  const maxPasses = eng && eng.platform === "pinpoint" ? 5 : AUTOFILL_MAX_PASSES;
+  const passDelayMs = eng && eng.platform === "pinpoint" ? 750 : 500;
+  const isLever = eng && eng.platform === "lever";
+  const isWorkable = eng && eng.platform === "workable";
+  const isBreezy = eng && eng.platform === "breezy";
+  let leverResumePending = null;
+  let workableResumePending = null;
+  let breezyResumePending = null;
+
+  for (let pass = 0; pass < maxPasses; pass++) {
     // Re-extract the live DOM each pass. Already-filled controls report
     // filled:true (and skip option harvesting); newly rendered controls show up.
     setAutofill({ runStatus: pass === 0 ? "Reading the application fields…" : "Checking for new fields…" });
     const specs = await extractSpecs(tabId, handles);
-    if (!specs.length) {
+    const specControls = specs.reduce((n, s) => n + ((s.controls && s.controls.length) || 0), 0);
+    if (!specs.length || !specControls) {
       if (pass === 0 && isFirstPage) {
-        setAutofill({ error: "Could not read the selected fields. Try reselecting." });
+        const onSurvey =
+          eng &&
+          eng.platform === "workable" &&
+          state.autofill.fields.some((f) => /survey/i.test(f.label || ""));
+        setAutofill({
+          error: onSurvey
+            ? "Could not read the survey questions. Reload the page and click Start autofill again."
+            : "Could not read the selected fields. Try reselecting.",
+        });
       }
       break;
     }
@@ -1572,7 +1776,27 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
 
     const writeCount = results.reduce((n, r) => n + (r.controls || []).length, 0);
     setAutofill({ runStatus: `Filling ${writeCount} field${writeCount === 1 ? "" : "s"} on the page…` });
-    await writeAndWait(tabId, results, files);
+    let writeResults = results;
+    let writeFiles = files;
+    if (isLever) {
+      const split = splitLeverResumeWrite(results, files);
+      writeResults = split.results;
+      writeFiles = split.files;
+      if (split.pending) leverResumePending = split.pending;
+    }
+    if (isWorkable) {
+      const split = splitLeverResumeWrite(results, files);
+      writeResults = split.results;
+      writeFiles = split.files;
+      if (split.pending) workableResumePending = split.pending;
+    }
+    if (isBreezy) {
+      const split = splitLeverResumeWrite(results, files);
+      writeResults = split.results;
+      writeFiles = split.files;
+      if (split.pending) breezyResumePending = split.pending;
+    }
+    await writeAndWait(tabId, writeResults, writeFiles);
 
     // Remember stable identity answers (EEO/work-auth/consent) that actually
     // committed, so future jobs replay them without harvesting menus or
@@ -1593,11 +1817,11 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     }
 
     // Give conditionally rendered fields a moment to mount before re-scanning.
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, passDelayMs));
   }
 
   // Final reconciliation for controlled forms (e.g. Ashby): a value can sit in
-  // the DOM while the framework never recorded it — the early commit runs
+  // the DOM while the framework never recorded it - the early commit runs
   // before these fields are written, and the engine skips any control that
   // already holds a value, so a late/skipped write never fires React's
   // onChange and submit reports the field "missing". The browser also RE-applies
@@ -1622,6 +1846,41 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       /* ignore */
     }
   }
+  if (eng && eng.platform === "pinpoint") {
+    try {
+      const ticked = await tabSend(tabId, { type: "AF_PP_TICK_CONSENT" });
+      if (ticked && ticked.ticked) {
+        console.log("[autofill] Pinpoint consent ticked");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (isLever) {
+    if (leverResumePending) {
+      setAutofill({ runStatus: "Uploading your resume…" });
+      const ok = await uploadLeverResumeLast(tabId, leverResumePending);
+      if (ok) {
+        console.log("[autofill] Lever resume uploaded last");
+        await delay(1200);
+        await commitPrefilled(tabId);
+      }
+    }
+  }
+  if (isWorkable) {
+    if (workableResumePending) {
+      setAutofill({ runStatus: "Uploading your resume…" });
+      const ok = await uploadWorkableResumeLast(tabId, workableResumePending);
+      if (ok) {
+        console.log("[autofill] Workable resume uploaded last");
+        await delay(1200);
+        await commitPrefilled(tabId);
+      }
+    }
+  }
+  if (isBreezy && breezyResumePending) {
+    ctx.breezyResumePending = breezyResumePending;
+  }
 
   return lastSpecs;
 }
@@ -1633,8 +1892,8 @@ async function runAutofill() {
   // the page is clean while filling (control attributes are kept for the writer).
   if (tabId != null) {
     try {
-      await chrome.tabs.sendMessage(tabId, { type: "AF_STOP" });
-      await chrome.tabs.sendMessage(tabId, { type: "AF_HIDE_MARKS" });
+      await tabBroadcast(tabId, { type: "AF_STOP" });
+      await tabBroadcast(tabId, { type: "AF_HIDE_MARKS" });
     } catch {
       /* ignore */
     }
@@ -1643,11 +1902,27 @@ async function runAutofill() {
   try {
     const eng = state.autofill.engine;
     const ctx = { labelByCid: {}, needsUser: [] };
+
+    // Workable: after submit the application form is replaced by a survey on the
+    // same tab - re-scan so we target survey-form instead of a detached handle.
+    if (eng && eng.platform === "workable") {
+      setAutofill({ runStatus: "Scanning the page…" });
+      const ok = await rediscoverForm(tabId);
+      if (!ok || !state.autofill.fields.length) {
+        setAutofill({
+          running: false,
+          runStatus: null,
+          error: "Could not find the application or survey form on this page.",
+        });
+        return;
+      }
+    }
+
     let lastSpecs = await fillCurrentPage(tabId, eng, ctx, true);
 
     // SmartRecruiters: longer applications split across steps with a footer
     // "Next" button (the final step shows "Submit" instead). Fill the step, click
-    // Next, re-discover the freshly rendered step, and fill again — repeating
+    // Next, re-discover the freshly rendered step, and fill again - repeating
     // until Next is gone or navigation is blocked. We never auto-submit.
     if (eng && eng.platform === "smartrecruiters" && lastSpecs.length) {
       for (let page = 1; page < SR_MAX_PAGES; page++) {
@@ -1667,6 +1942,48 @@ async function runAutofill() {
         const ok = await rediscoverForm(tabId);
         if (!ok) break;
         lastSpecs = await fillCurrentPage(tabId, eng, ctx, false);
+      }
+    }
+
+    // Workable: after the application form (or on a survey-only page), fill the
+    // post-submit survey when it mounts. Re-discover so survey radios replace the
+    // detached application handles. We never auto-submit the survey.
+    if (eng && eng.platform === "workable") {
+      for (let step = 0; step < 2; step++) {
+        setAutofill({ runStatus: "Checking for survey questions…" });
+        await delay(400);
+        let hasSurvey = false;
+        try {
+          const probe = await tabSend(tabId, { type: "AF_WB_HAS_SURVEY" });
+          hasSurvey = !!(probe && probe.survey);
+        } catch {}
+        if (!hasSurvey) break;
+        const ok = await rediscoverForm(tabId);
+        if (!ok) break;
+        lastSpecs = await fillCurrentPage(tabId, eng, ctx, false);
+      }
+    }
+
+    // Breezy: multi-step applications hide later sections behind Continue. Fill
+    // the visible step, advance, re-discover, and fill again - never auto-submit.
+    if (eng && eng.platform === "breezy" && lastSpecs.length) {
+      for (let page = 1; page < BZY_MAX_PAGES; page++) {
+        setAutofill({ runStatus: "Moving to the next step…" });
+        const nav = await tabSend(tabId, { type: "AF_BZY_NEXT" });
+        if (!nav || !nav.advanced) break;
+        const ok = await rediscoverForm(tabId);
+        if (!ok) break;
+        lastSpecs = await fillCurrentPage(tabId, eng, ctx, false);
+      }
+    }
+
+    if (eng && eng.platform === "breezy" && ctx.breezyResumePending) {
+      setAutofill({ runStatus: "Uploading your resume…" });
+      const ok = await uploadBreezyResumeLast(tabId, ctx.breezyResumePending);
+      if (ok) {
+        console.log("[autofill] Breezy resume uploaded last");
+        await delay(1200);
+        await commitPrefilled(tabId);
       }
     }
 
@@ -1876,6 +2193,7 @@ const SOURCE_META = {
   recruiterflow: { label: "RecruiterFlow", color: "#7C3AED", short: "RF" },
   workday: { label: "Workday", color: "#0875E1", short: "WD" },
   lever: { label: "Lever", color: "#6D6AE0", short: "LV" },
+  workable: { label: "Workable", color: "#00756A", short: "WB" },
   ziprecruiter: { label: "ZipRecruiter", color: "#1C9CD8", short: "ZR" },
   glassdoor: { label: "Glassdoor", color: "#0CAA41", short: "GD" },
   dice: { label: "Dice", color: "#E4002B", short: "DC" },
@@ -1884,6 +2202,8 @@ const SOURCE_META = {
   monster: { label: "Monster", color: "#6E46AE", short: "MO" },
   ashby: { label: "Ashby", color: "#4F46E5", short: "AB" },
   smartrecruiters: { label: "SmartRecruiters", color: "#0CA0E8", short: "SR" },
+  pinpoint: { label: "Pinpoint", color: "#E11D48", short: "PP" },
+  breezy: { label: "Breezy", color: "#2BB573", short: "BZ" },
 };
 
 const DEFAULT_SOURCE_META = { label: null, color: "#3a4150", short: null };
@@ -1898,8 +2218,11 @@ function sourceFromUrl(url) {
   if (u.includes("applytojob.com") || u.includes("resumator")) return "applytojob";
   if (u.includes("recruiterflow.com") || u.includes("rfcareers.")) return "recruiterflow";
   if (u.includes("lever.co")) return "lever";
+  if (u.includes("workable.com")) return "workable";
+  if (u.includes("breezy.hr")) return "breezy";
   if (u.includes("ashbyhq")) return "ashby";
   if (u.includes("smartrecruiters")) return "smartrecruiters";
+  if (/^https?:\/\/careers\./.test(u) && /\/postings\/.+\/applications/.test(u)) return "pinpoint";
   if (u.includes("linkedin.")) return "linkedin";
   if (u.includes("indeed.")) return "indeed";
   if (u.includes("ziprecruiter")) return "ziprecruiter";
@@ -1950,7 +2273,7 @@ function dashboardChips(j) {
   const posted = timeAgo(j.posted_date) || timeAgo(j.created_at);
   if (posted) chips.push({ label: posted });
   if (j.is_remote) chips.push({ label: "Remote", tone: "info" });
-  // Docs-ready status — resume PDF is the artifact the autofill uploads.
+  // Docs-ready status - resume PDF is the artifact the autofill uploads.
   if (j.resume_pdf_status === "completed") chips.push({ label: "Resume", tone: "ok", dot: true });
   if (j.cover_letter_pdf_status === "completed") chips.push({ label: "Cover letter", tone: "ok", dot: true });
   return chips;
@@ -1995,7 +2318,7 @@ function renderSkeletonList(count = 5) {
 // Renders one page of a (possibly massive) job list plus pagination controls.
 function jobListSection(tabId, cards, emptyMsg) {
   if (!cards.length) {
-    // Don't show "nothing here" until we actually know — show skeletons instead.
+    // Don't show "nothing here" until we actually know - show skeletons instead.
     if (state.queueLoading) return renderSkeletonList();
     return el("p", { class: "muted" }, emptyMsg);
   }
@@ -2300,7 +2623,7 @@ function renderJob() {
     wrap.appendChild(renderJdDetails(job.snapshot));
   }
 
-  wrap.appendChild(renderChat(job));
+  wrap.appendChild(renderChatSection(job));
   wrap.appendChild(renderJobFooter());
   if (state.error) wrap.appendChild(el("div", { class: "error", onclick: () => setState({ error: null }) }, state.error));
   return wrap;
@@ -2313,7 +2636,7 @@ function renderJdDetails(snap) {
   );
   const body = el("div", { class: "jd-body" });
 
-  // Quick facts grid — only the fields that exist.
+  // Quick facts grid - only the fields that exist.
   const facts = [];
   const addFact = (label, value) => {
     if (value) facts.push({ label, value });
@@ -2363,6 +2686,49 @@ function renderJdDetails(snap) {
 
   details.appendChild(body);
   return details;
+}
+
+function renderReportNotice() {
+  const n = state.reportNotice;
+  if (!n) return null;
+  const who = [n.reportedTitle, n.reportedCompany].filter(Boolean).join(" · ");
+  const card = el("div", { class: "report-notice", role: "status" }, [
+    el("div", { class: "report-notice-icon" }, icon(ICON_CHECK, "report-notice-icon-svg")),
+    el("div", { class: "report-notice-body" }, [
+      el("div", { class: "report-notice-title" }, "Reported as expired"),
+      el("div", { class: "report-notice-sub muted" }, who ? `${who} was removed from your queue.` : "That job was removed from your queue."),
+      el("div", { class: "report-notice-actions" }, [
+        el(
+          "button",
+          {
+            class: "btn report-notice-report",
+            onclick: () => reportInvalidJob(),
+          },
+          [icon(ICON_FLAG), el("span", {}, "Report this job too")],
+        ),
+        el("button", { class: "btn link small", onclick: () => dismissReportNotice() }, "Dismiss"),
+      ]),
+    ]),
+    el(
+      "button",
+      {
+        class: "report-notice-close",
+        title: "Dismiss",
+        "aria-label": "Dismiss",
+        onclick: () => dismissReportNotice(),
+      },
+      "×",
+    ),
+  ]);
+  return card;
+}
+
+function renderChatSection(job) {
+  const section = el("div", { class: "chat-section" });
+  const notice = renderReportNotice();
+  if (notice) section.appendChild(notice);
+  section.appendChild(renderChat(job));
+  return section;
 }
 
 function renderChat(job) {
@@ -2526,7 +2892,7 @@ function renderAutofillPanel() {
   }
 
   // Deterministic engines (Workday) have a distinct panel: no picking / field
-  // list — just run status and a per-step filled/missed report.
+  // list - just run status and a per-step filled/missed report.
   if (af.engine && af.engine.mode === "workday") {
     return renderWorkdayPanel(af);
   }
@@ -2604,7 +2970,7 @@ function renderAutofillPanel() {
           el("span", { class: "af-needs-title" }, `Review ${n} field${n === 1 ? "" : "s"} manually`),
           el("span", { class: "af-needs-count" }, String(n)),
         ]),
-        el("p", { class: "af-needs-sub" }, "We couldn't fill these from your profile — please check them before submitting."),
+        el("p", { class: "af-needs-sub" }, "We couldn't fill these from your profile - please check them before submitting."),
         el(
           "div",
           { class: "af-needs-list" },
@@ -2730,7 +3096,7 @@ async function rerunWorkday() {
     let resumeFile = null;
     try {
       resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
-      console.warn("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)");
+      console.debug("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)");
     } catch (e) {
       console.warn("[workday] resume PDF download failed:", (e && e.message) || e);
       resumeFile = null;

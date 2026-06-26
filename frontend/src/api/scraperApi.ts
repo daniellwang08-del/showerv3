@@ -28,16 +28,43 @@ export async function fetchScrapedJobs(params: {
   return data;
 }
 
+export type DashboardView = 'all' | 'today' | 'mine' | 'suggested';
+
 export async function fetchDashboardJobs(params: {
   page?: number;
   per_page?: number;
   source?: string;
   q?: string;
+  title?: string;
+  company?: string;
   remote_only?: boolean;
+  min_match_score?: number;
   sort?: string;
   order?: string;
+  view?: DashboardView;
+  timezone?: string;
 }): Promise<DashboardJobsPage> {
   const { data } = await apiClient.get('/jobs/dashboard', { params });
+  return data;
+}
+
+export interface DashboardCounts {
+  all: number;
+  today: number;
+  mine: number;
+  suggested: number;
+}
+
+export async function fetchDashboardCounts(params: {
+  source?: string;
+  q?: string;
+  title?: string;
+  company?: string;
+  remote_only?: boolean;
+  min_match_score?: number;
+  timezone?: string;
+}): Promise<DashboardCounts> {
+  const { data } = await apiClient.get('/jobs/dashboard/counts', { params });
   return data;
 }
 

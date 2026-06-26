@@ -13,9 +13,9 @@ Install these before setup:
 
 Optional but recommended:
 
-- **Playwright browsers** — SPA extraction and Scrapy Playwright spiders  
+- **Playwright browsers** - SPA extraction and Scrapy Playwright spiders  
   `playwright install chromium`
-- **LibreOffice** — PDF export from generated DOCX (set `LIBREOFFICE_PATH` in `.env`)
+- **LibreOffice** - PDF export from generated DOCX (set `LIBREOFFICE_PATH` in `.env`)
 
 ---
 

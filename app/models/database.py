@@ -51,7 +51,7 @@ class User(Base):
     profile_openai_cache = Column(Text, nullable=True)
 
     # Deduplication recycle window: jobs older than this many days are treated
-    # as "fresh" at their company — a new posting won't be auto-excluded even
+    # as "fresh" at their company - a new posting won't be auto-excluded even
     # if the user already applied to an older posting there. Default 60 days.
     dedup_recycle_days = Column(Integer, default=60, nullable=False, server_default="60")
     dedup_recycle_mode = Column(String(20), default="default", nullable=False, server_default="default")
@@ -91,6 +91,9 @@ class User(Base):
     resume_template_source_filename = Column(String(500), nullable=True)
     resume_template_profile_work_count = Column(Integer, nullable=True)
     resume_template_analyzed_at = Column(DateTime, nullable=True)
+    # Visual resume builder design config (theme/typography/colors/layout). When set,
+    # the working template above is generated from this design rather than uploaded.
+    resume_template_design = Column(JSON, nullable=True)
 
     # Per-user cover letter DOCX template (placeholder-driven document generation).
     cover_letter_template_status = Column(String(30), default="missing", nullable=False, server_default="missing")
@@ -175,7 +178,7 @@ class JobExtraction(Base):
 
 
 class Job(Base):
-    """Unified job table — every submitted/scraped job lives here exactly once."""
+    """Unified job table - every submitted/scraped job lives here exactly once."""
     __tablename__ = "jobs"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -207,7 +210,7 @@ class Job(Base):
 
 
 class UserJobStatus(Base):
-    """Per-user job status — tracks whether a job is active, duplicated, or
+    """Per-user job status - tracks whether a job is active, duplicated, or
     hidden for a specific user.  Replaces the old user_job_exclusions,
     user_dismissed_duplicates, and per-user aspects of invalid_jobs.
     """

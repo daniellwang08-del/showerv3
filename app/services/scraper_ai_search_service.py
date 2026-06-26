@@ -55,7 +55,7 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Query spec model — produced by OpenAI, applied as SQL filters
+# Query spec model - produced by OpenAI, applied as SQL filters
 # ---------------------------------------------------------------------------
 
 class ScraperJobSearchQuerySpec(BaseModel):
@@ -159,7 +159,7 @@ Jobs come from multiple scraping sources (Adzuna, Indeed, Glassdoor, Jobright, e
 4. Resume status: whether a tailored resume has been built for this job
 
 ## Rules
-- Return ONLY a raw JSON object — no markdown fences, no commentary.
+- Return ONLY a raw JSON object - no markdown fences, no commentary.
 - Use lowercase for all text filter values; matching is case-insensitive substring.
 - Be generous with synonyms in must_contain_any: "Python" → ["python", "python3", "django", "flask"]; "React" → ["react", "reactjs", "react.js"].
 - For skill/tech searches, put skill variants in must_contain_any AND role keywords in title_contains_any.
@@ -174,7 +174,7 @@ Jobs come from multiple scraping sources (Adzuna, Indeed, Glassdoor, Jobright, e
 
 ## JSON output schema (all lists default to [], numbers/bools/strings can be null):
 {
-  "rationale": "string — concise explanation of interpretation",
+  "rationale": "string - concise explanation of interpretation",
   "must_contain_all": [],
   "must_contain_any": [],
   "must_not_contain": [],

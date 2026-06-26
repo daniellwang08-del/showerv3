@@ -319,7 +319,7 @@ async def run_spider(
         try:
             await asyncio.wait_for(proc.wait(), timeout=1800)
         except asyncio.TimeoutError:
-            logger.error("Spider '%s' timed out after 1800s — killing subprocess", spider_name)
+            logger.error("Spider '%s' timed out after 1800s - killing subprocess", spider_name)
             proc.kill()
             await proc.wait()
             await asyncio.to_thread(_mark_scrape_run_interrupted, spider_name, started_at)

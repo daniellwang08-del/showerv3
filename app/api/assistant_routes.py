@@ -25,7 +25,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, delete as sa_delete, nullslast, or_, select
 
 from app.api.routes import get_current_user
@@ -443,6 +443,15 @@ class AutofillControlIn(BaseModel):
     # raw accept string can run many hundreds of characters; keep a generous cap.
     accept: str | None = Field(default=None, max_length=2000)
 
+    @field_validator("options", mode="before")
+    @classmethod
+    def clamp_options(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return v
+        if len(v) <= MAX_OPTIONS_PER_CONTROL:
+            return v
+        return v[:MAX_OPTIONS_PER_CONTROL]
+
 
 class AutofillFieldIn(BaseModel):
     handle: int = Field(..., ge=0)
@@ -749,6 +758,35 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
     # valid answer; always select it.
     if len(opts) == 1:
         return opts[0]
+
+    # Lever pronouns: prefer neutral "Use name only" when offered.
+    if "pronoun" in low:
+        useName = _pick_option(opts, includes=["use name only", "name only"])
+        if useName:
+            return useName
+
+    # When "Prefer not to say" (or similar) is offered on demographic / EEO
+    # questions - common on Pinpoint equality-monitoring forms - pick it over
+    # guessing a specific identity answer.
+    if any(
+        k in low
+        for k in (
+            "gender",
+            "ethnic",
+            "veteran",
+            "disab",
+            "lgbtq",
+            "sexual orientation",
+            "age bracket",
+            "equality",
+            "diversity",
+            "nationalit",
+            "race",
+        )
+    ):
+        pnts = _pick_option(opts, includes=["prefer not to say", "prefer not", "decline to"])
+        if pnts:
+            return pnts
 
     if "gender" in low or re.search(r"\bsex\b", low):
         return _pick_option(opts, equals=["male", "man"], includes=["male"], excludes=["female", "woman"])
@@ -1130,7 +1168,7 @@ def _tailored_description(block: dict) -> str:
 
 
 # Markdown emphasis/links the resume renders but a plain-text form field must not
-# show. NOTE: only PAIRED **bold** / __bold__ / `code` are stripped — lone
+# show. NOTE: only PAIRED **bold** / __bold__ / `code` are stripped - lone
 # underscores/asterisks are preserved so technical identifiers (e.g. feature_store)
 # and bullet hyphens stay intact.
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
@@ -1226,7 +1264,7 @@ def _home_location_str(addr: Any) -> str:
 async def _llm_company_locations(companies: list[str], home: str, user_id: str) -> dict[str, str]:
     """Ask the LLM for each company's office location nearest the candidate's home
     (falling back to its headquarters). Returns {company_lower: location}. Never
-    raises — returns {} on any failure so autofill keeps working."""
+    raises - returns {} on any failure so autofill keeps working."""
     if not companies:
         return {}
     settings = get_settings()
@@ -1313,7 +1351,7 @@ def _build_education(
             {
                 "school": str(e.get("university_name") or ""),
                 "degree": degree,
-                # ALWAYS the configured standard default — never derived from the
+                # ALWAYS the configured standard default - never derived from the
                 # candidate's degree/education text (their stored fields are free-form
                 # and don't match Workday's fixed option list). The candidate can
                 # change it manually on the form. Blank default leaves it empty.

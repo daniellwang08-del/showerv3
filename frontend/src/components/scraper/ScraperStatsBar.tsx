@@ -1,11 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import {
   Layers,
-  Sun,
+  CalendarClock,
   Wifi,
   CheckCircle2,
   Sparkles,
-  FileText,
+  UserRound,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ScraperStats } from '../../types/scraper';
@@ -19,11 +19,9 @@ function safe(n: number): number {
   return isFinite(n) && !isNaN(n) ? n : 0;
 }
 
+/** Exact number with locale grouping (e.g. 2,700 - never abbreviated). */
 function fmt(n: number): string {
-  const v = safe(Math.round(n));
-  if (v >= 10000) return `${(v / 1000).toFixed(0)}k`;
-  if (v >= 1000)  return `${(v / 1000).toFixed(1)}k`;
-  return String(v);
+  return safe(Math.round(n)).toLocaleString();
 }
 
 // ---------------------------------------------------------------------------
@@ -34,7 +32,7 @@ function useAnimatedNumber(target: number, duration = 700): number {
   const safeTarget = safe(target);
   const [value, setValue] = useState(0);
   // Mirror the current displayed value so each animation tweens FROM where we are
-  // now (previous value) TO the new target — never resetting to 0. This means a
+  // now (previous value) TO the new target - never resetting to 0. This means a
   // single stat changing only nudges that one number; unchanged numbers stay put.
   const valueRef = useRef(0);
   const rafRef = useRef<number>(0);
@@ -64,176 +62,70 @@ function AnimatedNumber({ value }: { value: number }) {
 }
 
 // ---------------------------------------------------------------------------
-// Platform metadata
+// Metric tile - uniform, modern card used for all six blocks
 // ---------------------------------------------------------------------------
 
-const PLATFORM_META: Record<string, { abbr: string; gradient: string; dot: string; label: string }> = {
-  adzuna:             { abbr: 'AZ', gradient: 'from-cyan-500 to-blue-600',     dot: 'bg-cyan-500',    label: 'Adzuna'     },
-  remoterocketship:   { abbr: 'RR', gradient: 'from-purple-500 to-violet-600', dot: 'bg-purple-500',  label: 'Rocket'     },
-  jobright:           { abbr: 'JR', gradient: 'from-indigo-500 to-blue-600',   dot: 'bg-indigo-500',  label: 'JobRight'   },
-  welcometothejungle: { abbr: 'WJ', gradient: 'from-emerald-500 to-green-600', dot: 'bg-emerald-500', label: 'Jungle'     },
-  ziprecruiter:       { abbr: 'ZR', gradient: 'from-amber-500 to-orange-500',  dot: 'bg-amber-500',   label: 'ZipRecruit' },
-  indeed:             { abbr: 'IN', gradient: 'from-blue-500 to-blue-700',     dot: 'bg-blue-500',    label: 'Indeed'     },
-  glassdoor:          { abbr: 'GD', gradient: 'from-green-500 to-teal-600',    dot: 'bg-green-500',   label: 'Glassdoor'  },
-};
-
-function getPlatformMeta(source: string) {
-  return PLATFORM_META[source.toLowerCase()] ?? {
-    abbr: source.slice(0, 2).toUpperCase(),
-    gradient: 'from-slate-400 to-slate-500',
-    dot: 'bg-slate-400',
-    label: source.length > 9 ? source.slice(0, 9) + '…' : source,
-  };
-}
-
-function relativeShort(dateStr: string | null): string {
-  if (!dateStr) return '';
-  const mins = safe(Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000));
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  return `${Math.floor(hrs / 24)}d`;
-}
-
-// ---------------------------------------------------------------------------
-// Unified tile — identical layout/size for BOTH platform and metric tiles
-// ---------------------------------------------------------------------------
-//
-//  ┌──────────────────────────────────┐
-//  │ [avatar]  NUMBER  optional-sub   │
-//  │           label                  │
-//  └──────────────────────────────────┘
-//
-//  avatar = gradient square with either abbreviated text (platform)
-//           or a Lucide icon (metric)
-
-interface UnifiedTileProps {
-  /** Gradient classes for the avatar square + top accent line */
-  gradient: string;
-  /** Abbreviation text rendered inside the avatar square (platform tiles) */
-  abbr?: string;
-  /** Lucide icon rendered inside the avatar square (metric tiles) */
-  icon?: LucideIcon;
-  /** Main numeric value */
-  value: number;
-  /** Short label below the number */
-  label: string;
-  /** Optional subscript next to the number (e.g. "42%", "12 remote") */
-  sub?: string;
-  /** Text color for value + sub */
-  textColor: string;
-  /** Optional live-pulse dot (platform tiles only) */
-  liveDot?: string; // bg-* color class
-  delay?: number;
-  title?: string;
-}
-
-// Memoised: with only primitive props (no inline JSX nodes), a tile re-renders
-// solely when its OWN data changes — so a status update that bumps one stat does
-// not re-render the other tiles.
-const UnifiedTile = memo(function UnifiedTile({
-  gradient,
-  abbr,
-  icon: Icon,
-  value,
-  label,
-  sub,
-  textColor,
-  liveDot,
-  delay = 0,
-  title,
-}: UnifiedTileProps) {
-  return (
-    <div
-      className="relative flex items-center gap-3 overflow-hidden rounded-xl border border-white/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-sm"
-      style={{ animationDelay: `${delay}ms`, minWidth: '110px' }}
-      title={title}
-    >
-      {/* Left accent bar */}
-      <div className={`absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-gradient-to-b ${gradient}`} />
-
-      {/* Avatar square */}
-      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${gradient} text-white shadow-sm`}>
-        {Icon ? <Icon size={17} strokeWidth={2.5} /> : <span className="text-[11px] font-black">{abbr}</span>}
-      </div>
-
-      {/* Value + label */}
-      <div className="min-w-0">
-        <div className="flex items-baseline gap-1 leading-none">
-          <span className={`text-lg font-extrabold tabular-nums ${textColor}`}>
-            <AnimatedNumber value={value} />
-          </span>
-          {sub && (
-            <span className={`text-[11px] font-semibold tabular-nums ${textColor} opacity-60`}>{sub}</span>
-          )}
-        </div>
-        <p className="mt-1 text-[11px] font-medium leading-none text-slate-500">{label}</p>
-      </div>
-
-      {/* Live pulse dot */}
-      {liveDot && (
-        <span className={`absolute right-2 top-2 h-2 w-2 rounded-full ${liveDot} animate-pulse`} />
-      )}
-    </div>
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Hero tile — center column, visibly larger
-// ---------------------------------------------------------------------------
-
-interface HeroTileProps {
+interface MetricTileProps {
   icon: LucideIcon;
   value: number;
   label: string;
   sub?: string;
+  /** Gradient classes for the avatar + accents (e.g. "from-blue-500 to-indigo-600") */
   gradient: string;
+  /** Text color for the value */
   textColor: string;
   delay?: number;
+  title?: string;
 }
 
-const HeroTile = memo(function HeroTile({ icon: Icon, value, label, sub, gradient, textColor, delay = 0 }: HeroTileProps) {
+const MetricTile = memo(function MetricTile({
+  icon: Icon,
+  value,
+  label,
+  sub,
+  gradient,
+  textColor,
+  delay = 0,
+  title,
+}: MetricTileProps) {
   return (
     <div
-      className="relative flex h-[132px] w-36 flex-col items-center justify-center gap-2 overflow-hidden rounded-2xl border border-white/70 bg-white/90 px-4 shadow-md backdrop-blur-sm"
+      className="group relative flex items-center gap-3 overflow-hidden rounded-2xl border border-slate-200/70 bg-white px-4 py-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md"
       style={{ animationDelay: `${delay}ms` }}
+      title={title}
     >
-      {/* Subtle gradient wash */}
-      <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-[0.07]`} />
+      {/* Soft gradient wash that intensifies on hover */}
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${gradient} opacity-[0.06] transition-opacity duration-300 group-hover:opacity-[0.11]`} />
       {/* Top accent line */}
-      <div className={`absolute top-0 left-5 right-5 h-0.5 rounded-full bg-gradient-to-r ${gradient}`} />
+      <div className={`absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${gradient}`} />
 
-      <div className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br ${gradient} text-white shadow-md`}>
-        <Icon size={21} strokeWidth={2.5} />
+      {/* Avatar */}
+      <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${gradient} text-white shadow-md`}>
+        <Icon size={20} strokeWidth={2.4} />
       </div>
-      <span className={`text-2xl font-black tabular-nums leading-none ${textColor}`}>
-        <AnimatedNumber value={value} />
-      </span>
-      <p className="text-[11px] font-semibold leading-none text-slate-600 text-center">{label}</p>
-      {sub && (
-        <p className={`text-[10px] font-medium leading-none ${textColor} opacity-60`}>{sub}</p>
-      )}
+
+      {/* Value + label */}
+      <div className="relative min-w-0">
+        <div className="flex items-baseline gap-1.5 leading-none">
+          <span className={`text-2xl font-black tabular-nums tracking-tight ${textColor}`}>
+            <AnimatedNumber value={value} />
+          </span>
+          {sub && (
+            <span className={`text-[11px] font-bold tabular-nums ${textColor} opacity-60`}>{sub}</span>
+          )}
+        </div>
+        <p className="mt-1.5 truncate text-[11.5px] font-semibold leading-none text-slate-500">{label}</p>
+      </div>
     </div>
   );
 });
 
 // ---------------------------------------------------------------------------
-// Divider
-// ---------------------------------------------------------------------------
-
-function VDivider() {
-  return <div className="mx-1 h-10 w-px shrink-0 self-center rounded-full bg-slate-200/80" />;
-}
-
-// ---------------------------------------------------------------------------
-// Loading skeletons
+// Loading skeleton
 // ---------------------------------------------------------------------------
 
 function SkeletonTile() {
-  return <div className="h-[64px] w-[114px] shrink-0 animate-pulse rounded-xl bg-gradient-to-r from-slate-100 to-slate-50" />;
-}
-function SkeletonHero() {
-  return <div className="h-[132px] w-36 shrink-0 animate-pulse rounded-2xl bg-gradient-to-r from-slate-100 to-slate-50" />;
+  return <div className="h-[72px] animate-pulse rounded-2xl bg-gradient-to-r from-slate-100 to-slate-50" />;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,21 +137,14 @@ interface ScraperStatsBarProps {
   loading: boolean;
 }
 
-export const ScraperStatsBar = memo(function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
+const GRID_CLASS = 'grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6';
 
+export const ScraperStatsBar = memo(function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
   if (loading || !stats) {
     return (
-      <div className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3 backdrop-blur-sm">
-        <div className="flex flex-1 flex-wrap gap-2">
-          {Array.from({ length: 4 }).map((_, i) => <SkeletonTile key={i} />)}
-        </div>
-        <VDivider />
-        <div className="flex shrink-0 gap-3">
-          <SkeletonHero /><SkeletonHero />
-        </div>
-        <VDivider />
-        <div className="flex flex-1 flex-wrap justify-end gap-2">
-          {Array.from({ length: 4 }).map((_, i) => <SkeletonTile key={i} />)}
+      <div className="w-full rounded-2xl border border-slate-100/80 bg-gradient-to-r from-slate-50/80 via-blue-50/30 to-slate-50/80 p-3 backdrop-blur-sm">
+        <div className={GRID_CLASS}>
+          {Array.from({ length: 6 }).map((_, i) => <SkeletonTile key={i} />)}
         </div>
       </div>
     );
@@ -267,97 +152,69 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({ stats, loading }:
 
   const totalJobs   = safe(stats.total_jobs);
   const remoteRatio = totalJobs > 0 ? safe(Math.round((stats.total_remote / totalJobs) * 100)) : 0;
+  const todayRemote = safe(stats.today_remote);
 
   return (
-    <div className="flex w-full items-center gap-3 rounded-2xl border border-slate-100/80 bg-gradient-to-r from-slate-50/80 via-blue-50/30 to-slate-50/80 px-4 py-3 backdrop-blur-sm">
-
-      {/* ── LEFT: Per-platform counts ─────────────────────────────────── */}
-      <div className="flex flex-1 flex-wrap items-center gap-3">
-        {stats.sources.length === 0 ? (
-          <span className="text-xs italic text-slate-400">No sources yet</span>
-        ) : stats.sources.map((src, i) => {
-          const meta  = getPlatformMeta(src.source);
-          const since = relativeShort(src.latest_scraped);
-          const isLive = !!since && since.endsWith('m') && safe(parseInt(since)) < 60;
-          return (
-            <UnifiedTile
-              key={src.source}
-              gradient={meta.gradient}
-              abbr={meta.abbr}
-              value={src.count}
-              label={meta.label}
-              textColor="text-slate-700"
-              liveDot={isLive ? meta.dot : undefined}
-              delay={i * 40}
-              title={`${src.source}: ${src.count} jobs${since ? ` · last scraped ${since} ago` : ''}`}
-            />
-          );
-        })}
-      </div>
-
-      <VDivider />
-
-      {/* ── CENTER: Hero tiles ────────────────────────────────────────── */}
-      <div className="flex shrink-0 items-center gap-8">
-        <HeroTile
-          icon={Sun}
+    <div className="w-full rounded-2xl border border-slate-100/80 bg-gradient-to-r from-slate-50/80 via-blue-50/30 to-slate-50/80 p-3 backdrop-blur-sm">
+      <div className={GRID_CLASS}>
+        <MetricTile
+          icon={Layers}
+          value={totalJobs}
+          label="Total Jobs"
+          gradient="from-blue-500 to-indigo-600"
+          textColor="text-blue-700"
+          delay={0}
+          title="All jobs currently in your dashboard"
+        />
+        <MetricTile
+          icon={CalendarClock}
           value={safe(stats.today_scraped)}
-          label="Today's Jobs"
-          sub={stats.today_remote > 0 ? `${safe(stats.today_remote)} remote` : undefined}
+          label="Added Today"
+          sub={todayRemote > 0 ? `${todayRemote} remote` : undefined}
           gradient="from-amber-400 to-orange-500"
           textColor="text-amber-700"
-          delay={0}
+          delay={50}
+          title="Jobs added to your dashboard today"
         />
-        <HeroTile
+        <MetricTile
+          icon={UserRound}
+          value={safe(stats.my_jobs)}
+          label="Posted by me"
+          gradient="from-violet-500 to-purple-600"
+          textColor="text-violet-700"
+          delay={100}
+          title="Jobs you added via submission or attachment"
+        />
+        <MetricTile
+          icon={Wifi}
+          value={safe(stats.total_remote)}
+          label="Remote"
+          sub={remoteRatio > 0 ? `${remoteRatio}%` : undefined}
+          gradient="from-cyan-500 to-blue-600"
+          textColor="text-cyan-700"
+          delay={150}
+          title="Remote-friendly jobs"
+        />
+        <MetricTile
+          icon={CheckCircle2}
+          value={safe(stats.extracted_jobs)}
+          label="Extracted"
+          gradient="from-indigo-500 to-blue-600"
+          textColor="text-indigo-700"
+          delay={200}
+          title="Jobs fully extracted and structured"
+        />
+        <MetricTile
           icon={Sparkles}
           value={safe(stats.ready_jobs)}
           label="Ready to Apply"
           sub={totalJobs > 0 ? `of ${fmt(totalJobs)}` : undefined}
           gradient="from-emerald-500 to-teal-500"
           textColor="text-emerald-700"
-          delay={60}
+          delay={250}
+          title="Jobs with a tailored resume ready"
         />
       </div>
-
-      <VDivider />
-
-      {/* ── RIGHT: Aggregate metrics ──────────────────────────────────── */}
-      <div className="flex flex-1 flex-wrap items-center justify-end gap-3">
-        <UnifiedTile
-          gradient="from-blue-500 to-indigo-600"
-          icon={Layers}
-          value={totalJobs}
-          label="Total Jobs"
-          textColor="text-blue-700"
-          delay={0}
-        />
-        <UnifiedTile
-          gradient="from-violet-500 to-purple-600"
-          icon={Wifi}
-          value={safe(stats.total_remote)}
-          label="Remote"
-          sub={remoteRatio > 0 ? `${remoteRatio}%` : undefined}
-          textColor="text-violet-700"
-          delay={40}
-        />
-        <UnifiedTile
-          gradient="from-indigo-500 to-blue-600"
-          icon={CheckCircle2}
-          value={safe(stats.extracted_jobs)}
-          label="Extracted"
-          textColor="text-indigo-700"
-          delay={120}
-        />
-        <UnifiedTile
-          gradient="from-emerald-400 to-green-500"
-          icon={FileText}
-          value={safe(stats.ready_jobs)}
-          label="With Resume"
-          textColor="text-emerald-700"
-          delay={200}
-        />
-      </div>
-
     </div>
   );
 });

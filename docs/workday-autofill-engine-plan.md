@@ -1,4 +1,4 @@
-# Workday Autofill Engine — Implementation Plan
+# Workday Autofill Engine - Implementation Plan
 
 Status: proposed (not yet built)
 Owner: autofill
@@ -18,7 +18,7 @@ Workday application forms are a multi-step SPA wizard (My Information → My
 Experience → Application Questions → Voluntary Disclosures → Self Identify →
 Review). Every input carries a **stable `data-automation-id`** attribute, so the
 form can be filled **deterministically** by mapping a structured user profile to
-known selectors — **no manual field selection and no LLM** for the standard
+known selectors - **no manual field selection and no LLM** for the standard
 fields.
 
 This is the OPPOSITE paradigm to the current Greenhouse engine:
@@ -72,13 +72,13 @@ hard part because of the two resume options (original vs tailored).
 
 ### 3.1 Current storage (verified)
 
-- **Original resume work experience — fully structured.**
+- **Original resume work experience - fully structured.**
   `users.work_experience` (JSON list), schema `WorkExperienceBlock`
   (`app/models/profile_schemas.py:17-29`):
   `company_name, job_title, period_start, period_end, location, job_type, description`.
   "Currently here" = empty `period_end` (rendered "Present").
 
-- **Tailored resume content — persisted, but missing temporal/location fields.**
+- **Tailored resume content - persisted, but missing temporal/location fields.**
   `resume_build_results.tailored_resume_data` (JSON) (`app/models/database.py:305`).
   Each tailored work block has only:
   `company_name, job_title, project_name, project_description, bullets[]`.
@@ -111,10 +111,10 @@ Changes:
 2. **Parser** (`app/services/job_match_service.py` `_parse_tailored_resume`,
    ~lines 290-302): accept + validate the new fields; keep them on the stored dict.
 3. **DOCX builder** (`app/services/resume_builder_service.py` `fill_resume_template`):
-   verify it ignores/optionally uses the new keys (backward compatible — it keys
+   verify it ignores/optionally uses the new keys (backward compatible - it keys
    on `project_name`/`project_description`/`bullets`). No behavior change required.
 
-Backward-compatibility fallback (REQUIRED — pre-enrichment rows lack the fields):
+Backward-compatibility fallback (REQUIRED - pre-enrichment rows lack the fields):
 - The autofill-profile assembler (§4.1) must **fall back to merging from the
   profile by company/order** when a tailored block is missing `period_start/end`
   or `location`. This also covers tailored content generated before this change
@@ -171,7 +171,7 @@ Response schema (canonical):
 ### 4.2 Resume/CV file
 
 Reuse the existing download endpoint; the engine attaches `resume_pdf` (or
-`resume_docx`) — the tailored or original file per the user's resume-source choice.
+`resume_docx`) - the tailored or original file per the user's resume-source choice.
 
 ---
 
@@ -199,18 +199,18 @@ Already in place from the Greenhouse work:
 
 ## 6. Content engine design (`extension/content/workday/`)
 
-- **`wd-dom.js`** — primitives (mirror SpeedyApply):
-  - `setText(selector, value)` — React-safe (focus + key events + native setter + input/change).
-  - `toggle(selector, on)` — click radio/checkbox only if state differs.
-  - `selectDropdown(baseSelector, value)` — open `…-input-base`, wait for
+- **`wd-dom.js`** - primitives (mirror SpeedyApply):
+  - `setText(selector, value)` - React-safe (focus + key events + native setter + input/change).
+  - `toggle(selector, on)` - click radio/checkbox only if state differs.
+  - `selectDropdown(baseSelector, value)` - open `…-input-base`, wait for
     `[role="listbox"] .menu-list` / `promptOption`, click option whose text matches.
-  - `selectNative(selector, value)` — native `<select>`, wait for options to populate.
+  - `selectNative(selector, value)` - native `<select>`, wait for options to populate.
   - `xpath(expr, root?)`, `waitFor(selectorOrXpath, timeoutMs)`, `delay(ms)`.
-- **`wd-steps.js`** — declarative selector map per step (§7) + repeatable-section
+- **`wd-steps.js`** - declarative selector map per step (§7) + repeatable-section
   logic (click Add, index `{i}`, date format `MM/YYYY`).
-- **`wd-engine.js`** — step detector (by presence of `data-automation-id`s) +
+- **`wd-engine.js`** - step detector (by presence of `data-automation-id`s) +
   runner; fills the visible step; reports progress; optional auto-advance.
-- **`wd-content.js`** — entry: MutationObserver + URL-change watch; receives
+- **`wd-content.js`** - entry: MutationObserver + URL-change watch; receives
   `WD_RUN`; re-runs on step changes; idempotent (skip already-filled inputs).
 
 ---
@@ -234,7 +234,7 @@ Already in place from the Greenhouse work:
 ### My Experience (uses merged `workExperience[i]`)
 | Field | Selector (indexed by `i`) | Value |
 |---|---|---|
-| Add block | `btnAddWorkHistory` ("Add Another") | — |
+| Add block | `btnAddWorkHistory` ("Add Another") | - |
 | Job Title | `workHistoryPosition{i}` | `title` |
 | Company | `workHistoryCompanyName{i}` | `company` |
 | Location | (Workday location input) | `location` |
@@ -262,7 +262,7 @@ Already in place from the Greenhouse work:
 |---|---|---|
 | 0 | Data layer: enrich tailoring (prompt+parser) for dates/location; `GET /assistant/autofill-profile` (+ merge fallback); extension caches it on job open | `job_match_phase_b_prompt.py`, `job_match_service.py`, `assistant_routes.py`, `extension/src/{api,app}.js` |
 | 1 | `wd-dom.js` primitives + step detection + **My Information**; flip `engines.workday.available=true`; `app.js` `mode:"workday"` branch + progress panel | `extension/content/workday/*`, `engines.js`, `background.js`, `app.js` |
-| 2 | **My Experience** — work history + education (repeatable, indexed, `MM/YYYY`), Skills, Resume/CV upload | `wd-steps.js`, `wd-engine.js` |
+| 2 | **My Experience** - work history + education (repeatable, indexed, `MM/YYYY`), Skills, Resume/CV upload | `wd-steps.js`, `wd-engine.js` |
 | 3 | **Voluntary Disclosures** (EEO) + **Application Questions** (dropdowns/radios) | `wd-steps.js` |
 | 4 | Auto-advance (`btnNext`) + review-page detection; **auto-submit OFF by default** | `wd-engine.js` |
 | 5 | Free-text questions → reuse existing LLM autofill for unmapped `<textarea>`s only | `app.js`, `assistant_routes.py` |
@@ -272,7 +272,7 @@ Already in place from the Greenhouse work:
 ## 9. Risks / watch-items
 
 - **Tenant variants**: `data-automation-id`s are stable but a few differ by Workday
-  version — use the `A or B` fallback pattern (e.g. `…-city` *or* `…-locality`,
+  version - use the `A or B` fallback pattern (e.g. `…-city` *or* `…-locality`,
   `…-zip` *or* `…-postal-code`).
 - **Dropdown timing**: open input-base, wait for `[role="listbox"]`, match option
   text (lowercased); needs `waitFor` + small delay.

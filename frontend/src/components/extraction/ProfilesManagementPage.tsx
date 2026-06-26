@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, UserCircle2, AlertCircle, CheckCircle2, ListChecks, CircleMinus } from 'lucide-react';
+import { UserCircle2, AlertCircle, CheckCircle2, ListChecks, CircleMinus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { apiClient } from '../../api/client';
 import { ProfileForm } from './ProfileForm';
@@ -38,6 +38,11 @@ function toPayload(data: ProfileFormData) {
       period_end: emptyToNull(w.period_end),
       location: emptyToNull(w.location),
       job_type: emptyToNull(w.job_type) || null,
+      employment_type: emptyToNull(w.employment_type) || null,
+      project_title: emptyToNull(w.project_title),
+      project_intro: emptyToNull(w.project_intro),
+      contributions: (w.contributions ?? []).map((c) => c.trim()).filter(Boolean),
+      used_skills: emptyToNull(w.used_skills),
       description: emptyToNull(w.description),
     })),
     education: data.education
@@ -88,7 +93,7 @@ function ProfileFormSkeleton() {
   );
 }
 
-export function ProfilesManagementPage({ onBack, userEmail }: Props) {
+export function ProfilesManagementPage({ userEmail }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -153,25 +158,9 @@ export function ProfilesManagementPage({ onBack, userEmail }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-3">
-        <div className="flex w-full flex-wrap items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to dashboard
-          </button>
-          <p className="text-xs font-medium text-slate-500 md:text-sm">
-            Profile data powers AI job match scoring
-          </p>
-        </div>
-      </div>
-
       <div className="page-scroll-y min-h-0 flex-1 px-5 py-5">
         <div className="w-full space-y-8 pb-8">
-          {/* Row 1 — overview + import */}
+          {/* Row 1 - overview + import */}
           <section className="space-y-4" aria-label="Profile overview">
             <div className="grid gap-4 xl:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
@@ -244,7 +233,7 @@ export function ProfilesManagementPage({ onBack, userEmail }: Props) {
                         )}
 
                         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
-                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Optional — nice to add</p>
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Optional - nice to add</p>
                           <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
                             {completion.optionalItems.map((item) => (
                               <li key={item.id} className="flex items-center gap-2 text-xs font-medium text-slate-600">
@@ -304,7 +293,7 @@ export function ProfilesManagementPage({ onBack, userEmail }: Props) {
             )}
           </section>
 
-          {/* Row 2 — editable profile sections */}
+          {/* Row 2 - editable profile sections */}
           <section aria-label="Profile details">
             <div className="mb-4 border-b border-slate-200 pb-3">
               <h2 className="text-lg font-bold text-slate-900">Profile details</h2>

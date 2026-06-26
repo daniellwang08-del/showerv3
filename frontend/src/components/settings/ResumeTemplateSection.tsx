@@ -148,42 +148,57 @@ function LegacyTemplateNote({ spec }: { spec: TemplateTypeSpec }) {
 }
 
 function RequirementsPanel({ requirements }: { requirements: ResumeTemplateRequirements }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-xl border border-violet-100 bg-violet-50/40 px-4 py-3 space-y-3">
-      <div className="flex items-start gap-2">
-        <Info size={16} className="mt-0.5 shrink-0 text-violet-700" />
-        <div>
-          <p className="text-sm font-semibold text-violet-950">{requirements.resume_style_title}</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-violet-900/80">
-            {requirements.resume_style_intro}
-          </p>
-          <p className="mt-1 text-[11px] text-violet-800/70">
-            File: {requirements.file_format.extension} · max {formatMaxBytes(requirements.file_format.max_bytes)}
-          </p>
+    <div className="rounded-xl border border-violet-100 bg-violet-50/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <Info size={15} className="shrink-0 text-violet-700" />
+          <span className="truncate text-xs font-semibold text-violet-950">
+            {requirements.resume_style_title}
+          </span>
+          <span className="hidden shrink-0 text-[11px] text-violet-800/70 sm:inline">
+            · {requirements.file_format.extension} · max {formatMaxBytes(requirements.file_format.max_bytes)}
+          </span>
         </div>
-      </div>
+        {open ? (
+          <ChevronUp size={15} className="shrink-0 text-violet-700" />
+        ) : (
+          <ChevronDown size={15} className="shrink-0 text-violet-700" />
+        )}
+      </button>
 
-      <div className="space-y-2">
-        {requirements.resume_style_sections.map((section, i) => (
-          <ResumeStyleSectionCard key={section.id} section={section} defaultOpen={i < 3} />
-        ))}
-      </div>
+      {open && (
+        <div className="space-y-3 border-t border-violet-100 px-3 py-3">
+          <p className="text-xs leading-relaxed text-violet-900/80">{requirements.resume_style_intro}</p>
 
-      {requirements.template_types.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Alternate layout</p>
-          {requirements.template_types.map((spec) => (
-            <LegacyTemplateNote key={spec.id} spec={spec} />
-          ))}
+          <div className="space-y-2">
+            {requirements.resume_style_sections.map((section, i) => (
+              <ResumeStyleSectionCard key={section.id} section={section} defaultOpen={i < 2} />
+            ))}
+          </div>
+
+          {requirements.template_types.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Alternate layout</p>
+              {requirements.template_types.map((spec) => (
+                <LegacyTemplateNote key={spec.id} spec={spec} />
+              ))}
+            </div>
+          )}
+
+          {requirements.validation_notes.length > 0 && (
+            <ul className="list-disc space-y-1 pl-5 text-xs text-violet-900/90">
+              {requirements.validation_notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          )}
         </div>
-      )}
-
-      {requirements.validation_notes.length > 0 && (
-        <ul className="list-disc pl-5 text-xs text-violet-900/90 space-y-1">
-          {requirements.validation_notes.map((note) => (
-            <li key={note}>{note}</li>
-          ))}
-        </ul>
       )}
     </div>
   );
@@ -361,7 +376,7 @@ export function ResumeTemplateSection({ onStatusChange }: ResumeTemplateSectionP
     try {
       const data = await uploadResumeTemplate(file);
       applyStatus(data);
-      setMessage('Template uploaded — OpenAI analysis and validation started.');
+      setMessage('Template uploaded - OpenAI analysis and validation started.');
       setMessageOk(true);
     } catch (err: unknown) {
       const detail =
@@ -405,20 +420,21 @@ export function ResumeTemplateSection({ onStatusChange }: ResumeTemplateSectionP
     (status === 'ready' || status === 'failed' || status === 'stale');
 
   return (
-    <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex items-start gap-4">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-purple-700 text-white">
-          <FileUp className="h-5 w-5" />
+    <section className="h-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 text-white">
+          <FileUp size={20} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-bold text-slate-900">Résumé template</h2>
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-slate-900">Résumé template</h2>
+              <p className="mt-0.5 text-sm leading-snug text-slate-500">
+                Word template AI fills per job. Expand requirements below.
+              </p>
+            </div>
             {!loading && statusBadge(status)}
           </div>
-          <p className="mt-1 text-sm leading-relaxed text-slate-600">
-            Build a Word template that matches the résumé section layout below. After upload, OpenAI validates
-            that placeholders fit your profile and tailoring output.
-          </p>
 
           {loading ? (
             <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
@@ -426,7 +442,7 @@ export function ResumeTemplateSection({ onStatusChange }: ResumeTemplateSectionP
               Loading template status…
             </div>
           ) : (
-            <div className="mt-4 space-y-4">
+            <div className="mt-4 space-y-3">
               {requirements && <RequirementsPanel requirements={requirements} />}
 
               {statusData?.resume_template_source_filename && (
@@ -473,6 +489,13 @@ export function ResumeTemplateSection({ onStatusChange }: ResumeTemplateSectionP
                   className="hidden"
                   onChange={(e) => void handleUpload(e.target.files?.[0] ?? null)}
                 />
+                <Link
+                  to="/resume-builder"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
+                >
+                  <Wrench size={14} />
+                  Open Resume Builder
+                </Link>
                 <button
                   type="button"
                   disabled={uploading || status === 'processing'}
@@ -480,7 +503,7 @@ export function ResumeTemplateSection({ onStatusChange }: ResumeTemplateSectionP
                   className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {uploading ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
-                  {statusData?.resume_template_source_filename ? 'Replace template' : 'Upload template'}
+                  {statusData?.resume_template_source_filename ? 'Replace template' : 'Upload your own'}
                 </button>
 
                 {statusData?.resume_template_source_filename && (
@@ -501,7 +524,7 @@ export function ResumeTemplateSection({ onStatusChange }: ResumeTemplateSectionP
                     className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-800 transition hover:bg-violet-100"
                   >
                     <Wrench size={14} />
-                    Open builder
+                    Edit blueprint
                   </Link>
                 )}
               </div>

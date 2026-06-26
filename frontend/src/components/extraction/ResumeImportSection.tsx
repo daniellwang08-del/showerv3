@@ -284,7 +284,7 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, disab
               <h3 className="text-base font-bold text-slate-900">Project source documents</h3>
               <p className="mt-1 text-sm text-slate-600">
                 Upload detailed per-company project write-ups (PDF or DOCX). These are parsed once and used when tailoring
-                résumés for each job — stronger bullets with real metrics and project depth.
+                résumés for each job - stronger bullets with real metrics and project depth.
               </p>
             </div>
             <div className="shrink-0">

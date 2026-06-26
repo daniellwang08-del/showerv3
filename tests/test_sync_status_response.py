@@ -7,13 +7,13 @@ from app.api.scraper_routes import SyncStatusResponse, _sync_running_message
 
 def test_sync_running_message_includes_elapsed():
     assert _sync_running_message("adzuna", 735, 1770) == (
-        "Spider 'adzuna' running — 735 scraped (1770s elapsed)."
+        "Spider 'adzuna' running - 735 scraped (1770s elapsed)."
     )
 
 
 def test_sync_running_message_without_elapsed():
     assert _sync_running_message("jobright", 0, None) == (
-        "Spider 'jobright' running — 0 scraped."
+        "Spider 'jobright' running - 0 scraped."
     )
 
 

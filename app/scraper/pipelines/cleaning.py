@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 SALARY_PATTERN = re.compile(
     r"\$?\s*([\d,]+(?:\.\d+)?)\s*(?:k)?\s*"
-    r"(?:[-–—to]+\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:k)?)?"
+    r"(?:[-\u2013\u2014to]+\s*\$?\s*([\d,]+(?:\.\d+)?)\s*(?:k)?)?"
     r"(?:\s*(?:per|/|a)?\s*(year|yr|month|mo|hour|hr|week|wk|annual|annually))?",
     re.IGNORECASE,
 )

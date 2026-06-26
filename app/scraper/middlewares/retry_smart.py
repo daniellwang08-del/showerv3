@@ -27,7 +27,7 @@ class SmartRetryMiddleware(RetryMiddleware):
     IMPORTANT: the backoff delay is implemented with Twisted's
     ``reactor.callLater`` instead of the blocking ``time.sleep``.
     Using ``time.sleep`` inside Scrapy's Twisted reactor freezes the
-    *entire* spider — no other requests can be made or processed while
+    *entire* spider - no other requests can be made or processed while
     the sleep is running.  ``callLater`` schedules the delayed retry on
     the event loop without blocking anything else.
     """
@@ -37,14 +37,14 @@ class SmartRetryMiddleware(RetryMiddleware):
             reason = response_status_message(response.status)
             delay = self._backoff_delay(request)
             spider.logger.warning(
-                "Got %s from %s — retrying in %.1fs",
+                "Got %s from %s - retrying in %.1fs",
                 response.status,
                 request.url,
                 delay,
             )
             retried = self._retry(request, reason)
             if retried is None:
-                # dont_retry=True or retries exhausted — pass through as-is
+                # dont_retry=True or retries exhausted - pass through as-is
                 return response
             # Non-blocking async delay via Twisted reactor
             d: defer.Deferred = defer.Deferred()

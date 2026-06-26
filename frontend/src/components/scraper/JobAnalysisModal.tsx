@@ -41,7 +41,7 @@ export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps)
       aria-modal="true"
       aria-label="Job analysis"
     >
-      {/* Dimmed backdrop — click outside to close */}
+      {/* Dimmed backdrop - click outside to close */}
       <div
         className="absolute inset-0 bg-slate-900/55 backdrop-blur-[3px]"
         onClick={onClose}
@@ -53,7 +53,7 @@ export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps)
         className="relative z-10 flex h-[85vh] w-[70vw] min-w-[520px] max-w-[1200px] animate-modal-in flex-col overflow-hidden rounded-2xl shadow-2xl ring-1 ring-slate-900/10"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Close (×) button — top-right corner, above the panel header */}
+        {/* Close (×) button - top-right corner, above the panel header */}
         <button
           type="button"
           onClick={onClose}

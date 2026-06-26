@@ -1,4 +1,4 @@
-// Workday engine — content-script entry point.
+// Workday engine - content-script entry point.
 //
 // Injected into all frames. Listens for WD_RUN from the side panel, runs the
 // engine on whichever frame actually contains the Workday form (others stay
@@ -29,11 +29,15 @@
     // Auto-advance orchestration (driven step-by-step from the side panel, which
     // is the only context that can focus the tab to flush deferred commits).
     if (msg.type === "WD_FLUSH") {
-      // The panel just focused the page; force any deferred text/date commits.
+      // Force any legacy deferred commits; new builds commit inline without OS focus.
       try {
         WD && WD.steps && WD.steps.flush && WD.steps.flush();
       } catch {}
-      sendResponse({ ok: true, hasFocus: document.hasFocus() });
+      sendResponse({
+        ok: true,
+        hasFocus: document.hasFocus(),
+        pending: (WD && WD._pendingCommits && WD._pendingCommits.length) || 0,
+      });
       return true;
     }
 
@@ -86,7 +90,7 @@
         await WD.engine.runAll(msg.profile || {}, msg.options || {}, (r) => {
           reports.push(r);
           try {
-            console.warn("[workday] step report", r.step, JSON.parse(JSON.stringify(r)));
+            WD.log("step report", r.step, JSON.parse(JSON.stringify(r)));
           } catch {}
           send({ type: "WD_PROGRESS", report: r });
         });
@@ -100,6 +104,6 @@
   });
 
   try {
-    console.warn("[workday] engine ready", location.href);
+    WD.log("engine ready", location.href);
   } catch {}
 })();

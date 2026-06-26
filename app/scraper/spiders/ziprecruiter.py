@@ -57,7 +57,7 @@ class ZipRecruiterSpider(BaseJobSpider):
 
     def parse_listing(self, response):
         if detect_captcha(response):
-            self.logger.warning("CAPTCHA detected on %s — skipping", response.url)
+            self.logger.warning("CAPTCHA detected on %s - skipping", response.url)
             return
 
         ld_json = response.css('script[type="application/ld+json"]::text').getall()

@@ -86,7 +86,7 @@ Accuracy rules (critical):
 - Copy employer names, job titles, degree names, school names, locations, dates, and bullets using the same wording as on the résumé (fix obvious OCR typos only if certain).
 - profile_summary: copy the full Summary / Objective / Profile section verbatim (all paragraphs), preserving line breaks where helpful, up to a reasonable length for one JSON string. Do not replace it with a generic one-line synopsis.
 
-Work experience (critical — most errors happen here):
+Work experience (critical - most errors happen here):
 - Emit one work_experience[] object per distinct role/employer block on the résumé (same order as the document, usually reverse chronological).
 - **Boundary rule:** For each role, `description` must contain **every** line of narrative that belongs to that role **from the first line under its header through the line immediately before the next role’s header** (or before the Education / Academic / Projects / Skills section if that role is last). Nothing that visually sits under that role may be dropped.
 - Put in `description` (verbatim, same order): role overview sentences before bullets; every bullet and sub-bullet; dash/asterisk lines; metric lines; “Key achievements” / “Selected projects” blocks; tech stack lines; indented continuation lines; footnotes under the role. If a line does not fit `company_name`, `job_title`, `dates`, or `location`, it still belongs in `description`.
@@ -96,7 +96,7 @@ Work experience (critical — most errors happen here):
 - education.description: copy honors, coursework, or notes verbatim if present.
 - technical_skills: keep skill names and groupings as written (same names, same commas/phrasing). Only split into categories when the résumé clearly groups them.
 - extra: optional lines copied verbatim (e.g. languages, awards) not captured elsewhere.
-- period_*: use YYYY-MM when the document shows month+year; use YYYY if only year; use null if unclear—do not guess dates.
+- period_*: use YYYY-MM when the document shows month+year; use YYYY if only year; use null if unclear-do not guess dates.
 - LinkedIn/GitHub: exact URLs from the document only.
 - phone_country_code: like +1, +44; phone_number: national number without country code.
 - job_type: only if explicitly stated or unambiguous (remote/hybrid/onsite); else null.
@@ -143,7 +143,7 @@ def pdf_to_plain_text_pypdf(raw: bytes, max_pages: int = MAX_PDF_PAGES) -> str:
 
 
 def pdf_to_base64_pngs(raw: bytes) -> tuple[list[str], list[str]]:
-    import fitz  # PyMuPDF — must be installed for this path
+    import fitz  # PyMuPDF - must be installed for this path
 
     warnings: list[str] = []
     doc = fitz.open(stream=raw, filetype="pdf")
@@ -407,7 +407,7 @@ async def _call_openai_resume(
 
     sys_msg = (
         "You are a precise résumé transcription assistant. Your job is to extract structured fields while preserving "
-        "the original wording—no summarization, no creative rewriting. Output valid JSON only.\n"
+        "the original wording-no summarization, no creative rewriting. Output valid JSON only.\n"
         + RESUME_JSON_INSTRUCTIONS
     )
 
@@ -418,7 +418,7 @@ async def _call_openai_resume(
                 "text": (
                     "The images are résumé pages. Transcribe into the JSON schema with verbatim wording (no summarizing). "
                     "For work_experience: one object per distinct job. Each description must include **every** line of "
-                    "body text that belongs to that job—all bullets, sub-bullets, intro lines, metrics—through the "
+                    "body text that belongs to that job-all bullets, sub-bullets, intro lines, metrics-through the "
                     "line immediately before the next job header (or before Education). Do not merge jobs or drop bullets."
                 ),
             }
@@ -443,7 +443,7 @@ async def _call_openai_resume(
                 "Résumé plain text is below (DOCX/PDF extraction: paragraphs and table rows follow document order).\n"
                 "For work_experience, emit one entry per job. Each entry's `description` must be the **full** verbatim "
                 "block for that role: from the first body line under that role's title/company through the last line "
-                "before the next role (or before Education / Projects if it is the last job)—including every bullet, "
+                "before the next role (or before Education / Projects if it is the last job)-including every bullet, "
                 "sub-bullet, and paragraph. Do not abbreviate.\n"
                 "---\n"
                 f"{ut}\n"

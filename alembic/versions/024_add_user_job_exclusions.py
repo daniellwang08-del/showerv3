@@ -2,7 +2,7 @@
 
 Previously, enforce_company_priority_after_match() physically moved ValidJob
 rows to invalid_jobs (setting is_active=False globally), which broke
-multi-user isolation — one user's analysis could permanently hide jobs for
+multi-user isolation - one user's analysis could permanently hide jobs for
 all other users.
 
 This table stores per-user policy decisions so that:

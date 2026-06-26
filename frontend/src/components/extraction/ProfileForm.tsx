@@ -28,7 +28,7 @@ import {
 import { COUNTRY_CODES } from '../../constants/countryCodes';
 import type { ProfileFormData, EEOPreferences } from '../../types/profile';
 import type { UserProfile } from '../../types/profile';
-import { JOB_TYPES, isValidJobArrangement, GENDER_OPTIONS, RACE_OPTIONS } from '../../types/profile';
+import { JOB_TYPES, EMPLOYMENT_TYPES, isValidJobArrangement, GENDER_OPTIONS, RACE_OPTIONS } from '../../types/profile';
 import {
   profileToForm,
   emptyTechSkill,
@@ -150,7 +150,7 @@ function stripSectionErrors(section: SectionId): (prev: Record<string, string>) 
 }
 
 function formatMonthLabel(ym: string): string {
-  if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return '—';
+  if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return '-';
   const [y, m] = ym.split('-').map(Number);
   const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   if (m < 1 || m > 12) return ym;
@@ -614,7 +614,7 @@ const ADDRESS_FIELDS: Array<{
 function triLabel(v: boolean | null | undefined, yes = 'Yes', no = 'No'): string {
   if (v === true) return yes;
   if (v === false) return no;
-  return '—';
+  return '-';
 }
 
 export function ProfileForm({ profile, onSubmit }: Props) {
@@ -727,11 +727,11 @@ export function ProfileForm({ profile, onSubmit }: Props) {
               <div className="space-y-4">
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Title</dt>
-                  <dd className="mt-1 font-medium text-slate-900">{form.title.trim() || '—'}</dd>
+                  <dd className="mt-1 font-medium text-slate-900">{form.title.trim() || '-'}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">LinkedIn</dt>
-                  <dd className="mt-1 break-all text-blue-700">{form.linkedin_url.trim() || '—'}</dd>
+                  <dd className="mt-1 break-all text-blue-700">{form.linkedin_url.trim() || '-'}</dd>
                 </div>
                 {form.github_url.trim() ? (
                   <div>
@@ -743,12 +743,12 @@ export function ProfileForm({ profile, onSubmit }: Props) {
               <div className="space-y-4">
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Email</dt>
-                  <dd className="mt-1 break-all font-medium text-slate-900">{form.email.trim() || '—'}</dd>
+                  <dd className="mt-1 break-all font-medium text-slate-900">{form.email.trim() || '-'}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-bold uppercase tracking-wide text-slate-500">Phone</dt>
                   <dd className="mt-1 font-medium text-slate-900">
-                    {form.phone_country_code} {form.phone_number.trim() || '—'}
+                    {form.phone_country_code} {form.phone_number.trim() || '-'}
                   </dd>
                 </div>
               </div>
@@ -972,7 +972,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                 t.category.trim() || t.skills.trim() ? (
                   <div key={i} className="rounded-lg border border-blue-100/80 bg-blue-50/40 px-3 py-2">
                     <span className="text-xs font-bold uppercase text-blue-800">{t.category.trim() || 'Category'}</span>
-                    <p className="mt-1 text-sm text-slate-800">{t.skills.trim() || '—'}</p>
+                    <p className="mt-1 text-sm text-slate-800">{t.skills.trim() || '-'}</p>
                   </div>
                 ) : null,
               )
@@ -1052,14 +1052,32 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                   <li key={i} className="rounded-lg border border-slate-100 bg-white/70 px-3 py-2">
                     <p className="font-semibold text-slate-900">
                       {w.job_title.trim() || 'Role'} <span className="font-normal text-slate-500">at</span>{' '}
-                      {w.company_name.trim() || '—'}
+                      {w.company_name.trim() || '-'}
                     </p>
                     <p className="text-xs text-slate-600">
                       {formatMonthLabel(w.period_start ?? '')} – {formatMonthLabel(w.period_end ?? '')}
                       {w.location?.trim() ? ` · ${w.location.trim()}` : ''}
                       {w.job_type?.trim() ? ` · ${w.job_type}` : ''}
+                      {w.employment_type?.trim() ? ` · ${w.employment_type}` : ''}
                     </p>
-                    {w.description?.trim() ? <p className="mt-1 text-sm text-slate-700 line-clamp-3">{w.description}</p> : null}
+                    {w.project_title?.trim() ? (
+                      <p className="mt-1 text-sm font-medium text-slate-800">{w.project_title.trim()}</p>
+                    ) : null}
+                    {w.project_intro?.trim() ? (
+                      <p className="mt-0.5 text-sm text-slate-700 line-clamp-2">{w.project_intro}</p>
+                    ) : !w.project_title?.trim() && w.description?.trim() ? (
+                      <p className="mt-1 text-sm text-slate-700 line-clamp-3">{w.description}</p>
+                    ) : null}
+                    {w.contributions?.some((c) => c.trim()) ? (
+                      <ul className="mt-1 space-y-0.5">
+                        {w.contributions.filter((c) => c.trim()).slice(0, 4).map((c, ci) => (
+                          <li key={ci} className="text-sm text-slate-700">&bull; {c}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {w.used_skills?.trim() ? (
+                      <p className="mt-1 text-xs text-slate-500">{w.used_skills}</p>
+                    ) : null}
                   </li>
                 ) : null,
               )
@@ -1171,17 +1189,104 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                 {errors[`work_${i}_job_type`] ? <p className={fieldErrorCls}>{errors[`work_${i}_job_type`]}</p> : null}
               </div>
             </div>
-            <textarea
-              rows={3}
-              placeholder="Impact, scope, stack…"
-              value={w.description}
-              onChange={(e) => {
-                const next = [...form.work_experience];
-                next[i] = { ...next[i], description: e.target.value };
-                update('work_experience', next);
-              }}
-              className={`${inputCls} resize-y`}
-            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <FancySelect
+                  value={w.employment_type ?? ''}
+                  onChange={(nextValue) => {
+                    const next = [...form.work_experience];
+                    next[i] = { ...next[i], employment_type: nextValue };
+                    update('work_experience', next);
+                  }}
+                  placeholder="Employment type"
+                  options={EMPLOYMENT_TYPES.map((et) => ({ value: et, label: et.charAt(0).toUpperCase() + et.slice(1) }))}
+                />
+              </div>
+              <div>
+                <input
+                  type="text"
+                  placeholder="Technologies / skills used (optional)"
+                  value={w.used_skills ?? ''}
+                  onChange={(e) => {
+                    const next = [...form.work_experience];
+                    next[i] = { ...next[i], used_skills: e.target.value };
+                    update('work_experience', next);
+                  }}
+                  className={`${inputCls} w-full`}
+                />
+              </div>
+            </div>
+            <div className="space-y-3 rounded-lg border border-slate-200/80 bg-white/60 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Project &amp; contributions</p>
+              <input
+                type="text"
+                placeholder="Project / engagement title (optional)"
+                value={w.project_title ?? ''}
+                onChange={(e) => {
+                  const next = [...form.work_experience];
+                  next[i] = { ...next[i], project_title: e.target.value };
+                  update('work_experience', next);
+                }}
+                className={`${inputCls} w-full`}
+              />
+              <textarea
+                rows={2}
+                placeholder="Brief project or contribution introduction (optional)"
+                value={w.project_intro ?? ''}
+                onChange={(e) => {
+                  const next = [...form.work_experience];
+                  next[i] = { ...next[i], project_intro: e.target.value };
+                  update('work_experience', next);
+                }}
+                className={`${inputCls} resize-y`}
+              />
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-slate-600">Key contributions</p>
+                {(w.contributions && w.contributions.length ? w.contributions : ['']).map((contribution, ci) => (
+                  <div key={ci} className="flex items-start gap-2">
+                    <span className="mt-2.5 text-slate-400">&bull;</span>
+                    <textarea
+                      rows={1}
+                      placeholder={`Contribution ${ci + 1}`}
+                      value={contribution}
+                      onChange={(e) => {
+                        const next = [...form.work_experience];
+                        const list = [...(next[i].contributions ?? [])];
+                        list[ci] = e.target.value;
+                        next[i] = { ...next[i], contributions: list };
+                        update('work_experience', next);
+                      }}
+                      className={`${inputCls} min-h-0 flex-1 resize-y py-1.5`}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Remove contribution"
+                      onClick={() => {
+                        const next = [...form.work_experience];
+                        const list = (next[i].contributions ?? []).filter((_, k) => k !== ci);
+                        next[i] = { ...next[i], contributions: list.length ? list : [''] };
+                        update('work_experience', next);
+                      }}
+                      className="mt-1.5 rounded-md p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = [...form.work_experience];
+                    next[i] = { ...next[i], contributions: [...(next[i].contributions ?? []), ''] };
+                    update('work_experience', next);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 transition hover:text-indigo-700"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add contribution
+                </button>
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => update('work_experience', form.work_experience.filter((_, j) => j !== i))}
@@ -1215,7 +1320,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
               form.education.map((ed, i) =>
                 ed.university_name.trim() || ed.degree.trim() ? (
                   <li key={i} className="rounded-lg border border-slate-100 bg-white/70 px-3 py-2">
-                    <p className="font-semibold text-slate-900">{ed.degree.trim() || 'Degree'} — {ed.university_name.trim() || '—'}</p>
+                    <p className="font-semibold text-slate-900">{ed.degree.trim() || 'Degree'} - {ed.university_name.trim() || '-'}</p>
                     <p className="text-xs text-slate-600">
                       {formatMonthLabel(ed.period_start ?? '')} – {formatMonthLabel(ed.period_end ?? '')}
                       {ed.mark?.trim() ? ` · ${ed.mark.trim()}` : ''}
@@ -1478,11 +1583,11 @@ export function ProfileForm({ profile, onSubmit }: Props) {
           <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
             <div className="flex justify-between gap-3 border-b border-slate-100 py-1">
               <dt className="text-slate-500">Gender</dt>
-              <dd className="font-medium text-slate-800">{form.eeo_preferences.gender?.trim() || '—'}</dd>
+              <dd className="font-medium text-slate-800">{form.eeo_preferences.gender?.trim() || '-'}</dd>
             </div>
             <div className="flex justify-between gap-3 border-b border-slate-100 py-1">
               <dt className="text-slate-500">Race / Ethnicity</dt>
-              <dd className="font-medium text-slate-800">{form.eeo_preferences.race?.trim() || '—'}</dd>
+              <dd className="font-medium text-slate-800">{form.eeo_preferences.race?.trim() || '-'}</dd>
             </div>
             {EEO_YESNO_FIELDS.map((f) => (
               <div key={f.key} className="flex justify-between gap-3 border-b border-slate-100 py-1">
@@ -1546,7 +1651,7 @@ export function ProfileForm({ profile, onSubmit }: Props) {
             {ADDRESS_FIELDS.map((f) => (
               <div key={f.key} className="flex justify-between gap-3 border-b border-slate-100 py-1">
                 <dt className="text-slate-500">{f.label}</dt>
-                <dd className="font-medium text-slate-800">{form.address[f.key]?.trim() || '—'}</dd>
+                <dd className="font-medium text-slate-800">{form.address[f.key]?.trim() || '-'}</dd>
               </div>
             ))}
           </dl>

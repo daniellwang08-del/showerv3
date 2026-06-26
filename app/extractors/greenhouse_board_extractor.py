@@ -127,7 +127,7 @@ class GreenhouseBoardExtractor(BaseExtractor):
         if greenhouse_board_tokens_from_url(url):
             return True
         # ?gh_jid=N on a careers page strongly implies Greenhouse, even before
-        # the HTML loads — let extract() try HTML token discovery.
+        # the HTML loads - let extract() try HTML token discovery.
         if "gh_jid" in (url or "").lower():
             return True
         if html and "greenhouse" in html.lower():

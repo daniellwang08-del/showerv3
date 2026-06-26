@@ -150,6 +150,7 @@ class ScraperStatsResponse(BaseModel):
     today_scraped: int = 0
     today_remote: int = 0
     today_posted: int = 0
+    my_jobs: int = 0          # jobs I added via submission/attachment
     extracted_jobs: int = 0   # fully extracted (pipeline completed)
     ready_jobs: int = 0       # have structured output + tailored resume/cover letter
     sources: list[SourceStats]
@@ -213,7 +214,7 @@ class SyncStatusResponse(BaseModel):
 
 def _sync_running_message(spider: str, items_scraped: int, elapsed_seconds: int | None) -> str:
     """Human-readable status line for GET /scraper/sync/status (running branch)."""
-    msg = f"Spider '{spider}' running — {items_scraped} scraped"
+    msg = f"Spider '{spider}' running - {items_scraped} scraped"
     if elapsed_seconds is not None:
         msg += f" ({elapsed_seconds}s elapsed)"
     return msg + "."
@@ -772,6 +773,7 @@ async def get_scraper_stats(
             today_scraped=data["today_scraped"],
             today_remote=data["today_remote"],
             today_posted=data["today_posted"],
+            my_jobs=data["my_jobs"],
             extracted_jobs=data["extracted_jobs"],
             ready_jobs=data["ready_jobs"],
             sources=[
@@ -929,7 +931,7 @@ async def get_sync_status(user=Depends(_get_current_user)):
     """Check if any spider is currently running.
 
     Any run that has been in 'running' state for longer than the worker's
-    subprocess timeout (1800 s / 30 min) is treated as stale — it is
+    subprocess timeout (1800 s / 30 min) is treated as stale - it is
     marked 'interrupted' inline and the endpoint returns 'idle'.  This is
     the belt-and-suspenders guard for the case where the startup cleanup
     in lifespan() was skipped (e.g. the worker process crashed without
@@ -938,10 +940,10 @@ async def get_sync_status(user=Depends(_get_current_user)):
     from sqlalchemy import text
 
     # Worker timeout is 1800 s; add a small buffer → 31 min.
-    # Threshold is inlined as a literal — asyncpg cannot bind parameters
+    # Threshold is inlined as a literal - asyncpg cannot bind parameters
     # inside PostgreSQL INTERVAL strings.
     # The threshold is a hard-coded constant so it can be inlined directly
-    # into the SQL string — PostgreSQL does not support bind parameters
+    # into the SQL string - PostgreSQL does not support bind parameters
     # inside INTERVAL literals (e.g. INTERVAL '$1 minutes' is invalid).
     async with get_session() as session:
         # Auto-heal runs that have been stuck for too long.

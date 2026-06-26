@@ -8,11 +8,16 @@ import type {
 } from '../types/scraper';
 import {
   fetchDashboardJobs,
+  fetchDashboardCounts,
   fetchScraperStats,
+  fetchScrapeRuns,
   fetchSpiders,
   fetchSyncStatus,
   triggerSync,
+  type DashboardView,
+  type DashboardCounts,
 } from '../api/scraperApi';
+import type { ScrapeRun } from '../types/scraper';
 import { postJobsToSheet as postJobsToSheetApi } from '../api/googleSheetsApi';
 import { apiClient } from '../api/client';
 import { toFiniteTimeMs } from '../utils/serverDate';
@@ -156,6 +161,21 @@ const STATUS_RANK: Record<string, number> = {
 const statusRank = (s: string | null | undefined): number =>
   STATUS_RANK[(s ?? '').toLowerCase()] ?? 0;
 
+/** Dashboard filter mutations requested by the AI agent (drives the main table). */
+export interface AgentDashboardFilters {
+  view?: DashboardView;
+  remote_only?: boolean;
+  min_match_score?: number;
+  source?: string;
+  query?: string;
+  title?: string;
+  company?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+  /** Clear all filters back to defaults before applying the rest. */
+  reset?: boolean;
+}
+
 interface ScraperState {
   jobs: DashboardJob[];
   total: number;
@@ -173,25 +193,43 @@ interface ScraperState {
   syncing: boolean;
   syncProgress: SyncProgress | null;
 
+  /** Recent scrape runs, newest first - drives "last synced" timestamps. */
+  lastSyncRuns: ScrapeRun[];
+
   sourceFilter: string;
   searchQuery: string;
+  titleFilter: string;
+  companyFilter: string;
   remoteOnly: boolean;
+  /** Minimum match-score filter (0 = any). */
+  minScore: number;
   sortField: string;
   sortOrder: 'asc' | 'desc';
 
+  /** Active dashboard view tab. */
+  view: DashboardView;
+  /** Per-tab job counts for the view switcher badges. */
+  counts: DashboardCounts;
+
   loadJobs: () => Promise<void>;
-  /** Refresh job rows silently (no loading spinner) — used for background polling. */
+  /** Refresh per-tab counts for the view switcher. */
+  loadCounts: () => Promise<void>;
+  /** Switch the active view tab, resetting to page 1 and reloading. */
+  setView: (view: DashboardView) => void;
+  /** Refresh job rows silently (no loading spinner) - used for background polling. */
   bgRefreshJobs: () => Promise<void>;
   /** Reload dashboard from page 1 after manual job submit. */
   refreshAfterJobSubmit: () => Promise<void>;
   /**
    * Refresh dashboard stats.
    * Pass `{ silent: true }` for background refreshes (pipeline/poll events) so the
-   * stats bar never flips into its skeleton state — which would unmount/remount
+   * stats bar never flips into its skeleton state - which would unmount/remount
    * every tile and replay the count-up animation from 0 on each job-status change.
    */
   loadStats: (opts?: { silent?: boolean }) => Promise<void>;
   loadSpiders: () => Promise<void>;
+  /** Refresh the recent scrape-run history used for "last synced" labels. */
+  loadLastSyncRuns: () => Promise<void>;
   checkSyncStatus: () => Promise<void>;
   handleSyncWsEvent: (event: {
     type: string;
@@ -210,7 +248,7 @@ interface ScraperState {
   deleteJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
   batchDeleteJobs: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   batchRerunJobs: (jobIds: string[]) => Promise<{ ok: boolean; partial?: boolean; message: string }>;
-  /** Instant UI update — call synchronously (e.g. inside flushSync) before persist. */
+  /** Instant UI update - call synchronously (e.g. inside flushSync) before persist. */
   optimisticMarkJobsApplied: (jobIds: string[], applied: boolean) => void;
   markJobsApplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   markJobsUnapplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
@@ -221,8 +259,21 @@ interface ScraperState {
   setPerPage: (perPage: number) => void;
   setSourceFilter: (source: string) => void;
   setSearchQuery: (q: string) => void;
+  setTitleFilter: (title: string) => void;
+  setCompanyFilter: (company: string) => void;
   setRemoteOnly: (val: boolean) => void;
+  setMinScore: (val: number) => void;
   setSort: (field: string) => void;
+  /** Apply a batch of filter/view changes from the AI agent, then reload once. */
+  applyAgentDashboard: (filters: AgentDashboardFilters) => void;
+}
+
+function localTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
 }
 
 function extractErrorMessage(err: unknown, fallback: string): string {
@@ -252,11 +303,19 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   syncing: false,
   syncProgress: null,
 
+  lastSyncRuns: [],
+
   sourceFilter: '',
   searchQuery: '',
+  titleFilter: '',
+  companyFilter: '',
   remoteOnly: false,
+  minScore: 0,
   sortField: 'created_at',
   sortOrder: 'desc',
+
+  view: 'today',
+  counts: { all: 0, today: 0, mine: 0, suggested: 0 },
 
   loadJobs: async () => {
     const s = get();
@@ -267,14 +326,44 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         per_page: s.perPage,
         source: s.sourceFilter || undefined,
         q: s.searchQuery || undefined,
+        title: s.titleFilter || undefined,
+        company: s.companyFilter || undefined,
         remote_only: s.remoteOnly || undefined,
+        min_match_score: s.minScore || undefined,
         sort: s.sortField,
         order: s.sortOrder,
+        view: s.view,
+        timezone: localTimezone(),
       });
       set({ jobs: result.items, total: result.total, pages: result.pages, loading: false });
     } catch {
       set({ loading: false });
     }
+    void get().loadCounts();
+  },
+
+  loadCounts: async () => {
+    const s = get();
+    try {
+      const counts = await fetchDashboardCounts({
+        source: s.sourceFilter || undefined,
+        q: s.searchQuery || undefined,
+        title: s.titleFilter || undefined,
+        company: s.companyFilter || undefined,
+        remote_only: s.remoteOnly || undefined,
+        min_match_score: s.minScore || undefined,
+        timezone: localTimezone(),
+      });
+      set({ counts });
+    } catch {
+      /* ignore */
+    }
+  },
+
+  setView: (view) => {
+    if (get().view === view) return;
+    set({ view, page: 1 });
+    get().loadJobs();
   },
 
   bgRefreshJobs: async () => {
@@ -285,9 +374,14 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         per_page: s.perPage,
         source: s.sourceFilter || undefined,
         q: s.searchQuery || undefined,
+        title: s.titleFilter || undefined,
+        company: s.companyFilter || undefined,
         remote_only: s.remoteOnly || undefined,
+        min_match_score: s.minScore || undefined,
         sort: s.sortField,
         order: s.sortOrder,
+        view: s.view,
+        timezone: localTimezone(),
       });
 
       const now = Date.now();
@@ -303,6 +397,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
       });
 
       set({ jobs: [...mergedJobs, ...preserved], total: result.total, pages: result.pages });
+      void get().loadCounts();
     } catch {
       /* silently ignore poll errors */
     }
@@ -330,6 +425,15 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     try {
       const spiders = await fetchSpiders();
       set({ spiders });
+    } catch {
+      /* ignore */
+    }
+  },
+
+  loadLastSyncRuns: async () => {
+    try {
+      const runs = await fetchScrapeRuns(60);
+      set({ lastSyncRuns: runs });
     } catch {
       /* ignore */
     }
@@ -457,6 +561,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
             : (event.error ? `Sync failed: ${event.error}` : 'Sync failed.'),
         },
       });
+      void get().loadLastSyncRuns();
     }
   },
 
@@ -757,11 +862,36 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   setPerPage: (perPage) => { set({ perPage, page: 1 }); get().loadJobs(); },
   setSourceFilter: (source) => { set({ sourceFilter: source, page: 1 }); get().loadJobs(); },
   setSearchQuery: (q) => { set({ searchQuery: q, page: 1 }); get().loadJobs(); },
+  setTitleFilter: (title) => { set({ titleFilter: title, page: 1 }); get().loadJobs(); },
+  setCompanyFilter: (company) => { set({ companyFilter: company, page: 1 }); get().loadJobs(); },
   setRemoteOnly: (val) => { set({ remoteOnly: val, page: 1 }); get().loadJobs(); },
+  setMinScore: (val) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(val)));
+    set({ minScore: clamped, page: 1 });
+    get().loadJobs();
+  },
   setSort: (field) => {
     const s = get();
     const order = s.sortField === field && s.sortOrder === 'desc' ? 'asc' : 'desc';
     set({ sortField: field, sortOrder: order, page: 1 });
+    get().loadJobs();
+  },
+
+  applyAgentDashboard: (f) => {
+    const s = get();
+    const cleared = f.reset === true;
+    set({
+      view: f.view ?? (cleared ? 'all' : s.view),
+      remoteOnly: f.remote_only ?? (cleared ? false : s.remoteOnly),
+      minScore: f.min_match_score ?? (cleared ? 0 : s.minScore),
+      sourceFilter: f.source ?? (cleared ? '' : s.sourceFilter),
+      searchQuery: f.query ?? (cleared ? '' : s.searchQuery),
+      titleFilter: f.title ?? (cleared ? '' : s.titleFilter),
+      companyFilter: f.company ?? (cleared ? '' : s.companyFilter),
+      sortField: f.sort ?? (cleared ? 'created_at' : s.sortField),
+      sortOrder: f.order ?? (cleared ? 'desc' : s.sortOrder),
+      page: 1,
+    });
     get().loadJobs();
   },
 }));

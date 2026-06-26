@@ -121,6 +121,11 @@ def user_profile_to_openai_text(profile: Any) -> str:
             )
             location = (w.get("location") if isinstance(w, dict) else getattr(w, "location", None)) or ""
             job_type = (w.get("job_type") if isinstance(w, dict) else getattr(w, "job_type", None)) or ""
+            employment_type = (w.get("employment_type") if isinstance(w, dict) else getattr(w, "employment_type", None)) or ""
+            project_title = (w.get("project_title") if isinstance(w, dict) else getattr(w, "project_title", None)) or ""
+            project_intro = (w.get("project_intro") if isinstance(w, dict) else getattr(w, "project_intro", None)) or ""
+            used_skills = (w.get("used_skills") if isinstance(w, dict) else getattr(w, "used_skills", None)) or ""
+            contributions = (w.get("contributions") if isinstance(w, dict) else getattr(w, "contributions", None)) or []
             desc = (w.get("description") if isinstance(w, dict) else getattr(w, "description", None)) or ""
 
             sub_parts: list[str] = []
@@ -130,10 +135,20 @@ def user_profile_to_openai_text(profile: Any) -> str:
             if period:
                 header += f" | {period}"
             sub_parts.append(header)
-            meta = [m for m in [location, job_type] if m]
+            meta = [m for m in [location, job_type, employment_type] if m]
             if meta:
                 sub_parts.append(", ".join(meta))
-            if desc:
+            if project_title:
+                sub_parts.append(f"Project: {project_title}")
+            if project_intro:
+                sub_parts.append(project_intro)
+            if isinstance(contributions, (list, tuple)):
+                for c in contributions:
+                    if isinstance(c, str) and c.strip():
+                        sub_parts.append(f"- {c.strip()}")
+            if used_skills:
+                sub_parts.append(f"Technologies: {used_skills}")
+            if desc and not (project_intro or contributions):
                 sub_parts.append(desc)
             parts.append("\n".join(sub_parts))
             parts.append("")

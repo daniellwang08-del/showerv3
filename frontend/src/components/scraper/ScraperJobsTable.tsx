@@ -82,7 +82,7 @@ function applyAppliedUiOverride(
 }
 
 function relativeTime(dateStr: string | null): string {
-  if (!dateStr) return '—';
+  if (!dateStr) return '-';
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';
@@ -112,7 +112,7 @@ const columns = [
   { key: '__actions__',    label: 'Actions',    sortable: false },
 ] as const;
 
-/** Fixed column widths — prevents layout shift when rows update during polling. */
+/** Fixed column widths - prevents layout shift when rows update during polling. */
 const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
   __check__: '32px',
   __no__: '44px',
@@ -238,7 +238,7 @@ function DocsCell({ job }: { job: DashboardJob }) {
   const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
 
   if (!resumeReady && !clReady) {
-    return <span className="text-slate-300 text-xs">—</span>;
+    return <span className="text-slate-300 text-xs">-</span>;
   }
 
   return (
@@ -250,7 +250,7 @@ function DocsCell({ job }: { job: DashboardJob }) {
             jobId={job.id}
             filePath={job.resume_pdf_path}
             fileType="resume_pdf"
-            docTitle={`Resume — ${jobLabel}`}
+            docTitle={`Resume - ${jobLabel}`}
             onOpen={setPreview}
           />
         )}
@@ -260,7 +260,7 @@ function DocsCell({ job }: { job: DashboardJob }) {
             jobId={job.id}
             filePath={job.cover_letter_pdf_path}
             fileType="cover_letter_pdf"
-            docTitle={`Cover letter — ${jobLabel}`}
+            docTitle={`Cover letter - ${jobLabel}`}
             onOpen={setPreview}
           />
         )}
@@ -352,7 +352,7 @@ function scoreLabel(score: number): string {
 }
 function MatchScoreBadge({ score }: { score: number }) {
   return (
-    <div title={`Match score: ${score}/100 — ${scoreLabel(score)}`}
+    <div title={`Match score: ${score}/100 - ${scoreLabel(score)}`}
       className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 shadow-sm ${scoreColors(score)}`}>
       <Sparkles size={11} className="shrink-0 opacity-75" />
       <span className="text-sm font-bold tabular-nums leading-none">{score}</span>
@@ -671,7 +671,7 @@ export function ScraperJobsTable({
   const optimisticMarkJobsSheetPosted = useScraperStore((s) => s.optimisticMarkJobsSheetPosted);
   const optimisticMarkJobsApplied = useScraperStore((s) => s.optimisticMarkJobsApplied);
 
-  // Instant applied UI — local state avoids unstable Zustand selectors (infinite re-render loop).
+  // Instant applied UI - local state avoids unstable Zustand selectors (infinite re-render loop).
   const [appliedUiOverride, setAppliedUiOverride] = useState<Record<string, AppliedUiOverride>>({});
 
   const displayJobs = useMemo(
@@ -869,7 +869,7 @@ export function ScraperJobsTable({
       setDeleting(targets);
       return;
     }
-    // Bulk — confirm via bulk delete dialog (reuse deleting state)
+    // Bulk - confirm via bulk delete dialog (reuse deleting state)
     setDeleteError(null);
     setDeleting(targets);
   }, []);
@@ -1203,29 +1203,29 @@ export function ScraperJobsTable({
 
                     {/* Company */}
                     <td className={`${CELL} text-slate-700 whitespace-nowrap text-xs truncate`}>
-                      {job.company || '—'}
+                      {job.company || '-'}
                     </td>
 
                     {/* Location */}
                     <td className={`${CELL} text-slate-500 text-xs truncate`}>
-                      {job.location || '—'}
+                      {job.location || '-'}
                     </td>
 
                     {/* Remote */}
                     <td className={CELL}>
                       {job.is_remote
                         ? <span className="inline-flex items-center gap-1 text-emerald-600"><Wifi size={13} /><span className="text-[11px] font-medium">Remote</span></span>
-                        : <span className="text-slate-300 text-xs">—</span>}
+                        : <span className="text-slate-300 text-xs">-</span>}
                     </td>
 
                     {/* Salary */}
                     <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
-                      {job.salary_raw || <span className="text-slate-300">—</span>}
+                      {job.salary_raw || <span className="text-slate-300">-</span>}
                     </td>
 
                     {/* Type */}
                     <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
-                      {job.job_type || <span className="text-slate-300">—</span>}
+                      {job.job_type || <span className="text-slate-300">-</span>}
                     </td>
 
                     {/* Source */}

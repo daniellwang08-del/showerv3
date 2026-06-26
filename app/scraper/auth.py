@@ -103,7 +103,7 @@ def setup_auth(platform_key: str) -> bool:
                 page.goto(login_url, wait_until="commit", timeout=90000)
             except Exception:
                 print(f"Direct navigation to {login_url} timed out.")
-                print("The browser is open — please navigate to the site manually.")
+                print("The browser is open - please navigate to the site manually.")
                 print(f"Go to: {login_url}\n")
 
             print("Waiting for you to log in...")
@@ -195,7 +195,7 @@ def _wait_for_login(page, cfg: dict, timeout_sec: int = 300) -> bool:
             if has_login_form or on_login_path:
                 if not saw_login_form:
                     elapsed = int(time.time() - start)
-                    print(f"  [{elapsed}s] Login form detected — waiting for you to complete login...")
+                    print(f"  [{elapsed}s] Login form detected - waiting for you to complete login...")
                 saw_login_form = True
                 if not logged_in:
                     consecutive_done = 0

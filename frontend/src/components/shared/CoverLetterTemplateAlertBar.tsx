@@ -15,7 +15,7 @@ function statusMessage(status: CoverLetterTemplateStatus, error?: string | null)
     case 'failed':
       return error
         ? `Cover letter template is not ready: ${error}. AI tailoring will still run, but cover letter documents may fail.`
-        : 'Cover letter template validation failed. Fix it in Settings — AI tailoring will still run, but cover letter documents may fail.';
+        : 'Cover letter template validation failed. Fix it in Settings - AI tailoring will still run, but cover letter documents may fail.';
     default:
       return '';
   }
@@ -39,7 +39,7 @@ export function CoverLetterTemplateAlertBar() {
         }
       }
     } catch {
-      // Non-blocking banner — ignore fetch errors.
+      // Non-blocking banner - ignore fetch errors.
     } finally {
       setLoading(false);
     }

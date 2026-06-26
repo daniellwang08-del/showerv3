@@ -56,6 +56,6 @@ class ProxyMiddleware:
     def process_exception(self, request, exception, spider):
         proxy = request.meta.get("proxy")
         if proxy and proxy in self.proxies:
-            logger.warning("Proxy failed: %s — removing from pool", proxy)
+            logger.warning("Proxy failed: %s - removing from pool", proxy)
             self.proxies.remove(proxy)
         return None

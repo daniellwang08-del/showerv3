@@ -291,16 +291,15 @@ export function GoogleSheetsSettingsSection() {
 
   return (
     <>
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white">
-            <Table2 className="h-5 w-5" />
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+            <Table2 size={20} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold text-slate-900">Google Sheets integration</h2>
-            <p className="mt-1 text-sm leading-relaxed text-slate-600">
-              Post job URLs to shared spreadsheet tabs using round-robin groups. Verify access first,
-              then assign tabs in the configuration modal.
+            <h2 className="text-base font-bold text-slate-900">Google Sheets integration</h2>
+            <p className="mt-0.5 text-sm leading-snug text-slate-500">
+              Post job URLs to spreadsheet tabs via round-robin groups.
             </p>
 
             {loading ? (
@@ -471,7 +470,7 @@ export function GoogleSheetsSettingsSection() {
                     </button>
                     {verifyState === 'ok' && verifyTabCount != null && !modalOpen && (
                       <p className="text-sm text-emerald-700">
-                        Connected — {verifyTabCount} tab{verifyTabCount === 1 ? '' : 's'} found. Open the
+                        Connected - {verifyTabCount} tab{verifyTabCount === 1 ? '' : 's'} found. Open the
                         configuration modal to assign groups.
                       </p>
                     )}

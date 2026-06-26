@@ -4,7 +4,7 @@ Extract job content from Lever using the public Postings API.
 Lever exposes every public job posting at:
     https://api.lever.co/v0/postings/{company}/{posting_id}?mode=json
 
-No API key is required and CORS is permissive — but Lever does block plain
+No API key is required and CORS is permissive - but Lever does block plain
 ``httpx`` requests with 403, so we fetch through the HTTP service's
 ``fetch_impersonated`` path (curl_cffi Chrome TLS impersonation).
 

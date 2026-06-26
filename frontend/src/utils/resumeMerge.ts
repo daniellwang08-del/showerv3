@@ -147,7 +147,7 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
 
 function previewSnippet(s: string, max = 80): string {
   const t = s.replace(/\s+/g, ' ').trim();
-  if (!t) return '—';
+  if (!t) return '-';
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 

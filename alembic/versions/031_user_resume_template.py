@@ -1,4 +1,4 @@
-"""Legacy revision alias — resume template columns (superseded by 032).
+"""Legacy revision alias - resume template columns (superseded by 032).
 
 Some databases were stamped with revision id ``031_user_resume_template`` before
 ``031_repair_corrupted_job_titles`` and ``032_user_resume_template`` were split out.
@@ -19,7 +19,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Legacy stamp only — columns are applied in 032_user_resume_template.
+    # Legacy stamp only - columns are applied in 032_user_resume_template.
     pass
 
 

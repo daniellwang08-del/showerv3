@@ -132,7 +132,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
 
 
 
-    Resume and cover letter templates are gated independently — each requires
+    Resume and cover letter templates are gated independently - each requires
 
     the user's own uploaded template, like the résumé builder flow.
 

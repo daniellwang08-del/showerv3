@@ -508,7 +508,7 @@ class UserRepository:
     async def resolve_provider_api_key(self, user_id: str, provider: str) -> str:
         """Return the usable API key for ``provider`` (custom user key or server key).
 
-        Returns "" when no key is available — never raises — so the multi-provider
+        Returns "" when no key is available - never raises - so the multi-provider
         client can simply skip unconfigured providers.
         """
         provider = (provider or "").strip().lower()

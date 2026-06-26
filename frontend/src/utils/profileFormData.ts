@@ -17,6 +17,11 @@ export const emptyWorkExp = (): WorkExperienceBlock => ({
   period_end: '',
   location: '',
   job_type: '',
+  employment_type: '',
+  project_title: '',
+  project_intro: '',
+  contributions: [''],
+  used_skills: '',
   description: '',
 });
 export const emptyEducation = (): EducationBlock => ({
@@ -121,15 +126,24 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
     github_url: p.github_url ?? '',
     profile_summary: p.profile_summary ?? '',
     technical_skills: ts.map((x) => ({ category: (x as TechnicalSkillBlock).category ?? '', skills: (x as TechnicalSkillBlock).skills ?? '' })),
-    work_experience: we.map((x) => ({
-      company_name: (x as WorkExperienceBlock).company_name ?? '',
-      job_title: (x as WorkExperienceBlock).job_title ?? '',
-      period_start: (x as WorkExperienceBlock).period_start ?? '',
-      period_end: (x as WorkExperienceBlock).period_end ?? '',
-      location: (x as WorkExperienceBlock).location ?? '',
-      job_type: (x as WorkExperienceBlock).job_type ?? '',
-      description: (x as WorkExperienceBlock).description ?? '',
-    })),
+    work_experience: we.map((x) => {
+      const w = x as WorkExperienceBlock;
+      const contributions = Array.isArray(w.contributions) ? w.contributions.filter((c) => typeof c === 'string') : [];
+      return {
+        company_name: w.company_name ?? '',
+        job_title: w.job_title ?? '',
+        period_start: w.period_start ?? '',
+        period_end: w.period_end ?? '',
+        location: w.location ?? '',
+        job_type: w.job_type ?? '',
+        employment_type: w.employment_type ?? '',
+        project_title: w.project_title ?? '',
+        project_intro: w.project_intro ?? '',
+        contributions: contributions.length ? contributions : [''],
+        used_skills: w.used_skills ?? '',
+        description: w.description ?? '',
+      };
+    }),
     education: ed.map((x) => ({
       university_name: (x as EducationBlock).university_name ?? '',
       degree: (x as EducationBlock).degree ?? '',

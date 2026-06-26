@@ -62,10 +62,10 @@ class IndeedSpider(BaseJobSpider):
 
     def parse_listing(self, response):
         if detect_cloudflare_challenge(response):
-            self.logger.warning("Cloudflare challenge on %s — skipping", response.url)
+            self.logger.warning("Cloudflare challenge on %s - skipping", response.url)
             return
         if detect_captcha(response):
-            self.logger.warning("CAPTCHA detected on %s — skipping", response.url)
+            self.logger.warning("CAPTCHA detected on %s - skipping", response.url)
             return
 
         mosaic_data = response.css("script#mosaic-data::text").get()

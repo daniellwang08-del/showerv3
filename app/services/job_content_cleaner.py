@@ -3,13 +3,13 @@ Convert HTML to clean plain text for downstream LLM analysis.
 
 This module strips structural/rendering elements (tags, attributes, styles,
 scripts) and returns the full visible text content of the page.  It does NOT
-attempt to locate or rank specific job-description regions — the analysis
+attempt to locate or rank specific job-description regions - the analysis
 engine (LLM) determines which parts of the text constitute the job posting.
 
 Public API
 ----------
-- ``plain_text_from_document_html``  — full HTML document → plain text
-- ``plain_text_from_fragment_html``  — HTML fragment (e.g. JSON-LD description) → plain text
+- ``plain_text_from_document_html``  - full HTML document → plain text
+- ``plain_text_from_fragment_html``  - HTML fragment (e.g. JSON-LD description) → plain text
 """
 
 from __future__ import annotations

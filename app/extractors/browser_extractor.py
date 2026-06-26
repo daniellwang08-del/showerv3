@@ -520,7 +520,7 @@ class BrowserExtractor(BaseExtractor):
         1. Collect text from the main page and from any non-application ATS
            iframes (real JD bodies).
         2. Collect text from ``/job_app`` iframes (Greenhouse application form
-           shells) separately — these usually contain *only* the apply UI, but
+           shells) separately - these usually contain *only* the apply UI, but
            on careers pages that embed Greenhouse the JD itself is rendered
            inside the same iframe.
         3. Prefer non-application text.  Fall back to job_app text only when
@@ -564,7 +564,7 @@ class BrowserExtractor(BaseExtractor):
             best_primary = max(primary, key=len)
             if len(best_primary) >= 400 or not job_app_fallback:
                 return best_primary
-            # Primary text is thin — see if the job_app iframe has richer content.
+            # Primary text is thin - see if the job_app iframe has richer content.
             best_fallback = max(job_app_fallback, key=len)
             return best_fallback if len(best_fallback) > len(best_primary) else best_primary
 

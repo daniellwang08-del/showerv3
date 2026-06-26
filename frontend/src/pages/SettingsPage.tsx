@@ -1,27 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
   FileText,
-  KeyRound,
   Loader2,
   Mail,
   RefreshCw,
   Search,
   Settings2,
-  Shield,
   Target,
-  Zap,
 } from 'lucide-react';
 import {
   fetchUserSettings,
   saveDedupSettings,
   saveMinMatchScoreSettings,
-  saveOpenAiSettings,
   saveResumeTailoringPromptSettings,
   saveCoverLetterPromptSettings,
   fetchCoverLetterPromptDefaults,
-  testOpenAiKey,
   previewMinMatchScore,
   applyMinMatchScore,
   type MinMatchScorePreview,
@@ -32,12 +27,13 @@ import {
   BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS,
   BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH,
 } from '../constants/builtinCoverLetterPrompt';
-import { MarkdownPromptEditor, MarkdownPromptPreview } from '../components/settings/MarkdownPromptEditor';
+import { MarkdownPromptEditor } from '../components/settings/MarkdownPromptEditor';
 import { ResumeTemplateSection } from '../components/settings/ResumeTemplateSection';
 import { CoverLetterTemplateSection } from '../components/settings/CoverLetterTemplateSection';
 import { GoogleSheetsSettingsSection } from '../components/settings/GoogleSheetsSettingsSection';
 import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
-import { ProviderKeySection } from '../components/settings/ProviderKeySection';
+import { ProviderKeysCard } from '../components/settings/ProviderKeysCard';
+import { SettingsCard } from '../components/settings/SettingsCard';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
@@ -115,16 +111,6 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
-  // OpenAI section state
-  const [openaiMode, setOpenaiMode] = useState<SettingsMode>('default');
-  const [openaiKeyInput, setOpenaiKeyInput] = useState('');
-  const [openaiTesting, setOpenaiTesting] = useState(false);
-  const [openaiSaving, setOpenaiSaving] = useState(false);
-  const [openaiTestOk, setOpenaiTestOk] = useState<boolean | null>(null);
-  const [openaiTestMsg, setOpenaiTestMsg] = useState('');
-  const [openaiSaveMsg, setOpenaiSaveMsg] = useState('');
-  const [openaiSaveOk, setOpenaiSaveOk] = useState(false);
-
   // Dedup section state
   const [dedupMode, setDedupMode] = useState<SettingsMode>('default');
   const [dedupDays, setDedupDays] = useState(60);
@@ -160,7 +146,6 @@ export function SettingsPage() {
 
   const applySettings = useCallback((data: UserSettings) => {
     setSettings(data);
-    setOpenaiMode(data.openai_key_mode);
     setDedupMode(data.dedup_recycle_mode);
     setDedupDays(data.dedup_recycle_days_custom);
     setMinScoreMode(data.min_match_score_mode);
@@ -169,9 +154,6 @@ export function SettingsPage() {
     setPromptText(resolveStoredPromptText(data));
     setCoverPromptMode(data.cover_letter_prompt_mode ?? 'default');
     setCoverPromptText(resolveStoredCoverLetterPromptText(data));
-    setOpenaiKeyInput('');
-    setOpenaiTestOk(null);
-    setOpenaiTestMsg('');
   }, []);
 
   const load = useCallback(async () => {
@@ -213,12 +195,6 @@ export function SettingsPage() {
   }, [settings]);
 
   useEffect(() => {
-    if (!openaiSaveOk) return;
-    const t = window.setTimeout(() => setOpenaiSaveOk(false), 3000);
-    return () => window.clearTimeout(t);
-  }, [openaiSaveOk]);
-
-  useEffect(() => {
     if (!dedupSaveOk) return;
     const t = window.setTimeout(() => setDedupSaveOk(false), 3000);
     return () => window.clearTimeout(t);
@@ -244,7 +220,6 @@ export function SettingsPage() {
 
   const defaultDedup = settings?.default_dedup_recycle_days ?? 60;
   const defaultMinScore = settings?.default_min_match_score ?? 0;
-  const savedOpenaiMode = settings?.openai_key_mode ?? 'default';
   const savedDedupMode = settings?.dedup_recycle_mode ?? 'default';
   const savedDedupDays = settings?.dedup_recycle_days_custom ?? 60;
   const savedMinScoreMode = settings?.min_match_score_mode ?? 'default';
@@ -272,95 +247,6 @@ export function SettingsPage() {
   const coverPromptMaxLength =
     settings?.cover_letter_prompt_max_length ?? BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH;
   const safeCoverPromptText = coverPromptText ?? '';
-
-  const openaiKeyDirty = openaiKeyInput.trim().length > 0;
-
-  const handleOpenaiModeChange = (mode: SettingsMode) => {
-    setOpenaiMode(mode);
-    setOpenaiTestOk(null);
-    setOpenaiTestMsg('');
-    setOpenaiSaveMsg('');
-    if (mode === 'custom' && openaiKeyDirty) {
-      setOpenaiTestOk(null);
-    }
-  };
-
-  const handleOpenaiKeyChange = (value: string) => {
-    setOpenaiKeyInput(value);
-    setOpenaiTestOk(null);
-    setOpenaiTestMsg('');
-    setOpenaiSaveMsg('');
-  };
-
-  const handleTestOpenAiKey = async () => {
-    setOpenaiTesting(true);
-    setOpenaiTestMsg('');
-    setOpenaiTestOk(null);
-    setOpenaiSaveMsg('');
-    try {
-      const result = await testOpenAiKey(openaiKeyInput.trim() || undefined);
-      setOpenaiTestOk(result.ok);
-      setOpenaiTestMsg(result.message);
-    } catch (err: unknown) {
-      setOpenaiTestOk(false);
-      const msg =
-        err && typeof err === 'object' && 'response' in err
-          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-          : null;
-      setOpenaiTestMsg(typeof msg === 'string' ? msg : 'Key test failed.');
-    } finally {
-      setOpenaiTesting(false);
-    }
-  };
-
-  const openaiSaveEnabled = useMemo(() => {
-    if (!settings) return false;
-    if (openaiMode === 'default') {
-      return savedOpenaiMode !== 'default';
-    }
-    // custom mode — must pass test first
-    if (openaiTestOk !== true) return false;
-    if (openaiKeyDirty) return true;
-    if (savedOpenaiMode !== 'custom') return true;
-    return false;
-  }, [settings, openaiMode, openaiTestOk, openaiKeyDirty, savedOpenaiMode]);
-
-  const handleSaveOpenAi = async () => {
-    if (!settings || !openaiSaveEnabled) return;
-    setOpenaiSaving(true);
-    setOpenaiSaveMsg('');
-    try {
-      if (openaiMode === 'default') {
-        const data = await saveOpenAiSettings({
-          openai_key_mode: 'default',
-          clear_openai_api_key: true,
-        });
-        applySettings(data);
-        setOpenaiSaveOk(true);
-        setOpenaiSaveMsg('Using system default OpenAI key.');
-      } else {
-        const body: Parameters<typeof saveOpenAiSettings>[0] = {
-          openai_key_mode: 'custom',
-        };
-        if (openaiKeyDirty) {
-          body.openai_api_key = openaiKeyInput.trim();
-        }
-        const data = await saveOpenAiSettings(body);
-        applySettings(data);
-        setOpenaiSaveOk(true);
-        setOpenaiSaveMsg('Custom OpenAI key saved.');
-      }
-    } catch (err: unknown) {
-      setOpenaiSaveOk(false);
-      const msg =
-        err && typeof err === 'object' && 'response' in err
-          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-          : null;
-      setOpenaiSaveMsg(typeof msg === 'string' ? msg : 'Failed to save OpenAI settings.');
-    } finally {
-      setOpenaiSaving(false);
-    }
-  };
 
   const dedupChanged =
     dedupMode !== savedDedupMode ||
@@ -428,8 +314,6 @@ export function SettingsPage() {
     minScoreMode === 'default'
       ? ({ min_match_score_mode: 'default' as const })
       : ({ min_match_score_mode: 'custom' as const, min_match_score: minScore });
-
-  const draftThreshold = minScoreMode === 'default' ? defaultMinScore : minScore;
 
   const handleCheckMinScoreJobs = async () => {
     if (!settings) return;
@@ -658,145 +542,32 @@ export function SettingsPage() {
   return (
     <PageScrollArea>
       <div className="w-full px-5 py-5">
-      <div className="mb-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
-            <Settings2 size={20} />
+        <div className="mb-6 flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white">
+            <Settings2 size={22} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-            <p className="text-sm text-slate-500">
-              OpenAI, company check cycle, match score threshold, job sync, Google Sheets, resume/cover letter prompts, and templates are saved separately.
-            </p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">Settings</h1>
+            <p className="mt-0.5 text-sm text-slate-600">Provider keys, matching, sync, and document templates.</p>
           </div>
         </div>
-      </div>
 
-      {loading ? (
-        <p className="text-sm text-slate-500">Loading settings…</p>
-      ) : loadError ? (
-        <p className="text-sm text-rose-700">{loadError}</p>
-      ) : (
-        <div className="space-y-5">
-          <div className="grid gap-5 xl:grid-cols-3 items-start">
-          {/* OpenAI */}
-          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 text-white">
-                <KeyRound className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-slate-900">OpenAI API key</h2>
-                  <ModeToggle
-                    value={openaiMode}
-                    onChange={handleOpenaiModeChange}
-                    disabled={openaiSaving || openaiTesting}
-                  />
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  Test your key before saving. Custom keys are encrypted and never shown in full.
-                </p>
+        {loading ? (
+          <p className="text-sm text-slate-500">Loading settings…</p>
+        ) : loadError ? (
+          <p className="text-sm text-rose-700">{loadError}</p>
+        ) : (
+          <div className="space-y-5">
+            {settings && <ProviderKeysCard settings={settings} onSaved={applySettings} />}
 
-                {openaiMode === 'default' ? (
-                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
-                    <Shield size={16} className="mt-0.5 shrink-0 text-slate-400" />
-                    <span>
-                      System default key
-                      {settings?.system_openai_available
-                        ? ' is available on this server.'
-                        : ' is not configured — use a custom key instead.'}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-3">
-                    {settings?.openai_key_hint && !openaiKeyDirty && (
-                      <p className="text-xs text-slate-500">
-                        Saved key:{' '}
-                        <code className="rounded bg-slate-100 px-1.5 py-0.5">{settings.openai_key_hint}</code>
-                        {' '}— enter a new key to replace, or test the saved key.
-                      </p>
-                    )}
-                    <div>
-                      <label htmlFor="openai-key" className="text-xs font-semibold text-slate-700">
-                        Your OpenAI API key
-                      </label>
-                      <input
-                        id="openai-key"
-                        type="password"
-                        autoComplete="off"
-                        placeholder="sk-…"
-                        value={openaiKeyInput}
-                        onChange={(e) => handleOpenaiKeyChange(e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono text-slate-800 shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleTestOpenAiKey()}
-                        disabled={
-                          openaiTesting ||
-                          (openaiKeyDirty ? !openaiKeyInput.trim() : !settings?.openai_key_configured)
-                        }
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {openaiTesting ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Zap size={14} />
-                        )}
-                        {openaiTesting ? 'Testing…' : 'Test API key'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveOpenAi()}
-                        disabled={!openaiSaveEnabled || openaiSaving}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {openaiSaving ? 'Saving…' : 'Save OpenAI settings'}
-                      </button>
-                    </div>
-                    {openaiTestMsg && (
-                      <SectionMessage ok={openaiTestOk === true} text={openaiTestMsg} />
-                    )}
-                    {openaiMode === 'custom' && openaiTestOk !== true && !openaiTestMsg && (
-                      <p className="text-xs text-slate-500">
-                        Test your key to enable save{openaiKeyDirty ? '' : ' (or test the saved key)'}.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {openaiMode === 'default' && (
-                  <div className="mt-4">
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveOpenAi()}
-                      disabled={!openaiSaveEnabled || openaiSaving}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {openaiSaving ? 'Saving…' : 'Save OpenAI settings'}
-                    </button>
-                  </div>
-                )}
-
-                {openaiSaveMsg && (
-                  <SectionMessage ok={openaiSaveOk} text={openaiSaveMsg} />
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* Min match score */}
-          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-rose-600 to-orange-600 text-white">
-                <Target className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-slate-900">Minimum match score</h2>
+            <div className="grid items-stretch gap-5 lg:grid-cols-2">
+              {/* Minimum match score */}
+              <SettingsCard
+                icon={Target}
+                iconClass="bg-gradient-to-br from-rose-500 to-orange-600"
+                title="Minimum match score"
+                description="Auto-hide jobs scoring below this after AI analysis."
+                actions={
                   <ModeToggle
                     value={minScoreMode}
                     onChange={(m) => {
@@ -807,25 +578,16 @@ export function SettingsPage() {
                     }}
                     disabled={minScoreSaving}
                   />
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  After each job finishes AI analysis, scores below this threshold are automatically
-                  hidden from the dashboard (Low match tab). Use Check jobs to preview already-analyzed
-                  jobs, then hide them from the main list.
-                </p>
-
+                }
+              >
                 {minScoreMode === 'default' ? (
-                  <div className="mt-4 rounded-lg border border-rose-100 bg-rose-50/60 px-3 py-2.5 text-sm text-rose-900">
+                  <div className="rounded-lg border border-rose-100 bg-rose-50/60 px-3 py-2 text-sm text-rose-900">
                     System default: <strong>{defaultMinScore}</strong>
-                    {defaultMinScore === 0 ? ' (show all scored jobs)' : '+'}
+                    {defaultMinScore === 0 ? ' (show all)' : '+'}
                   </div>
                 ) : (
-                  <div className="mt-4 space-y-4">
-                    <div>
-                      <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-700">
-                        <label htmlFor="min-score-slider">Minimum score</label>
-                        <span className="tabular-nums text-rose-700">{minScore}</span>
-                      </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
                       <input
                         id="min-score-slider"
                         type="range"
@@ -833,63 +595,44 @@ export function SettingsPage() {
                         max={100}
                         value={minScore}
                         onChange={(e) => handleMinScoreChange(Number(e.target.value))}
-                        className="h-2 w-full cursor-pointer accent-rose-600"
+                        className="h-2 flex-1 cursor-pointer accent-rose-600"
                       />
-                      <div className="mt-1 flex w-full justify-between text-[10px] text-slate-400">
-                        <span>0</span>
-                        <span>100</span>
-                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={minScore}
+                        onChange={(e) => handleMinScoreChange(Number(e.target.value) || 0)}
+                        className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center text-sm font-semibold text-slate-800 shadow-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
+                      />
                     </div>
-
-                    <div className="flex flex-wrap items-end gap-3">
-                      <div>
-                        <label htmlFor="min-score" className="text-xs font-semibold text-slate-700">
-                          Exact score
-                        </label>
-                        <div className="mt-1 flex items-center gap-2">
-                          <input
-                            id="min-score"
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={minScore}
-                            onChange={(e) => handleMinScoreChange(Number(e.target.value) || 0)}
-                            className="w-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2 pb-[2px]">
-                        {MATCH_SCORE_PRESETS.map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            onClick={() => handleMinScoreChange(preset)}
-                            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                              minScore === preset
-                                ? 'border-rose-400 bg-rose-100 text-rose-800'
-                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                            }`}
-                          >
-                            {preset === 0 ? 'All' : preset}
-                          </button>
-                        ))}
-                      </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {MATCH_SCORE_PRESETS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => handleMinScoreChange(preset)}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                            minScore === preset
+                              ? 'border-rose-400 bg-rose-100 text-rose-800'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                          }`}
+                        >
+                          {preset === 0 ? 'All' : preset}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
 
-                <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void handleCheckMinScoreJobs()}
                     disabled={minScoreChecking || minScoreApplying || minScoreSaving}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {minScoreChecking ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Search size={14} />
-                    )}
+                    {minScoreChecking ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
                     {minScoreChecking ? 'Checking…' : 'Check jobs'}
                   </button>
                   <button
@@ -898,65 +641,35 @@ export function SettingsPage() {
                     disabled={!hideJobsEnabled || minScoreApplying || minScoreChecking || minScoreSaving}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {minScoreApplying ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : null}
+                    {minScoreApplying ? <Loader2 size={14} className="animate-spin" /> : null}
                     {minScoreApplying ? 'Applying…' : 'Hide from dashboard'}
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleSaveMinScore()}
                     disabled={!minScoreSaveEnabled || minScoreSaving || minScoreApplying}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {minScoreSaving ? 'Saving…' : 'Save threshold only'}
+                    {minScoreSaving ? 'Saving…' : 'Save'}
                   </button>
                 </div>
 
-                {!minScoreCheckResult && !minScoreCheckMsg && draftThreshold > 0 && (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Set your threshold, click Check jobs to see how many existing analyzed jobs would be hidden.
-                  </p>
-                )}
-
                 {minScoreCheckMsg && (
-                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
                     {minScoreCheckMsg}
                   </div>
                 )}
 
-                {minScoreCheckResult && minScoreCheckResult.samples.length > 0 && (
-                  <div className="mt-3 rounded-lg border border-rose-100 bg-rose-50/40 px-3 py-2.5">
-                    <p className="text-xs font-semibold text-rose-900">
-                      Most recent jobs below {minScoreCheckResult.threshold}
-                    </p>
-                    <ul className="mt-2 space-y-1.5">
-                      {minScoreCheckResult.samples.map((job) => (
-                        <li key={job.job_id} className="flex items-center justify-between gap-2 text-xs text-slate-700">
-                          <span className="truncate">
-                            {job.title || 'Untitled'}
-                            {job.company ? ` · ${job.company}` : ''}
-                          </span>
-                          <span className="shrink-0 font-bold tabular-nums text-rose-700">{job.match_score}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
                 {minScoreCheckResult && (
-                  <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-2 2xl:grid-cols-4">
+                  <div className="mt-3 grid grid-cols-4 gap-2">
                     {[
-                      ['Analyzed visible', minScoreCheckResult.analyzed_visible_count],
-                      ['Would hide', minScoreCheckResult.would_hide_count],
-                      ['Already hidden', minScoreCheckResult.already_hidden_count],
-                      ['Would restore', minScoreCheckResult.would_restore_count],
+                      ['Visible', minScoreCheckResult.analyzed_visible_count],
+                      ['Hide', minScoreCheckResult.would_hide_count],
+                      ['Hidden', minScoreCheckResult.already_hidden_count],
+                      ['Restore', minScoreCheckResult.would_restore_count],
                     ].map(([label, value]) => (
-                      <div
-                        key={label}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-center"
-                      >
-                        <div className="text-lg font-bold tabular-nums text-slate-900">{value}</div>
+                      <div key={label} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center">
+                        <div className="text-base font-bold tabular-nums text-slate-900">{value}</div>
                         <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
                       </div>
                     ))}
@@ -964,19 +677,15 @@ export function SettingsPage() {
                 )}
 
                 {minScoreSaveMsg && <SectionMessage ok={minScoreSaveOk} text={minScoreSaveMsg} />}
-              </div>
-            </div>
-          </section>
+              </SettingsCard>
 
-          {/* Company check cycle */}
-          <section className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 text-white">
-                <RefreshCw className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-slate-900">Company check cycle</h2>
+              {/* Company check cycle */}
+              <SettingsCard
+                icon={RefreshCw}
+                iconClass="bg-gradient-to-br from-indigo-500 to-purple-600"
+                title="Company check cycle"
+                description="Days before a repeat posting counts as fresh."
+                actions={
                   <ModeToggle
                     value={dedupMode}
                     onChange={(m) => {
@@ -985,22 +694,15 @@ export function SettingsPage() {
                     }}
                     disabled={dedupSaving}
                   />
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  Days before a new posting at the same company is treated as fresh again.
-                </p>
-
+                }
+              >
                 {dedupMode === 'default' ? (
-                  <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 text-sm text-indigo-900">
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-sm text-indigo-900">
                     System default: <strong>{defaultDedup} days</strong>
                   </div>
                 ) : (
-                  <div className="mt-4 space-y-4">
-                    <div>
-                      <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-700">
-                        <label htmlFor="dedup-slider">Recycle period</label>
-                        <span className="tabular-nums text-indigo-700">{dedupDays} days</span>
-                      </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
                       <input
                         id="dedup-slider"
                         type="range"
@@ -1008,291 +710,181 @@ export function SettingsPage() {
                         max={DEDUP_SLIDER_MAX}
                         value={sliderValue}
                         onChange={(e) => handleDedupDaysChange(Number(e.target.value))}
-                        className="h-2 w-full cursor-pointer accent-indigo-600"
+                        className="h-2 flex-1 cursor-pointer accent-indigo-600"
                       />
-                      <div className="mt-1 flex w-full justify-between text-[10px] text-slate-400">
-                        <span>1d</span>
-                        <span>{DEDUP_SLIDER_MAX}d</span>
-                      </div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={3650}
+                        value={dedupDays}
+                        onChange={(e) => handleDedupDaysChange(Number(e.target.value) || 1)}
+                        className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center text-sm font-semibold text-slate-800 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                      />
                     </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {DEDUP_PRESETS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => handleDedupDaysChange(preset)}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
+                            dedupDays === preset
+                              ? 'border-indigo-400 bg-indigo-100 text-indigo-800'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                          }`}
+                        >
+                          {preset}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-                    <div className="flex flex-wrap items-end gap-3">
-                      <div>
-                        <label htmlFor="dedup-days" className="text-xs font-semibold text-slate-700">
-                          Exact days
-                        </label>
-                        <div className="mt-1 flex items-center gap-2">
-                          <input
-                            id="dedup-days"
-                            type="number"
-                            min={1}
-                            max={3650}
-                            value={dedupDays}
-                            onChange={(e) => handleDedupDaysChange(Number(e.target.value) || 1)}
-                            className="w-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                          />
-                          <span className="text-sm text-slate-500">days</span>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2 pb-[2px]">
-                        {DEDUP_PRESETS.map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            onClick={() => handleDedupDaysChange(preset)}
-                            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                              dedupDays === preset
-                                ? 'border-indigo-400 bg-indigo-100 text-indigo-800'
-                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                            }`}
-                          >
-                            {preset}d
-                          </button>
-                        ))}
-                      </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveDedup()}
+                    disabled={!dedupSaveEnabled || dedupSaving}
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {dedupSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+
+                {dedupSaveMsg && <SectionMessage ok={dedupSaveOk} text={dedupSaveMsg} />}
+              </SettingsCard>
+            </div>
+
+            <GoogleSheetsSettingsSection />
+
+            <JobSyncSettingsSection />
+
+            <div className="grid items-start gap-5 lg:grid-cols-2">
+              <ResumeTemplateSection />
+              <CoverLetterTemplateSection />
+            </div>
+
+            <div className="grid items-start gap-5 lg:grid-cols-2">
+              {/* Resume tailoring prompt */}
+              <SettingsCard
+                icon={FileText}
+                iconClass="bg-gradient-to-br from-blue-500 to-indigo-600"
+                title="Resume tailoring prompt"
+                description="How AI writes tailored resume content."
+                actions={<ModeToggle value={promptMode} onChange={handlePromptModeChange} disabled={promptSaving} />}
+              >
+                {promptMode === 'default' ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    Using built-in instructions. Switch to <span className="font-semibold text-slate-700">Custom</span> to edit.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs tabular-nums ${promptValidLength ? 'text-slate-400' : 'text-rose-600'}`}>
+                        {promptTrimmed.length.toLocaleString()} / {promptMaxLength.toLocaleString()}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResetPrompt}
+                        disabled={promptSaving}
+                        className="text-xs font-semibold text-slate-500 transition hover:text-slate-800 disabled:opacity-50"
+                      >
+                        Reset to default
+                      </button>
                     </div>
-                    {dedupDays > DEDUP_SLIDER_MAX && (
-                      <p className="text-xs text-slate-500">
-                        Values above {DEDUP_SLIDER_MAX} days: use the number field (max 3650).
+                    <MarkdownPromptEditor
+                      id="resume-tailoring-prompt"
+                      value={safePromptText}
+                      maxLength={promptMaxLength}
+                      disabled={promptSaving}
+                      onChange={(next) => {
+                        setPromptText(next);
+                        setPromptSaveMsg('');
+                      }}
+                    />
+                    {!promptValidLength && promptTrimmed.length > 0 && (
+                      <p className="text-xs text-rose-600">
+                        Must be {RESUME_TAILORING_PROMPT_MIN_LENGTH}–{promptMaxLength.toLocaleString()} characters.
                       </p>
                     )}
                   </div>
                 )}
 
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveDedup()}
-                    disabled={!dedupSaveEnabled || dedupSaving}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {dedupSaving ? 'Saving…' : 'Save check cycle'}
-                  </button>
-                </div>
-
-                {dedupSaveMsg && <SectionMessage ok={dedupSaveOk} text={dedupSaveMsg} />}
-              </div>
-            </div>
-          </section>
-
-          </div>
-
-          {settings && (
-            <div className="grid gap-5 xl:grid-cols-2 items-start">
-              <ProviderKeySection provider="anthropic" settings={settings} onSaved={applySettings} />
-              <ProviderKeySection provider="gemini" settings={settings} onSaved={applySettings} />
-            </div>
-          )}
-
-          <GoogleSheetsSettingsSection />
-
-          <JobSyncSettingsSection />
-
-          <div className="grid gap-5 xl:grid-cols-2 items-stretch">
-          {/* Résumé template */}
-          <ResumeTemplateSection />
-
-          {/* Cover letter template */}
-          <CoverLetterTemplateSection />
-
-          {/* Resume tailoring prompt */}
-          <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex min-h-0 flex-1 items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white">
-                <FileText className="h-5 w-5" />
-              </div>
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-slate-900">Resume tailoring prompt</h2>
-                  <ModeToggle
-                    value={promptMode}
-                    onChange={handlePromptModeChange}
-                    disabled={promptSaving}
-                  />
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  Controls how AI writes tailored resume content during job analysis.
-                </p>
-
-                {promptMode === 'default' ? (
-                  <div className="mt-4 flex flex-1 flex-col space-y-3">
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
-                      Using the built-in resume tailoring instructions.
-                    </div>
-                    <div className="flex flex-col">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Built-in instructions
-                      </p>
-                      <div className="mt-2 max-h-96 overflow-y-auto">
-                        <MarkdownPromptPreview value={defaultPromptInstructions} />
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-3">
-                    <div>
-                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <label htmlFor="resume-tailoring-prompt" className="text-xs font-semibold text-slate-700">
-                          Custom instructions (Markdown)
-                        </label>
-                        <span
-                          className={`text-xs tabular-nums ${
-                            promptValidLength ? 'text-slate-500' : 'text-rose-600'
-                          }`}
-                        >
-                          {promptTrimmed.length.toLocaleString()} / {promptMaxLength.toLocaleString()}
-                        </span>
-                      </div>
-                      <MarkdownPromptEditor
-                        id="resume-tailoring-prompt"
-                        value={safePromptText}
-                        maxLength={promptMaxLength}
-                        disabled={promptSaving}
-                        onChange={(next) => {
-                          setPromptText(next);
-                          setPromptSaveMsg('');
-                        }}
-                      />
-                      {!promptValidLength && promptTrimmed.length > 0 && (
-                        <p className="mt-2 text-xs text-rose-600">
-                          Prompt must be between {RESUME_TAILORING_PROMPT_MIN_LENGTH} and{' '}
-                          {promptMaxLength.toLocaleString()} characters.
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleResetPrompt}
-                      disabled={promptSaving}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Reset to built-in default
-                    </button>
-                  </div>
-                )}
-
-                <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="mt-3 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void handleSavePrompt()}
                     disabled={!promptSaveEnabled || promptSaving}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {promptSaving ? 'Saving…' : 'Save resume prompt'}
+                    {promptSaving ? 'Saving…' : 'Save'}
                   </button>
                 </div>
 
-                {promptMode === 'custom' && (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Changes apply to future tailored resume generations. Rerun a job to regenerate documents.
-                  </p>
-                )}
-
                 {promptSaveMsg && <SectionMessage ok={promptSaveOk} text={promptSaveMsg} />}
-              </div>
-            </div>
-          </section>
+              </SettingsCard>
 
-          {/* Cover letter prompt */}
-          <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex min-h-0 flex-1 items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-purple-600 text-white">
-                <Mail className="h-5 w-5" />
-              </div>
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold text-slate-900">Cover letter prompt</h2>
-                  <ModeToggle
-                    value={coverPromptMode}
-                    onChange={handleCoverPromptModeChange}
-                    disabled={coverPromptSaving}
-                  />
-                </div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  Controls how AI writes cover letter bodies. Greeting and signature come from your cover letter template.
-                </p>
-
+              {/* Cover letter prompt */}
+              <SettingsCard
+                icon={Mail}
+                iconClass="bg-gradient-to-br from-violet-500 to-purple-600"
+                title="Cover letter prompt"
+                description="How AI writes the cover letter body."
+                actions={<ModeToggle value={coverPromptMode} onChange={handleCoverPromptModeChange} disabled={coverPromptSaving} />}
+              >
                 {coverPromptMode === 'default' ? (
-                  <div className="mt-4 flex flex-1 flex-col space-y-3">
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
-                      Using the built-in cover letter instructions.
-                    </div>
-                    <div className="flex flex-col">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Built-in instructions
-                      </p>
-                      <div className="mt-2 max-h-96 overflow-y-auto">
-                        <MarkdownPromptPreview value={defaultCoverPromptInstructions} />
-                      </div>
-                    </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    Using built-in instructions. Switch to <span className="font-semibold text-slate-700">Custom</span> to edit.
                   </div>
                 ) : (
-                  <div className="mt-4 space-y-3">
-                    <div>
-                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                        <label htmlFor="cover-letter-prompt" className="text-xs font-semibold text-slate-700">
-                          Custom instructions (Markdown)
-                        </label>
-                        <span
-                          className={`text-xs tabular-nums ${
-                            coverPromptValidLength ? 'text-slate-500' : 'text-rose-600'
-                          }`}
-                        >
-                          {coverPromptTrimmed.length.toLocaleString()} / {coverPromptMaxLength.toLocaleString()}
-                        </span>
-                      </div>
-                      <MarkdownPromptEditor
-                        id="cover-letter-prompt"
-                        value={safeCoverPromptText}
-                        maxLength={coverPromptMaxLength}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs tabular-nums ${coverPromptValidLength ? 'text-slate-400' : 'text-rose-600'}`}>
+                        {coverPromptTrimmed.length.toLocaleString()} / {coverPromptMaxLength.toLocaleString()}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResetCoverPrompt}
                         disabled={coverPromptSaving}
-                        onChange={(next) => {
-                          setCoverPromptText(next);
-                          setCoverPromptSaveMsg('');
-                        }}
-                      />
-                      {!coverPromptValidLength && coverPromptTrimmed.length > 0 && (
-                        <p className="mt-2 text-xs text-rose-600">
-                          Prompt must be between {COVER_LETTER_PROMPT_MIN_LENGTH} and{' '}
-                          {coverPromptMaxLength.toLocaleString()} characters.
-                        </p>
-                      )}
+                        className="text-xs font-semibold text-slate-500 transition hover:text-slate-800 disabled:opacity-50"
+                      >
+                        Reset to default
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleResetCoverPrompt}
+                    <MarkdownPromptEditor
+                      id="cover-letter-prompt"
+                      value={safeCoverPromptText}
+                      maxLength={coverPromptMaxLength}
                       disabled={coverPromptSaving}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Reset to built-in default
-                    </button>
+                      onChange={(next) => {
+                        setCoverPromptText(next);
+                        setCoverPromptSaveMsg('');
+                      }}
+                    />
+                    {!coverPromptValidLength && coverPromptTrimmed.length > 0 && (
+                      <p className="text-xs text-rose-600">
+                        Must be {COVER_LETTER_PROMPT_MIN_LENGTH}–{coverPromptMaxLength.toLocaleString()} characters.
+                      </p>
+                    )}
                   </div>
                 )}
 
-                <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="mt-3 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void handleSaveCoverPrompt()}
                     disabled={!coverPromptSaveEnabled || coverPromptSaving}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {coverPromptSaving ? 'Saving…' : 'Save cover letter prompt'}
+                    {coverPromptSaving ? 'Saving…' : 'Save'}
                   </button>
                 </div>
 
-                {coverPromptMode === 'custom' && (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Changes apply to future cover letter generations. Rerun a job to regenerate documents.
-                  </p>
-                )}
-
                 {coverPromptSaveMsg && <SectionMessage ok={coverPromptSaveOk} text={coverPromptSaveMsg} />}
-              </div>
+              </SettingsCard>
             </div>
-          </section>
           </div>
-        </div>
-      )}
+        )}
       </div>
     </PageScrollArea>
   );

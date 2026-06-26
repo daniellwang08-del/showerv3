@@ -41,10 +41,13 @@ def _is_remote_expr():
 
 
 def _job_source_expr():
+    # Manual submissions/attachments carry raw_metadata.submitted_data but no
+    # platform source, so label them "manual" instead of falling through to
+    # "unknown".
     return func.coalesce(
         Job.raw_metadata["source"].as_string(),
         Job.raw_metadata["scraped_source"].as_string(),
-        "unknown",
+        case((Job.raw_metadata["submitted_data"].isnot(None), "manual"), else_="unknown"),
     )
 
 
@@ -88,6 +91,12 @@ async def fetch_dashboard_stats(
                         Job.posted_date < day_end,
                     )
                 ).label("today_posted"),
+                func.count().filter(
+                    and_(
+                        UserJobStatus.status == "active",
+                        Job.raw_metadata["submitted_data"].isnot(None),
+                    )
+                ).label("my_jobs"),
                 func.count().filter(
                     JobExtraction.status == ExtractionStatus.COMPLETED
                 ).label("extracted_jobs"),
@@ -139,6 +148,7 @@ async def fetch_dashboard_stats(
         "today_scraped": stats_row.today_added or 0,
         "today_remote": stats_row.today_remote or 0,
         "today_posted": stats_row.today_posted or 0,
+        "my_jobs": stats_row.my_jobs or 0,
         "extracted_jobs": stats_row.extracted_jobs or 0,
         "ready_jobs": stats_row.ready_jobs or 0,
         "sources": sources,

@@ -5,12 +5,12 @@ Opens user-designed DOCX templates, replaces placeholder tags with AI-tailored
 content, and converts to PDF via LibreOffice.
 
 Placeholders recognised in the resume template:
-  {{PROFILE_SUMMARY}}  — single paragraph replacement
-  {{SKILLS_CONTENT}}   — replaced by N skill-category rows
-  {{EXP_1}} … {{EXP_N}} — replaced by per-company experience blocks
+  {{PROFILE_SUMMARY}}  - single paragraph replacement
+  {{SKILLS_CONTENT}}   - replaced by N skill-category rows
+  {{EXP_1}} … {{EXP_N}} - replaced by per-company experience blocks
 
 Placeholders recognised in the cover letter template:
-  {{COVER_LETTER_BODY}} — AI-generated body only; all letterhead, greeting, and signature
+  {{COVER_LETTER_BODY}} - AI-generated body only; all letterhead, greeting, and signature
   are fixed text in the user's uploaded template.
 """
 
@@ -202,7 +202,7 @@ def _replace_tag_with_paragraphs(
     """Replace the paragraph containing *tag* with a list of new <w:p> elements.
 
     The new paragraphs are inserted *after* the anchor; then the anchor is removed
-    (unless cleanup_anchor is False — used when the anchor has other content to keep).
+    (unless cleanup_anchor is False - used when the anchor has other content to keep).
     """
     anchor = _find_paragraph_with_tag(doc, tag)
     if anchor is None:
@@ -301,76 +301,399 @@ def _split_anchor_around_tag(
 
 # ── Resume content builders ───────────────────────────────────────────────
 
-def _build_skills_elements(skills: list[dict], anchor_p) -> list[OxmlElement]:
-    """Build <w:p> elements for the skills section, cloning formatting from anchor."""
+_SKILLS_SPLIT_RE = re.compile(r"[,;|\n]+")
+
+
+def _split_skill_values(s: str) -> list[str]:
+    return [x.strip() for x in _SKILLS_SPLIT_RE.split(s or "") if x.strip()]
+
+
+def _tint_hex(value: str | None, keep: float) -> str:
+    """Blend *value* toward white (keep=fraction of original retained)."""
+    v = (value or "#000000").lstrip("#")
+    if len(v) == 3:
+        v = "".join(ch * 2 for ch in v)
+    try:
+        r, g, b = int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16)
+    except Exception:
+        return "f1f5f9"
+    r = round(255 * (1 - keep) + r * keep)
+    g = round(255 * (1 - keep) + g * keep)
+    b = round(255 * (1 - keep) + b * keep)
+    return f"{r:02x}{g:02x}{b:02x}"
+
+
+def _styled_run(
+    text: str,
+    rPr_template: OxmlElement | None,
+    *,
+    bold: bool = False,
+    caps: bool = False,
+    color_hex: str | None = None,
+    fill_hex: str | None = None,
+) -> OxmlElement:
+    """A <w:r> with optional bold, caps, font color and background shading."""
+    r = OxmlElement("w:r")
+    rPr = deepcopy(rPr_template) if rPr_template is not None else OxmlElement("w:rPr")
+    for tag_name in ("w:b", "w:bCs", "w:caps", "w:color", "w:shd"):
+        for el in rPr.findall(qn(tag_name)):
+            rPr.remove(el)
+    if bold:
+        rPr.insert(0, OxmlElement("w:b"))
+        rPr.append(OxmlElement("w:bCs"))
+    if caps:
+        rPr.append(OxmlElement("w:caps"))
+    if color_hex:
+        col = OxmlElement("w:color")
+        col.set(qn("w:val"), color_hex.lstrip("#"))
+        rPr.append(col)
+    if fill_hex:
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), fill_hex.lstrip("#"))
+        rPr.append(shd)
+    r.append(rPr)
+    t = OxmlElement("w:t")
+    t.set(qn("xml:space"), "preserve")
+    t.text = text
+    r.append(t)
+    return r
+
+
+def _category_runs(
+    cat: str,
+    rPr_tpl: OxmlElement | None,
+    cat_style: str,
+    accent: str | None,
+    heading: str | None,
+) -> list[OxmlElement]:
+    if cat_style == "caps":
+        return [_styled_run(cat.upper(), rPr_tpl, bold=True, color_hex=heading)]
+    if cat_style == "accent":
+        return [_styled_run(cat, rPr_tpl, bold=True, color_hex=accent or heading)]
+    if cat_style == "badge":
+        return [_styled_run(f"  {cat.upper()}  ", rPr_tpl, bold=True, color_hex="#ffffff", fill_hex=accent or "334155")]
+    if cat_style == "bar":
+        runs: list[OxmlElement] = []
+        runs.append(_styled_run("\u258f ", rPr_tpl, bold=True, color_hex=accent or heading))
+        runs.append(_styled_run(cat, rPr_tpl, bold=True, color_hex=heading))
+        return runs
+    return [_styled_run(cat, rPr_tpl, bold=True, color_hex=heading)]
+
+
+def _build_skills_elements(
+    skills: list[dict],
+    anchor_p,
+    style: dict | None = None,
+    colors: dict | None = None,
+) -> list[OxmlElement]:
+    """Build <w:p> elements for the skills section, cloning formatting from anchor.
+
+    Each skill in a category is split into its own structured unit; the SkillsStyle
+    *style* controls the layout (inline / stacked / bullets / chips / pipe / grid),
+    category-label treatment and chip shading so the .docx matches the live preview.
+    """
     rPr_tpl = _get_template_rPr(anchor_p)
-    result = []
+    style = style or {}
+    colors = colors or {}
+    layout = style.get("layout", "inline")
+    if layout == "bullets":  # one-term-per-line lists were dropped; render as chips
+        layout = "chips"
+    cat_style = style.get("category", "bold")
+    accent_chips = bool(style.get("accent_chips"))
+    accent = (colors.get("accent") or "").strip() or None
+    heading = (colors.get("heading") or "").strip() or None
+    text_col = (colors.get("text") or "").strip() or None
+
+    result: list[OxmlElement] = []
     for item in skills:
-        cat = item.get("category", "")
-        vals = item.get("skills", "")
-        runs = [
-            _make_run(f"{cat}: ", rPr_tpl, bold=True),
-            *_runs_from_marked_text(vals, rPr_tpl),
-        ]
-        result.append(_make_paragraph_from_anchor(anchor_p, runs))
+        cat = (item.get("category") or "").strip()
+        vals = _split_skill_values(item.get("skills") or "")
+        if not vals and not cat:
+            continue
+        cat_runs = _category_runs(cat, rPr_tpl, cat_style, accent, heading) if cat else []
+
+        if layout in ("inline", "pipe", "grid"):
+            sep = "  |  " if layout == "pipe" else ", "
+            runs = list(cat_runs)
+            if cat:
+                runs.append(_make_run(" " if cat_style == "badge" else ": ", rPr_tpl))
+            runs.extend(_runs_from_marked_text(sep.join(vals), rPr_tpl))
+            result.append(_make_paragraph_from_anchor(anchor_p, runs))
+        elif layout == "stacked":
+            if cat:
+                result.append(_make_paragraph_from_anchor(anchor_p, cat_runs))
+            result.append(_make_paragraph_from_anchor(anchor_p, _runs_from_marked_text(", ".join(vals), rPr_tpl)))
+        elif layout == "chips":
+            if cat:
+                result.append(_make_paragraph_from_anchor(anchor_p, cat_runs))
+            fill = _tint_hex(accent, 0.14) if (accent_chips and accent) else "eef2f7"
+            chip_color = accent if (accent_chips and accent) else text_col
+            chip_runs: list[OxmlElement] = []
+            for i, sk in enumerate(vals):
+                if i:
+                    chip_runs.append(_make_run("  ", rPr_tpl))
+                chip_runs.append(_styled_run(f"  {sk}  ", rPr_tpl, color_hex=chip_color, fill_hex=fill))
+            result.append(_make_paragraph_from_anchor(anchor_p, chip_runs))
+        else:
+            runs = list(cat_runs)
+            if cat:
+                runs.append(_make_run(": ", rPr_tpl))
+            runs.extend(_runs_from_marked_text(", ".join(vals), rPr_tpl))
+            result.append(_make_paragraph_from_anchor(anchor_p, runs))
     return result
+
+
+_INLINE_BULLET_RE = re.compile(r"[•▪‣◦∙·●]")
+_LINE_BULLET_RE = re.compile(r"^\s*(?:[-*▪‣◦∙·●]|\d+[.)])\s+(.*)$")
+_PROJECT_LINE_RE = re.compile(r"^\s*project\s*[:\-\u2013\u2014]\s*", re.IGNORECASE)
+
+
+def _build_lead_paragraphs(
+    lead: str,
+    anchor_p,
+    rPr_tpl,
+    *,
+    project_already_rendered: bool,
+) -> list[OxmlElement]:
+    """Render the experience lead text, putting a ``Project: <title>`` prefix on its
+    own line (bold label) and keeping the remaining description as a flowing paragraph.
+
+    The project title and description frequently arrive separated by a newline that
+    would otherwise be collapsed into one run-on line; this restores the line break.
+    """
+    segments = [seg.strip() for seg in (lead or "").split("\n") if seg.strip()]
+    if not segments:
+        return []
+
+    paragraphs: list[OxmlElement] = []
+    start = 0
+    first = segments[0]
+    looks_like_title = bool(_PROJECT_LINE_RE.match(first)) and (len(segments) > 1 or len(first) <= 80)
+
+    if looks_like_title:
+        if project_already_rendered:
+            # A PROJECT: line was already emitted from project_name - drop the duplicate.
+            start = 1
+        else:
+            match = _PROJECT_LINE_RE.match(first)
+            title = first[match.end():].strip()
+            runs = [_make_run("Project: ", rPr_tpl, bold=True)]
+            if title:
+                runs.extend(_runs_from_marked_text(title, rPr_tpl))
+            paragraphs.append(_make_paragraph_from_anchor(anchor_p, runs))
+            start = 1
+
+    description = " ".join(segments[start:]).strip()
+    if description:
+        paragraphs.append(_make_paragraph_from_anchor(anchor_p, _runs_from_marked_text(description, rPr_tpl)))
+    return paragraphs
+
+
+def split_description_and_bullets(text: str) -> tuple[str, list[str]]:
+    """Separate a free-form experience description into a lead paragraph and bullets.
+
+    Tailored/profile text frequently arrives as a single blob where individual
+    achievements are joined inline with a bullet glyph (``… workloads. • Architected …
+    • Built …``) or as newline-prefixed list items. Rendering that verbatim produces
+    one giant run-on paragraph. This splits it so each achievement becomes its own
+    bullet line while keeping any introductory sentence as the lead.
+    """
+    s = (text or "").strip()
+    if not s:
+        return "", []
+
+    if _INLINE_BULLET_RE.search(s):
+        segments = [seg.strip(" \t\r\n-\u2013\u2014").strip() for seg in _INLINE_BULLET_RE.split(s)]
+        segments = [seg for seg in segments if seg]
+        if len(segments) >= 2:
+            return segments[0], segments[1:]
+        return s, []
+
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    matches = [_LINE_BULLET_RE.match(ln) for ln in lines]
+    if sum(1 for m in matches if m) >= 2:
+        lead_lines: list[str] = []
+        bullets: list[str] = []
+        for ln, m in zip(lines, matches):
+            if m:
+                bullets.append(m.group(1).strip())
+            elif not bullets:
+                lead_lines.append(ln)
+        return " ".join(lead_lines).strip(), bullets
+
+    return s, []
+
+
+_EXP_MARKER_GLYPH: dict[str, str] = {
+    "dot": "\u2022",
+    "dash": "\u2013",
+    "arrow": "\u2192",
+    "chevron": "\u203A",
+    "square": "\u25AA",
+    "diamond": "\u25C6",
+    "none": "",
+}
+
+
+def _exp_label_runs(label_style: str, rPr_tpl, accent: str | None, heading: str | None) -> list[OxmlElement]:
+    text = "Key Contributions:"
+    if label_style == "bold":
+        return [_styled_run(text, rPr_tpl, bold=True, color_hex=heading)]
+    if label_style == "accent":
+        return [_styled_run(text, rPr_tpl, bold=True, color_hex=accent or heading)]
+    if label_style == "caps":
+        return [_styled_run("KEY CONTRIBUTIONS:", rPr_tpl, bold=True, color_hex=heading)]
+    return [_make_run(text, rPr_tpl, bold=False)]
+
+
+def _exp_used_skills_paragraphs(
+    used_skills: str,
+    used_style: str,
+    anchor_p,
+    rPr_tpl,
+    accent: str | None,
+    heading: str | None,
+    text_col: str | None,
+) -> list[OxmlElement]:
+    used_skills = (used_skills or "").strip()
+    if not used_skills:
+        return []
+    if used_style == "inline":
+        runs = [_styled_run("Technologies: ", rPr_tpl, bold=True, color_hex=heading)]
+        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl))
+        return [_make_paragraph_from_anchor(anchor_p, runs)]
+    if used_style == "label":
+        runs = [_styled_run("Tech \u00b7 ", rPr_tpl, bold=True, color_hex=accent or heading)]
+        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl))
+        return [_make_paragraph_from_anchor(anchor_p, runs)]
+    # chips / pill - each skill is a shaded segment
+    accent_pill = used_style == "pill"
+    fill = _tint_hex(accent, 0.16) if (accent_pill and accent) else "eef2f7"
+    chip_color = accent if (accent_pill and accent) else text_col
+    runs: list[OxmlElement] = []
+    for sk in _split_skill_values(used_skills):
+        runs.append(_styled_run(f"  {sk}  ", rPr_tpl, color_hex=chip_color, fill_hex=fill))
+        runs.append(_make_run("  ", rPr_tpl))
+    if not runs:
+        return []
+    return [_make_paragraph_from_anchor(anchor_p, runs)]
+
+
+def _build_experience_body(
+    exp: dict,
+    anchor_p,
+    project_header_p,
+    style: dict | None,
+    colors: dict | None,
+) -> list[OxmlElement]:
+    """Build the body <w:p> elements for one company's experience block: project
+    title, intro, 'Key Contributions:' label, contribution bullets and used skills.
+
+    The company / role / date header is rendered separately (at template-compile time
+    for builder themes, or carried by the user's own template), so this never emits a
+    header. *style* is the ExperienceStyle dict (control board + item styling)."""
+    rPr_tpl = _get_template_rPr(anchor_p)
+    header_p_ref = project_header_p if project_header_p is not None else anchor_p
+    style = style or {}
+    colors = colors or {}
+    accent = (colors.get("accent") or "").strip() or None
+    heading = (colors.get("heading") or "").strip() or None
+    text_col = (colors.get("text") or "").strip() or None
+
+    project_style = style.get("project_style", "label")
+    show_project = style.get("show_project_title", True)
+    intro_style = style.get("intro_style", "plain")
+    show_intro = style.get("show_intro", True)
+    marker = style.get("marker", "dot")
+    label_style = style.get("label_style", "plain")
+    show_label = style.get("show_contributions_label", True)
+    used_style = style.get("used_skills_style", "inline")
+    show_used = style.get("show_used_skills", True)
+
+    paragraphs: list[OxmlElement] = []
+
+    project_name = exp.get("project_name")
+    project_rendered = (
+        bool(project_name) and project_name not in ("None", "null") and show_project and project_style != "hidden"
+    )
+    if project_rendered:
+        header_rPr = _get_template_rPr(header_p_ref)
+        p = OxmlElement("w:p")
+        _clone_pPr(header_p_ref, p)
+        if project_style == "label":
+            p.append(_make_run("PROJECT:", header_rPr, bold=True))
+            p.append(_make_run(f" {project_name}", header_rPr, bold=False))
+        elif project_style == "accent":
+            p.append(_styled_run(project_name, header_rPr, bold=True, color_hex=accent or heading))
+        elif project_style == "bold":
+            p.append(_styled_run(project_name, header_rPr, bold=True, color_hex=heading))
+        else:  # italic degrades to plain in DOCX
+            p.append(_make_run(project_name, header_rPr))
+        paragraphs.append(p)
+
+    lead, inline_bullets = split_description_and_bullets(exp.get("project_description", ""))
+    if show_intro and intro_style != "hidden":
+        lead_paragraphs = _build_lead_paragraphs(
+            lead, anchor_p, rPr_tpl, project_already_rendered=project_rendered
+        )
+    else:
+        lead_paragraphs = []
+    paragraphs.extend(lead_paragraphs)
+
+    explicit_bullets = [str(b) for b in (exp.get("bullets") or []) if str(b).strip()]
+    bullets = [*inline_bullets, *explicit_bullets]
+    if bullets:
+        if lead_paragraphs:
+            paragraphs.append(_make_empty_spacer_paragraph(anchor_p))
+
+        if show_label and label_style != "hidden":
+            paragraphs.append(
+                _make_paragraph_from_anchor(anchor_p, _exp_label_runs(label_style, rPr_tpl, accent, heading))
+            )
+
+        for idx, bullet_text in enumerate(bullets, start=1):
+            runs: list[OxmlElement] = []
+            if marker == "numbered":
+                runs.append(_styled_run(f"{idx}. ", rPr_tpl, bold=True, color_hex=accent))
+            else:
+                glyph = _EXP_MARKER_GLYPH.get(marker, "\u2022")
+                if glyph:
+                    runs.append(_styled_run(f"{glyph} ", rPr_tpl, bold=True, color_hex=accent))
+            runs.extend(_runs_from_marked_text(str(bullet_text), rPr_tpl))
+            paragraphs.append(_make_paragraph_from_anchor(anchor_p, runs))
+
+    if show_used and used_style != "hidden":
+        paragraphs.extend(
+            _exp_used_skills_paragraphs(
+                exp.get("used_skills", ""), used_style, anchor_p, rPr_tpl, accent, heading, text_col
+            )
+        )
+
+    return paragraphs
 
 
 def _build_experience_elements(
     exp: dict,
     anchor_p,
     project_header_p=None,
+    style: dict | None = None,
+    colors: dict | None = None,
 ) -> list[OxmlElement]:
-    """Build <w:p> elements for a single company's experience block.
+    """Style-aware body builder for one company's ``{{EXP_N}}`` block.
 
-    *anchor_p*: the ``{{EXP_N}}`` paragraph XML — used for body/bullet formatting.
-    *project_header_p*: the ``PROJECT: …`` paragraph XML from the template — used for
-        the "PROJECT:" header line formatting.  When None, falls back to anchor_p.
-
-    Produces: PROJECT header, description paragraph, 'Key Contributions:' label,
-    then bullet paragraphs.
+    Kept as a thin wrapper around :func:`_build_experience_body` for backward
+    compatibility with callers that do not pass a style.
     """
-    rPr_tpl = _get_template_rPr(anchor_p)
-    header_p_ref = project_header_p if project_header_p is not None else anchor_p
-    paragraphs: list[OxmlElement] = []
-
-    project_name = exp.get("project_name")
-    if project_name and project_name not in ("None", "null"):
-        header_rPr = _get_template_rPr(header_p_ref)
-        p = OxmlElement("w:p")
-        _clone_pPr(header_p_ref, p)
-        p.append(_make_run("PROJECT:", header_rPr, bold=True))
-        p.append(_make_run(f" {project_name}", header_rPr, bold=False))
-        paragraphs.append(p)
-
-    desc = exp.get("project_description", "")
-    if desc:
-        p = _make_paragraph_from_anchor(anchor_p, _runs_from_marked_text(desc, rPr_tpl))
-        paragraphs.append(p)
-
-    bullets = exp.get("bullets", [])
-    if bullets:
-        if desc:
-            paragraphs.append(_make_empty_spacer_paragraph(anchor_p))
-
-        label_p = _make_paragraph_from_anchor(anchor_p, [
-            _make_run("Key Contributions:", rPr_tpl, bold=False),
-        ])
-        paragraphs.append(label_p)
-
-        for bullet_text in bullets:
-            bullet_runs = _runs_from_marked_text(str(bullet_text), rPr_tpl, prefix="• ")
-            bp = _make_paragraph_from_anchor(anchor_p, bullet_runs)
-            paragraphs.append(bp)
-
-    return paragraphs
+    return _build_experience_body(exp, anchor_p, project_header_p, style, colors)
 
 
 def _clean_leftover_exp_placeholders(doc: Document) -> None:
     """Clear any unreplaced {{EXP_N}} placeholder text (replace with empty).
 
     We keep the paragraph element so the surrounding company header tables and
-    spacing are not disrupted — only the tag text itself is removed.
+    spacing are not disrupted - only the tag text itself is removed.
     """
     pattern = re.compile(r"\{\{EXP_\d+\}\}")
     for p in doc.paragraphs:
@@ -416,7 +739,7 @@ def _read_template_header_footer_rids(template_path: Path) -> set[str]:
 def _strip_phantom_header_footer_refs(root: etree._Element, allowed_rids: set[str]) -> None:
     """Remove ``<w:headerReference>`` / ``<w:footerReference>`` entries whose
     ``r:id`` is not in *allowed_rids*. These are the phantom references
-    python-docx injects on save — keeping only ones the user truly authored.
+    python-docx injects on save - keeping only ones the user truly authored.
     """
     rid_attr = f"{{{OFFICE_REL_NS}}}id"
     for ref_tag in (_w("headerReference"), _w("footerReference")):
@@ -440,7 +763,7 @@ def _save_docx_preserving_template_layout(
     into every ``<w:sectPr>`` plus phantom ``word/header*.xml`` /
     ``word/footer*.xml`` files into the archive. Word/LibreOffice then
     reserves header/footer space on every page even though those files are
-    empty — pushing the body content down and visibly shifting the user's
+    empty - pushing the body content down and visibly shifting the user's
     designed layout.
 
     Strategy:
@@ -486,22 +809,24 @@ def fill_resume_template(
     """Fill resume template with tailored content and save to *output_path*."""
     doc = Document(str(template_path))
 
-    # Profile summary — simple inline replacement
+    # Profile summary - simple inline replacement
     summary = tailored.get("profile_summary", "")
     anchor = _find_paragraph_with_tag(doc, "{{PROFILE_SUMMARY}}")
     if anchor:
         _set_paragraph_marked_text(anchor, summary, tag="{{PROFILE_SUMMARY}}")
 
-    # Technical skills — replace with multiple skill-category paragraphs
+    # Technical skills - replace with multiple skill-category paragraphs
     skills = tailored.get("technical_skills", [])
     if skills:
         skills_anchor = _find_paragraph_with_tag(doc, "{{SKILLS_CONTENT}}")
         if skills_anchor:
-            elements = _build_skills_elements(skills, skills_anchor._p)
+            elements = _build_skills_elements(
+                skills, skills_anchor._p, tailored.get("skills_style"), tailored.get("colors")
+            )
             _replace_tag_with_paragraphs(doc, "{{SKILLS_CONTENT}}", elements)
 
     # Capture the PROJECT: header paragraph XML as a formatting template.
-    # The template has a fixed "PROJECT: ..." line before {{EXP_1}} — we clone
+    # The template has a fixed "PROJECT: ..." line before {{EXP_1}} - we clone
     # its formatting for all other companies' PROJECT headers.
     project_header_ref = None
     for p in doc.paragraphs:
@@ -510,15 +835,17 @@ def fill_resume_template(
             project_header_ref = p._p
             break
 
-    # Work experience — replace each {{EXP_N}} placeholder
+    # Work experience - replace each {{EXP_N}} placeholder
     experience = tailored.get("work_experience", [])
+    exp_style = tailored.get("experience_style")
+    exp_colors = tailored.get("colors")
     for idx, exp in enumerate(experience, start=1):
         tag = "{{" + f"EXP_{idx}" + "}}"
         exp_anchor = _find_paragraph_with_tag(doc, tag)
         if exp_anchor:
             if idx == 1 and project_header_ref is not None:
-                # EXP_1: the template already has a PROJECT: line — update it
-                # with the AI project name, then fill the body without a header.
+                # EXP_1: the template already has a PROJECT: line - update it with the
+                # AI project name, then fill the body without re-rendering the project.
                 project_name = exp.get("project_name")
                 if project_name and project_name not in ("None", "null"):
                     for run in Paragraph(project_header_ref, None).runs:
@@ -529,36 +856,18 @@ def fill_resume_template(
                             run.text = project_name
                             break
 
-                # Build body (no project header — template has it)
-                rPr_tpl = _get_template_rPr(exp_anchor._p)
-                body_elements: list[OxmlElement] = []
-
-                desc = exp.get("project_description", "")
-                if desc:
-                    body_elements.append(_make_paragraph_from_anchor(
-                        exp_anchor._p, _runs_from_marked_text(desc, rPr_tpl)
-                    ))
-
-                bullets = exp.get("bullets", [])
-                if bullets:
-                    if desc:
-                        body_elements.append(_make_empty_spacer_paragraph(exp_anchor._p))
-
-                    body_elements.append(_make_paragraph_from_anchor(
-                        exp_anchor._p, [_make_run("Key Contributions:", rPr_tpl)]
-                    ))
-                    for bt in bullets:
-                        body_elements.append(_make_paragraph_from_anchor(
-                            exp_anchor._p, _runs_from_marked_text(str(bt), rPr_tpl, prefix="• ")
-                        ))
-
+                # Project header is owned by the template here, so suppress it in the body.
+                body_style = {**(exp_style or {}), "show_project_title": False}
+                body_elements = _build_experience_body(
+                    exp, exp_anchor._p, None, body_style, exp_colors
+                )
                 if body_elements:
                     _replace_tag_with_paragraphs(doc, tag, body_elements)
                 else:
                     _replace_inline_tag(exp_anchor, tag, "")
             else:
                 elements = _build_experience_elements(
-                    exp, exp_anchor._p, project_header_ref
+                    exp, exp_anchor._p, project_header_ref, exp_style, exp_colors
                 )
                 if elements:
                     _replace_tag_with_paragraphs(doc, tag, elements)
@@ -739,7 +1048,7 @@ def fill_cover_letter_template(
 
     Copies the template byte-for-byte except ``word/document.xml``, so headers,
     footers, drawings, and styles are preserved. Only ``{{COVER_LETTER_BODY}}`` is
-    replaced — including when Word split the placeholder across multiple runs.
+    replaced - including when Word split the placeholder across multiple runs.
 
     The inserted paragraphs inherit the anchor paragraph's run formatting
     (``<w:rPr>``: font family, size, color, language) so the body uses the same
@@ -749,7 +1058,7 @@ def fill_cover_letter_template(
     """
     body_parts = [p.strip("\r ") for p in cover_letter_body.split("\n\n") if p.strip()]
     if not body_parts:
-        raise RuntimeError("Cover letter body is empty — nothing to insert into the template.")
+        raise RuntimeError("Cover letter body is empty - nothing to insert into the template.")
 
     shutil.copy2(template_path, output_path)
     with zipfile.ZipFile(output_path, "r") as zf:

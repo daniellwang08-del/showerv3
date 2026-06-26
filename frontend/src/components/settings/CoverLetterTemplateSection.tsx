@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Download,
   FileUp,
   Loader2,
@@ -49,30 +51,42 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 function RequirementsPanel({ requirements }: { requirements: CoverLetterTemplateRequirements }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-3 text-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Required placeholder</p>
-      <ul className="mt-2 space-y-1.5">
-        {requirements.required_tags.map((p) => (
-          <li key={p.tag} className="text-xs text-slate-800">
-            <code className="rounded bg-emerald-50 px-1 py-0.5 font-semibold text-emerald-900 ring-1 ring-emerald-100">
-              {p.tag}
-            </code>{' '}
-            <span className="text-slate-600">{p.description}</span>
-          </li>
-        ))}
-      </ul>
-      {requirements.layout_example && (
-        <pre className="mt-3 overflow-x-auto rounded-md bg-slate-900 px-3 py-2 text-[11px] leading-relaxed text-slate-100 whitespace-pre-wrap">
-          {requirements.layout_example}
-        </pre>
-      )}
-      {requirements.notes.length > 0 && (
-        <ul className="mt-2 list-disc pl-4 text-xs text-slate-600 space-y-1">
-          {requirements.notes.map((note) => (
-            <li key={note}>{note}</li>
-          ))}
-        </ul>
+    <div className="rounded-lg border border-slate-200 bg-slate-50/80">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
+      >
+        Required placeholder
+        {open ? <ChevronUp size={15} className="text-slate-500" /> : <ChevronDown size={15} className="text-slate-500" />}
+      </button>
+      {open && (
+        <div className="border-t border-slate-200 px-3 py-3 text-sm">
+          <ul className="space-y-1.5">
+            {requirements.required_tags.map((p) => (
+              <li key={p.tag} className="text-xs text-slate-800">
+                <code className="rounded bg-emerald-50 px-1 py-0.5 font-semibold text-emerald-900 ring-1 ring-emerald-100">
+                  {p.tag}
+                </code>{' '}
+                <span className="text-slate-600">{p.description}</span>
+              </li>
+            ))}
+          </ul>
+          {requirements.layout_example && (
+            <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-900 px-3 py-2 text-[11px] leading-relaxed text-slate-100">
+              {requirements.layout_example}
+            </pre>
+          )}
+          {requirements.notes.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-slate-600">
+              {requirements.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );
@@ -137,7 +151,7 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
       setMessage(
         data.cover_letter_template_status === 'ready'
           ? 'Cover letter template uploaded and validated.'
-          : 'Upload received — fix validation issues and re-upload.',
+          : 'Upload received - fix validation issues and re-upload.',
       );
       setMessageOk(data.cover_letter_template_status === 'ready');
     } catch (err: unknown) {
@@ -162,7 +176,7 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
       setMessage(
         data.cover_letter_template_status === 'ready'
           ? 'Template re-validated successfully.'
-          : 'Validation failed — see errors below.',
+          : 'Validation failed - see errors below.',
       );
       setMessageOk(data.cover_letter_template_status === 'ready');
     } catch (err: unknown) {
@@ -201,21 +215,21 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
   const requirements = statusData?.requirements;
 
   return (
-    <section id="cover-letter-template" className="h-full scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex items-start gap-4">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-600 to-cyan-700 text-white">
-          <Mail className="h-5 w-5" />
+    <section id="cover-letter-template" className="h-full scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white">
+          <Mail size={20} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg font-bold text-slate-900">Cover letter template</h2>
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-slate-900">Cover letter template</h2>
+              <p className="mt-0.5 text-sm leading-snug text-slate-500">
+                AI fills <code className="rounded bg-slate-100 px-1 text-[11px]">{'{{COVER_LETTER_BODY}}'}</code> per job.
+              </p>
+            </div>
             {!loading && statusBadge(status)}
           </div>
-          <p className="mt-1 text-sm leading-relaxed text-slate-600">
-            Upload your Word cover letter layout with your fixed letterhead, greeting, and signature.
-            AI fills only{' '}
-            <code className="rounded bg-slate-100 px-1 text-xs">{'{{COVER_LETTER_BODY}}'}</code> per job.
-          </p>
 
           {loading ? (
             <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
@@ -223,7 +237,7 @@ export function CoverLetterTemplateSection({ onStatusChange }: CoverLetterTempla
               Loading template status…
             </div>
           ) : (
-            <div className="mt-4 space-y-4">
+            <div className="mt-4 space-y-3">
               {requirements && <RequirementsPanel requirements={requirements} />}
 
               {statusData?.cover_letter_template_source_filename && (

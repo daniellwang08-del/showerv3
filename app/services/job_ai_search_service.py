@@ -160,12 +160,12 @@ async def interpret_job_search_prompt(prompt: str, *, user_id: str | None = None
 
 
 def _coalesce_ilike(column, pattern: str):
-    """COALESCE(column, '') ILIKE pattern — NULL-safe substring match."""
+    """COALESCE(column, '') ILIKE pattern - NULL-safe substring match."""
     return func.coalesce(column, literal("")).ilike(pattern)
 
 
 def _coalesce_not_ilike(column, pattern: str):
-    """NOT (COALESCE(column, '') ILIKE pattern) — NULL-safe exclusion."""
+    """NOT (COALESCE(column, '') ILIKE pattern) - NULL-safe exclusion."""
     return ~func.coalesce(column, literal("")).ilike(pattern)
 
 

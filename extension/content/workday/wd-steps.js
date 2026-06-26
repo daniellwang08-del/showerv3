@@ -1,4 +1,4 @@
-// Workday engine — field discovery + control-aware writing + value resolution.
+// Workday engine - field discovery + control-aware writing + value resolution.
 //
 // Grounded in the REAL Workday application DOM: every field is a wrapper
 //   <div data-automation-id="formField-<key>"> … </div>
@@ -55,8 +55,123 @@
           .join(" ");
       }
     }
+    if (!clean(t)) {
+      const ctrl = container.querySelector("input[id], select[id], button[id]");
+      if (ctrl && ctrl.id) {
+        try {
+          const ext = document.querySelector(`label[for="${CSS.escape(ctrl.id)}"]`);
+          if (ext) t = ext.innerText || ext.textContent || "";
+        } catch {}
+      }
+    }
+    // Application Questions often label the Canvas Select combobox via aria-label
+    // on the input (full question text + " Required") with no inner <label>.
+    if (!clean(t)) {
+      const trigger = listboxTrigger(container);
+      if (trigger) t = trigger.getAttribute("aria-label") || trigger.getAttribute("title") || "";
+    }
     if (!clean(t)) t = container.getAttribute("aria-label") || "";
     return clean(t);
+  }
+
+  // Workday Canvas Select (Application Questions) uses input[role=combobox]
+  // aria-haspopup=listbox - NOT button[aria-haspopup=listbox] (My Information era).
+  function listboxTrigger(container) {
+    return (
+      container.querySelector('button[aria-haspopup="listbox"]') ||
+      container.querySelector('[role="combobox"][aria-haspopup="listbox"]') ||
+      container.querySelector('input[aria-haspopup="listbox"]')
+    );
+  }
+
+  function triggerCurrentValue(trigger) {
+    if (!trigger) return "";
+    if (trigger.tagName === "INPUT" || trigger.tagName === "SELECT") {
+      return trigger.value || "";
+    }
+    return trigger.textContent || "";
+  }
+
+  function triggerShowsPlaceholder(trigger) {
+    const t = D.norm(triggerCurrentValue(trigger));
+    return !t || /^select(\s+one)?\.?\.?\.?$/.test(t);
+  }
+
+  // True when the control already holds a committed, valid-looking value.
+  function fieldIsFilled(container) {
+    if (container.querySelector('[aria-invalid="true"]') && D.isVisible(container.querySelector('[aria-invalid="true"]'))) {
+      return false;
+    }
+    const trigger = listboxTrigger(container);
+    if (trigger) return !triggerShowsPlaceholder(trigger);
+    const nativeSel = container.querySelector("select");
+    if (nativeSel) {
+      const t = (nativeSel.options[nativeSel.selectedIndex]?.text || "").trim();
+      return !!t && !/^select(\s+one)?\.?\.?\.?$/i.test(t);
+    }
+    const radios = container.querySelectorAll('input[type="radio"]');
+    if (radios.length && container.querySelector('input[type="radio"]:checked')) return true;
+    const checks = [...container.querySelectorAll('input[type="checkbox"]')];
+    if (checks.length === 1) return checks[0].checked;
+    if (checks.length > 1 && checks.some((c) => c.checked)) return true;
+    const text = container.querySelector(
+      'input[type="text"], textarea, input[type="tel"], input[type="number"], input[type="email"], input[type="url"], input:not([type])',
+    );
+    if (text && text.type !== "hidden" && text.getAttribute("role") !== "combobox") {
+      return !!(text.value || "").trim();
+    }
+    return false;
+  }
+
+  // Harvested options must resemble the question - stale open listboxes attach
+  // the wrong popup (e.g. SMS opt-in options harvested for "Highest degree").
+  function optionsPlausibleForLabel(label, options) {
+    if (!options || !options.length) return true;
+    const opts = options.join(" ").toLowerCase();
+    const low = (label || "").toLowerCase();
+    if (/highest degree|degree attained/.test(low)) {
+      return /bachelor|master|doctor|associate|diploma|ged|ph\.?d|juris|vocational|coursework/.test(opts);
+    }
+    if (/protected veteran|veteran.*categor|belong to any of the categories/.test(low)) {
+      return /veteran|not a veteran|self-identify|protected/.test(opts) && !/asian|african american|hispanic|native hawaiian|two or more races/.test(opts);
+    }
+    if (/what is your (sex|gender)|\bsex\b/.test(low)) {
+      return /male|female|do not wish/.test(opts) && !/bachelor|master|veteran/.test(opts);
+    }
+    if (/race|ethnicity/.test(low) && !/veteran/.test(low)) {
+      return /asian|african|hispanic|white|native|two or more|do not wish/.test(opts);
+    }
+    if (/salary|compensation expectation|cash compensation/.test(low)) {
+      return /\d/.test(opts);
+    }
+    if (/text message|sms|opt-in to receive/.test(low)) {
+      return /sms|text message|opt-in|opt-out|wish to receive|do not wish/.test(opts);
+    }
+    return true;
+  }
+
+  async function closeAllListboxes() {
+    for (let pass = 0; pass < 3; pass++) {
+      let anyOpen = false;
+      const triggers = D.qa(
+        'button[aria-haspopup="listbox"], [role="combobox"][aria-haspopup="listbox"], input[aria-haspopup="listbox"]',
+      ).filter(D.isVisible);
+      for (const btn of triggers) {
+        if (openedListbox(btn)) {
+          anyOpen = true;
+          await closeListbox(btn);
+        }
+      }
+      const popups = D.qa('[data-automation-id="activeListContainer"], [role="listbox"]').filter(D.isVisible);
+      if (popups.length) {
+        anyOpen = true;
+        pressKey(document.body, "Escape", "Escape", 27);
+        await D.delay(80);
+        focusSinkOutside(document);
+      }
+      if (!anyOpen) break;
+      await D.delay(100);
+    }
   }
   function labelForInput(input) {
     if (input.id) {
@@ -119,7 +234,7 @@
   }
 
   // Workday's LinkedIn field (validation code A1647) rejects bare-host URLs like
-  // "https://linkedin.com/in/x" — it requires the canonical "www.linkedin.com"
+  // "https://linkedin.com/in/x" - it requires the canonical "www.linkedin.com"
   // host. Normalize any stored form (bare handle, host w/ or w/o scheme/www) to
   // "https://www.linkedin.com/in/<handle>".
   function canonLinkedIn(s) {
@@ -130,7 +245,7 @@
       v = v.replace(/^www\./i, "");
       return "https://www." + v;
     }
-    // Bare handle (e.g. "kzwang" or "in/kzwang") — build the profile URL.
+    // Bare handle (e.g. "kzwang" or "in/kzwang") - build the profile URL.
     v = v.replace(/^@/, "").replace(/^in\//i, "");
     return "https://www.linkedin.com/in/" + v;
   }
@@ -139,7 +254,7 @@
   // shows readme markup like **bold**. Mirrors the backend sanitizer and is
   // applied client-side too, so the field is clean regardless of the profile
   // source. Keeps line breaks and "- " bullets; preserves lone */_ (e.g. the
-  // identifier feature_store) — only PAIRED **/__/` are removed.
+  // identifier feature_store) - only PAIRED **/__/` are removed.
   function stripMarkdown(text) {
     let s = String(text == null ? "" : text);
     if (!s) return "";
@@ -193,7 +308,7 @@
     const map = {
       source: p.howDidYouHear,
       country: canonCountry(a.country),
-      // Social Network URLs (My Experience page) — keyed by the formField id.
+      // Social Network URLs (My Experience page) - keyed by the formField id.
       // Workday validates these as full URLs, so ensure an https:// scheme.
       linkedInAccount: canonLinkedIn(w.linkedin),
       facebookAccount: canonUrl(w.facebook),
@@ -224,19 +339,43 @@
     const e = p.eeo || {};
     const nm = p.name || {};
     const fullName = [nm.first, nm.last].filter(Boolean).join(" ").trim();
+    const low = label.toLowerCase();
+    if (/highest degree|degree attained/.test(low) && Array.isArray(p.education)) {
+      for (let i = p.education.length - 1; i >= 0; i--) {
+        const deg = p.education[i] && p.education[i].degree;
+        if (deg) return deg;
+      }
+    }
+    if (/accept these terms|yes i accept/i.test(low)) return "Yes";
+    if (/please check one of the boxes|disability|cc-305|self.identif/i.test(low)) {
+      return e.disability
+        ? "Yes, I have a disability"
+        : "No, I do not have a disability and have not had one in the past";
+    }
     const RULES = [
-      // Self-Identify (CC-305) "Name" — a standalone full-name field. The keyed
+      // Self-Identify (CC-305) "Name" - a standalone full-name field. The keyed
       // legalName--first/last fields are resolved by buildValueMap and never reach
       // here, and "Preferred/Legal Name" labels won't match the strict ^name$.
       [/^name$/i, fullName],
       // Order-independent: catches "previously been employed", "been employed by
       // <Company> previously", "ever worked for", "worked here before", etc. Note:
-      // no \b after employ/work — "employ" must match the stem in "employed".
+      // no \b after employ/work - "employ" must match the stem in "employed".
       [/(previously|formerly|prior|before|ever)[\s\S]{0,40}?(employ|work)/i, "No"],
       [/(employ|work)[\s\S]{0,40}?(previously|formerly|prior|before)/i, "No"],
-      [/legally (eligible|authorized) to work|authorized to work/i, "Yes"],
+      [/legally (eligible|authorized) to work|authorized to work|legal right to work/i, "Yes"],
+      [/relatives employed|relative.*employed by/i, "No"],
+      [/contractual restrictions|restrict your employment|non-compete|non-disclosure/i, "No"],
+      [/non-solicitation|prospect for business/i, "No"],
+      [/outside activities.*competitive|competition with|in competition with/i, "No"],
+      [/required years of relevant experience|years of relevant experience needed/i, "Yes"],
+      [/software language|network technologies needed/i, "Yes"],
+      [/employed by a federal.*government|government entity \(excluding military/i, "No"],
+      [/award or administration of any contracts.*defense|department of defense/i, "No"],
+      [/projects.*contracts.*procurements.*involved/i, "No"],
+      [/agree to receive text messages|receive text messages from/i, "Yes"],
+      [/willing to relocate|\brelocate\b/i, "No"],
       [/require sponsorship|sponsorship for (a )?work visa|need sponsorship/i, "No"],
-      [/will you now or in the future require/i, "No"],
+      [/will you now or in the future require|might you in the future require/i, "No"],
       [/at least 18|18 years of age/i, "Yes"],
       [/non-disclosure|non-compete|non-competitive|restrict your employment/i, "No"],
       [/hispanic or latino/i, e.hispanicLatino ? "Yes" : "No"],
@@ -252,19 +391,15 @@
   }
 
   // ── control-aware writers ───────────────────────────────────────────────────
-  // ROOT CAUSE (proven on the live page via the [workday] textfill diagnostic:
-  // `pageHadFocus=false focusLanded=true` for every text field): autofill runs from
-  // the extension SIDE PANEL, which holds OS focus, so the Workday page does NOT
-  // have system focus (document.hasFocus() === false). el.focus() still sets
-  // document.activeElement (focusLanded=true), BUT browsers do NOT dispatch
-  // focus/blur/focusout events while the document lacks system focus — so when we
-  // move focus to the sink, the input's `focusout` never fires and Workday's
-  // onBlur commit handler never runs. The value stays in the DOM property only and
-  // the field keeps `aria-invalid="true"`. window.focus() canNOT pull system focus
-  // away from the side panel (the log still shows pageHadFocus=false). The ONLY
-  // thing that gives the page real focus is a genuine user interaction in the page.
-  // → So we set the visible value now and DEFER the commit until the page regains
-  //   real focus (the user clicking anywhere on the form, e.g. Save and Continue).
+  // ROOT CAUSE (proven on live Workday + side panel): autofill is started from the
+  // extension side panel, so document.hasFocus() === false on the application tab.
+  // setReactValue + input makes the value VISIBLE in the input, but Workday commits
+  // its React model on blur/focusout - and browsers suppress those events when the
+  // document lacks OS focus. focusPageAndFlush() activates the tab but Chrome keeps
+  // focus in the side panel, so flushCommits()'s hasFocus gate never runs and
+  // "Save and Continue" validates against an empty model → red "required" errors
+  // on fields that already show text (First Name, City, Phone, …). Dropdowns/radios
+  // work because they commit via click, not blur.
   function setReactValue(el, value) {
     const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
@@ -285,87 +420,118 @@
     return sink;
   }
 
-  // Controlled inputs (text, textarea, AND the date month/year spin-inputs) whose
-  // value is set but NOT yet committed because the page lacked system focus at
-  // fill time. Each item re-asserts its value(s) then chains focus across its
-  // inputs and finally to a sink, producing a real focusout per input so
-  // Workday's onBlur commit + validation runs. Flushed the instant the page
-  // regains real focus (the user's first click on the form — even on Save).
-  // Shared on WD so a module reinstall reuses the same queue + single listener:
-  // the (one) armed listener closes over this same array, so commits queued by
-  // freshly-installed code are still flushed by the original listener.
+  function fireKey(el, key, code, keyCode) {
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      el.dispatchEvent(
+        new KeyboardEvent(type, { bubbles: true, cancelable: true, key, code, keyCode, which: keyCode }),
+      );
+    }
+  }
+
+  function keyMetaForChar(ch) {
+    if (/[0-9]/.test(ch)) return { code: "Digit" + ch, keyCode: 48 + Number(ch) };
+    if (ch === " ") return { code: "Space", keyCode: 32 };
+    if (ch === "-") return { code: "Minus", keyCode: 189 };
+    if (ch === ".") return { code: "Period", keyCode: 190 };
+    const upper = ch.toUpperCase();
+    return { code: "Key" + upper, keyCode: upper.charCodeAt(0) };
+  }
+
+  // Explicit focusout/blur - browsers won't auto-fire these without OS focus, but
+  // Workday's React handlers still receive manually dispatched FocusEvents.
+  function dispatchBlurCommit(el, sink) {
+    el.dispatchEvent(new FocusEvent("focusout", { bubbles: true, cancelable: true, relatedTarget: sink }));
+    el.dispatchEvent(new FocusEvent("blur", { bubbles: true, cancelable: true, relatedTarget: sink }));
+  }
+
+  function fieldStillInvalid(el) {
+    if (!el || !el.isConnected) return false;
+    if (el.getAttribute("aria-invalid") === "true") return true;
+    const ff = el.closest('[data-automation-id^="formField-"]');
+    return !!(ff && ff.querySelector('[aria-invalid="true"]'));
+  }
+
+  function typeIntoInput(el, value) {
+    const str = String(value);
+    try {
+      el.focus({ preventScroll: true });
+    } catch {}
+    setReactValue(el, "");
+    fireKey(el, "Backspace", "Backspace", 8);
+    for (const ch of str) {
+      const { code, keyCode } = keyMetaForChar(ch);
+      fireKey(el, ch, code, keyCode);
+    }
+    setReactValue(el, str);
+    el.dispatchEvent(
+      new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str }),
+    );
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  // Legacy queue - kept so WD_FLUSH can drain anything queued by an older build.
   const pendingCommits = (WD._pendingCommits = WD._pendingCommits || []);
 
-  function commitItem(item, sink) {
-    item.applyValue();
-    for (const el of item.els) {
-      if (el && el.isConnected) {
-        try {
-          el.focus({ preventScroll: true });
-        } catch {}
-      }
+  function commitControlledInputs(applyValue, els) {
+    applyValue();
+    const doc = (els.find((el) => el && el.isConnected) || {}).ownerDocument || document;
+    const sink = makeSink(doc);
+    for (const el of els) {
+      if (!el || !el.isConnected) continue;
+      try {
+        el.focus({ preventScroll: true });
+      } catch {}
+      dispatchBlurCommit(el, sink);
     }
     try {
-      sink.focus({ preventScroll: true }); // focusout of the last input → commit
+      sink.focus({ preventScroll: true });
     } catch {}
+    sink.remove();
   }
 
   function flushCommits() {
-    if (!document.hasFocus() || !pendingCommits.length) return;
-    const sink = makeSink(document);
+    if (!pendingCommits.length) return;
     for (const item of pendingCommits.splice(0)) {
       try {
-        commitItem(item, sink);
+        commitControlledInputs(item.applyValue, item.els);
       } catch {}
     }
-    sink.remove();
   }
 
   function armFocusFlush() {
     if (WD._focusFlushArmed) return;
     WD._focusFlushArmed = true;
-    // window 'focus' fires synchronously when the user clicks into the page,
-    // BEFORE the click's default action — so even clicking "Save and Continue"
-    // commits the values first. pointerdown is a capture-phase backstop.
     window.addEventListener("focus", flushCommits, true);
     document.addEventListener("pointerdown", flushCommits, true);
   }
 
-  // Set a controlled input's value now (so it's visible) and ensure it COMMITS.
-  // applyValue() must (re)assign the value(s) + dispatch input/change; els are the
-  // inputs that need a focusout to commit. If the page has real focus we commit
-  // immediately; otherwise defer to the next genuine page focus.
-  async function deferOrCommit(applyValue, els) {
-    applyValue();
-    if (document.hasFocus()) {
-      const sink = makeSink(document);
-      for (const el of els) {
-        if (el && el.isConnected) {
-          try {
-            el.focus({ preventScroll: true });
-          } catch {}
-        }
+  // Commit controlled text/date inputs without requiring OS focus on the tab.
+  async function deferOrCommit(applyValue, els, retryValues) {
+    commitControlledInputs(applyValue, els);
+    await D.delay(80);
+    const retry = els.filter((el) => el && el.isConnected && fieldStillInvalid(el));
+    if (retry.length) {
+      for (const el of retry) {
+        const v = (retryValues && retryValues.get(el)) ?? el.value;
+        if (v != null && v !== "") typeIntoInput(el, v);
       }
-      sink.focus({ preventScroll: true });
+      commitControlledInputs(() => {}, retry);
       await D.delay(50);
-      sink.remove();
-    } else {
-      pendingCommits.push({ applyValue, els });
-      armFocusFlush();
     }
   }
 
   async function writeTextEl(el, value) {
     el.scrollIntoView({ block: "center", behavior: "instant" });
-    el.focus({ preventScroll: true });
+    const str = String(value);
+    const retryValues = new Map([[el, str]]);
     const applyValue = () => {
-      setReactValue(el, value);
+      setReactValue(el, str);
       el.dispatchEvent(
-        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: String(value) }),
+        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str }),
       );
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     };
-    await deferOrCommit(applyValue, [el]);
+    await deferOrCommit(applyValue, [el], retryValues);
     return true;
   }
 
@@ -380,13 +546,13 @@
     // 1. Exact text match always wins.
     const exact = scored.find((x) => x.t === w);
     if (exact) return exact.o;
-    // 2. Options whose text CONTAINS the wanted value — pick the SHORTEST so a
+    // 2. Options whose text CONTAINS the wanted value - pick the SHORTEST so a
     //    prefix like "united states" resolves to "united states of america", not
     //    the longer "united states minor outlying islands" that happens to sort
     //    first in the list.
     const contains = scored.filter((x) => x.t.includes(w)).sort((a, b) => a.t.length - b.t.length);
     if (contains.length) return contains[0].o;
-    // 3. Wanted value contains the option text — pick the LONGEST (most specific).
+    // 3. Wanted value contains the option text - pick the LONGEST (most specific).
     const within = scored.filter((x) => w.includes(x.t)).sort((a, b) => b.t.length - a.t.length);
     if (within.length) return within[0].o;
     return null;
@@ -395,7 +561,7 @@
   // The overlay a single-select button just opened. Workday renders the popup in
   // a portal (not inside the field wrapper), so we locate it via the ARIA contract
   // (aria-controls / aria-owns) and fall back to the visible list container. This
-  // is the anchor that scopes the search box + option lookups — without it, a
+  // is the anchor that scopes the search box + option lookups - without it, a
   // document-wide input query grabs the always-present, page-top "How Did You Hear
   // About Us?" multiselect and types THIS field's value into it.
   function openedListbox(btn) {
@@ -432,18 +598,20 @@
     }
   }
 
-  // Single-select: click the button, type into the search box scoped to the
-  // popup this button opened (long lists are virtualized + filtered), then click
-  // the matching promptOption. All lookups are confined to that popup so we never
-  // write into another field's input.
-  async function openAndPick(btn, value) {
-    if (D.norm(btn.textContent) === D.norm(value)) return true; // already set
-    D.clickEl(btn);
+  // Single-select: click the listbox trigger (button OR Canvas Select combobox
+  // input), type into the search box scoped to the popup it opened, then click
+  // the matching promptOption. All lookups are confined to that popup.
+  async function openAndPick(trigger, value) {
+    const want = D.norm(value);
+    const cur = D.norm(triggerCurrentValue(trigger));
+    if (cur && cur === want) return true;
+    if (cur && !triggerShowsPlaceholder(trigger) && (cur.includes(want) || want.includes(cur))) return true;
+    D.clickEl(trigger);
     await D.delay(150);
-    let popup = openedListbox(btn);
+    let popup = openedListbox(trigger);
     for (let i = 0; i < 12 && !popup; i++) {
       await D.delay(80);
-      popup = openedListbox(btn);
+      popup = openedListbox(trigger);
     }
     const search = popup
       ? popup.querySelector('input[data-automation-id="searchBox"], input[type="search"], input[type="text"]')
@@ -455,7 +623,7 @@
       await D.delay(400);
     }
     if (!(await D.waitFor(OPTION_SEL, 2000, popup || undefined))) {
-      await closeListbox(btn);
+      await closeListbox(trigger);
       return false;
     }
     await D.delay(120);
@@ -463,11 +631,15 @@
     if (match) {
       D.clickEl(match);
       await D.delay(120);
-      return true;
+      if (!triggerShowsPlaceholder(trigger)) return true;
+      // Combobox may need Enter to commit the highlighted option.
+      if (trigger.getAttribute("role") === "combobox") {
+        pressEnter(trigger);
+        await D.delay(120);
+      }
+      return !triggerShowsPlaceholder(trigger);
     }
-    // No matching option — close so we don't leave an open popup that corrupts
-    // the next interaction (e.g. the LLM-fallback harvest of this same control).
-    await closeListbox(btn);
+    await closeListbox(trigger);
     return false;
   }
 
@@ -487,7 +659,7 @@
   const pressEnter = (el) => pressKey(el, "Enter", "Enter", 13);
 
   // Move focus to a throwaway off-screen sink so a genuine focusout (with a
-  // non-null relatedTarget) fires — a bare input.blur() (relatedTarget=null) is
+  // non-null relatedTarget) fires - a bare input.blur() (relatedTarget=null) is
   // ignored by the widget. An outside click-away is dispatched as a backup for
   // widgets that dismiss on document click rather than focusout.
   function focusSinkOutside(doc) {
@@ -546,7 +718,7 @@
     const input = multi.querySelector("input");
     if (!input) return false;
 
-    // Open the prompt — the search box is minimized until the field is activated.
+    // Open the prompt - the search box is minimized until the field is activated.
     const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
     D.clickEl(opener);
     await D.delay(150);
@@ -558,7 +730,7 @@
     await D.delay(450);
 
     // Path A: a flat multiselect (e.g. Country Phone Code) surfaces the matching
-    // leaf as a clickable option — click it, then close the still-open list.
+    // leaf as a clickable option - click it, then close the still-open list.
     let match = pickOption(value);
     if (match) {
       D.clickEl(match);
@@ -570,7 +742,7 @@
     // Path B: a hierarchical search prompt (e.g. "How Did You Hear About Us?")
     // keeps showing parent categories; typing never exposes a clickable "LinkedIn"
     // leaf. Enter runs Workday's search-and-select, but ONLY when the search input
-    // itself is focused — so refocus it (and re-assert the typed value) first.
+    // itself is focused - so refocus it (and re-assert the typed value) first.
     input.focus();
     if (document.activeElement !== input) D.clickEl(input);
     if (D.norm(input.value) !== want) {
@@ -585,7 +757,7 @@
       return true;
     }
 
-    // After Enter the matching leaf may render as a result — click it as a fallback.
+    // After Enter the matching leaf may render as a result - click it as a fallback.
     if (await D.waitFor(OPTION_SEL, 1500)) {
       await D.delay(120);
       match = pickOption(value);
@@ -685,11 +857,23 @@
         await closePrompt(multi, input);
         return true;
       }
-      // Not committed — close and retry the whole sequence once.
+      // Not committed - close and retry the whole sequence once.
       await closePrompt(multi, input);
       await D.delay(200);
     }
     return isChosen();
+  }
+
+  function clickInputOrLabel(input) {
+    if (!input) return;
+    let lbl = null;
+    if (input.id) {
+      try {
+        lbl = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+      } catch {}
+    }
+    if (!lbl) lbl = input.closest("label");
+    D.clickEl(lbl || input);
   }
 
   function pickRadio(radios, value) {
@@ -697,13 +881,13 @@
     for (const r of radios) {
       const lt = D.norm(labelForInput(r));
       if (lt && (lt === want || (want === "yes" && lt === "yes") || (want === "no" && lt === "no"))) {
-        D.clickEl(r);
+        clickInputOrLabel(r);
         return true;
       }
     }
     for (const r of radios) {
       if (D.norm(r.value) === want) {
-        D.clickEl(r);
+        clickInputOrLabel(r);
         return true;
       }
     }
@@ -711,9 +895,14 @@
     for (const r of radios) {
       const lt = D.norm(labelForInput(r));
       if ((want.startsWith("no") && lt.startsWith("no")) || (want.startsWith("i am not") && lt.includes("not"))) {
-        D.clickEl(r);
+        clickInputOrLabel(r);
         return true;
       }
+    }
+    const hit = pickByLabel(radios, value);
+    if (hit) {
+      clickInputOrLabel(hit);
+      return true;
     }
     return false;
   }
@@ -721,15 +910,24 @@
   async function selectNativeEl(sel, value) {
     for (let i = 0; i < 20 && sel.options.length < 2; i++) await D.delay(100);
     const want = D.norm(value);
-    const scored = [...sel.options].map((o) => ({ o, t: D.norm(o.text) })).filter((x) => x.t);
+    const scored = [...sel.options]
+      .map((o, i) => ({ o, t: D.norm(o.text), i }))
+      .filter((x) => x.t && !/^select(\s+one)?\.?\.?\.?$/.test(x.t));
     const contains = scored.filter((x) => x.t.includes(want)).sort((a, b) => a.t.length - b.t.length);
-    const opt =
-      (scored.find((x) => x.t === want) || contains[0] || { o: null }).o;
-    if (!opt) return false;
-    sel.value = opt.value;
+    const hit = scored.find((x) => x.t === want) || contains[0];
+    if (!hit) return false;
+    try {
+      sel.focus({ preventScroll: true });
+    } catch {}
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+    if (setter) setter.call(sel, hit.o.value);
+    else sel.value = hit.o.value;
+    if (sel._valueTracker) sel._valueTracker.setValue("");
+    sel.selectedIndex = hit.i;
     sel.dispatchEvent(new Event("input", { bubbles: true }));
     sel.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
+    sel.dispatchEvent(new Event("blur", { bubbles: true }));
+    return sel.selectedIndex > 0 && D.norm(hit.o.text).length > 0;
   }
 
   // Workday MM/YYYY (or YYYY-only) date group inside a formField. The month/year
@@ -751,7 +949,7 @@
     const year =
       container.querySelector(AID("dateSectionYear-input")) || container.querySelector("input[aria-label*='Year' i]");
     // PROVEN (console probe): these date sections are <input role="spinbutton">.
-    // Workday commits them via the onKeyDown digit handler, NOT onInput/onChange —
+    // Workday commits them via the onKeyDown digit handler, NOT onInput/onChange -
     // which is why setReactValue alone showed the digits but left the model empty
     // ("Date is required"). So TYPE the digits via key events (these fire even
     // while the page lacks OS focus), then mirror the value for any input-based
@@ -794,8 +992,8 @@
     if (value == null || value === "") return null;
     const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
     if (multi) return await fillMultiselect(multi, value);
-    const btn = container.querySelector('button[aria-haspopup="listbox"]');
-    if (btn) return await openAndPick(btn, value);
+    const listbox = listboxTrigger(container);
+    if (listbox) return await openAndPick(listbox, value);
     const nativeSel = container.querySelector("select");
     if (nativeSel) return await selectNativeEl(nativeSel, value);
     const radios = [...container.querySelectorAll('input[type="radio"]')];
@@ -804,7 +1002,7 @@
       return await fillDateContainer(container, value);
     }
     const text = container.querySelector(
-      'input[type="text"]:not(.css-77hcv), textarea, input[type="tel"], input[type="number"], input:not([type])',
+      'input[type="text"]:not(.css-77hcv):not([role="combobox"]), textarea, input[type="tel"], input[type="number"], input:not([type]):not([role="combobox"]):not([aria-haspopup="listbox"])',
     );
     if (text) {
       // A <textarea> is a plain-text field: never let Markdown (**bold**, `code`,
@@ -819,14 +1017,14 @@
       // A single boolean checkbox ("I agree", "I certify") toggles by yes/no/true.
       if (checks.length === 1 && /^(yes|no|true|false|on|off|1|0)$/i.test(String(value))) {
         const on = value === true || /^(yes|true|on|1)$/i.test(String(value));
-        if (!!checks[0].checked !== on) D.clickEl(checks[0]);
+        if (!!checks[0].checked !== on) clickInputOrLabel(checks[0]);
         return true;
       }
-      // A checkbox GROUP (pick one, e.g. disability self-ID) — check the box whose
+      // A checkbox GROUP (pick one, e.g. disability self-ID) - check the box whose
       // label matches the resolved value and leave the others unchecked.
       const target = pickByLabel(checks, value);
       if (target) {
-        if (!target.checked) D.clickEl(target);
+        if (!target.checked) clickInputOrLabel(target);
       return true;
       }
       return false;
@@ -861,7 +1059,7 @@
   // Disability Self-Identification (CC-305). PROVEN failure mode: this one-of
   // group is NOT inside a standard formField wrapper (its question is plain page
   // text + a fieldset of checkboxes), and the real <input type="checkbox"> is
-  // visually hidden behind a styled box — so the generic formField pass never
+  // visually hidden behind a styled box - so the generic formField pass never
   // touches it and clicking the input does nothing. We locate the three options
   // anywhere on the page by their distinctive label text and click the LABEL of
   // the correct one (unchecking any other so exactly one stays selected).
@@ -905,15 +1103,50 @@
       }
     }
     try {
-      console.warn(`[workday] disability self-ID -> '${target.t}' checked=${target.el.checked}`);
+      WD.log(`disability self-ID -> '${target.t}' checked=${target.el.checked}`);
     } catch {}
     record(rep, "Disability self-identification", !!target.el.checked);
   }
 
+  function isDisabilityContainer(container, label) {
+    const low = (label || "").toLowerCase();
+    if (/please check one of the boxes|disability|cc-305|self.identif/i.test(low)) return true;
+    const inputs = [...container.querySelectorAll('input[type="radio"], input[type="checkbox"]')];
+    if (inputs.length < 2 || inputs.length > 5) return false;
+    const blob = inputs.map((el) => labelForInput(el)).join(" ").toLowerCase();
+    return /disability|do not want to answer/.test(blob);
+  }
+
+  function isTermsAcceptField(label) {
+    return /accept these terms|yes i accept/i.test((label || "").toLowerCase());
+  }
+
+  function onSelfIdOrVoluntaryPage() {
+    return (
+      D.headingHas("Self Identify") ||
+      D.headingHas("Self-Identify") ||
+      D.headingHas("Voluntary Disclosure")
+    );
+  }
+
   // ── generic step filler (My Information, Voluntary, Questions) ───────────────
-  async function fillStep(profile, _options, rep) {
+  function matchesOnlyInvalid(container, key, label, onlyInvalid) {
+    if (!onlyInvalid || !onlyInvalid.length) return true;
+    const labelNorm = (label || fieldLabel(container) || "").toLowerCase().trim();
+    for (const f of onlyInvalid) {
+      if (f.key && f.key === key) return true;
+      const want = (f.label || "").toLowerCase().trim();
+      if (!want) continue;
+      if (labelNorm === want || labelNorm.includes(want) || want.includes(labelNorm)) return true;
+    }
+    return false;
+  }
+
+  async function fillStep(profile, options, rep) {
+    options = options || {};
+    const onlyInvalid = Array.isArray(options.onlyInvalid) ? options.onlyInvalid : null;
     // Wait briefly for the step to render its controls. After navigation (e.g.
-    // Voluntary Disclosures → Self Identify), filling too early finds nothing —
+    // Voluntary Disclosures → Self Identify), filling too early finds nothing -
     // which is exactly how Self Identify ended up blank. Skip the wait the instant
     // any formField / checkbox / radio is present (so populated steps aren't slowed).
     for (
@@ -932,25 +1165,34 @@
       const aid = c.getAttribute("data-automation-id") || "";
       const key = aid.replace(/^formField-/, "");
       const label = fieldLabel(c);
+      if (onlyInvalid) {
+        if (!matchesOnlyInvalid(c, key, label, onlyInvalid)) continue;
+      } else if (fieldIsFilled(c)) {
+        continue;
+      }
+      // CC-305 disability is handled exclusively by fillDisabilitySelfId (label click).
+      if (isDisabilityContainer(c, label)) continue;
       let value = key in valueByKey ? valueByKey[key] : undefined;
       if (value === undefined) value = resolveByLabel(label, profile);
       // Any unmapped date widget (e.g. the Self-Identify signature date) defaults
-      // to today — the form expects the current date, never a profile value.
+      // to today - the form expects the current date, never a profile value.
       if ((value === undefined || value === null || value === "") && isDateContainer(c)) {
         value = todayDate();
       }
-      const interesting = label && (isRequired(c) || /\?/.test(label));
+      // Required fields MUST reach the LLM even when fieldLabel() is empty
+      // (Application Questions often label via combobox aria-label only).
+      const interesting = isRequired(c) || !!(label && /\?/.test(label));
       if (value === undefined || value === null || value === "") {
         // Defer to the LLM for things a human should look at: required fields or
         // actual questions. Skip optional niceties (middle name, extension, …).
-        if (interesting) llmTargets.push({ container: c, key, label, required: isRequired(c) });
+        if (interesting) llmTargets.push({ container: c, key, label: label || fieldLabel(c), required: isRequired(c) });
         continue;
       }
       const ok = await writeField(c, value);
       // A deterministic value that does NOT match this tenant's actual options
       // fails to apply (e.g. veteran "I am not a protected veteran" when the
       // options say "I AM NOT A VETERAN"). Route those to the LLM, which harvests
-      // the real options and picks the truthful one — rather than leaving it empty.
+      // the real options and picks the truthful one - rather than leaving it empty.
       if (ok === false && interesting) {
         llmTargets.push({ container: c, key, label, required: isRequired(c) });
       } else {
@@ -958,23 +1200,26 @@
       }
       await D.delay(60);
     }
+    // Self-ID / voluntary: fill disability before LLM so we never round-trip for it.
+    if (onSelfIdOrVoluntaryPage()) {
+      await fillDisabilitySelfId(profile, rep);
+    }
     // Layer 2: resolve everything the deterministic layer missed via the LLM.
-    await resolveUnmatchedWithLLM(llmTargets, rep);
-    // Disability Self-ID lives outside the formField wrappers — handle it last so
-    // it is authoritative over anything the generic/LLM passes may have touched.
+    await resolveUnmatchedWithLLM(llmTargets, rep, profile);
+    // Disability Self-ID lives outside the formField wrappers - reassert after LLM.
     await fillDisabilitySelfId(profile, rep);
   }
 
   // ── My Experience: repeating Work Experience + Education panels ──────────────
   // Panels do not exist until "Add" is clicked, so the generic formField pass
-  // never sees them. We add exactly as many as the profile needs (idempotent —
+  // never sees them. We add exactly as many as the profile needs (idempotent -
   // re-running never duplicates), then fill each panel SCOPED to its own root so
   // entries never cross-contaminate. Every text/date field commits through the
   // deferOrCommit path, so a later "Save and Continue" never reports them empty.
   function sectionGroupByLabel(labelId) {
     return D.qa(`[role="group"][aria-labelledby="${labelId}"]`).find(D.isVisible) || null;
   }
-  // Locate panels by their STABLE per-entry group label — "Work-Experience-1-panel",
+  // Locate panels by their STABLE per-entry group label - "Work-Experience-1-panel",
   // "Education-2-panel", etc. ($="-panel" excludes the section group itself, which
   // ends in "-section"). PROVEN necessary: the inner data-fkit-id="...--null"
   // wrapper only marks a brand-new row; once Workday registers the row the suffix
@@ -1015,13 +1260,13 @@
     return count;
   }
   // Each repeating panel carries its own delete control: a plain <button> with the
-  // visible text "Delete" INSIDE the panel group (proven via console — no stable
+  // visible text "Delete" INSIDE the panel group (proven via console - no stable
   // automation-id, so match by text). The attachment "delete-file" buttons live
   // OUTSIDE any panel group and are excluded by scoping to the panel root.
   function panelDeleteButton(root) {
     return D.qa("button", root).find((b) => /^\s*delete\s*$/i.test(b.textContent || "")) || null;
   }
-  // Some tenants pop a confirmation dialog after clicking Delete — confirm it if
+  // Some tenants pop a confirmation dialog after clicking Delete - confirm it if
   // present, otherwise this is a harmless no-op.
   async function confirmDeleteIfPrompted() {
     const dialog = D.qa('[role="dialog"], [data-automation-id="confirmationModal"], [data-automation-id="modalPopup"]').find(D.isVisible);
@@ -1042,7 +1287,7 @@
       const victim = panels[panels.length - 1];
       const del = panelDeleteButton(victim);
       if (!del) {
-        try { console.warn(`[workday] surplus delete ${panelLabelPrefix}: no Delete button on last panel — stopping`); } catch {}
+        try { WD.warn("surplus delete", panelLabelPrefix, ": no Delete button on last panel - stopping"); } catch {}
         break;
       }
       D.clickEl(del);
@@ -1057,7 +1302,7 @@
           break;
         }
       }
-      try { console.warn(`[workday] surplus delete ${panelLabelPrefix}: ${before} -> ${panels.length} (${shrank ? "removed" : "NO CHANGE, stopping"})`); } catch {}
+      try { WD.log(`surplus delete ${panelLabelPrefix}: ${before} -> ${panels.length} (${shrank ? "removed" : "NO CHANGE, stopping"})`); } catch {}
       if (!shrank) break;
       await D.delay(200);
     }
@@ -1069,7 +1314,7 @@
     const settled = await settledPanelCount(panelLabelPrefix);
     let panels = panelRoots(panelLabelPrefix);
     try {
-      console.warn(`[workday] ensurePanels ${panelLabelPrefix}: settled at ${settled}/${needed} before adding`);
+      WD.log(`ensurePanels ${panelLabelPrefix}: settled at ${settled}/${needed} before adding`);
     } catch {}
     // Self-correct an over-populated section (e.g. extras left by an earlier run):
     // delete from the bottom down to exactly `needed`.
@@ -1081,7 +1326,7 @@
       const before = panels.length;
       const add = sectionAddButton(sectionLabelId); // resolved fresh each iteration
       if (!add) {
-        try { console.warn(`[workday] ensurePanels ${panelLabelPrefix}: have ${before}/${needed}, NO add-button found — stopping`); } catch {}
+        try { WD.warn("ensurePanels", panelLabelPrefix, `: have ${before}/${needed}, NO add-button found - stopping`); } catch {}
         break;
       }
       D.clickEl(add);
@@ -1099,8 +1344,8 @@
           break;
         }
       }
-      try { console.warn(`[workday] ensurePanels ${panelLabelPrefix}: ${before}/${needed} -> ${panels.length} in ${Date.now() - t0}ms (${grew ? "added" : "NO GROWTH, stopping"})`); } catch {}
-      if (!grew) break; // could not add another — stop safely rather than loop
+      try { WD.log(`ensurePanels ${panelLabelPrefix}: ${before}/${needed} -> ${panels.length} in ${Date.now() - t0}ms (${grew ? "added" : "NO GROWTH, stopping"})`); } catch {}
+      if (!grew) break; // could not add another - stop safely rather than loop
       await D.delay(250); // let the new panel settle before the next add
     }
     return panelRoots(panelLabelPrefix).slice(0, needed);
@@ -1128,7 +1373,7 @@
 
   // PROVEN root cause (read-back PROBE): our write lands CLEAN, then Workday's
   // résumé parser asynchronously re-populates Role Description from the uploaded
-  // PDF — which still carries **markdown** — clobbering our text AFTER we set it.
+  // PDF - which still carries **markdown** - clobbering our text AFTER we set it.
   // We can't out-race a single write, so we re-assert clean text in a short loop
   // until the parser stops overwriting (it parses once per upload). Re-resolves
   // panels/textarea live each pass (the SPA replaces nodes on re-render).
@@ -1164,12 +1409,12 @@
           if (ff && ta && isDirty(ta, clean)) { late = true; break; }
         }
         if (!late) {
-          try { console.warn(`[workday] role descriptions clean & stable after ${attempt + 1} pass(es)`); } catch {}
+          try { WD.log(`role descriptions clean & stable after ${attempt + 1} pass(es)`); } catch {}
           return;
         }
       }
     }
-    try { console.warn("[workday] role descriptions: re-assert loop exhausted (parser still fighting)"); } catch {}
+    try { WD.warn("role descriptions: re-assert loop exhausted (parser still fighting)"); } catch {}
   }
 
   async function fillEducationNonDegree(root, entry, n, rep) {
@@ -1191,7 +1436,7 @@
   }
 
   // Degree is a fixed Workday dropdown. We open it to harvest the exact option
-  // strings, then (asynchronously) ask the LLM — via the side panel + backend —
+  // strings, then (asynchronously) ask the LLM - via the side panel + backend -
   // to map the candidate's profile degree to the best option, while the rest of
   // the page fills. A local fuzzy pick is the fallback if the LLM is unavailable.
   function degreeButton(root) {
@@ -1199,7 +1444,8 @@
     return c ? c.querySelector('button[aria-haspopup="listbox"]') : null;
   }
   async function harvestOptions(btn) {
-    // Only click to OPEN when it isn't already open — clicking an open dropdown
+    await closeAllListboxes();
+    // Only click to OPEN when it isn't already open - clicking an open dropdown
     // toggles it CLOSED, which would harvest zero options.
     if (!openedListbox(btn)) {
       D.clickEl(btn);
@@ -1231,7 +1477,7 @@
     return uniq;
   }
   // The option whose text is exactly the candidate's value (case/space-insensitive),
-  // or null. An exact match is authoritative — it must NOT be overridden by the LLM.
+  // or null. An exact match is authoritative - it must NOT be overridden by the LLM.
   function exactOption(want, options) {
     const w = D.norm(want);
     if (!w || !options) return null;
@@ -1258,6 +1504,69 @@
     }
     return best || options[0];
   }
+  function matchOptionFromList(want, options) {
+    if (want == null || want === "" || !options || !options.length) return null;
+    const w = D.norm(want);
+    const scored = options
+      .map((o) => ({ o, t: D.norm(o) }))
+      .filter((x) => x.t && !/^select(\s+one)?\.?\.?\.?$/.test(x.t));
+    const exact = scored.find((x) => x.t === w);
+    if (exact) return exact.o;
+    const contains = scored
+      .filter((x) => x.t.includes(w) || w.includes(x.t))
+      .sort((a, b) => a.t.length - b.t.length);
+    if (contains.length) return contains[0].o;
+    return null;
+  }
+
+  // Deterministic screening answers when the LLM round-trip returns nothing
+  // (API error, timeout, truncated JSON, or needs_user). Maps question label →
+  // profile rules → exact option text from the harvested list.
+  function localScreeningPick(label, profile, options) {
+    if (!options || !options.length) return null;
+    const pick = (w) => matchOptionFromList(w, options);
+    const fromRules = resolveByLabel(label, profile || {});
+    if (fromRules) {
+      const m = pick(fromRules);
+      if (m) return m;
+    }
+    const low = (label || "").toLowerCase();
+    if (/legal right to work|authorized to work|legally eligible/.test(low)) return pick("Yes");
+    if (/require sponsorship|might you in the future require/.test(low)) return pick("No");
+    if (/relative.*employed|relatives employed/.test(low)) return pick("No");
+    if (/contractual restriction|non-solicitation|outside activities.*competit|in competition with/.test(low)) {
+      return pick("No");
+    }
+    if (/government entity|department of defense|procurement|projects.*contracts.*involved/.test(low)) {
+      return pick("No");
+    }
+    if (/years of.*experience|software language|network technologies/.test(low)) return pick("Yes");
+    if (/text messages|agree to receive text/.test(low)) return pick("Yes");
+    if (/willing to relocate|\brelocate\b/.test(low)) return pick("No");
+    if (/ever applied for employment|applied previously/.test(low)) return pick("No");
+    if (/served in the armed forces|reserve component|spouse of someone who has served/.test(low)) {
+      return (
+        pick("No, I have not served") ||
+        pick("I have not served") ||
+        pick("No") ||
+        pick("Never served")
+      );
+    }
+    if (/highest degree/.test(low) && profile && Array.isArray(profile.education)) {
+      for (const e of profile.education) {
+        if (e && e.degree) {
+          const m = pick(e.degree);
+          if (m) return m;
+        }
+      }
+    }
+    if (/salary|compensation expectation|cash compensation/.test(low)) {
+      const ranged = options.filter((o) => /\d/.test(String(o)));
+      if (ranged.length) return ranged[Math.min(Math.floor(ranged.length * 0.55), ranged.length - 1)];
+    }
+    return null;
+  }
+
   // Round-trip to the side panel (→ backend LLM) to map profile values to the
   // harvested options. Resolves to {} on any failure/timeout so filling never
   // blocks. The matching id is the source control's element id.
@@ -1291,10 +1600,11 @@
             options: it.options,
           })),
         });
+        // 19+ Application Questions in one batch can exceed LLM latency; 90s headroom.
         setTimeout(() => {
           delete WDw._waiters[requestId];
           finish({});
-        }, 30000);
+        }, 90000);
       } catch {
         finish({});
       }
@@ -1330,11 +1640,24 @@
   // Inspect a formField wrapper and describe its control for the LLM: { kind,
   // options } where kind aligns with the backend's AutofillControlIn kinds. For
   // option controls we harvest the exact visible choices so the model can only
-  // pick a real one. Returns null for controls we never send to the LLM (dates —
-  // filled from the profile; file uploads — handled separately).
+  // pick a real one. Returns null for controls we never send to the LLM (dates -
+  // filled from the profile; file uploads - handled separately).
   async function classifyControl(container) {
-    const btn = container.querySelector('button[aria-haspopup="listbox"]');
-    if (btn) return { kind: "select", options: await harvestOptions(btn) };
+    const btn = listboxTrigger(container);
+    if (btn) {
+      await closeAllListboxes();
+      let options = await harvestOptions(btn);
+      const label = fieldLabel(container);
+      if (!optionsPlausibleForLabel(label, options)) {
+        try {
+          WD.warn("implausible options for", label, "- re-harvesting", options);
+        } catch {}
+        await closeAllListboxes();
+        await D.delay(200);
+        options = await harvestOptions(btn);
+      }
+      return { kind: "select", options };
+    }
     const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
     if (multi) return { kind: "select", options: await harvestMultiOptions(multi) };
     const nativeSel = container.querySelector("select");
@@ -1350,7 +1673,7 @@
     }
     const checks = [...container.querySelectorAll('input[type="checkbox"]')];
     if (checks.length > 1) {
-      // One-of checkbox group (e.g. disability self-ID) — give the model the real
+      // One-of checkbox group (e.g. disability self-ID) - give the model the real
       // labels and treat it as single-choice so it picks exactly one.
       return { kind: "radio", options: checks.map((c) => (labelForInput(c) || "").trim()).filter(Boolean) };
     }
@@ -1376,8 +1699,9 @@
   // backend LLM in one batch, then apply each answer with the control-aware
   // writeField. Anything the LLM declines (needs_user / no answer) stays in
   // rep.unmatched so the side panel flags it for manual review.
-  async function resolveUnmatchedWithLLM(targets, rep) {
+  async function resolveUnmatchedWithLLM(targets, rep, profile) {
     if (!targets || !targets.length) return;
+    WD._resolveCache = WD._resolveCache || {};
     const items = [];
     const byCid = new Map();
     let i = 0;
@@ -1394,25 +1718,53 @@
       byCid.set(cid, t);
       items.push({ cid, label: t.label, kind: info.kind, required: t.required, options: info.options });
       try {
-        console.warn(`[workday] LLM fallback target '${t.label}' kind=${info.kind} options=${info.options.length}`, info.options);
+        WD.log(`LLM fallback target '${t.label}' kind=${info.kind} options=${info.options.length}`, info.options);
       } catch {}
     }
     if (!items.length) return;
-    let values = {};
+
+    const values = {};
+    const needLlm = [];
+    for (const item of items) {
+      const cacheKey = (item.label || "").toLowerCase().trim().slice(0, 120);
+      if (cacheKey && WD._resolveCache[cacheKey]) {
+        values[item.cid] = WD._resolveCache[cacheKey];
+        continue;
+      }
+      const local = localScreeningPick(item.label, profile, item.options);
+      if (local) values[item.cid] = local;
+      else needLlm.push(item);
+    }
     try {
-      values = await requestOptionMatches(items);
+      const BATCH = 8;
+      for (let b = 0; b < needLlm.length; b += BATCH) {
+        const chunk = needLlm.slice(b, b + BATCH);
+        const part = await requestOptionMatches(chunk);
+        Object.assign(values, part || {});
+      }
     } catch {}
+
+    for (const item of items) {
+      if (values[item.cid]) continue;
+      const local = localScreeningPick(item.label, profile, item.options);
+      if (local) values[item.cid] = local;
+    }
+
     for (const [cid, t] of byCid) {
       const value = values[cid];
       try {
-        console.warn(`[workday] LLM fallback apply '${t.label}' <- ${value == null ? "(none)" : JSON.stringify(value)}`);
+        WD.log(`LLM fallback apply '${t.label}' <- ${value == null ? "(none)" : JSON.stringify(value)}`);
       } catch {}
       if (value == null || value === "") {
-        rep.unmatched.push({ key: t.key, label: t.label }); // LLM declined / no answer
+        rep.unmatched.push({ key: t.key, label: t.label });
         continue;
       }
       const ok = await writeField(t.container, value);
-      try { console.warn(`[workday] LLM fallback apply '${t.label}' result=${ok}`); } catch {}
+      try { WD.log(`LLM fallback apply '${t.label}' result=${ok}`); } catch {}
+      if (ok) {
+        const cacheKey = (t.label || "").toLowerCase().trim().slice(0, 120);
+        if (cacheKey) WD._resolveCache[cacheKey] = value;
+      }
       record(rep, t.label || cid, ok);
       await D.delay(60);
     }
@@ -1420,9 +1772,9 @@
 
   // The resume widget keeps EVERY uploaded file as its own row, so re-running the
   // step (auto-advance recovery, or a prior step that already uploaded one) piles
-  // up duplicates. Remove all currently-uploaded files in this widget — each row
+  // up duplicates. Remove all currently-uploaded files in this widget - each row
   // is [data-automation-id="file-upload-item"] with its own
-  // button[data-automation-id="delete-file"] (proven via the page DOM) — so that
+  // button[data-automation-id="delete-file"] (proven via the page DOM) - so that
   // after the subsequent attach exactly ONE (the current) resume remains.
   // getScope() is re-evaluated every pass because the widget can re-render. The
   // delete control is button[data-automation-id="delete-file"] inside each
@@ -1461,7 +1813,7 @@
     const resumeFile = options && options.resumeFile;
     try {
       const b = resumeFile && resumeFile.base64 ? resumeFile.base64.length : 0;
-      console.warn(`[workday] resume upload: file=${resumeFile ? resumeFile.filename || "yes" : "MISSING (none downloaded)"} base64Len=${b}`);
+      WD.log(`resume upload: file=${resumeFile ? resumeFile.filename || "yes" : "MISSING (none downloaded)"} base64Len=${b}`);
     } catch {}
     if (resumeFile) {
       // Resolve the resume widget LIVE (re-render safe): prefer the one wrapping
@@ -1486,7 +1838,7 @@
       const inputPresent = !!D.q(AID("file-upload-input-ref"));
       const ok = await D.attachFile(AID("file-upload-input-ref"), resumeFile);
       try {
-        console.warn(`[workday] resume upload result: attached=${ok} removedExisting=${removed} inputPresentAtStart=${inputPresent}`);
+        WD.log(`resume upload result: attached=${ok} removedExisting=${removed} inputPresentAtStart=${inputPresent}`);
       } catch {}
       record(rep, "Resume upload", ok);
     }
@@ -1494,7 +1846,7 @@
     const work = Array.isArray(profile.workExperience) ? profile.workExperience : [];
     const edu = Array.isArray(profile.education) ? profile.education : [];
     try {
-      console.warn(`[workday] experience input: work=${work.length} edu=${edu.length} resumeSource=${profile.resumeSource}`);
+      WD.log(`experience input: work=${work.length} edu=${edu.length} resumeSource=${profile.resumeSource}`);
     } catch {}
 
     // 1. Create exactly the needed panels (idempotent across re-runs). Workday
@@ -1505,18 +1857,18 @@
     const workPanels = panelRoots("Work-Experience").slice(0, work.length);
     const eduPanels = panelRoots("Education").slice(0, edu.length);
     try {
-      console.warn(`[workday] experience panels: work=${workPanels.length}/${work.length} edu=${eduPanels.length}/${edu.length}`);
+      WD.log(`experience panels: work=${workPanels.length}/${work.length} edu=${eduPanels.length}/${edu.length}`);
     } catch {}
 
     // 2. Harvest each education's Degree options and fire the LLM match request
     //    NOW (non-blocking) so it resolves while we fill everything else. (Field
-    //    of Study is NOT harvested here — it is a free search prompt filled inline
+    //    of Study is NOT harvested here - it is a free search prompt filled inline
     //    in step 3 by typing the exact value and pressing Enter.)
     const matchItems = [];
     for (let i = 0; i < eduPanels.length; i++) {
       const e = edu[i] || {};
       const n = i + 1;
-      // Degree: a fixed dropdown — open it to read every option.
+      // Degree: a fixed dropdown - open it to read every option.
       if (e.degree) {
         const btn = degreeButton(eduPanels[i]);
         if (btn && btn.id) {
@@ -1535,7 +1887,7 @@
     for (let i = 0; i < eduPanels.length; i++) await fillEducationNonDegree(eduPanels[i], edu[i], i + 1, rep);
 
     // 4. Apply the resolved Degree. Precedence: an EXACT option match for the
-    //    candidate's own value is authoritative (fill it verbatim — never let the
+    //    candidate's own value is authoritative (fill it verbatim - never let the
     //    LLM swap it for a merely "relevant" one). Only when there is no exact
     //    option do we defer to the LLM, falling back to local token-overlap.
     let chosen = {};
@@ -1559,5 +1911,5 @@
   // Build marker: if this line is NOT in the console on a run, the tab is running
   // a STALE engine (reload the extension at chrome://extensions, then hard-reload
   // the Workday page). markdown-strip is part of this build.
-  try { console.warn("[workday] wd-steps build: 2026-06-21-md-strip+reinstall"); } catch {}
+  try { WD.log("wd-steps build: 2026-06-23-wd-quiet-selfid"); } catch {}
 })();

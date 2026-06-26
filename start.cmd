@@ -73,7 +73,7 @@ start "Resume Build Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && 
 echo [6/7] Starting scraper worker...
 start "Scraper Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "WORKER_RELOAD=%WORKER_RELOAD%" && venv\Scripts\python.exe run_worker.py scraper"
 
-:: Frontend dev server (Vite HMR — hot reload built in)
+:: Frontend dev server (Vite HMR - hot reload built in)
 echo [7/7] Starting frontend dev server...
 for /f "delims=" %%i in ('venv\Scripts\python.exe scripts\lan_urls.py --ip 2^>nul') do set "LAN_HOST=%%i"
 start "Frontend (port 5173)" cmd /k "cd /d "%~dp0\frontend" && set "LAN_HOST=%LAN_HOST%" && npm run dev"
@@ -88,7 +88,7 @@ echo   API Docs:     http://localhost:8000/docs
 venv\Scripts\python.exe scripts\lan_urls.py
 echo.
 echo   Other devices on your Wi-Fi/LAN can open the Frontend LAN URL above.
-echo   Use port 5173 only — do not share http://^<ip^>:8000 with other users.
+echo   Use port 5173 only - do not share http://^<ip^>:8000 with other users.
 echo   If the page does not load, allow port 5173 in Windows Firewall.
 if "%RELOAD%"=="1" (
   echo.

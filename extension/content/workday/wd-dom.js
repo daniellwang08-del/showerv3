@@ -1,4 +1,4 @@
-// Workday engine — DOM primitives (isolated-world content script).
+// Workday engine - DOM primitives (isolated-world content script).
 //
 // Workday renders every input with a stable `data-automation-id` and uses
 // React-controlled inputs + custom listbox dropdowns. These helpers fill those
@@ -186,11 +186,11 @@
   // Attach a downloaded file (base64) to an <input type=file> via DataTransfer.
   async function attachFile(selector, file, root) {
     if (!file || !file.base64) {
-      try { console.warn("[workday] attachFile: no file/base64 provided"); } catch {}
+      try { WD.warn("attachFile: no file/base64 provided"); } catch {}
       return false;
     }
     // A native file <input> is almost ALWAYS visually hidden (a styled dropzone
-    // is shown instead), so we must match by PRESENCE — not visibility. The
+    // is shown instead), so we must match by PRESENCE - not visibility. The
     // visibility-gated waitFor/exists never return it.
     let el = null;
     const end = Date.now() + 8000;
@@ -204,7 +204,7 @@
       await delay(100);
     }
     if (!el) {
-      try { console.warn("[workday] attachFile: file input not found for", selector); } catch {}
+      try { WD.warn("attachFile: file input not found for", selector); } catch {}
       return false;
     }
     try {
@@ -219,7 +219,7 @@
       el.dispatchEvent(new Event("change", { bubbles: true }));
       return true;
     } catch (e) {
-      try { console.warn("[workday] attachFile: exception", (e && e.message) || e); } catch {}
+      try { WD.warn("attachFile: exception", (e && e.message) || e); } catch {}
       return false;
     }
   }
@@ -235,8 +235,23 @@
     );
   }
 
+  // Informational traces use console.debug so chrome://extensions → Errors stays
+  // clean. Reserve console.warn for attach failures and other real problems.
+  function wdLog(...args) {
+    try {
+      console.debug("[workday]", ...args);
+    } catch {}
+  }
+  function wdWarn(...args) {
+    try {
+      console.warn("[workday]", ...args);
+    } catch {}
+  }
+
   WD.dom = {
     delay, xpath, xpathAll, q, qa, isVisible, waitFor, nativeSet,
     setText, click, clickEl, toggle, selectDropdown, selectNative, attachFile, exists, headingHas, norm,
   };
+  WD.log = wdLog;
+  WD.warn = wdWarn;
 })();

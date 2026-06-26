@@ -1,4 +1,4 @@
-// Autofill engine — shared DOM utilities + driver registry.
+// Autofill engine - shared DOM utilities + driver registry.
 //
 // This is the FIRST engine file injected into every frame. It bootstraps the
 // `window.__AF` namespace that all driver modules and the engine core register
@@ -99,7 +99,7 @@
   //      bubble, so React 17+ never listens to "blur"). A synthetic `blur` Event
   //      therefore never triggers the onBlur commit, and the field stays "missing"
   //      on submit even though it shows a value. A genuine focus()+blur() fires a
-  //      native, bubbling `focusout` — the same gesture the user does by hand to
+  //      native, bubbling `focusout` - the same gesture the user does by hand to
   //      clear the error. We dispatch `focusout` explicitly as a fallback for
   //      inputs that can't take focus (disabled/readonly/off-screen).
   // No-ops when the value is empty. Returns true if it committed a value.
@@ -200,6 +200,56 @@
         }
       } catch {}
     }
+    // Pinpoint: boolean option text lives in a sibling .checkable-input__label (no
+    // label[for]); the question title is resolved separately via groupLabel /
+    // questionTitleFor.
+    try {
+      const ci = inp.closest && inp.closest(".checkable-input");
+      if (ci) {
+        const ol = ci.querySelector(".checkable-input__label");
+        if (ol && clean(ol.textContent)) return clean(ol.textContent).slice(0, 200);
+      }
+    } catch {}
+    // Pinpoint: react-select / text questions use .external-form__label--title or a
+    // hidden [title] metadata field inside the question block.
+    try {
+      if (AF.pinpoint && AF.pinpoint.questionTitleFor) {
+        const q = AF.pinpoint.questionTitleFor(inp);
+        if (q) return q.slice(0, 200);
+      }
+    } catch {}
+    // Lever: question text lives in .application-label (no label[for]); checkbox
+    // option text is in .application-answer-alternative (handled below for inputs
+    // inside checkable labels, and via optionLabelFor in the group driver).
+    try {
+      if (AF.lever && AF.lever.isLeverPage && AF.lever.isLeverPage()) {
+        if (inp.type === "checkbox" || inp.type === "radio") {
+          const opt = AF.lever.optionLabelFor && AF.lever.optionLabelFor(inp);
+          if (opt) return opt.slice(0, 200);
+        }
+        const q = AF.lever.questionLabelFor && AF.lever.questionLabelFor(inp);
+        if (q) return q.slice(0, 200);
+      }
+    } catch {}
+    // Workable: duplicate ids inside edu/exp editors - resolve labels in-scope.
+    try {
+      if (AF.workable && AF.workable.isWorkablePage && AF.workable.isWorkablePage()) {
+        const wb = AF.workable.labelForControl && AF.workable.labelForControl(inp);
+        if (wb) return wb.slice(0, 200);
+      }
+    } catch {}
+    // Breezy: question text lives in a preceding <h3> (no label[for]).
+    try {
+      if (AF.breezy && AF.breezy.isBreezyPage && AF.breezy.isBreezyPage()) {
+        const t = (inp.type || "").toLowerCase();
+        if (t === "radio" || t === "checkbox") {
+          const opt = AF.breezy.optionLabelFor && AF.breezy.optionLabelFor(inp);
+          if (opt && !inp.closest("li.question")) return opt.slice(0, 200);
+        }
+        const q = AF.breezy.questionTitleFor && AF.breezy.questionTitleFor(inp);
+        if (q) return q.slice(0, 200);
+      }
+    } catch {}
     const wrap = inp.closest && inp.closest("label");
     if (wrap && clean(wrap.innerText)) return clean(wrap.innerText).slice(0, 200);
     const labelledby = inp.getAttribute && inp.getAttribute("aria-labelledby");
@@ -328,6 +378,10 @@
         if (key) return key.length <= 56 ? "sr:" + key : "af:" + hashStr(key);
       }
     }
+    if (AF.workable && AF.workable.isWorkablePage && AF.workable.isWorkablePage()) {
+      const wb = AF.workable.cidFor && AF.workable.cidFor(el);
+      if (wb) return wb.length <= 60 ? wb : "af:" + hashStr(wb);
+    }
     const id = el.getAttribute && (el.getAttribute("id") || el.getAttribute("name"));
     // Keep short real ids/names verbatim (readable + usable by getElementById on
     // relocate); hash anything long or path-based so the cid stays well within
@@ -371,7 +425,8 @@
   const _CLEAN_REMOVE_SEL = [
     "script", "style", "svg", "noscript", "link", "iframe", "img", "path", "br", "hr", "button",
     '[aria-hidden="true"]', '[class*="a11yText"]', '[class*="requiredInput"]',
-    ".iti__dropdown-content", ".iti__flag", ".iti__arrow", ".iti__selected-country",
+    ".iti__dropdown-content", ".iti__country-list", ".iti__flag", ".iti__arrow", ".iti__selected-country",
+    ".apply-field-extra", ".apply-buttons",
   ].join(",");
   const _CLEAN_KEEP_ATTR = new Set([
     "id", "data-af-cid", "data-af-options-for", "role", "type", "name", "value",

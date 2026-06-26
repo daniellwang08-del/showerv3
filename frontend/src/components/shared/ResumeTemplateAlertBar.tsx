@@ -13,11 +13,11 @@ function statusMessage(status: ResumeTemplateStatus, error?: string | null): str
     case 'processing':
       return 'Your résumé template is being analyzed. AI tailoring will still run, but resume documents may fail until analysis completes.';
     case 'stale':
-      return 'Your profile work experience changed — re-analyze your template in Settings. AI tailoring will still run, but resume documents may fail.';
+      return 'Your profile work experience changed - re-analyze your template in Settings. AI tailoring will still run, but resume documents may fail.';
     case 'failed':
       return error
         ? `Résumé template is not ready: ${error}. AI tailoring will still run, but resume documents may fail.`
-        : 'Résumé template validation failed. Fix it in Settings — AI tailoring will still run, but resume documents may fail.';
+        : 'Résumé template validation failed. Fix it in Settings - AI tailoring will still run, but resume documents may fail.';
     default:
       return '';
   }
@@ -41,7 +41,7 @@ export function ResumeTemplateAlertBar() {
         }
       }
     } catch {
-      // Non-blocking banner — ignore fetch errors.
+      // Non-blocking banner - ignore fetch errors.
     } finally {
       setLoading(false);
     }

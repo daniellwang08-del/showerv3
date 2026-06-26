@@ -3,7 +3,7 @@ Extract Welcome to the Jungle job content via the public Algolia search API.
 
 WTTJ job pages are protected by AWS WAF (HTTP 202 + ``x-amzn-waf-action: challenge``),
 which blocks both httpx and headless Playwright.  The same Algolia index the WTTJ
-frontend uses is publicly accessible with the embedded API key — identical to the
+frontend uses is publicly accessible with the embedded API key - identical to the
 Scrapy spider in ``app.scraper.spiders.welcometothejungle``.
 """
 
@@ -201,7 +201,7 @@ class WttjAlgoliaExtractor(BaseExtractor):
         if hits:
             return hits[0]
 
-        # Fallback: slug may differ slightly — search by company slug + job slug token
+        # Fallback: slug may differ slightly - search by company slug + job slug token
         fallback_body = {
             "query": job_slug.replace("_", " ").replace("-", " "),
             "filters": f'organization.slug:"{company_slug}"',

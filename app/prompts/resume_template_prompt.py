@@ -8,7 +8,7 @@ Default layout (recommended): fixed experience slots {{EXP_1}}, {{EXP_2}}, … w
 - Set engine to "legacy_exp_n" when EXP tags are present or when no repeat block is used.
 - Header/contact is usually static Word text (not {{profile.*}} tags).
 
-Alternate layout (advanced): one {{#work_experience}} … {{/work_experience}} repeat block — set engine to "blueprint" only when that loop is present.
+Alternate layout (advanced): one {{#work_experience}} … {{/work_experience}} repeat block - set engine to "blueprint" only when that loop is present.
 
 Rules:
 - Identify sections: header/contact, summary, skills, work_experience, education, certificates, other.

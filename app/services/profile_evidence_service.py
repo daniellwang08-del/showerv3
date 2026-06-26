@@ -42,7 +42,7 @@ MAX_BATCH_SOURCE_CHARS = 25_000
 MAX_EVIDENCE_BULLETS_PER_COMPANY = 12
 
 EVIDENCE_SYSTEM_PROMPT = """You extract job-relevant evidence from a candidate's detailed project source material.
-This evidence will be used to write rich, high-impact tailored resume bullets — extract depth, not summaries.
+This evidence will be used to write rich, high-impact tailored resume bullets - extract depth, not summaries.
 
 Return ONLY valid JSON with this shape:
 {
@@ -68,7 +68,7 @@ Rules:
 - Extract scope_signals when present: team size, system scale, transaction volume, data size, uptime, etc.
 - Map evidence to job_keywords_matched using phrases from the job posting the evidence genuinely supports.
 - Include one entry per company provided in the input; if nothing is relevant, return empty arrays for that company.
-- Limit evidence_bullets to at most 12 per company — for companies with rich source material, extract enough distinct bullets to support 7+ tailored resume lines for recent roles.
+- Limit evidence_bullets to at most 12 per company - for companies with rich source material, extract enough distinct bullets to support 7+ tailored resume lines for recent roles.
 """
 
 

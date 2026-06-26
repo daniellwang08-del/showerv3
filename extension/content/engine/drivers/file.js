@@ -3,7 +3,7 @@
 // Greenhouse hides the real file input (.visually-hidden) inside a
 // <div role="group" aria-labelledby="upload-label-resume"> whose label text
 // ("Resume/CV", "Cover Letter") is the only thing that distinguishes resume from
-// cover letter — the input's own <label> just says "Attach". So we read the
+// cover letter - the input's own <label> just says "Attach". So we read the
 // enclosing group label first. The file bytes are injected via DataTransfer.
 (() => {
   const AF = window.__AF;
@@ -41,7 +41,7 @@
       if (el.tagName !== "INPUT" || (el.type || "").toLowerCase() !== "file") return null;
       // Ashby shows a convenience "Autofill from resume" drop zone ABOVE the form
       // whose file input parses the resume and overwrites fields. That's not an
-      // application field and fighting it causes races, so never claim it — we
+      // application field and fighting it causes races, so never claim it - we
       // attach to the real Resume field (#_systemfield_resume) instead.
       if (
         el.closest &&
@@ -62,6 +62,14 @@
         if (/upload profile image|profile image/i.test(al)) return null;
         if (el.closest && el.closest("oc-file-upload-button, oc-apply-with-resume")) return null;
       } catch {}
+      // Lever: skip the LinkedIn AWLI widget row - not an application upload field.
+      if (el.closest && el.closest(".awli-application-row, .awli-button-container")) return null;
+      // Workable: skip photo upload; claim only data-ui="resume".
+      try {
+        const ui = el.getAttribute && el.getAttribute("data-ui");
+        if (ui === "avatar") return null;
+        if (el.closest && el.closest('[data-ui="autofill-button"]')) return null;
+      } catch {}
       return el;
     },
     extract(root) {
@@ -77,6 +85,18 @@
         } catch {}
       }
       if (!label) label = labelForControl(root);
+      // Pinpoint structured attachments: question title distinguishes Resume vs Cover Letter.
+      if (!label && AF.pinpoint && AF.pinpoint.questionTitleFor) {
+        label = AF.pinpoint.questionTitleFor(root);
+      }
+      // Lever: Resume/CV label lives in .application-label on li.application-question.resume.
+      if (!label && AF.lever && AF.lever.questionLabelFor) {
+        label = AF.lever.questionLabelFor(root);
+      }
+      // Breezy: hidden #main-attachment resume upload.
+      if (!label && (root.id === "main-attachment" || root.name === "cResume")) label = "Resume";
+      if (!label && root.getAttribute && root.getAttribute("data-ui") === "resume") label = "Resume";
+      if (!label && (root.name === "resume" || root.id === "resume-upload-input")) label = "Resume/CV";
       return {
         kind: "file",
         label: label || "File",

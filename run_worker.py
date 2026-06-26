@@ -159,7 +159,7 @@ class ResumeBuildWorkerConfig(ResumeBuildWorkerSettings):
     redis_settings = ResumeBuildWorkerSettings.redis_settings()
 
 
-# ── Scraper worker lifecycle (DB only — spiders run as subprocesses) ───────
+# ── Scraper worker lifecycle (DB only - spiders run as subprocesses) ───────
 
 async def scraper_startup(ctx):
     logger.info("scraper_worker_startup_begin")
@@ -208,7 +208,7 @@ WORKER_CONFIGS = {
 #
 # Keep this defined at module level and accept the worker mode as a plain
 # string so pickling stores just ``(run_worker, _watchfiles_worker_target)``
-# plus a str arg — both trivially importable in the spawned child.
+# plus a str arg - both trivially importable in the spawned child.
 def _watchfiles_worker_target(mode: str) -> None:
     config = WORKER_CONFIGS[mode]
     logger.info(
@@ -242,7 +242,7 @@ if __name__ == "__main__":
 
         watch_path = str(Path(__file__).resolve().parent / "app")
         print(
-            f"[reload] Watching {watch_path} — {args.mode} worker restarts on .py changes "
+            f"[reload] Watching {watch_path} - {args.mode} worker restarts on .py changes "
             f"(debounced). Set WORKER_RELOAD=0 for a stable worker."
         )
         run_process(

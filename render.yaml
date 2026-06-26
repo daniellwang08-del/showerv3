@@ -1,4 +1,4 @@
-# Render.com Blueprint — provisions all services for the Job Scraper app.
+# Render.com Blueprint - provisions all services for the Job Scraper app.
 # Usage: New > Blueprint > connect repo > Render detects this file automatically.
 # Database: external Neon PostgreSQL (not Render-managed).
 

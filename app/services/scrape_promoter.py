@@ -10,9 +10,9 @@ Design highlights
   so it has direct access to the async DB, arq pool, and websocket publisher.
 * **Idempotent.** Each ``scraped_jobs`` row is stamped with the resulting
   ``promoted_extraction_id`` after it's been promoted.  Re-running the
-  promoter is safe — already-promoted rows are skipped.
+  promoter is safe - already-promoted rows are skipped.
 * **Reuses existing components.** ``JobExtractionRepository``, ``Job``,
-  ``URLManager``, ``enqueue_extraction`` — exactly the same plumbing the
+  ``URLManager``, ``enqueue_extraction`` - exactly the same plumbing the
   manual submit flow uses.  No duplicated extraction pipeline.
 * **Prefers the real ATS URL.**  For aggregators (Jobright, etc.) the spider
   writes the real posting URL into ``origin_url``; we promote that, not the
@@ -224,7 +224,7 @@ async def promote_single_scraped_row(
     enqueue: bool = True,
     user_id: str | None = None,
 ) -> dict:
-    """Public entry point — see :func:`_promote_single_scraped_row`."""
+    """Public entry point - see :func:`_promote_single_scraped_row`."""
     return await _promote_single_scraped_row(
         row, scrape_run_id=scrape_run_id, enqueue=enqueue, user_id=user_id
     )

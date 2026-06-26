@@ -2,7 +2,7 @@
 //
 // The .iti wrapper holds the real <input type="tel"> plus a flag/country
 // selector whose FULL country list (<ul class="iti__country-list"> with
-// data-dial-code / data-country-code) lives in the static DOM at all times — so
+// data-dial-code / data-country-code) lives in the static DOM at all times - so
 // unlike react-select, no open is needed to read options. We treat the phone
 // field as a national-number text input. When the form has no separate
 // country/dial-code control, we also set the flag from a leading "+<cc>".
@@ -72,7 +72,9 @@
       // control existed), align the iti flag to its dial code first.
       const m = value.match(/^\+\s*(\d{1,4})/);
       if (m) setCountryByDialCode(root, m[1]);
-      return AF.native.setTextInput(inp, value);
+      const ok = AF.native.setTextInput(inp, value);
+      if (ok && AF.pinpoint && AF.pinpoint.syncPhoneIso2) AF.pinpoint.syncPhoneIso2(root);
+      return ok;
     },
   });
 })();

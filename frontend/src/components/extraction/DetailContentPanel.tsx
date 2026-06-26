@@ -188,7 +188,7 @@ function ResumeBuildBadges({ build, validJobId }: { build: ResumeBuildStatus; va
             type="button"
             disabled={!isReady}
             onClick={() => isReady && handleDownload(downloadType)}
-            title={`${label}: ${status}${isReady ? ' — click to download' : ''}`}
+            title={`${label}: ${status}${isReady ? ' - click to download' : ''}`}
             className={`group relative flex h-7 items-center gap-1 rounded-md border px-1.5 text-[10px] font-medium leading-none transition-colors ${
               isReady
                 ? 'border-emerald-300/80 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer'
@@ -210,7 +210,7 @@ function ResumeBuildBadges({ build, validJobId }: { build: ResumeBuildStatus; va
   );
 }
 
-/** Large overall score — same band language as `MatchScoreChip` */
+/** Large overall score - same band language as `MatchScoreChip` */
 function matchScoreHeroClass(score: number): string {
   if (score >= 75) {
     return 'border border-emerald-300/95 bg-gradient-to-b from-emerald-100 to-emerald-50/95 text-emerald-950 shadow-md shadow-emerald-900/12';
@@ -221,7 +221,7 @@ function matchScoreHeroClass(score: number): string {
   return 'border border-amber-300/95 bg-gradient-to-b from-amber-100 to-amber-50/95 text-amber-950 shadow-md shadow-amber-900/12';
 }
 
-/** Per-dimension mini badges — mid-strength tints */
+/** Per-dimension mini badges - mid-strength tints */
 function matchScoreDimensionBadgeClass(score: number): string {
   if (score >= 80) {
     return 'border border-emerald-300/85 bg-gradient-to-b from-emerald-100 to-emerald-50 text-emerald-950 shadow-sm';

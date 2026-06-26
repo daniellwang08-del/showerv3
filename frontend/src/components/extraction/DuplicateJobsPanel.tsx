@@ -5,7 +5,6 @@ import {
   ArrowLeftRight,
   Search,
   Trash2,
-  AlertCircle,
   MoreHorizontal,
   X,
   ClipboardCheck,
@@ -15,7 +14,14 @@ import {
   CheckSquare,
   RotateCcw,
   FileText,
+  Copy,
+  Globe,
+  TrendingDown,
+  FileWarning,
+  ExternalLink,
+  Layers,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { SubmittedUrlItem } from '../../types/ui';
 import type { ExclusionType } from '../../types/index';
 import { useJobsStore } from '../../stores/jobsStore';
@@ -73,6 +79,71 @@ function ExclusionBadge({ type }: { type: ExclusionType }) {
     </span>
   );
 }
+
+type DupTabId = 'duplicates' | 'non_us' | 'low_score' | 'extraction_failed';
+type AccentKey = 'blue' | 'orange' | 'rose' | 'slate';
+
+const DUP_TABS: { id: DupTabId; label: string; icon: LucideIcon; accent: AccentKey; noun: string; emptyHint: string }[] = [
+  {
+    id: 'duplicates',
+    label: 'Duplicates',
+    icon: Copy,
+    accent: 'blue',
+    noun: 'duplicates',
+    emptyHint: 'Potential duplicate jobs and jobs needing location review appear here after AI analysis.',
+  },
+  {
+    id: 'non_us',
+    label: 'Non-US',
+    icon: Globe,
+    accent: 'orange',
+    noun: 'non-US jobs',
+    emptyHint: 'Jobs outside the United States are moved here after AI analysis.',
+  },
+  {
+    id: 'low_score',
+    label: 'Low match',
+    icon: TrendingDown,
+    accent: 'rose',
+    noun: 'low-match jobs',
+    emptyHint: 'Jobs below your minimum match score will appear here after AI analysis.',
+  },
+  {
+    id: 'extraction_failed',
+    label: 'Extraction failed',
+    icon: FileWarning,
+    accent: 'slate',
+    noun: 'extraction failures',
+    emptyHint: 'Expired or invalid postings that failed extraction appear here.',
+  },
+];
+
+const TAB_ACCENT: Record<AccentKey, { active: string; icon: string; badgeActive: string; badgeIdle: string }> = {
+  blue: {
+    active: 'border-blue-300 bg-blue-50 text-blue-700 shadow-sm',
+    icon: 'text-blue-600',
+    badgeActive: 'bg-blue-600 text-white',
+    badgeIdle: 'bg-slate-100 text-slate-500',
+  },
+  orange: {
+    active: 'border-orange-300 bg-orange-50 text-orange-700 shadow-sm',
+    icon: 'text-orange-600',
+    badgeActive: 'bg-orange-600 text-white',
+    badgeIdle: 'bg-slate-100 text-slate-500',
+  },
+  rose: {
+    active: 'border-rose-300 bg-rose-50 text-rose-700 shadow-sm',
+    icon: 'text-rose-600',
+    badgeActive: 'bg-rose-600 text-white',
+    badgeIdle: 'bg-slate-100 text-slate-500',
+  },
+  slate: {
+    active: 'border-slate-300 bg-slate-100 text-slate-800 shadow-sm',
+    icon: 'text-slate-600',
+    badgeActive: 'bg-slate-700 text-white',
+    badgeIdle: 'bg-slate-100 text-slate-500',
+  },
+};
 
 const MENU_WIDTH = 224;
 const MENU_EST_HEIGHT = 200;
@@ -390,307 +461,261 @@ export function DuplicateJobsPanel({
     return () => io.disconnect();
   }, [onLoadMoreActive, duplicateListHasMoreActive, loadingMoreActive, items.length, activeTab]);
 
+  const activeMeta = DUP_TABS.find((t) => t.id === activeTab) ?? DUP_TABS[0];
+  const countFor = (id: DupTabId): number =>
+    id === 'non_us'
+      ? invalidCounts.non_us
+      : id === 'low_score'
+        ? invalidCounts.low_score
+        : id === 'extraction_failed'
+          ? invalidCounts.extraction_failed
+          : invalidCounts.duplicates;
+
   return (
     <>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="mb-4 flex items-start justify-between gap-3 border-b border-blue-100 pb-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-blue-600" />
-              <h2 className="text-lg font-bold text-slate-900">Hidden jobs</h2>
-            </div>
-            <p className="mt-1 text-sm text-slate-500">
-              Review duplicates, low-match jobs, and failed extractions
-            </p>
-
-            <div className="mt-3 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('duplicates');
-                  setSelectedIds(new Set());
-                }}
-                className={[
-                  'rounded-md px-3 py-1.5 text-xs font-semibold transition',
-                  activeTab === 'duplicates'
-                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                    : 'text-slate-500 hover:text-slate-700',
-                ].join(' ')}
-              >
-                Duplicates
-                {invalidCounts.duplicates > 0 && (
-                  <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
-                    {invalidCounts.duplicates}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('non_us');
-                  setSelectedIds(new Set());
-                }}
-                className={[
-                  'rounded-md px-3 py-1.5 text-xs font-semibold transition',
-                  activeTab === 'non_us'
-                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                    : 'text-slate-500 hover:text-slate-700',
-                ].join(' ')}
-              >
-                Non-US
-                {invalidCounts.non_us > 0 && (
-                  <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700">
-                    {invalidCounts.non_us}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('low_score');
-                  setSelectedIds(new Set());
-                }}
-                className={[
-                  'rounded-md px-3 py-1.5 text-xs font-semibold transition',
-                  activeTab === 'low_score'
-                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                    : 'text-slate-500 hover:text-slate-700',
-                ].join(' ')}
-              >
-                Low match
-                {invalidCounts.low_score > 0 && (
-                  <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
-                    {invalidCounts.low_score}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('extraction_failed');
-                  setSelectedIds(new Set());
-                }}
-                className={[
-                  'rounded-md px-3 py-1.5 text-xs font-semibold transition',
-                  activeTab === 'extraction_failed'
-                    ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                    : 'text-slate-500 hover:text-slate-700',
-                ].join(' ')}
-              >
-                Extraction failed
-                {invalidCounts.extraction_failed > 0 && (
-                  <span className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">
-                    {invalidCounts.extraction_failed}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {items.length > 0 && duplicateListHasMoreActive != null ? (
-              <p className="mt-2 text-[11px] text-slate-500">
-                <span className="font-semibold tabular-nums text-slate-700">{loadedCount}</span>{' '}
-                loaded
-                {tabCount > loadedCount ? (
-                  <span className="ml-1 text-slate-400">· {tabCount} total</span>
-                ) : null}
-                {duplicateListHasMoreActive ? (
-                  <span className="ml-1 inline-flex items-center gap-0.5 font-semibold text-indigo-600">
-                    <ChevronDown className="h-3 w-3" aria-hidden />
-                    scroll for more
-                  </span>
-                ) : (
-                  <span className="text-slate-400"> · all loaded</span>
-                )}
-              </p>
-            ) : null}
-            {items.length > 0 ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={toggleSelectAll}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  {allSelected ? (
-                    <>
-                      <CheckSquare className="h-3.5 w-3.5 text-blue-600" aria-hidden />
-                      Deselect all
-                    </>
-                  ) : (
-                    <>
-                      <Square className="h-3.5 w-3.5 text-slate-500" aria-hidden />
-                      Select all
-                    </>
-                  )}
-                </button>
-                {someSelected ? (
-                  <button
-                    type="button"
-                    onClick={handleBatchDelete}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 shadow-sm transition hover:bg-red-100"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                    Dismiss ({selectedIds.size})
-                  </button>
-                ) : null}
+        {/* Header */}
+        <div className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-white via-white to-slate-50/60 px-5 pt-5 pb-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 text-white shadow-sm">
+                <Layers className="h-5 w-5" />
               </div>
-            ) : null}
+              <div>
+                <h2 className="text-xl font-bold tracking-tight text-slate-900">Hidden jobs</h2>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  Review duplicates, non-US, low-match, and failed extractions - restore, replace, or dismiss.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClosePanel}
+              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+              aria-label="Close duplicates panel"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClosePanel}
-            className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
-            aria-label="Close duplicates panel"
-          >
-            <X className="h-4 w-4" />
-          </button>
+
+          {/* Tabs */}
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {DUP_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              const count = countFor(tab.id);
+              const accent = TAB_ACCENT[tab.accent];
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    setSelectedIds(new Set());
+                  }}
+                  className={[
+                    'flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition',
+                    isActive
+                      ? accent.active
+                      : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700',
+                  ].join(' ')}
+                >
+                  <Icon className={`h-4 w-4 shrink-0 ${isActive ? accent.icon : 'text-slate-400'}`} />
+                  <span className="truncate">{tab.label}</span>
+                  <span
+                    className={[
+                      'inline-flex min-w-[1.5rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums',
+                      isActive ? accent.badgeActive : accent.badgeIdle,
+                    ].join(' ')}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="mb-4 shrink-0 min-w-0">
-          {children}
-        </div>
-
-        <div ref={dupScrollRef} className="min-h-0 flex-1 overflow-y-auto">
-          <div className="glass-card rounded-xl border border-blue-200/70 bg-gradient-to-b from-white to-blue-50/30 shadow-sm">
-            {loadingLists ? (
-              <div className="p-4 text-sm text-slate-500">Loading...</div>
-            ) : items.length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-sm font-medium text-slate-600">
-                  {activeTab === 'non_us'
-                    ? 'No non-US jobs.'
-                    : activeTab === 'low_score'
-                      ? 'No low-match jobs.'
-                      : activeTab === 'extraction_failed'
-                        ? 'No extraction failures.'
-                        : 'No duplicates yet.'}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {activeTab === 'non_us'
-                    ? 'Jobs outside the United States are moved here after AI analysis.'
-                    : activeTab === 'low_score'
-                      ? 'Jobs below your minimum match score will appear here after AI analysis.'
-                      : activeTab === 'extraction_failed'
-                        ? 'Expired or invalid postings that failed extraction appear here.'
-                        : 'Potential duplicate jobs and jobs needing location review appear here after AI analysis.'}
-                </p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-blue-100/60">
-                {items.map((item) => (
-                  <li key={item.id} className="group">
-                    <div className="relative" data-job-menu-root="true">
-                      <div
-                        className="flex items-center justify-between gap-2 border border-transparent px-2 py-2 transition hover:bg-blue-50/70"
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const p = clampDupContextMenu(e.clientX, e.clientY);
-                          setDupMenuOverride(p);
-                          if (openMenuId !== item.id) {
-                            onToggleMenu(item.id);
-                          }
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleRow(item.id);
-                          }}
-                          className="shrink-0 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
-                          aria-label={selectedIds.has(item.id) ? 'Deselect row' : 'Select row'}
-                          aria-pressed={selectedIds.has(item.id)}
-                        >
-                          {selectedIds.has(item.id) ? (
-                            <CheckSquare className="h-4 w-4 text-blue-600" aria-hidden />
-                          ) : (
-                            <Square className="h-4 w-4" aria-hidden />
-                          )}
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <ExclusionBadge type={item.exclusion_type ?? null} />
-                            {item.company && (
-                              <span className="truncate text-[10px] font-semibold text-slate-600">
-                                {item.company}
-                              </span>
-                            )}
-                          </div>
-                          <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-0.5 block cursor-pointer"
-                            title={item.url}
-                            onContextMenu={(e) => e.preventDefault()}
-                          >
-                            {item.title ? (
-                              <div className="truncate text-xs font-medium text-slate-800 hover:text-blue-700 hover:underline">
-                                {item.title}
-                              </div>
-                            ) : (
-                              <div className="truncate text-xs font-medium text-slate-500 italic">
-                                Untitled job
-                              </div>
-                            )}
-                            <div className="truncate text-[10px] text-slate-500 hover:text-blue-500 hover:underline">
-                              {item.url}
-                            </div>
-                          </a>
-                          {item.duplication_reason && (
-                            <div className="mt-1 flex items-start gap-1 text-[10px] text-slate-500">
-                              <FileText className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden />
-                              <span className="line-clamp-2">{item.duplication_reason}</span>
-                            </div>
-                          )}
-                          <div className="mt-0.5 text-[10px] text-slate-400">
-                            {new Date(item.created_at_ms).toLocaleString()}
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          data-dup-menu-anchor={item.id}
-                          className="shrink-0 rounded-md border border-slate-300 bg-white p-1 text-slate-700 opacity-0 transition-opacity duration-200 hover:bg-slate-100 group-hover:opacity-100"
-                          aria-label="Actions"
-                          aria-expanded={openMenuId === item.id}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setDupMenuOverride(null);
-                            onToggleMenu(item.id);
-                          }}
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+        {/* Toolbar */}
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-white px-5 py-2.5">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              disabled={items.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {allSelected ? (
+                <>
+                  <CheckSquare className="h-3.5 w-3.5 text-blue-600" aria-hidden />
+                  Deselect all
+                </>
+              ) : (
+                <>
+                  <Square className="h-3.5 w-3.5 text-slate-500" aria-hidden />
+                  Select all
+                </>
+              )}
+            </button>
+            {someSelected && (
+              <button
+                type="button"
+                onClick={handleBatchDelete}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 shadow-sm transition hover:bg-red-100"
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                Dismiss ({selectedIds.size})
+              </button>
             )}
           </div>
+          <div className="text-[11px] text-slate-500">
+            <span className="font-semibold tabular-nums text-slate-700">{loadedCount}</span> loaded
+            {tabCount > loadedCount ? <span className="text-slate-400"> · {tabCount} total</span> : null}
+            {duplicateListHasMoreActive ? (
+              <span className="ml-1 inline-flex items-center gap-0.5 font-semibold text-indigo-600">
+                <ChevronDown className="h-3 w-3" aria-hidden /> scroll for more
+              </span>
+            ) : items.length > 0 ? (
+              <span className="text-slate-400"> · all loaded</span>
+            ) : null}
+          </div>
+        </div>
+
+        {children}
+
+        {/* List */}
+        <div ref={dupScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 px-4 py-4">
+          {loadingLists ? (
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> Loading…
+            </div>
+          ) : items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-300 shadow-sm ring-1 ring-slate-200">
+                <activeMeta.icon className="h-6 w-6" />
+              </div>
+              <p className="mt-3 text-sm font-semibold text-slate-700">No {activeMeta.noun}.</p>
+              <p className="mt-1 max-w-sm text-xs text-slate-500">{activeMeta.emptyHint}</p>
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {items.map((item) => {
+                const selected = selectedIds.has(item.id);
+                return (
+                  <li key={item.id} className="group" data-job-menu-root="true">
+                    <div
+                      className={[
+                        'relative flex items-start gap-3 rounded-xl border bg-white px-3 py-3 shadow-sm transition',
+                        selected
+                          ? 'border-blue-300 ring-1 ring-inset ring-blue-200'
+                          : 'border-slate-200 hover:border-slate-300 hover:shadow',
+                      ].join(' ')}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const p = clampDupContextMenu(e.clientX, e.clientY);
+                        setDupMenuOverride(p);
+                        if (openMenuId !== item.id) {
+                          onToggleMenu(item.id);
+                        }
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleRow(item.id);
+                        }}
+                        className="mt-0.5 shrink-0 rounded-md p-0.5 text-slate-400 transition hover:text-slate-700"
+                        aria-label={selected ? 'Deselect row' : 'Select row'}
+                        aria-pressed={selected}
+                      >
+                        {selected ? (
+                          <CheckSquare className="h-5 w-5 text-blue-600" aria-hidden />
+                        ) : (
+                          <Square className="h-5 w-5" aria-hidden />
+                        )}
+                      </button>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <ExclusionBadge type={item.exclusion_type ?? null} />
+                          {item.company && (
+                            <span className="truncate text-xs font-semibold text-slate-700">{item.company}</span>
+                          )}
+                          <span className="ml-auto shrink-0 text-[11px] text-slate-400">
+                            {new Date(item.created_at_ms).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            })}
+                          </span>
+                        </div>
+
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group/link mt-1 block"
+                          title={item.url}
+                          onContextMenu={(e) => e.preventDefault()}
+                        >
+                          <div
+                            className={[
+                              'truncate text-sm font-semibold',
+                              item.title ? 'text-slate-900 group-hover/link:text-blue-700' : 'italic text-slate-500',
+                            ].join(' ')}
+                          >
+                            {item.title || 'Untitled job'}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-400 group-hover/link:text-blue-500">
+                            <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+                            <span className="truncate">{item.url}</span>
+                          </div>
+                        </a>
+
+                        {item.duplication_reason && (
+                          <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
+                            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+                            <span className="line-clamp-2">{item.duplication_reason}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        data-dup-menu-anchor={item.id}
+                        className="shrink-0 rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 shadow-sm transition hover:bg-slate-100 hover:text-slate-800"
+                        aria-label="Actions"
+                        aria-expanded={openMenuId === item.id}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDupMenuOverride(null);
+                          onToggleMenu(item.id);
+                        }}
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
           {duplicateListHasMoreActive && items.length > 0 ? (
             <div
               ref={dupSentinelRef}
-              className="mt-2 flex min-h-[48px] flex-col items-center justify-center gap-2 rounded-xl border border-blue-100/90 bg-gradient-to-b from-blue-50/80 to-white/70 px-3 py-2"
+              className="mt-2 flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white px-3 py-3"
             >
               {loadingMoreActive ? (
                 <>
-                  <Loader2 className="h-5 w-5 animate-spin text-blue-600" aria-hidden />
-                  <span className="text-[11px] font-medium text-slate-600">Loading more…</span>
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" aria-hidden />
+                  <span className="text-xs font-medium text-slate-600">Loading more…</span>
                 </>
               ) : (
-                <span className="text-center text-[10px] text-slate-500">
-                  Scroll for more{' '}
-                  {activeTab === 'non_us'
-                    ? 'non-US jobs'
-                    : activeTab === 'low_score'
-                      ? 'low-match jobs'
-                      : activeTab === 'extraction_failed'
-                        ? 'extraction failures'
-                        : 'duplicates'}
-                </span>
+                <span className="text-xs text-slate-400">Scroll for more {activeMeta.noun}</span>
               )}
             </div>
           ) : null}

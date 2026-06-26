@@ -8,14 +8,16 @@ import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
 import { SyncButton } from '../components/scraper/SyncButton';
 import { LlmProviderSelector } from '../components/scraper/LlmProviderSelector';
 import { Pagination } from '../components/shared/Pagination';
-import { ScraperAISearch, type AiSearchState } from '../components/scraper/ScraperAISearch';
+import { DashboardViewSwitcher } from '../components/scraper/DashboardViewSwitcher';
+import { MatchScoreFilter, RemoteFilterToggle } from '../components/scraper/DashboardFilters';
+import { SearchInput } from '../components/shared/SearchInput';
 import { SubmitForm } from '../components/extraction/SubmitForm';
 import { DuplicatesModal } from '../components/scraper/DuplicatesModal';
 import { CoverLetterTemplateAlertBar } from '../components/shared/CoverLetterTemplateAlertBar';
 import { ResumeTemplateAlertBar } from '../components/shared/ResumeTemplateAlertBar';
-import { useFloatingButtonPosition } from '../hooks/useFloatingButtonPosition';
-import { AlertTriangle, Sparkles, Link } from 'lucide-react';
+import { AlertTriangle, Briefcase, Building2 } from 'lucide-react';
 import type { DashboardJob } from '../types/scraper';
+import type { DashboardView } from '../api/scraperApi';
 
 export function ScraperDashboard() {
   const {
@@ -25,81 +27,42 @@ export function ScraperDashboard() {
     syncing,
     syncProgress,
     sortField, sortOrder,
-    loadJobs, bgRefreshJobs, loadStats, loadSpiders, checkSyncStatus, startSync,
-    setPage, setPerPage, setSort,
+    view, counts,
+    titleFilter, companyFilter, remoteOnly, minScore,
+    lastSyncRuns,
+    loadJobs, bgRefreshJobs, loadStats, loadSpiders, loadLastSyncRuns, checkSyncStatus, startSync,
+    setPage, setPerPage, setSort, setView,
+    setTitleFilter, setCompanyFilter, setRemoteOnly, setMinScore,
   } = useScraperStore();
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Duplicates modal + floating button
+  // Duplicates modal
   const [dupOpen, setDupOpen] = useState(false);
   const duplicateCount = useJobsStore((s) => s.invalidCounts.total);
   const refreshLists    = useJobsStore((s) => s.refreshLists);
-  const floating       = useFloatingButtonPosition('job_scraper:scraper_dup_btn_pos:v1');
 
-  // AI search state — when active, table shows AI results instead of paginated list
-  const [aiSearch, setAiSearch] = useState<AiSearchState>({
-    active: false, results: [], total: 0, rationale: null,
-  });
+  const handleViewChange = useCallback((next: DashboardView) => {
+    setView(next);
+  }, [setView]);
 
-  const handleAiResults = useCallback((state: AiSearchState) => {
-    setAiSearch(state);
-  }, []);
+  const handleTitleFilter = useCallback((value: string) => {
+    setTitleFilter(value);
+  }, [setTitleFilter]);
 
-  const handleAiClear = useCallback(() => {
-    setAiSearch({ active: false, results: [], total: 0, rationale: null });
-  }, []);
+  const handleCompanyFilter = useCallback((value: string) => {
+    setCompanyFilter(value);
+  }, [setCompanyFilter]);
 
-  const handleAppliedStateChange = useCallback((patches: Array<{
-    id: string;
-    applied_at: string | null;
-    applied_by_name: string | null;
-  }>) => {
-    if (patches.length === 0) return;
-    setAiSearch((prev) => {
-      if (!prev.active || prev.results.length === 0) return prev;
-      const byId = new Map(patches.map((p) => [p.id, p]));
-      let changed = false;
-      const results = prev.results.map((row) => {
-        const patch = byId.get(row.id);
-        if (!patch) return row;
-        if (row.applied_at === patch.applied_at && row.applied_by_name === patch.applied_by_name) {
-          return row;
-        }
-        changed = true;
-        return { ...row, applied_at: patch.applied_at, applied_by_name: patch.applied_by_name };
-      });
-      return changed ? { ...prev, results } : prev;
-    });
-  }, []);
-
-  const handleSheetPostedStateChange = useCallback((patches: Array<{
-    id: string;
-    sheet_posted_at: string | null;
-  }>) => {
-    if (patches.length === 0) return;
-    setAiSearch((prev) => {
-      if (!prev.active || prev.results.length === 0) return prev;
-      const byId = new Map(patches.map((p) => [p.id, p]));
-      let changed = false;
-      const results = prev.results.map((row) => {
-        const patch = byId.get(row.id);
-        if (!patch) return row;
-        if (row.sheet_posted_at === patch.sheet_posted_at) return row;
-        changed = true;
-        return { ...row, sheet_posted_at: patch.sheet_posted_at };
-      });
-      return changed ? { ...prev, results } : prev;
-    });
-  }, []);
-
-  const activeJobs = jobs.filter((j) => j.user_status !== 'duplicated' && j.user_status !== 'manual_hidden');
-  const displayedJobs: DashboardJob[] = aiSearch.active ? aiSearch.results : activeJobs;
+  const displayedJobs: DashboardJob[] = jobs.filter(
+    (j) => j.user_status !== 'duplicated' && j.user_status !== 'manual_hidden',
+  );
 
   useEffect(() => {
     loadJobs();
     loadStats();
     loadSpiders();
+    loadLastSyncRuns();
     checkSyncStatus();
     refreshLists();
     const RECONCILE_FLAG = 'company_policy_reconciled_v1';
@@ -171,9 +134,10 @@ export function ScraperDashboard() {
             Browse and manage processed job listings across all platforms.
           </p>
         </div>
-        <div className="flex items-start gap-2">
+        {/* relative z-40 lifts this group (and the open Sync dropdown) above the toolbar/table below. */}
+        <div className="relative z-40 flex items-start gap-2">
           <LlmProviderSelector />
-          <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} onSync={handleSync} />
+          <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} lastSyncRuns={lastSyncRuns} onSync={handleSync} />
         </div>
       </div>
 
@@ -182,45 +146,82 @@ export function ScraperDashboard() {
       <ResumeTemplateAlertBar />
       <CoverLetterTemplateAlertBar />
 
-      {/* ── AI search + Add job URL ──────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 px-0.5 flex items-center gap-1.5">
-            <Sparkles size={11} className="text-indigo-400" />
-            AI Search
-          </span>
-          <ScraperAISearch
-            onResults={handleAiResults}
-            onClear={handleAiClear}
-            isActive={aiSearch.active}
-            resultCount={aiSearch.results.length}
-            totalMatching={aiSearch.total}
-            rationale={aiSearch.rationale}
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 px-0.5 flex items-center gap-1.5">
-            <Link size={11} className="text-blue-400" />
-            Add job URL
-          </span>
-          <SubmitForm />
+      {/* ── Toolbar: view + filters + add-job URL (one line) ─────────────── */}
+      {/* relative z-30 lifts this stacking context (and its open dropdowns) above the jobs table below. */}
+      <div className="relative z-30 rounded-2xl border border-slate-200 bg-white/70 p-3 shadow-sm backdrop-blur-sm">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+          {/* Viewing dropdown */}
+          <div className="shrink-0">
+            <DashboardViewSwitcher view={view} counts={counts} onChange={handleViewChange} />
+          </div>
+
+          <div className="hidden self-stretch w-px bg-slate-200 xl:block" />
+
+          {/* Title / company / remote / match-score filters */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:shrink-0">
+            <SearchInput
+              value={titleFilter}
+              onChange={handleTitleFilter}
+              placeholder="Filter by title"
+              icon={Briefcase}
+              variant="solid"
+              className="w-full sm:w-44"
+            />
+            <SearchInput
+              value={companyFilter}
+              onChange={handleCompanyFilter}
+              placeholder="Filter by company"
+              icon={Building2}
+              variant="solid"
+              className="w-full sm:w-44"
+            />
+            <RemoteFilterToggle active={remoteOnly} onChange={setRemoteOnly} className="w-full sm:w-auto" />
+            <MatchScoreFilter value={minScore} onChange={setMinScore} className="w-full sm:w-44" />
+          </div>
+
+          <div className="hidden self-stretch w-px bg-slate-200 xl:block" />
+
+          {/* Add job URL + duplicates */}
+          <div className="flex w-full items-start gap-3 xl:flex-1 xl:min-w-[18rem]">
+            <div className="min-w-0 flex-1">
+              <SubmitForm inline />
+            </div>
+            <button
+              type="button"
+              onClick={() => setDupOpen(true)}
+              title="View duplicate jobs"
+              aria-label="Open duplicates panel"
+              className={[
+                'group inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border border-orange-600/20 px-3.5 text-sm font-bold text-white',
+                'bg-gradient-to-br from-amber-500 to-orange-600 shadow-md shadow-orange-500/25 transition-all',
+                'hover:from-amber-500 hover:to-orange-500 hover:shadow-lg hover:shadow-orange-500/30',
+                'focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:ring-offset-1',
+                dupOpen ? 'from-amber-600 to-orange-700 ring-2 ring-orange-300' : '',
+              ].join(' ')}
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0 drop-shadow-sm" />
+              <span className="hidden sm:inline">Duplicates</span>
+              {duplicateCount > 0 && (
+                <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-white px-1.5 py-0.5 text-xs font-extrabold tabular-nums text-orange-700 shadow-sm">
+                  {duplicateCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* ── Jobs table ──────────────────────────────────────────────────── */}
       <ScraperJobsTable
         jobs={displayedJobs}
-        loading={loading && !aiSearch.active}
+        loading={loading}
         sortField={sortField}
         sortOrder={sortOrder}
-        onSort={aiSearch.active ? () => {} : setSort}
-        rowOffset={aiSearch.active ? 0 : (page - 1) * perPage}
-        onAppliedStateChange={handleAppliedStateChange}
-        onSheetPostedStateChange={handleSheetPostedStateChange}
+        onSort={setSort}
+        rowOffset={(page - 1) * perPage}
       />
 
-      {/* Pagination only when not in AI search mode */}
-      {!aiSearch.active && total > 0 && (
+      {total > 0 && (
         <Pagination
           page={page}
           pages={pages}
@@ -230,42 +231,6 @@ export function ScraperDashboard() {
           onPerPageChange={setPerPage}
         />
       )}
-
-      {/* ── Draggable Duplicates FAB ─────────────────────────────────────── */}
-      <button
-        ref={floating.ref}
-        type="button"
-        onPointerDown={floating.handlers.onPointerDown}
-        onPointerMove={floating.handlers.onPointerMove}
-        onPointerUp={(e) => {
-          const { wasDrag } = floating.handlers.onPointerUp(e);
-          if (!wasDrag) setDupOpen(true);
-        }}
-        onPointerCancel={floating.handlers.onPointerCancel}
-        className={[
-          'fixed z-50 touch-none rounded-l-xl rounded-r-md border px-3 py-2 shadow-lg',
-          'transition focus:outline-none focus:ring-2 focus:ring-blue-400',
-          dupOpen
-            ? 'border-blue-300 bg-blue-100 text-blue-800'
-            : 'border-blue-400 btn-blue-neon text-white',
-        ].join(' ')}
-        style={floating.pos ? { left: floating.pos.x, top: floating.pos.y } : undefined}
-        aria-label="Open duplicates panel"
-        title="View duplicate jobs"
-      >
-        <span className="flex items-center gap-2 text-sm font-semibold">
-          <AlertTriangle className="h-4 w-4" />
-          <span>Duplicates</span>
-          {duplicateCount > 0 && (
-            <span className={[
-              'inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-bold',
-              dupOpen ? 'bg-white text-blue-700' : 'bg-blue-100 text-blue-700',
-            ].join(' ')}>
-              {duplicateCount}
-            </span>
-          )}
-        </span>
-      </button>
 
       {/* ── Duplicates modal ─────────────────────────────────────────────── */}
       {dupOpen && <DuplicatesModal onClose={() => setDupOpen(false)} />}

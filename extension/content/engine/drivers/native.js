@@ -11,7 +11,7 @@
 
   // Write a value the way a user does: focus → type → blur. The trailing blur is
   // critical for controlled forms (e.g. Ashby) that only commit a field into
-  // their *validated* state on blur — and React delegates onBlur from the native,
+  // their *validated* state on blur - and React delegates onBlur from the native,
   // bubbling **focusout** event, NOT "blur" (blur doesn't bubble, so React 17+
   // never listens to it). A real el.blur() fires that focusout; we fall back to a
   // dispatched focusout when the element couldn't take focus.
@@ -45,10 +45,13 @@
   // A combobox input belongs to react-select et al., not the native driver.
   function isComboInput(inp) {
     const role = (inp.getAttribute && inp.getAttribute("role")) || "";
+    const cls = String((inp.className && inp.className.baseVal !== undefined ? inp.className.baseVal : inp.className) || "");
     return (
       role === "combobox" ||
       (inp.getAttribute && inp.getAttribute("aria-autocomplete") === "list") ||
-      (inp.getAttribute && inp.getAttribute("aria-haspopup") === "listbox")
+      (inp.getAttribute && inp.getAttribute("aria-haspopup") === "listbox") ||
+      /dummyInput/i.test(cls) ||
+      (inp.closest && inp.closest(".react-select"))
     );
   }
 
@@ -115,7 +118,14 @@
     type: "native-select",
     priority: 40,
     match(el) {
-      return el.tagName === "SELECT" ? el : null;
+      if (el.tagName !== "SELECT") return null;
+      // Pinpoint mobile fallback <select> duplicates a react-select on desktop;
+      // skip it when a react-select widget is present in the same question block.
+      try {
+        const block = el.closest && el.closest(".col-md-1-1, .frow, .pad-v-3");
+        if (block && block.querySelector(".react-select, [class*='select__control']")) return null;
+      } catch {}
+      return el;
     },
     extract(root) {
       return {
@@ -173,7 +183,10 @@
       if (SKIP_INPUT_TYPES.includes(t)) return null;
       if (t === "file" || t === "radio" || t === "checkbox") return null;
       if (isComboInput(el)) return null; // react-select inner input
+      if (el.closest && el.closest(".react-select, [class*='select__']")) return null;
       if (el.closest && el.closest(".iti")) return null; // intl-tel-input owns it
+      if (AF.lever && AF.lever.shouldSkipControl && AF.lever.shouldSkipControl(el)) return null;
+      if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(el)) return null;
       if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return null;
       if (el.className && /requiredInput/i.test(String(el.className))) return null; // react-select shim
       return el;

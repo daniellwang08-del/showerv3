@@ -117,7 +117,7 @@ class AdzunaSpider(BaseJobSpider):
 
     def _load_checkpoint(self):
         if self._fresh_mode:
-            self.logger.info("Fresh mode — ignoring checkpoints")
+            self.logger.info("Fresh mode - ignoring checkpoints")
             return
         db_url = self.settings.get("DATABASE_URL")
         engine = get_engine(db_url)
@@ -147,7 +147,7 @@ class AdzunaSpider(BaseJobSpider):
                         len(legacy_set),
                     )
             else:
-                self.logger.info("No checkpoint found — will use max_pages=%d", self.max_pages)
+                self.logger.info("No checkpoint found - will use max_pages=%d", self.max_pages)
         finally:
             session.close()
 
@@ -264,7 +264,7 @@ class AdzunaSpider(BaseJobSpider):
             self.logger.info("[%s] Page %d: %d jobs (total unknown)", title, page, len(jobs))
 
         if not jobs:
-            self.logger.info("[%s] Page %d returned 0 jobs — stopping", title, page)
+            self.logger.info("[%s] Page %d returned 0 jobs - stopping", title, page)
             return
 
         job_ids = [str(j.get("id", "")) for j in jobs]
@@ -284,7 +284,7 @@ class AdzunaSpider(BaseJobSpider):
 
         if self._page_too_old(page_posted_dates):
             self.logger.info(
-                "[%s] Page %d jobs are older than posted_since — stopping pagination",
+                "[%s] Page %d jobs are older than posted_since - stopping pagination",
                 title,
                 page,
             )
@@ -299,7 +299,7 @@ class AdzunaSpider(BaseJobSpider):
             for job, jid in zip(jobs, job_ids):
                 if jid and jid in title_markers:
                     self.logger.info(
-                        "[%s] Checkpoint marker %s found on page %d — caught up",
+                        "[%s] Checkpoint marker %s found on page %d - caught up",
                         title, jid, page,
                     )
                     marker_hit_on_page = True
@@ -322,13 +322,13 @@ class AdzunaSpider(BaseJobSpider):
                     title, self.max_pages,
                 )
             else:
-                self.logger.info("[%s] Reached max_pages limit (%d) — stopping", title, self.max_pages)
+                self.logger.info("[%s] Reached max_pages limit (%d) - stopping", title, self.max_pages)
             should_continue = False
         elif total_pages is not None and next_page > total_pages:
-            self.logger.info("[%s] Reached last page (%d/%d) — stopping", title, page, total_pages)
+            self.logger.info("[%s] Reached last page (%d/%d) - stopping", title, page, total_pages)
             should_continue = False
         elif len(jobs) < RESULTS_PER_PAGE:
-            self.logger.info("[%s] Page %d had %d < %d jobs — last page", title, page, len(jobs), RESULTS_PER_PAGE)
+            self.logger.info("[%s] Page %d had %d < %d jobs - last page", title, page, len(jobs), RESULTS_PER_PAGE)
             should_continue = False
 
         if should_continue:
@@ -348,9 +348,9 @@ class AdzunaSpider(BaseJobSpider):
         """Yield a Scrapy Request to follow the Adzuna redirect URL.
 
         Adzuna's API returns a ``redirect_url`` that is either:
-        - ``/land/ad/<id>?se=<token>&v=<hash>``  — a time-bound click-tracking
+        - ``/land/ad/<id>?se=<token>&v=<hash>``  - a time-bound click-tracking
           URL that performs an HTTP 302 redirect to the actual employer page.
-        - ``/details/<id>``                       — the Adzuna detail page.
+        - ``/details/<id>``                       - the Adzuna detail page.
 
         In both cases, fetching from the extraction worker later fails because
         Adzuna blocks programmatic access (Cloudflare 403).  By following the
@@ -423,7 +423,7 @@ class AdzunaSpider(BaseJobSpider):
             errback=self._redirect_errback,
             meta={
                 "job_data": job_meta,
-                # Don't waste retry attempts on expired/invalid tokens —
+                # Don't waste retry attempts on expired/invalid tokens -
                 # the errback / status check handles that gracefully.
                 "dont_retry": True,
                 # Deliver 4xx / 5xx responses to parse_job so we can fall
@@ -441,7 +441,7 @@ class AdzunaSpider(BaseJobSpider):
         resolved to a non-Adzuna domain we have the real employer job page.
         If it stayed on adzuna.com (JS-redirect, Cloudflare challenge, or
         HTTP error) we fall back to storing the original Adzuna URL so the
-        job is still persisted — the extraction worker will attempt it and
+        job is still persisted - the extraction worker will attempt it and
         the validator will handle any wall pages gracefully.
         """
         job_meta = response.meta.get("job_data", {})
@@ -450,7 +450,7 @@ class AdzunaSpider(BaseJobSpider):
 
         if response.status >= 400:
             self.logger.warning(
-                "Adzuna redirect returned HTTP %d for job %s — "
+                "Adzuna redirect returned HTTP %d for job %s - "
                 "falling back to Adzuna URL",
                 response.status,
                 job_meta.get("source_job_id"),
@@ -458,7 +458,7 @@ class AdzunaSpider(BaseJobSpider):
             final_url = origin_url
 
         elif "adzuna.com" in final_url:
-            # Redirect did not leave adzuna.com — most likely a /details/ page
+            # Redirect did not leave adzuna.com - most likely a /details/ page
             # that returned 200 directly (no HTTP-level redirect to employer).
             # Store the Adzuna URL; the extraction service handles it from here.
             self.logger.info(
@@ -500,7 +500,7 @@ class AdzunaSpider(BaseJobSpider):
         origin_url: str = job_meta.get("origin_url", request.url)
 
         self.logger.warning(
-            "Network error following Adzuna redirect for job %s: %s — "
+            "Network error following Adzuna redirect for job %s: %s - "
             "falling back to Adzuna URL",
             job_meta.get("source_job_id"),
             failure.getErrorMessage(),

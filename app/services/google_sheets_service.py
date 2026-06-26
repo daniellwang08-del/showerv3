@@ -3,7 +3,7 @@ Google Sheets integration service.
 
 Reads/writes to user-configured Google Spreadsheets via a service account.
 All gspread (sync) calls are wrapped in asyncio.to_thread to stay non-blocking.
-Failures are logged but never propagate — sheet operations must not break the
+Failures are logged but never propagate - sheet operations must not break the
 main job pipeline.
 
 Tab groups: tabs are organized into groups (e.g. [["CHELL","Victor"], ["Adekunle","Elsie"]]).
@@ -493,7 +493,7 @@ async def distribute_jobs(user_id: str, job_ids: list[str]) -> dict:
     """
     Post job URLs to the configured Google Sheet using tab groups + round-robin.
 
-    Deduplication is based on the **actual sheet content** — if a URL already
+    Deduplication is based on the **actual sheet content** - if a URL already
     exists in any configured tab, it is skipped.  The local ``sheet_posted_at``
     flag is set/synced but never used as the skip criterion.
 

@@ -129,7 +129,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
 
             reason = error_msg
             if result.get("site_unreachable"):
-                reason = f"Site unreachable — {error_msg[:200]}"
+                reason = f"Site unreachable - {error_msg[:200]}"
 
             if user_id:
                 await _hide_extraction_failure_for_user(job_id, user_id, reason)
@@ -463,7 +463,7 @@ async def run_scraper_task(
 
     After each spider finishes its scrape_runs row, the freshly written
     ``scraped_jobs`` rows are bridged into the extraction lifecycle via
-    ``scrape_promoter.promote_scrape_run`` — they become ``JobExtraction``
+    ``scrape_promoter.promote_scrape_run`` - they become ``JobExtraction``
     (PENDING) + ``Job`` rows and ``extract_job`` is enqueued on the
     extraction queue.  From that point on, scraped jobs flow through the
     same pipeline as manually submitted URLs.
@@ -690,7 +690,7 @@ _shared_pools: dict[str, ArqRedis] = {}
 async def _get_shared_pool(queue: str) -> ArqRedis:
     """Return a long-lived ArqRedis pool for *queue*, creating it on first use.
 
-    Callers must NOT close the returned pool — it is shared across the process.
+    Callers must NOT close the returned pool - it is shared across the process.
     """
     pool = _shared_pools.get(queue)
     if pool is not None:

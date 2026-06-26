@@ -27,11 +27,44 @@ function hostOf(url) {
   }
 }
 
+function pathOf(url) {
+  try {
+    return new URL(url).pathname || "";
+  } catch {
+    return "";
+  }
+}
+
+// Career pages that embed Greenhouse pass gh_jid / gh_src on the parent URL even
+// when the host is not greenhouse.io (e.g. ithaka.org/job/...?gh_jid=...).
+export function hasGreenhouseUrlSignals(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    if (u.searchParams.has("gh_jid") || u.searchParams.has("gh_src")) return true;
+  } catch {}
+  return false;
+}
+
+/** Origins to request before injecting on a career page with an embedded GH form. */
+export function autofillPermissionOrigins(pageUrl, platform) {
+  const origins = [];
+  try {
+    origins.push(new URL(pageUrl).origin + "/*");
+  } catch {}
+  if (platform === "greenhouse" || hasGreenhouseUrlSignals(pageUrl)) {
+    origins.push("https://*.greenhouse.io/*");
+  }
+  return [...new Set(origins.filter(Boolean))];
+}
+
 // Host -> platform id. Ordered, first match wins. Add new ATS hosts here.
 const PLATFORM_MATCHERS = [
   ["greenhouse", (h) => h.includes("greenhouse.io") || h.includes("greenhouse-")],
   ["applytojob", (h) => h.includes("applytojob.com")],
   ["recruiterflow", (h) => h.includes("recruiterflow.com") || h.includes("rfcareers.")],
+  // Pinpoint HQ white-label careers sites: careers.[company].com/.../postings/.../applications
+  ["pinpoint", (h, p) => /^careers\./.test(h) && /\/postings\/.+\/applications/.test(p || "")],
   ["workday", (h) => h.includes("myworkdayjobs.com") || h.endsWith(".workday.com")],
   ["lever", (h) => h.includes("lever.co")],
   ["ashby", (h) => h.includes("ashbyhq.com")],
@@ -40,6 +73,7 @@ const PLATFORM_MATCHERS = [
   ["taleo", (h) => h.includes("taleo.net")],
   ["bamboohr", (h) => h.includes("bamboohr.com")],
   ["workable", (h) => h.includes("workable.com")],
+  ["breezy", (h) => h.includes("breezy.hr")],
 ];
 
 // Detect the ATS platform for a job. Prefers the live page URL (the actual
@@ -48,10 +82,12 @@ export function detectPlatform({ snapshot, pageUrl } = {}) {
   const candidates = [pageUrl, snapshot && snapshot.url, snapshot && snapshot.source].filter(Boolean);
   for (const u of candidates) {
     const h = hostOf(u);
+    const p = pathOf(u);
     if (!h) continue;
     for (const [id, test] of PLATFORM_MATCHERS) {
-      if (test(h)) return id;
+      if (test(h, p)) return id;
     }
+    if (hasGreenhouseUrlSignals(u)) return "greenhouse";
   }
   return "generic";
 }
@@ -72,7 +108,7 @@ export const ENGINES = {
     note: "Finds the application form and fills it automatically.",
   },
   // ApplyToJob (JazzHR / "resumator"): the whole application is one native HTML
-  // <form> (text/select/textarea/file — no custom widgets), so the generic
+  // <form> (text/select/textarea/file - no custom widgets), so the generic
   // component drivers fill it directly. Reuses the greenhouse bundle and the
   // auto-discover flow; a small prep step reveals the hidden resume file input.
   applytojob: {
@@ -99,7 +135,7 @@ export const ENGINES = {
     note: "Finds the application form and fills it automatically.",
   },
   // Ashby (jobs.ashbyhq.com): the application renders inside one stable container
-  // (.ashby-application-form-container — a div, not a <form>) with standard
+  // (.ashby-application-form-container - a div, not a <form>) with standard
   // <label for> + native inputs and Ashby's own combobox/file widgets. Reuses the
   // greenhouse bundle + auto-discover flow; the platform-agnostic component
   // drivers fill text/email/tel/textarea/select/file and the LLM resolves values.
@@ -127,6 +163,61 @@ export const ENGINES = {
     available: true,
     autoDiscover: true,
     note: "Finds the application form and fills it automatically.",
+  },
+  // Pinpoint HQ (careers.[company].com): Rails + React-on-Rails application form
+  // (#application-form.external-form) mixing native inputs, intl-tel-input phone,
+  // react-select (single + multi), boolean radios, conditional questions, EEO
+  // selects, and direct-upload file fields. Reuses the greenhouse bundle +
+  // auto-discover; Pinpoint-specific label/option/consent helpers live in
+  // content/engine/pinpoint.js and the shared component drivers.
+  pinpoint: {
+    id: "pinpoint",
+    label: "Pinpoint",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Finds the application form and fills it automatically.",
+  },
+  // Lever (jobs.lever.co): single-page native HTML apply form in
+  // .application-form (.application-label questions, checkbox groups, location
+  // autocomplete, hidden resume input). Reuses the greenhouse bundle +
+  // auto-discover; Lever-specific helpers live in content/engine/lever.js.
+  lever: {
+    id: "lever",
+    label: "Lever",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Finds the application form and fills it automatically.",
+  },
+  // Workable (apply.workable.com): single-page React form with stable data-ui
+  // hooks (application-form, firstname, resume, …), intl-tel-input phone, and
+  // repeating Education/Experience blocks (Add -> editor -> Update). Reuses the
+  // greenhouse bundle + auto-discover; prep owns edu/exp rows; resume uploads last.
+  workable: {
+    id: "workable",
+    label: "Workable",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Finds the application form and fills it automatically.",
+  },
+  // Breezy.hr: AngularJS single- or multi-step form (.application-container)
+  // with native text/email/textarea, radio screening questions, optional EEO,
+  // and a hidden resume file input (#main-attachment). Reuses the greenhouse
+  // bundle + auto-discover; Breezy-specific label/skip helpers live in
+  // content/engine/breezy.js. Resume uploads last (parser may overwrite fields).
+  breezy: {
+    id: "breezy",
+    label: "Breezy",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Finds the Breezy application form and fills it automatically.",
   },
   generic: {
     id: "generic",

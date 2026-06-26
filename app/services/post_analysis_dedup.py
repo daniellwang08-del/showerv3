@@ -5,13 +5,13 @@ whether the job should be saved as active, marked as duplicated, or skipped
 entirely based on same-company comparisons within the user's recycle window.
 
 Rules (applied in order):
-  0. Minimum match score — score below user's threshold → duplicated (below_min_score).
-  1. US location filter — non-US structured location → duplicated (non_us_location).
+  0. Minimum match score - score below user's threshold → duplicated (below_min_score).
+  1. US location filter - non-US structured location → duplicated (non_us_location).
      Missing/ambiguous location → duplicated (location_unknown) for review in Duplicates tab.
-  2. Same URL — another active job with identical normalized_url → duplicated (same_url).
-  3. Strict similarity — same title + same company → duplicated.
-  4. Applied at same company — user already applied within recycle window → duplicated.
-  5. Score comparison — keep the higher-scoring job active; mark the other duplicated.
+  2. Same URL - another active job with identical normalized_url → duplicated (same_url).
+  3. Strict similarity - same title + same company → duplicated.
+  4. Applied at same company - user already applied within recycle window → duplicated.
+  5. Score comparison - keep the higher-scoring job active; mark the other duplicated.
 """
 
 from __future__ import annotations

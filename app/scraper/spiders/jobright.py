@@ -183,7 +183,7 @@ class JobrightSpider(BaseJobSpider):
                 )
                 return None
             if resp.status_code == 429:
-                self.logger.warning("Rate limited (429) — stopping pagination")
+                self.logger.warning("Rate limited (429) - stopping pagination")
                 return None
             resp.raise_for_status()
             return json.loads(resp.text)
@@ -198,7 +198,7 @@ class JobrightSpider(BaseJobSpider):
     def _load_checkpoint(self):
         if self._fresh_mode:
             self.logger.info(
-                "Fresh mode — ignoring checkpoints, scraping up to %d pages × %d sort modes",
+                "Fresh mode - ignoring checkpoints, scraping up to %d pages × %d sort modes",
                 self.max_pages, len(self._sort_modes),
             )
             return
@@ -217,7 +217,7 @@ class JobrightSpider(BaseJobSpider):
                     len(self._marker_ids), list(self._marker_ids),
                 )
             else:
-                self.logger.info("No checkpoint found — full scrape up to max_pages=%d", self.max_pages)
+                self.logger.info("No checkpoint found - full scrape up to max_pages=%d", self.max_pages)
         finally:
             session.close()
 
@@ -310,7 +310,7 @@ class JobrightSpider(BaseJobSpider):
         )
 
         if not jobs:
-            self.logger.info("[sort=%s] Page %d returned 0 jobs — end of results", sort_label, page)
+            self.logger.info("[sort=%s] Page %d returned 0 jobs - end of results", sort_label, page)
             return
 
         job_ids = [
@@ -331,7 +331,7 @@ class JobrightSpider(BaseJobSpider):
                 except (ValueError, TypeError):
                     pass
 
-        # Save page 1 IDs for checkpoint — always from sort=1 (most recent)
+        # Save page 1 IDs for checkpoint - always from sort=1 (most recent)
         # regardless of which sort modes are active. In fresh mode we still
         # save markers so the next incremental run has them.
         if page == 1 and sort_condition == INCREMENTAL_SORT and not self._page1_ids:
@@ -339,7 +339,7 @@ class JobrightSpider(BaseJobSpider):
 
         if self._page_too_old(page_posted_dates):
             self.logger.info(
-                "[sort=%s] Page %d jobs are older than posted_since — stopping pagination",
+                "[sort=%s] Page %d jobs are older than posted_since - stopping pagination",
                 sort_label,
                 page,
             )
@@ -347,13 +347,13 @@ class JobrightSpider(BaseJobSpider):
                 yield from self._parse_job_item(item)
             return
 
-        # Checkpoint marker detection — only in incremental mode (sort=1 only)
+        # Checkpoint marker detection - only in incremental mode (sort=1 only)
         marker_hit_on_page = False
         if not self._fresh_mode and self._marker_ids:
             for item, jid in zip(jobs, job_ids):
                 if jid and jid in self._marker_ids:
                     self.logger.info(
-                        "[sort=%s] Checkpoint marker %s found on page %d — caught up with previous run",
+                        "[sort=%s] Checkpoint marker %s found on page %d - caught up with previous run",
                         sort_label, jid, page,
                     )
                     marker_hit_on_page = True
@@ -369,7 +369,7 @@ class JobrightSpider(BaseJobSpider):
             if marker_hit_on_page:
                 return
         else:
-            # Fresh mode or no markers — yield all new jobs
+            # Fresh mode or no markers - yield all new jobs
             new_on_page = 0
             for item, jid in zip(jobs, job_ids):
                 if jid in self._seen_job_ids:
@@ -381,7 +381,7 @@ class JobrightSpider(BaseJobSpider):
 
             if new_on_page == 0:
                 self.logger.info(
-                    "[sort=%s] Page %d had 0 new jobs (all seen in other sort modes) — stopping this sort",
+                    "[sort=%s] Page %d had 0 new jobs (all seen in other sort modes) - stopping this sort",
                     sort_label, page,
                 )
                 return
@@ -391,14 +391,14 @@ class JobrightSpider(BaseJobSpider):
         should_continue = True
 
         if next_page > self.max_pages:
-            self.logger.info("[sort=%s] Reached max_pages limit (%d) — stopping", sort_label, self.max_pages)
+            self.logger.info("[sort=%s] Reached max_pages limit (%d) - stopping", sort_label, self.max_pages)
             should_continue = False
         elif next_position >= API_CEILING:
-            self.logger.info("[sort=%s] Reached API ceiling (%d) — stopping", sort_label, API_CEILING)
+            self.logger.info("[sort=%s] Reached API ceiling (%d) - stopping", sort_label, API_CEILING)
             should_continue = False
         elif len(jobs) < JOBS_PER_PAGE:
             self.logger.info(
-                "[sort=%s] Page %d had %d < %d jobs — last page",
+                "[sort=%s] Page %d had %d < %d jobs - last page",
                 sort_label, page, len(jobs), JOBS_PER_PAGE,
             )
             should_continue = False

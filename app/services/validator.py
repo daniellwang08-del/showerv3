@@ -2,8 +2,8 @@
 Validation for extracted content and structured job data.
 
 Two-stage validation:
-1. ``validate_extracted_text`` — after extraction, checks plain text quality.
-2. ``validate_job_data`` — after LLM structuring, checks structured output.
+1. ``validate_extracted_text`` - after extraction, checks plain text quality.
+2. ``validate_job_data`` - after LLM structuring, checks structured output.
 """
 
 import re

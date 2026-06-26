@@ -1,4 +1,4 @@
-"""Canonical resume template requirements — fixed EXP slots are the default layout."""
+"""Canonical resume template requirements - fixed EXP slots are the default layout."""
 
 from __future__ import annotations
 
@@ -77,11 +77,11 @@ def _build_resume_style_sections(
     work_description = (
         "Default approach: design each job's layout yourself in Word, then place one "
         "{{EXP_N}} placeholder per role where tailored text should be inserted. "
-        "The app fills each slot without cloning paragraphs — your formatting stays intact."
+        "The app fills each slot without cloning paragraphs - your formatting stays intact."
     )
     if profile_work_count > 0:
         work_description += (
-            f" Your profile has {profile_work_count} role(s) — include "
+            f" Your profile has {profile_work_count} role(s) - include "
             f"{{{{EXP_1}}}} through {{{{EXP_{profile_work_count}}}}} at minimum."
         )
     else:
@@ -93,7 +93,7 @@ def _build_resume_style_sections(
             heading="Header & contact",
             description=(
                 "For fixed-slot templates, type your name and contact as normal Word text "
-                "(recommended). Do not rely on {{profile.*}} tags here — they are only used "
+                "(recommended). Do not rely on {{profile.*}} tags here - they are only used "
                 "with the optional repeat-block layout."
             ),
             layout_example=(
@@ -106,7 +106,7 @@ def _build_resume_style_sections(
                     tag="(static text)",
                     label="Name & contact",
                     required=True,
-                    description="Fixed text in Word — not replaced at build time.",
+                    description="Fixed text in Word - not replaced at build time.",
                 ),
             ],
             required=True,
@@ -147,7 +147,7 @@ def _build_resume_style_sections(
                 id="skills",
                 heading="Technical skills",
                 description=(
-                    f"Optional — {counts['skills']} skill categor"
+                    f"Optional - {counts['skills']} skill categor"
                     f"{'y' if counts['skills'] == 1 else 'ies'} in your profile. "
                     "Use one placeholder; the app expands it into category lines."
                 ),
@@ -199,7 +199,7 @@ def _build_resume_style_sections(
                 id="education",
                 heading="Education",
                 description=(
-                    f"Optional — {counts['education']} entr"
+                    f"Optional - {counts['education']} entr"
                     f"{'y' if counts['education'] == 1 else 'ies'} in your profile. "
                     "Keep as static formatted text in Word."
                 ),
@@ -226,7 +226,7 @@ def _build_resume_style_sections(
             ResumeStyleSectionSpec(
                 id="certificates",
                 heading="Certifications",
-                description="Optional — static text in Word.",
+                description="Optional - static text in Word.",
                 layout_example="CERTIFICATIONS\n• AWS Solutions Architect\n• PMP",
                 placeholders=[
                     TemplatePlaceholderSpec(
@@ -329,7 +329,7 @@ def get_template_requirements(
             max_bytes=max_bytes,
             notes=(
                 "Upload a .docx with your own Word formatting. "
-                "Use {{EXP_N}} slots for work experience — not multiple duplicate sections cloned by code."
+                "Use {{EXP_N}} slots for work experience - not multiple duplicate sections cloned by code."
             ),
         ),
         resume_style_title="Fixed-slot résumé template (recommended)",

@@ -313,7 +313,7 @@ class HTTPService:
 
         Returns the final URL string on success, or None if the request was
         blocked (4xx / 5xx) or failed with a network error.  A short timeout
-        is used intentionally — we want a fast yes/no answer, not a 30-second
+        is used intentionally - we want a fast yes/no answer, not a 30-second
         hang waiting for Cloudflare challenges.
         """
         if _CURL_CFFI_AVAILABLE and _CurlAsyncSession is not None:
@@ -350,7 +350,7 @@ class HTTPService:
             except Exception as e:
                 logger.warning("resolve_redirect_curl_cffi_failed", url=url, error=str(e))
 
-        # curl_cffi unavailable or failed — try plain httpx as last resort
+        # curl_cffi unavailable or failed - try plain httpx as last resort
         if _client is not None:
             try:
                 resp = await _client.get(url, headers=get_random_headers(), timeout=timeout)

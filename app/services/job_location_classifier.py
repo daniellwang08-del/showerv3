@@ -82,7 +82,7 @@ def _normalize(text: str | None) -> str:
     if not text:
         return ""
     cleaned = text.strip().lower()
-    cleaned = cleaned.replace("–", "-").replace("—", "-")
+    cleaned = cleaned.replace("\u2013", "-").replace("\u2014", "-")
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned
 

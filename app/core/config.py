@@ -17,7 +17,7 @@ def _resolve_env_files() -> tuple[str, ...]:
          which overrides values from `.env`.
 
     On Render / production the env vars are injected directly, so the files
-    are optional — real env vars always take highest precedence.
+    are optional - real env vars always take highest precedence.
     """
     env = os.environ.get("APP_ENV", "").strip().lower()
     base = _PROJECT_ROOT / ".env"
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # arq workers watch app/ when True (independent of reload; default off).
     worker_reload: bool = False
 
-    app_name: str = "Job Description Scraper"
+    app_name: str = "Atomspace"
     app_version: str = "1.0.0"
     debug: bool = True
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
         if not v:
             raise ValueError("DATABASE_URL is required and must be PostgreSQL (postgresql+asyncpg://...)")
 
-        # Render (and many PaaS) provide postgres:// — auto-convert to the
+        # Render (and many PaaS) provide postgres:// - auto-convert to the
         # asyncpg dialect SQLAlchemy requires.
         if v.startswith("postgres://"):
             v = v.replace("postgres://", "postgresql+asyncpg://", 1)
@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     phase_b_max_tokens: int = 16384
     auto_generate_tailored_content: bool = True
 
-    # Anthropic Claude — used as automatic fallback when OpenAI is unavailable
+    # Anthropic Claude - used as automatic fallback when OpenAI is unavailable
     # (insufficient_quota, rate-limit, auth failure, connection/timeout error).
     # Leave anthropic_api_key empty to disable fallback entirely.
     anthropic_api_key: str = Field(default="")
@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     anthropic_max_tokens: int = 4096
     # Per-request HTTP timeout for Anthropic calls (mirrors openai_timeout_seconds).
     anthropic_timeout_seconds: float = 240.0
-    # Google Gemini — selectable as a primary provider or as a fallback. Uses
+    # Google Gemini - selectable as a primary provider or as a fallback. Uses
     # Google's OpenAI-compatible endpoint so the existing OpenAI SDK is reused
     # (no extra dependency). Leave gemini_api_key empty to disable Gemini.
     gemini_api_key: str = Field(default="")

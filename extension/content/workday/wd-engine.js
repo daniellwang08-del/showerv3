@@ -1,4 +1,4 @@
-// Workday engine — step detection + run orchestration.
+// Workday engine - step detection + run orchestration.
 //
 // Workday is a single-page app: the same frame swaps between application steps.
 // detectStep() inspects headings + key automation-ids to classify the current
@@ -19,7 +19,7 @@
       return "experience";
     // Self Identify (CC-305 disability) is a SEPARATE page from Voluntary
     // Disclosures, but Workday often presents them back-to-back. They MUST have
-    // distinct step ids — the auto-advance loop detects "did we move?" by step-id
+    // distinct step ids - the auto-advance loop detects "did we move?" by step-id
     // change, so sharing an id makes it think Voluntary→SelfId never happened and
     // skip a dedicated fill pass on Self Identify (leaving Name/Date/box empty).
     if (D.headingHas("Self Identify") || D.headingHas("Self-Identify")) return "selfid";
@@ -58,9 +58,9 @@
       .filter((n) => D.isVisible(n) && /\b(error|required|must|invalid)\b/i.test(n.textContent || ""));
     const clean = invalidFields.length === 0 && alerts.length === 0;
     try {
-      if (!clean) {
-        console.warn(
-          "[workday] detectValidation:",
+      if (!clean && WD.log) {
+        WD.log(
+          "detectValidation:",
           invalidFields.length,
           "invalid field(s),",
           alerts.length,
@@ -79,7 +79,9 @@
     // The generic formField pass handles My Information, Voluntary Disclosures,
     // Application Questions, and any other flat Workday step.
     await S.fillStep(profile, options || {}, rep);
-    if (step === "experience") await S.fillExperienceExtras(profile, options || {}, rep);
+    if (step === "experience" && !(options && options.onlyInvalid && options.onlyInvalid.length)) {
+      await S.fillExperienceExtras(profile, options || {}, rep);
+    }
     return rep;
   }
 
@@ -108,7 +110,7 @@
       const ok = await clickNext();
       if (!ok) break;
       await D.delay(1500);
-      if (detectStep() === step) break; // validation blocked / stuck — stop safely
+      if (detectStep() === step) break; // validation blocked / stuck - stop safely
       if (++guard > 8) break;
     }
   }

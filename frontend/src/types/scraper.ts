@@ -135,6 +135,7 @@ export interface ScraperStats {
   today_scraped: number;
   today_remote: number;
   today_posted: number;
+  my_jobs: number;
   extracted_jobs: number;
   ready_jobs: number;
   sources: SourceStats[];

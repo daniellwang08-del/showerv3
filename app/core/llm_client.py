@@ -29,7 +29,7 @@ trips OPEN and subsequent requests skip OpenAI entirely for
 straight to Anthropic without wasting a round-trip on a known-bad endpoint.
 After the cooldown, one probe request tests whether OpenAI has recovered.
 
-The wrapper preserves Langfuse OpenAI tracing when available — only the
+The wrapper preserves Langfuse OpenAI tracing when available - only the
 fallback branch bypasses Langfuse (Anthropic is not auto-instrumented here).
 """
 
@@ -83,7 +83,7 @@ logger = get_logger(__name__)
 #   - APITimeoutError      : per-request timeout
 #   - InternalServerError  : 5xx
 #
-# We do NOT fall back on BadRequest / NotFound / UnprocessableEntity — those
+# We do NOT fall back on BadRequest / NotFound / UnprocessableEntity - those
 # indicate our request is malformed and the same payload would also fail
 # against Anthropic.
 
@@ -97,7 +97,7 @@ OPENAI_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
 )
 
 # Gemini is reached through the OpenAI-compatible endpoint using the OpenAI SDK,
-# so it raises the same ``openai.*`` exception types — reuse the same set.
+# so it raises the same ``openai.*`` exception types - reuse the same set.
 GEMINI_FALLBACK_ERRORS: tuple[type[Exception], ...] = OPENAI_FALLBACK_ERRORS
 
 # Equivalent recoverable-error classification for a primary Anthropic provider.
@@ -304,7 +304,7 @@ def _normalize_anthropic_json(raw_text: str) -> str:
     2. Locate the OUTERMOST JSON object using a brace-counter that ignores
        braces inside string literals. This drops any commentary/prose that
        may follow ``}`` (a known Claude behaviour at very low temperatures).
-    3. Try strict ``json.loads`` first — if it parses, return as-is.
+    3. Try strict ``json.loads`` first - if it parses, return as-is.
     4. Fall back to ``json-repair`` (a tolerant parser that fixes unescaped
        quotes / newlines / trailing commas) and re-serialise the result.
     5. If repair also fails, return whatever balanced-brace candidate we
@@ -342,7 +342,7 @@ def _normalize_anthropic_json(raw_text: str) -> str:
                 repaired = repaired.decode("utf-8", errors="replace")
             repaired = str(repaired or "").strip()
             if repaired:
-                # Sanity check — only accept the repaired string if it
+                # Sanity check - only accept the repaired string if it
                 # round-trips through the strict parser. Otherwise we'd be
                 # handing the caller something even worse than the original.
                 try:
@@ -461,7 +461,7 @@ async def _call_anthropic(
     """
     system_text, anthropic_messages = _split_system_and_messages(messages)
 
-    # JSON mode: Anthropic has no native flag. Use the prefill technique —
+    # JSON mode: Anthropic has no native flag. Use the prefill technique -
     # strengthen the system prompt + start the assistant turn with ``{`` so
     # Claude continues writing a JSON object. We re-prepend ``{`` to the
     # text we extract.
@@ -538,7 +538,7 @@ async def _stream_anthropic(
     """Stream plain-text deltas from the Anthropic Messages API.
 
     Mirrors ``_call_anthropic`` but yields text incrementally. JSON mode is not
-    supported here — this path is for free-text assistant chat only.
+    supported here - this path is for free-text assistant chat only.
     """
     system_text, anthropic_messages = _split_system_and_messages(messages)
     if not anthropic_messages:
@@ -760,7 +760,7 @@ class LLMFallbackClient:
         fallbacks = self._adapters[1:]
         primary_error: Exception | None = None
 
-        # When the circuit breaker is OPEN we skip the primary entirely — unless
+        # When the circuit breaker is OPEN we skip the primary entirely - unless
         # there is no fallback, in which case trying a possibly-broken primary is
         # better than giving up immediately.
         skip_primary = bool(fallbacks) and not self._cb.should_attempt_primary()

@@ -15,6 +15,12 @@
 
   // cid -> { driver, root, spec, handle }
   const controls = new Map();
+  const MAX_OPTIONS_PER_CONTROL = 120;
+
+  function clampOptions(opts) {
+    if (!opts || !opts.length) return opts;
+    return opts.length > MAX_OPTIONS_PER_CONTROL ? opts.slice(0, MAX_OPTIONS_PER_CONTROL) : opts;
+  }
 
   function reset() {
     controls.clear();
@@ -32,7 +38,7 @@
     try {
       // offsetParent is null for display:none subtrees, position:fixed elements,
       // AND (in some engines) controls inside a shadow root. A non-zero layout
-      // rect means the element is actually laid out and visible — true for fixed
+      // rect means the element is actually laid out and visible - true for fixed
       // and shadow-hosted controls (SmartRecruiters' spl-* inputs), still false
       // for display:none helpers (which collapse to a 0x0 rect).
       const r = el.getBoundingClientRect();
@@ -76,8 +82,8 @@
   //    geocoded location & country pickers, whose inner role="combobox" box would
   //    otherwise be mistaken for a react-select and harvest a 240-entry list.
   //    Screening-question dropdowns (spl-autocomplete[id^="question_"]) are the
-  //    ONE exception — the sr-select driver owns those, so they're NOT excluded.
-  //    NOTE: do NOT exclude spl-dropdown itself — on screening questions the
+  //    ONE exception - the sr-select driver owns those, so they're NOT excluded.
+  //    NOTE: do NOT exclude spl-dropdown itself - on screening questions the
   //    combobox <input> lives INSIDE <spl-dropdown class="c-spl-autocomplete-dropdown">
   //    (ancestor of the input, NOT the portaled overlay menu). Excluding spl-dropdown
   //    skips the entire subtree and yields comboboxes: 0 on the screening step.
@@ -91,13 +97,27 @@
     if (!deepCollectActive()) {
       const anchors = [];
       if (regionEl.matches && regionEl.matches(ANCHOR_SEL)) anchors.push(regionEl);
-      if (regionEl.querySelectorAll) regionEl.querySelectorAll(ANCHOR_SEL).forEach((n) => anchors.push(n));
+      if (regionEl.querySelectorAll) {
+        regionEl.querySelectorAll(ANCHOR_SEL).forEach((n) => {
+          try {
+            if (AF.lever && AF.lever.shouldSkipControl && AF.lever.shouldSkipControl(n)) return;
+            if (n.closest && AF.lever && AF.lever.shouldSkipSubtree && n.closest(".awli-application-row")) return;
+            if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(n)) return;
+            if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(n)) return;
+            if (n.closest && AF.workable && AF.workable.shouldSkipSubtree && n.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) return;
+          } catch {}
+          anchors.push(n);
+        });
+      }
       return anchors;
     }
     const out = [];
     const visit = (el) => {
       if (!el || el.nodeType !== 1) return;
       if (el.matches && el.matches(DEEP_EXCLUDE_SEL)) return; // skip the whole subtree
+      try {
+        if (AF.lever && AF.lever.shouldSkipSubtree && AF.lever.shouldSkipSubtree(el)) return;
+      } catch {}
       if (el.matches && el.matches(ANCHOR_SEL)) out.push(el);
       if (el.shadowRoot) {
         for (const c of el.shadowRoot.children) visit(c);
@@ -111,8 +131,8 @@
   }
 
   // Claim controls within regionEl. `consumed` (a shared WeakSet) prevents a
-  // child element of an already-claimed widget — or a control already claimed
-  // under another selected block — from being claimed twice.
+  // child element of an already-claimed widget - or a control already claimed
+  // under another selected block - from being claimed twice.
   function detect(regionEl, consumed) {
     const drivers = AF.orderedDrivers();
     const anchors = collectAnchors(regionEl);
@@ -120,11 +140,21 @@
     const claims = [];
     for (const anchor of anchors) {
       if (consumed.has(anchor)) continue;
-      // Skip hidden helper inputs — EXCEPT file inputs, which are almost always
+      try {
+        if (AF.lever && AF.lever.shouldSkipControl && AF.lever.shouldSkipControl(anchor)) continue;
+        if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(anchor)) continue;
+        if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(anchor)) continue;
+        if (anchor.closest && AF.workable && anchor.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) continue;
+      } catch {}
+      // Skip hidden helper inputs - EXCEPT file inputs, which are almost always
       // hidden behind a styled drop zone (RecruiterFlow's #fileInput is permanently
       // display:none) yet must still be claimed so the resume can be attached.
       const isFileInput = anchor.tagName === "INPUT" && (anchor.type || "").toLowerCase() === "file";
-      if (!isFileInput && !isRendered(anchor)) continue;
+      const wbSurveyRadio =
+        AF.workable && AF.workable.isSurveyRadioInput && AF.workable.isSurveyRadioInput(anchor);
+      const wbAppWidget =
+        AF.workable && AF.workable.isApplicationWidgetInput && AF.workable.isApplicationWidgetInput(anchor);
+      if (!isFileInput && !wbSurveyRadio && !wbAppWidget && !isRendered(anchor)) continue;
       for (const driver of drivers) {
         let root = null;
         try {
@@ -178,7 +208,7 @@
       // settled dropdown and re-sending finished controls).
       if (!filled && driver.harvestOptions && (!spec.options || !spec.options.length)) {
         try {
-          spec.options = await driver.harvestOptions(root);
+          spec.options = clampOptions(await driver.harvestOptions(root));
         } catch {
           spec.options = [];
         }
@@ -194,7 +224,7 @@
         required: !!spec.required,
       };
       if (spec.multi) desc.multi = true;
-      if (spec.options && spec.options.length) desc.options = spec.options;
+      if (spec.options && spec.options.length) desc.options = clampOptions(spec.options);
       if (spec.constraints && Object.keys(spec.constraints).length) desc.constraints = spec.constraints;
       if (spec.is_file) desc.is_file = true;
       if (spec.accept) desc.accept = spec.accept;
@@ -246,6 +276,7 @@
           harvested = [];
         }
         if (harvested.length) {
+          harvested = clampOptions(harvested);
           try {
             const ul = AF.dom.buildOptionList(cid, harvested);
             root.appendChild(ul);
@@ -265,7 +296,7 @@
       if (spec.multi) meta.multi = true;
       if (spec.is_file) meta.is_file = true;
       if (spec.accept) meta.accept = spec.accept;
-      const opts = harvested.length ? harvested : spec.options || [];
+      const opts = clampOptions(harvested.length ? harvested : spec.options || []);
       if (opts.length) meta.options = opts;
       if (spec.constraints && Object.keys(spec.constraints).length) meta.constraints = spec.constraints;
       controlsMeta.push(meta);
@@ -277,6 +308,9 @@
         ul.remove();
       } catch {}
     }
+    try {
+      if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(regionEl);
+    } catch {}
     diag(
       "extract DOM",
       JSON.stringify(labelText(regionEl)).slice(0, 60),
@@ -291,8 +325,8 @@
 
   function relocate(cid) {
     const entry = controls.get(cid);
-    // isConnected (not document.contains) so a control living in a shadow root —
-    // SmartRecruiters' inner inputs — is recognized as still on the page; a
+    // isConnected (not document.contains) so a control living in a shadow root -
+    // SmartRecruiters' inner inputs - is recognized as still on the page; a
     // shadow node is connected to the document but is NOT a document descendant,
     // so document.contains() returns false for it and would discard a live root.
     if (entry && entry.root && entry.root.isConnected) return entry.root;

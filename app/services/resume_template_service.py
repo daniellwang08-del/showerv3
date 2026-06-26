@@ -160,7 +160,7 @@ def _default_blueprint_from_tags(tags: list[str], profile_work_count: int) -> Re
                 ),
             )
         )
-        warnings.append("Repeat-block template — fixed {{EXP_N}} slots are recommended for layout control.")
+        warnings.append("Repeat-block template - fixed {{EXP_N}} slots are recommended for layout control.")
 
     return ResumeTemplateBlueprint(
         engine=engine,  # type: ignore[arg-type]
@@ -187,7 +187,7 @@ def validate_blueprint(
         exp_count = len([t for t in tags if LEGACY_EXP_PATTERN.search(t)])
         if exp_count == 0:
             errors.append(
-                "Add fixed experience slots {{EXP_1}}, {{EXP_2}}, … — one per role in your profile."
+                "Add fixed experience slots {{EXP_1}}, {{EXP_2}}, … - one per role in your profile."
             )
         elif profile_work_count > exp_count:
             errors.append(

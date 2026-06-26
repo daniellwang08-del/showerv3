@@ -7,7 +7,12 @@ import { useJobsStore } from '../../stores/jobsStore';
 const ACCEPT =
   '.docx,.xlsx,.txt,.text,.md,.markdown,.html,.htm,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/html';
 
-export function SubmitForm() {
+interface SubmitFormProps {
+  /** When true, render without the standalone glass card so it can sit inside a toolbar. */
+  inline?: boolean;
+}
+
+export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
   const url = useJobsStore((s) => s.url);
   const setUrl = useJobsStore((s) => s.setUrl);
   const loading = useJobsStore((s) => s.loading);
@@ -54,13 +59,12 @@ export function SubmitForm() {
     setPendingFiles([]);
   };
 
-  return (
-    <div className="glass-card min-w-0 rounded-2xl border border-blue-200/60 bg-gradient-to-br from-white/90 to-blue-50/50 p-5 shadow-sm">
-      <form onSubmit={handleFormSubmit} className="min-w-0">
-        <div className="flex min-w-0 flex-col gap-0 sm:flex-row sm:items-stretch">
-          <input
-            ref={fileRef}
-            type="file"
+  const formBody = (
+    <>
+      <div className="flex min-w-0 flex-col gap-0 sm:flex-row sm:items-stretch">
+        <input
+          ref={fileRef}
+          type="file"
             className="sr-only"
             multiple
             accept={ACCEPT}
@@ -72,12 +76,12 @@ export function SubmitForm() {
               e.target.value = '';
             }}
           />
-          <div className="flex h-11 min-w-0 flex-1 overflow-hidden rounded-t-lg border border-[rgba(147,197,253,0.8)] bg-[rgba(255,255,255,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] transition-[border-color,box-shadow,background-color] duration-[180ms] focus-within:border-[rgba(59,130,246,0.95)] focus-within:bg-white focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.85)] sm:rounded-l-lg sm:rounded-r-none">
+          <div className="flex h-11 min-w-0 flex-1 overflow-hidden rounded-t-lg border border-[rgba(147,197,253,0.8)] bg-[rgba(255,255,255,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] transition-[border-color,box-shadow,background-color] duration-[180ms] focus-within:border-[rgba(59,130,246,0.95)] focus-within:bg-white focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.85)] dark:border-[rgba(59,130,246,0.4)] dark:bg-[rgba(20,29,49,0.85)] dark:shadow-none dark:focus-within:bg-slate-900 sm:rounded-l-lg sm:rounded-r-none">
             <button
               type="button"
               disabled={busy}
               onClick={() => fileRef.current?.click()}
-              title="Attach Word, Excel, Markdown, text, or HTML — URLs will be detected with AI"
+              title="Attach Word, Excel, Markdown, text, or HTML - URLs will be detected with AI"
               aria-label="Attach documents to import job URLs"
               className={[
                 'flex h-full w-11 shrink-0 items-center justify-center border-r border-[rgba(147,197,253,0.65)] bg-gradient-to-b from-white to-slate-50/90 text-slate-500',
@@ -155,14 +159,27 @@ export function SubmitForm() {
           </button>
         </div>
 
-        {submitNotice && submitNoticeKind === 'warning' && (
-          <div className="mt-3 text-sm font-medium text-amber-700">
-            \u26A0 {submitNotice}
-          </div>
-        )}
+      {submitNotice && submitNoticeKind === 'warning' && (
+        <div className="mt-2.5 text-sm font-medium text-amber-700">
+          \u26A0 {submitNotice}
+        </div>
+      )}
 
-        {submitError && <div className="mt-3 text-sm font-medium text-red-700">\u2715 {submitError}</div>}
-      </form>
+      {submitError && <div className="mt-2.5 text-sm font-medium text-red-700">\u2715 {submitError}</div>}
+    </>
+  );
+
+  const form = (
+    <form onSubmit={handleFormSubmit} className="min-w-0">
+      {formBody}
+    </form>
+  );
+
+  if (inline) return form;
+
+  return (
+    <div className="glass-card min-w-0 rounded-2xl border border-blue-200/60 bg-gradient-to-br from-white/90 to-blue-50/50 p-5 shadow-sm">
+      {form}
     </div>
   );
 }

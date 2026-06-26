@@ -6,10 +6,10 @@ plain text from the page, stores it in Redis cache, and the downstream analysis
 engine (LLM) determines the structured content.
 
 Pipeline order:
-  1. Vendor APIs by URL (Ashby / Lever / Workday) — no HTML required
+  1. Vendor APIs by URL (Ashby / Lever / Workday) - no HTML required
   2. HTTP fetch (httpx, auto-falls-back to curl_cffi Chrome impersonation
      on 401/403 to bypass Lever/Workday/careers anti-bot)
-     — SKIPPED for known job-aggregator domains (adzuna.com, etc.) that block
+     - SKIPPED for known job-aggregator domains (adzuna.com, etc.) that block
        all programmatic HTTP; browser render is tried directly instead.
   3. Ashby embed (?ashby_jid) / Greenhouse boards API / Lever embed / JSON-LD /
      Static HTML
@@ -42,7 +42,7 @@ logger = get_logger(__name__)
 
 # Job-aggregator domains that block all programmatic HTTP access (Cloudflare,
 # custom bot detection, etc.).  For these, the HTTP fetch steps are skipped
-# entirely and the browser extractor is tried directly — saving several
+# entirely and the browser extractor is tried directly - saving several
 # wasted round-trips and producing a clearer failure message when even
 # Playwright can't get through.
 #
@@ -112,7 +112,7 @@ class ExtractionService:
         #      If the token is still valid we get the real employer URL and
         #      can run the full extraction pipeline against it.
         #   2. If the redirect is blocked / times out, fail fast immediately
-        #      with a clear message — no point hanging in Playwright.
+        #      with a clear message - no point hanging in Playwright.
         if _is_adzuna_tracking_url(url):
             resolved = await self.http_service.resolve_redirect(url, timeout=10.0)
             if resolved and "adzuna.com" not in resolved:
@@ -124,7 +124,7 @@ class ExtractionService:
                 )
                 url = resolved  # Continue with the real employer URL
             else:
-                # Token is stale — fail fast rather than letting Playwright
+                # Token is stale - fail fast rather than letting Playwright
                 # hang for 30+ seconds on a connection that will never load.
                 logger.warning(
                     "adzuna_tracking_url_expired",
@@ -143,7 +143,7 @@ class ExtractionService:
         last_error: str | None = None
 
         try:
-            # 1a. Ashby public API (native URL — no HTML needed)
+            # 1a. Ashby public API (native URL - no HTML needed)
             if await self.ashby_api_extractor.can_extract(url):
                 logger.info("ashby_api_attempt", job_id=job_id)
                 result = await self.ashby_api_extractor.extract(url)
@@ -153,7 +153,7 @@ class ExtractionService:
                     last_error = result.error
                     logger.warning("ashby_api_extract_failed", job_id=job_id, error=result.error)
 
-            # 1b. Lever public Postings API (native URL — no HTML needed)
+            # 1b. Lever public Postings API (native URL - no HTML needed)
             if is_lever_job_url(url):
                 logger.info("lever_api_attempt", job_id=job_id)
                 result = await self.lever_api_extractor.extract(url)
@@ -163,7 +163,7 @@ class ExtractionService:
                     last_error = result.error
                     logger.warning("lever_api_extract_failed", job_id=job_id, error=result.error)
 
-            # 1c. Workday cxs JSON (native URL — no HTML needed)
+            # 1c. Workday cxs JSON (native URL - no HTML needed)
             if is_workday_job_url(url):
                 logger.info("workday_api_attempt", job_id=job_id)
                 result = await self.workday_extractor.extract(url)
@@ -173,7 +173,7 @@ class ExtractionService:
                     last_error = result.error
                     logger.warning("workday_extract_failed", job_id=job_id, error=result.error)
 
-            # 1d. WTTJ Algolia API — bypasses AWS WAF on public job pages
+            # 1d. WTTJ Algolia API - bypasses AWS WAF on public job pages
             if is_wttj_job_url(url):
                 logger.info("wttj_algolia_attempt", job_id=job_id)
                 wttj_result = await self.wttj_algolia_extractor.extract(url)
@@ -196,7 +196,7 @@ class ExtractionService:
                         url=url,
                         reason="Known aggregator domain blocks HTTP; attempting browser only",
                     )
-                    last_error = "Aggregator domain — HTTP fetch skipped"
+                    last_error = "Aggregator domain - HTTP fetch skipped"
                 elif is_wttj_job_url(url):
                     logger.info(
                         "http_fetch_skipped_wttj",
@@ -252,7 +252,7 @@ class ExtractionService:
                 elif html_result.error:
                     last_error = html_result.error
 
-            # 7. Browser rendering — try if available and no strong candidate yet
+            # 7. Browser rendering - try if available and no strong candidate yet
             best_so_far, _ = pick_best_text(candidates)
             needs_browser = len(best_so_far) < 500 and not (
                 is_wttj_job_url(url) and len(best_so_far) >= 300
@@ -263,7 +263,7 @@ class ExtractionService:
                 if browser_result.success and browser_result.raw_content:
                     candidates.append((browser_result.raw_content, ExtractionMethod.BROWSER_RENDER.value))
 
-                    # Re-run vendor extractors on browser-rendered HTML — many
+                    # Re-run vendor extractors on browser-rendered HTML - many
                     # SPAs only reveal Greenhouse/Lever/Ashby tokens after JS runs.
                     rendered_html = browser_result.raw_content
 

@@ -1,4 +1,4 @@
-// Autofill content script — region picker + thin engine bridge.
+// Autofill content script - region picker + thin engine bridge.
 //
 // This file owns ONLY the on-page UX (hover overlay, click-to-select blocks)
 // and chrome.runtime messaging. All detection/extraction/writing is delegated to
@@ -6,7 +6,7 @@
 // drivers. Injected into every frame; idempotent via the guard below.
 (() => {
   try {
-    console.log("[autofill] picker.js build 2026-06-23f (smartrecruiters: fix multiselect isFilled false-positive on empty tags-list wrapper)");
+    console.log("[autofill] picker.js build 2026-06-23r (ATJ: no Lever apply click)");
   } catch {}
   if (window.__JOB_AUTOFILL__) return;
   window.__JOB_AUTOFILL__ = true;
@@ -33,7 +33,7 @@
       // SmartRecruiters renders the whole application with shadow-DOM web
       // components (spl-*/sr-*/oc-*). On the screening-questions step the fields
       // live inside <sr-screening-questions-form>'s shadow root, so a light-DOM
-      // querySelector finds nothing — key off the host so shadow-piercing stays
+      // querySelector finds nothing - key off the host so shadow-piercing stays
       // enabled across every step, not just the personal-info step.
       if (/(^|\.)smartrecruiters\.com$/i.test(location.hostname)) return true;
       return !!document.querySelector("oc-oneclick-form, spl-input, spl-autocomplete, spl-date-field");
@@ -184,7 +184,7 @@
     const handle = Math.floor(Math.random() * 2000000000);
     el.setAttribute("data-autofill-id", String(handle));
     state.selected.set(handle, el);
-    chrome.runtime.sendMessage({
+    announceFieldAdded({
       type: "AF_FIELD_ADDED",
       handle,
       label: labelText(el),
@@ -193,8 +193,31 @@
     });
   }
 
-  function onKey(e) {
-    if (e.key === "Escape" && state.picking) stopPicking(true);
+  function frameMeta() {
+    try {
+      return { frameUrl: location.href, frameHost: location.hostname };
+    } catch {
+      return { frameUrl: "", frameHost: "" };
+    }
+  }
+
+  function formLabelForContainer(container) {
+    if (container.matches && container.matches('form[data-ui="survey-form"]')) return "Survey questions";
+    try {
+      if (AF.greenhouse && AF.greenhouse.isApplicationFrame && AF.greenhouse.isApplicationFrame()) {
+        return "Application form (Greenhouse)";
+      }
+      if (AF.greenhouse && AF.greenhouse.isEmbedParent && AF.greenhouse.isEmbedParent()) {
+        return "Application form (Greenhouse embed)";
+      }
+    } catch {}
+    return "Application form";
+  }
+
+  function announceFieldAdded(payload) {
+    try {
+      chrome.runtime.sendMessage({ ...frameMeta(), ...payload });
+    } catch {}
   }
 
   // ── auto-discovery (no manual clicking) ───────────────────────────────────
@@ -235,6 +258,19 @@
     "oc-oneclick-form",
     "sr-screening-questions-form",
     "[data-test='screening-questions']",
+    // Workable (apply.workable.com): post-submit survey OR application form.
+    'form[data-ui="survey-form"]',
+    'form[data-ui="application-form"]',
+    // Breezy.hr: AngularJS application + questionnaire + EEO in one form.
+    '.application-container form[name="form"]',
+    'form[ng-controller*="FormWithQuestionnaire"]',
+    ".application-container",
+    // Lever (jobs.lever.co): apply form is a .application-form section (often a
+    // <div> inside or instead of a native <form>). Select the whole block so
+    // every .application-question is filled in one pass.
+    "form[action*='lever.co']",
+    ".section.application-form",
+    ".application-form",
     // Generic fallback
     "form",
   ];
@@ -261,8 +297,32 @@
     } catch {}
   }
 
+  // Lever job pages split description vs apply (/apply). Activate the apply form
+  // when the candidate opened the posting page instead of the apply URL.
+  // MUST NOT run on other ATS pages (ApplyToJob, etc.): their URLs and nav links
+  // also contain "/apply" but clicking them navigates away from the open form.
+  function ensureLeverApplyVisible() {
+    try {
+      if (AF.lever && AF.lever.isLeverPage && AF.lever.isLeverPage()) return;
+      if (/\.lever\.co$/i.test(location.hostname) || /jobs\.(?:eu\.)?lever\.co/i.test(location.hostname)) {
+        /* fall through - Lever host but apply form not mounted yet */
+      } else {
+        return; // not Lever - never click generic /apply links on other ATS pages
+      }
+      if (document.querySelector(".application-form, .application-question")) return;
+      if (document.querySelector('form#form_submit_new_resume, #resumator-resume-upload, #resumator-resume-value')) {
+        return; // ApplyToJob form already on this page
+      }
+      const apply =
+        document.querySelector('a.postings-btn[href*="/apply"], a.template-btn-submit[href*="/apply"], a[href$="/apply"]') ||
+        document.querySelector(".postings-btn-wrapper a[href*='apply']");
+      if (apply) apply.click();
+    } catch {}
+  }
+
   function findAutoContainer() {
     ensureAshbyFormVisible();
+    ensureLeverApplyVisible();
     for (const sel of AUTO_CONTAINER_SELECTORS) {
       let node = null;
       try {
@@ -290,27 +350,49 @@
   function autoSelect() {
     const container = findAutoContainer();
     if (!container) return 0;
-    // Reuse the handle if already registered (idempotent across re-injection /
-    // repeated Start), otherwise assign a new one.
+    pruneStaleSelections(container);
+    // Reuse the container's data-autofill-id when present (survives re-injection);
+    // otherwise assign a new handle and stamp it on the DOM node.
+    let handle = null;
     const existing = container.getAttribute("data-autofill-id");
-    let handle = existing && state.selected.has(Number(existing)) ? Number(existing) : null;
+    if (existing && /^\d+$/.test(String(existing))) handle = Number(existing);
     if (handle == null) {
       handle = Math.floor(Math.random() * 2000000000);
       container.setAttribute("data-autofill-id", String(handle));
-      state.selected.set(handle, container);
     }
+    state.selected.set(handle, container);
     const v = validity(container);
-    // Always (re-)announce so a freshly opened side panel relearns the handle.
-    try {
-      chrome.runtime.sendMessage({
-        type: "AF_FIELD_ADDED",
-        handle,
-        label: "Application form",
-        level: "group",
-        controlCount: v.count,
-      });
-    } catch {}
+    const formLabel = formLabelForContainer(container);
+    announceFieldAdded({
+      type: "AF_FIELD_ADDED",
+      handle,
+      label: formLabel,
+      level: "group",
+      controlCount: v.count,
+    });
     return 1;
+  }
+
+  // Drop detached containers and superseded Workable forms (application ->
+  // post-submit survey) so autofill does not keep targeting a removed form.
+  function pruneStaleSelections(activeContainer) {
+    for (const [handle, el] of Array.from(state.selected.entries())) {
+      if (!el || !el.isConnected) {
+        removeSelection(handle);
+        continue;
+      }
+      if (!activeContainer) continue;
+      try {
+        const wb =
+          el.matches &&
+          (el.matches('form[data-ui="application-form"]') || el.matches('form[data-ui="survey-form"]'));
+        const activeWb =
+          activeContainer.matches &&
+          (activeContainer.matches('form[data-ui="application-form"]') ||
+            activeContainer.matches('form[data-ui="survey-form"]'));
+        if (wb && activeWb && el !== activeContainer) removeSelection(handle);
+      } catch {}
+    }
   }
 
   // ── repeating education rows (Greenhouse) ─────────────────────────────────
@@ -318,7 +400,7 @@
   // plus an "Add another" button. A candidate may have several education
   // entries, so before filling we add enough rows for the whole history and let
   // the fill pass map each entry to its 0-based index. The indexed ids make this
-  // deterministic — mirrors the Workday repeating-panel flow.
+  // deterministic - mirrors the Workday repeating-panel flow.
   function educationBlockCount() {
     const set = new Set();
     document
@@ -365,7 +447,7 @@
       if (!btn || !isVisible(btn)) break;
       clickButton(btn);
       await waitUntil(() => (educationBlockCount() > before ? true : null), 3000, 100);
-      if (educationBlockCount() <= before) break; // the Add click did nothing — stop
+      if (educationBlockCount() <= before) break; // the Add click did nothing - stop
     }
     return educationBlockCount();
   }
@@ -401,7 +483,7 @@
   // Commit browser-autofilled values into the page's framework state. The
   // engine skips controls that already hold a value (isFilled), so a value the
   // browser autofilled WITHOUT firing React's onChange would never get committed
-  // to the controlled component — and a React form (e.g. Ashby) then rejects it
+  // to the controlled component - and a React form (e.g. Ashby) then rejects it
   // as a missing required field on submit. Re-fire each pre-filled text input's
   // own value through the React-safe path so the framework records it. We don't
   // change any text, so this is safe to run on every text field in the form.
@@ -432,7 +514,7 @@
           // single render where the shared form-state merges clobber each other,
           // so some fields we just committed read back as "missing required
           // field". A real macrotask gap flushes each field's commit before the
-          // next — exactly what happens when a user clicks in and out one field at
+          // next - exactly what happens when a user clicks in and out one field at
           // a time (the gesture that reliably fixes it by hand).
           await wait(16);
         }
@@ -467,7 +549,7 @@
       seen.add(root);
       // Yes/No button groups (Ashby) must be clicked AFTER the form is fully
       // interactive. This replay runs right after the form mounts, so a click
-      // here can fire before Ashby wires its onClick — it would flip only the
+      // here can fire before Ashby wires its onClick - it would flip only the
       // button's visual and never reach React's form state, then the
       // data-af-yesno-answered marker makes the post-hydration pass skip it and
       // the answer reads as a missing required field on submit. Skip them here;
@@ -538,7 +620,7 @@
 
   // Fill every education row deterministically, ONE control at a time. Each
   // react-select selection closes its own menu, so we never have several
-  // Greenhouse education menus open at once — the exact stacked-open state that
+  // Greenhouse education menus open at once - the exact stacked-open state that
   // leaves School/Degree unselected when the generic option-harvest pass opens
   // them all together. School = profile school name (best-effort typeahead),
   // Degree = profile degree mapped to Greenhouse's taxonomy, Discipline = the
@@ -563,7 +645,7 @@
   // ── repeating Experience / Education rows (RecruiterFlow) ──────────────────
   // RecruiterFlow ships ONE Experience row and ONE Education row plus
   // "+Add Experience" / "+Add Education" buttons. Field NAMES carry a 0-based
-  // index (candidate_profile.company-name.0, candidate_profile.school.1, …) — the
+  // index (candidate_profile.company-name.0, candidate_profile.school.1, …) - the
   // ids are duplicated across rows, so the name is the reliable identifier. As
   // with Greenhouse education, we add a row per profile entry, then fill each by
   // index. Company/Title/School/Degree are plain text; dates are react-datepicker
@@ -588,7 +670,7 @@
       if (!btn || !isVisible(btn)) break;
       clickButton(btn);
       await waitUntil(() => (rfRowCount(prefix) > before ? true : null), 3000, 100);
-      if (rfRowCount(prefix) <= before) break; // the Add click did nothing — stop
+      if (rfRowCount(prefix) <= before) break; // the Add click did nothing - stop
     }
     return rfRowCount(prefix);
   }
@@ -770,7 +852,7 @@
     return true;
   }
 
-  // Type into an spl-autocomplete (Title / Company / Institution — they carry
+  // Type into an spl-autocomplete (Title / Company / Institution - they carry
   // allowcustomvalues) and pick the topmost search result if one appears; else
   // commit the typed text as a custom value. `host` is the oc-*-autocomplete.
   async function srFillAutocomplete(host, value) {
@@ -922,8 +1004,8 @@
   }
 
   // Fill a location block. SmartRecruiters renders location EITHER as a single
-  // city autocomplete (label "City"/"Office location"/"School location") OR — when
-  // the company configured postal lookup — as a "Country/Region" picker plus a
+  // city autocomplete (label "City"/"Office location"/"School location") OR - when
+  // the company configured postal lookup - as a "Country/Region" picker plus a
   // "Postal code" search. Both the postal field and the country picker are
   // geocoded autocompletes (no custom values), so we type and pick the top
   // suggestion. In postal mode we type the candidate's ZIP (not address text).
@@ -985,7 +1067,7 @@
   // Set a month-year flatpickr date inside an oc-datepicker host by driving its
   // (always-rendered "static") calendar: step the year with the prev/next arrows
   // (a year per click in monthSelect mode), then click the month cell. Format-
-  // independent and deterministic — no guessing flatpickr's parse format.
+  // independent and deterministic - no guessing flatpickr's parse format.
   async function srFillDate(host, year, month) {
     if (!host || !year || !month) return false;
     const input = srDeepOne(host, "input.flatpickr-input");
@@ -1046,7 +1128,7 @@
     if (e.description) srFillTextarea(srDeepOne(form, 'oc-textarea[data-test="experience-description"]'), e.description);
     const start = srParseMMYYYY(e.start);
     if (start) await srFillDate(srDeepOne(form, 'oc-datepicker[data-test="experience-date-from"]'), start.year, start.month);
-    // Never tick "I currently work here" — always commit a real end date (last
+    // Never tick "I currently work here" - always commit a real end date (last
     // month when the role is marked current / has no end).
     let end = srParseMMYYYY(e.end);
     if (!end || e.current) end = srLastMonth();
@@ -1123,11 +1205,189 @@
     return { filledExp, filledEdu, consent, homeLoc };
   }
 
+  // ── Workable repeating Education / Experience ─────────────────────────────
+  // Workable mounts edu/exp as Add -> [data-ui="editor"] -> Update -> saved
+  // [data-ui="group"] cards. Prep fills any missing rows from the profile before
+  // the generic LLM pass (which excludes these subtrees).
+  function wbDelay(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  async function wbWait(check, timeoutMs, intervalMs) {
+    const waitUntil = dom.waitUntil ? dom.waitUntil : async () => null;
+    try {
+      await waitUntil(check, timeoutMs || 3000, intervalMs || 80);
+    } catch {}
+    try {
+      return !!check();
+    } catch {
+      return false;
+    }
+  }
+
+  function wbSection(sectionUi) {
+    return document.querySelector('[data-ui="' + sectionUi + '"]');
+  }
+
+  function wbSavedCount(sectionUi) {
+    const sec = wbSection(sectionUi);
+    if (!sec) return 0;
+    return sec.querySelectorAll('ul li [data-ui="group"]').length;
+  }
+
+  function wbEditor(sectionUi) {
+    const sec = wbSection(sectionUi);
+    return sec ? sec.querySelector('[data-ui="editor"]') : null;
+  }
+
+  async function wbSetField(input, value) {
+    const v = String(value || "").trim();
+    if (!input || !v) return false;
+    try {
+      const wbSet =
+        AF.workable && AF.workable.setEditorField ? AF.workable.setEditorField.bind(AF.workable) : null;
+      if (wbSet && wbSet(input, v)) {
+        await wbDelay(60);
+        return true;
+      }
+      const setText = AF.native && AF.native.setTextInput;
+      if (setText) setText(input, v);
+      else if (dom.setNativeValue) {
+        dom.setNativeValue(input, v);
+        if (dom.fireInput) dom.fireInput(input);
+        else {
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        input.blur();
+      } else {
+        input.value = v;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      await wbDelay(60);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function wbCommitEditor(editor) {
+    if (!editor) return;
+    try {
+      if (AF.workable && AF.workable.commitEditorFields) AF.workable.commitEditorFields(editor);
+    } catch {}
+    await wbDelay(120);
+  }
+
+  async function wbOpenEditor(sectionUi) {
+    const sec = wbSection(sectionUi);
+    if (!sec) return null;
+    const open = sec.querySelector('[data-ui="editor"]');
+    if (open) return open;
+    const btn = sec.querySelector('[data-ui="add-section"]:not([disabled])');
+    if (!btn || !isVisible(btn)) return null;
+    clickButton(btn);
+    await wbWait(() => wbEditor(sectionUi), 3500, 80);
+    return wbEditor(sectionUi);
+  }
+
+  async function wbSaveEditor(sectionUi) {
+    const sec = wbSection(sectionUi);
+    if (!sec) return false;
+    const editor = sec.querySelector('[data-ui="editor"]');
+    if (!editor) return false;
+    const save = editor.querySelector('[data-ui="save-section"]');
+    if (!save) return false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await wbCommitEditor(editor);
+      clickButton(save);
+      const closed = await wbWait(() => !sec.querySelector('[data-ui="editor"]'), 4000, 100);
+      if (closed) {
+        await wbDelay(150);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function wbSetCurrent(editor, current) {
+    if (!editor) return false;
+    const cb = editor.querySelector(
+      '[role="checkbox"]#current, [role="checkbox"][aria-labelledby="checkbox_label_current"]'
+    );
+    if (!cb) return false;
+    const on = cb.getAttribute("aria-checked") === "true";
+    if (current && !on) clickButton(cb);
+    else if (!current && on) clickButton(cb);
+    await wbDelay(80);
+    return true;
+  }
+
+  async function wbFillEducationEntry(entry) {
+    const e = entry || {};
+    if (!e.school) return false;
+    const editor = await wbOpenEditor("education");
+    if (!editor) return false;
+    let n = 0;
+    // Optional fields first; required School last so a later write cannot drop it
+    // from React state while the DOM still shows the typed value.
+    if (e.field_of_study && (await wbSetField(editor.querySelector('[name="field_of_study"]'), e.field_of_study))) n++;
+    if (e.degree && (await wbSetField(editor.querySelector('[name="degree"]'), e.degree))) n++;
+    if (e.start && (await wbSetField(editor.querySelector('[name="start_date"]'), e.start))) n++;
+    if (e.end && (await wbSetField(editor.querySelector('[name="end_date"]'), e.end))) n++;
+    if (await wbSetField(editor.querySelector('[name="school"]'), e.school)) n++;
+    if (!n) return false;
+    return wbSaveEditor("education");
+  }
+
+  async function wbFillExperienceEntry(entry) {
+    const e = entry || {};
+    if (!e.title) return false;
+    const editor = await wbOpenEditor("experience");
+    if (!editor) return false;
+    let n = 0;
+    // Optional fields first; required Title last (see education note above).
+    if (e.company && (await wbSetField(editor.querySelector('[name="company"]'), e.company))) n++;
+    if (e.industry && (await wbSetField(editor.querySelector('[name="industry"]'), e.industry))) n++;
+    if (e.description && (await wbSetField(editor.querySelector('textarea[name="summary"]'), e.description))) n++;
+    if (e.start && (await wbSetField(editor.querySelector('[name="start_date"]'), e.start))) n++;
+    if (e.current) {
+      await wbSetCurrent(editor, true);
+    } else {
+      await wbSetCurrent(editor, false);
+      if (e.end) await wbSetField(editor.querySelector('[name="end_date"]'), e.end);
+    }
+    if (await wbSetField(editor.querySelector('[name="title"]'), e.title)) n++;
+    if (!n) return false;
+    return wbSaveEditor("experience");
+  }
+
+  async function fillWorkable(experience, education) {
+    let filledExp = 0;
+    let filledEdu = 0;
+    const expList = Array.isArray(experience) ? experience : [];
+    const eduList = Array.isArray(education) ? education : [];
+    const eduStart = wbSavedCount("education");
+    for (let i = eduStart; i < eduList.length; i++) {
+      try {
+        if (await wbFillEducationEntry(eduList[i])) filledEdu++;
+      } catch {}
+    }
+    const expStart = wbSavedCount("experience");
+    for (let i = expStart; i < expList.length; i++) {
+      try {
+        if (await wbFillExperienceEntry(expList[i])) filledExp++;
+      } catch {}
+    }
+    return { filledExp, filledEdu };
+  }
+
   // ── SmartRecruiters multi-page navigation ─────────────────────────────────
   // Longer applications split the form across steps with a "Next" footer button
   // (oc-button[data-test="footer-next"]); the final step shows "Submit" instead.
   // We fill the current step, click Next, let the next step render, fill again,
-  // and stop once Next is gone (the Submit step) — we never auto-submit.
+  // and stop once Next is gone (the Submit step) - we never auto-submit.
 
   // A fingerprint of the currently rendered step: the count + ids of every
   // data-test node across the form (shadow-piercing). A different step exposes a
@@ -1156,7 +1416,7 @@
     }
   }
 
-  // Report invalid/required controls (regardless of visibility — a saved
+  // Report invalid/required controls (regardless of visibility - a saved
   // Experience/Education block collapses but can still hold an invalid field).
   function srValidationErrors() {
     const nodes = srDeepQuery(
@@ -1220,12 +1480,12 @@
   }
 
   // Click the footer "Next" to advance one step. Returns:
-  //   { advanced:true }            — page changed, fill the next step
-  //   { advanced:false, submit }   — no Next (we're on the Submit step) -> stop
-  //   { advanced:false, blocked }  — Next exists but the page didn't change
+  //   { advanced:true }            - page changed, fill the next step
+  //   { advanced:false, submit }   - no Next (we're on the Submit step) -> stop
+  //   { advanced:false, blocked }  - Next exists but the page didn't change
   //                                  (validation blocked it) -> stop
   async function srNavigateNext() {
-    // Clear any required spl-checkbox consent boxes before attempting Next —
+    // Clear any required spl-checkbox consent boxes before attempting Next -
     // unchecked boxes leave c-spl-form-field--invalid and block navigation.
     try {
       const ticked = AF.srTickRequiredCheckboxes ? await AF.srTickRequiredCheckboxes() : 0;
@@ -1259,7 +1519,7 @@
           changed = true;
           break;
         }
-        // If validation errors appeared, the click DID register — stop clicking
+        // If validation errors appeared, the click DID register - stop clicking
         // other targets and report the blocking fields.
         if (srValidationErrors().length) break;
       }
@@ -1274,7 +1534,7 @@
     const errs = srValidationErrors();
     console.log(
       "[autofill] SR nav: did NOT advance. aria-invalid/error fields:",
-      errs.length ? errs : "(none — click still not registering)"
+      errs.length ? errs : "(none - click still not registering)"
     );
     return { advanced: false, blocked: true, errors: errs };
   }
@@ -1292,7 +1552,14 @@
     if (shown()) return true;
     const link = document.getElementById("resumator-choose-upload");
     if (!link) return shown();
-    clickButton(link);
+    // Some tenants use <a href="...">; avoid navigation - toggle visibility only.
+    if (link.tagName === "A") {
+      try {
+        link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      } catch {}
+    } else {
+      clickButton(link);
+    }
     const waitUntil = dom.waitUntil ? dom.waitUntil : async () => null;
     await waitUntil(() => (shown() ? true : null), 2000, 100);
     return shown();
@@ -1386,7 +1653,7 @@
   }
 
   // ── engine bridge ────────────────────────────────────────────────────────
-  async function handleExtract() {
+  async function handleExtract(requestedHandles) {
     if (!AF.engine) {
       chrome.runtime.sendMessage({ type: "AF_FIELDS", fields: [] });
       return;
@@ -1394,17 +1661,24 @@
     AF.engine.reset();
     const consumed = new WeakSet();
     const fields = [];
-    for (const [handle] of state.selected) {
-      const el = relocate(handle);
-      if (!el) continue;
-      try {
-        // DOM mode: open the selects, inline their options, and snapshot the
-        // region's cleaned HTML (with options) for the LLM. controls is lite
-        // metadata (cid/kind/filled/label/is_file) used for write + file fetch.
-        fields.push(await AF.engine.extractRegionDom(el, consumed, handle));
-      } catch {
-        fields.push({ handle, label: "", controls: [], html: "" });
+    const handleList =
+      Array.isArray(requestedHandles) && requestedHandles.length
+        ? requestedHandles
+        : [...state.selected.keys()];
+    try {
+      for (const handle of handleList) {
+        const el = relocate(handle);
+        if (!el) continue;
+        try {
+          fields.push(await AF.engine.extractRegionDom(el, consumed, handle));
+        } catch {
+          fields.push({ handle, label: "", controls: [], html: "" });
+        }
       }
+    } finally {
+      try {
+        if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
+      } catch {}
     }
     chrome.runtime.sendMessage({ type: "AF_FIELDS", fields });
   }
@@ -1433,7 +1707,14 @@
     } catch {}
 
     if (!AF.engine) return;
-    const report = await AF.engine.writeControls(results, files);
+    let report = [];
+    try {
+      report = await AF.engine.writeControls(results, files);
+    } finally {
+      try {
+        if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
+      } catch {}
+    }
     try {
       if (AF.srTickRequiredCheckboxes && /smartrecruiters\.com$/i.test(location.hostname)) {
         const ticked = await AF.srTickRequiredCheckboxes();
@@ -1469,18 +1750,14 @@
     // section answers, so its real count wins over empty frames.
     if (msg.type === "AF_GH_PREP") {
       const hasEdu = !!document.querySelector('.education--container, .education--form, [id^="school--"]');
-      if (!hasEdu) return false; // not this frame — let the form's frame respond
+      if (!hasEdu) return;
       runExclusive(async () => {
         const entries = Array.isArray(msg.entries) ? msg.entries : [];
         const count = await ensureEducationBlocks(entries.length || 1);
-        const filled = await fillEducationRows(entries, msg.discipline);
-        return { count, filled };
-      }).then((res) => {
-        try {
-          sendResponse({ ok: true, count: res.count, filled: res.filled });
-        } catch {}
+        await fillEducationRows(entries, msg.discipline);
+        return count;
       });
-      return true; // async sendResponse
+      return;
     }
     // RecruiterFlow pre-pass: add a repeating Experience/Education row per profile
     // entry (Workday-style), fill them + Country deterministically, and tick the
@@ -1545,6 +1822,99 @@
       runExclusive(async () => {
         const ticked = AF.srTickRequiredCheckboxes ? await AF.srTickRequiredCheckboxes() : 0;
         return { ticked };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // Pinpoint: tick the required application-process consent checkbox before submit.
+    if (msg.type === "AF_PP_TICK_CONSENT") {
+      const isPp = !!(AF.pinpoint && AF.pinpoint.isPinpointPage && AF.pinpoint.isPinpointPage());
+      if (!isPp) return false;
+      runExclusive(async () => {
+        const ticked = AF.pinpoint && AF.pinpoint.tickPinpointConsent ? AF.pinpoint.tickPinpointConsent() : 0;
+        return { ticked };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // Workable pre-pass: Add -> fill -> Update for Education/Experience rows
+    // BEFORE the generic fill. Only the frame hosting the Workable form answers.
+    if (msg.type === "AF_WB_PREP") {
+      const isWb = !!(AF.workable && AF.workable.isWorkableApplicationPage && AF.workable.isWorkableApplicationPage());
+      if (!isWb) return false;
+      runExclusive(async () => {
+        return await fillWorkable(msg.experience, msg.education);
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...res });
+        } catch {}
+      });
+      return true;
+    }
+    // Workable: upload resume LAST so import/parse does not overwrite fields.
+    if (msg.type === "AF_WB_UPLOAD_RESUME") {
+      const isWb = !!(AF.workable && AF.workable.isWorkableApplicationPage && AF.workable.isWorkableApplicationPage());
+      if (!isWb) return false;
+      runExclusive(async () => {
+        const uploaded = AF.workable && AF.workable.writeResumeFile ? AF.workable.writeResumeFile(msg.file) : false;
+        return { uploaded: uploaded ? 1 : 0 };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // Workable: report whether the post-submit survey form is mounted.
+    if (msg.type === "AF_WB_HAS_SURVEY") {
+      const survey = !!(AF.workable && AF.workable.isWorkableSurveyPage && AF.workable.isWorkableSurveyPage());
+      try {
+        sendResponse({ ok: true, survey });
+      } catch {}
+      return true;
+    }
+    // Lever: upload resume LAST so Lever's parser does not overwrite fields we
+    // already filled. Only the frame hosting the Lever application form answers.
+    if (msg.type === "AF_LV_UPLOAD_RESUME") {
+      const isLv = !!(AF.lever && AF.lever.isLeverPage && AF.lever.isLeverPage());
+      if (!isLv) return false;
+      runExclusive(async () => {
+        const uploaded = AF.lever && AF.lever.writeResumeFile ? AF.lever.writeResumeFile(msg.file) : false;
+        return { uploaded: uploaded ? 1 : 0 };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // Breezy: upload resume LAST so any parser does not overwrite filled fields.
+    if (msg.type === "AF_BZY_UPLOAD_RESUME") {
+      const isBz = !!(AF.breezy && AF.breezy.isBreezyPage && AF.breezy.isBreezyPage());
+      if (!isBz) return false;
+      runExclusive(async () => {
+        const uploaded = AF.breezy && AF.breezy.writeResumeFile ? AF.breezy.writeResumeFile(msg.file) : false;
+        return { uploaded: uploaded ? 1 : 0 };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // Breezy multi-step: click Continue to expose the next section (never Submit).
+    if (msg.type === "AF_BZY_NEXT") {
+      const isBz = !!(AF.breezy && AF.breezy.isBreezyPage && AF.breezy.isBreezyPage());
+      if (!isBz) return false;
+      runExclusive(async () => {
+        const nav = AF.breezy && AF.breezy.advanceSection ? await AF.breezy.advanceSection() : { advanced: false };
+        return nav || { advanced: false };
       }).then((res) => {
         try {
           sendResponse({ ok: true, ...(res || {}) });
@@ -1618,8 +1988,10 @@
             console.log(
               "[autofill] AF_AUTOSELECT -> registered",
               count,
-              "container(s); oc-oneclick-form present =",
-              !!document.querySelector("oc-oneclick-form")
+              "container(s); host =",
+              location.hostname,
+              "ghFrame =",
+              !!(AF.greenhouse && AF.greenhouse.isApplicationFrame && AF.greenhouse.isApplicationFrame())
             );
           } catch {}
           try {
@@ -1641,7 +2013,7 @@
         clearAll();
         break;
       case "AF_EXTRACT":
-        runExclusive(handleExtract);
+        runExclusive(() => handleExtract(msg.handles));
         break;
       case "AF_WRITE":
         runExclusive(() => handleWrite(msg.results, msg.files, msg.passId));

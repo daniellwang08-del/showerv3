@@ -29,7 +29,7 @@ def fetch_with_browser_tls(
         resp.raise_for_status()
         return resp.content
     except ImportError:
-        logger.error("curl_cffi not installed — pip install curl_cffi")
+        logger.error("curl_cffi not installed - pip install curl_cffi")
         return None
     except Exception as e:
         logger.error("TLS-impersonated fetch failed for %s: %s", url, e)
@@ -58,7 +58,7 @@ def fetch_json_with_browser_tls(
         resp.raise_for_status()
         return resp.json()
     except ImportError:
-        logger.error("curl_cffi not installed — pip install curl_cffi")
+        logger.error("curl_cffi not installed - pip install curl_cffi")
         return None
     except Exception as e:
         logger.error("TLS-impersonated JSON fetch failed for %s: %s", url, e)

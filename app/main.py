@@ -33,6 +33,7 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router
 from app.api.scraper_routes import scraper_router
 from app.api.assistant_routes import assistant_router
+from app.api.agent_routes import agent_router
 from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
@@ -265,7 +266,7 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return JSONResponse({
-            "message": "Job Scraper API",
+            "message": "Atomspace API",
             "version": settings.app_version,
             "docs": "/docs",
             "health": "/api/v1/health"
@@ -280,6 +281,7 @@ def create_app() -> FastAPI:
     app.include_router(router, prefix="/api/v1")
     app.include_router(scraper_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")
+    app.include_router(agent_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 
     return app

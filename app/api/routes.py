@@ -34,6 +34,7 @@ from app.models.profile_source_schemas import (
     ProfileSourceDocumentUploadResponse,
 )
 from app.models.resume_template_schemas import ResumeTemplateBlueprintUpdateRequest
+from app.models.resume_design_schemas import ResumeDesignSaveRequest
 from app.storage.database import get_session, check_database_connection
 from app.storage.repository import (
     JobExtractionRepository,
@@ -72,6 +73,7 @@ from app.services.attachment_text_extract import combine_file_texts, extract_tex
 from app.services.attachment_job_url_ai import extract_job_urls_from_text_combined
 from app.services.job_field_utils import resolve_job_display_title
 from app.storage.repository import _utcnow
+from app.utils.date_bounds import day_bounds_for_timezone
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -1112,7 +1114,7 @@ async def submit_job(
                     duplicate_job_id=existing_job.id,
                     message="Already in your pool",
                 )
-            # User doesn't have a status row yet — add one
+            # User doesn't have a status row yet - add one
             await ujs_repo.upsert(
                 user_id=user_id,
                 job_id=existing_job.id,
@@ -1138,7 +1140,7 @@ async def submit_job(
                 message="Already in your pool",
             )
 
-        # New URL — create Job + extraction + UserJobStatus
+        # New URL - create Job + extraction + UserJobStatus
         new_job = Job(
             source_url=request.url,
             normalized_url=normalized_url,
@@ -1296,6 +1298,97 @@ async def extract_job_urls_from_attachments(
     return AttachmentExtractUrlsResponse(urls=urls, files_processed=len(parts), warnings=warnings)
 
 
+DASHBOARD_VIEWS = {"all", "today", "mine", "suggested"}
+
+
+def _dashboard_view_clauses(
+    view: str,
+    *,
+    min_score: int = 0,
+    day_start: datetime | None = None,
+    day_end: datetime | None = None,
+) -> tuple[list, bool]:
+    """Extra WHERE clauses for a dashboard view tab.
+
+    Returns ``(clauses, needs_match_join)`` where *needs_match_join* signals that
+    the ``JobMatchResult`` outer-join must be present for the clauses to resolve.
+
+    Views:
+      * ``all``        - every visible job (scraped, others', and mine).
+      * ``today``      - jobs created during the current calendar day (user tz).
+      * ``mine``       - jobs I added via submission/attachment (manual, in my pool).
+      * ``suggested``  - analysed jobs scoring at/above my effective minimum.
+    """
+    clauses: list = []
+    needs_match_join = False
+
+    if view == "today":
+        if day_start is not None and day_end is not None:
+            # "Added today" mirrors the dashboard stats tile: when the job entered
+            # (or re-entered) this user's pool, falling back to the job row's own
+            # creation date for global/un-added jobs. Filtering on Job.created_at
+            # alone would miss jobs added today that were scraped earlier.
+            added_at = func.coalesce(UserJobStatus.created_at, Job.created_at)
+            clauses.append(added_at >= day_start)
+            clauses.append(added_at < day_end)
+    elif view == "mine":
+        # Manual submissions stamp raw_metadata.submitted_data and live in my pool
+        # with an active per-user status; scraped/promoted jobs never carry it.
+        clauses.append(UserJobStatus.status == "active")
+        clauses.append(Job.raw_metadata["submitted_data"].isnot(None))
+    elif view == "suggested":
+        needs_match_join = True
+        clauses.append(JobMatchResult.overall_score.isnot(None))
+        clauses.append(JobMatchResult.overall_score >= min_score)
+
+    return clauses, needs_match_join
+
+
+def _dashboard_search_clauses(
+    *,
+    q: str | None = None,
+    title: str | None = None,
+    company: str | None = None,
+    source: str | None = None,
+    remote_only: bool = False,
+) -> list:
+    """Shared text/source/remote filters for the dashboard list + counts.
+
+    ``title`` and ``company`` are independent column filters (combined with AND),
+    while ``q`` is the legacy combined title-or-company search.
+    """
+    clauses: list = []
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        clauses.append((Job.title.ilike(pattern)) | (Job.company.ilike(pattern)))
+    if title and title.strip():
+        clauses.append(Job.title.ilike(f"%{title.strip()}%"))
+    if company and company.strip():
+        clauses.append(Job.company.ilike(f"%{company.strip()}%"))
+    if source:
+        clauses.append(Job.raw_metadata["source"].as_string() == source)
+    if remote_only:
+        clauses.append(Job.raw_metadata["is_remote"].as_boolean() == True)  # noqa: E712
+    return clauses
+
+
+def _dashboard_min_score_clauses(min_match_score: int | None) -> tuple[list, bool]:
+    """WHERE clauses for the optional minimum match-score filter.
+
+    Returns ``(clauses, needs_match_join)``; the ``JobMatchResult`` outer-join must
+    be present whenever clauses are returned. A threshold of 0/None disables it.
+    """
+    if min_match_score and min_match_score > 0:
+        return (
+            [
+                JobMatchResult.overall_score.isnot(None),
+                JobMatchResult.overall_score >= min_match_score,
+            ],
+            True,
+        )
+    return [], False
+
+
 @router.get("/jobs/dashboard", response_model=DashboardJobsPage, dependencies=[Depends(get_current_user)])
 async def get_dashboard_jobs(
     page: int = Query(1, ge=1),
@@ -1303,14 +1396,31 @@ async def get_dashboard_jobs(
     sort: str = Query("created_at"),
     order: str = Query("desc"),
     q: str | None = Query(None),
+    title: str | None = Query(None),
+    company: str | None = Query(None),
     source: str | None = Query(None),
     remote_only: bool = Query(False),
+    min_match_score: int | None = Query(None, ge=0, le=100),
+    view: str = Query("all"),
+    timezone: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ) -> DashboardJobsPage:
-    """Paginated list of processed jobs from the jobs table, with per-user status."""
+    """Paginated list of processed jobs from the jobs table, with per-user status.
+
+    The ``view`` tab narrows the result set: ``all`` (default), ``today`` (added
+    today in the caller's ``timezone``), ``mine`` (jobs I submitted), or
+    ``suggested`` (jobs analysed at/above my effective minimum match score).
+    """
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    if view not in DASHBOARD_VIEWS:
+        view = "all"
+
+    day_start = day_end = None
+    if view == "today":
+        day_start, day_end = day_bounds_for_timezone(timezone)
 
     SORT_COLUMNS = {
         "created_at": Job.created_at,
@@ -1332,22 +1442,28 @@ async def get_dashboard_jobs(
     order_clauses.append(Job.id.desc())
 
     async with get_session() as session:
+        min_score = 0
+        if view == "suggested":
+            min_score = await UserRepository(session).get_effective_min_match_score(user_id)
+
         base_filter = [
             Job.status != "blocked",
             (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
         ]
-
-        if q:
-            pattern = f"%{q}%"
-            base_filter.append(
-                (Job.title.ilike(pattern)) | (Job.company.ilike(pattern))
+        base_filter.extend(
+            _dashboard_search_clauses(
+                q=q, title=title, company=company, source=source, remote_only=remote_only,
             )
+        )
 
-        if source:
-            base_filter.append(Job.raw_metadata["source"].as_string() == source)
+        view_clauses, needs_match_join = _dashboard_view_clauses(
+            view, min_score=min_score, day_start=day_start, day_end=day_end,
+        )
+        base_filter.extend(view_clauses)
 
-        if remote_only:
-            base_filter.append(Job.raw_metadata["is_remote"].as_boolean() == True)  # noqa: E712
+        score_clauses, score_needs_join = _dashboard_min_score_clauses(min_match_score)
+        base_filter.extend(score_clauses)
+        needs_match_join = needs_match_join or score_needs_join
 
         count_stmt = (
             select(func.count())
@@ -1356,8 +1472,13 @@ async def get_dashboard_jobs(
                 UserJobStatus,
                 (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
             )
-            .where(*base_filter)
         )
+        if needs_match_join:
+            count_stmt = count_stmt.outerjoin(
+                JobMatchResult,
+                (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+            )
+        count_stmt = count_stmt.where(*base_filter)
         total = (await session.execute(count_stmt)).scalar() or 0
 
         pages = max(1, -(-total // per_page))
@@ -1465,13 +1586,87 @@ async def get_dashboard_jobs(
         )
 
 
+class DashboardCountsResponse(BaseModel):
+    """Per-tab job counts powering the dashboard view switcher badges."""
+    all: int
+    today: int
+    mine: int
+    suggested: int
+
+
+@router.get(
+    "/jobs/dashboard/counts",
+    response_model=DashboardCountsResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_dashboard_counts(
+    q: str | None = Query(None),
+    title: str | None = Query(None),
+    company: str | None = Query(None),
+    source: str | None = Query(None),
+    remote_only: bool = Query(False),
+    min_match_score: int | None = Query(None, ge=0, le=100),
+    timezone: str | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+) -> DashboardCountsResponse:
+    """Counts for every dashboard view tab, honoring the active search filters."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    day_start, day_end = day_bounds_for_timezone(timezone)
+
+    async with get_session() as session:
+        min_score = await UserRepository(session).get_effective_min_match_score(user_id)
+
+        shared_filter = [
+            Job.status != "blocked",
+            (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
+        ]
+        shared_filter.extend(
+            _dashboard_search_clauses(
+                q=q, title=title, company=company, source=source, remote_only=remote_only,
+            )
+        )
+
+        score_clauses, score_needs_join = _dashboard_min_score_clauses(min_match_score)
+
+        async def _count(view: str) -> int:
+            view_clauses, needs_match_join = _dashboard_view_clauses(
+                view, min_score=min_score, day_start=day_start, day_end=day_end,
+            )
+            needs_match_join = needs_match_join or score_needs_join
+            stmt = (
+                select(func.count())
+                .select_from(Job)
+                .outerjoin(
+                    UserJobStatus,
+                    (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+                )
+            )
+            if needs_match_join:
+                stmt = stmt.outerjoin(
+                    JobMatchResult,
+                    (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+                )
+            stmt = stmt.where(*shared_filter, *view_clauses, *score_clauses)
+            return (await session.execute(stmt)).scalar() or 0
+
+        return DashboardCountsResponse(
+            all=await _count("all"),
+            today=await _count("today"),
+            mine=await _count("mine"),
+            suggested=await _count("suggested"),
+        )
+
+
 @router.get("/jobs/valid", response_model=list[JobResponse], dependencies=[Depends(get_current_user)])
 async def get_valid_jobs(
     limit: int = 50,
     offset: int = 0,
     current_user: dict = Depends(get_current_user),
 ) -> list[JobResponse]:
-    """Get active jobs for the current user — only jobs with UserJobStatus(status='active')."""
+    """Get active jobs for the current user - only jobs with UserJobStatus(status='active')."""
     limit = min(limit, 500)
     logger.debug("get_valid_jobs", limit=limit, offset=offset)
     user_id = current_user.get("user_id")
@@ -2272,7 +2467,7 @@ async def get_duplicated_jobs(
 async def get_invalid_job_counts(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Counts for duplicates modal tabs — single query with conditional aggregation."""
+    """Counts for duplicates modal tabs - single query with conditional aggregation."""
     from app.services.job_exclusion_types import (
         BELOW_MIN_SCORE_EXCLUSION,
         EXTRACTION_FAILED_EXCLUSION,
@@ -2936,6 +3131,105 @@ async def preview_resume_template(
 
 
 @router.get(
+    "/settings/resume-template/themes",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_resume_template_themes(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_themes import build_catalog
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return build_catalog()
+
+
+@router.get(
+    "/settings/resume-template/design",
+    dependencies=[Depends(get_current_user)],
+)
+async def get_resume_template_design(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_design_schemas import ResumeDesignResponse
+    from app.services.resume_design_service import design_response_payload
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return ResumeDesignResponse(**design_response_payload(user))
+
+
+@router.put(
+    "/settings/resume-template/design",
+    dependencies=[Depends(get_current_user)],
+)
+async def save_resume_template_design(
+    body: ResumeDesignSaveRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
+    from app.services.resume_design_service import save_user_design
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        payload = await save_user_design(user_id, body.design)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_design_save_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to save resume design.")
+    return ResumeTemplateStatusResponse(**payload)
+
+
+@router.post(
+    "/settings/resume-template/design/preview",
+    dependencies=[Depends(get_current_user)],
+)
+async def preview_resume_template_design(
+    body: ResumeDesignSaveRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_builder_service import convert_docx_to_pdf
+    from app.services.resume_design_service import generate_design_preview_docx
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        docx_path = await generate_design_preview_docx(user_id, body.design)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_design_preview_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate preview.")
+
+    try:
+        pdf_path = docx_path.with_suffix(".pdf")
+        convert_docx_to_pdf(docx_path, pdf_path)
+    except Exception as e:
+        logger.warning("resume_design_preview_pdf_failed", user_id=user_id, error=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Accurate PDF preview requires LibreOffice on the server. Use the live preview instead.",
+        )
+
+    return FileResponse(
+        path=str(pdf_path),
+        media_type="application/pdf",
+        filename="resume-design-preview.pdf",
+    )
+
+
+@router.get(
     "/settings/cover-letter-prompt/defaults",
     dependencies=[Depends(get_current_user)],
 )
@@ -3029,6 +3323,29 @@ async def revalidate_cover_letter_template(
         payload = await revalidate(user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return CoverLetterTemplateStatusResponse(**payload)
+
+
+@router.post(
+    "/settings/cover-letter-template/from-resume-design",
+    dependencies=[Depends(get_current_user)],
+)
+async def generate_cover_letter_template_from_resume_design(
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.cover_letter_template_schemas import CoverLetterTemplateStatusResponse
+    from app.services.resume_design_service import generate_cover_letter_from_design
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        payload = await generate_cover_letter_from_design(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("cover_letter_design_generate_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate cover letter template.")
     return CoverLetterTemplateStatusResponse(**payload)
 
 
@@ -3140,7 +3457,7 @@ async def reconcile_company_policy_for_user(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Stub — company-policy reconciliation is now handled by the post-analysis dedup service."""
+    """Stub - company-policy reconciliation is now handled by the post-analysis dedup service."""
     return {"success": True, "status": "noop", "message": "Dedup is now handled by the save queue"}
 
 
@@ -3163,7 +3480,7 @@ async def promote_invalid_to_valid(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
     async with get_session() as session:
-        # job_id here is either the UserJobStatus.id or a Job.id — try both
+        # job_id here is either the UserJobStatus.id or a Job.id - try both
         ujs_repo = UserJobStatusRepository(session)
 
         # Try as UserJobStatus.id first
@@ -3238,7 +3555,7 @@ async def promote_invalid_to_valid(
                         actual_job_id, user_id, background_tasks=background_tasks
                     )
     else:
-        # No extraction yet — create one and enqueue
+        # No extraction yet - create one and enqueue
         async with get_session() as session:
             job_result = await session.execute(select(Job).where(Job.id == actual_job_id))
             job = job_result.scalar_one_or_none()

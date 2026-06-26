@@ -56,7 +56,7 @@ def get_cover_letter_requirements() -> CoverLetterTemplateRequirements:
         notes=[
             "Upload a .docx with your own layout, fonts, and header/footer styling.",
             "Put your name, contact details, date, greeting, and signature as fixed text in the template.",
-            "Only {{COVER_LETTER_BODY}} is filled per job — the AI writes the letter body paragraphs.",
+            "Only {{COVER_LETTER_BODY}} is filled per job - the AI writes the letter body paragraphs.",
             "Place {{COVER_LETTER_BODY}} in the main document body (not a floating text box).",
             "Uploading copies your template exactly; headers, graphics, and layout are preserved.",
         ],

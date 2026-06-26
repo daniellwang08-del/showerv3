@@ -1,4 +1,4 @@
-"""Scraper ORM models — writes to the shared PostgreSQL database.
+"""Scraper ORM models - writes to the shared PostgreSQL database.
 
 Uses sync SQLAlchemy (Scrapy runs on Twisted, not asyncio). The
 DATABASE_URL is converted from asyncpg to plain psycopg2 format
@@ -27,12 +27,12 @@ from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
 
 def utcnow_naive() -> datetime:
-    """UTC wall time as naive datetime — matches async app storage conventions."""
+    """UTC wall time as naive datetime - matches async app storage conventions."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class JSONType(TypeDecorator):
-    """JSON column — native JSON on PostgreSQL, serialized TEXT on SQLite."""
+    """JSON column - native JSON on PostgreSQL, serialized TEXT on SQLite."""
     impl = Text
     cache_ok = True
 

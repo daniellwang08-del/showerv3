@@ -6,6 +6,11 @@ export type WorkExperienceBlock = {
   period_end?: string;
   location?: string;
   job_type?: string;
+  employment_type?: string;
+  project_title?: string;
+  project_intro?: string;
+  contributions?: string[];
+  used_skills?: string;
   description?: string;
 };
 export type EducationBlock = {
@@ -87,6 +92,8 @@ export type ProfileFormData = {
 
 export const JOB_TYPES = ['onsite', 'hybrid', 'remote'] as const;
 
+export const EMPLOYMENT_TYPES = ['full-time', 'part-time', 'contract', 'internship', 'freelance', 'temporary'] as const;
+
 /** Option lists for the EEO section selects. */
 export const GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Decline to self-identify'] as const;
 export const RACE_OPTIONS = [
@@ -100,7 +107,7 @@ export const RACE_OPTIONS = [
   'Decline to self-identify',
 ] as const;
 
-/** Normalized remote / hybrid / onsite — used for validation and profile completion. */
+/** Normalized remote / hybrid / onsite - used for validation and profile completion. */
 export function isValidJobArrangement(s: string | undefined | null): boolean {
   const v = (s ?? '').trim().toLowerCase();
   return (JOB_TYPES as readonly string[]).includes(v);

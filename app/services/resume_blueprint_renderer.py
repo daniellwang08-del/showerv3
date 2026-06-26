@@ -102,7 +102,9 @@ def _render_skills_legacy(doc: Document, context: dict[str, Any]) -> None:
     skills = resolve_context_path(context, "tailored.technical_skills") or []
     anchor = _find_paragraph_with_tag(doc, "{{SKILLS_CONTENT}}")
     if anchor and skills:
-        elements = _build_skills_elements(skills, anchor._p)
+        style = resolve_context_path(context, "tailored.skills_style")
+        colors = resolve_context_path(context, "tailored.colors")
+        elements = _build_skills_elements(skills, anchor._p, style, colors)
         _replace_tag_with_paragraphs(doc, "{{SKILLS_CONTENT}}", elements)
 
 
@@ -123,6 +125,9 @@ def fill_user_resume_template(
             "profile_summary": resolve_context_path(context, "tailored.profile_summary"),
             "technical_skills": resolve_context_path(context, "tailored.technical_skills") or [],
             "work_experience": resolve_context_path(context, "tailored.work_experience") or [],
+            "skills_style": resolve_context_path(context, "tailored.skills_style"),
+            "experience_style": resolve_context_path(context, "tailored.experience_style"),
+            "colors": resolve_context_path(context, "tailored.colors"),
         }
         return fill_resume_template(template_path, output_path, tailored)
 

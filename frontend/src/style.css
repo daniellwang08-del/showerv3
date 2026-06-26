@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Enable class-based dark mode (toggled by adding `.dark` to <html>). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 html,
 body,
 #root {
@@ -10,6 +13,161 @@ body {
   background: #f8fafc;
   color: #0f172a;
 }
+
+html { color-scheme: light; }
+html, body { transition: background-color 0.25s ease, color 0.25s ease; }
+
+/* ============================================================
+   DARK MODE
+   Centralized theming: remap the neutral (slate/gray) palette so
+   text, surfaces and borders invert app-wide, then add targeted
+   overrides for white surfaces, accent chips, glass and scrollbars.
+   ============================================================ */
+html.dark { color-scheme: dark; }
+
+.dark {
+  /* Neutral scale inverted: light surfaces -> dark, dark text -> light */
+  --color-slate-50: #0f172a;
+  --color-slate-100: #1e293b;
+  --color-slate-200: #334155;
+  --color-slate-300: #475569;
+  --color-slate-400: #64748b;
+  --color-slate-500: #94a3b8;
+  --color-slate-600: #cbd5e1;
+  --color-slate-700: #dde5ef;
+  --color-slate-800: #eef2f7;
+  --color-slate-900: #f8fafc;
+  --color-slate-950: #ffffff;
+
+  --color-gray-50: #0f172a;
+  --color-gray-100: #1e293b;
+  --color-gray-200: #334155;
+  --color-gray-300: #475569;
+  --color-gray-400: #64748b;
+  --color-gray-500: #94a3b8;
+  --color-gray-600: #cbd5e1;
+  --color-gray-700: #dde5ef;
+  --color-gray-800: #eef2f7;
+  --color-gray-900: #f8fafc;
+  --color-gray-950: #ffffff;
+
+  --color-zinc-50: #0f172a;
+  --color-zinc-100: #1e293b;
+  --color-zinc-200: #334155;
+  --color-zinc-800: #eef2f7;
+  --color-zinc-900: #f8fafc;
+
+  /* Accent families: remap the faint 50/100 steps to dark hued tints so chips,
+     washes, gradients and faint (100) borders invert in one place - this
+     covers every opacity variant automatically. 200 is deliberately left
+     alone because it is reused by focus rings (focus:ring-*-200), which must
+     stay visible. Blue is also excluded - its 50/100 double as light TEXT on
+     the auth + agent surfaces and are handled by utility overrides below. */
+  --color-sky-50: #0a1f2e;     --color-sky-100: #0e2a3d;
+  --color-cyan-50: #07222b;    --color-cyan-100: #0b2f3a;
+  --color-indigo-50: #141633;  --color-indigo-100: #1b1f46;
+  --color-violet-50: #1c1538;  --color-violet-100: #261c4a;
+  --color-purple-50: #1f1238;  --color-purple-100: #2a184a;
+  --color-fuchsia-50: #2a1230; --color-fuchsia-100: #3a1840;
+  --color-pink-50: #2a1220;    --color-pink-100: #3a1830;
+  --color-emerald-50: #07221a; --color-emerald-100: #0c2e23;
+  --color-green-50: #0a2012;   --color-green-100: #0e2c1a;
+  --color-teal-50: #08211f;    --color-teal-100: #0c2d29;
+  --color-amber-50: #2a1e08;   --color-amber-100: #38280b;
+  --color-yellow-50: #29230a;  --color-yellow-100: #38300d;
+  --color-orange-50: #2a1808;  --color-orange-100: #38220b;
+  --color-rose-50: #2a1116;    --color-rose-100: #3a161d;
+  --color-red-50: #2a1212;     --color-red-100: #3a1818;
+}
+
+.dark body {
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+/* White surfaces -> dark glass. text-white / border-white are left intact
+   (they sit on accent buttons and glass), so only backgrounds change. */
+.dark .bg-white { background-color: #141d31; }
+.dark .bg-white\/95 { background-color: rgba(20, 29, 49, 0.95); }
+.dark .bg-white\/90 { background-color: rgba(20, 29, 49, 0.9); }
+.dark .bg-white\/85 { background-color: rgba(20, 29, 49, 0.85); }
+.dark .bg-white\/80 { background-color: rgba(20, 29, 49, 0.8); }
+.dark .bg-white\/75 { background-color: rgba(20, 29, 49, 0.75); }
+.dark .bg-white\/70 { background-color: rgba(20, 29, 49, 0.7); }
+.dark .bg-white\/65 { background-color: rgba(20, 29, 49, 0.65); }
+.dark .bg-white\/60 { background-color: rgba(20, 29, 49, 0.6); }
+.dark .bg-white\/55 { background-color: rgba(30, 41, 59, 0.5); }
+.dark .bg-white\/50 { background-color: rgba(20, 29, 49, 0.5); }
+.dark .bg-white\/45 { background-color: rgba(30, 41, 59, 0.42); }
+.dark .bg-white\/40 { background-color: rgba(30, 41, 59, 0.4); }
+.dark .bg-white\/35 { background-color: rgba(30, 41, 59, 0.34); }
+.dark .bg-white\/30 { background-color: rgba(30, 41, 59, 0.3); }
+.dark .bg-white\/25 { background-color: rgba(30, 41, 59, 0.25); }
+.dark .bg-white\/20 { background-color: rgba(30, 41, 59, 0.2); }
+.dark .hover\:bg-white:hover { background-color: #1b2740; }
+
+/* Modal/overlay scrims use bg-slate-900/xx; keep them dark (the palette
+   inversion would otherwise flip them to a light wash). */
+.dark .bg-slate-900\/40 { background-color: rgba(2, 6, 23, 0.55); }
+.dark .bg-slate-900\/45 { background-color: rgba(2, 6, 23, 0.58); }
+.dark .bg-slate-900\/50 { background-color: rgba(2, 6, 23, 0.62); }
+.dark .bg-slate-900\/55 { background-color: rgba(2, 6, 23, 0.65); }
+.dark .bg-slate-900\/60 { background-color: rgba(2, 6, 23, 0.7); }
+
+/* Solid dark buttons (bg-slate-900 + text-white) and dark code blocks
+   (bg-slate-900 + text-slate-100) must stay dark with light text. */
+.dark .bg-slate-900.text-white,
+.dark .bg-slate-800.text-white {
+  background-color: #1e293b;
+}
+.dark .bg-slate-900.text-white:hover,
+.dark .bg-slate-800.text-white:hover {
+  background-color: #334155;
+}
+.dark .bg-slate-900.text-slate-100 {
+  background-color: #0b1220;
+  color: #e2e8f0;
+}
+
+/* White gradient stops -> dark surface so light-to-white gradients stay dark. */
+.dark .from-white { --tw-gradient-from: #141d31 var(--tw-gradient-from-position); }
+.dark .via-white { --tw-gradient-via: #141d31 var(--tw-gradient-via-position); }
+.dark .to-white { --tw-gradient-to: #141d31 var(--tw-gradient-to-position); }
+.dark .from-white\/90 { --tw-gradient-from: rgba(20, 29, 49, 0.9) var(--tw-gradient-from-position); }
+.dark .to-white\/90 { --tw-gradient-to: rgba(20, 29, 49, 0.9) var(--tw-gradient-to-position); }
+
+/* Blue chips stay as background-only overrides (blue 50/100 vars double as
+   light text on the auth + agent surfaces, so they are NOT remapped above). */
+.dark .bg-blue-50 { background-color: rgba(59, 130, 246, 0.14); }
+.dark .bg-blue-100 { background-color: rgba(59, 130, 246, 0.2); }
+.dark .bg-blue-50\/40, .dark .bg-blue-50\/30, .dark .bg-blue-50\/50 { background-color: rgba(59, 130, 246, 0.1); }
+.dark .bg-blue-50\/70, .dark .bg-blue-50\/80, .dark .bg-blue-50\/90, .dark .bg-blue-50\/95 { background-color: rgba(59, 130, 246, 0.16); }
+.dark .bg-blue-100\/80, .dark .bg-blue-100\/90 { background-color: rgba(59, 130, 246, 0.22); }
+.dark .from-blue-50, .dark .from-blue-50\/40, .dark .from-blue-50\/50, .dark .hover\:from-blue-50:hover { --tw-gradient-from: rgba(59, 130, 246, 0.1) var(--tw-gradient-from-position); }
+.dark .to-blue-50\/80, .dark .to-blue-50\/50, .dark .hover\:to-blue-50\/80:hover { --tw-gradient-to: rgba(59, 130, 246, 0.14) var(--tw-gradient-to-position); }
+.dark .to-white\/60 { --tw-gradient-to: rgba(20, 29, 49, 0.6) var(--tw-gradient-to-position); }
+.dark .border-blue-200 { border-color: rgba(59, 130, 246, 0.35); }
+.dark .border-blue-100\/70, .dark .border-blue-100\/80, .dark .border-blue-100\/60 { border-color: rgba(59, 130, 246, 0.22); }
+/* Dim the brighter 200 accent borders (200 is not remapped above). */
+.dark .border-sky-200 { border-color: rgba(56, 189, 248, 0.32); }
+.dark .border-indigo-200 { border-color: rgba(99, 102, 241, 0.32); }
+.dark .border-emerald-200, .dark .border-green-200, .dark .border-teal-200 { border-color: rgba(16, 185, 129, 0.32); }
+.dark .border-amber-200, .dark .border-orange-200 { border-color: rgba(245, 158, 11, 0.32); }
+.dark .border-rose-200, .dark .border-red-200 { border-color: rgba(244, 63, 94, 0.32); }
+.dark .border-violet-200, .dark .border-purple-200 { border-color: rgba(139, 92, 246, 0.32); }
+
+/* Accent text (600-900) lightened so it stays legible on the dark tints. */
+.dark .text-blue-600 { color: #93c5fd; }
+.dark .text-blue-700, .dark .text-blue-800, .dark .text-blue-900 { color: #bfdbfe; }
+.dark .text-sky-600, .dark .text-sky-700, .dark .text-sky-800, .dark .text-sky-900 { color: #7dd3fc; }
+.dark .text-cyan-600, .dark .text-cyan-700, .dark .text-cyan-800, .dark .text-cyan-900 { color: #67e8f9; }
+.dark .text-indigo-600, .dark .text-indigo-700, .dark .text-indigo-800, .dark .text-indigo-900 { color: #a5b4fc; }
+.dark .text-violet-600, .dark .text-violet-700, .dark .text-violet-800, .dark .text-violet-900, .dark .text-purple-600, .dark .text-purple-700, .dark .text-purple-800, .dark .text-purple-900 { color: #c4b5fd; }
+.dark .text-fuchsia-600, .dark .text-fuchsia-700, .dark .text-fuchsia-800, .dark .text-fuchsia-900, .dark .text-pink-600, .dark .text-pink-700, .dark .text-pink-800, .dark .text-pink-900 { color: #f0abfc; }
+.dark .text-emerald-600, .dark .text-emerald-700, .dark .text-emerald-800, .dark .text-emerald-900, .dark .text-green-600, .dark .text-green-700, .dark .text-green-800, .dark .text-green-900 { color: #6ee7b7; }
+.dark .text-teal-600, .dark .text-teal-700, .dark .text-teal-800, .dark .text-teal-900 { color: #5eead4; }
+.dark .text-amber-600, .dark .text-amber-700, .dark .text-amber-800, .dark .text-amber-900, .dark .text-yellow-700, .dark .text-yellow-800, .dark .text-yellow-900, .dark .text-orange-600, .dark .text-orange-700, .dark .text-orange-800, .dark .text-orange-900 { color: #fcd34d; }
+.dark .text-rose-600, .dark .text-rose-700, .dark .text-rose-800, .dark .text-rose-900, .dark .text-red-600, .dark .text-red-700, .dark .text-red-800, .dark .text-red-900 { color: #fda4af; }
 
 /* ---- Shared animations ---- */
 
@@ -130,6 +288,82 @@ body {
   animation: card-enter 0.35s ease-out both;
 }
 
+/* Smooth crossfade when swapping between sign in and sign up forms */
+@keyframes auth-form-swap {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); filter: blur(2px); }
+  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+.auth-form-swap {
+  animation: auth-form-swap 0.4s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-form-swap { animation: none; }
+}
+
+/* Keep translucent glass inputs from turning solid white on browser autofill */
+.glass-input:-webkit-autofill,
+.glass-input:-webkit-autofill:hover,
+.glass-input:-webkit-autofill:focus,
+.glass-input:-webkit-autofill:active {
+  -webkit-text-fill-color: #ffffff;
+  caret-color: #ffffff;
+  /* The long transition prevents the autofill background from ever painting,
+     so the input keeps its own translucent backdrop. */
+  transition: background-color 600000s 0s, color 600000s 0s;
+}
+.glass-input:autofill {
+  -webkit-text-fill-color: #ffffff;
+  caret-color: #ffffff;
+}
+
+/* Bright star travelling around a modal border */
+@property --star-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes star-border-spin {
+  to { --star-angle: 360deg; }
+}
+@keyframes star-border-pulse {
+  0%, 100% { opacity: 0.9; filter: drop-shadow(0 0 6px rgba(125,211,252,0.85)); }
+  50%      { opacity: 1;   filter: drop-shadow(0 0 16px rgba(224,242,254,1)); }
+}
+.modal-star-border::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  /* Two bright stars travelling 180deg apart around the border */
+  background: conic-gradient(
+    from var(--star-angle),
+    rgba(255, 255, 255, 0) 0deg,
+    rgba(56, 189, 248, 0) 110deg,
+    rgba(56, 189, 248, 0.6) 150deg,
+    rgba(186, 230, 253, 1) 162deg,
+    #ffffff 168deg,
+    rgba(186, 230, 253, 1) 174deg,
+    rgba(168, 85, 247, 0.7) 182deg,
+    rgba(255, 255, 255, 0) 215deg,
+    rgba(56, 189, 248, 0) 290deg,
+    rgba(56, 189, 248, 0.6) 330deg,
+    rgba(186, 230, 253, 1) 342deg,
+    #ffffff 348deg,
+    rgba(186, 230, 253, 1) 354deg,
+    rgba(168, 85, 247, 0.7) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: star-border-spin 4.2s linear infinite, star-border-pulse 2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-star-border::before { animation: none; }
+}
+
 .blue-outline-input {
   border: 1px solid rgba(147,197,253,0.75);
   background: rgba(255,255,255,0.92);
@@ -161,7 +395,7 @@ body {
 .timeline-scroll::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(59,130,246,0.45), rgba(37,99,235,0.55)); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
 .timeline-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(59,130,246,0.6), rgba(37,99,235,0.75)); background-clip: padding-box; }
 
-/* Long-form pages (Settings, Profile) — thin scrollbar, always reserved when using .page-scroll-y */
+/* Long-form pages (Settings, Profile) - thin scrollbar, always reserved when using .page-scroll-y */
 .page-scroll-y,
 .page-scroll-y-auto {
   overflow-x: hidden;
@@ -214,6 +448,63 @@ body {
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 
+/* Resume Builder controls panel - ultra-thin, minimal, floating scrollbar */
+.builder-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+  scroll-behavior: smooth;
+}
+.builder-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.builder-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.builder-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  min-height: 40px;
+  transition: background 0.2s ease;
+}
+.builder-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.85), rgba(59, 130, 246, 0.9));
+  background-clip: padding-box;
+}
+.builder-scroll::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.95), rgba(37, 99, 235, 1));
+  background-clip: padding-box;
+}
+
+/* Thin horizontal scrollbar for the summary-style gallery */
+.summary-gallery {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+.summary-gallery::-webkit-scrollbar {
+  height: 6px;
+}
+.summary-gallery::-webkit-scrollbar-track {
+  background: transparent;
+}
+.summary-gallery::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+  background-clip: padding-box;
+}
+.summary-gallery::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.85), rgba(59, 130, 246, 0.9));
+  background-clip: padding-box;
+}
+.dark .summary-gallery {
+  scrollbar-color: rgba(100, 116, 139, 0.55) transparent;
+}
+.dark .summary-gallery::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.5);
+  background-clip: padding-box;
+}
+
 /* Dashboard pipeline animations */
 @keyframes today-battery-flow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
 @keyframes today-battery-sheen { 0% { transform: translateX(-120%); opacity: 0; } 20% { opacity: 0.5; } 100% { transform: translateX(280%); opacity: 0; } }
@@ -235,3 +526,87 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .pipeline-col-fill { animation: none; background: linear-gradient(180deg, #1d4ed8, #3b82f6); }
 }
+
+/* ============================================================
+   DARK MODE — custom component & scrollbar overrides
+   ============================================================ */
+
+/* Long-form page scrollbars */
+.dark .page-scroll-y,
+.dark .page-scroll-y-auto {
+  scrollbar-color: rgba(100, 116, 139, 0.55) rgba(15, 23, 42, 0.6);
+}
+.dark .page-scroll-y::-webkit-scrollbar-track,
+.dark .page-scroll-y-auto::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-left: 1px solid rgba(51, 65, 85, 0.7);
+}
+.dark .page-scroll-y::-webkit-scrollbar-thumb,
+.dark .page-scroll-y-auto::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.65), rgba(71, 85, 105, 0.8));
+  border: 1px solid rgba(15, 23, 42, 0.6);
+  background-clip: padding-box;
+}
+
+.dark .timeline-scroll {
+  scrollbar-color: rgba(96, 165, 250, 0.5) rgba(15, 23, 42, 0.6);
+}
+.dark .timeline-scroll::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+
+.dark .builder-scroll {
+  scrollbar-color: rgba(100, 116, 139, 0.55) transparent;
+}
+.dark .builder-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.5);
+  background-clip: padding-box;
+}
+
+/* Surface shadows read better with a subtle dark glow */
+.dark .shadow-sm,
+.dark .shadow,
+.dark .shadow-md,
+.dark .shadow-lg,
+.dark .shadow-xl {
+  --tw-shadow-color: rgba(0, 0, 0, 0.5);
+}
+
+/* Dashboard battery / pipeline tracks default to a light slate fill; darken them */
+.dark .today-battery-track { background-color: rgba(30, 41, 59, 0.7) !important; }
+
+/* Native form controls and date pickers */
+.dark input,
+.dark textarea,
+.dark select {
+  color-scheme: dark;
+}
+
+/* Selection color */
+.dark ::selection { background: rgba(59, 130, 246, 0.4); color: #f8fafc; }
+
+/* Custom glass surfaces (in-app cards & modals) */
+.dark .glass-card {
+  background: linear-gradient(160deg, rgba(30, 41, 59, 0.88), rgba(15, 23, 42, 0.82));
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.dark .glass-panel {
+  background: linear-gradient(160deg, rgba(30, 41, 59, 0.86), rgba(15, 23, 42, 0.8));
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Blue outline input */
+.dark .blue-outline-input {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(20, 29, 49, 0.85);
+  color: #e2e8f0;
+}
+.dark .blue-outline-input:focus {
+  border-color: rgba(96, 165, 250, 0.95);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+  background: #0f172a;
+}
+
+/* App-surface ambient glows soften on dark */
+.dark .app-surface::before { background: rgba(37, 99, 235, 0.22); }
+.dark .app-surface::after { background: rgba(56, 189, 248, 0.16); }

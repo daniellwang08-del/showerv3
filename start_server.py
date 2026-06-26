@@ -66,11 +66,11 @@ if __name__ == "__main__":
     reload_dirs = [str(ROOT / "app")]
 
     if use_reload:
-        print(f"[reload] Watching {reload_dirs[0]} — save a file to restart the API.")
+        print(f"[reload] Watching {reload_dirs[0]} - save a file to restart the API.")
     else:
         print("[reload] Disabled (set RELOAD=1 or APP_ENV=local to enable).")
     if host == "127.0.0.1":
-        print("[lan] API bound to 127.0.0.1 — other devices should use http://<your-ip>:5173 only.")
+        print("[lan] API bound to 127.0.0.1 - other devices should use http://<your-ip>:5173 only.")
 
     uvicorn.run(
         "app.main:app",

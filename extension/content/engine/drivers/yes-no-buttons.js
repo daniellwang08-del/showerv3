@@ -120,7 +120,7 @@
     // These button groups expose no dependable selected-state class, so we mark
     // the group once WE click it. Without this, isFilled would always be false
     // and a SECOND write (cached-answer replay BEFORE extraction, then the LLM
-    // pass) clicks the already-selected button again — and Ashby's buttons
+    // pass) clicks the already-selected button again - and Ashby's buttons
     // toggle, so the second click DESELECTS it. That is the intermittent
     // "sometimes didn't select" bug. The marker makes the LLM pass skip a group
     // the replay already answered (and vice-versa).

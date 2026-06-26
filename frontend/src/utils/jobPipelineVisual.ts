@@ -16,10 +16,10 @@ function isExtracted(item: SubmittedUrlItem): boolean {
 
 /**
  * Maps extraction + match list API fields to a single UI state:
- * — Match score (persisted) replaces all ring visuals.
- * — 1/4 + amber: queued or running page extraction.
- * — 2/4 + blue: posting text extracted; match not running yet.
- * — 3/4 + amber: AI profile match in progress.
+ * - Match score (persisted) replaces all ring visuals.
+ * - 1/4 + amber: queued or running page extraction.
+ * - 2/4 + blue: posting text extracted; match not running yet.
+ * - 3/4 + amber: AI profile match in progress.
  */
 export function getJobPipelineVisual(item: SubmittedUrlItem): JobPipelineVisual | null {
   if (item.table !== 'active') return null;

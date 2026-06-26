@@ -10,13 +10,13 @@ import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ResumeTemplateBuilderPage } from './pages/ResumeTemplateBuilderPage';
-import { LoginPage } from './pages/LoginPage';
-import { SignupPage } from './pages/SignupPage';
+import { ResumeBuilderPage } from './pages/ResumeBuilderPage';
+import { AuthScreen } from './components/extraction/AuthScreen';
 import { JobActionModal } from './components/extraction/JobActionModal';
 import { ConfirmDialog } from './components/extraction/ConfirmDialog';
 
 function App() {
-  const { isAuthenticated, user, authPage, setAuthPage, logout, onAuthSuccess } = useAuth();
+  const { isAuthenticated, user, authPage, logout, onAuthSuccess } = useAuth();
 
   const modal = useModalStore((s) => s.modal);
   const modalUrl = useModalStore((s) => s.modalUrl);
@@ -107,10 +107,7 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    if (authPage === 'signup') {
-      return <SignupPage onSignup={onAuthSuccess} onSwitchToLogin={() => setAuthPage('login')} />;
-    }
-    return <LoginPage onLogin={onAuthSuccess} onSwitchToSignup={() => setAuthPage('signup')} />;
+    return <AuthScreen onAuthSuccess={onAuthSuccess} initialMode={authPage} />;
   }
 
   return (
@@ -165,6 +162,7 @@ function App() {
           <Route path="/scraper" element={<ScraperDashboard />} />
           <Route path="/profile" element={<ProfilePage user={user} onLogout={logout} />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/resume-builder" element={<ResumeBuilderPage />} />
           <Route path="/settings/resume-template" element={<ResumeTemplateBuilderPage />} />
           <Route path="*" element={<Navigate to="/scraper" replace />} />
         </Route>

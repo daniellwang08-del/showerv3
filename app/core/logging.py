@@ -121,7 +121,7 @@ def setup_logging() -> None:
         force=True,
     )
 
-    # arq logs "Starting worker for N functions" at INFO — keep visible so
+    # arq logs "Starting worker for N functions" at INFO - keep visible so
     # workers do not look hung after startup_complete.
     logging.getLogger("arq.worker").setLevel(logging.INFO)
 

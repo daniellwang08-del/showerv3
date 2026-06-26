@@ -85,7 +85,7 @@ export function EditScrapedJobModal({ job, onClose, onSave }: Props) {
           <h2 className="text-lg font-semibold text-slate-900">Edit scraped job URL</h2>
           <p className="mt-1 text-xs text-slate-500 truncate" title={job.title}>
             {job.title}
-            {job.company_name ? <> — {job.company_name}</> : null}
+            {job.company_name ? <> - {job.company_name}</> : null}
           </p>
         </div>
 

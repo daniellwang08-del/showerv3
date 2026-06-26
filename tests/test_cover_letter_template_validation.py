@@ -139,7 +139,7 @@ def test_fill_cover_letter_template_inherits_anchor_font():
 
 def test_fill_cover_letter_template_signoff_uses_soft_break():
     """Single \\n inside a body part should render as a Word soft break (w:br)
-    rather than splitting into two paragraphs — so 'Best regards,' and the name
+    rather than splitting into two paragraphs - so 'Best regards,' and the name
     stay in the same paragraph but on separate lines.
     """
     import zipfile

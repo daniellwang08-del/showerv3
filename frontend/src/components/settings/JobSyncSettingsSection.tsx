@@ -48,16 +48,16 @@ function SectionMessage({ ok, text }: { ok?: boolean; text: string }) {
 
 function formatCheckpointMarkers(markers: SyncCheckpoint['marker_job_ids']): string {
   if (Array.isArray(markers)) {
-    return markers.slice(0, 3).join(', ') || '—';
+    return markers.slice(0, 3).join(', ') || '-';
   }
   if (markers && typeof markers === 'object') {
     const parts = Object.entries(markers).slice(0, 2).map(([title, ids]) => {
       const list = Array.isArray(ids) ? ids.slice(0, 3).join(', ') : String(ids);
       return `${title}: ${list}`;
     });
-    return parts.join(' · ') || '—';
+    return parts.join(' · ') || '-';
   }
-  return '—';
+  return '-';
 }
 
 export function JobSyncSettingsSection() {
@@ -184,19 +184,15 @@ export function JobSyncSettingsSection() {
   };
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex items-start gap-4">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-600 to-blue-700 text-white">
-          <CalendarRange className="h-5 w-5" />
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 text-white">
+          <CalendarRange size={20} />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-bold text-slate-900">Job sync</h2>
-          <p className="mt-1 text-sm leading-relaxed text-slate-600">
-            The Jobs page <strong>Sync All</strong> button runs incremental sync: spiders paginate
-            newest-first and stop when they hit the last saved 3-job checkpoint markers (not a
-            timestamp window). Use this section for initial backfill or manual date-range sync.
-            Date sync ignores old checkpoints, filters by posted date where available, and saves
-            fresh 3-job markers when each spider finishes.
+          <h2 className="text-base font-bold text-slate-900">Job sync</h2>
+          <p className="mt-0.5 text-sm leading-snug text-slate-500">
+            Manual backfill or date-range sync. The Jobs page <strong>Sync All</strong> handles incremental updates.
           </p>
 
           {loading ? (

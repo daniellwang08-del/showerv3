@@ -45,7 +45,7 @@ export function DuplicatesModal({ onClose }: Props) {
         aria-hidden
       />
 
-      {/* Modal container — DuplicateJobsPanel owns the full header + close button */}
+      {/* Modal container - DuplicateJobsPanel owns the full header + close button */}
       <div
         role="dialog"
         aria-modal="true"
@@ -54,14 +54,14 @@ export function DuplicatesModal({ onClose }: Props) {
         style={{ zIndex: Z_INDEX.duplicatesModal }}
       >
         <div
-          className="glass-card pointer-events-auto flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl shadow-2xl"
+          className="pointer-events-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
           style={{
-            height: 'min(80vh, 680px)',
+            height: 'min(88vh, 860px)',
             animation: 'modal-in 0.2s ease-out both',
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <DuplicateJobsPanel onClosePanel={onClose}>
               <></>
             </DuplicateJobsPanel>

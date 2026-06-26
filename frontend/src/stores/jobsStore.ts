@@ -850,7 +850,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       if (posted > 0 && alreadyInSheet === 0) {
         notify('success', `Posted ${posted} job${posted > 1 ? 's' : ''} to Google Sheet`);
       } else if (posted > 0 && alreadyInSheet > 0) {
-        notify('warning', `${posted} job${posted > 1 ? 's' : ''} posted newly, ${alreadyInSheet} already in the sheet — skipped.`);
+        notify('warning', `${posted} job${posted > 1 ? 's' : ''} posted newly, ${alreadyInSheet} already in the sheet - skipped.`);
       } else if (posted === 0 && alreadyInSheet > 0) {
         notify('info', `${alreadyInSheet === 1 ? 'This job is' : `All ${alreadyInSheet} jobs are`} already in the sheet.`);
       } else {

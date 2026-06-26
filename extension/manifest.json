@@ -2,14 +2,14 @@
   "manifest_version": 3,
   "name": "Job Application Assistant",
   "version": "1.0.0",
-  "description": "Job-specific AI assistant that uses your Job Scraper profile and job descriptions to help fill out applications.",
-  "permissions": ["storage", "sidePanel", "tabs", "scripting"],
+  "description": "Job-specific AI assistant that uses your Atomspace profile and job descriptions to help fill out applications.",
+  "permissions": ["storage", "sidePanel", "tabs", "scripting", "webNavigation"],
+  "optional_host_permissions": ["*://*/*", "https://*.greenhouse.io/*"],
   "host_permissions": [
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://localhost/*"
   ],
-  "optional_host_permissions": ["*://*/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

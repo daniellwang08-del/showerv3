@@ -77,11 +77,11 @@ def main() -> None:
         return
 
     if not ip:
-        print("  LAN:          (could not detect — use ipconfig to find your IPv4 address)")
+        print("  LAN:          (could not detect - use ipconfig to find your IPv4 address)")
         return
 
     print(f"  Frontend LAN: http://{ip}:{args.frontend_port}")
-    print(f"  Backend:      http://127.0.0.1:{args.api_port}  (host only — LAN clients use :5173)")
+    print(f"  Backend:      http://127.0.0.1:{args.api_port}  (host only - LAN clients use :5173)")
 
 
 if __name__ == "__main__":

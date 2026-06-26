@@ -28,6 +28,11 @@ const ENGINE_SCRIPTS = {
   // the platform-agnostic component drivers.
   greenhouse: [
     "content/engine/dom.js",
+    "content/engine/greenhouse.js",
+    "content/engine/pinpoint.js",
+    "content/engine/lever.js",
+    "content/engine/workable.js",
+    "content/engine/breezy.js",
     "content/engine/drivers/sr-select.js",
     "content/engine/drivers/native.js",
     "content/engine/drivers/react-select.js",

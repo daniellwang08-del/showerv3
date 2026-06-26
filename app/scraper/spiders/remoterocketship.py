@@ -118,7 +118,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
     def _load_checkpoint(self):
         """Load marker job IDs from the last successful run."""
         if self._fresh_mode:
-            self.logger.info("Fresh mode — ignoring checkpoints")
+            self.logger.info("Fresh mode - ignoring checkpoints")
             return
         db_url = self.settings.get("DATABASE_URL")
         engine = get_engine(db_url)
@@ -135,7 +135,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
                     len(self._marker_ids), list(self._marker_ids),
                 )
             else:
-                self.logger.info("No checkpoint found — will use max_pages=%d", self.max_pages)
+                self.logger.info("No checkpoint found - will use max_pages=%d", self.max_pages)
         finally:
             session.close()
 
@@ -288,7 +288,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
             self.logger.info("Page %d: %d jobs (total unknown)", page, len(jobs))
 
         if not jobs:
-            self.logger.info("Page %d returned 0 jobs — stopping", page)
+            self.logger.info("Page %d returned 0 jobs - stopping", page)
             return
 
         job_ids = [str(j.get("id", "")) for j in jobs]
@@ -301,7 +301,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
             for job, jid in zip(jobs, job_ids):
                 if jid and jid in self._marker_ids:
                     self.logger.info(
-                        "Checkpoint marker %s found on page %d — caught up with previous run",
+                        "Checkpoint marker %s found on page %d - caught up with previous run",
                         jid, page,
                     )
                     marker_hit_on_page = True
@@ -321,18 +321,18 @@ class RemoteRocketshipSpider(BaseJobSpider):
         if next_page > self.max_pages:
             if self._marker_ids:
                 self.logger.warning(
-                    "Reached max_pages limit (%d) without hitting a checkpoint marker — "
+                    "Reached max_pages limit (%d) without hitting a checkpoint marker - "
                     "markers may have expired",
                     self.max_pages,
                 )
             else:
-                self.logger.info("Reached max_pages limit (%d) — stopping", self.max_pages)
+                self.logger.info("Reached max_pages limit (%d) - stopping", self.max_pages)
             should_continue = False
         elif total_pages is not None and next_page > total_pages:
-            self.logger.info("Reached last page (%d/%d) — stopping", page, total_pages)
+            self.logger.info("Reached last page (%d/%d) - stopping", page, total_pages)
             should_continue = False
         elif len(jobs) < JOBS_PER_PAGE:
-            self.logger.info("Page %d had %d < %d jobs — last page", page, len(jobs), JOBS_PER_PAGE)
+            self.logger.info("Page %d had %d < %d jobs - last page", page, len(jobs), JOBS_PER_PAGE)
             should_continue = False
 
         if should_continue:

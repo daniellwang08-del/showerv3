@@ -3,7 +3,7 @@
 // react-select renders its option list ONLY while the menu is open (the
 // .select__menu subtree is mounted on open and unmounted on close), so options
 // cannot be read from the static DOM. This driver therefore opens the widget,
-// polls until the listbox mounts, harvests the option texts, then closes — and
+// polls until the listbox mounts, harvests the option texts, then closes - and
 // at write time opens again to click the chosen option (value-aware: a wrong
 // pre-existing selection is replaced, not kept).
 (() => {
@@ -14,19 +14,31 @@
   const COMBO_ROOT_SEL =
     '[class*="select__control"], [class*="select-control"], [class*="Select-control"], [role="combobox"]';
   const OPTION_SEL = '[role="option"], .select__option, [class*="-option"], li[role="option"]';
+  const MAX_HARVEST_OPTIONS = 120; // matches backend MAX_OPTIONS_PER_CONTROL
+
+  function isItiCountryNode(el) {
+    try {
+      return !!(el && el.closest && el.closest(".iti__country-list, .iti"));
+    } catch {
+      return false;
+    }
+  }
 
   function isComboInput(inp) {
     const role = (inp.getAttribute && inp.getAttribute("role")) || "";
+    const cls = String((inp.className && inp.className.baseVal !== undefined ? inp.className.baseVal : inp.className) || "");
     return (
       role === "combobox" ||
       (inp.getAttribute && inp.getAttribute("aria-autocomplete") === "list") ||
-      (inp.getAttribute && inp.getAttribute("aria-haspopup") === "listbox")
+      (inp.getAttribute && inp.getAttribute("aria-haspopup") === "listbox") ||
+      /dummyInput/i.test(cls) ||
+      (inp.closest && inp.closest(".react-select"))
     );
   }
 
   // The canonical widget root we own and write against: the .select__control
   // (holds the .select__single-value and the inner input). The menu mounts as
-  // its sibling or in a portal — located separately via aria-controls.
+  // its sibling or in a portal - located separately via aria-controls.
   //
   // NOTE: we must NOT return the inner <input> here even though it matches
   // [role="combobox"] (Element.closest tests self first): the single-value node
@@ -51,7 +63,52 @@
   }
 
   function comboInput(root) {
-    return root.tagName === "INPUT" ? root : root.querySelector && root.querySelector("input");
+    if (root.tagName === "INPUT") return root;
+    if (!root.querySelector) return null;
+    return (
+      root.querySelector('input[role="combobox"]') ||
+      root.querySelector("input.react-select__input") ||
+      root.querySelector('input[class*="dummyInput"]') ||
+      root.querySelector("input")
+    );
+  }
+
+  function isDummyInput(input) {
+    if (!input) return false;
+    const cls = String(input.className || "");
+    return (
+      input.readOnly ||
+      /dummyInput/i.test(cls) ||
+      (input.getAttribute && input.getAttribute("aria-readonly") === "true")
+    );
+  }
+
+  // Pinpoint ships a mobile <select> sibling for some react-select widgets; use
+  // it when the desktop dummy input cannot be typed into.
+  function pinpointMobileSelect(root) {
+    try {
+      const block = root.closest && root.closest(".col-md-1-1, .frow, .pad-v-3");
+      if (!block) return null;
+      const sel = block.querySelector("select");
+      if (sel && sel.options && sel.options.length > 1) return sel;
+    } catch {}
+    return null;
+  }
+
+  async function writeNativeSelect(sel, want) {
+    const value = clean(want);
+    if (!sel || !value) return false;
+    const w = normText(value);
+    for (const opt of sel.options) {
+      const t = normText(clean(opt.textContent));
+      if (t === w || (t && (t.includes(w) || w.includes(t)))) {
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event("input", { bubbles: true }));
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+    }
+    return false;
   }
 
   function isMultiCombo(root, input) {
@@ -102,6 +159,7 @@
   // treat notice/loading/placeholder nodes as NOT options.
   function isRealOption(o) {
     if (!isVisible(o)) return false;
+    if (isItiCountryNode(o)) return false;
     const cls = (o.className && o.className.baseVal !== undefined ? o.className.baseVal : o.className) || "";
     if (/notice|no-?options|no-?results|loading|placeholder/i.test(String(cls))) return false;
     if (o.getAttribute && o.getAttribute("role") === "option") return true;
@@ -109,7 +167,8 @@
   }
 
   function optionNodes(scope) {
-    return [...(scope || document).querySelectorAll(OPTION_SEL)].filter(isRealOption);
+    if (!scope) return [];
+    return [...scope.querySelectorAll(OPTION_SEL)].filter(isRealOption);
   }
 
   // The listbox belonging to THIS widget: react-select sets the input's
@@ -124,23 +183,27 @@
         if (lb) return lb;
       }
     } catch {}
-    return (root && root.parentElement) || root || document;
+    try {
+      const menu =
+        (root && root.querySelector && root.querySelector('[class*="menu"], [role="listbox"]')) || null;
+      if (menu) return menu;
+    } catch {}
+    return null;
   }
 
   function scopedOptionNodes(input, root) {
-    const own = optionNodes(comboListbox(input, root));
-    if (own.length) return own;
-    return optionNodes(document);
+    return optionNodes(comboListbox(input, root));
   }
 
   function collectVisibleOptions(scope) {
+    if (!scope) return [];
     const opts = [];
-    (scope || document).querySelectorAll(OPTION_SEL).forEach((o) => {
+    scope.querySelectorAll(OPTION_SEL).forEach((o) => {
       if (!isRealOption(o)) return;
       const t = clean(o.innerText || o.textContent);
       if (t) opts.push(t);
     });
-    return [...new Set(opts)].slice(0, 200);
+    return [...new Set(opts)].slice(0, MAX_HARVEST_OPTIONS);
   }
 
   function comboHasSelection(root) {
@@ -229,12 +292,14 @@
         await delay(120);
       }
       const lb = comboListbox(input, root);
-      const scope = optionNodes(lb).length ? lb : document;
-      options = collectVisibleOptions(scope);
+      options = collectVisibleOptions(lb);
     } catch {
       options = [];
     } finally {
       closeMenu(input, root);
+    }
+    if (!options.length && AF.pinpoint && AF.pinpoint.rorOptionsFor) {
+      options = AF.pinpoint.rorOptionsFor(input || root);
     }
     return options;
   }
@@ -268,6 +333,27 @@
     // Already showing the desired value -> nothing to do.
     const cur = comboSelectionText(root);
     if (cur && normText(cur) === normText(value)) return true;
+
+    // Pinpoint EEO / equality selects use a read-only dummyInput: open the menu
+    // and click the option (typing + Enter is ignored).
+    if (isDummyInput(input)) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          openCombo(input, root);
+          await waitUntil(() => (scopedOptionNodes(input, root).length ? true : null), 1000, 60);
+          const opt = pickOption(scopedOptionNodes(input, root), value);
+          if (opt) {
+            clickOption(opt);
+            if (await waitUntil(() => (comboHasSelection(root) ? true : null), 700, 60)) return true;
+          }
+        } catch {}
+        closeMenu(input, root);
+        await delay(120);
+      }
+      const mob = pinpointMobileSelect(root);
+      if (mob && (await writeNativeSelect(mob, value))) return true;
+      return comboHasSelection(root);
+    }
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -320,6 +406,9 @@
     type: "react-select",
     priority: 20,
     match(el) {
+      // intl-tel-input's flag picker is role=combobox but is NOT react-select;
+      // claiming it harvests the entire 200-entry country list into options.
+      if (el.closest && el.closest(".iti")) return null;
       if (el.tagName === "INPUT" && isComboInput(el)) return comboRoot(el);
       if (el.getAttribute && el.getAttribute("role") === "combobox" && el.tagName !== "INPUT") {
         // A container-level combobox with no inner input.
@@ -343,6 +432,12 @@
         shell
           .querySelectorAll('input[class*="requiredInput"], input[aria-hidden="true"], input[type="hidden"]')
           .forEach((n) => extra.push(n));
+        shell.querySelectorAll('input[tabindex="-1"]').forEach((n) => {
+          try {
+            const r = n.getBoundingClientRect();
+            if (r.width === 0 && r.height === 0) extra.push(n);
+          } catch {}
+        });
       }
       return extra;
     },
@@ -364,7 +459,11 @@
       return comboHasSelection(root);
     },
     async harvestOptions(root) {
-      return harvestOptions(root);
+      const opts = await harvestOptions(root);
+      if (opts.length) return opts;
+      const input = comboInput(root);
+      if (AF.pinpoint && AF.pinpoint.rorOptionsFor) return AF.pinpoint.rorOptionsFor(input || root);
+      return opts;
     },
     async write(root, answer) {
       const values =
@@ -380,4 +479,23 @@
       return writeSingle(root, answer.option || answer.value || "");
     },
   });
+
+  // Collapse any react-select menus left open after a long harvest pass (avoids
+  // stacked option lists bleeding across unrelated screening questions).
+  AF.closeReactSelectMenus = function closeReactSelectMenus(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    try {
+      root.querySelectorAll('[class*="select__control"], [class*="-control"]').forEach((ctrl) => {
+        try {
+          const inp = comboInput(ctrl);
+          closeMenu(inp, ctrl);
+        } catch {}
+      });
+    } catch {}
+    try {
+      for (const t of ["mousedown", "mouseup", "click"]) {
+        document.body.dispatchEvent(new MouseEvent(t, { bubbles: true }));
+      }
+    } catch {}
+  };
 })();

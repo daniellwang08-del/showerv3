@@ -90,7 +90,7 @@ export async function setMinScore(value) {
 
 // When enabled, the Workday autofill keeps filling each step, recovers any
 // validation errors via the LLM, clicks "Save and Continue", and advances until
-// the Review page — where it stops so the user can submit. Off by default.
+// the Review page - where it stops so the user can submit. Off by default.
 export async function getAutoAdvance() {
   const { autoAdvance } = await LOCAL.get("autoAdvance");
   return autoAdvance === true;

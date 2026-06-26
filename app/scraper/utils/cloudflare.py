@@ -150,7 +150,7 @@ class CloudflareSession:
 
             if resp.status_code == 403:
                 logger.warning(
-                    "Got 403 from %s — session may have expired. "
+                    "Got 403 from %s - session may have expired. "
                     "Re-run: python -m app.scraper.auth setup",
                     url,
                 )

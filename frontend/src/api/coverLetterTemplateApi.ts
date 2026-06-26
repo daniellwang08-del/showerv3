@@ -55,6 +55,13 @@ export async function uploadCoverLetterTemplate(file: File): Promise<CoverLetter
   return normalizeStatus(data);
 }
 
+export async function generateCoverLetterFromResumeDesign(): Promise<CoverLetterTemplateStatusPayload> {
+  const { data } = await apiClient.post<Partial<CoverLetterTemplateStatusPayload>>(
+    '/settings/cover-letter-template/from-resume-design',
+  );
+  return normalizeStatus(data);
+}
+
 export async function revalidateCoverLetterTemplate(): Promise<CoverLetterTemplateStatusPayload> {
   const { data } = await apiClient.post<Partial<CoverLetterTemplateStatusPayload>>(
     '/settings/cover-letter-template/revalidate',

@@ -14,6 +14,29 @@ def _empty_to_none(v: str | None) -> str | None:
     return None if (v is None or (isinstance(v, str) and not v.strip())) else v
 
 
+def _coerce_str_list(v) -> list[str]:
+    """Normalize a value into a clean list of non-empty strings.
+
+    Accepts a list (filtering blanks) or a newline-separated string so legacy
+    single-blob inputs degrade gracefully into a structured list.
+    """
+    if v is None:
+        return []
+    if isinstance(v, str):
+        items = [ln.strip() for ln in v.splitlines()]
+        return [s for s in items if s]
+    if isinstance(v, (list, tuple)):
+        out: list[str] = []
+        for item in v:
+            if item is None:
+                continue
+            s = str(item).strip()
+            if s:
+                out.append(s)
+        return out
+    return []
+
+
 class WorkExperienceBlock(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200)
     job_title: str = Field(..., min_length=1, max_length=200)
@@ -21,12 +44,25 @@ class WorkExperienceBlock(BaseModel):
     period_end: str | None = Field(default=None, max_length=20)
     location: str | None = Field(default=None, max_length=200)
     job_type: str | None = Field(default=None, max_length=20)  # onsite, hybrid, remote
+    employment_type: str | None = Field(default=None, max_length=40)  # full-time, internship, contract, part-time
+    project_title: str | None = Field(default=None, max_length=300)
+    project_intro: str | None = Field(default=None, max_length=2000)
+    contributions: list[str] = Field(default_factory=list, max_length=40)
+    used_skills: str | None = Field(default=None, max_length=2000)
     description: str | None = Field(default=None, max_length=12000)
 
-    @field_validator("period_start", "period_end", "location", "job_type", "description", mode="before")
+    @field_validator(
+        "period_start", "period_end", "location", "job_type", "employment_type",
+        "project_title", "project_intro", "used_skills", "description", mode="before",
+    )
     @classmethod
     def empty_to_none(cls, v):
         return _empty_to_none(v)
+
+    @field_validator("contributions", mode="before")
+    @classmethod
+    def normalize_contributions(cls, v):
+        return _coerce_str_list(v)
 
 
 class EducationBlock(BaseModel):
@@ -132,6 +168,11 @@ class ResumeWorkBlock(BaseModel):
     period_end: str | None = None
     location: str | None = None
     job_type: str | None = None
+    employment_type: str | None = None
+    project_title: str | None = None
+    project_intro: str | None = None
+    contributions: list[str] = Field(default_factory=list)
+    used_skills: str | None = None
     description: str | None = None
 
 

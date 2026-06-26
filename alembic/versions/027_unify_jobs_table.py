@@ -94,7 +94,7 @@ def upgrade() -> None:
         op.rename_table("valid_jobs", "jobs")
     elif has_valid_jobs and not has_jobs:
         op.rename_table("valid_jobs", "jobs")
-    # else: jobs already exists and valid_jobs is gone — rename already done
+    # else: jobs already exists and valid_jobs is gone - rename already done
 
     # Add status column if missing
     if not _column_exists(conn, "jobs", "status"):
