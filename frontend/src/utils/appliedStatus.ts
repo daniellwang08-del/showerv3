@@ -24,13 +24,13 @@ export function dashboardJobRowSurfaceClass(
 
   // Applied must remain visible even when the row is selected (bulk actions).
   if (isApplied && isSelected) {
-    return 'bg-sky-50 border-l-[3px] border-l-sky-500 ring-1 ring-inset ring-sky-200/80';
+    return 'bg-sky-50 border-l-[3px] border-l-sky-500 ring-1 ring-inset ring-sky-200/80 dark:bg-sky-500/15 dark:ring-sky-400/30';
   }
   if (isApplied) {
-    return 'bg-sky-50 border-l-[3px] border-l-sky-500';
+    return 'bg-sky-50 border-l-[3px] border-l-sky-500 dark:bg-sky-500/15';
   }
   if (isSelected) {
-    return 'bg-blue-50 border-l-[3px] border-l-blue-500';
+    return 'bg-blue-50 border-l-[3px] border-l-blue-500 dark:bg-blue-500/15';
   }
   return 'border-l-[3px] border-l-transparent hover:bg-blue-50/30';
 }
@@ -41,7 +41,11 @@ export function dashboardJobStickyCellClass(
 ): string {
   const isSelected = opts.isSelected ?? false;
   const isApplied = dashboardJobMarkedApplied(job);
-  if (isApplied) return '!bg-sky-50 group-hover:!bg-sky-50';
-  if (isSelected) return '!bg-blue-50 group-hover:!bg-blue-50';
+  // The sticky cell must stay OPAQUE (it overlays horizontally-scrolled cells). The
+  // light `!bg-*-50` utilities use `!important`, which the global `.dark .bg-*-50`
+  // overrides can't beat, so without an explicit dark variant the selected cell would
+  // render bright light-blue over the dark table. The dark hexes match each row's tint.
+  if (isApplied) return '!bg-sky-50 group-hover:!bg-sky-50 dark:!bg-[#13314d] dark:group-hover:!bg-[#13314d]';
+  if (isSelected) return '!bg-blue-50 group-hover:!bg-blue-50 dark:!bg-[#192b4d] dark:group-hover:!bg-[#192b4d]';
   return 'bg-white group-hover:bg-blue-50/30';
 }

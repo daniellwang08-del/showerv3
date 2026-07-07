@@ -43,6 +43,9 @@ from app.services.extraction_cache import init_redis_pool, close_redis_pool
 from app.tasks.worker import close_shared_pools
 from app.core.config import get_settings
 from app.core.logging import setup_logging, get_logger
+from app.core.reload_quiet import install_uvicorn_reload_noise_filter
+
+install_uvicorn_reload_noise_filter()
 
 logger = get_logger(__name__)
 

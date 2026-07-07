@@ -26,6 +26,18 @@ async def init_database() -> None:
     engine_kwargs["pool_pre_ping"] = True
     engine_kwargs["pool_recycle"] = 3600
 
+    # Pin the DB session time zone to UTC. Server-side defaults (func.now() on
+    # created_at/updated_at) are written into naive `timestamp without time zone`
+    # columns; asyncpg otherwise inherits the *server's* local TimeZone and stores
+    # local wall-clock time, while the rest of the app (_utcnow(), scraped_at, and
+    # day_bounds_for_timezone) assumes those columns are UTC. That mismatch made the
+    # dashboard "Today" filter drop jobs fetched today. Forcing UTC keeps every
+    # timestamp on one convention regardless of the host's local time zone.
+    if "asyncpg" in settings.database_url:
+        engine_kwargs["connect_args"] = {"server_settings": {"timezone": "UTC"}}
+    elif "psycopg" in settings.database_url:
+        engine_kwargs["connect_args"] = {"options": "-c timezone=UTC"}
+
     try:
         _engine = create_async_engine(settings.database_url, **engine_kwargs)
 

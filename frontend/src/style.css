@@ -1,5 +1,38 @@
 @import "tailwindcss";
 
+/* Carlito: metric-compatible with Calibri and OFL-licensed, so the resume preview can
+   render with the EXACT same font the generated .docx/PDF uses (LibreOffice ships /
+   embeds Carlito). Bundling it guarantees identical glyph metrics -> identical line
+   wrapping and page breaks between the live preview and the rendered PDF. */
+@font-face {
+  font-family: "Carlito";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Carlito-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Carlito";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/Carlito-Bold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Carlito";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Carlito-Italic.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Carlito";
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/Carlito-BoldItalic.ttf") format("truetype");
+}
+
 /* Enable class-based dark mode (toggled by adding `.dark` to <html>). */
 @custom-variant dark (&:where(.dark, .dark *));
 

@@ -24,56 +24,10 @@ function normalizeStatus(
   };
 }
 
-export async function fetchCoverLetterTemplateRequirements(): Promise<CoverLetterTemplateRequirements> {
-  const { data } = await apiClient.get<Partial<CoverLetterTemplateRequirements>>(
-    '/settings/cover-letter-template/requirements',
-  );
-  return {
-    max_bytes: Number(data.max_bytes ?? 5_000_000),
-    required_tags: Array.isArray(data.required_tags) ? data.required_tags : [],
-    optional_tags: Array.isArray(data.optional_tags) ? data.optional_tags : [],
-    layout_example: String(data.layout_example ?? ''),
-    notes: Array.isArray(data.notes) ? (data.notes as string[]) : [],
-  };
-}
-
-export async function fetchCoverLetterTemplateStatus(): Promise<CoverLetterTemplateStatusPayload> {
-  const { data } = await apiClient.get<Partial<CoverLetterTemplateStatusPayload>>(
-    '/settings/cover-letter-template',
-  );
-  return normalizeStatus(data);
-}
-
-export async function uploadCoverLetterTemplate(file: File): Promise<CoverLetterTemplateStatusPayload> {
-  const form = new FormData();
-  form.append('file', file);
-  const { data } = await apiClient.post<Partial<CoverLetterTemplateStatusPayload>>(
-    '/settings/cover-letter-template/upload',
-    form,
-    { headers: { 'Content-Type': 'multipart/form-data' } },
-  );
-  return normalizeStatus(data);
-}
-
+/** Compile the cover letter template from the user's saved Resume Builder design. */
 export async function generateCoverLetterFromResumeDesign(): Promise<CoverLetterTemplateStatusPayload> {
   const { data } = await apiClient.post<Partial<CoverLetterTemplateStatusPayload>>(
     '/settings/cover-letter-template/from-resume-design',
   );
   return normalizeStatus(data);
-}
-
-export async function revalidateCoverLetterTemplate(): Promise<CoverLetterTemplateStatusPayload> {
-  const { data } = await apiClient.post<Partial<CoverLetterTemplateStatusPayload>>(
-    '/settings/cover-letter-template/revalidate',
-  );
-  return normalizeStatus(data);
-}
-
-export async function downloadCoverLetterTemplatePreview(): Promise<Blob> {
-  const { data } = await apiClient.post<Blob>(
-    '/settings/cover-letter-template/preview',
-    undefined,
-    { responseType: 'blob' },
-  );
-  return data;
 }

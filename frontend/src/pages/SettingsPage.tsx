@@ -28,8 +28,6 @@ import {
   BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH,
 } from '../constants/builtinCoverLetterPrompt';
 import { MarkdownPromptEditor } from '../components/settings/MarkdownPromptEditor';
-import { ResumeTemplateSection } from '../components/settings/ResumeTemplateSection';
-import { CoverLetterTemplateSection } from '../components/settings/CoverLetterTemplateSection';
 import { GoogleSheetsSettingsSection } from '../components/settings/GoogleSheetsSettingsSection';
 import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { ProviderKeysCard } from '../components/settings/ProviderKeysCard';
@@ -758,11 +756,6 @@ export function SettingsPage() {
             <GoogleSheetsSettingsSection />
 
             <JobSyncSettingsSection />
-
-            <div className="grid items-start gap-5 lg:grid-cols-2">
-              <ResumeTemplateSection />
-              <CoverLetterTemplateSection />
-            </div>
 
             <div className="grid items-start gap-5 lg:grid-cols-2">
               {/* Resume tailoring prompt */}

@@ -1,13 +1,52 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ResumeDesign } from '../../types/resumeDesign';
+import type { LayoutMetrics, ResumeDesign } from '../../types/resumeDesign';
 import type { UserProfile } from '../../types/profile';
-import { ResumePreview, resumeHasHeaderBand, resumeVerticalMarginsPx } from './ResumePreview';
+import { PT_TO_PX, ResumePreview, resumeHasHeaderBand, resumeVerticalMarginsPx } from './ResumePreview';
+
+/** Exact header-band geometry measured from the rendered preview (points). */
+export interface MeasuredHeaderMetrics {
+  band_pt: number | null;
+  gap_pt: number | null;
+  measured_at_px: number;
+}
+
+/** Per-role body gaps measured from the rendered preview (points). */
+export type MeasuredLayoutMetrics = LayoutMetrics;
+
+/** Maps each measured DOM gap (between two consecutive `[data-gap-role]` leaves) to a
+ *  manifest field. Keyed by the *current* block's role; a few roles disambiguate the
+ *  first-after-heading case from the repeated-row case via the previous role. */
+const LAYOUT_FIELDS: (keyof LayoutMetrics)[] = [
+  'heading_before_pt',
+  'heading_after_pt',
+  'exp_lead_pt',
+  'exp_label_pt',
+  'exp_bullet_pt',
+  'exp_used_pt',
+  'exp_company_pt',
+  'skill_row_pt',
+  'edu_entry_pt',
+  'cert_row_pt',
+];
 
 const LETTER_RATIO = 11 / 8.5; // height / width for US Letter
 /** Native layout width used to lay out and measure the resume. Every instance
  *  (main preview and thumbnail rail) renders at this width and is then scaled,
- *  so page breaks are identical regardless of the on-screen size. */
-export const RESUME_REF_WIDTH = 760;
+ *  so page breaks are identical regardless of the on-screen size.
+ *
+ *  This MUST equal a true US-Letter page width at 96 dpi (8.5 in × 96 = 816 px,
+ *  i.e. 612 pt × PT_TO_PX). Elements are sized in px via PT_TO_PX = 1.3333, so any
+ *  other reference width would scale text/margins relative to the page differently
+ *  than the LibreOffice-rendered PDF and shift every line break. */
+export const RESUME_REF_WIDTH = 816;
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+/** Treat two (possibly null) pt values as equal within ~0.4 pt, so sub-pixel jitter
+ *  from the browser layout does not trigger a save/recompile loop. */
+const nearlyEqual = (a: number | null, b: number | null): boolean => {
+  if (a == null || b == null) return a === b;
+  return Math.abs(a - b) < 0.4;
+};
 
 interface Page {
   offset: number; // native px into the content flow where this page starts
@@ -26,6 +65,13 @@ interface Props {
   idPrefix?: string;
   onPageCount?: (count: number) => void;
   onSelect?: (index: number) => void;
+  /** Reports the exact rendered header-band geometry (pt) so the compiler can pin the
+   *  .docx band to the same height the browser drew. Wire this on a single instance
+   *  (the main preview) only. */
+  onMeasureHeader?: (m: MeasuredHeaderMetrics) => void;
+  /** Reports the realized per-role body gaps (pt) so the compiler/fill engine reproduce
+   *  the exact spacing the user designed. Wire on the main preview only. */
+  onMeasureLayout?: (m: MeasuredLayoutMetrics) => void;
 }
 
 /**
@@ -50,9 +96,16 @@ export function ResumePageStack({
   idPrefix,
   onPageCount,
   onSelect,
+  onMeasureHeader,
+  onMeasureLayout,
 }: Props) {
   const measureRef = useRef<HTMLDivElement>(null);
   const [pages, setPages] = useState<Page[]>([{ offset: 0, height: 0, topMargin: 0 }]);
+  // Last reported band geometry, so we only fire onMeasureHeader on a real change
+  // (otherwise reporting → store update → re-render → re-measure would loop).
+  const lastReported = useRef<MeasuredHeaderMetrics | null>(null);
+  // Same idempotency guard for the per-role body spacing manifest.
+  const lastReportedLayout = useRef<MeasuredLayoutMetrics | null>(null);
 
   const { top: marginTop, bottom: marginBottom } = resumeVerticalMarginsPx(design);
   const hasBand = resumeHasHeaderBand(design);
@@ -61,6 +114,134 @@ export function ResumePageStack({
   useLayoutEffect(() => {
     const root = measureRef.current;
     if (!root) return;
+
+    const reportHeaderMetrics = (rootEl: HTMLElement, rootTopPx: number) => {
+      if (!onMeasureHeader) return;
+      const band = rootEl.querySelector('[data-header-band]') as HTMLElement | null;
+      let next: MeasuredHeaderMetrics;
+      if (!band) {
+        next = { band_pt: null, gap_pt: null, measured_at_px: RESUME_REF_WIDTH };
+      } else {
+        const bandRect = band.getBoundingClientRect();
+        const bandBottom = bandRect.bottom - rootTopPx;
+        // First content block after the band (the band itself is a [data-block]).
+        let firstTop = Infinity;
+        for (const el of Array.from(rootEl.querySelectorAll('[data-block]')) as HTMLElement[]) {
+          if (el === band || band.contains(el)) continue;
+          const top = el.getBoundingClientRect().top - rootTopPx;
+          if (top > bandBottom - 1 && top < firstTop) firstTop = top;
+        }
+        const gapPx = firstTop === Infinity ? null : Math.max(0, firstTop - bandBottom);
+        next = {
+          band_pt: round1(bandRect.height / PT_TO_PX),
+          gap_pt: gapPx == null ? null : round1(gapPx / PT_TO_PX),
+          measured_at_px: RESUME_REF_WIDTH,
+        };
+      }
+      const prev = lastReported.current;
+      const changed =
+        !prev ||
+        !nearlyEqual(prev.band_pt, next.band_pt) ||
+        !nearlyEqual(prev.gap_pt, next.gap_pt);
+      if (changed) {
+        lastReported.current = next;
+        onMeasureHeader(next);
+      }
+    };
+
+    const reportLayoutMetrics = (rootEl: HTMLElement, rootTopPx: number) => {
+      if (!onMeasureLayout) return;
+      // Flat, document-ordered list of the *leaf* gap-role blocks (a tagged element
+      // that contains no other tagged element). Measuring leaves keeps the vertical
+      // sequence non-nested, so `top - prevBottom` is the true inter-paragraph gap.
+      const leaves = (Array.from(rootEl.querySelectorAll('[data-gap-role]')) as HTMLElement[])
+        .filter((el) => !el.querySelector('[data-gap-role]'))
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            role: el.dataset.gapRole ?? '',
+            top: r.top - rootTopPx,
+            bottom: r.bottom - rootTopPx,
+            left: r.left,
+            right: r.right,
+          };
+        });
+
+      // In a 2-column layout the left and right column leaves interleave in `top`
+      // order, so a flat top-sort would measure meaningless cross-column "gaps".
+      // Partition leaves into columns by horizontal overlap, then measure vertical
+      // gaps only *within* a column. A single-column layout collapses to one group,
+      // so this is a no-op there.
+      type Leaf = (typeof leaves)[number];
+      const columns: { left: number; right: number; items: Leaf[] }[] = [];
+      for (const leaf of leaves.slice().sort((a, b) => a.left - b.left)) {
+        const mid = (leaf.left + leaf.right) / 2;
+        const col = columns.find((c) => mid >= c.left && mid <= c.right);
+        if (col) {
+          col.items.push(leaf);
+          col.left = Math.min(col.left, leaf.left);
+          col.right = Math.max(col.right, leaf.right);
+        } else {
+          columns.push({ left: leaf.left, right: leaf.right, items: [leaf] });
+        }
+      }
+
+      const acc: Record<string, { sum: number; n: number }> = {};
+      const add = (key: keyof LayoutMetrics, v: number) => {
+        const a = acc[key] ?? (acc[key] = { sum: 0, n: 0 });
+        a.sum += v;
+        a.n += 1;
+      };
+      for (const col of columns) {
+        const ordered = col.items.slice().sort((a, b) => a.top - b.top);
+        for (let i = 1; i < ordered.length; i++) {
+          const prev = ordered[i - 1];
+          const cur = ordered[i];
+          const gap = Math.max(0, cur.top - prev.bottom) / PT_TO_PX;
+          const afterHeading = prev.role === 'heading';
+          switch (cur.role) {
+            case 'heading':
+              add('heading_before_pt', gap);
+              break;
+            case 'skill':
+              add(afterHeading ? 'heading_after_pt' : 'skill_row_pt', gap);
+              break;
+            case 'edu':
+              add(afterHeading ? 'heading_after_pt' : 'edu_entry_pt', gap);
+              break;
+            case 'cert':
+              add(afterHeading ? 'heading_after_pt' : 'cert_row_pt', gap);
+              break;
+            case 'exp-head':
+              add(afterHeading ? 'heading_after_pt' : 'exp_company_pt', gap);
+              break;
+            case 'exp-lead':
+              add('exp_lead_pt', gap);
+              break;
+            case 'exp-label':
+              add('exp_label_pt', gap);
+              break;
+            case 'exp-bull':
+              add('exp_bullet_pt', gap);
+              break;
+            case 'exp-used':
+              add('exp_used_pt', gap);
+              break;
+          }
+        }
+      }
+      const next = { measured_at_px: RESUME_REF_WIDTH } as MeasuredLayoutMetrics;
+      for (const f of LAYOUT_FIELDS) {
+        const a = acc[f];
+        next[f] = a ? round1(a.sum / a.n) : null;
+      }
+      const prev = lastReportedLayout.current;
+      const changed = !prev || LAYOUT_FIELDS.some((f) => !nearlyEqual(prev[f], next[f]));
+      if (changed) {
+        lastReportedLayout.current = next;
+        onMeasureLayout(next);
+      }
+    };
 
     const compute = () => {
       const total = root.scrollHeight;
@@ -71,6 +252,9 @@ export function ResumePageStack({
           return { top: r.top - rootTop, bottom: r.bottom - rootTop };
         })
         .sort((a, b) => a.top - b.top);
+
+      reportHeaderMetrics(root, rootTop);
+      reportLayoutMetrics(root, rootTop);
 
       const result: Page[] = [];
       let start = 0;
@@ -111,7 +295,7 @@ export function ResumePageStack({
     const ro = new ResizeObserver(compute);
     ro.observe(root);
     return () => ro.disconnect();
-  }, [design, profile, marginTop, marginBottom, hasBand, nativePageH]);
+  }, [design, profile, marginTop, marginBottom, hasBand, nativePageH, onMeasureHeader, onMeasureLayout]);
 
   const scale = displayWidth / RESUME_REF_WIDTH;
   const dispW = displayWidth;

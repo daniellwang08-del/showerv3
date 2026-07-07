@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, Response, status, Cookie, File, UploadFile, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from app.services.auth_service import AuthService
 from app.models.schemas import (
@@ -33,8 +33,8 @@ from app.models.profile_source_schemas import (
     ProfileSourceDocumentUpdateRequest,
     ProfileSourceDocumentUploadResponse,
 )
-from app.models.resume_template_schemas import ResumeTemplateBlueprintUpdateRequest
-from app.models.resume_design_schemas import ResumeDesignSaveRequest
+from app.models.resume_design_schemas import ResumeDesign, ResumeDesignSaveRequest
+from app.models.resume_ai_schemas import ResumeAiChatRequest
 from app.storage.database import get_session, check_database_connection
 from app.storage.repository import (
     JobExtractionRepository,
@@ -444,15 +444,10 @@ async def put_profile(
 
     async with get_session() as session:
         repo = UserRepository(session)
-        user, should_reanalyze = await repo.update_profile(user_id, _request_to_profile_data(request))
+        user, _ = await repo.update_profile(user_id, _request_to_profile_data(request))
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         await session.commit()
-
-    if should_reanalyze:
-        from app.services.resume_template_service import schedule_template_analysis
-
-        await schedule_template_analysis(user_id, reason="profile_work_count_changed")
 
     async with get_session() as session:
         repo = UserRepository(session)
@@ -2958,175 +2953,31 @@ async def update_user_settings(
     return UserSettingsResponse(**data)
 
 
-@router.get(
-    "/settings/resume-template/requirements",
-    dependencies=[Depends(get_current_user)],
-)
-async def get_resume_template_requirements(
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.resume_template_schemas import ResumeTemplateRequirementsResponse
-    from app.services.resume_template_requirements import get_template_requirements
-    from app.services.resume_template_service import count_work_roles
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    async with get_session() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-    profile_work_count = count_work_roles(user) if user else 0
-    return ResumeTemplateRequirementsResponse(
-        **get_template_requirements(user=user, profile_work_count=profile_work_count).model_dump()
-    )
-
-
-@router.get(
-    "/settings/resume-template",
-    dependencies=[Depends(get_current_user)],
-)
-async def get_resume_template_status(
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
-    from app.services.resume_template_service import template_status_payload
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    async with get_session() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return ResumeTemplateStatusResponse(**template_status_payload(user))
-
-
-@router.post(
-    "/settings/resume-template/upload",
-    dependencies=[Depends(get_current_user)],
-)
-async def upload_resume_template(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
-    from app.services.resume_template_service import (
-        save_uploaded_template,
-        schedule_template_analysis,
-        template_status_payload,
-    )
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    raw = await file.read()
-    filename = file.filename or "template.docx"
-    try:
-        await save_uploaded_template(user_id, raw, filename)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    await schedule_template_analysis(user_id, reason="upload")
-
-    async with get_session() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-    return ResumeTemplateStatusResponse(**template_status_payload(user))
-
-
-@router.put(
-    "/settings/resume-template/blueprint",
-    dependencies=[Depends(get_current_user)],
-)
-async def update_resume_template_blueprint(
-    body: ResumeTemplateBlueprintUpdateRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
-    from app.services.resume_template_service import update_user_blueprint
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    try:
-        payload = await update_user_blueprint(user_id, body.blueprint)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return ResumeTemplateStatusResponse(**payload)
-
-
-@router.post(
-    "/settings/resume-template/reanalyze",
-    dependencies=[Depends(get_current_user)],
-)
-async def reanalyze_resume_template(
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.resume_template_schemas import ResumeTemplateStatusResponse
-    from app.services.resume_template_service import (
-        schedule_template_analysis,
-        template_status_payload,
-    )
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    async with get_session() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-        if not user or not getattr(user, "resume_template_source_path", None):
-            raise HTTPException(status_code=400, detail="Upload a template before re-analyzing.")
-
-    await schedule_template_analysis(user_id, reason="manual_reanalyze")
-
-    async with get_session() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-    return ResumeTemplateStatusResponse(**template_status_payload(user))
-
-
-@router.get(
-    "/settings/resume-template/variables",
-    dependencies=[Depends(get_current_user)],
-)
-async def list_resume_template_variables(
-    current_user: dict = Depends(get_current_user),
-):
-    from app.services.resume_variable_registry import list_template_variables
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return {"variables": list_template_variables()}
-
-
 @router.post(
     "/settings/resume-template/preview",
     dependencies=[Depends(get_current_user)],
 )
-async def preview_resume_template(
+async def download_resume_design_docx(
     current_user: dict = Depends(get_current_user),
 ):
-    from app.services.resume_template_service import generate_template_preview_docx
+    """Download a .docx rendered from the user's saved Resume Builder design."""
+    from app.services.resume_design_service import generate_saved_design_docx
 
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
-        preview_path = await generate_template_preview_docx(user_id)
+        docx_path = await generate_saved_design_docx(user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception("resume_template_preview_failed", user_id=user_id, error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to generate preview.")
+        logger.exception("resume_design_docx_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate document.")
 
     return FileResponse(
-        path=str(preview_path),
+        path=str(docx_path),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="resume-template-preview.docx",
+        filename="resume.docx",
     )
 
 
@@ -3229,6 +3080,70 @@ async def preview_resume_template_design(
     )
 
 
+@router.post(
+    "/resume-builder/ai/chat",
+    dependencies=[Depends(get_current_user)],
+)
+async def resume_builder_ai_chat(
+    body: ResumeAiChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """OneClick AI center: tailor a resume / score the match from a pasted job description.
+
+    Streams Server-Sent Events so the builder can show live progress through the
+    multi-step pipeline (routing → match analysis → evidence → tailoring). Event
+    contract (one JSON object per `data:` line):
+      {"stage": "routing"|"analyzing"|"evidence"|"tailoring", "label": "..."}  # progress
+      {"stage": "done", "result": <ResumeAiChatResponse json>}                  # success
+      {"stage": "error", "message": "..."}                                     # failure
+    Job-less — nothing is persisted; the tailored content is returned to the builder."""
+    import json as _json
+
+    from app.services.resume_ai_chat_service import run_resume_ai_chat
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    def _sse(obj: dict) -> str:
+        return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    async def event_stream():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def emit(ev: dict) -> None:
+            await queue.put(ev)
+
+        async def run() -> None:
+            try:
+                resp = await run_resume_ai_chat(
+                    user_id, body.messages, body.last_job_description, emit=emit
+                )
+                await queue.put({"stage": "done", "result": resp.model_dump(mode="json")})
+            except Exception as e:  # noqa: BLE001 - surface a clean SSE error
+                logger.exception("resume_ai_chat_failed", user_id=user_id, error=str(e))
+                await queue.put({"stage": "error", "message": "Failed to process request."})
+            finally:
+                await queue.put(None)  # sentinel: stream complete
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                ev = await queue.get()
+                if ev is None:
+                    break
+                yield _sse(ev)
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
 @router.get(
     "/settings/cover-letter-prompt/defaults",
     dependencies=[Depends(get_current_user)],
@@ -3245,85 +3160,146 @@ async def get_cover_letter_prompt_defaults_endpoint(
     return CoverLetterPromptDefaultsResponse(**get_cover_letter_prompt_defaults())
 
 
-@router.get(
-    "/settings/cover-letter-template/requirements",
-    dependencies=[Depends(get_current_user)],
-)
-async def get_cover_letter_template_requirements(
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.cover_letter_template_schemas import CoverLetterTemplateRequirements
-    from app.services.cover_letter_template_service import get_cover_letter_requirements
+# ─────────────────────────── Resume library (multi-resume) ───────────────────────────
 
+
+class ResumeLibraryCreateRequest(BaseModel):
+    name: str = ""
+    design: ResumeDesign
+    source: str = "manual"  # manual | tailored
+    status: str = "draft"  # draft | completed
+    job_title: str | None = None
+    company: str | None = None
+    activate: bool = True
+
+
+class ResumeLibraryUpdateRequest(BaseModel):
+    name: str | None = None
+    status: str | None = None  # draft | completed
+    design: ResumeDesign | None = None
+
+
+def _require_user_id(current_user: dict) -> str:
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return CoverLetterTemplateRequirements.model_validate(get_cover_letter_requirements())
+    return user_id
 
 
-@router.get(
-    "/settings/cover-letter-template",
-    dependencies=[Depends(get_current_user)],
-)
-async def get_cover_letter_template_status(
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.cover_letter_template_schemas import CoverLetterTemplateStatusResponse
-    from app.services.cover_letter_template_service import template_status_payload
+@router.get("/resume-builder/resumes", dependencies=[Depends(get_current_user)])
+async def list_resume_library(current_user: dict = Depends(get_current_user)):
+    """List the user's saved resumes (the library) + the active resume id."""
+    from app.services.resume_design_service import list_resumes
 
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    async with get_session() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return CoverLetterTemplateStatusResponse(**template_status_payload(user))
-
-
-@router.post(
-    "/settings/cover-letter-template/upload",
-    dependencies=[Depends(get_current_user)],
-)
-async def upload_cover_letter_template(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    from app.models.cover_letter_template_schemas import CoverLetterTemplateStatusResponse
-    from app.services.cover_letter_template_service import save_uploaded_cover_letter_template
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    raw = await file.read()
-    filename = file.filename or "cover_letter_template.docx"
+    user_id = _require_user_id(current_user)
     try:
-        payload = await save_uploaded_cover_letter_template(user_id, raw, filename)
+        return await list_resumes(user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_library_list_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to load resumes.")
+
+
+@router.post("/resume-builder/resumes", dependencies=[Depends(get_current_user)])
+async def create_resume_library_entry(
+    body: ResumeLibraryCreateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a new saved resume (optionally activating it)."""
+    from app.services.resume_design_service import create_resume
+
+    user_id = _require_user_id(current_user)
+    try:
+        return await create_resume(
+            user_id,
+            name=body.name,
+            design=body.design,
+            source=body.source,
+            status=body.status,
+            job_title=body.job_title,
+            company=body.company,
+            activate=body.activate,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return CoverLetterTemplateStatusResponse(**payload)
+    except Exception as e:
+        logger.exception("resume_library_create_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to create resume.")
 
 
-@router.post(
-    "/settings/cover-letter-template/revalidate",
-    dependencies=[Depends(get_current_user)],
-)
-async def revalidate_cover_letter_template(
+@router.put("/resume-builder/resumes/{resume_id}", dependencies=[Depends(get_current_user)])
+async def update_resume_library_entry(
+    resume_id: str,
+    body: ResumeLibraryUpdateRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    from app.models.cover_letter_template_schemas import CoverLetterTemplateStatusResponse
-    from app.services.cover_letter_template_service import revalidate_cover_letter_template as revalidate
+    """Rename, change status (draft/completed), and/or replace the design of a resume."""
+    from app.services.resume_design_service import update_resume
 
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    user_id = _require_user_id(current_user)
     try:
-        payload = await revalidate(user_id)
+        return await update_resume(
+            user_id, resume_id, name=body.name, status=body.status, design=body.design
+        )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return CoverLetterTemplateStatusResponse(**payload)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_library_update_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to update resume.")
+
+
+@router.delete("/resume-builder/resumes/{resume_id}", dependencies=[Depends(get_current_user)])
+async def delete_resume_library_entry(
+    resume_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_design_service import delete_resume
+
+    user_id = _require_user_id(current_user)
+    try:
+        return await delete_resume(user_id, resume_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_library_delete_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to delete resume.")
+
+
+@router.post("/resume-builder/resumes/{resume_id}/duplicate", dependencies=[Depends(get_current_user)])
+async def duplicate_resume_library_entry(
+    resume_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_design_service import duplicate_resume
+
+    user_id = _require_user_id(current_user)
+    try:
+        return await duplicate_resume(user_id, resume_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_library_duplicate_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to duplicate resume.")
+
+
+@router.post("/resume-builder/resumes/{resume_id}/activate", dependencies=[Depends(get_current_user)])
+async def activate_resume_library_entry(
+    resume_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Make a saved resume the active one (loads it into the builder + mirrors it into
+    the working template used by the extension / downloads / job-tailoring)."""
+    from app.services.resume_design_service import activate_resume
+
+    user_id = _require_user_id(current_user)
+    try:
+        return await activate_resume(user_id, resume_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_library_activate_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to activate resume.")
 
 
 @router.post(
@@ -3347,33 +3323,6 @@ async def generate_cover_letter_template_from_resume_design(
         logger.exception("cover_letter_design_generate_failed", user_id=user_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to generate cover letter template.")
     return CoverLetterTemplateStatusResponse(**payload)
-
-
-@router.post(
-    "/settings/cover-letter-template/preview",
-    dependencies=[Depends(get_current_user)],
-)
-async def preview_cover_letter_template(
-    current_user: dict = Depends(get_current_user),
-):
-    from app.services.cover_letter_template_service import generate_cover_letter_preview_docx
-
-    user_id = current_user.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    try:
-        preview_path = await generate_cover_letter_preview_docx(user_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("cover_letter_template_preview_failed", user_id=user_id, error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to generate preview.")
-
-    return FileResponse(
-        path=str(preview_path),
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="cover-letter-template-preview.docx",
-    )
 
 
 @router.get(

@@ -9,7 +9,6 @@ import { AppShell } from './components/layout/AppShell';
 import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
-import { ResumeTemplateBuilderPage } from './pages/ResumeTemplateBuilderPage';
 import { ResumeBuilderPage } from './pages/ResumeBuilderPage';
 import { AuthScreen } from './components/extraction/AuthScreen';
 import { JobActionModal } from './components/extraction/JobActionModal';
@@ -163,7 +162,6 @@ function App() {
           <Route path="/profile" element={<ProfilePage user={user} onLogout={logout} />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/resume-builder" element={<ResumeBuilderPage />} />
-          <Route path="/settings/resume-template" element={<ResumeTemplateBuilderPage />} />
           <Route path="*" element={<Navigate to="/scraper" replace />} />
         </Route>
       </Routes>

@@ -82,31 +82,62 @@ class User(Base):
     cover_letter_prompt_mode = Column(String(20), default="default", nullable=False, server_default="default")
     cover_letter_prompt_custom = Column(Text, nullable=True)
 
-    # Per-user resume DOCX template (blueprint-driven document generation).
+    # Visual resume builder design (theme/typography/colors/layout). Every résumé is
+    # compiled from this design; the working template + blueprint are derived from it.
+    # These columns MIRROR the currently-active resume in the library (see
+    # active_resume_id / ResumeDocument) so the extension, downloads and job-tailoring
+    # keep reading one "current" working template.
     resume_template_status = Column(String(30), default="missing", nullable=False, server_default="missing")
-    resume_template_source_path = Column(Text, nullable=True)
     resume_template_working_path = Column(Text, nullable=True)
     resume_template_blueprint = Column(JSON, nullable=True)
     resume_template_error = Column(Text, nullable=True)
-    resume_template_source_filename = Column(String(500), nullable=True)
-    resume_template_profile_work_count = Column(Integer, nullable=True)
-    resume_template_analyzed_at = Column(DateTime, nullable=True)
-    # Visual resume builder design config (theme/typography/colors/layout). When set,
-    # the working template above is generated from this design rather than uploaded.
     resume_template_design = Column(JSON, nullable=True)
 
-    # Per-user cover letter DOCX template (placeholder-driven document generation).
+    # Multi-resume library: the resume currently loaded/edited in the builder. Points at
+    # a resume_documents row; that row's design is mirrored into the columns above.
+    active_resume_id = Column(String(36), nullable=True)
+
+    # Per-user cover letter template, compiled from the resume builder design.
     cover_letter_template_status = Column(String(30), default="missing", nullable=False, server_default="missing")
-    cover_letter_template_source_path = Column(Text, nullable=True)
     cover_letter_template_working_path = Column(Text, nullable=True)
-    cover_letter_template_source_filename = Column(String(500), nullable=True)
     cover_letter_template_error = Column(Text, nullable=True)
-    cover_letter_template_detected_tags = Column(JSON, nullable=True)
-    cover_letter_template_analyzed_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("ix_users_email", "email"),
         Index("ix_users_is_active", "is_active"),
+    )
+
+
+class ResumeDocument(Base):
+    """A saved resume in the user's library (multi-resume support).
+
+    Each row is one self-contained resume: a full ResumeDesign JSON (theme + content
+    override) plus metadata. The user's active resume is mirrored into the
+    users.resume_template_* columns so all existing consumers (extension, download,
+    job-tailoring) keep working against a single "current" working template."""
+    __tablename__ = "resume_documents"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(200), nullable=False, default="Untitled resume")
+    # "draft" | "completed" — user-controlled via a "Mark as complete" toggle.
+    status = Column(String(20), nullable=False, default="draft", server_default="draft")
+    # "manual" | "tailored" — how the resume was created.
+    source = Column(String(20), nullable=False, default="manual", server_default="manual")
+    design = Column(JSON, nullable=True)
+    # For tailored resumes: the role this was tailored to (used for naming/labels).
+    job_title = Column(String(300), nullable=True)
+    company = Column(String(300), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_resume_documents_user_id", "user_id"),
     )
 
 

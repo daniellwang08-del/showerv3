@@ -21,11 +21,14 @@ import {
   ClipboardCheck,
   ClipboardX,
   Table2,
+  Rocket,
 } from 'lucide-react';
 import { Badge } from '../shared/Badge';
 import { ConfirmDialog } from '../extraction/ConfirmDialog';
 import { JobAnalysisModal } from './JobAnalysisModal';
 import { DocumentPreviewModal, type PreviewDocType } from './DocumentPreviewModal';
+import { InstallExtensionModal } from './InstallExtensionModal';
+import { detectExtension, applyViaExtension } from '../../lib/extensionBridge';
 import { useScraperStore } from '../../stores/scraperStore';
 import { fetchSheetsConfig } from '../../api/googleSheetsApi';
 import { apiClient } from '../../api/client';
@@ -127,7 +130,7 @@ const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
   created_at: '68px',
   __processing__: '118px',
   __docs__: '148px',
-  __actions__: '220px',
+  __actions__: '300px',
 };
 
 const ROW_H = 'h-[52px] max-h-[52px]';
@@ -425,6 +428,7 @@ interface ContextMenuProps {
   y: number;
   onClose: () => void;
   onView: (jobId: string) => void;
+  onApply: (job: DashboardJob) => void;
   onRerun: (jobs: DashboardJob[]) => void;
   onMarkApplied: (jobs: DashboardJob[]) => void;
   onMarkUnapplied: (jobs: DashboardJob[]) => void;
@@ -441,6 +445,7 @@ function ContextMenu({
   y,
   onClose,
   onView,
+  onApply,
   onRerun,
   onMarkApplied,
   onMarkUnapplied,
@@ -493,6 +498,11 @@ function ContextMenu({
   }
 
   const menuItems: Array<{ icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; disabled?: boolean } | 'divider'> = [
+    ...(!multi ? [{
+      icon: <Rocket size={13} />,
+      label: 'Apply with Assistant',
+      onClick: () => { onApply(job); onClose(); },
+    }] : []),
     ...(!multi ? [{
       icon: <Eye size={13} />,
       label: 'View analysis',
@@ -725,6 +735,8 @@ export function ScraperJobsTable({
   const [toast,            setToast]            = useState<{ kind: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [sheetsConfigured, setSheetsConfigured] = useState(false);
   const [postingToSheet,   setPostingToSheet]   = useState(false);
+  const [installFor,       setInstallFor]       = useState<DashboardJob | null>(null);
+  const [applyChecking,    setApplyChecking]    = useState<string | null>(null);
 
   // ── Selection state ───────────────────────────────────────────────────────
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
@@ -846,6 +858,33 @@ export function ScraperJobsTable({
   }, [selectedIds, displayJobs]);
 
   // ── Action handlers ───────────────────────────────────────────────────────
+  // "Apply with Assistant": hand the job to the extension AND open its side
+  // panel. We must dispatch synchronously inside the click so the user gesture
+  // survives long enough for the worker to open the panel (Chrome requirement).
+  // If the in-page bridge doesn't acknowledge, decide the fallback by install
+  // state: installed-but-stale-tab -> open the URL and ask for a reload; not
+  // installed -> prompt to install (and retry once they have).
+  const handleApply = useCallback(async (job: DashboardJob) => {
+    const ackPromise = applyViaExtension(job.id, job.source_url);
+    setApplyChecking(job.id);
+    try {
+      const acked = await ackPromise;
+      if (acked) {
+        showToast('success', 'Sent to the Job Application Assistant — opening it now…');
+        return;
+      }
+      const info = await detectExtension();
+      if (info.installed) {
+        window.open(job.source_url, '_blank', 'noopener,noreferrer');
+        showToast('warning', 'Opened the job in a new tab. Reload this dashboard once so the assistant opens automatically.');
+      } else {
+        setInstallFor(job);
+      }
+    } finally {
+      setApplyChecking(null);
+    }
+  }, [showToast]);
+
   const handleRerun = async (job: DashboardJob) => {
     setRerunningId(job.id);
     const res = await rerunJob(job.id);
@@ -1068,7 +1107,7 @@ export function ScraperJobsTable({
 
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1280px] table-fixed text-sm border-collapse">
+          <table className="w-full min-w-[1360px] table-fixed text-sm border-collapse">
             <colgroup>
               {columns.map((col) => (
                 <col key={col.key} style={{ width: COLUMN_WIDTHS[col.key] }} />
@@ -1261,6 +1300,20 @@ export function ScraperJobsTable({
                       className={`sticky right-0 z-10 px-2 py-0 whitespace-nowrap align-middle ${STICKY_SHADOW} ${dashboardJobStickyCellClass(job, { isSelected })}`}
                     >
                       <div className="flex items-center gap-1">
+                        {/* Apply with Assistant */}
+                        <button
+                          type="button"
+                          disabled={applyChecking === job.id}
+                          onClick={() => void handleApply(job)}
+                          title="Apply with the Job Application Assistant extension"
+                          className="inline-flex w-[72px] h-[28px] items-center justify-center gap-1 rounded-md border border-blue-200 bg-blue-50 text-xs font-medium text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {applyChecking === job.id
+                            ? <Loader2 size={12} className="animate-spin" />
+                            : <Rocket size={12} />}
+                          <span>Apply</span>
+                        </button>
+
                         {/* Run / Rerun */}
                         <button
                           type="button"
@@ -1335,6 +1388,7 @@ export function ScraperJobsTable({
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           onView={(id) => setViewingJobId(id)}
+          onApply={(j) => void handleApply(j)}
           onRerun={(targets) => void handleRerunMany(targets)}
           onMarkApplied={(targets) => void handleMarkApplied(targets)}
           onMarkUnapplied={(targets) => void handleMarkUnapplied(targets)}
@@ -1374,6 +1428,16 @@ export function ScraperJobsTable({
       {viewingJobId && (
         <JobAnalysisModal validJobId={viewingJobId} onClose={() => setViewingJobId(null)} />
       )}
+
+      <InstallExtensionModal
+        open={!!installFor}
+        onClose={() => setInstallFor(null)}
+        onInstalled={() => {
+          const job = installFor;
+          setInstallFor(null);
+          if (job) void handleApply(job);
+        }}
+      />
 
       {/* ── Toast ────────────────────────────────────────────────────────── */}
       {toast && (

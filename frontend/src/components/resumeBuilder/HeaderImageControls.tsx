@@ -17,11 +17,15 @@ import { HeaderImageCropModal, type CropResult } from './HeaderImageCropModal';
  * Kept close to the .docx band height so the cropped image fills it with negligible
  * distortion. */
 export function estimateBandAspect(design: ResumeDesign): number {
+  // These per-line factors MUST match the backend `_header_band_height_pt`
+  // (resume_design_compiler.py): the .docx stretches the baked picture to
+  // `page_width x band_height`, so any divergence here distorts the image. Keeping
+  // them identical means the picture is shown at exactly the proportions it was baked.
   const base = design.typography.base_font_pt;
   const hp = headerPadSides(design.layout);
-  const name = base * design.typography.name_scale * 1.15;
-  const title = base * 1.1 * 1.35;
-  const contact = base * 0.95 * 1.5;
+  const name = base * design.typography.name_scale * 1.32;
+  const title = base * 1.1 * 1.5;
+  const contact = base * 0.95 * 1.7;
   const bandH = hp.top + hp.bottom + name + title + contact + 6;
   const pageW = 612; // Letter pt
   return Math.max(2.2, Math.min(9, pageW / bandH));

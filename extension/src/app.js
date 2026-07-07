@@ -105,6 +105,14 @@ function scoreAutofillField(field) {
 
 function onContentMessage(msg, sender) {
   if (!msg || !msg.type) return;
+  if (msg.type === "WEBAPP_OPEN_PENDING_JOB" && msg.jobId) {
+    // Panel is already open: the dashboard just handed us a job to apply to.
+    if (state.user) {
+      chrome.storage.session.remove("pendingWebappJob").catch(() => {});
+      openJob(String(msg.jobId), { redirect: false });
+    }
+    return;
+  }
   if (msg.type === "AF_FIELDS") {
     if (!extractCollector) return;
     for (const f of msg.fields || []) extractCollector.collected.set(f.handle, f);
@@ -423,6 +431,7 @@ async function init() {
     state.user = user;
     state.cache = await store.getCache(user.user_id);
     await goHome();
+    await consumePendingWebappJob();
   } else {
     setState({ view: "login" });
   }
@@ -443,6 +452,7 @@ async function doLogin(backendUrl, email, password) {
     state.minScore = await store.getMinScore();
     await syncNow(); // first load populates the cache
     await goHome();
+    await consumePendingWebappJob();
   } catch (err) {
     setState({ error: err.message || "Login failed." });
   }
@@ -579,6 +589,22 @@ async function applyAutoAdvance(value) {
 }
 
 // ── job / chat actions ───────────────────────────────────────────────────────
+
+// The dashboard's "Apply with Assistant" button stores a job for us to open
+// (via the background worker). Pick it up once the user is authenticated; the
+// application URL was already opened in its own tab, so no redirect here.
+async function consumePendingWebappJob() {
+  try {
+    if (!state.user) return; // not logged in yet; consume after login instead
+    const data = await chrome.storage.session.get("pendingWebappJob");
+    const pending = data && data.pendingWebappJob;
+    if (!pending || !pending.jobId) return;
+    await chrome.storage.session.remove("pendingWebappJob");
+    await openJob(String(pending.jobId), { redirect: false });
+  } catch (err) {
+    console.warn("consumePendingWebappJob failed", err);
+  }
+}
 
 async function openJob(jobId, { redirect = false, keepReportNotice = false } = {}) {
   setState({

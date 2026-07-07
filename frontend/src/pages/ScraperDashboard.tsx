@@ -13,9 +13,9 @@ import { MatchScoreFilter, RemoteFilterToggle } from '../components/scraper/Dash
 import { SearchInput } from '../components/shared/SearchInput';
 import { SubmitForm } from '../components/extraction/SubmitForm';
 import { DuplicatesModal } from '../components/scraper/DuplicatesModal';
-import { CoverLetterTemplateAlertBar } from '../components/shared/CoverLetterTemplateAlertBar';
-import { ResumeTemplateAlertBar } from '../components/shared/ResumeTemplateAlertBar';
-import { AlertTriangle, Briefcase, Building2 } from 'lucide-react';
+import { AlertTriangle, Briefcase, Building2, Wand2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useResumeAiStore } from '../stores/resumeAiStore';
 import type { DashboardJob } from '../types/scraper';
 import type { DashboardView } from '../api/scraperApi';
 
@@ -36,6 +36,11 @@ export function ScraperDashboard() {
   } = useScraperStore();
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigate = useNavigate();
+  const openResumeAiCenter = useCallback(() => {
+    useResumeAiStore.getState().requestOpen();
+    navigate('/resume-builder');
+  }, [navigate]);
 
   // Duplicates modal
   const [dupOpen, setDupOpen] = useState(false);
@@ -136,15 +141,21 @@ export function ScraperDashboard() {
         </div>
         {/* relative z-40 lifts this group (and the open Sync dropdown) above the toolbar/table below. */}
         <div className="relative z-40 flex items-start gap-2">
+          <button
+            type="button"
+            onClick={openResumeAiCenter}
+            title="Paste a job description and tailor your resume with AI"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:shadow-md"
+          >
+            <Wand2 size={15} />
+            Tailor with AI
+          </button>
           <LlmProviderSelector />
           <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} lastSyncRuns={lastSyncRuns} onSync={handleSync} />
         </div>
       </div>
 
       <ScraperStatsBar stats={stats} loading={statsLoading} />
-
-      <ResumeTemplateAlertBar />
-      <CoverLetterTemplateAlertBar />
 
       {/* ── Toolbar: view + filters + add-job URL (one line) ─────────────── */}
       {/* relative z-30 lifts this stacking context (and its open dropdowns) above the jobs table below. */}

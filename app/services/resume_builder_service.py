@@ -20,6 +20,7 @@ import platform
 import re
 import shutil
 import subprocess
+import tempfile
 import zipfile
 from copy import deepcopy
 from datetime import datetime
@@ -36,7 +37,7 @@ from lxml import etree
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.services.docx_structure import iter_document_paragraphs
-from app.utils.resume_text_format import parse_bold_markers
+from app.utils.resume_text_format import parse_inline_markup
 
 logger = get_logger(__name__)
 
@@ -90,18 +91,29 @@ def _runs_from_marked_text(
     rPr_template: OxmlElement | None,
     *,
     prefix: str = "",
+    size_pt: float | None = None,
 ) -> list[OxmlElement]:
-    """Build Word runs from text that may contain ``**bold**`` markers."""
-    segments = parse_bold_markers(text or "")
+    """Build Word runs from text that may contain ``**bold**`` / ``*italic*`` /
+    ``__underline__`` markers (shared with the live preview)."""
+    segments = parse_inline_markup(text or "")
     runs: list[OxmlElement] = []
     if prefix:
-        runs.append(_make_run(prefix, rPr_template, bold=False))
-    for segment, is_bold in segments:
-        if not segment:
+        runs.append(_make_run(prefix, rPr_template, bold=False, size_pt=size_pt))
+    for seg in segments:
+        if not seg.text:
             continue
-        runs.append(_make_run(segment, rPr_template, bold=is_bold))
+        runs.append(
+            _make_run(
+                seg.text,
+                rPr_template,
+                bold=seg.bold,
+                size_pt=size_pt,
+                italic=seg.italic,
+                underline=seg.underline,
+            )
+        )
     if not runs and prefix:
-        runs.append(_make_run(prefix, rPr_template, bold=False))
+        runs.append(_make_run(prefix, rPr_template, bold=False, size_pt=size_pt))
     return runs
 
 
@@ -124,9 +136,33 @@ def _set_paragraph_marked_text(paragraph: Paragraph, text: str, *, tag: str | No
         p_xml.append(run_el)
 
 
-def _make_run(text: str, rPr_template: OxmlElement | None = None, bold: bool = False) -> OxmlElement:
+def _apply_italic_underline(rPr: OxmlElement, italic: bool, underline: bool) -> None:
+    """Add/remove ``<w:i>``/``<w:iCs>`` and ``<w:u>`` on a run-properties element."""
+    for tag_name in ("w:i", "w:iCs"):
+        for el in rPr.findall(qn(tag_name)):
+            rPr.remove(el)
+    if italic:
+        rPr.append(OxmlElement("w:i"))
+        rPr.append(OxmlElement("w:iCs"))
+    for el in rPr.findall(qn("w:u")):
+        rPr.remove(el)
+    if underline:
+        u = OxmlElement("w:u")
+        u.set(qn("w:val"), "single")
+        rPr.append(u)
+
+
+def _make_run(
+    text: str,
+    rPr_template: OxmlElement | None = None,
+    bold: bool = False,
+    size_pt: float | None = None,
+    italic: bool = False,
+    underline: bool = False,
+) -> OxmlElement:
     """Create a <w:r> element with text and optional formatting."""
     r = OxmlElement("w:r")
+    new_rPr = None
     if rPr_template is not None:
         new_rPr = deepcopy(rPr_template)
         if bold:
@@ -139,11 +175,25 @@ def _make_run(text: str, rPr_template: OxmlElement | None = None, bold: bool = F
                 el = new_rPr.find(qn(tag_name))
                 if el is not None:
                     new_rPr.remove(el)
-        r.append(new_rPr)
-    elif bold:
+    elif bold or size_pt is not None or italic or underline:
         new_rPr = OxmlElement("w:rPr")
-        new_rPr.append(OxmlElement("w:b"))
-        new_rPr.append(OxmlElement("w:bCs"))
+        if bold:
+            new_rPr.append(OxmlElement("w:b"))
+            new_rPr.append(OxmlElement("w:bCs"))
+    if new_rPr is not None and (italic or underline):
+        _apply_italic_underline(new_rPr, italic, underline)
+    if new_rPr is not None and size_pt is not None:
+        for tag_name in ("w:sz", "w:szCs"):
+            for el in new_rPr.findall(qn(tag_name)):
+                new_rPr.remove(el)
+        half = str(int(round(size_pt * 2)))
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), half)
+        new_rPr.append(sz)
+        szCs = OxmlElement("w:szCs")
+        szCs.set(qn("w:val"), half)
+        new_rPr.append(szCs)
+    if new_rPr is not None:
         r.append(new_rPr)
     t = OxmlElement("w:t")
     t.set(qn("xml:space"), "preserve")
@@ -161,11 +211,47 @@ def _make_paragraph_from_anchor(anchor_p, runs: list[OxmlElement]) -> OxmlElemen
     return new_p
 
 
-def _make_empty_spacer_paragraph(anchor_p) -> OxmlElement:
-    """Build an empty paragraph inheriting *anchor_p*'s pPr so it renders as a
-    single blank line at body line-height. Used to add visual breathing room
-    between sections (e.g., description ↔ Key Contributions)."""
-    return _make_paragraph_from_anchor(anchor_p, [])
+def _set_para_space_before(p, pts: float) -> None:
+    """Force space-before (in points) on a built ``<w:p>``, overriding any spacing
+    inherited from the anchor paragraph. Used to add a small, controlled gap (a few
+    points) instead of a full blank line."""
+    pPr = p.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p.insert(0, pPr)
+    spacing = pPr.find(qn("w:spacing"))
+    if spacing is None:
+        spacing = OxmlElement("w:spacing")
+        pPr.append(spacing)
+    spacing.set(qn("w:before"), str(int(round(pts * 20))))
+    spacing.set(qn("w:beforeAutospacing"), "0")
+
+
+def _set_para_space_after(p, pts: float) -> None:
+    """Force space-after (in points) on a built ``<w:p>``, overriding any spacing
+    inherited from the anchor paragraph. Lets a section's per-row gap match the live
+    preview's CSS ``margin-bottom`` instead of the template's default section spacing."""
+    pPr = p.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p.insert(0, pPr)
+    spacing = pPr.find(qn("w:spacing"))
+    if spacing is None:
+        spacing = OxmlElement("w:spacing")
+        pPr.append(spacing)
+    spacing.set(qn("w:after"), str(int(round(pts * 20))))
+    spacing.set(qn("w:afterAutospacing"), "0")
+
+
+def _metric(metrics: dict | None, field: str, fallback: float) -> float:
+    """Realized gap (pt) for a body role, measured from the browser preview and shipped
+    in ``tailored['layout_metrics']``. The preview is the single source of truth for
+    spacing; *fallback* is used only when the design has not been measured yet."""
+    if isinstance(metrics, dict):
+        value = metrics.get(field)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return float(fallback)
 
 
 # ── Placeholder replacement logic ──────────────────────────────────────────
@@ -323,6 +409,22 @@ def _tint_hex(value: str | None, keep: float) -> str:
     return f"{r:02x}{g:02x}{b:02x}"
 
 
+def _rpr_base_pt(rPr_template: OxmlElement | None, fallback: float = 10.5) -> float:
+    """Read the base font size (pt) from a template ``<w:rPr>`` (``w:sz`` is half-points).
+
+    The skills/used-skills elements clone the anchor paragraph's run properties, so the
+    anchor's size *is* the body base size. We scale from it to mirror the preview's
+    per-element ratios (caps category 0.92, badge 0.8, chips 0.9, …)."""
+    if rPr_template is not None:
+        sz = rPr_template.find(qn("w:sz"))
+        if sz is not None:
+            try:
+                return int(sz.get(qn("w:val"))) / 2.0
+            except (TypeError, ValueError):
+                pass
+    return fallback
+
+
 def _styled_run(
     text: str,
     rPr_template: OxmlElement | None,
@@ -331,13 +433,25 @@ def _styled_run(
     caps: bool = False,
     color_hex: str | None = None,
     fill_hex: str | None = None,
+    size_pt: float | None = None,
 ) -> OxmlElement:
-    """A <w:r> with optional bold, caps, font color and background shading."""
+    """A <w:r> with optional bold, caps, font color, background shading and font size."""
     r = OxmlElement("w:r")
     rPr = deepcopy(rPr_template) if rPr_template is not None else OxmlElement("w:rPr")
-    for tag_name in ("w:b", "w:bCs", "w:caps", "w:color", "w:shd"):
+    remove_tags = ["w:b", "w:bCs", "w:caps", "w:color", "w:shd"]
+    if size_pt is not None:
+        remove_tags += ["w:sz", "w:szCs"]
+    for tag_name in remove_tags:
         for el in rPr.findall(qn(tag_name)):
             rPr.remove(el)
+    if size_pt is not None:
+        half = str(int(round(size_pt * 2)))
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), half)
+        rPr.append(sz)
+        szCs = OxmlElement("w:szCs")
+        szCs.set(qn("w:val"), half)
+        rPr.append(szCs)
     if bold:
         rPr.insert(0, OxmlElement("w:b"))
         rPr.append(OxmlElement("w:bCs"))
@@ -368,12 +482,15 @@ def _category_runs(
     accent: str | None,
     heading: str | None,
 ) -> list[OxmlElement]:
+    # Mirror the preview's catLabel font sizes (ResumePreview.tsx): caps 0.92, badge 0.8,
+    # everything else stays at the body base size.
+    base_pt = _rpr_base_pt(rPr_tpl)
     if cat_style == "caps":
-        return [_styled_run(cat.upper(), rPr_tpl, bold=True, color_hex=heading)]
+        return [_styled_run(cat.upper(), rPr_tpl, bold=True, color_hex=heading, size_pt=base_pt * 0.92)]
     if cat_style == "accent":
         return [_styled_run(cat, rPr_tpl, bold=True, color_hex=accent or heading)]
     if cat_style == "badge":
-        return [_styled_run(f"  {cat.upper()}  ", rPr_tpl, bold=True, color_hex="#ffffff", fill_hex=accent or "334155")]
+        return [_styled_run(f"  {cat.upper()}  ", rPr_tpl, bold=True, color_hex="#ffffff", fill_hex=accent or "334155", size_pt=base_pt * 0.8)]
     if cat_style == "bar":
         runs: list[OxmlElement] = []
         runs.append(_styled_run("\u258f ", rPr_tpl, bold=True, color_hex=accent or heading))
@@ -387,6 +504,7 @@ def _build_skills_elements(
     anchor_p,
     style: dict | None = None,
     colors: dict | None = None,
+    metrics: dict | None = None,
 ) -> list[OxmlElement]:
     """Build <w:p> elements for the skills section, cloning formatting from anchor.
 
@@ -406,13 +524,30 @@ def _build_skills_elements(
     heading = (colors.get("heading") or "").strip() or None
     text_col = (colors.get("text") or "").strip() or None
 
+    # The live preview wraps every skill category in a div with a fixed bottom margin
+    # (3px when the skills have no surface/chip background, else 5px) and gives each
+    # inner <p> margin:0. The .docx anchor paragraph instead carries the template's
+    # section spacing (section_gap/2), so the inter-row gap rendered larger than the
+    # preview. Mirror the preview's per-row margins exactly (px -> pt at 72/96).
+    surface = style.get("surface", "none")
+    PX_TO_PT = 72.0 / 96.0
+    # Gap *before* each category row (owned by space-before; space-after stays 0 so Word's
+    # non-collapsing margins never double a gap). Measured from the preview, with the
+    # surface-dependent CSS margin as the fallback. The first row's gap is the
+    # heading->content gap, owned by the section heading, so it stays 0 here.
+    row_gap_pt = _metric(metrics, "skill_row_pt", (3.0 if surface == "none" else 5.0) * PX_TO_PT)
+    stacked_label_gap_pt = 2.0 * PX_TO_PT  # preview cat label marginBottom: 2px
+    chips_label_gap_pt = 3.0 * PX_TO_PT    # preview cat label marginBottom: 3px
+
     result: list[OxmlElement] = []
+    emitted_rows = 0
     for item in skills:
         cat = (item.get("category") or "").strip()
         vals = _split_skill_values(item.get("skills") or "")
         if not vals and not cat:
             continue
         cat_runs = _category_runs(cat, rPr_tpl, cat_style, accent, heading) if cat else []
+        cat_paras: list[OxmlElement] = []
 
         if layout in ("inline", "pipe", "grid"):
             sep = "  |  " if layout == "pipe" else ", "
@@ -420,28 +555,40 @@ def _build_skills_elements(
             if cat:
                 runs.append(_make_run(" " if cat_style == "badge" else ": ", rPr_tpl))
             runs.extend(_runs_from_marked_text(sep.join(vals), rPr_tpl))
-            result.append(_make_paragraph_from_anchor(anchor_p, runs))
+            cat_paras.append(_make_paragraph_from_anchor(anchor_p, runs))
         elif layout == "stacked":
             if cat:
-                result.append(_make_paragraph_from_anchor(anchor_p, cat_runs))
-            result.append(_make_paragraph_from_anchor(anchor_p, _runs_from_marked_text(", ".join(vals), rPr_tpl)))
+                lbl = _make_paragraph_from_anchor(anchor_p, cat_runs)
+                _set_para_space_after(lbl, stacked_label_gap_pt)
+                cat_paras.append(lbl)
+            cat_paras.append(_make_paragraph_from_anchor(anchor_p, _runs_from_marked_text(", ".join(vals), rPr_tpl)))
         elif layout == "chips":
             if cat:
-                result.append(_make_paragraph_from_anchor(anchor_p, cat_runs))
+                lbl = _make_paragraph_from_anchor(anchor_p, cat_runs)
+                _set_para_space_after(lbl, chips_label_gap_pt)
+                cat_paras.append(lbl)
             fill = _tint_hex(accent, 0.14) if (accent_chips and accent) else "eef2f7"
             chip_color = accent if (accent_chips and accent) else text_col
+            chip_pt = _rpr_base_pt(rPr_tpl) * 0.9  # preview chip fontSize == base * 0.9
             chip_runs: list[OxmlElement] = []
             for i, sk in enumerate(vals):
                 if i:
                     chip_runs.append(_make_run("  ", rPr_tpl))
-                chip_runs.append(_styled_run(f"  {sk}  ", rPr_tpl, color_hex=chip_color, fill_hex=fill))
-            result.append(_make_paragraph_from_anchor(anchor_p, chip_runs))
+                chip_runs.append(_styled_run(f"  {sk}  ", rPr_tpl, color_hex=chip_color, fill_hex=fill, size_pt=chip_pt))
+            cat_paras.append(_make_paragraph_from_anchor(anchor_p, chip_runs))
         else:
             runs = list(cat_runs)
             if cat:
                 runs.append(_make_run(": ", rPr_tpl))
             runs.extend(_runs_from_marked_text(", ".join(vals), rPr_tpl))
-            result.append(_make_paragraph_from_anchor(anchor_p, runs))
+            cat_paras.append(_make_paragraph_from_anchor(anchor_p, runs))
+
+        if cat_paras:
+            # Row owns the gap above it; the very first row inherits the heading gap (0).
+            _set_para_space_before(cat_paras[0], 0.0 if emitted_rows == 0 else row_gap_pt)
+            _set_para_space_after(cat_paras[-1], 0.0)
+            emitted_rows += 1
+        result.extend(cat_paras)
     return result
 
 
@@ -544,7 +691,7 @@ def _exp_label_runs(label_style: str, rPr_tpl, accent: str | None, heading: str 
     if label_style == "accent":
         return [_styled_run(text, rPr_tpl, bold=True, color_hex=accent or heading)]
     if label_style == "caps":
-        return [_styled_run("KEY CONTRIBUTIONS:", rPr_tpl, bold=True, color_hex=heading)]
+        return [_styled_run("KEY CONTRIBUTIONS:", rPr_tpl, bold=True, color_hex=heading, size_pt=_rpr_base_pt(rPr_tpl) * 0.92)]
     return [_make_run(text, rPr_tpl, bold=False)]
 
 
@@ -560,21 +707,27 @@ def _exp_used_skills_paragraphs(
     used_skills = (used_skills or "").strip()
     if not used_skills:
         return []
+    # Mirror the preview's used-skills font sizes (ResumePreview.tsx): inline 0.92 (muted),
+    # label 0.9, chips/pill 0.85.
+    base_pt = _rpr_base_pt(rPr_tpl)
     if used_style == "inline":
-        runs = [_styled_run("Technologies: ", rPr_tpl, bold=True, color_hex=heading)]
-        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl))
+        inline_pt = base_pt * 0.92
+        runs = [_styled_run("Technologies: ", rPr_tpl, bold=True, color_hex=heading, size_pt=inline_pt)]
+        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl, size_pt=inline_pt))
         return [_make_paragraph_from_anchor(anchor_p, runs)]
     if used_style == "label":
-        runs = [_styled_run("Tech \u00b7 ", rPr_tpl, bold=True, color_hex=accent or heading)]
-        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl))
+        label_pt = base_pt * 0.9
+        runs = [_styled_run("Tech \u00b7 ", rPr_tpl, bold=True, color_hex=accent or heading, size_pt=label_pt)]
+        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl, size_pt=label_pt))
         return [_make_paragraph_from_anchor(anchor_p, runs)]
     # chips / pill - each skill is a shaded segment
     accent_pill = used_style == "pill"
     fill = _tint_hex(accent, 0.16) if (accent_pill and accent) else "eef2f7"
     chip_color = accent if (accent_pill and accent) else text_col
+    chip_pt = base_pt * 0.85
     runs: list[OxmlElement] = []
     for sk in _split_skill_values(used_skills):
-        runs.append(_styled_run(f"  {sk}  ", rPr_tpl, color_hex=chip_color, fill_hex=fill))
+        runs.append(_styled_run(f"  {sk}  ", rPr_tpl, color_hex=chip_color, fill_hex=fill, size_pt=chip_pt))
         runs.append(_make_run("  ", rPr_tpl))
     if not runs:
         return []
@@ -587,6 +740,7 @@ def _build_experience_body(
     project_header_p,
     style: dict | None,
     colors: dict | None,
+    metrics: dict | None = None,
 ) -> list[OxmlElement]:
     """Build the body <w:p> elements for one company's experience block: project
     title, intro, 'Key Contributions:' label, contribution bullets and used skills.
@@ -613,6 +767,11 @@ def _build_experience_body(
     show_used = style.get("show_used_skills", True)
 
     paragraphs: list[OxmlElement] = []
+    roles: list[str] = []
+
+    def _add(p, role: str) -> None:
+        paragraphs.append(p)
+        roles.append(role)
 
     project_name = exp.get("project_name")
     project_rendered = (
@@ -631,7 +790,7 @@ def _build_experience_body(
             p.append(_styled_run(project_name, header_rPr, bold=True, color_hex=heading))
         else:  # italic degrades to plain in DOCX
             p.append(_make_run(project_name, header_rPr))
-        paragraphs.append(p)
+        _add(p, "lead")
 
     lead, inline_bullets = split_description_and_bullets(exp.get("project_description", ""))
     if show_intro and intro_style != "hidden":
@@ -640,18 +799,15 @@ def _build_experience_body(
         )
     else:
         lead_paragraphs = []
-    paragraphs.extend(lead_paragraphs)
+    for lp in lead_paragraphs:
+        _add(lp, "lead")
 
     explicit_bullets = [str(b) for b in (exp.get("bullets") or []) if str(b).strip()]
     bullets = [*inline_bullets, *explicit_bullets]
     if bullets:
-        if lead_paragraphs:
-            paragraphs.append(_make_empty_spacer_paragraph(anchor_p))
-
         if show_label and label_style != "hidden":
-            paragraphs.append(
-                _make_paragraph_from_anchor(anchor_p, _exp_label_runs(label_style, rPr_tpl, accent, heading))
-            )
+            label_p = _make_paragraph_from_anchor(anchor_p, _exp_label_runs(label_style, rPr_tpl, accent, heading))
+            _add(label_p, "label")
 
         for idx, bullet_text in enumerate(bullets, start=1):
             runs: list[OxmlElement] = []
@@ -662,16 +818,48 @@ def _build_experience_body(
                 if glyph:
                     runs.append(_styled_run(f"{glyph} ", rPr_tpl, bold=True, color_hex=accent))
             runs.extend(_runs_from_marked_text(str(bullet_text), rPr_tpl))
-            paragraphs.append(_make_paragraph_from_anchor(anchor_p, runs))
+            _add(_make_paragraph_from_anchor(anchor_p, runs), "bullet")
 
     if show_used and used_style != "hidden":
-        paragraphs.extend(
-            _exp_used_skills_paragraphs(
-                exp.get("used_skills", ""), used_style, anchor_p, rPr_tpl, accent, heading, text_col
-            )
-        )
+        for up in _exp_used_skills_paragraphs(
+            exp.get("used_skills", ""), used_style, anchor_p, rPr_tpl, accent, heading, text_col
+        ):
+            _add(up, "used")
 
+    _apply_experience_spacing(paragraphs, roles, metrics)
     return paragraphs
+
+
+_PX_TO_PT = 72.0 / 96.0
+# Measured-manifest field + CSS-margin fallback for the gap *above* each experience
+# paragraph role. The .docx reproduces these as ``space_before`` (with ``space_after``
+# pinned to 0 on every line), so Word's non-collapsing margins never double a gap and
+# the rhythm matches the live preview exactly. The company-to-company gap is owned by
+# the next company header's space-before (set at template-compile time from
+# ``exp_company_pt``); the last body line therefore just stays at space_after 0.
+_EXP_ROLE_GAP: dict[str, tuple[str, float]] = {
+    "lead": ("exp_lead_pt", 2.0 * _PX_TO_PT),     # project / description <p margin-top 2px>
+    "label": ("exp_label_pt", 3.0 * _PX_TO_PT),   # "Key Contributions:" <p margin-top 3px>
+    "bullet": ("exp_bullet_pt", 1.0 * _PX_TO_PT), # bullet row, gap before each line
+    "used": ("exp_used_pt", 3.0 * _PX_TO_PT),     # used-skills line <p margin-top 3px>
+}
+
+
+def _apply_experience_spacing(
+    paragraphs: list[OxmlElement], roles: list[str], metrics: dict | None = None
+) -> None:
+    """Pin each experience paragraph's gap to the browser-measured value for its role.
+
+    Every line owns the gap *above* it via ``space_before`` and carries ``space_after``
+    0, so the realized spacing equals the preview's regardless of how the user changed
+    the schema (line height, markers, item styles). The first line's space-before is the
+    header->first-line gap; the company-to-company gap is owned by the next header."""
+    if not paragraphs:
+        return
+    for p, role in zip(paragraphs, roles):
+        field, fallback = _EXP_ROLE_GAP.get(role, ("exp_bullet_pt", 1.0 * _PX_TO_PT))
+        _set_para_space_before(p, _metric(metrics, field, fallback))
+        _set_para_space_after(p, 0.0)
 
 
 def _build_experience_elements(
@@ -680,13 +868,14 @@ def _build_experience_elements(
     project_header_p=None,
     style: dict | None = None,
     colors: dict | None = None,
+    metrics: dict | None = None,
 ) -> list[OxmlElement]:
     """Style-aware body builder for one company's ``{{EXP_N}}`` block.
 
     Kept as a thin wrapper around :func:`_build_experience_body` for backward
     compatibility with callers that do not pass a style.
     """
-    return _build_experience_body(exp, anchor_p, project_header_p, style, colors)
+    return _build_experience_body(exp, anchor_p, project_header_p, style, colors, metrics)
 
 
 def _clean_leftover_exp_placeholders(doc: Document) -> None:
@@ -696,7 +885,9 @@ def _clean_leftover_exp_placeholders(doc: Document) -> None:
     spacing are not disrupted - only the tag text itself is removed.
     """
     pattern = re.compile(r"\{\{EXP_\d+\}\}")
-    for p in doc.paragraphs:
+    # Walk body *and* table cells / headers - two-column layouts render the experience
+    # section inside a table cell, where doc.paragraphs would miss the leftover tag.
+    for p in iter_document_paragraphs(doc):
         for run in p.runs:
             if pattern.search(run.text):
                 run.text = pattern.sub("", run.text)
@@ -809,6 +1000,9 @@ def fill_resume_template(
     """Fill resume template with tailored content and save to *output_path*."""
     doc = Document(str(template_path))
 
+    # Browser-measured per-role body gaps (pt); the single source of truth for spacing.
+    layout_metrics = tailored.get("layout_metrics")
+
     # Profile summary - simple inline replacement
     summary = tailored.get("profile_summary", "")
     anchor = _find_paragraph_with_tag(doc, "{{PROFILE_SUMMARY}}")
@@ -821,7 +1015,7 @@ def fill_resume_template(
         skills_anchor = _find_paragraph_with_tag(doc, "{{SKILLS_CONTENT}}")
         if skills_anchor:
             elements = _build_skills_elements(
-                skills, skills_anchor._p, tailored.get("skills_style"), tailored.get("colors")
+                skills, skills_anchor._p, tailored.get("skills_style"), tailored.get("colors"), layout_metrics
             )
             _replace_tag_with_paragraphs(doc, "{{SKILLS_CONTENT}}", elements)
 
@@ -859,7 +1053,7 @@ def fill_resume_template(
                 # Project header is owned by the template here, so suppress it in the body.
                 body_style = {**(exp_style or {}), "show_project_title": False}
                 body_elements = _build_experience_body(
-                    exp, exp_anchor._p, None, body_style, exp_colors
+                    exp, exp_anchor._p, None, body_style, exp_colors, layout_metrics
                 )
                 if body_elements:
                     _replace_tag_with_paragraphs(doc, tag, body_elements)
@@ -867,7 +1061,7 @@ def fill_resume_template(
                     _replace_inline_tag(exp_anchor, tag, "")
             else:
                 elements = _build_experience_elements(
-                    exp, exp_anchor._p, project_header_ref, exp_style, exp_colors
+                    exp, exp_anchor._p, project_header_ref, exp_style, exp_colors, layout_metrics
                 )
                 if elements:
                     _replace_tag_with_paragraphs(doc, tag, elements)
@@ -1099,14 +1293,29 @@ def convert_docx_to_pdf(docx_path: Path, pdf_path: Path) -> Path:
         pdf_path.unlink()
 
     outdir = pdf_path.parent
-    cmd = [libre, "--headless", "--convert-to", "pdf", "--outdir", str(outdir), str(docx_path)]
+    # A single shared LibreOffice user profile is locked to one process; two concurrent
+    # conversions (two users downloading at once) otherwise collide - the second either
+    # blocks on the profile lock or silently reuses the first instance and fails to emit a
+    # PDF. Give every conversion its own throwaway profile so they run independently.
+    with tempfile.TemporaryDirectory(prefix="lo_profile_") as profile_dir:
+        user_install = Path(profile_dir).as_uri()
+        cmd = [
+            libre,
+            "-env:UserInstallation=" + user_install,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(outdir),
+            str(docx_path),
+        ]
 
-    try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"LibreOffice conversion failed: {e.stderr}") from e
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError("LibreOffice conversion timed out after 120s") from e
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"LibreOffice conversion failed: {e.stderr}") from e
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("LibreOffice conversion timed out after 120s") from e
 
     produced = outdir / f"{docx_path.stem}.pdf"
     if not produced.exists():

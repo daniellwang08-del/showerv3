@@ -20,6 +20,10 @@ const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.1;
 import { Toolbar } from '../components/resumeBuilder/Toolbar';
 import { selectIsDirty, useResumeBuilderStore } from '../stores/resumeBuilderStore';
+import { effectiveProfile, profileToContent } from '../utils/resumeContent';
+import { ContentControls } from '../components/resumeBuilder/ContentControls';
+import { ResumeLibraryPanel } from '../components/resumeBuilder/ResumeLibraryPanel';
+import { OneClickAICenter } from '../components/resumeBuilder/OneClickAICenter';
 import { previewResumeDesignPdf } from '../api/resumeDesignApi';
 import { downloadResumeTemplatePreview } from '../api/resumeTemplateApi';
 import { generateCoverLetterFromResumeDesign } from '../api/coverLetterTemplateApi';
@@ -37,6 +41,8 @@ export function ResumeBuilderPage() {
   const store = useResumeBuilderStore();
   const dirty = useResumeBuilderStore(selectIsDirty);
 
+  const panelTab = useResumeBuilderStore((s) => s.panelTab);
+  const setPanelTab = useResumeBuilderStore((s) => s.setPanelTab);
   const [previewing, setPreviewing] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -54,6 +60,11 @@ export function ResumeBuilderPage() {
 
   useEffect(() => {
     void store.load();
+    return () => {
+      // Persist any debounced edit before the builder unmounts, and clear the
+      // module-global timer so it can't fire after we're gone.
+      useResumeBuilderStore.getState().flushAutoSave();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -73,22 +84,30 @@ export function ResumeBuilderPage() {
     return () => ro.disconnect();
   }, []);
 
+  const previewGenRef = useRef(0);
+
   const handlePreview = useCallback(async () => {
     if (!store.design) return;
+    const gen = ++previewGenRef.current;
     setPreviewing(true);
     setPreviewError(null);
     setPreviewOpen(true);
     try {
       const blob = await previewResumeDesignPdf(store.design);
+      if (gen !== previewGenRef.current) return;
       const url = URL.createObjectURL(blob);
       setPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return url;
       });
     } catch (err) {
-      setPreviewError(errorDetail(err, 'Could not generate the PDF preview.'));
+      if (gen !== previewGenRef.current) return;
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      if (!aborted) {
+        setPreviewError(errorDetail(err, 'Could not generate the PDF preview.'));
+      }
     } finally {
-      setPreviewing(false);
+      if (gen === previewGenRef.current) setPreviewing(false);
     }
   }, [store.design]);
 
@@ -136,6 +155,8 @@ export function ResumeBuilderPage() {
   }
 
   const { design, catalog, profile } = store;
+  // The live preview renders the manual content override when present, else the profile.
+  const previewProfile = effectiveProfile(profile, design.content);
 
   const baseWidth = Math.min((previewWidth || RESUME_REF_WIDTH) - 4, RESUME_REF_WIDTH);
   const mainDisplayWidth = Math.max(240, baseWidth * zoom);
@@ -214,6 +235,26 @@ export function ResumeBuilderPage() {
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 overflow-y-auto px-5 pb-5 lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)_auto] lg:overflow-hidden lg:[grid-template-rows:minmax(0,1fr)]">
         <div className="builder-scroll min-w-0 space-y-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-2">
+            <div className="sticky top-0 z-10 -mx-0.5 inline-flex w-full rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+              {(['style', 'content', 'resumes'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setPanelTab(tab)}
+                  className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold capitalize transition ${
+                    panelTab === tab ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {tab === 'style' ? 'Style' : tab === 'content' ? 'Content' : 'Resumes'}
+                </button>
+              ))}
+            </div>
+            {panelTab === 'resumes' ? (
+              <ResumeLibraryPanel />
+            ) : panelTab === 'content' ? (
+              <ContentControls content={design.content ?? profileToContent(profile)} onChange={store.setContent} />
+            ) : (
+            <>
             <ThemeGallery themes={catalog.themes} design={design} onApply={store.applyTheme} />
             <TypographyControls design={design} fonts={catalog.fonts} onChange={store.updateTypography} />
             <ColorControls
@@ -237,6 +278,8 @@ export function ResumeBuilderPage() {
             <EducationControls style={design.sections.education_style} onChange={store.updateEducationStyle} />
             <CertificatesControls style={design.sections.certificates_style} onChange={store.updateCertificatesStyle} />
             <SectionManager design={design} onToggle={store.toggleSection} onMove={store.moveSection} />
+            </>
+            )}
           </div>
 
           <div className="flex min-w-0 flex-col lg:min-h-0">
@@ -285,10 +328,12 @@ export function ResumeBuilderPage() {
                 <div className="mx-auto w-max">
                   <ResumePageStack
                     design={design}
-                    profile={profile}
+                    profile={previewProfile}
                     displayWidth={mainDisplayWidth}
                     idPrefix="resume-page"
                     onPageCount={setPreviewPageCount}
+                    onMeasureHeader={store.setHeaderMetrics}
+                    onMeasureLayout={store.setLayoutMetrics}
                   />
                 </div>
               </div>
@@ -304,7 +349,7 @@ export function ResumeBuilderPage() {
               <div className="builder-scroll flex flex-col items-center gap-3 overflow-y-auto px-1 pb-1 lg:min-h-0 lg:flex-1">
                 <ResumePageStack
                   design={design}
-                  profile={profile}
+                  profile={previewProfile}
                   displayWidth={132}
                   gap={12}
                   onSelect={(i) =>
@@ -356,6 +401,8 @@ export function ResumeBuilderPage() {
           </div>
         </div>
       )}
+
+      <OneClickAICenter />
     </div>
   );
 }

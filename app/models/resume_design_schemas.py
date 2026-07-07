@@ -89,6 +89,55 @@ class HeaderImage(BaseModel):
     text: HeaderImageText = "light"
 
 
+class HeaderMetrics(BaseModel):
+    """Exact header-band geometry measured in the browser preview (pt).
+
+    The live preview lays out the band with real font line-boxes; the backend can
+    only *estimate* the same height. To make the .docx band pixel-identical to what
+    the user designed, the preview measures the rendered band and reports it here, and
+    the compiler pins the band to ``band_pt`` instead of using its own estimate.
+    Values are ``None`` for older designs / before the preview has measured, in which
+    case the compiler falls back to the estimate."""
+
+    # Total outer band height (top padding + content + bottom padding), in points.
+    band_pt: float | None = Field(default=None, ge=0, le=600)
+    # Distance from the band's bottom edge to the top of the first content block (pt).
+    gap_pt: float | None = Field(default=None, ge=0, le=400)
+    # Width the band was measured at (px); lets the compiler ignore stale measurements
+    # taken at a different reference width.
+    measured_at_px: float | None = Field(default=None, ge=0, le=4000)
+
+
+class LayoutMetrics(BaseModel):
+    """Per-role vertical gaps (pt) measured from the rendered browser preview.
+
+    The live preview is the single source of truth for spacing: it lays out the exact
+    CSS (line-height, per-element margins, padding) the user designed. Rather than the
+    backend re-deriving those gaps (px->pt conversion + CSS margin-collapsing, which
+    Word does not replicate), the preview measures the realized gap *before* each kind
+    of block and reports it here. The compiler/fill engine then apply each paragraph's
+    ``space_before`` directly from these values (with ``space_after = 0`` everywhere),
+    so the .docx reproduces the preview pixel-for-pixel regardless of how the user
+    changes the schema. Every field is ``None`` until the preview measures, in which
+    case the backend falls back to its built-in defaults."""
+
+    # Section heading: gap above it (the section gap) and below it (heading -> first row).
+    heading_before_pt: float | None = Field(default=None, ge=0, le=120)
+    heading_after_pt: float | None = Field(default=None, ge=0, le=120)
+    # Work-experience body gaps.
+    exp_lead_pt: float | None = Field(default=None, ge=0, le=120)
+    exp_label_pt: float | None = Field(default=None, ge=0, le=120)
+    exp_bullet_pt: float | None = Field(default=None, ge=0, le=120)
+    exp_used_pt: float | None = Field(default=None, ge=0, le=120)
+    # Company-to-company gap (the entry wrapper's bottom margin).
+    exp_company_pt: float | None = Field(default=None, ge=0, le=120)
+    # Repeated-row gaps for the data-driven sections.
+    skill_row_pt: float | None = Field(default=None, ge=0, le=120)
+    edu_entry_pt: float | None = Field(default=None, ge=0, le=120)
+    cert_row_pt: float | None = Field(default=None, ge=0, le=120)
+    measured_at_px: float | None = Field(default=None, ge=0, le=4000)
+
+
 class LayoutConfig(BaseModel):
     columns: Literal[1, 2] = 1
     # ``margin_pt`` / ``header_padding_pt`` remain as the legacy single-value source so
@@ -107,6 +156,12 @@ class LayoutConfig(BaseModel):
     header_pad_bottom_pt: float | None = Field(default=None, ge=0, le=120)
     header_pad_left_pt: float | None = Field(default=None, ge=0, le=120)
     header_image: HeaderImage | None = None
+    # Browser-measured band geometry (pt); when present the compiler pins the band to
+    # these exact values instead of estimating, so preview and PDF match to the point.
+    header_metrics: HeaderMetrics | None = None
+    # Browser-measured per-role body spacing (pt); when present the compiler/fill engine
+    # apply these exact gaps so the .docx matches the preview after any schema change.
+    layout_metrics: LayoutMetrics | None = None
     contact_layout: ContactLayout = "inline"
     contact_icons: ContactIconStyle = "brand"
     accent_rule: bool = True
@@ -256,12 +311,73 @@ class SectionOptions(BaseModel):
     certificates_style: CertificatesStyle = Field(default_factory=CertificatesStyle)
 
 
+class ContentSkill(BaseModel):
+    category: str = ""
+    skills: str = ""
+
+
+class ContentWork(BaseModel):
+    company_name: str = ""
+    job_title: str = ""
+    period_start: str = ""
+    period_end: str = ""
+    location: str = ""
+    job_type: str = ""
+    employment_type: str = ""
+    project_title: str = ""
+    project_intro: str = ""
+    contributions: list[str] = Field(default_factory=list)
+    used_skills: str = ""
+    description: str = ""
+
+
+class ContentEducation(BaseModel):
+    university_name: str = ""
+    degree: str = ""
+    mark: str = ""
+    period_start: str = ""
+    period_end: str = ""
+    location: str = ""
+    description: str = ""
+
+
+class ContentCertificate(BaseModel):
+    name: str = ""
+
+
+class ResumeContent(BaseModel):
+    """Per-design manual content override.
+
+    When present, the builder's live preview, PDF preview and downloadable working
+    template render from THIS content instead of the user's master profile. Free-text
+    fields may carry inline markup (``**bold**`` / ``*italic*`` / ``__underline__``) which
+    is rendered as real runs in the DOCX and as styled spans in the preview. Per-job
+    AI-tailored builds intentionally ignore this override and keep using the profile."""
+
+    name_first: str = ""
+    name_middle: str = ""
+    name_last: str = ""
+    title: str = ""
+    email: str = ""
+    phone_country_code: str = ""
+    phone_number: str = ""
+    linkedin_url: str = ""
+    github_url: str = ""
+    profile_summary: str = ""
+    technical_skills: list[ContentSkill] = Field(default_factory=list)
+    work_experience: list[ContentWork] = Field(default_factory=list)
+    education: list[ContentEducation] = Field(default_factory=list)
+    certificates: list[ContentCertificate] = Field(default_factory=list)
+
+
 class ResumeDesign(BaseModel):
     theme_id: str = "classic"
     typography: Typography = Field(default_factory=Typography)
     colors: Colors = Field(default_factory=Colors)
     layout: LayoutConfig = Field(default_factory=LayoutConfig)
     sections: SectionOptions = Field(default_factory=SectionOptions)
+    # Optional manual content override authored in the builder's Content panel.
+    content: ResumeContent | None = None
 
 
 class ThemePreset(BaseModel):

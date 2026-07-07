@@ -128,6 +128,10 @@ def fill_user_resume_template(
             "skills_style": resolve_context_path(context, "tailored.skills_style"),
             "experience_style": resolve_context_path(context, "tailored.experience_style"),
             "colors": resolve_context_path(context, "tailored.colors"),
+            # Carry the measured per-role spacing manifest through to the fill engine.
+            # Without this, body spacing silently falls back to hardcoded constants and
+            # the rendered PDF drifts from the live preview ("measure, don't predict").
+            "layout_metrics": resolve_context_path(context, "tailored.layout_metrics"),
         }
         return fill_resume_template(template_path, output_path, tailored)
 

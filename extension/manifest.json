@@ -3,6 +3,7 @@
   "name": "Job Application Assistant",
   "version": "1.0.0",
   "description": "Job-specific AI assistant that uses your Atomspace profile and job descriptions to help fill out applications.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt0ON3WuqLhSQrnqtIytemjIu2bpyd5cCONAeyizYe0nFhKCfRySwXlwLWOsyMo8btFyHEloymbInWDlJ3csRoWEPC6OYQefKjreB3QNCMPjjIGjiwbv8EmM1qZ4F03VD9EzGIYghr9E35oOY7NkFvb4oj6fb8Gde9J4cVZSwbVofHe0UoSARHxUVEMTaoIDabTAVW5oD/sCBfQZZaUtXvDyZZgPF2eqI4H0ZBuSgEVknAKftdECG69eC0zGZl3SVMYn6t7+frwXuFgoRWc90OEdz09dvRxXCNWmcKEdeksnJRpfUMCH0cvRmw4i3QjVRyJjqGWMncGGY1oVBny9CewIDAQAB",
   "permissions": ["storage", "sidePanel", "tabs", "scripting", "webNavigation"],
   "optional_host_permissions": ["*://*/*", "https://*.greenhouse.io/*"],
   "host_permissions": [
@@ -14,10 +15,28 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://localhost/*"
+      ],
+      "js": ["content/webapp-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
   "action": {
     "default_title": "Open Job Application Assistant"
   },
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["installed.svg"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

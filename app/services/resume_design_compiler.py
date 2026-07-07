@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import base64
 import re
+import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
@@ -45,6 +47,173 @@ except Exception:  # pragma: no cover
 import zipfile
 
 SIDEBAR_SECTIONS = {"skills", "education", "certificates"}
+
+# US Letter page width in EMU (8.5 in × 914_400 EMU/in = 612 pt). Used to place the
+# right-aligned date tab stop at the true right text edge so it matches the preview.
+_LETTER_WIDTH_EMU = 7_772_400
+
+# Bundled OFL font directory (shipped so any render host has the exact face the preview
+# uses). Carlito is metric-identical to Calibri and embeds cleanly into the .docx.
+_FONT_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
+# Designed family -> the bundled face actually rendered, so the preview, the .docx and
+# the LibreOffice-rendered PDF all use one identical font (same metrics => same wrapping
+# and page breaks). Keyed by lowercase family name.
+_FONT_RENDER_MAP = {"calibri": "Carlito", "carlito": "Carlito"}
+
+# Embeddable variants for each rendered family: (style flags) -> TTF filename.
+_FONT_EMBED_FILES: dict[str, dict[str, str]] = {
+    "Carlito": {
+        "regular": "Carlito-Regular.ttf",
+        "bold": "Carlito-Bold.ttf",
+        "italic": "Carlito-Italic.ttf",
+        "bolditalic": "Carlito-BoldItalic.ttf",
+    },
+}
+
+
+def _render_font_family(name: str) -> str:
+    """Map a designed font family to the bundled face that is actually rendered."""
+    return _FONT_RENDER_MAP.get((name or "").strip().lower(), name)
+
+
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+_PR_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_FONT_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font"
+_OBFUSCATED_FONT_CT = "application/vnd.openxmlformats-officedocument.obfuscatedFont"
+_EMBED_SLOT_TAG = {
+    "regular": "embedRegular",
+    "bold": "embedBold",
+    "italic": "embedItalic",
+    "bolditalic": "embedBoldItalic",
+}
+
+
+def _obfuscate_font(data: bytes, key_uuid: uuid.UUID) -> bytes:
+    """Apply the ECMA-376 font obfuscation: XOR the first 32 bytes of the TTF with the
+    16 GUID bytes (reversed), repeated twice. Symmetric with Word/LibreOffice de-obf."""
+    key = key_uuid.bytes[::-1]
+    out = bytearray(data)
+    for i in range(min(32, len(out))):
+        out[i] ^= key[i % 16]
+    return bytes(out)
+
+
+def _embed_fonts(docx_path: Path, families: list[str]) -> None:
+    """Embed the bundled variants of *families* into the .docx using Word's obfuscated
+    embedded-font format, so every renderer (LibreOffice/Word on any OS, including hosts
+    without the font installed) uses the exact same face as the live preview.
+
+    Best-effort and fully guarded: any failure leaves the .docx untouched and valid (it
+    still *names* Carlito, which renders correctly wherever the font is present)."""
+    if etree is None:
+        return
+    try:
+        plan: list[dict[str, Any]] = []
+        for fam in families:
+            for slot, fname in _FONT_EMBED_FILES.get(fam, {}).items():
+                p = _FONT_ASSET_DIR / fname
+                if p.exists():
+                    plan.append({"family": fam, "slot": slot, "path": p})
+        if not plan:
+            return
+
+        with zipfile.ZipFile(docx_path, "r") as zin:
+            parts: dict[str, bytes] = {i.filename: zin.read(i.filename) for i in zin.infolist()}
+
+        font_table = parts.get("word/fontTable.xml")
+        content_types = parts.get("[Content_Types].xml")
+        settings = parts.get("word/settings.xml")
+        if font_table is None or content_types is None or settings is None:
+            return  # not a standard python-docx package; skip rather than risk corruption
+
+        ft_root = etree.fromstring(font_table)
+        rels_raw = parts.get("word/_rels/fontTable.xml.rels")
+        if rels_raw is not None:
+            rels_root = etree.fromstring(rels_raw)
+        else:
+            rels_root = etree.Element(f"{{{_PR_NS}}}Relationships")
+
+        existing_ids = {r.get("Id") for r in rels_root}
+        next_n = 1
+
+        def new_rid() -> str:
+            nonlocal next_n
+            while f"rIdFont{next_n}" in existing_ids:
+                next_n += 1
+            rid = f"rIdFont{next_n}"
+            existing_ids.add(rid)
+            next_n += 1
+            return rid
+
+        # Group variants per family so each family becomes one <w:font> with embeds.
+        by_family: dict[str, list[dict[str, Any]]] = {}
+        for item in plan:
+            by_family.setdefault(item["family"], []).append(item)
+
+        font_idx = 0
+        for fam, items in by_family.items():
+            # Reuse or create the <w:font w:name="fam"> element.
+            font_el = None
+            for fe in ft_root.findall(f"{{{_W_NS}}}font"):
+                if fe.get(f"{{{_W_NS}}}name") == fam:
+                    font_el = fe
+                    break
+            if font_el is None:
+                font_el = etree.SubElement(ft_root, f"{{{_W_NS}}}font")
+                font_el.set(f"{{{_W_NS}}}name", fam)
+
+            for slot in ("regular", "bold", "italic", "bolditalic"):
+                match = next((it for it in items if it["slot"] == slot), None)
+                if not match:
+                    continue
+                key_uuid = uuid.uuid4()
+                font_idx += 1
+                part_name = f"word/fonts/font{font_idx}.odttf"
+                parts[part_name] = _obfuscate_font(match["path"].read_bytes(), key_uuid)
+
+                rid = new_rid()
+                rel = etree.SubElement(rels_root, f"{{{_PR_NS}}}Relationship")
+                rel.set("Id", rid)
+                rel.set("Type", _FONT_REL_TYPE)
+                rel.set("Target", f"fonts/font{font_idx}.odttf")
+
+                embed = etree.SubElement(font_el, f"{{{_W_NS}}}{_EMBED_SLOT_TAG[slot]}")
+                embed.set(f"{{{_R_NS}}}id", rid)
+                embed.set(f"{{{_W_NS}}}fontKey", "{" + str(key_uuid).upper() + "}")
+                embed.set(f"{{{_W_NS}}}subsetted", "false")
+
+        # Tell the consumer to honour embedded fonts.
+        set_root = etree.fromstring(settings)
+        if set_root.find(f"{{{_W_NS}}}embedTrueTypeFonts") is None:
+            embed_flag = etree.Element(f"{{{_W_NS}}}embedTrueTypeFonts")
+            set_root.insert(0, embed_flag)
+
+        # Register the obfuscated-font extension in the content types.
+        ct_root = etree.fromstring(content_types)
+        has_odttf = any(
+            d.get("Extension", "").lower() == "odttf" for d in ct_root.findall(f"{{{_CT_NS}}}Default")
+        )
+        if not has_odttf:
+            default = etree.SubElement(ct_root, f"{{{_CT_NS}}}Default")
+            default.set("Extension", "odttf")
+            default.set("ContentType", _OBFUSCATED_FONT_CT)
+
+        parts["word/fontTable.xml"] = etree.tostring(ft_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        parts["word/_rels/fontTable.xml.rels"] = etree.tostring(rels_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        parts["word/settings.xml"] = etree.tostring(set_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+        parts["[Content_Types].xml"] = etree.tostring(ct_root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+        tmp = docx_path.with_name(docx_path.name + ".fonts.tmp")
+        with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+            for name, payload in parts.items():
+                zout.writestr(name, payload)
+        tmp.replace(docx_path)
+    except Exception:
+        # Never let font embedding break template generation.
+        return
 
 
 def _clean_url(value: str | None) -> str:
@@ -105,12 +274,19 @@ def _emu_to_twips(emu: int) -> int:
     return int(round(emu / 635))
 
 
-def _set_row_min_height(row, height_tw: int) -> None:
-    """Force a table row to be at least *height_tw* twips tall (the band)."""
+def _set_row_exact_height(row, height_tw: int) -> None:
+    """Pin a table row to *exactly* ``height_tw`` twips. Used for the header image
+    band so a full-bleed background picture of the same height fills it edge to edge
+    with no flat fallback strip and without bleeding into the body below.
+
+    NOTE: ``hRule="atLeast"`` must NOT be used for the band - LibreOffice adds the
+    cell's top+bottom margins on top of an ``atLeast`` height, inflating the band by
+    ~the padding amount and leaving an empty strip under the contacts. ``exact`` makes
+    the band height deterministic so the picture and the band line up precisely."""
     tr_pr = row._tr.get_or_add_trPr()
     tr_height = OxmlElement("w:trHeight")
     tr_height.set(qn("w:val"), str(max(0, int(height_tw))))
-    tr_height.set(qn("w:hRule"), "atLeast")
+    tr_height.set(qn("w:hRule"), "exact")
     tr_pr.append(tr_height)
 
 
@@ -132,17 +308,27 @@ def _reorder_tblpr(tbl_pr) -> None:
         tbl_pr.append(child)
 
 
-def _set_table_full_bleed(table, page_width_emu: int, left_margin_emu: int) -> None:
+def _set_table_full_bleed(
+    table, page_width_emu: int, left_margin_emu: int, right_margin_emu: int = 0
+) -> None:
     """Stretch *table* across the whole page width and shift it left into the margin
-    so a header band touches the page's left and right edges (no margin gap)."""
+    so a header band touches the page's left and right edges (no margin gap).
+
+    The table is shifted left by the left margin (negative ``tblInd``) so its left
+    edge sits on the page edge. Its width is the page width PLUS both margins: a plain
+    ``page_width`` under-extends on the right in LibreOffice (the rendered table stops
+    ~a margin short, leaving a white strip - and any behind-text picture, which is
+    clipped to the cell, is cut off with it). Over-sizing is safe because the renderer
+    clamps the right edge to the physical page edge."""
     table.allow_autofit = False
     tbl_pr = table._tbl.tblPr
     for tag in ("w:tblW", "w:tblInd"):
         for el in tbl_pr.findall(qn(tag)):
             tbl_pr.remove(el)
+    full_width = page_width_emu + left_margin_emu + right_margin_emu
     tbl_w = OxmlElement("w:tblW")
     tbl_w.set(qn("w:type"), "dxa")
-    tbl_w.set(qn("w:w"), str(_emu_to_twips(page_width_emu)))
+    tbl_w.set(qn("w:w"), str(_emu_to_twips(full_width)))
     tbl_pr.append(tbl_w)
     tbl_ind = OxmlElement("w:tblInd")
     tbl_ind.set(qn("w:type"), "dxa")
@@ -244,11 +430,30 @@ def _summary_border_sides(border: str) -> tuple[set[str], int]:
     return set(), 8
 
 
+def _layout_gap(design: ResumeDesign, field: str, fallback: float) -> float:
+    """Realized vertical gap (pt) for a body role, measured from the browser preview.
+
+    The preview is the single source of truth for spacing: it reports the exact gap it
+    drew before each kind of block (see ``LayoutMetrics``) so the .docx reproduces it
+    regardless of how the user changed the schema (section gap, entry gap, line height,
+    surface, markers, ...). ``fallback`` is used only for designs the preview has not
+    measured yet (older saves / API-only requests)."""
+    metrics = getattr(design.layout, "layout_metrics", None)
+    if metrics is not None:
+        value = getattr(metrics, field, None)
+        if value is not None:
+            return float(value)
+    return float(fallback)
+
+
 def _heading(container, text: str, design: ResumeDesign) -> None:
     typo = design.typography
     para = container.add_paragraph()
-    para.paragraph_format.space_before = Pt(design.layout.section_gap_pt)
-    para.paragraph_format.space_after = Pt(3)
+    # space-before owns the section gap above the heading; space-after owns the
+    # heading->first-row gap. Both come from the measured preview (constants are only a
+    # fallback) so they track the user's section-gap / line-height edits exactly.
+    para.paragraph_format.space_before = Pt(_layout_gap(design, "heading_before_pt", design.layout.section_gap_pt))
+    para.paragraph_format.space_after = Pt(_layout_gap(design, "heading_after_pt", 3.75))
     para.paragraph_format.keep_with_next = True
     run = para.add_run(text.upper() if typo.uppercase_headings else text)
     _set_run(
@@ -261,6 +466,20 @@ def _heading(container, text: str, design: ResumeDesign) -> None:
     )
     if design.layout.accent_rule:
         _add_bottom_border(para, design.colors.accent)
+
+
+def _set_exact_line_spacing(para, size_pt: float, multiplier: float) -> None:
+    """Reproduce the CSS ``line-height: <multiplier>`` box model EXACTLY.
+
+    CSS line height = ``multiplier x font-size``. Word's MULTIPLE rule (what you get from
+    assigning a bare float to ``line_spacing``) instead multiplies the font's *natural*
+    single-line height - ~1.22x the font size for Carlito - so the same 1.12 renders ~22%
+    taller (measured: 14.3 pt vs the design's 11.76 pt for 10.5 pt text) and pushes the
+    pagination out of sync with the preview. Pinning an EXACT point height per line makes
+    the .docx wrap identically to the browser preview."""
+    pf = para.paragraph_format
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing = Pt(size_pt * multiplier)
 
 
 def _body(
@@ -276,7 +495,7 @@ def _body(
     typo = design.typography
     para = container.add_paragraph()
     para.paragraph_format.space_after = Pt(space_after)
-    para.paragraph_format.line_spacing = typo.line_spacing
+    _set_exact_line_spacing(para, typo.base_font_pt + size_delta, typo.line_spacing)
     run = para.add_run(text)
     _set_run(
         run,
@@ -357,7 +576,14 @@ def _render_header(
         if val
     ]
     contact_hex = "#dbe4f0" if on_dark else design.colors.muted
-    contact_size = typo.base_font_pt * 0.95
+    # Preview contactStyle == base * 0.92 (ResumePreview.tsx).
+    contact_size = typo.base_font_pt * 0.92
+    # Inline pictures in Word/LibreOffice are anchored to the text baseline (and the
+    # baseline shift `w:position` is ignored for image runs), so a full-em icon ends up
+    # ~half its height above the text's optical centre and looks raised. Sizing the icon
+    # to roughly the font's cap-height makes it sit from the baseline to the cap line,
+    # i.e. visually centred with the text - matching the live preview.
+    icon_h = typo.base_font_pt * 0.66
     icon_style = getattr(design.layout, "contact_icons", "brand")
 
     def emit_item(p, kind: str, text: str) -> None:
@@ -370,7 +596,7 @@ def _render_header(
         if png:
             icon_run = p.add_run()
             try:
-                icon_run.add_picture(BytesIO(png), height=Pt(contact_size))
+                icon_run.add_picture(BytesIO(png), height=Pt(icon_h))
             except Exception:
                 pass
             sp = p.add_run("\u2009")  # thin space between icon and text
@@ -402,36 +628,92 @@ def _render_header(
 
 
 def _decode_data_url(data_url: str) -> bytes | None:
-    """Decode a ``data:image/...;base64,...`` URL into raw bytes."""
+    """Decode a ``data:image/...;base64,...`` URL into raw bytes, re-encoding to a
+    format Word/python-docx can embed.
+
+    The frontend bakes header images as WebP by default (smaller files), but
+    python-docx/Word do NOT support WebP - ``add_picture`` raises
+    ``UnrecognizedImageError`` for it, which previously made the header band silently
+    fall back to a flat fill (the chosen image never appeared in the .docx/PDF). We
+    transcode anything that isn't already a docx-friendly raster to PNG via Pillow so
+    the picture actually embeds."""
     try:
         if "," not in data_url:
             return None
         head, b64 = data_url.split(",", 1)
         if "base64" not in head:
             return None
-        return base64.b64decode(b64)
+        raw = base64.b64decode(b64)
+        return _coerce_docx_image(raw)
     except Exception:
         return None
+
+
+_DOCX_SAFE_IMAGE_FORMATS = {"PNG", "JPEG", "GIF", "BMP", "TIFF"}
+
+
+def _coerce_docx_image(raw: bytes) -> bytes:
+    """Return image bytes in a format python-docx/Word can embed. Formats Word does
+    not understand (notably WebP, which the frontend produces) are transcoded to PNG.
+    Falls back to the original bytes if Pillow is unavailable."""
+    try:
+        from PIL import Image as _PILImage
+
+        with _PILImage.open(BytesIO(raw)) as im:
+            fmt = (im.format or "").upper()
+            if fmt in _DOCX_SAFE_IMAGE_FORMATS:
+                return raw
+            converted = im.convert("RGBA" if "A" in im.getbands() else "RGB")
+            buf = BytesIO()
+            converted.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception:
+        return raw
+
+
+def _effective_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> float:
+    """The header band height (pt) to pin the .docx band to.
+
+    Prefers the browser-measured value (``layout.header_metrics.band_pt``) so the
+    rendered PDF band is identical to the live preview's real line-box height. Falls
+    back to the estimate for designs saved before the preview measured the band."""
+    metrics = getattr(design.layout, "header_metrics", None)
+    if metrics is not None and metrics.band_pt and metrics.band_pt > 0:
+        return float(metrics.band_pt)
+    return _header_band_height_pt(design, profile)
 
 
 def _header_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> float:
     """Estimate the header band height (pt) from typography + padding + present
     content, so the behind-text image is sized to fill exactly that band."""
+    # Per-line factors are calibrated against the LibreOffice-rendered band so the
+    # picture height matches the natural content height (a solid band of the same
+    # content renders at ~the same height). Being marginally generous is safe: the
+    # band uses an *exact* row height, so a slight over-estimate only adds a hair of
+    # padding, whereas an under-estimate would clip the text.
     typo = design.typography
     base = typo.base_font_pt
-    h = design.layout.hp_top + design.layout.hp_bottom + base * typo.name_scale * 1.18
+    lay = design.layout
+    # The content height mirrors the CSS preview's line boxes so the band matches the
+    # live-preview height (otherwise the .docx band is visibly taller than designed):
+    #   name  -> font * name_scale, line-height 1.1
+    #   title -> font * 1.1, normal line (~1.22) + 2 px (1.5 pt) top margin
+    #   contact -> font * 0.95, normal line (~1.18) + 4 px (3 pt) top margin
+    content = base * typo.name_scale * 1.10
     if profile.get("title"):
-        h += base * 1.1 * 1.4
+        content += base * 1.1 * 1.22 + 1.5
     has_contact = any(
         profile.get(k) for k in ("email", "phone", "linkedin", "github")
     )
     if has_contact:
-        if design.layout.contact_layout == "stacked":
+        if lay.contact_layout == "stacked":
             n = sum(1 for k in ("email", "phone", "linkedin", "github") if profile.get(k))
-            h += base * 0.95 * 1.55 * max(1, n)
+            content += base * 0.95 * 1.18 * max(1, n) + 3.0
         else:
-            h += base * 0.95 * 1.55
-    return h + 4
+            content += base * 0.95 * 1.18 + 3.0
+    # hp_top/hp_bottom are the designed band paddings; +2 pt is a small anti-clip
+    # margin (the band uses an exact row height).
+    return lay.hp_top + lay.hp_bottom + content + 2.0
 
 
 def _add_band_background_image(paragraph, image_bytes: bytes, width_emu: int, height_emu: int) -> bool:
@@ -457,7 +739,13 @@ def _add_band_background_image(paragraph, image_bytes: bytes, width_emu: int, he
         for attr, val in (
             ("distT", "0"), ("distB", "0"), ("distL", "0"), ("distR", "0"),
             ("simplePos", "0"), ("relativeHeight", "0"), ("behindDoc", "1"),
-            ("locked", "0"), ("layoutInCell", "1"), ("allowOverlap", "1"),
+            # layoutInCell MUST be 0: with it on, LibreOffice positions/clips the
+            # picture relative to the cell's shifted content frame, so a page-width
+            # image stops ~a margin short of the right edge (white strip). Anchored to
+            # the page (offset 0,0) with the band pinned to the page top, the picture
+            # spans the full page width and its height matches the exact band height,
+            # so there is no right-edge strip and no bleed into the body below.
+            ("locked", "0"), ("layoutInCell", "0"), ("allowOverlap", "1"),
         ):
             anchor.set(attr, val)
 
@@ -519,38 +807,116 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
         fill = _tint(design.colors.accent, 0.14).lstrip("#")
         on_dark = False
 
-    table = doc.add_table(rows=1, cols=1)
+    # Render the band into the FIRST-PAGE header so the section top margin can stay at
+    # m_top for every page - continuation pages then keep their top margin (matching the
+    # preview) while the band still sits flush at the very top of page 1, because a tall
+    # first-page header pushes the page-1 body down past the band. (A zero section top
+    # margin strips the top margin from pages 2+; a continuous section break does not
+    # change page margins in LibreOffice - both verified by rendering.)
+    section.different_first_page_header_footer = True
+    section.header_distance = Pt(0)
+    band_container = section.first_page_header
+    for _hp in list(band_container.paragraphs):
+        _hp._p.getparent().remove(_hp._p)
+    table = band_container.add_table(rows=1, cols=1, width=section.page_width)
+    # A header must not end on a table; a 1 pt trailing paragraph keeps it valid without
+    # adding meaningful height below the band.
+    band_tail = band_container.add_paragraph()
+    band_tail.paragraph_format.space_before = Pt(0)
+    band_tail.paragraph_format.space_after = Pt(0)
+    band_tail.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    band_tail.paragraph_format.line_spacing = Pt(1)
     cell = table.rows[0].cells[0]
-    _set_table_full_bleed(table, section.page_width, section.left_margin)
-    cell.width = section.page_width
-    _set_cell_background(cell, fill)
+    _set_table_full_bleed(table, section.page_width, section.left_margin, section.right_margin)
+    # The cell spans the same full-bleed width so a behind-text picture (clipped to the
+    # cell) is not cut off before the right page edge.
+    cell.width = section.page_width + section.left_margin + section.right_margin
     # Each band padding side is independently controllable; 1 pt = 20 twips.
     lay = design.layout
-    _set_cell_margins(
-        cell,
-        top=max(0, int(round(lay.hp_top * 20))),
-        bottom=max(0, int(round(lay.hp_bottom * 20))),
-        left=max(0, int(round(lay.hp_left * 20))),
-        right=max(0, int(round(lay.hp_right * 20))),
-    )
-    _render_header(cell, design, profile, on_dark=on_dark)
-    _remove_leading_empty(cell)
 
     if header_image and image_bytes:
-        band_h_pt = _header_band_height_pt(design, profile)
-        # Keep the row at least the image height so text and picture line up.
-        _set_row_min_height(table.rows[0], int(round(band_h_pt * 20)))
-        _add_band_background_image(
-            cell.paragraphs[0],
+        # --- Image band -------------------------------------------------------
+        # A solid cell fill would paint OVER the behind-text picture and hide it
+        # entirely (the band would show the flat fallback colour instead of the
+        # chosen image), so we deliberately do NOT shade the cell here. The band is
+        # pinned to an exact height equal to the picture height: the image fills it
+        # edge to edge (no fallback strip, no bleed into the body), and the text is
+        # vertically centred over the picture - matching the CSS preview, whose band
+        # is `background-size: cover` with centred content.
+        band_h_pt = _effective_band_height_pt(design, profile)
+        # Honour the designed *asymmetric* vertical padding: inset the content from the
+        # top by hp_top and top-align it (rather than vertically centring, which splits
+        # the slack evenly and ignores a smaller hp_bottom). The remaining space below
+        # the content equals hp_bottom, matching the CSS preview's top/bottom padding.
+        _set_cell_margins(
+            cell,
+            top=max(0, int(round(lay.hp_top * 20))),
+            bottom=0,
+            left=max(0, int(round(lay.hp_left * 20))),
+            right=max(0, int(round(lay.hp_right * 20))),
+        )
+        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+        _render_header(cell, design, profile, on_dark=on_dark)
+        _remove_leading_empty(cell)
+        _set_row_exact_height(table.rows[0], int(round(band_h_pt * 20)))
+        # CRITICAL: anchor the behind-text picture to the header-level ``band_tail``
+        # paragraph (OUTSIDE the table), never to a cell paragraph. LibreOffice draws a
+        # ``behindDoc`` floating image that is anchored *inside a table cell* ON TOP of
+        # that cell's text - so the white name/contacts vanish under the band image
+        # (verified by rendering: 0 visible text pixels when cell-anchored vs. fully
+        # visible when header-anchored). The picture is page-positioned at (0,0), so the
+        # anchor paragraph only controls z-layer, not placement.
+        ok = _add_band_background_image(
+            band_tail,
             image_bytes,
             width_emu=section.page_width,
             height_emu=int(round(band_h_pt * 12700)),
         )
+        if not ok:
+            # Embedding failed - fall back to a solid fill so the text stays legible.
+            _set_cell_background(cell, fill)
+    else:
+        # --- Solid / soft band ------------------------------------------------
+        _set_cell_background(cell, fill)
+        measured = getattr(design.layout, "header_metrics", None)
+        pin = bool(measured is not None and measured.band_pt and measured.band_pt > 0)
+        # LibreOffice renders an *exact* table row as ``trHeight + bottom cell margin``
+        # (the bottom inset is added OUTSIDE the exact height - proven by rendering).
+        # So when we pin the band to the browser-measured height we must drop the bottom
+        # cell margin to zero and bake hp_bottom into the row height instead (top-aligned
+        # content then sits hp_top from the top with hp_bottom of space below), exactly
+        # like the image band. Without a measurement we keep the natural-growth layout
+        # (real hp_bottom margin) so the estimate can never clip the text.
+        _set_cell_margins(
+            cell,
+            top=max(0, int(round(lay.hp_top * 20))),
+            bottom=0 if pin else max(0, int(round(lay.hp_bottom * 20))),
+            left=max(0, int(round(lay.hp_left * 20))),
+            right=max(0, int(round(lay.hp_right * 20))),
+        )
+        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+        _render_header(cell, design, profile, on_dark=on_dark)
+        _remove_leading_empty(cell)
+        if pin:
+            _set_row_exact_height(table.rows[0], int(round(float(measured.band_pt) * 20)))
 
-    # Breathing room between the band and the first section.
+    # Breathing room between the band and the first section. The browser-measured gap
+    # (band bottom -> first content block top) already includes the first section's own
+    # space-before (== section_gap, which the first heading/summary paragraph re-creates
+    # in the .docx). So the spacer only needs to contribute the remainder; subtracting
+    # section_gap avoids double-counting. The spacer's own line height is collapsed to an
+    # exact 1 pt so it never stacks a stray blank line on top. Without a measurement we
+    # fall back to the preview's body top padding (~0.6 * top-margin).
+    measured = getattr(design.layout, "header_metrics", None)
+    if measured is not None and measured.gap_pt is not None and measured.gap_pt >= 0:
+        spacer_before = max(0.0, float(measured.gap_pt) - design.layout.section_gap_pt)
+    else:
+        spacer_before = design.layout.m_top * 0.6
     spacer = doc.add_paragraph()
-    spacer.paragraph_format.space_before = Pt(design.layout.m_top * 0.4)
-    spacer.paragraph_format.space_after = Pt(2)
+    spacer.paragraph_format.space_before = Pt(spacer_before)
+    spacer.paragraph_format.space_after = Pt(0)
+    spacer.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    spacer.paragraph_format.line_spacing = Pt(1)
 
 
 _SUMMARY_TITLE = "Professional Summary"
@@ -589,7 +955,7 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool) -> lis
         badge_bg = "#ffffff" if on_solid else design.colors.accent
         badge_fg = design.colors.accent if on_solid else "#ffffff"
         run = p.add_run(f"  {_SUMMARY_TITLE.upper()}  ")
-        _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt * 0.85, color=_hex_to_rgb(badge_fg), bold=True, caps=True)
+        _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt * 0.82, color=_hex_to_rgb(badge_fg), bold=True, caps=True)
         _set_run_shading(run, badge_bg)
         return [p]
 
@@ -621,8 +987,11 @@ def _summary_emit_body(target, design: ResumeDesign, st, on_solid: bool):
     body_color = _hex_to_rgb("#ffffff" if on_solid else design.colors.text)
     p = target.add_paragraph()
     p.alignment = _ALIGN_MAP.get(st.align, WD_ALIGN_PARAGRAPH.LEFT)
-    p.paragraph_format.line_spacing = typo.line_spacing
-    p.paragraph_format.space_after = Pt(design.layout.section_gap_pt / 2)
+    _set_exact_line_spacing(p, typo.base_font_pt, typo.line_spacing)
+    # Space-before ownership: the summary body owns no trailing gap. The following
+    # section heading owns the inter-section gap via its own space-before, and Word's
+    # non-collapsing margins would otherwise add this on top (preview keeps body margin 0).
+    p.paragraph_format.space_after = Pt(0)
     if st.title == "inline":
         upper = typo.uppercase_headings
         lead = p.add_run((_SUMMARY_TITLE.upper() if upper else _SUMMARY_TITLE) + ".  ")
@@ -704,12 +1073,29 @@ def _render_experience(container, design: ResumeDesign, rows: list[dict[str, Any
     _heading(container, "Work Experience", design)
     style = design.sections.experience_style
     font = design.typography.font_family
-    head_pt = design.typography.base_font_pt + 0.5
+    if not rows:
+        # Mirror the preview's empty-state note instead of emitting a phantom
+        # "Company / Role" slot with a dangling {{EXP_1}} placeholder.
+        _body(
+            container,
+            "Add work experience in your profile to populate this section.",
+            design,
+            color_hex=design.colors.muted,
+            space_after=0.0,
+        )
+        return
+    # The live preview renders the company/role at the base font size (bold + accent for
+    # emphasis), so the PDF must too. A larger header here makes the fixed company gap
+    # read tighter than the preview even though the gap value is identical.
+    head_pt = design.typography.base_font_pt
+    # The preview renders dates with mutedStyle == base * 0.92 (ResumePreview.tsx).
+    # Mirror that exactly so the date line's height (and the gap it consumes) matches.
+    date_pt = design.typography.base_font_pt * 0.92
     company_color = _hex_to_rgb(design.colors.accent if style.accent_target == "company" else design.colors.heading)
     role_color = _hex_to_rgb(design.colors.accent if style.accent_target == "role" else design.colors.text)
     date_color = _hex_to_rgb(design.colors.accent if style.accent_target == "date" else design.colors.muted)
-    # Usable text width for a right-aligned tab stop (Letter = 12_192_000 EMU wide).
-    usable_emu = max(int(12_192_000 - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
+    # Right-aligned tab stop sits at the true right text edge (page width minus margins).
+    usable_emu = max(int(_LETTER_WIDTH_EMU - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
 
     for i in range(1, slot_count + 1):
         row = rows[i - 1] if i - 1 < len(rows) else {}
@@ -736,10 +1122,16 @@ def _render_experience(container, design: ResumeDesign, rows: list[dict[str, Any
 
         def add_date_subline() -> None:
             if date_text:
-                _body(container, date_text, design, color_hex=design.colors.muted, size_delta=-0.5, space_after=1.0)
+                _body(container, date_text, design, color_hex=design.colors.muted, size_delta=date_pt - head_pt, space_after=0.0)
 
         header_para = container.add_paragraph()
-        header_para.paragraph_format.space_before = Pt(4)
+        # Each company owns the gap *above* it via space-before (space-after is 0 here and
+        # on every body line, so Word's non-collapsing margins never double a gap). The
+        # first company's gap is the heading->content gap (owned by the heading's
+        # space-after, so 0 here); later companies use the measured company-to-company gap.
+        header_para.paragraph_format.space_before = Pt(
+            0.0 if i == 1 else _layout_gap(design, "exp_company_pt", style.entry_gap_pt)
+        )
         header_para.paragraph_format.space_after = Pt(0)
         header_para.paragraph_format.keep_with_next = True
 
@@ -749,7 +1141,7 @@ def _render_experience(container, design: ResumeDesign, rows: list[dict[str, Any
                 header_para.paragraph_format.tab_stops.add_tab_stop(Emu(usable_emu), WD_TAB_ALIGNMENT.RIGHT)
                 add_company_run(header_para, with_role=False)
                 d_run = header_para.add_run(f"\t{date_text}")
-                _set_run(d_run, font=font, size_pt=design.typography.base_font_pt - 0.5, color=date_color)
+                _set_run(d_run, font=font, size_pt=date_pt, color=date_color)
                 add_role_line()
             else:
                 add_company_run(header_para, with_role=False)
@@ -762,12 +1154,12 @@ def _render_experience(container, design: ResumeDesign, rows: list[dict[str, Any
             add_company_run(header_para, with_role=True)
             if date_text:
                 d_run = header_para.add_run(f"\t{date_text}")
-                _set_run(d_run, font=font, size_pt=design.typography.base_font_pt - 0.5, color=date_color)
+                _set_run(d_run, font=font, size_pt=date_pt, color=date_color)
         elif style.date_position == "inline":
             add_company_run(header_para, with_role=True)
             if date_text:
                 d_run = header_para.add_run(f"   \u00b7   {date_text}")
-                _set_run(d_run, font=font, size_pt=design.typography.base_font_pt - 0.5, color=date_color)
+                _set_run(d_run, font=font, size_pt=date_pt, color=date_color)
         else:
             # inline header, date below
             add_company_run(header_para, with_role=True)
@@ -792,12 +1184,19 @@ def _render_education(container, design: ResumeDesign, education: list[dict[str,
     _heading(container, "Education", design)
     style = design.sections.education_style
     font = design.typography.font_family
-    head_pt = design.typography.base_font_pt + 0.5
-    sub_pt = design.typography.base_font_pt - 0.5
+    # Match the live preview, which renders the university/degree at the base font size.
+    head_pt = design.typography.base_font_pt
+    # Preview dates use mutedStyle == base * 0.92; mirror it for height/gap parity.
+    sub_pt = design.typography.base_font_pt * 0.92
     muted = _hex_to_rgb(design.colors.muted)
     uni_color = _hex_to_rgb(design.colors.accent if style.accent_target == "university" else design.colors.heading)
     degree_color = _hex_to_rgb(design.colors.accent if style.accent_target == "degree" else design.colors.text)
-    usable_emu = max(int(12_192_000 - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
+    usable_emu = max(int(_LETTER_WIDTH_EMU - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
+
+    # Each entry owns the gap above it via space-before (space-after stays 0 on the
+    # entry's last line). The first entry's gap is the heading->content gap (owned by the
+    # heading's space-after, so 0 here); later entries use the measured entry-to-entry gap.
+    emitted_entries = 0
 
     for item in education:
         uni = item.get("university_name") or ""
@@ -827,12 +1226,15 @@ def _render_education(container, design: ResumeDesign, education: list[dict[str,
 
         def add_date_subline() -> None:
             if date_text:
-                _body(container, date_text, design, color_hex=design.colors.muted, size_delta=-0.5, space_after=1.0)
+                _body(container, date_text, design, color_hex=design.colors.muted, size_delta=sub_pt - head_pt, space_after=0.0)
 
         header_para = container.add_paragraph()
-        header_para.paragraph_format.space_before = Pt(4)
+        header_para.paragraph_format.space_before = Pt(
+            _layout_gap(design, "edu_entry_pt", style.entry_gap_pt) if emitted_entries else 0.0
+        )
         header_para.paragraph_format.space_after = Pt(0)
         header_para.paragraph_format.keep_with_next = True
+        emitted_entries += 1
 
         if style.header_layout == "stacked":
             if style.date_position == "right" and date_text:
@@ -862,7 +1264,9 @@ def _render_education(container, design: ResumeDesign, education: list[dict[str,
             add_date_subline()
 
         if style.show_description and (item.get("description") or "").strip():
-            _body(container, str(item["description"]).strip(), design, space_after=2.0)
+            # Trailing line of the entry: keep space-after 0 so the next entry's measured
+            # space-before (edu_entry) owns the whole inter-entry gap without doubling it.
+            _body(container, str(item["description"]).strip(), design, space_after=0.0)
 
 
 _CERT_GLYPH: dict[str, str] = {
@@ -894,8 +1298,13 @@ def _render_certificates(container, design: ResumeDesign, certificates: list[dic
         # list / grid: one entry per line with the chosen marker glyph.
         glyph = _CERT_GLYPH.get(style.marker, "\u2022")
         prefix = f"{glyph}  " if glyph else ""
-        for n in names:
-            _body(container, f"{prefix}{n}", design, space_after=1.0)
+        # Each row owns the gap above it via space-before (space-after stays 0). The first
+        # row's gap is the heading->content gap (owned by the heading); later rows use the
+        # measured row-to-row gap. Fallback mirrors the preview's <div margin: 0 0 1px>.
+        row_gap = _layout_gap(design, "cert_row_pt", 1.0 * 72.0 / 96.0)
+        for idx_n, n in enumerate(names):
+            para = _body(container, f"{prefix}{n}", design, space_after=0.0)
+            para.paragraph_format.space_before = Pt(0.0 if idx_n == 0 else row_gap)
 
 
 # ── Profile extraction ─────────────────────────────────────────────────────
@@ -959,19 +1368,50 @@ def _strip_headers(path: Path) -> None:
     except (KeyError, zipfile.BadZipFile):
         return
     root = etree.fromstring(document_xml)
-    _strip_phantom_header_footer_refs(root, set())
+    # Preserve the intentional first-page header (it carries the full-bleed band); strip
+    # every other phantom header/footer ref so continuation pages keep a clean top margin.
+    allowed: set[str] = set()
+    for ref in root.iter(qn("w:headerReference")):
+        if ref.get(qn("w:type")) == "first":
+            rid = ref.get(qn("r:id"))
+            if rid:
+                allowed.add(rid)
+    _strip_phantom_header_footer_refs(root, allowed)
     final_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
     _replace_docx_internal(path, "word/document.xml", final_xml)
 
 
-def compile_design(design: ResumeDesign, user: User, out_path: Path) -> tuple[list[str], ResumeTemplateBlueprint]:
-    """Build a styled .docx for *design* at *out_path*; return (tags, blueprint)."""
+def compile_design(
+    design: ResumeDesign,
+    user: User,
+    out_path: Path,
+    *,
+    apply_content: bool = False,
+) -> tuple[list[str], ResumeTemplateBlueprint]:
+    """Build a styled .docx for *design* at *out_path*; return (tags, blueprint).
+
+    When *apply_content* is true and the design carries a manual content override
+    (``design.content``), the template is built from that override instead of the user's
+    profile. Builder preview/working-template paths opt in; the per-job AI build does not.
+    """
+    # Render every Calibri design with the bundled, metric-identical Carlito so the
+    # .docx/PDF uses the exact same typeface (and therefore the same line wrapping and
+    # page breaks) as the live preview, on any OS - the design is deep-copied first so
+    # the caller's object is untouched.
+    design = design.model_copy(deep=True)
+    design.typography.font_family = _render_font_family(design.typography.font_family)
+    if apply_content:
+        from app.services.resume_content_overlay import apply_content_overlay
+
+        user = apply_content_overlay(user, design.content)
     profile = _profile_dict(user)
     work_rows = _profile_work_rows(user)
     education = _education_rows(user)
     certificates = _certificate_rows(user)
     has_skills = _skill_count(user) > 0
-    slot_count = max(len(work_rows), 1)
+    # One placeholder slot per real work row. (Previously forced to >= 1, which emitted a
+    # phantom "Company / Role" entry and a dangling {{EXP_1}} when the profile had none.)
+    slot_count = len(work_rows)
 
     order = [s for s in design.layout.section_order if s not in set(design.layout.hidden_sections)]
     # Skip data-driven sections the profile cannot fill.
@@ -1012,8 +1452,9 @@ def compile_design(design: ResumeDesign, user: User, out_path: Path) -> tuple[li
 
     usable = max(section.page_width - section.left_margin - section.right_margin, Pt(360))
     if design.layout.header_background != "none":
-        # Full-bleed band: remove the top margin so it touches the page's top edge.
-        section.top_margin = Pt(0)
+        # The band is rendered into the first-page header (see _render_header_band), which
+        # lets it sit flush at the page top WITHOUT zeroing the section top margin - so
+        # continuation pages keep their top margin, matching the live preview.
         _render_header_band(doc, design, profile, section)
     else:
         _render_header(doc, design, profile, trailing_space_pt=design.layout.hp_bottom)
@@ -1039,6 +1480,8 @@ def compile_design(design: ResumeDesign, user: User, out_path: Path) -> tuple[li
     out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_path))
     _strip_headers(out_path)
+    # Embed the rendered font so the .docx/PDF looks identical on hosts that lack it.
+    _embed_fonts(out_path, [design.typography.font_family])
 
     tags: list[str] = ["{{PROFILE_SUMMARY}}"]
     if has_skills and "skills" in order:

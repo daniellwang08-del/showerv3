@@ -26,8 +26,17 @@ import type {
   UserProfile,
   WorkExperienceBlock,
 } from '../../types/profile';
+import { renderRich } from '../../utils/richText';
 
-const PT_TO_PX = 1.3333;
+export const PT_TO_PX = 1.3333;
+
+/** Maps a designed font family to the bundled web font actually rendered, so the live
+ *  preview uses the exact same typeface as the generated .docx/PDF. Carlito is the
+ *  metric-compatible, OFL-licensre ed stand-in for Calibri that LibreOffice renders. */
+export const RESUME_FONT_RENDER: Record<string, string> = {
+  Calibri: 'Carlito',
+  Carlito: 'Carlito',
+};
 
 interface ResumePreviewProps {
   design: ResumeDesign;
@@ -293,7 +302,7 @@ export function SummaryBlock({
         color: textColor,
       }}
     >
-      {text}
+      {renderRich(text)}
     </p>
   );
 
@@ -376,7 +385,7 @@ export function SummaryBlock({
         <span style={{ fontWeight: 700, color: titleColor, textTransform: upper ? 'uppercase' : 'none', letterSpacing: upper ? '0.04em' : 0 }}>
           {titleText}.{'  '}
         </span>
-        {text}
+        {renderRich(text)}
       </p>
     );
   } else if (st.title === 'side') {
@@ -503,7 +512,7 @@ export function SkillsBlock({
           border: `1px solid ${accent ? tint(c.accent, 0.45) : '#e2e8f0'}`,
         }}
       >
-        {skill}
+        {renderRich(skill)}
       </span>
     );
   };
@@ -530,7 +539,7 @@ export function SkillsBlock({
                 <span style={{ color: c.text }}>{labelGap}</span>
               </>
             )}
-            <span style={{ color: c.text }}>{list.join(st.layout === 'pipe' ? '  |  ' : ', ')}</span>
+            <span style={{ color: c.text }}>{renderRich(list.join(st.layout === 'pipe' ? '  |  ' : ', '))}</span>
           </p>
         );
         break;
@@ -538,7 +547,7 @@ export function SkillsBlock({
         content = (
           <div>
             {cat && <div style={{ marginBottom: 2 }}>{catLabel(cat)}</div>}
-            <p style={{ ...bodyText, margin: 0 }}>{list.join(', ')}</p>
+            <p style={{ ...bodyText, margin: 0 }}>{renderRich(list.join(', '))}</p>
           </div>
         );
         break;
@@ -559,7 +568,7 @@ export function SkillsBlock({
               {st.accent_chips ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{list.map((sk, i) => chip(sk, i))}</div>
               ) : (
-                <span style={{ color: c.text }}>{list.join(', ')}</span>
+                <span style={{ color: c.text }}>{renderRich(list.join(', '))}</span>
               )}
             </div>
           </div>
@@ -585,7 +594,7 @@ export function SkillsBlock({
     }
 
     return (
-      <div key={idx} data-block style={wrap}>
+      <div key={idx} data-block data-gap-role="skill" style={wrap}>
         {content}
       </div>
     );
@@ -700,7 +709,7 @@ export function ExperienceBlock({
         border: `1px solid ${accent ? tint(c.accent, 0.4) : '#e2e8f0'}`,
       }}
     >
-      {skill}
+      {renderRich(skill)}
     </span>
   );
 
@@ -787,17 +796,17 @@ export function ExperienceBlock({
     if (st.show_project_title && st.project_style !== 'hidden' && e.projectTitle) {
       if (st.project_style === 'label') {
         projectEl = (
-          <p style={{ ...bodyStyle, margin: '2px 0 0' }}>
+          <p data-gap-role="exp-lead" style={{ ...bodyStyle, margin: '2px 0 0' }}>
             <span style={{ fontWeight: 700 }}>Project: </span>
-            {e.projectTitle}
+            {renderRich(e.projectTitle)}
           </p>
         );
       } else if (st.project_style === 'bold') {
-        projectEl = <p style={{ ...bodyStyle, margin: '2px 0 0', fontWeight: 700 }}>{e.projectTitle}</p>;
+        projectEl = <p data-gap-role="exp-lead" style={{ ...bodyStyle, margin: '2px 0 0', fontWeight: 700 }}>{renderRich(e.projectTitle)}</p>;
       } else if (st.project_style === 'italic') {
-        projectEl = <p style={{ ...bodyStyle, margin: '2px 0 0', fontStyle: 'italic' }}>{e.projectTitle}</p>;
+        projectEl = <p data-gap-role="exp-lead" style={{ ...bodyStyle, margin: '2px 0 0', fontStyle: 'italic' }}>{renderRich(e.projectTitle)}</p>;
       } else {
-        projectEl = <p style={{ ...bodyStyle, margin: '2px 0 0', color: c.accent, fontWeight: 700 }}>{e.projectTitle}</p>;
+        projectEl = <p data-gap-role="exp-lead" style={{ ...bodyStyle, margin: '2px 0 0', color: c.accent, fontWeight: 700 }}>{renderRich(e.projectTitle)}</p>;
       }
     }
 
@@ -807,7 +816,7 @@ export function ExperienceBlock({
       const introStyle: CSSProperties = { ...bodyStyle, margin: '2px 0 0' };
       if (st.intro_style === 'italic') introStyle.fontStyle = 'italic';
       if (st.intro_style === 'indented') introStyle.paddingLeft = 10;
-      introEl = <p style={introStyle}>{e.intro}</p>;
+      introEl = <p data-gap-role="exp-lead" style={introStyle}>{renderRich(e.intro)}</p>;
     }
 
     // ---- Pill badges row (when not inlined) ----
@@ -825,6 +834,7 @@ export function ExperienceBlock({
       labelEl = (
         <p
           data-block
+          data-gap-role="exp-label"
           style={{
             ...bodyStyle,
             margin: '3px 0 1px',
@@ -845,19 +855,19 @@ export function ExperienceBlock({
       const marker = st.marker === 'numbered' ? `${bi + 1}.` : MARKER_GLYPH[st.marker] ?? '';
       if (!marker) {
         return (
-          <p key={bi} data-block style={{ ...bodyStyle, margin: '0 0 1px' }}>
-            {b}
+          <p key={bi} data-block data-gap-role="exp-bull" style={{ ...bodyStyle, margin: '0 0 1px' }}>
+            {renderRich(b)}
           </p>
         );
       }
       // Flex row keeps the marker tight to the text and makes wrapped lines align
       // under the text column (the text span is its own flex item).
       return (
-        <div key={bi} data-block style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
+        <div key={bi} data-block data-gap-role="exp-bull" style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
           <span style={{ flex: '0 0 auto', color: st.accent_target === 'none' ? c.text : c.accent, fontWeight: 700 }}>
             {marker}
           </span>
-          <span style={{ flex: '1 1 auto', minWidth: 0 }}>{b}</span>
+          <span style={{ flex: '1 1 auto', minWidth: 0 }}>{renderRich(b)}</span>
         </div>
       );
     });
@@ -867,22 +877,22 @@ export function ExperienceBlock({
     if (st.show_used_skills && st.used_skills_style !== 'hidden' && e.usedSkills) {
       if (st.used_skills_style === 'inline') {
         usedSkillsEl = (
-          <p style={{ ...mutedStyle, margin: '3px 0 0' }}>
+          <p data-gap-role="exp-used" style={{ ...mutedStyle, margin: '3px 0 0' }}>
             <span style={{ fontWeight: 700, color: c.heading }}>Technologies: </span>
-            {e.usedSkills}
+            {renderRich(e.usedSkills)}
           </p>
         );
       } else if (st.used_skills_style === 'label') {
         usedSkillsEl = (
-          <p style={{ ...bodyStyle, margin: '3px 0 0', fontSize: base * 0.9 }}>
+          <p data-gap-role="exp-used" style={{ ...bodyStyle, margin: '3px 0 0', fontSize: base * 0.9 }}>
             <span style={{ fontWeight: 700, color: c.accent }}>Tech &middot; </span>
-            {e.usedSkills}
+            {renderRich(e.usedSkills)}
           </p>
         );
       } else {
         const accent = st.used_skills_style === 'pill';
         usedSkillsEl = (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
+          <div data-gap-role="exp-used" style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
             {splitSkills(e.usedSkills).map((s, si) => skillChip(s, si, accent))}
           </div>
         );
@@ -912,7 +922,7 @@ export function ExperienceBlock({
     return (
       <div key={idx} style={wrap}>
         <div data-block>
-          {header}
+          <div data-gap-role="exp-head">{header}</div>
           {projectEl}
           {introEl}
           {pillRow}
@@ -1030,7 +1040,7 @@ export function EducationBlock({
 
     const descEl =
       st.show_description && (e.description || '').trim() ? (
-        <p style={{ ...bodyStyle, margin: '2px 0 0' }}>{(e.description || '').trim()}</p>
+        <p style={{ ...bodyStyle, margin: '2px 0 0' }}>{renderRich((e.description || '').trim())}</p>
       ) : null;
 
     const wrap: CSSProperties = { marginBottom: gapPx };
@@ -1053,7 +1063,7 @@ export function EducationBlock({
     }
 
     return (
-      <div key={idx} data-block style={wrap}>
+      <div key={idx} data-block data-gap-role="edu" style={wrap}>
         {header}
         {descEl}
       </div>
@@ -1135,13 +1145,13 @@ export function CertificatesBlock({
           const marker = CERT_MARKER_GLYPH[st.marker] ?? '';
           if (!marker) {
             return (
-              <p key={i} data-block style={{ ...bodyStyle, margin: '0 0 1px' }}>
+              <p key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px' }}>
                 {n}
               </p>
             );
           }
           return (
-            <div key={i} data-block style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
+            <div key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
               <span style={{ flex: '0 0 auto', color: c.accent, fontWeight: 700 }}>{marker}</span>
               <span style={{ flex: '1 1 auto', minWidth: 0 }}>{n}</span>
             </div>
@@ -1155,13 +1165,13 @@ export function CertificatesBlock({
       const marker = CERT_MARKER_GLYPH[st.marker] ?? '';
       if (!marker) {
         return (
-          <p key={i} data-block style={{ ...bodyStyle, margin: '0 0 1px' }}>
+          <p key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px' }}>
             {n}
           </p>
         );
       }
       return (
-        <div key={i} data-block style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
+        <div key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
           <span style={{ flex: '0 0 auto', color: c.accent, fontWeight: 700 }}>{marker}</span>
           <span style={{ flex: '1 1 auto', minWidth: 0 }}>{n}</span>
         </div>
@@ -1191,7 +1201,13 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
   const fontStack = useMemo(() => {
     const serif = ['Georgia', 'Cambria', 'Times New Roman', 'Garamond'];
     const fallback = serif.includes(t.font_family) ? 'serif' : 'sans-serif';
-    return `"${t.font_family}", ${fallback}`;
+    // Render with the same font the .docx/PDF uses so wrapping + page breaks match.
+    // Calibri designs render with the bundled, metric-identical Carlito (the original
+    // family stays as a secondary fallback for the brief moment before the web font
+    // loads, since it is metric-compatible).
+    const primary = RESUME_FONT_RENDER[t.font_family] ?? t.font_family;
+    const secondary = primary !== t.font_family ? `, "${t.font_family}"` : '';
+    return `"${primary}"${secondary}, ${fallback}`;
   }, [t.font_family]);
 
   const skills = asArray<TechnicalSkillBlock>(profile?.technical_skills).filter((s) => (s.category || s.skills));
@@ -1223,7 +1239,7 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
   const mutedStyle: CSSProperties = { color: c.muted, fontSize: base * 0.92 };
 
   function Heading({ id }: { id: SectionId }) {
-    return <div data-block style={headingStyle}>{SECTION_LABELS[id]}</div>;
+    return <div data-block data-gap-role="heading" style={headingStyle}>{SECTION_LABELS[id]}</div>;
   }
 
   function renderSection(id: SectionId) {
@@ -1311,6 +1327,7 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
   const header = (
     <div
       data-block
+      data-header-band
       style={{
         textAlign: l.header_align,
         marginBottom: bandBg ? 0 : hpSides.bottom * PT_TO_PX,

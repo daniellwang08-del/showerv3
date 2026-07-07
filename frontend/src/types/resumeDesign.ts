@@ -137,6 +137,32 @@ export interface DesignColors {
   muted: string;
 }
 
+export interface HeaderMetrics {
+  /** Total outer band height (top pad + content + bottom pad), in points. */
+  band_pt: number | null;
+  /** Band-bottom to first-content-block top, in points. */
+  gap_pt: number | null;
+  /** Reference width (px) the measurement was taken at. */
+  measured_at_px: number | null;
+}
+
+/** Per-role vertical gaps (pt) measured from the rendered preview, so the .docx can
+ *  reproduce the exact spacing the user designed instead of re-deriving it. Every
+ *  field is the realized gap *before* a block of that kind. */
+export interface LayoutMetrics {
+  heading_before_pt: number | null;
+  heading_after_pt: number | null;
+  exp_lead_pt: number | null;
+  exp_label_pt: number | null;
+  exp_bullet_pt: number | null;
+  exp_used_pt: number | null;
+  exp_company_pt: number | null;
+  skill_row_pt: number | null;
+  edu_entry_pt: number | null;
+  cert_row_pt: number | null;
+  measured_at_px: number | null;
+}
+
 export interface LayoutConfig {
   columns: 1 | 2;
   margin_pt: number;
@@ -153,6 +179,8 @@ export interface LayoutConfig {
   header_pad_bottom_pt?: number | null;
   header_pad_left_pt?: number | null;
   header_image?: HeaderImage | null;
+  header_metrics?: HeaderMetrics | null;
+  layout_metrics?: LayoutMetrics | null;
   contact_layout: ContactLayout;
   contact_icons: ContactIconStyle;
   accent_rule: boolean;
@@ -200,12 +228,53 @@ export interface SectionOptions {
   certificates_style: CertificatesStyle;
 }
 
+/** Per-design manual content override authored in the builder's Content panel.
+ *  Mirrors WorkExperienceBlock / EducationBlock / etc. from types/profile.ts. */
+export interface ResumeContent {
+  name_first: string;
+  name_middle: string;
+  name_last: string;
+  title: string;
+  email: string;
+  phone_country_code: string;
+  phone_number: string;
+  linkedin_url: string;
+  github_url: string;
+  profile_summary: string;
+  technical_skills: { category: string; skills: string }[];
+  work_experience: {
+    company_name: string;
+    job_title: string;
+    period_start: string;
+    period_end: string;
+    location: string;
+    job_type: string;
+    employment_type: string;
+    project_title: string;
+    project_intro: string;
+    contributions: string[];
+    used_skills: string;
+    description: string;
+  }[];
+  education: {
+    university_name: string;
+    degree: string;
+    mark: string;
+    period_start: string;
+    period_end: string;
+    location: string;
+    description: string;
+  }[];
+  certificates: { name: string }[];
+}
+
 export interface ResumeDesign {
   theme_id: string;
   typography: Typography;
   colors: DesignColors;
   layout: LayoutConfig;
   sections: SectionOptions;
+  content?: ResumeContent | null;
 }
 
 export interface ThemePreset {

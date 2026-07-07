@@ -16,6 +16,10 @@ to change:
     )
     text = response.choices[0].message.content
 
+For OpenAI reasoning models (o-series, GPT-5 non-chat) the adapter
+transparently maps ``max_tokens`` → ``max_completion_tokens`` and strips
+unsupported sampling parameters (e.g. ``temperature`` ≠ 1).
+
 If the OpenAI request raises a recoverable error (quota exceeded,
 rate-limited, auth failure, connection/timeout, or 5xx) AND an Anthropic
 API key is configured, the same request is transparently retried against
@@ -560,6 +564,60 @@ async def _stream_anthropic(
                 yield text
 
 
+# ── OpenAI reasoning-model parameter normalization ─────────────────────────
+#
+# Newer OpenAI reasoning families (o-series, GPT-5 non-chat) reject legacy
+# Chat Completions knobs:
+#   - ``max_tokens`` → use ``max_completion_tokens`` instead
+#   - ``temperature`` other than 1 (and several sampling params) are rejected
+#
+# Call sites across the codebase still pass ``max_tokens`` and low temperatures
+# for determinism; we translate at the adapter boundary so every service keeps
+# working without per-model branching.
+
+
+def _is_openai_reasoning_model(model: str) -> bool:
+    """Return True for OpenAI models that require reasoning-style API kwargs."""
+    m = (model or "").strip().lower()
+    if not m:
+        return False
+    # o-series reasoning models: o1, o3, o4-mini, …
+    if m.startswith(("o1", "o3", "o4")):
+        return True
+    # GPT-5 reasoning models — exclude chat variants (e.g. gpt-5-chat-latest).
+    if m.startswith("gpt-5") and "chat" not in m:
+        return True
+    return False
+
+
+def _normalize_openai_chat_kwargs(
+    kwargs: dict[str, Any],
+    *,
+    model: str,
+    reasoning_effort: str | None = None,
+) -> dict[str, Any]:
+    """Map legacy OpenAI chat kwargs to what reasoning / GPT-5 models accept."""
+    out = dict(kwargs)
+    if not _is_openai_reasoning_model(model):
+        return out
+
+    if "max_tokens" in out:
+        out.setdefault("max_completion_tokens", out.pop("max_tokens"))
+        out.pop("max_tokens", None)
+
+    temp = out.get("temperature")
+    if temp is not None and temp != 1:
+        out.pop("temperature", None)
+
+    for key in ("top_p", "presence_penalty", "frequency_penalty", "logprobs"):
+        out.pop(key, None)
+
+    if reasoning_effort and "reasoning_effort" not in out:
+        out["reasoning_effort"] = reasoning_effort
+
+    return out
+
+
 # ── Provider adapters ─────────────────────────────────────────────────────
 #
 # Each adapter exposes ``async create(**openai_shape_kwargs) -> response`` and a
@@ -590,6 +648,12 @@ class _OpenAIAdapter:
     async def create(self, **kwargs: Any) -> Any:
         kwargs = dict(kwargs)
         kwargs["model"] = self._model
+        settings = get_settings()
+        kwargs = _normalize_openai_chat_kwargs(
+            kwargs,
+            model=self._model,
+            reasoning_effort=settings.openai_reasoning_effort,
+        )
         return await self._client.chat.completions.create(**kwargs)
 
     async def stream(self, **kwargs: Any) -> AsyncIterator[str]:
@@ -684,6 +748,12 @@ def _stream_openai_compatible(
         call_kwargs["stream"] = True
         # JSON mode is incompatible with the free-text streaming path.
         call_kwargs.pop("response_format", None)
+        settings = get_settings()
+        call_kwargs = _normalize_openai_chat_kwargs(
+            call_kwargs,
+            model=model,
+            reasoning_effort=settings.openai_reasoning_effort,
+        )
         stream = await client.chat.completions.create(**call_kwargs)
         async for chunk in stream:
             try:
@@ -906,8 +976,20 @@ class LLMFallbackClient:
 _clients: dict[str, LLMFallbackClient] = {}
 
 
-def _cache_key(provider: str, openai_key: str, anthropic_key: str, gemini_key: str) -> str:
-    raw = f"{provider}|{openai_key}|{anthropic_key}|{gemini_key}"
+def _cache_key(
+    provider: str,
+    openai_key: str,
+    anthropic_key: str,
+    gemini_key: str,
+    *,
+    openai_model: str,
+    anthropic_model: str,
+    gemini_model: str,
+) -> str:
+    raw = (
+        f"{provider}|{openai_key}|{anthropic_key}|{gemini_key}|"
+        f"{openai_model}|{anthropic_model}|{gemini_model}"
+    )
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
@@ -1019,7 +1101,15 @@ def get_llm_client(
             "No LLM provider configured. Set an API key for OpenAI, Anthropic, or Gemini."
         )
 
-    ck = _cache_key(provider, keys["openai"], keys["anthropic"], keys["gemini"])
+    ck = _cache_key(
+        provider,
+        keys["openai"],
+        keys["anthropic"],
+        keys["gemini"],
+        openai_model=settings.openai_model,
+        anthropic_model=settings.anthropic_model,
+        gemini_model=settings.gemini_model,
+    )
     if ck in _clients:
         return _clients[ck]
 

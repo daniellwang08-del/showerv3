@@ -107,9 +107,14 @@ class Settings(BaseSettings):
     redis_pool_size: int = 10
 
     openai_api_key: str = Field(default="")
-    openai_model: str = "gpt-4.1"
+    # GPT-5 reasoning models (e.g. gpt-5-nano) use max_completion_tokens and ignore
+    # custom temperature; the LLM client normalizes API kwargs automatically.
+    openai_model: str = "gpt-5-nano-2025-08-07"
     openai_max_tokens: int = 4096
     openai_temperature: float = 0.1
+    # Reasoning depth for o-series / GPT-5 non-chat models (low | medium | high).
+    # Ignored for legacy chat models (gpt-4.x, gpt-5-chat-latest, …).
+    openai_reasoning_effort: Literal["low", "medium", "high"] = "low"
     # HTTP timeout for each OpenAI request (stay below worker job_timeout so jobs fail cleanly).
     openai_timeout_seconds: float = 240.0
     # Concurrent arq jobs on the analysis worker (each job = one OpenAI call).

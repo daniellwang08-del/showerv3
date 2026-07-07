@@ -3,8 +3,18 @@ import { apiClient } from '../api/client';
 import {
   fetchResumeDesign,
   fetchResumeThemeCatalog,
+  invalidateResumeDesignPreviewCache,
   saveResumeDesign,
 } from '../api/resumeDesignApi';
+import {
+  activateResume,
+  createResume,
+  deleteResume as apiDeleteResume,
+  duplicateResume,
+  fetchResumeLibrary,
+  updateResume,
+} from '../api/resumeLibraryApi';
+import type { ResumeLibraryItem, ResumeSource, ResumeStatus } from '../types/resumeLibrary';
 import {
   DEFAULT_CERTIFICATES_STYLE,
   DEFAULT_EDUCATION_STYLE,
@@ -18,6 +28,8 @@ import {
   type ExperienceStyle,
   type HeaderImage,
   type LayoutConfig,
+  type LayoutMetrics,
+  type ResumeContent,
   type ResumeDesign,
   type ResumeThemeCatalog,
   type SectionId,
@@ -28,6 +40,7 @@ import {
   type Typography,
 } from '../types/resumeDesign';
 import type { UserProfile } from '../types/profile';
+import { requestOnce } from '../utils/requestOnce';
 
 const ALL_SECTIONS: SectionId[] = ['summary', 'skills', 'experience', 'education', 'certificates'];
 
@@ -46,9 +59,43 @@ function normalizeOrder(order: SectionId[] | undefined): SectionId[] {
   return result;
 }
 
+/** Fill in defaults on a raw stored design so older / partial designs render cleanly.
+ *  Shared by initial load and every library switch/create/delete. */
+function hydrateDesign(raw: ResumeDesign): ResumeDesign {
+  return {
+    ...raw,
+    layout: {
+      ...raw.layout,
+      header_background: raw.layout.header_background ?? 'none',
+      header_padding_pt: raw.layout.header_padding_pt ?? 16,
+      contact_icons: raw.layout.contact_icons ?? 'brand',
+      section_order: normalizeOrder(raw.layout.section_order),
+      hidden_sections: raw.layout.hidden_sections ?? [],
+    },
+    sections: {
+      ...raw.sections,
+      summary_style: raw.sections?.summary_style ?? { ...DEFAULT_SUMMARY_STYLE },
+      skills_style: raw.sections?.skills_style ?? { ...DEFAULT_SKILLS_STYLE },
+      experience_style: raw.sections?.experience_style
+        ? { ...DEFAULT_EXPERIENCE_STYLE, ...raw.sections.experience_style }
+        : { ...DEFAULT_EXPERIENCE_STYLE },
+      education_style: raw.sections?.education_style
+        ? { ...DEFAULT_EDUCATION_STYLE, ...raw.sections.education_style }
+        : { ...DEFAULT_EDUCATION_STYLE },
+      certificates_style: raw.sections?.certificates_style
+        ? { ...DEFAULT_CERTIFICATES_STYLE, ...raw.sections.certificates_style }
+        : { ...DEFAULT_CERTIFICATES_STYLE },
+    },
+  };
+}
+
 interface ResumeBuilderState {
   catalog: ResumeThemeCatalog | null;
   design: ResumeDesign | null;
+  /** The resume library (multi-resume) + which one is active/edited. */
+  resumes: ResumeLibraryItem[];
+  activeResumeId: string | null;
+  switchingResume: boolean;
   baseline: string;
   profile: UserProfile | null;
   profileWorkCount: number;
@@ -68,6 +115,9 @@ interface ResumeBuilderState {
   applyColorPreset: (preset: ColorPreset) => void;
   updateLayout: (patch: Partial<LayoutConfig>) => void;
   setHeaderImage: (image: HeaderImage | null) => void;
+  setHeaderMetrics: (m: { band_pt: number | null; gap_pt: number | null; measured_at_px: number }) => void;
+  setLayoutMetrics: (m: LayoutMetrics) => void;
+  setContent: (content: ResumeContent) => void;
   updateSectionOptions: (patch: Partial<SectionOptions>) => void;
   applySummaryStyle: (style: SummaryStyle) => void;
   applySkillsStyle: (style: SkillsStyle) => void;
@@ -79,10 +129,43 @@ interface ResumeBuilderState {
   moveSection: (id: SectionId, dir: -1 | 1) => void;
   resetToSaved: () => void;
   save: () => Promise<boolean>;
+  /** Cancel any pending auto-save and immediately persist if there are unsaved edits.
+   *  Call on unmount so a debounced edit is never dropped (or left to fire after the
+   *  builder is gone). */
+  flushAutoSave: () => void;
+
+  /** Which left-panel tab is active. Lifted into the store so the OneClick AI center can
+   *  jump the user to the Content tab after applying a tailored result. */
+  panelTab: 'style' | 'content' | 'resumes';
+  setPanelTab: (tab: 'style' | 'content' | 'resumes') => void;
+
+  /** Resume library actions. */
+  loadResumes: () => Promise<void>;
+  switchResume: (id: string) => Promise<void>;
+  createResumeEntry: (args: {
+    name: string;
+    design: ResumeDesign;
+    source?: ResumeSource;
+    status?: ResumeStatus;
+    jobTitle?: string | null;
+    company?: string | null;
+    activate?: boolean;
+  }) => Promise<string | null>;
+  renameResume: (id: string, name: string) => Promise<void>;
+  setResumeStatus: (id: string, status: ResumeStatus) => Promise<void>;
+  duplicateResumeEntry: (id: string) => Promise<void>;
+  removeResume: (id: string) => Promise<void>;
 }
 
 const AUTOSAVE_MS = 900;
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Equal within ~0.4 pt (or both null). Mirrors the preview's measurement tolerance so
+ *  sub-pixel layout jitter does not churn the saved design. */
+function nearlyEqualPt(a: number | null, b: number | null): boolean {
+  if (a == null || b == null) return a === b;
+  return Math.abs(a - b) < 0.4;
+}
 
 /** Debounced auto-save: every design edit reschedules a save so the user never has
  * to press a button. Skips while a save is in flight and re-checks afterwards so
@@ -114,6 +197,9 @@ function applyDesign(set: (partial: Partial<ResumeBuilderState>) => void, get: (
 export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   catalog: null,
   design: null,
+  resumes: [],
+  activeResumeId: null,
+  switchingResume: false,
   baseline: '',
   profile: null,
   profileWorkCount: 0,
@@ -125,40 +211,22 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   error: null,
   saveError: null,
   lastSavedAt: null,
+  panelTab: 'style',
+
+  setPanelTab: (tab) => set({ panelTab: tab }),
 
   load: async () => {
     set({ loading: true, error: null });
     try {
-      const [catalog, designResp, profileResp] = await Promise.all([
-        fetchResumeThemeCatalog(),
-        fetchResumeDesign(),
-        apiClient.get<UserProfile>('/profile').then((r) => r.data).catch(() => null),
-      ]);
-      const design: ResumeDesign = {
-        ...designResp.design,
-        layout: {
-          ...designResp.design.layout,
-          header_background: designResp.design.layout.header_background ?? 'none',
-          header_padding_pt: designResp.design.layout.header_padding_pt ?? 16,
-          contact_icons: designResp.design.layout.contact_icons ?? 'brand',
-          section_order: normalizeOrder(designResp.design.layout.section_order),
-          hidden_sections: designResp.design.layout.hidden_sections ?? [],
-        },
-        sections: {
-          ...designResp.design.sections,
-          summary_style: designResp.design.sections?.summary_style ?? { ...DEFAULT_SUMMARY_STYLE },
-          skills_style: designResp.design.sections?.skills_style ?? { ...DEFAULT_SKILLS_STYLE },
-          experience_style: designResp.design.sections?.experience_style
-            ? { ...DEFAULT_EXPERIENCE_STYLE, ...designResp.design.sections.experience_style }
-            : { ...DEFAULT_EXPERIENCE_STYLE },
-          education_style: designResp.design.sections?.education_style
-            ? { ...DEFAULT_EDUCATION_STYLE, ...designResp.design.sections.education_style }
-            : { ...DEFAULT_EDUCATION_STYLE },
-          certificates_style: designResp.design.sections?.certificates_style
-            ? { ...DEFAULT_CERTIFICATES_STYLE, ...designResp.design.sections.certificates_style }
-            : { ...DEFAULT_CERTIFICATES_STYLE },
-        },
-      };
+      const [catalog, designResp, profileResp, library] = await requestOnce('resume-builder:load', () =>
+        Promise.all([
+          fetchResumeThemeCatalog(),
+          fetchResumeDesign(),
+          apiClient.get<UserProfile>('/profile').then((r) => r.data).catch(() => null),
+          fetchResumeLibrary().catch(() => ({ resumes: [], active_id: null })),
+        ]),
+      );
+      const design = hydrateDesign(designResp.design);
       set({
         catalog,
         design,
@@ -168,6 +236,8 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
         hasDesign: designResp.has_design,
         status: designResp.resume_template_status,
         ready: designResp.resume_template_ready,
+        resumes: library.resumes,
+        activeResumeId: library.active_id,
         loading: false,
       });
     } catch {
@@ -175,15 +245,141 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     }
   },
 
+  loadResumes: async () => {
+    try {
+      const lib = await fetchResumeLibrary();
+      set({ resumes: lib.resumes, activeResumeId: lib.active_id });
+    } catch {
+      /* leave existing list in place */
+    }
+  },
+
+  switchResume: async (id) => {
+    const s = get();
+    if (id === s.activeResumeId || s.switchingResume) return;
+    // Persist any pending edit to the current resume before switching away.
+    s.flushAutoSave();
+    set({ switchingResume: true, saveError: null });
+    try {
+      const lib = await activateResume(id);
+      const active = lib.resume ?? lib.resumes.find((r) => r.id === lib.active_id) ?? null;
+      const nextDesign = active ? hydrateDesign(active.design) : get().design;
+      invalidateResumeDesignPreviewCache();
+      set({
+        resumes: lib.resumes,
+        activeResumeId: lib.active_id,
+        design: nextDesign,
+        baseline: nextDesign ? JSON.stringify(nextDesign) : get().baseline,
+        hasDesign: true,
+        switchingResume: false,
+      });
+    } catch {
+      set({ switchingResume: false, saveError: 'Could not switch resume. Please retry.' });
+    }
+  },
+
+  createResumeEntry: async ({ name, design, source, status, jobTitle, company, activate = true }) => {
+    try {
+      const lib = await createResume({
+        name,
+        design,
+        source,
+        status,
+        job_title: jobTitle ?? null,
+        company: company ?? null,
+        activate,
+      });
+      const created = lib.resume ?? null;
+      if (activate && created) {
+        const nextDesign = hydrateDesign(created.design);
+        invalidateResumeDesignPreviewCache();
+        set({
+          resumes: lib.resumes,
+          activeResumeId: lib.active_id,
+          design: nextDesign,
+          baseline: JSON.stringify(nextDesign),
+          hasDesign: true,
+        });
+      } else {
+        set({ resumes: lib.resumes, activeResumeId: lib.active_id });
+      }
+      return created?.id ?? null;
+    } catch {
+      set({ saveError: 'Could not create the resume. Please retry.' });
+      return null;
+    }
+  },
+
+  renameResume: async (id, name) => {
+    try {
+      const lib = await updateResume(id, { name });
+      set({ resumes: lib.resumes, activeResumeId: lib.active_id });
+    } catch {
+      set({ saveError: 'Could not rename the resume. Please retry.' });
+    }
+  },
+
+  setResumeStatus: async (id, statusVal) => {
+    try {
+      const lib = await updateResume(id, { status: statusVal });
+      set({ resumes: lib.resumes, activeResumeId: lib.active_id });
+    } catch {
+      set({ saveError: 'Could not update the status. Please retry.' });
+    }
+  },
+
+  duplicateResumeEntry: async (id) => {
+    try {
+      const lib = await duplicateResume(id);
+      set({ resumes: lib.resumes, activeResumeId: lib.active_id });
+    } catch {
+      set({ saveError: 'Could not duplicate the resume. Please retry.' });
+    }
+  },
+
+  removeResume: async (id) => {
+    const wasActive = get().activeResumeId === id;
+    try {
+      const lib = await apiDeleteResume(id);
+      const patch: Partial<ResumeBuilderState> = {
+        resumes: lib.resumes,
+        activeResumeId: lib.active_id,
+      };
+      // If we deleted the active resume, the backend re-activated another one — load it.
+      if (wasActive) {
+        const active = lib.resumes.find((r) => r.id === lib.active_id) ?? null;
+        if (active) {
+          const nextDesign = hydrateDesign(active.design);
+          invalidateResumeDesignPreviewCache();
+          patch.design = nextDesign;
+          patch.baseline = JSON.stringify(nextDesign);
+        }
+      }
+      set(patch);
+    } catch {
+      set({ saveError: 'Could not delete the resume. Please retry.' });
+    }
+  },
+
   applyTheme: (theme) => {
     const current = get().design;
     if (!current) return;
+    // A theme changes typography/colors/section styling - it must NOT throw away the
+    // user's own content/derived layout state: their header image, and the measured
+    // spacing manifests (header_metrics / layout_metrics) that keep the PDF in sync with
+    // the preview. Carry those across, and keep the image background selected if an image
+    // is present so it doesn't silently disappear when switching themes.
+    const keepImage = current.layout.header_image ?? null;
     const next: ResumeDesign = {
       ...theme.design,
       layout: {
         ...theme.design.layout,
         section_order: current.layout.section_order,
         hidden_sections: current.layout.hidden_sections,
+        header_image: keepImage,
+        header_background: keepImage ? 'image' : theme.design.layout.header_background,
+        header_metrics: current.layout.header_metrics,
+        layout_metrics: current.layout.layout_metrics,
       },
       sections: { ...current.sections },
     };
@@ -228,10 +424,53 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     });
   },
 
+  setHeaderMetrics: (m) => {
+    const d = get().design;
+    if (!d) return;
+    const cur = d.layout.header_metrics ?? null;
+    const same =
+      cur != null &&
+      nearlyEqualPt(cur.band_pt ?? null, m.band_pt) &&
+      nearlyEqualPt(cur.gap_pt ?? null, m.gap_pt);
+    // Skip no-op updates so re-measuring an unchanged design never marks it dirty
+    // (which would trigger an endless measure → save → recompile loop).
+    if (same) return;
+    applyDesign(set, get, { ...d, layout: { ...d.layout, header_metrics: { ...m } } });
+  },
+
+  setLayoutMetrics: (m) => {
+    const d = get().design;
+    if (!d) return;
+    const cur = d.layout.layout_metrics ?? null;
+    const keys: (keyof LayoutMetrics)[] = [
+      'heading_before_pt',
+      'heading_after_pt',
+      'exp_lead_pt',
+      'exp_label_pt',
+      'exp_bullet_pt',
+      'exp_used_pt',
+      'exp_company_pt',
+      'skill_row_pt',
+      'edu_entry_pt',
+      'cert_row_pt',
+    ];
+    const same = cur != null && keys.every((k) => nearlyEqualPt(cur[k] ?? null, m[k] ?? null));
+    // Skip no-op updates so re-measuring an unchanged design never marks it dirty
+    // (which would trigger an endless measure → save → recompile loop).
+    if (same) return;
+    applyDesign(set, get, { ...d, layout: { ...d.layout, layout_metrics: { ...m } } });
+  },
+
   updateSectionOptions: (patch) => {
     const d = get().design;
     if (!d) return;
     applyDesign(set, get, { ...d, sections: { ...d.sections, ...patch } });
+  },
+
+  setContent: (content) => {
+    const d = get().design;
+    if (!d) return;
+    applyDesign(set, get, { ...d, content });
   },
 
   applySummaryStyle: (style) => {
@@ -329,20 +568,36 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     set({ design: JSON.parse(baseline) as ResumeDesign });
   },
 
+  flushAutoSave: () => {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+    }
+    const s = get();
+    if (s.design && !s.saving && selectIsDirty(s)) {
+      void s.save();
+    }
+  },
+
   save: async () => {
     const d = get().design;
     if (!d) return false;
     set({ saving: true, saveError: null });
     try {
       const status = await saveResumeDesign(d);
-      set({
+      const activeId = get().activeResumeId;
+      set((st) => ({
         saving: false,
         baseline: JSON.stringify(d),
         status: status.resume_template_status,
         ready: Boolean(status.resume_template_ready),
         hasDesign: true,
         lastSavedAt: Date.now(),
-      });
+        // Keep the active library thumbnail in sync with the just-saved design.
+        resumes: activeId
+          ? st.resumes.map((r) => (r.id === activeId ? { ...r, design: d } : r))
+          : st.resumes,
+      }));
       return true;
     } catch {
       set({ saving: false, saveError: 'Could not save your design. Please retry.' });

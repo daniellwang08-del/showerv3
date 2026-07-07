@@ -550,8 +550,8 @@ async def get_data_version(current_user: dict = Depends(get_current_user)) -> Da
             user.cover_letter_prompt_mode, user.cover_letter_prompt_custom,
         )
         templates_hash = _hash_parts(
-            user.resume_template_status, _iso(user.resume_template_analyzed_at),
-            user.cover_letter_template_status, _iso(user.cover_letter_template_analyzed_at),
+            user.resume_template_status, user.resume_template_working_path,
+            user.cover_letter_template_status, user.cover_letter_template_working_path,
         )
 
         return DataVersionResponse(

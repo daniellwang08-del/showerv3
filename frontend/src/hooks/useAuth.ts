@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
+import { requestOnce } from '../utils/requestOnce';
 
 export type AuthPage = 'login' | 'signup';
 
@@ -18,7 +19,7 @@ export function useAuth() {
   const [authPage, setAuthPage] = useState<AuthPage>('login');
 
   useEffect(() => {
-    const checkAuth = async () => {
+    void requestOnce('auth:me', async () => {
       try {
         const res = await apiClient.get('/auth/me');
         setUser(res.data ?? null);
@@ -27,9 +28,7 @@ export function useAuth() {
         setUser(null);
         setIsAuthenticated(false);
       }
-    };
-
-    void checkAuth();
+    });
 
     const interceptor = apiClient.interceptors.response.use(
       (response) => response,
