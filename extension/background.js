@@ -1,27 +1,41 @@
-// Origins where the dashboard runs (match the manifest content_scripts). Chrome
-// match patterns ignore ports, so these cover any dev port (e.g. :5173).
-const WEBAPP_MATCHES = ["http://localhost/*", "http://127.0.0.1/*", "https://localhost/*"];
+// Origins where the Atomspace dashboard runs (localhost, 127.0.0.1, private LAN).
+// Chrome match patterns ignore ports, so these cover any dev port (e.g. :5173).
 
-// Static content scripts only auto-inject into pages loaded AFTER the extension
-// is installed/reloaded. So when we install (or the browser starts), push the
-// web-app bridge into any dashboard tabs that are already open — otherwise the
-// dashboard's "is the extension installed?" handshake finds nothing until the
-// user manually reloads the page.
+import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/store.js";
+import { isDashboardUrl } from "./src/backendOrigin.js";
+
+const BRIDGE_FILE = "content/webapp-bridge.js";
+
+async function injectBridge(tabId) {
+  if (tabId == null) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: false },
+      files: [BRIDGE_FILE],
+    });
+  } catch (err) {
+    console.warn("bridge inject failed", tabId, err);
+  }
+}
+
+// Static content scripts only auto-inject into pages loaded AFTER install/reload.
+// Push the web-app bridge into any open dashboard tabs (including LAN IPs).
 async function injectBridgeIntoOpenTabs() {
   try {
-    const tabs = await chrome.tabs.query({ url: WEBAPP_MATCHES });
+    const tabs = await chrome.tabs.query({});
     await Promise.all(
-      tabs.map((tab) =>
-        tab.id == null
-          ? Promise.resolve()
-          : chrome.scripting
-              .executeScript({ target: { tabId: tab.id, allFrames: false }, files: ["content/webapp-bridge.js"] })
-              .catch((err) => console.warn("bridge inject failed", tab.id, err)),
-      ),
+      tabs.filter((tab) => tab.url && isDashboardUrl(tab.url)).map((tab) => injectBridge(tab.id)),
     );
   } catch (err) {
     console.warn("injectBridgeIntoOpenTabs failed", err);
   }
+}
+
+async function syncBackendUrl(backendUrl) {
+  const next = normalizeBackendUrl(backendUrl);
+  if (!next) return getBackendUrl();
+  const ok = await setBackendUrl(next);
+  return ok ? next : getBackendUrl();
 }
 
 // MV3 service worker. Opens the side panel when the toolbar icon is clicked.
@@ -34,6 +48,12 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   void injectBridgeIntoOpenTabs();
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete" && tab.url && isDashboardUrl(tab.url)) {
+    void injectBridge(tabId);
+  }
 });
 
 // Fallback for browsers/states where panel behavior is not honored: open on click.
@@ -96,6 +116,21 @@ function scriptsForEngine(engineId) {
 // Key under which we stash the job the dashboard asked us to apply to, so the
 // side panel can pick it up whether it is already open or opened afterwards.
 const PENDING_JOB_KEY = "pendingWebappJob";
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "SYNC_BACKEND_URL" && msg.backendUrl) {
+    (async () => {
+      try {
+        const synced = await syncBackendUrl(msg.backendUrl);
+        sendResponse({ ok: true, backendUrl: synced });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+  return false;
+});
 
 // The dashboard's "Apply with Assistant" button relays a job here (via the
 // content-script bridge). We remember it, open the application URL in a new

@@ -15,6 +15,7 @@ from app.core.exceptions import AIParsingError
 from app.prompts.job_match_phase_a_prompt import (
     JOB_MATCH_PHASE_A_SYSTEM_PROMPT,
     JOB_MATCH_PHASE_A_USER_TEMPLATE,
+    MATCH_DIMENSION_WEIGHTS,
 )
 from app.prompts.job_match_phase_b_prompt import (
     JOB_MATCH_PHASE_B_SYSTEM_PROMPT,
@@ -47,19 +48,63 @@ MAX_JOB_LENGTH = 15000
 MAX_PROFILE_LENGTH = 16000
 MAX_EVIDENCE_LENGTH = 15000
 
+_MATCH_DIMENSION_KEYS = tuple(MATCH_DIMENSION_WEIGHTS.keys())
+
 EMPTY_MATCH_RESULT = {
     "overall_score": 0,
-    "dimension_scores": {
-        "industry_alignment": 0,
-        "experience_match": 0,
-        "technical_skills": 0,
-        "work_environment": 0,
-    },
+    "dimension_scores": {k: 0 for k in _MATCH_DIMENSION_KEYS},
     "summary": "No candidate profile provided. Please add your profile to analyze job match.",
     "strengths": [],
     "gaps": ["Missing candidate profile"],
     "recommendation": "poor_match",
+    "requires_security_clearance": False,
 }
+
+_WORK_MODES = frozenset({"remote", "hybrid", "onsite", "unknown"})
+
+
+def _zero_match_result(summary: str, *, requires_security_clearance: bool = False) -> dict:
+    return {
+        "overall_score": 0,
+        "dimension_scores": {k: 0 for k in _MATCH_DIMENSION_KEYS},
+        "summary": summary,
+        "strengths": [],
+        "gaps": [],
+        "recommendation": "poor_match",
+        "requires_security_clearance": requires_security_clearance,
+    }
+
+
+def _compute_overall_score(dimension_scores: dict[str, int]) -> int:
+    total = 0.0
+    for key, weight in MATCH_DIMENSION_WEIGHTS.items():
+        total += dimension_scores.get(key, 0) * weight
+    return max(0, min(100, round(total)))
+
+
+def _normalize_work_mode(value) -> str:
+    if value is None:
+        return "unknown"
+    mode = str(value).strip().lower()
+    if mode in _WORK_MODES:
+        return mode
+    if "hybrid" in mode:
+        return "hybrid"
+    if "remote" in mode or "wfh" in mode or "work from home" in mode:
+        return "remote"
+    if "onsite" in mode or "on-site" in mode or "in-office" in mode or "in office" in mode:
+        return "onsite"
+    return "unknown"
+
+
+def _format_job_preferences_text(preferences: str | None) -> str:
+    text = (preferences or "").strip()
+    if not text:
+        return (
+            "No specific preferences provided. Score the user_preferences dimension at 50 (neutral) "
+            "and mention in the summary that preferences were not configured."
+        )
+    return text
 
 
 def _build_job_text(
@@ -104,6 +149,8 @@ def build_structured_context(structured_job: JobDescriptionSchema | None) -> str
         parts.append(f"Industry: {structured_job.industry}")
     if structured_job.remote_policy:
         parts.append(f"Remote policy: {structured_job.remote_policy}")
+    if structured_job.work_mode:
+        parts.append(f"Work mode: {structured_job.work_mode}")
     if structured_job.requirements:
         parts.append("\nKey requirements (prioritize these in tailored content):")
         for req in structured_job.requirements[:15]:
@@ -185,18 +232,21 @@ def _list_of_strings(value) -> list[str]:
     return out
 
 
-def _parse_match_section(parsed: dict) -> dict:
-    overall = int(parsed.get("overall_score", 0))
-    dims = parsed.get("dimension_scores", {})
-    required_dims = [
-        "industry_alignment",
-        "experience_match",
-        "technical_skills",
-        "work_environment",
-    ]
-    for d in required_dims:
-        if d not in dims:
-            dims[d] = 0
+def _parse_match_section(parsed: dict, *, recompute_overall: bool = True) -> dict:
+    dims_raw = parsed.get("dimension_scores", {})
+    dims: dict[str, int] = {}
+    if isinstance(dims_raw, dict):
+        for key in _MATCH_DIMENSION_KEYS:
+            try:
+                dims[key] = max(0, min(100, int(round(float(dims_raw.get(key, 0))))))
+            except (TypeError, ValueError):
+                dims[key] = 0
+    else:
+        dims = {k: 0 for k in _MATCH_DIMENSION_KEYS}
+
+    overall = _compute_overall_score(dims) if recompute_overall else max(
+        0, min(100, int(parsed.get("overall_score", 0)))
+    )
 
     raw_gaps = list(parsed.get("gaps", [])) if isinstance(parsed.get("gaps"), list) else []
     gaps: list[str] = []
@@ -207,12 +257,13 @@ def _parse_match_section(parsed: dict) -> dict:
                 gaps.append(t)
 
     return {
-        "overall_score": max(0, min(100, overall)),
-        "dimension_scores": {k: max(0, min(100, int(v))) for k, v in dims.items()},
+        "overall_score": overall,
+        "dimension_scores": dims,
         "summary": str(parsed.get("summary", "")).strip() or "No summary provided.",
         "strengths": list(parsed.get("strengths", [])) if isinstance(parsed.get("strengths"), list) else [],
         "gaps": gaps,
         "recommendation": parsed.get("recommendation") or "moderate_match",
+        "requires_security_clearance": False,
     }
 
 
@@ -222,6 +273,10 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
         if not description:
             description = "No description available"
         title = parse_job_title(parsed.get("title"))
+        work_mode = _normalize_work_mode(parsed.get("work_mode"))
+        if work_mode == "unknown" and parsed.get("remote_policy"):
+            work_mode = _normalize_work_mode(parsed.get("remote_policy"))
+
         return JobDescriptionSchema(
             title=title,
             company=clean_optional_job_field(parsed.get("company")),
@@ -232,6 +287,7 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
             responsibilities=_list_of_strings(parsed.get("responsibilities")),
             requirements=_list_of_strings(parsed.get("requirements")),
             benefits=_list_of_strings(parsed.get("benefits")),
+            work_mode=work_mode,
             remote_policy=(str(parsed["remote_policy"]).strip() if parsed.get("remote_policy") else None),
             experience_level=(str(parsed["experience_level"]).strip() if parsed.get("experience_level") else None),
             industry=(str(parsed["industry"]).strip() if parsed.get("industry") else None),
@@ -374,6 +430,7 @@ async def analyze_job_match_phase_a(
     profile_text: str,
     *,
     user_id: str | None = None,
+    job_preferences: str | None = None,
 ) -> tuple[dict, JobDescriptionSchema | None, bool]:
     """
     Phase A: validation, structured job extraction, and match scoring.
@@ -386,9 +443,18 @@ async def analyze_job_match_phase_a(
     if not profile_truncated.strip():
         return dict(EMPTY_MATCH_RESULT), None, False
 
+    if job_preferences is None and user_id:
+        async with get_session() as session:
+            user = await UserRepository(session).get_by_id(user_id)
+            if user:
+                job_preferences = getattr(user, "job_match_preferences", None)
+
+    preferences_text = _format_job_preferences_text(job_preferences)
+
     user_content = JOB_MATCH_PHASE_A_USER_TEMPLATE.format(
         job_text=job_truncated,
         profile_text=profile_truncated,
+        job_preferences=preferences_text,
     )
     phase_a_max = max(settings.openai_max_tokens, settings.phase_a_max_tokens)
     phase_a_max = min(phase_a_max, 16384)
@@ -401,9 +467,8 @@ async def analyze_job_match_phase_a(
         user_id=user_id,
     )
 
+    requires_security_clearance = bool(parsed.get("requires_security_clearance", False))
     is_job_posting = bool(parsed.get("is_job_posting", False))
-    match_section = parsed.get("match") or parsed
-    match_result = _parse_match_section(match_section)
 
     structured_job: JobDescriptionSchema | None = None
     structured_section = parsed.get("structured_job")
@@ -412,6 +477,17 @@ async def analyze_job_match_phase_a(
         structured_job = _finalize_structured_job_description(structured_job)
     else:
         logger.warning("structured_job_section_missing_from_phase_a_response")
+
+    if requires_security_clearance:
+        match_result = _zero_match_result(
+            "Requires security clearance - not scored",
+            requires_security_clearance=True,
+        )
+    elif not is_job_posting:
+        match_result = _zero_match_result("Not a job posting")
+    else:
+        match_section = parsed.get("match") or parsed
+        match_result = _parse_match_section(match_section, recompute_overall=True)
 
     return match_result, structured_job, is_job_posting
 

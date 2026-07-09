@@ -112,3 +112,17 @@ export function isValidJobArrangement(s: string | undefined | null): boolean {
   const v = (s ?? '').trim().toLowerCase();
   return (JOB_TYPES as readonly string[]).includes(v);
 }
+
+/** Guess arrangement when a résumé lists a city/office but not remote/hybrid/onsite explicitly. */
+export function inferJobArrangement(
+  location?: string | null,
+  jobType?: string | null,
+  description?: string | null,
+): string {
+  if (isValidJobArrangement(jobType)) return (jobType ?? '').trim().toLowerCase();
+  const blob = `${location ?? ''} ${description ?? ''}`.toLowerCase();
+  if (/\bhybrid\b/.test(blob)) return 'hybrid';
+  if (/\bremote\b/.test(blob)) return 'remote';
+  if ((location ?? '').trim()) return 'onsite';
+  return '';
+}

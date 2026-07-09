@@ -3,6 +3,7 @@ import { useScraperStore } from '../stores/scraperStore';
 import { useJobsStore } from '../stores/jobsStore';
 import { apiClient } from '../api/client';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
+import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { ScraperStatsBar } from '../components/scraper/ScraperStatsBar';
 import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
 import { SyncButton } from '../components/scraper/SyncButton';
@@ -42,6 +43,12 @@ export function ScraperDashboard() {
     navigate('/resume-builder');
   }, [navigate]);
 
+  // Show the branded loader only on the very first load, not on later filter refreshes.
+  const [booted, setBooted] = useState(false);
+  useEffect(() => {
+    if (!loading) setBooted(true);
+  }, [loading]);
+
   // Duplicates modal
   const [dupOpen, setDupOpen] = useState(false);
   const duplicateCount = useJobsStore((s) => s.invalidCounts.total);
@@ -77,7 +84,7 @@ export function ScraperDashboard() {
         sessionStorage.removeItem(RECONCILE_FLAG);
       });
     }
-    const LOCATION_RECONCILE_FLAG = 'location_reconciled_v1';
+    const LOCATION_RECONCILE_FLAG = 'location_reconciled_v2';
     if (!sessionStorage.getItem(LOCATION_RECONCILE_FLAG)) {
       sessionStorage.setItem(LOCATION_RECONCILE_FLAG, 'pending');
       void apiClient.post('/jobs/reconcile-locations').then(() => {
@@ -127,6 +134,14 @@ export function ScraperDashboard() {
   const handleSync = useCallback((spiderName?: string) => {
     startSync(spiderName);
   }, [startSync]);
+
+  if (!booted) {
+    return (
+      <PageScrollArea alwaysShowScrollbar={false}>
+        <BrandedLoader label="Loading your jobs…" />
+      </PageScrollArea>
+    );
+  }
 
   return (
     <PageScrollArea alwaysShowScrollbar={false}>

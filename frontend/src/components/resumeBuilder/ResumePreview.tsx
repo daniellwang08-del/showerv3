@@ -27,6 +27,7 @@ import type {
   WorkExperienceBlock,
 } from '../../types/profile';
 import { renderRich } from '../../utils/richText';
+import { deriveWorkContent } from '../../utils/workExperience';
 
 export const PT_TO_PX = 1.3333;
 
@@ -70,49 +71,6 @@ function tint(hex: string, keep: number): string {
   const mix = (x: number) => Math.round(255 * (1 - keep) + x * keep);
   const hx = (x: number) => x.toString(16).padStart(2, '0');
   return `#${hx(mix(r))}${hx(mix(g))}${hx(mix(b))}`;
-}
-
-const INLINE_BULLET_RE = /[•▪‣◦∙·●]/;
-const LINE_BULLET_RE = /^\s*(?:[-*▪‣◦∙·●]|\d+[.)])\s+(.*)$/;
-
-const PROJECT_LINE_RE = /^\s*project\s*[:\-\u2013\u2014]\s*/i;
-
-function splitProjectLead(lead: string): { projectTitle: string | null; description: string } {
-  const segments = lead.split('\n').map((s) => s.trim()).filter(Boolean);
-  if (segments.length === 0) return { projectTitle: null, description: '' };
-  const first = segments[0];
-  const m = first.match(PROJECT_LINE_RE);
-  const looksLikeTitle = !!m && (segments.length > 1 || first.length <= 80);
-  if (looksLikeTitle && m) {
-    return { projectTitle: first.slice(m[0].length).trim(), description: segments.slice(1).join(' ').trim() };
-  }
-  return { projectTitle: null, description: segments.join(' ').trim() };
-}
-
-function splitDescription(text: string): { lead: string; bullets: string[] } {
-  const s = (text || '').trim();
-  if (!s) return { lead: '', bullets: [] };
-  if (INLINE_BULLET_RE.test(s)) {
-    const segs = s
-      .split(INLINE_BULLET_RE)
-      .map((seg) => seg.replace(/^[\s\-\u2013\u2014]+|[\s]+$/g, '').trim())
-      .filter(Boolean);
-    if (segs.length >= 2) return { lead: segs[0], bullets: segs.slice(1) };
-    return { lead: s, bullets: [] };
-  }
-  const lines = s.split('\n').map((ln) => ln.trim()).filter(Boolean);
-  const matches = lines.map((ln) => ln.match(LINE_BULLET_RE));
-  if (matches.filter(Boolean).length >= 2) {
-    const lead: string[] = [];
-    const bullets: string[] = [];
-    lines.forEach((ln, i) => {
-      const m = matches[i];
-      if (m) bullets.push(m[1].trim());
-      else if (bullets.length === 0) lead.push(ln);
-    });
-    return { lead: lead.join(' ').trim(), bullets };
-  }
-  return { lead: s, bullets: [] };
 }
 
 function period(start?: string, end?: string): string {
@@ -625,13 +583,7 @@ function deriveExperience(w: WorkExperienceBlock): {
   contributions: string[];
   usedSkills: string;
 } {
-  const desc = (w.description || '').trim();
-  const parsed = splitDescription(desc);
-  const parsedProject = splitProjectLead(parsed.lead);
-  const structuredContribs = (w.contributions || []).map((c) => (c || '').trim()).filter(Boolean);
-  const projectTitle = (w.project_title || '').trim() || parsedProject.projectTitle || '';
-  const intro = (w.project_intro || '').trim() || parsedProject.description || '';
-  const contributions = structuredContribs.length ? structuredContribs : parsed.bullets;
+  const { projectTitle, intro, contributions } = deriveWorkContent(w);
   return {
     company: (w.company_name || '').trim(),
     role: (w.job_title || '').trim(),

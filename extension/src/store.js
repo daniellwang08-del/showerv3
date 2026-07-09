@@ -2,6 +2,15 @@
 // (not session) so the user stays signed in across browser restarts; the server
 // issues a long-lived token for this client, so the login persists.
 
+import { DEFAULT_BACKEND_URL } from "../config.js";
+import {
+  configuredBackendHostname,
+  isConfiguredLanBackend,
+  isDashboardUrl,
+  resolvedDefaultBackendUrl,
+  shouldAcceptBackendOrigin,
+} from "./backendOrigin.js";
+
 const LOCAL = chrome.storage.local;
 
 export async function getToken() {
@@ -19,16 +28,77 @@ export async function clearToken() {
 
 export async function getBackendUrl() {
   const { backendUrl } = await LOCAL.get("backendUrl");
-  return backendUrl || "http://localhost:8000";
+  const stored = backendUrl ? normalizeBackendUrl(backendUrl) : null;
+  const fallback = resolvedDefaultBackendUrl();
+
+  let resolved;
+  if (isConfiguredLanBackend()) {
+    resolved = stored && shouldAcceptBackendOrigin(stored) ? stored : fallback;
+  } else {
+    resolved = stored || fallback;
+  }
+
+  // Self-heal stale storage (e.g. old tab synced 172.20.1.1 instead of config IP).
+  if (resolved && stored !== resolved) {
+    await LOCAL.set({ backendUrl: resolved });
+  }
+  return resolved;
+}
+
+/** Pick up backend URL from an open dashboard tab (localhost or LAN IP). */
+export async function syncBackendFromOpenTabs() {
+  const fallback = resolvedDefaultBackendUrl();
+  const preferredHost = isConfiguredLanBackend() ? configuredBackendHostname() : null;
+
+  try {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (active?.url && isDashboardUrl(active.url)) {
+      const origin = new URL(active.url).origin;
+      if (shouldAcceptBackendOrigin(origin)) {
+        await setBackendUrl(origin);
+        return origin;
+      }
+    }
+
+    if (preferredHost) {
+      const tabs = await chrome.tabs.query({});
+      for (const tab of tabs) {
+        if (!tab.url || !isDashboardUrl(tab.url)) continue;
+        if (new URL(tab.url).hostname.toLowerCase() === preferredHost) {
+          const origin = new URL(tab.url).origin;
+          await setBackendUrl(origin);
+          return origin;
+        }
+      }
+      await setBackendUrl(fallback);
+      return fallback;
+    }
+
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      if (!tab.url || !isDashboardUrl(tab.url)) continue;
+      const origin = new URL(tab.url).origin;
+      if (shouldAcceptBackendOrigin(origin)) {
+        await setBackendUrl(origin);
+        return origin;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 export async function setBackendUrl(backendUrl) {
-  await LOCAL.set({ backendUrl: normalizeBackendUrl(backendUrl) });
+  const next = normalizeBackendUrl(backendUrl);
+  if (!shouldAcceptBackendOrigin(next)) return false;
+  await LOCAL.set({ backendUrl: next });
+  return true;
 }
 
 export function normalizeBackendUrl(url) {
   let u = (url || "").trim();
-  if (!u) return "http://localhost:8000";
+  if (!u) return DEFAULT_BACKEND_URL;
   u = u.replace(/\/+$/, "");
   if (!/^https?:\/\//i.test(u)) u = "http://" + u;
   return u;
@@ -45,6 +115,19 @@ export async function setCurrentUser(currentUser) {
 
 export async function clearCurrentUser() {
   await LOCAL.remove("currentUser");
+}
+
+const REMEMBER_EMAIL_KEY = "rememberedEmail";
+
+export async function getRememberedEmail() {
+  const { [REMEMBER_EMAIL_KEY]: email } = await LOCAL.get(REMEMBER_EMAIL_KEY);
+  return typeof email === "string" ? email : "";
+}
+
+export async function setRememberedEmail(email) {
+  const trimmed = (email || "").trim();
+  if (trimmed) await LOCAL.set({ [REMEMBER_EMAIL_KEY]: trimmed });
+  else await LOCAL.remove(REMEMBER_EMAIL_KEY);
 }
 
 // Per-user cache: profile, profile text, settings, and the last seen data-version.

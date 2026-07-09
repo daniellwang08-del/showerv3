@@ -2,7 +2,7 @@
 
 This is a job-less tailoring surface: the user pastes a raw job description into the
 builder's AI center and the assistant can analyze the match, tailor the resume, or
-refine a previous tailoring. Nothing here persists a Job/ValidJob — results are handed
+refine a previous tailoring. Nothing here persists a Job/ValidJob - results are handed
 straight back to the Resume Builder's design content.
 """
 

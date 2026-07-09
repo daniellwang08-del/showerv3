@@ -16,6 +16,7 @@ import {
   AlertCircle,
   ExternalLink,
   CheckCircle2,
+  Undo2,
 } from 'lucide-react';
 import { useAgentStore, type TimelineItem } from '../../stores/agentStore';
 import type { AgentJobCard } from '../../api/agentApi';
@@ -68,7 +69,24 @@ function JobCard({ job }: { job: AgentJobCard }) {
   );
 }
 
+function discardLabel(discard: NonNullable<Extract<TimelineItem, { kind: 'tool' }>['discard']>): string {
+  switch (discard.kind) {
+    case 'dashboard':
+      return 'Discard filter changes';
+    case 'applied':
+      return discard.wasApplied ? 'Undo applied marks' : 'Restore applied marks';
+    case 'submit_job':
+      return 'Remove submitted job';
+    default:
+      return 'Discard change';
+  }
+}
+
 function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
+  const discardAction = useAgentStore((s) => s.discardAction);
+  const sending = useAgentStore((s) => s.sending);
+  const canDiscard = Boolean(item.discard && !item.discarded && item.status === 'ok');
+
   const icon =
     item.status === 'running' ? (
       <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />
@@ -86,6 +104,22 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
           <span className="truncate text-slate-400">- {item.summary}</span>
         )}
       </div>
+      {canDiscard && item.discard && (
+        <div className="ml-5">
+          <button
+            type="button"
+            disabled={sending}
+            onClick={() => void discardAction(item.id)}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+          >
+            <Undo2 className="h-3 w-3" />
+            {discardLabel(item.discard)}
+          </button>
+        </div>
+      )}
+      {item.discarded && (
+        <p className="ml-5 text-[11px] font-medium text-slate-400">Change discarded</p>
+      )}
       {item.jobs && item.jobs.length > 0 && (
         <div className="ml-5 space-y-1.5">
           {item.jobs.slice(0, 8).map((job) => (
@@ -206,10 +240,10 @@ export function AgentChat() {
         type="button"
         onClick={openChat}
         aria-label="Open AI assistant"
-        className="group fixed bottom-5 right-5 z-[60] flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 via-blue-600 to-blue-700 text-white shadow-xl shadow-blue-600/30 transition hover:scale-105 hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-blue-300"
+        className="group fixed bottom-5 right-5 z-[60] flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-blue-600 to-blue-700 text-white shadow-xl shadow-blue-600/30 transition hover:scale-105 hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-blue-300"
       >
         <Bot className="h-6 w-6" />
-        <span className="absolute right-0 top-0 h-3 w-3 animate-pulse rounded-full bg-emerald-400 ring-2 ring-white" />
+        <span className="absolute -right-1 -top-1 h-3 w-3 animate-pulse rounded-full bg-emerald-400 ring-2 ring-white" />
       </button>
     );
   }

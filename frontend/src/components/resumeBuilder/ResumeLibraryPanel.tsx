@@ -269,7 +269,7 @@ export function ResumeLibraryPanel() {
           <div>
             <p className="text-sm font-semibold text-slate-800">My resumes</p>
             <p className="text-[11px] text-slate-500">
-              Every resume you edit or tailor lives here. Pick one to edit — it becomes your active resume.
+              Every resume you edit or tailor lives here. Pick one to edit - it becomes your active resume.
             </p>
           </div>
           <button

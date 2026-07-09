@@ -26,9 +26,13 @@ let state = {
   sync: null, // { changed: string[] }
   sessions: [],
   queue: [], // ready-to-apply jobs (resume built, scored, not yet applied)
-  todayQueue: [], // jobs scraped today (any build state), not yet applied
+  todayQueue: [], // jobs added today (matches dashboard view=today)
+  todayPlatformQueue: [], // today's scraped/platform jobs (not user-submitted)
+  todayMineQueue: [], // today's user-submitted jobs
+  todayCounts: { all: 0, platform: 0, mine: 0 },
   appliedQueue: [], // jobs applied to today (most recent first)
   homeTab: "progress", // active Home tab: "progress" | "today" | "ready" | "applied"
+  todaySubTab: "all", // "all" | "platform" | "mine" — narrows the New today list
   pageByTab: { progress: 1, today: 1, ready: 1, applied: 1 }, // 1-based page per Home tab
   pageSize: 25, // rows per page, user-selectable
   queueLoading: false, // true while the Home job lists are being fetched
@@ -43,8 +47,12 @@ let state = {
   toast: null,
   reportNotice: null, // { reportedTitle, reportedCompany } - shown above chat after reporting
   error: null,
+  loginLoading: false,
   autofill: emptyAutofill(),
 };
+
+// Login form draft (kept outside render state so typing does not re-render on each key).
+let loginDraft = { email: "", password: "", remember: false, showPassword: false };
 
 function emptyAutofill() {
   return {
@@ -419,6 +427,7 @@ async function copyText(text) {
 // ── init ────────────────────────────────────────────────────────────────────
 
 async function init() {
+  await store.syncBackendFromOpenTabs();
   const [user, token, minScore, autoAdvance] = await Promise.all([
     store.getCurrentUser(),
     store.getToken(),
@@ -433,34 +442,42 @@ async function init() {
     await goHome();
     await consumePendingWebappJob();
   } else {
+    const remembered = await store.getRememberedEmail();
+    loginDraft = { email: remembered, password: "", remember: Boolean(remembered), showPassword: false };
     setState({ view: "login" });
   }
 }
 
 // ── auth actions ─────────────────────────────────────────────────────────────
 
-async function doLogin(backendUrl, email, password) {
-  setState({ error: null });
+async function doLogin(email, password) {
+  setState({ error: null, loginLoading: true });
+  await store.syncBackendFromOpenTabs();
+  const backendUrl = await store.getBackendUrl();
   const granted = await api.ensureHostPermission(backendUrl);
   if (!granted) {
-    setState({ error: "Permission to access the backend URL was denied." });
+    setState({ error: "Permission to access the backend was denied.", loginLoading: false });
     return;
   }
   try {
     const user = await api.login(backendUrl, email, password);
+    if (loginDraft.remember) await store.setRememberedEmail(email);
+    else await store.setRememberedEmail("");
     state.user = user;
     state.minScore = await store.getMinScore();
     await syncNow(); // first load populates the cache
     await goHome();
     await consumePendingWebappJob();
   } catch (err) {
-    setState({ error: err.message || "Login failed." });
+    setState({ error: err.message || "Login failed.", loginLoading: false });
   }
 }
 
 async function doLogout() {
   await api.logout();
   await store.clearCurrentUser();
+  const remembered = await store.getRememberedEmail();
+  loginDraft = { email: remembered, password: "", remember: Boolean(remembered), showPassword: false };
   setState({ view: "login", user: null, cache: null, sync: null, job: null, queue: [], sessions: [] });
 }
 
@@ -511,13 +528,26 @@ function startOfToday() {
   return d;
 }
 
-// The dashboard caps per_page at 200, so a single request only returns the 200
-// newest jobs - older "ready to apply" jobs would be cut off. Page through the
-// whole list (newest first) so the Ready tab reflects ALL jobs so far. Capped to
-// keep the side panel responsive even on very large accounts.
-async function fetchAllDashboardJobs(maxPages = 25) {
+function localTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// The dashboard caps per_page at 200. Page through a view (newest first) so the
+// extension mirrors the web dashboard tabs instead of client-filtering view=all.
+async function fetchDashboardPages({
+  view = "all",
+  sort = "created_at",
+  order = "desc",
+  min_match_score,
+  maxPages = 25,
+} = {}) {
+  const timezone = localTimezone();
   const first = await api
-    .getDashboard({ per_page: 200, page: 1, sort: "created_at", order: "desc" })
+    .getDashboard({ view, per_page: 200, page: 1, sort, order, timezone, min_match_score })
     .catch(() => ({ items: [], pages: 1 }));
   let items = first.items || [];
   const pages = Math.min(first.pages || 1, maxPages);
@@ -525,7 +555,15 @@ async function fetchAllDashboardJobs(maxPages = 25) {
     const rest = await Promise.all(
       Array.from({ length: pages - 1 }, (_, i) =>
         api
-          .getDashboard({ per_page: 200, page: i + 2, sort: "created_at", order: "desc" })
+          .getDashboard({
+            view,
+            per_page: 200,
+            page: i + 2,
+            sort,
+            order,
+            timezone,
+            min_match_score,
+          })
           .catch(() => ({ items: [] }))
       )
     );
@@ -534,40 +572,57 @@ async function fetchAllDashboardJobs(maxPages = 25) {
   return items;
 }
 
+function pipelineComplete(j) {
+  return (
+    !j.applied_at &&
+    j.match_overall_score != null &&
+    j.content_generation_status === "completed" &&
+    j.resume_build_status === "completed" &&
+    j.resume_pdf_status === "completed"
+  );
+}
+
 async function loadQueue() {
   // Show skeletons while we page through the (potentially large) dashboard.
   setState({ queueLoading: true });
   try {
-    const [sessions, items] = await Promise.all([
-      api.listSessions("in_progress").catch(() => []),
-      fetchAllDashboardJobs(),
-    ]);
     const minScore = state.minScore;
     const today = startOfToday();
-    // A job is "ready" only once its WHOLE pipeline has finished and it hasn't
-    // been applied to yet: match analysis scored it, content was generated
-    // (resume tailoring), and both the resume DOCX and the uploadable PDF built.
-    const pipelineComplete = (j) =>
-      !j.applied_at &&
-      j.match_overall_score != null &&
-      j.content_generation_status === "completed" &&
-      j.resume_build_status === "completed" &&
-      j.resume_pdf_status === "completed";
-    // New today: jobs scraped today whose resume tailoring (full pipeline) is done.
-    const todayJobs = items.filter((j) => pipelineComplete(j) && j.created_at && new Date(j.created_at) >= today);
-    // Ready to apply: all completed jobs (any date), further filtered by min score.
-    const ready = items.filter((j) => pipelineComplete(j) && j.match_overall_score >= minScore);
-    // Applied today: jobs we've submitted an application to since midnight, newest first.
-    const appliedToday = items.filter((j) => j.applied_at && new Date(j.applied_at) >= today);
-    const byScore = (a, b) => (b.match_overall_score ?? 0) - (a.match_overall_score ?? 0);
-    const byAppliedDesc = (a, b) => new Date(b.applied_at || 0) - new Date(a.applied_at || 0);
-    ready.sort(byScore);
-    todayJobs.sort(byScore);
-    appliedToday.sort(byAppliedDesc);
+    const [sessions, todayItems, mineItems, suggestedItems, allItems] = await Promise.all([
+      api.listSessions("in_progress").catch(() => []),
+      // Same server filter as the web dashboard "Today's new jobs" tab.
+      fetchDashboardPages({ view: "today", sort: "created_at", order: "desc" }),
+      // Jobs the user submitted — used to split today's list into platform vs me.
+      fetchDashboardPages({ view: "mine", sort: "created_at", order: "desc" }),
+      // Same server filter as the web dashboard "Suggested jobs" tab.
+      fetchDashboardPages({
+        view: "suggested",
+        sort: "match_score",
+        order: "desc",
+        min_match_score: minScore,
+      }),
+      // Broader pool for "applied today" (applied jobs may fall outside today/suggested).
+      fetchDashboardPages({ view: "all", sort: "created_at", order: "desc", maxPages: 10 }),
+    ]);
+
+    const mineIds = new Set((mineItems || []).map((j) => j.id));
+    const todayAll = todayItems || [];
+    const todayMine = todayAll.filter((j) => mineIds.has(j.id));
+    const todayPlatform = todayAll.filter((j) => !mineIds.has(j.id));
+
+    // Ready to apply: suggested matches whose tailoring pipeline finished.
+    const ready = (suggestedItems || []).filter((j) => pipelineComplete(j));
+
+    const appliedToday = (allItems || []).filter((j) => j.applied_at && new Date(j.applied_at) >= today);
+    appliedToday.sort((a, b) => new Date(b.applied_at || 0) - new Date(a.applied_at || 0));
+
     setState({
       sessions: sessions || [],
       queue: ready,
-      todayQueue: todayJobs,
+      todayQueue: todayAll,
+      todayPlatformQueue: todayPlatform,
+      todayMineQueue: todayMine,
+      todayCounts: { all: todayAll.length, platform: todayPlatform.length, mine: todayMine.length },
       appliedQueue: appliedToday,
       pageByTab: { progress: 1, today: 1, ready: 1, applied: 1 },
       queueLoading: false,
@@ -2066,30 +2121,130 @@ function renderModal() {
 }
 
 function renderLogin() {
-  const wrap = el("div", { class: "screen" });
-  wrap.appendChild(el("h1", {}, "Job Application Assistant"));
-  wrap.appendChild(el("p", { class: "muted" }, "Sign in with your Job Scraper account."));
+  const wrap = el("div", { class: "login-screen" });
 
-  const urlInput = el("input", { type: "text", id: "f-url", placeholder: "http://localhost:8000" });
-  const emailInput = el("input", { type: "email", id: "f-email", placeholder: "you@example.com" });
-  const passInput = el("input", { type: "password", id: "f-pass", placeholder: "Password" });
+  const bg = el("div", { class: "login-bg" }, [
+    el("img", { class: "login-bg-img", src: "login-still.jpg", alt: "" }),
+    el("div", { class: "login-bg-scrim" }),
+  ]);
+  wrap.appendChild(bg);
 
-  store.getBackendUrl().then((u) => (urlInput.value = u));
+  const outer = el("div", { class: "login-card-outer" });
+  outer.appendChild(el("div", { class: "login-card-glow" }));
 
-  const form = el("form", {
-    class: "form",
-    onsubmit: (e) => {
-      e.preventDefault();
-      doLogin(urlInput.value, emailInput.value, passInput.value);
+  const card = el("div", { class: "login-card" });
+  card.appendChild(el("div", { class: "login-card-sheen" }));
+
+  const inner = el("div", { class: "login-card-inner" });
+  inner.appendChild(
+    el("div", { class: "login-brand" }, [
+      el("div", { class: "login-logo-wrap" }, [
+        el("img", { class: "login-logo", src: "atomspace-logo.png", alt: "Atomspace" }),
+      ]),
+      el("h1", { class: "login-title" }, "Atomspace"),
+      el("p", { class: "login-subtitle" }, "Your AI job application workspace"),
+    ])
+  );
+
+  const emailInput = el("input", {
+    class: "login-input",
+    type: "email",
+    id: "f-email",
+    placeholder: "name@example.com",
+    autocomplete: "email",
+    value: loginDraft.email,
+    oninput: (e) => {
+      loginDraft.email = e.target.value;
     },
   });
-  form.appendChild(field("Server URL", urlInput));
-  form.appendChild(field("Email", emailInput));
-  form.appendChild(field("Password", passInput));
-  form.appendChild(el("button", { type: "submit", class: "btn primary" }, "Sign in"));
-  wrap.appendChild(form);
-  if (state.error) wrap.appendChild(el("div", { class: "error" }, state.error));
+  const passInput = el("input", {
+    class: "login-input login-input-password",
+    type: loginDraft.showPassword ? "text" : "password",
+    id: "f-pass",
+    placeholder: "••••••••",
+    autocomplete: "current-password",
+    value: loginDraft.password,
+    oninput: (e) => {
+      loginDraft.password = e.target.value;
+    },
+  });
+  const togglePass = el(
+    "button",
+    {
+      type: "button",
+      class: "login-toggle-pass",
+      "aria-label": loginDraft.showPassword ? "Hide password" : "Show password",
+      onclick: () => {
+        loginDraft.showPassword = !loginDraft.showPassword;
+        setState({});
+      },
+    },
+    icon(loginDraft.showPassword ? ICON_EYE_OFF : ICON_EYE, "login-toggle-pass-ico")
+  );
+
+  const rememberId = "login-remember";
+  const rememberInput = el("input", {
+    type: "checkbox",
+    id: rememberId,
+    class: "login-remember-input",
+    checked: loginDraft.remember,
+    onchange: (e) => {
+      loginDraft.remember = e.target.checked;
+    },
+  });
+  const rememberLabel = el("label", { class: "login-remember", for: rememberId }, [
+    el("span", { class: "login-remember-box" }, [
+      rememberInput,
+      el("span", { class: "login-remember-mark" }, icon(ICON_CHECK, "login-remember-check")),
+    ]),
+    el("span", {}, "Remember me"),
+  ]);
+
+  const form = el(
+    "form",
+    {
+      class: "login-form",
+      onsubmit: (e) => {
+        e.preventDefault();
+        if (!state.loginLoading) doLogin(loginDraft.email.trim(), loginDraft.password);
+      },
+    },
+    [
+      loginField("Email", ICON_MAIL, emailInput),
+      loginField("Password", ICON_LOCK, passInput, togglePass),
+      rememberLabel,
+      state.error ? el("div", { class: "login-error" }, state.error) : null,
+      el(
+        "button",
+        {
+          type: "submit",
+          class: "login-submit" + (state.loginLoading ? " loading" : ""),
+          disabled: state.loginLoading,
+        },
+        state.loginLoading
+          ? [el("span", { class: "spinner-sm login-submit-spinner" }), el("span", {}, "Signing in…")]
+          : [el("span", { class: "login-submit-shine" }), el("span", {}, "Sign In")]
+      ),
+    ]
+  );
+
+  inner.appendChild(form);
+  card.appendChild(inner);
+  outer.appendChild(card);
+  outer.appendChild(el("div", { class: "login-star-border" }));
+  wrap.appendChild(outer);
   return wrap;
+}
+
+function loginField(label, iconSvg, input, trailing) {
+  const field = el("div", { class: "login-field" });
+  field.appendChild(el("label", { class: "login-label" }, label));
+  const wrap = el("div", { class: "login-input-wrap" });
+  wrap.appendChild(el("span", { class: "login-field-icon", html: iconSvg }));
+  wrap.appendChild(input);
+  if (trailing) wrap.appendChild(trailing);
+  field.appendChild(wrap);
+  return field;
 }
 
 function field(label, input) {
@@ -2114,7 +2269,7 @@ function renderHome() {
 function renderJobTabs() {
   const tabs = [
     { id: "progress", label: "In progress", count: state.sessions.length },
-    { id: "today", label: "New today", count: state.todayQueue.length },
+    { id: "today", label: "New today", count: state.todayCounts.all || state.todayQueue.length },
     { id: "ready", label: "Ready to apply", count: state.queue.length },
     { id: "applied", label: "Applied", count: state.appliedQueue.length },
   ];
@@ -2126,7 +2281,11 @@ function renderJobTabs() {
         "button",
         {
           class: "tab" + (t.id === state.homeTab ? " active" : ""),
-          onclick: () => setState({ homeTab: t.id }),
+          onclick: () =>
+            setState({
+              homeTab: t.id,
+              pageByTab: { ...state.pageByTab, [t.id]: 1 },
+            }),
         },
         [
           el("span", {}, t.label),
@@ -2137,6 +2296,67 @@ function renderJobTabs() {
       )
     )
   );
+}
+
+function renderTodaySubTabs() {
+  const subs = [
+    { id: "all", label: "All", count: state.todayCounts.all },
+    { id: "platform", label: "From platform", count: state.todayCounts.platform },
+    { id: "mine", label: "From me", count: state.todayCounts.mine },
+  ];
+  return el(
+    "div",
+    { class: "sub-tabs" },
+    subs.map((t) =>
+      el(
+        "button",
+        {
+          class: "sub-tab" + (t.id === state.todaySubTab ? " active" : ""),
+          onclick: () =>
+            setState({
+              todaySubTab: t.id,
+              pageByTab: { ...state.pageByTab, today: 1 },
+            }),
+        },
+        [el("span", {}, t.label), el("span", { class: "sub-tab-count" }, String(t.count))]
+      )
+    )
+  );
+}
+
+function todayJobsForSubTab() {
+  switch (state.todaySubTab) {
+    case "mine":
+      return state.todayMineQueue;
+    case "platform":
+      return state.todayPlatformQueue;
+    default:
+      return state.todayQueue;
+  }
+}
+
+function todayEmptyMessage() {
+  switch (state.todaySubTab) {
+    case "mine":
+      return "No jobs you added today.";
+    case "platform":
+      return "No platform jobs were added today.";
+    default:
+      return "No jobs were added today.";
+  }
+}
+
+function jobToCard(j, onClick) {
+  return {
+    title: j.title || "(untitled job)",
+    company: j.company,
+    location: j.location,
+    workMode: j.work_mode,
+    score: j.match_overall_score,
+    source: j.source || sourceFromUrl(j.normalized_url || j.source_url),
+    chips: dashboardChips(j),
+    onClick: onClick || (() => openJob(j.id, { redirect: true })),
+  };
 }
 
 function renderActiveTab() {
@@ -2157,30 +2377,18 @@ function renderActiveTab() {
         }),
         "No applications in progress yet."
       );
-    case "today":
-      return jobListSection(
-        "today",
-        state.todayQueue.map((j) => ({
-          title: j.title || "(untitled job)",
-          company: j.company,
-          score: j.match_overall_score,
-          source: j.source || sourceFromUrl(j.normalized_url || j.source_url),
-          chips: dashboardChips(j),
-          onClick: () => openJob(j.id, { redirect: true }),
-        })),
-        "No new jobs were scraped today."
+    case "today": {
+      const section = el("div", { class: "tab-panel" });
+      section.appendChild(renderTodaySubTabs());
+      section.appendChild(
+        jobListSection("today", todayJobsForSubTab().map((j) => jobToCard(j)), todayEmptyMessage())
       );
+      return section;
+    }
     case "applied":
       return jobListSection(
         "applied",
-        state.appliedQueue.map((j) => ({
-          title: j.title || "(untitled job)",
-          company: j.company,
-          score: j.match_overall_score,
-          source: j.source || sourceFromUrl(j.normalized_url || j.source_url),
-          chips: appliedChips(j),
-          onClick: () => openJob(j.id, { redirect: true }),
-        })),
+        state.appliedQueue.map((j) => ({ ...jobToCard(j), chips: appliedChips(j) })),
         "No jobs applied yet today."
       );
     case "ready":
@@ -2190,14 +2398,7 @@ function renderActiveTab() {
       section.appendChild(
         jobListSection(
           "ready",
-          state.queue.map((j) => ({
-            title: j.title || "(untitled job)",
-            company: j.company,
-            score: j.match_overall_score,
-            source: j.source || sourceFromUrl(j.normalized_url || j.source_url),
-            chips: dashboardChips(j),
-            onClick: () => openJob(j.id, { redirect: true }),
-          })),
+          state.queue.map((j) => jobToCard(j)),
           `No jobs with a finished tailored resume and score of at least ${state.minScore}.`
         )
       );
@@ -2294,22 +2495,60 @@ function scoreClass(score) {
   return "min";
 }
 
+function scoreLabel(score) {
+  if (score >= 75) return "Strong";
+  if (score >= 50) return "Good";
+  if (score >= 25) return "Fair";
+  return "Low";
+}
+
 function dashboardChips(j) {
   const chips = [];
-  const posted = timeAgo(j.posted_date) || timeAgo(j.created_at);
-  if (posted) chips.push({ label: posted });
-  if (j.is_remote) chips.push({ label: "Remote", tone: "info" });
-  // Docs-ready status - resume PDF is the artifact the autofill uploads.
+  const added = relativeTime(j.created_at);
+  if (added) chips.push({ label: `Added ${added}` });
+  const posted = relativeTime(j.posted_date);
+  if (posted) chips.push({ label: `Posted ${posted}` });
+  if (j.work_mode) {
+    const mode = String(j.work_mode).toLowerCase();
+    const tone = mode === "remote" ? "ok" : mode === "hybrid" ? "warn" : "info";
+    chips.push({ label: mode.charAt(0).toUpperCase() + mode.slice(1), tone });
+  } else if (j.is_remote) {
+    chips.push({ label: "Remote", tone: "ok" });
+  }
+  if (j.salary_raw) chips.push({ label: j.salary_raw });
+  if (j.job_type) chips.push({ label: j.job_type });
+  if (j.match_in_progress) chips.push({ label: "Matching…", tone: "warn", dot: true });
   if (j.resume_pdf_status === "completed") chips.push({ label: "Resume", tone: "ok", dot: true });
   if (j.cover_letter_pdf_status === "completed") chips.push({ label: "Cover letter", tone: "ok", dot: true });
   return chips;
 }
 
+function relativeTime(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
 function appliedChips(j) {
   const chips = [];
-  const when = timeAgo(j.applied_at);
+  const when = relativeTime(j.applied_at);
   chips.push({ label: when ? `Applied ${when}` : "Applied", tone: "ok", dot: true });
-  if (j.is_remote) chips.push({ label: "Remote", tone: "info" });
+  if (j.work_mode) {
+    const mode = String(j.work_mode).toLowerCase();
+    chips.push({ label: mode.charAt(0).toUpperCase() + mode.slice(1), tone: mode === "remote" ? "ok" : "info" });
+  } else if (j.is_remote) {
+    chips.push({ label: "Remote", tone: "info" });
+  }
   return chips;
 }
 
@@ -2440,7 +2679,7 @@ function renderPager(tabId, page, totalPages, total, start, shown) {
 
 function renderHeader() {
   return el("div", { class: "header" }, [
-    el("div", { class: "header-title" }, "Assistant"),
+    el("div", { class: "header-title" }, "Atomspace"),
     el("div", { class: "header-right" }, [
       el("span", { class: "muted small" }, state.user ? state.user.email : ""),
       el("button", { class: "btn link", onclick: () => doLogout() }, "Sign out"),
@@ -2457,6 +2696,14 @@ const ICON_STOP =
   '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 const ICON_CHECK =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const ICON_MAIL =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>';
+const ICON_LOCK =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+const ICON_EYE =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const ICON_EYE_OFF =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.52 13.52 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="M2 2l20 20"/></svg>';
 const ICON_NEXT =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>';
 const ICON_FLAG =
@@ -2574,15 +2821,24 @@ function renderMinScoreControl() {
 const ICON_BRIEFCASE =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>';
 
-function jobCard({ title, company, score, onClick, badge, chips = [], source }) {
+function jobCard({ title, company, location, score, onClick, badge, chips = [], source }) {
   const meta = sourceMeta(source);
   const side = [];
-  if (score != null) side.push(el("span", { class: "score " + scoreClass(score) }, `${score}`));
+  if (score != null) {
+    side.push(
+      el("div", { class: "score-block " + scoreClass(score), title: `Match score: ${score}/100 - ${scoreLabel(score)}` }, [
+        el("span", { class: "score-value" }, `${score}`),
+        el("span", { class: "score-label" }, scoreLabel(score)),
+      ])
+    );
+  }
   if (badge) side.push(el("span", { class: "badge tiny" }, badge));
 
   const logo = meta.short
     ? el("div", { class: "card-logo", title: meta.label || "" }, meta.short)
     : el("div", { class: "card-logo neutral", title: "Other source", html: ICON_BRIEFCASE });
+
+  const subtitle = [company, location].filter(Boolean).join(" · ");
 
   return el(
     "div",
@@ -2591,7 +2847,7 @@ function jobCard({ title, company, score, onClick, badge, chips = [], source }) 
       logo,
       el("div", { class: "card-main" }, [
         el("div", { class: "card-title", title }, title),
-        company ? el("div", { class: "card-sub muted", title: company }, company) : null,
+        subtitle ? el("div", { class: "card-sub muted", title: subtitle }, subtitle) : null,
         chips.length ? el("div", { class: "card-chips" }, chips.map(renderChip)) : null,
       ]),
       side.length ? el("div", { class: "card-side" }, side) : null,

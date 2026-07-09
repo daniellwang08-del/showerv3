@@ -2,7 +2,7 @@
 
 Job-less tailoring: the user pastes a raw job description and the assistant routes the
 request to the existing match-analysis (Phase A) and tailoring (Phase B) services. No
-Job/ValidJob/ResumeBuildResult rows are written — the tailored content is handed back to
+Job/ValidJob/ResumeBuildResult rows are written - the tailored content is handed back to
 the client which injects it straight into the Resume Builder design.
 """
 
@@ -201,7 +201,7 @@ async def _run_pipeline(
     structured_context = build_structured_context(structured_job)
     match_summary = str(match_result.get("summary", "") or "")
 
-    # Project evidence — mirror the per-job pipeline (load inside a session, use after).
+    # Project evidence - mirror the per-job pipeline (load inside a session, use after).
     await _emit(emit, "evidence", "Gathering proof from your projects…")
     project_evidence_context = "No project source evidence available."
     async with get_session() as session:
@@ -225,7 +225,7 @@ async def _run_pipeline(
     jd_for_phase_b = job_text
     if extra_instructions.strip():
         jd_for_phase_b = (
-            f"{job_text}\n\n[Additional tailoring instructions from the candidate — "
+            f"{job_text}\n\n[Additional tailoring instructions from the candidate - "
             f"apply these while keeping all facts truthful: {extra_instructions.strip()}]"
         )
 
@@ -248,7 +248,7 @@ _NO_PROFILE_REPLY = (
     "then paste the job description here and I'll tailor your resume to it."
 )
 _NEED_JD_REPLY = (
-    "Paste the full job description and I'll tailor your resume to it — I can also score how "
+    "Paste the full job description and I'll tailor your resume to it - I can also score how "
     "well you match the role."
 )
 _NOT_A_JOB_REPLY = (
@@ -266,7 +266,7 @@ async def run_resume_ai_chat(
     latest = _latest_user_message(messages)
     if not latest:
         return ResumeAiChatResponse(
-            reply="Paste a job description and tell me what you'd like — tailor your resume or score your match.",
+            reply="Paste a job description and tell me what you'd like - tailor your resume or score your match.",
             intent="chat",
         )
 
@@ -343,7 +343,7 @@ async def run_resume_ai_chat(
     content = _map_tailored(tailored_raw)
     role = " · ".join([p for p in [job_title, company] if p]) or "the role"
     default_reply = (
-        f"Done — I tailored your resume to {role} and loaded it into the builder. "
+        f"Done - I tailored your resume to {role} and loaded it into the builder. "
         "Review and tweak it in the Content tab; your match analysis is below."
     )
     return ResumeAiChatResponse(

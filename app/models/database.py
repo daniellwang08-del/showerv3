@@ -82,6 +82,9 @@ class User(Base):
     cover_letter_prompt_mode = Column(String(20), default="default", nullable=False, server_default="default")
     cover_letter_prompt_custom = Column(Text, nullable=True)
 
+    # Free-text job preferences used by the match analysis engine (Phase A).
+    job_match_preferences = Column(Text, nullable=True)
+
     # Visual resume builder design (theme/typography/colors/layout). Every résumé is
     # compiled from this design; the working template + blueprint are derived from it.
     # These columns MIRROR the currently-active resume in the library (see
@@ -125,9 +128,9 @@ class ResumeDocument(Base):
         index=True,
     )
     name = Column(String(200), nullable=False, default="Untitled resume")
-    # "draft" | "completed" — user-controlled via a "Mark as complete" toggle.
+    # "draft" | "completed" - user-controlled via a "Mark as complete" toggle.
     status = Column(String(20), nullable=False, default="draft", server_default="draft")
-    # "manual" | "tailored" — how the resume was created.
+    # "manual" | "tailored" - how the resume was created.
     source = Column(String(20), nullable=False, default="manual", server_default="manual")
     design = Column(JSON, nullable=True)
     # For tailored resumes: the role this was tailored to (used for naming/labels).
@@ -190,6 +193,7 @@ class JobExtraction(Base):
     posted_date = Column(DateTime, nullable=True)
     application_deadline = Column(DateTime, nullable=True)
     remote_policy = Column(String(500), nullable=True)
+    work_mode = Column(String(20), nullable=True)
     experience_level = Column(String(500), nullable=True)
     industry = Column(String(200), nullable=True)
     raw_metadata = Column(JSON, default=dict)
@@ -219,6 +223,7 @@ class Job(Base):
     title = Column(String(500), nullable=True)
     company = Column(String(500), nullable=False)
     location = Column(String(500), nullable=True)
+    work_mode = Column(String(20), nullable=True)
     description = Column(Text, nullable=True)
     posted_date = Column(DateTime, nullable=True)
     experience_level = Column(String(100), nullable=True)

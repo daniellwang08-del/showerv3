@@ -14,8 +14,26 @@ from app.services.job_exclusion_types import (
     SAME_URL_EXCLUSION,
     STRICT_SIMILARITY_EXCLUSION,
 )
+from app.core.config import get_settings
 from app.services.post_analysis_dedup import run_post_analysis_dedup
 from app.storage.database import close_database, get_session, init_database
+
+
+@pytest.fixture
+def enable_all_dedup_rules():
+    """Re-enable the optional dedup rules (disabled by default) for rule-logic tests."""
+    settings = get_settings()
+    originals = {
+        "dedup_rule_location_unknown_enabled": settings.dedup_rule_location_unknown_enabled,
+        "dedup_rule_applied_company_enabled": settings.dedup_rule_applied_company_enabled,
+        "dedup_rule_score_comparison_enabled": settings.dedup_rule_score_comparison_enabled,
+    }
+    settings.dedup_rule_location_unknown_enabled = True
+    settings.dedup_rule_applied_company_enabled = True
+    settings.dedup_rule_score_comparison_enabled = True
+    yield
+    for key, value in originals.items():
+        setattr(settings, key, value)
 
 
 @pytest.fixture(autouse=True)
@@ -241,7 +259,7 @@ async def test_below_min_score_uses_low_score_exclusion():
 
 
 @pytest.mark.asyncio
-async def test_lower_score_duplicate_when_company_matches():
+async def test_lower_score_duplicate_when_company_matches(enable_all_dedup_rules):
     async with get_session() as session:
         user_id = await _seed_user(session)
         first = await _add_job(
@@ -298,7 +316,7 @@ async def test_non_us_location_is_hidden_in_non_us_tab():
 
 
 @pytest.mark.asyncio
-async def test_unknown_location_is_hidden_in_duplicates_tab():
+async def test_unknown_location_is_hidden_in_duplicates_tab(enable_all_dedup_rules):
     async with get_session() as session:
         user_id = await _seed_user(session)
         job = await _add_job(
@@ -339,6 +357,61 @@ async def test_us_location_passes_location_filter_before_dedup():
         job_id,
         user_id,
         _match_data(82),
+        extraction_id=None,
+    )
+    assert result["action"] == "saved_active"
+
+
+@pytest.mark.asyncio
+async def test_unknown_location_active_when_rule_disabled_by_default():
+    async with get_session() as session:
+        user_id = await _seed_user(session)
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/remote/{uuid.uuid4()}",
+            company="Acme",
+            title="Engineer",
+            location="Remote",
+        )
+        job_id = job.id
+
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        _match_data(82),
+        extraction_id=None,
+    )
+    assert result["action"] == "saved_active"
+
+
+@pytest.mark.asyncio
+async def test_lower_score_same_company_active_when_rule_disabled_by_default():
+    async with get_session() as session:
+        user_id = await _seed_user(session)
+        first = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/a/{uuid.uuid4()}",
+            company="Acme Corp",
+            title="Backend Engineer",
+            location="Boston, MA",
+        )
+        second = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/b/{uuid.uuid4()}",
+            company="Acme Corp",
+            title="Frontend Engineer",
+            location="Boston, MA",
+        )
+        await _add_match(session, first.id, user_id, 80)
+        second_id = second.id
+
+    result = await run_post_analysis_dedup(
+        second_id,
+        user_id,
+        _match_data(60),
         extraction_id=None,
     )
     assert result["action"] == "saved_active"

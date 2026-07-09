@@ -79,6 +79,8 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
       data.default_cover_letter_prompt_instructions ?? '',
     ),
     cover_letter_prompt_max_length: Number(data.cover_letter_prompt_max_length ?? 12000),
+    job_match_preferences: String(data.job_match_preferences ?? ''),
+    job_match_preferences_max_length: Number(data.job_match_preferences_max_length ?? 4000),
     resume_template_status: (data.resume_template_status as UserSettings['resume_template_status']) ?? 'missing',
     resume_template_source_filename: (data.resume_template_source_filename as string | null | undefined) ?? null,
     resume_template_error: (data.resume_template_error as string | null | undefined) ?? null,
@@ -182,6 +184,12 @@ export async function saveResumeTailoringPromptSettings(
 
 export async function saveCoverLetterPromptSettings(
   body: Pick<UserSettingsUpdate, 'cover_letter_prompt_mode' | 'cover_letter_prompt_custom'>,
+) {
+  return updateUserSettings(body);
+}
+
+export async function saveJobMatchPreferences(
+  body: Pick<UserSettingsUpdate, 'job_match_preferences' | 'clear_job_match_preferences'>,
 ) {
   return updateUserSettings(body);
 }

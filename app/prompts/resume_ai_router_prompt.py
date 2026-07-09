@@ -22,7 +22,7 @@ Output JSON shape (no markdown, no extra keys):
 Rules for choosing intent:
 - "tailor": the latest message CONTAINS a job description (a posting with responsibilities/requirements
   /qualifications, or a clear paste of a role), and the user wants a resume for it (or gave no other
-  instruction — pasting a JD defaults to tailoring). Set has_job_description=true.
+  instruction - pasting a JD defaults to tailoring). Set has_job_description=true.
 - "analyze": the user only wants a match score / fit assessment for a job description present in the
   message (e.g. "how well do I match this?", "score this"). Set has_job_description=true.
 - "refine": the user is asking to adjust/improve a resume that was ALREADY tailored earlier in the
@@ -31,7 +31,7 @@ Rules for choosing intent:
 - "chat": greetings, questions about how to use the builder, or anything not covered above. No JD.
 
 has_job_description must be true ONLY when the latest user message itself contains the job posting text.
-Keep "reply" natural and encouraging, e.g. "On it — tailoring your resume to this role now." Never
+Keep "reply" natural and encouraging, e.g. "On it - tailoring your resume to this role now." Never
 include the resume content or scores in "reply"; those are produced separately.
 """
 

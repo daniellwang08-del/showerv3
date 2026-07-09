@@ -4,13 +4,18 @@ import { Link } from 'react-router-dom';
 import { apiClient } from '../../api/client';
 import { ProfileForm } from './ProfileForm';
 import { ResumeImportSection } from './ResumeImportSection';
+import { PageHeader } from '../layout/PageHeader';
+import { BrandedLoader } from '../layout/BrandedLoader';
 import type { UserProfile } from '../../types/profile';
 import type { ProfileFormData } from '../../types/profile';
 import { computeProfileCompletion } from '../../utils/profileCompletion';
+import { formatProfileValidationSummary } from '../../utils/profileValidation';
 
 type Props = {
   onBack: () => void;
   userEmail?: string | null;
+  /** Called after a successful save so the app can refresh the sidebar name. */
+  onProfileSaved?: () => void | Promise<unknown>;
 };
 
 function toPayload(data: ProfileFormData) {
@@ -93,7 +98,7 @@ function ProfileFormSkeleton() {
   );
 }
 
-export function ProfilesManagementPage({ userEmail }: Props) {
+export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -132,6 +137,9 @@ export function ProfilesManagementPage({ userEmail }: Props) {
 
   const completion = useMemo(() => computeProfileCompletion(profile), [profile]);
 
+  const [importDraft, setImportDraft] = useState<ProfileFormData | null>(null);
+  const [importErrors, setImportErrors] = useState<Record<string, string>>({});
+
   const handleSubmit = async (data: ProfileFormData) => {
     try {
       setError('');
@@ -139,6 +147,9 @@ export function ProfilesManagementPage({ userEmail }: Props) {
       const res = await apiClient.put<UserProfile>('/profile', toPayload(data));
       setProfile(res.data);
       setSaveOk(true);
+      // Refresh the authenticated user so the sidebar name/avatar reflect the
+      // just-saved profile name without requiring a page reload.
+      void onProfileSaved?.();
     } catch (err: unknown) {
       let msg = 'Failed to save profile';
       if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ERR_NETWORK') {
@@ -156,43 +167,50 @@ export function ProfilesManagementPage({ userEmail }: Props) {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <BrandedLoader label="Loading your profile…" />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="page-scroll-y min-h-0 flex-1 px-5 py-5">
-        <div className="w-full space-y-8 pb-8">
+      <div className="page-scroll-y min-h-0 flex-1 px-4 py-4">
+        <div className="w-full space-y-5 pb-8">
+          <PageHeader
+            icon={UserCircle2}
+            gradient="from-blue-600 to-indigo-600"
+            title="Your profile"
+            description="Structured profile data powers match summaries, dimension scores, and gap analysis when you run job fit checks."
+          />
+
           {/* Row 1 - overview + import */}
           <section className="space-y-4" aria-label="Profile overview">
             <div className="grid gap-4 xl:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-                <div className="flex items-start gap-4">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white">
-                    <UserCircle2 className="h-7 w-7" />
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white">
+                    <ListChecks className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
-                      Your profile
-                    </h1>
-                    <p className="mt-1.5 text-sm leading-relaxed text-slate-600 md:text-base">
-                      Structured profile data powers match summaries, dimension scores, and gap analysis when you run job fit checks.
+                    <h2 className="text-sm font-bold text-slate-900">Profile strength</h2>
+                    <p className="mt-0.5 text-xs leading-snug text-slate-500">
+                      How complete your saved profile is for AI matching.
                     </p>
 
                     {!loading ? (
-                      <div className="mt-5 border-t border-slate-200 pt-5">
-                        <div className="flex flex-wrap items-end justify-between gap-3">
-                          <div className="flex items-center gap-2">
-                            <ListChecks className="h-4 w-4 shrink-0 text-blue-600" aria-hidden />
-                            <div>
-                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Saved profile strength</p>
-                              <p className="mt-0.5 text-sm text-slate-700">
-                                <span className="font-semibold text-slate-900">
-                                  {completion.requiredFilled} of {completion.requiredTotal} core areas
-                                </span>{' '}
-                                complete from your last save
-                              </p>
-                            </div>
-                          </div>
+                      <div className="mt-4 border-t border-slate-200 pt-4">
+                        <div className="flex flex-wrap items-end justify-between gap-2">
+                          <p className="text-sm text-slate-700">
+                            <span className="font-semibold text-slate-900">
+                              {completion.requiredFilled} of {completion.requiredTotal} core areas
+                            </span>{' '}
+                            complete from your last save
+                          </p>
                           <p
-                            className="text-3xl font-bold tabular-nums leading-none text-blue-800"
+                            className="text-2xl font-bold tabular-nums leading-none text-blue-800"
                             aria-live="polite"
                             aria-atomic="true"
                           >
@@ -200,7 +218,7 @@ export function ProfilesManagementPage({ userEmail }: Props) {
                           </p>
                         </div>
                         <div
-                          className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-slate-200"
+                          className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-slate-200"
                           role="progressbar"
                           aria-valuemin={0}
                           aria-valuemax={100}
@@ -261,7 +279,16 @@ export function ProfilesManagementPage({ userEmail }: Props) {
               {loading ? (
                 <div className="h-full min-h-[220px] rounded-2xl border border-slate-200 bg-slate-100/80 animate-pulse" />
               ) : (
-                <ResumeImportSection profile={profile} accountEmail={userEmail ?? undefined} applyProfile={handleSubmit} />
+                <ResumeImportSection
+                  profile={profile}
+                  accountEmail={userEmail ?? undefined}
+                  applyProfile={handleSubmit}
+                  onDraftToForm={(data, errors) => {
+                    setImportDraft(data);
+                    setImportErrors(errors);
+                    setError(formatProfileValidationSummary(errors));
+                  }}
+                />
               )}
             </div>
 
@@ -295,9 +322,9 @@ export function ProfilesManagementPage({ userEmail }: Props) {
 
           {/* Row 2 - editable profile sections */}
           <section aria-label="Profile details">
-            <div className="mb-4 border-b border-slate-200 pb-3">
-              <h2 className="text-lg font-bold text-slate-900">Profile details</h2>
-              <p className="mt-1 text-sm text-slate-600">
+            <div className="mb-3 border-b border-slate-200 pb-2.5">
+              <h2 className="text-base font-bold text-slate-900">Profile details</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
                 Edit each section and save independently. All fields are used for AI matching.
               </p>
             </div>
@@ -305,7 +332,16 @@ export function ProfilesManagementPage({ userEmail }: Props) {
             {loading ? (
               <ProfileFormSkeleton />
             ) : (
-              <ProfileForm profile={profile} onSubmit={handleSubmit} />
+              <ProfileForm
+                profile={profile}
+                onSubmit={handleSubmit}
+                importDraft={importDraft}
+                importErrors={importErrors}
+                onImportDraftApplied={() => {
+                  setImportDraft(null);
+                  setImportErrors({});
+                }}
+              />
             )}
           </section>
         </div>

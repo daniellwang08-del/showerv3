@@ -923,9 +923,12 @@ _SUMMARY_TITLE = "Professional Summary"
 _SUMMARY_TAG = "{{PROFILE_SUMMARY}}"
 
 
-def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool) -> list:
+def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool, *, title: str = _SUMMARY_TITLE) -> list:
     """Emit the styled summary heading into *target*. Returns the paragraphs created
-    (empty for hidden / inline titles, which fold the label into the body)."""
+    (empty for hidden / inline titles, which fold the label into the body).
+
+    ``title`` overrides the default "Professional Summary" label so the same styled
+    heading can be reused as the cover letter's "Cover Letter" section title."""
     typo = design.typography
     # 'side' degrades to an above-title in the .docx (clean and width-safe).
     mode = "above" if st.title == "side" else st.title
@@ -946,7 +949,7 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool) -> lis
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER if st.align == "center" else WD_ALIGN_PARAGRAPH.LEFT
         _add_top_border(p, accent_hex)
         p.paragraph_format.space_before = Pt(2)
-        run = p.add_run(_SUMMARY_TITLE.upper())
+        run = p.add_run(title.upper())
         _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt * 0.95, color=title_color, bold=True, caps=True)
         return [p]
 
@@ -954,7 +957,7 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool) -> lis
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER if st.align == "center" else WD_ALIGN_PARAGRAPH.LEFT
         badge_bg = "#ffffff" if on_solid else design.colors.accent
         badge_fg = design.colors.accent if on_solid else "#ffffff"
-        run = p.add_run(f"  {_SUMMARY_TITLE.upper()}  ")
+        run = p.add_run(f"  {title.upper()}  ")
         _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt * 0.82, color=_hex_to_rgb(badge_fg), bold=True, caps=True)
         _set_run_shading(run, badge_bg)
         return [p]
@@ -968,7 +971,7 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool) -> lis
         dot = p.add_run("\u25cf ")
         _set_run(dot, font=typo.font_family, size_pt=typo.base_font_pt, color=accent_color, bold=True)
 
-    run = p.add_run(_SUMMARY_TITLE.upper() if upper else _SUMMARY_TITLE)
+    run = p.add_run(title.upper() if upper else title)
     if st.title_accent == "box":
         _set_run(run, font=typo.font_family, size_pt=size, color=_hex_to_rgb("#ffffff"), bold=True, caps=upper)
         _set_run_shading(run, design.colors.accent)
@@ -982,7 +985,7 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool) -> lis
     return [p]
 
 
-def _summary_emit_body(target, design: ResumeDesign, st, on_solid: bool):
+def _summary_emit_body(target, design: ResumeDesign, st, on_solid: bool, *, title: str = _SUMMARY_TITLE, tag: str = _SUMMARY_TAG):
     typo = design.typography
     body_color = _hex_to_rgb("#ffffff" if on_solid else design.colors.text)
     p = target.add_paragraph()
@@ -994,7 +997,7 @@ def _summary_emit_body(target, design: ResumeDesign, st, on_solid: bool):
     p.paragraph_format.space_after = Pt(0)
     if st.title == "inline":
         upper = typo.uppercase_headings
-        lead = p.add_run((_SUMMARY_TITLE.upper() if upper else _SUMMARY_TITLE) + ".  ")
+        lead = p.add_run((title.upper() if upper else title) + ".  ")
         _set_run(
             lead,
             font=typo.font_family,
@@ -1003,14 +1006,16 @@ def _summary_emit_body(target, design: ResumeDesign, st, on_solid: bool):
             bold=True,
             caps=upper,
         )
-    run = p.add_run(_SUMMARY_TAG)
+    run = p.add_run(tag)
     _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt, color=body_color, bold=False)
     if st.italic:
         run.font.italic = True
     return p
 
 
-def _render_summary(container, design: ResumeDesign) -> None:
+def _render_summary(container, design: ResumeDesign, *, title: str = _SUMMARY_TITLE, tag: str = _SUMMARY_TAG) -> None:
+    """Render the summary section. ``title``/``tag`` are overridable so the cover
+    letter can reuse this exact styled section as its "Cover Letter" body block."""
     st = design.sections.summary_style
     on_solid = st.surface in ("solid", "gradient")
     has_box = st.surface != "none" or st.border != "none"
@@ -1038,13 +1043,13 @@ def _render_summary(container, design: ResumeDesign) -> None:
         pad_tw = max(60, int(round(st.pad_pt * 20)))
         _set_cell_margins(cell, top=pad_tw, bottom=pad_tw, left=pad_tw, right=pad_tw)
 
-        _summary_emit_title(cell, design, st, on_solid)
-        _summary_emit_body(cell, design, st, on_solid)
+        _summary_emit_title(cell, design, st, on_solid, title=title)
+        _summary_emit_body(cell, design, st, on_solid, title=title, tag=tag)
         _remove_leading_empty(cell)
         return
 
-    paras = _summary_emit_title(container, design, st, on_solid)
-    body = _summary_emit_body(container, design, st, on_solid)
+    paras = _summary_emit_title(container, design, st, on_solid, title=title)
+    body = _summary_emit_body(container, design, st, on_solid, title=title, tag=tag)
     first = paras[0] if paras else body
     first.paragraph_format.space_before = Pt(gap)
 

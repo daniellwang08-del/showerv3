@@ -2,12 +2,12 @@
 
 The résumé/cover-letter build engine renders from ``users.resume_template_design``
 (a mirror of the active library resume). Users who have a library resume but a NULL
-mirror — e.g. from a partial/older save — otherwise fall back to the default theme on
+mirror - e.g. from a partial/older save - otherwise fall back to the default theme on
 every tailored résumé. Copy the active (or most-recent) library resume's design into the
 mirror so the build renders their real design.
 
 Users with no library resume at all (legacy uploaded-template users) have no design to
-recover and are intentionally left NULL — they render with the default theme until they
+recover and are intentionally left NULL - they render with the default theme until they
 save a design in the builder.
 
 Revision ID: 044_backfill_design_mirror

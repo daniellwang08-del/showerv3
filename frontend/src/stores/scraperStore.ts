@@ -176,6 +176,20 @@ export interface AgentDashboardFilters {
   reset?: boolean;
 }
 
+/** Point-in-time dashboard filters the agent can restore via "Discard". */
+export interface AgentDashboardSnapshot {
+  view: DashboardView;
+  remoteOnly: boolean;
+  minScore: number;
+  sourceFilter: string;
+  searchQuery: string;
+  titleFilter: string;
+  companyFilter: string;
+  sortField: string;
+  sortOrder: 'asc' | 'desc';
+  page: number;
+}
+
 interface ScraperState {
   jobs: DashboardJob[];
   total: number;
@@ -266,6 +280,10 @@ interface ScraperState {
   setSort: (field: string) => void;
   /** Apply a batch of filter/view changes from the AI agent, then reload once. */
   applyAgentDashboard: (filters: AgentDashboardFilters) => void;
+  /** Capture current dashboard filters before an agent mutation. */
+  captureAgentDashboardSnapshot: () => AgentDashboardSnapshot;
+  /** Restore dashboard filters from a pre-agent snapshot. */
+  restoreAgentDashboardSnapshot: (snapshot: AgentDashboardSnapshot) => void;
 }
 
 function localTimezone(): string {
@@ -874,6 +892,38 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     const s = get();
     const order = s.sortField === field && s.sortOrder === 'desc' ? 'asc' : 'desc';
     set({ sortField: field, sortOrder: order, page: 1 });
+    get().loadJobs();
+  },
+
+  captureAgentDashboardSnapshot: () => {
+    const s = get();
+    return {
+      view: s.view,
+      remoteOnly: s.remoteOnly,
+      minScore: s.minScore,
+      sourceFilter: s.sourceFilter,
+      searchQuery: s.searchQuery,
+      titleFilter: s.titleFilter,
+      companyFilter: s.companyFilter,
+      sortField: s.sortField,
+      sortOrder: s.sortOrder,
+      page: s.page,
+    };
+  },
+
+  restoreAgentDashboardSnapshot: (snapshot) => {
+    set({
+      view: snapshot.view,
+      remoteOnly: snapshot.remoteOnly,
+      minScore: snapshot.minScore,
+      sourceFilter: snapshot.sourceFilter,
+      searchQuery: snapshot.searchQuery,
+      titleFilter: snapshot.titleFilter,
+      companyFilter: snapshot.companyFilter,
+      sortField: snapshot.sortField,
+      sortOrder: snapshot.sortOrder,
+      page: snapshot.page,
+    });
     get().loadJobs();
   },
 

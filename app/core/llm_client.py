@@ -39,6 +39,7 @@ fallback branch bypasses Langfuse (Anthropic is not auto-instrumented here).
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json as json_lib
 import time
@@ -47,9 +48,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
-import openai as _openai_pkg
-import anthropic as _anthropic_pkg
-from anthropic import AsyncAnthropic
 
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
@@ -64,16 +62,63 @@ try:
 except ImportError:  # pragma: no cover - hard dependency
     _repair_json = None  # type: ignore[assignment]
 
-try:
-    from langfuse.openai import AsyncOpenAI  # type: ignore[import-unresolved]
-
-    _LANGFUSE_AVAILABLE = True
-except ImportError:
-    from openai import AsyncOpenAI
-
-    _LANGFUSE_AVAILABLE = False
-
 logger = get_logger(__name__)
+
+
+# ── Lazy SDK loading ───────────────────────────────────────────────────────
+#
+# ``openai`` and ``anthropic`` build large Pydantic model trees at import time
+# (~1.9 s combined on a cold start). Importing them eagerly at module load
+# taxed every API/worker process boot even though the SDKs are only needed on
+# the first LLM call. We defer the imports behind cached accessors so process
+# startup stays fast and the SDK cost is paid once, lazily, when a client is
+# first constructed. ``functools.lru_cache`` guarantees each import runs once.
+
+
+@functools.lru_cache(maxsize=1)
+def _openai_module() -> Any:
+    import openai
+
+    return openai
+
+
+@functools.lru_cache(maxsize=1)
+def _anthropic_module() -> Any:
+    import anthropic
+
+    return anthropic
+
+
+@functools.lru_cache(maxsize=1)
+def _async_openai_and_langfuse() -> tuple[Any, bool]:
+    """Return ``(AsyncOpenAI class, langfuse_available)``.
+
+    Prefer the Langfuse-instrumented client when Langfuse is installed so
+    OpenAI calls are traced; fall back to the plain SDK otherwise.
+    """
+    try:
+        from langfuse.openai import AsyncOpenAI  # type: ignore[import-unresolved]
+
+        return AsyncOpenAI, True
+    except ImportError:
+        from openai import AsyncOpenAI
+
+        return AsyncOpenAI, False
+
+
+def _get_async_openai_cls() -> Any:
+    return _async_openai_and_langfuse()[0]
+
+
+def _langfuse_available() -> bool:
+    return _async_openai_and_langfuse()[1]
+
+
+@functools.lru_cache(maxsize=1)
+def _get_async_anthropic_cls() -> Any:
+    from anthropic import AsyncAnthropic
+
+    return AsyncAnthropic
 
 
 # ── Error classification ───────────────────────────────────────────────────
@@ -91,28 +136,38 @@ logger = get_logger(__name__)
 # indicate our request is malformed and the same payload would also fail
 # against Anthropic.
 
-OPENAI_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
-    _openai_pkg.RateLimitError,
-    _openai_pkg.AuthenticationError,
-    _openai_pkg.PermissionDeniedError,
-    _openai_pkg.APIConnectionError,
-    _openai_pkg.APITimeoutError,
-    _openai_pkg.InternalServerError,
-)
+# These tuples reference the SDK exception classes, so they are resolved lazily
+# (on first LLM error) to avoid importing openai/anthropic at module load.
+@functools.lru_cache(maxsize=1)
+def _openai_fallback_errors() -> tuple[type[Exception], ...]:
+    openai = _openai_module()
+    return (
+        openai.RateLimitError,
+        openai.AuthenticationError,
+        openai.PermissionDeniedError,
+        openai.APIConnectionError,
+        openai.APITimeoutError,
+        openai.InternalServerError,
+    )
+
 
 # Gemini is reached through the OpenAI-compatible endpoint using the OpenAI SDK,
 # so it raises the same ``openai.*`` exception types - reuse the same set.
-GEMINI_FALLBACK_ERRORS: tuple[type[Exception], ...] = OPENAI_FALLBACK_ERRORS
+_gemini_fallback_errors = _openai_fallback_errors
+
 
 # Equivalent recoverable-error classification for a primary Anthropic provider.
-ANTHROPIC_FALLBACK_ERRORS: tuple[type[Exception], ...] = (
-    _anthropic_pkg.RateLimitError,
-    _anthropic_pkg.AuthenticationError,
-    _anthropic_pkg.PermissionDeniedError,
-    _anthropic_pkg.APIConnectionError,
-    _anthropic_pkg.APITimeoutError,
-    _anthropic_pkg.InternalServerError,
-)
+@functools.lru_cache(maxsize=1)
+def _anthropic_fallback_errors() -> tuple[type[Exception], ...]:
+    anthropic = _anthropic_module()
+    return (
+        anthropic.RateLimitError,
+        anthropic.AuthenticationError,
+        anthropic.PermissionDeniedError,
+        anthropic.APIConnectionError,
+        anthropic.APITimeoutError,
+        anthropic.InternalServerError,
+    )
 
 
 # ── Circuit breaker ───────────────────────────────────────────────────────
@@ -584,7 +639,7 @@ def _is_openai_reasoning_model(model: str) -> bool:
     # o-series reasoning models: o1, o3, o4-mini, …
     if m.startswith(("o1", "o3", "o4")):
         return True
-    # GPT-5 reasoning models — exclude chat variants (e.g. gpt-5-chat-latest).
+    # GPT-5 reasoning models - exclude chat variants (e.g. gpt-5-chat-latest).
     if m.startswith("gpt-5") and "chat" not in m:
         return True
     return False
@@ -639,7 +694,10 @@ class _OpenAIAdapter:
     """
 
     name = "openai"
-    recoverable_errors = OPENAI_FALLBACK_ERRORS
+
+    @property
+    def recoverable_errors(self) -> tuple[type[Exception], ...]:
+        return _openai_fallback_errors()
 
     def __init__(self, client: AsyncOpenAI, model: str) -> None:
         self._client = client
@@ -670,7 +728,10 @@ class _GeminiAdapter:
     """
 
     name = "gemini"
-    recoverable_errors = GEMINI_FALLBACK_ERRORS
+
+    @property
+    def recoverable_errors(self) -> tuple[type[Exception], ...]:
+        return _gemini_fallback_errors()
 
     def __init__(self, client: AsyncOpenAI, model: str) -> None:
         self._client = client
@@ -709,7 +770,10 @@ class _GeminiAdapter:
 
 class _AnthropicAdapter:
     name = "anthropic"
-    recoverable_errors = ANTHROPIC_FALLBACK_ERRORS
+
+    @property
+    def recoverable_errors(self) -> tuple[type[Exception], ...]:
+        return _anthropic_fallback_errors()
 
     def __init__(self, client: AsyncAnthropic, model: str, default_max_tokens: int) -> None:
         self._client = client
@@ -998,7 +1062,8 @@ def _build_openai_client(api_key: str) -> AsyncOpenAI | None:
         return None
     settings = get_settings()
     t = settings.openai_timeout_seconds
-    return AsyncOpenAI(
+    async_openai_cls = _get_async_openai_cls()
+    return async_openai_cls(
         api_key=api_key,
         max_retries=0,
         timeout=httpx.Timeout(t, connect=min(30.0, t)),
@@ -1028,7 +1093,8 @@ def _build_anthropic_client(api_key: str) -> AsyncAnthropic | None:
         return None
     settings = get_settings()
     t = settings.anthropic_timeout_seconds
-    return AsyncAnthropic(
+    async_anthropic_cls = _get_async_anthropic_cls()
+    return async_anthropic_cls(
         api_key=api_key,
         max_retries=0,
         timeout=httpx.Timeout(t, connect=min(30.0, t)),
@@ -1129,7 +1195,7 @@ def get_llm_client(
         primary_provider=client.primary_provider,
         providers=[a.name for a in adapters],
         fallback_enabled=settings.llm_fallback_enabled,
-        langfuse_tracing=_LANGFUSE_AVAILABLE and settings.langfuse_enabled,
+        langfuse_tracing=_langfuse_available() and settings.langfuse_enabled,
     )
     return client
 

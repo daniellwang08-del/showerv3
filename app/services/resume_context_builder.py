@@ -319,7 +319,7 @@ def build_preview_tailored(user: User) -> dict[str, Any]:
             intro = f"Sample accomplishments at {row.get('company_name') or 'the organization'}."
         # Mirror the live preview: bullets come from structured contributions when
         # present, otherwise the fill engine parses them out of the description/intro.
-        # Do NOT inject a placeholder bullet here — the React preview never adds one,
+        # Do NOT inject a placeholder bullet here - the React preview never adds one,
         # so injecting it makes the rendered DOCX one bullet taller per job than the
         # preview and silently overflows onto an extra page.
         contributions = row.get("contributions") or []

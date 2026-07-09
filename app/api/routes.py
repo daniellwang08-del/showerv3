@@ -51,7 +51,6 @@ from app.api.websocket import publish_ws_event
 from app.extractors.browser_extractor import get_browser_pool_safe
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, get_logger
-from openai import APIError as OpenAIAPIError
 from app.core.exceptions import AIParsingError
 from app.services.job_ai_search_service import apply_job_search_spec, interpret_job_search_prompt
 from app.services.resume_parse_service import parse_resume_bytes
@@ -64,19 +63,31 @@ from app.models.database import (
     ValidJobUserApplication,
     ResumeBuildResult,
 )
-from sqlalchemy import delete as sa_delete, select, func, update as sa_update, nullslast, text
+from sqlalchemy import delete as sa_delete, select, func, update as sa_update, nullslast, text, and_, or_
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from datetime import datetime, timedelta, timezone
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 from app.services.attachment_text_extract import combine_file_texts, extract_text_from_bytes
 from app.services.attachment_job_url_ai import extract_job_urls_from_text_combined
-from app.services.job_field_utils import resolve_job_display_title
+from app.services.job_field_utils import resolve_display_work_mode, resolve_job_display_title
 from app.storage.repository import _utcnow
 from app.utils.date_bounds import day_bounds_for_timezone
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+def _openai_api_error() -> type[Exception]:
+    """Lazily resolve ``openai.APIError`` for ``except`` clauses.
+
+    Importing the OpenAI SDK at module load added ~1 s to API startup. These
+    handlers only run after an LLM call (which already imported the SDK), so
+    resolving the class on demand keeps startup fast without changing behavior.
+    """
+    from openai import APIError
+
+    return APIError
 
 BLOCKED_DOMAINS: dict[str, str] = {
     "paycomonline.net": "Paycom ATS requires lengthy manual registration; auto-extraction not supported.",
@@ -90,6 +101,17 @@ def _check_domain_blocked(domain: str) -> str | None:
         if lowered == blocked or lowered.endswith(f".{blocked}"):
             return reason
     return None
+
+
+def _check_extraction_blocked(url: str) -> str | None:
+    """Return a block reason when *url* must not enter extraction, else None."""
+    from app.services.linkedin_job_filter import linkedin_job_block_reason
+
+    domain = URLManager.extract_domain(url)
+    domain_reason = _check_domain_blocked(domain)
+    if domain_reason:
+        return domain_reason
+    return linkedin_job_block_reason(url)
 
 
 class JobUrlUpdateRequest(BaseModel):
@@ -481,7 +503,7 @@ async def resume_parse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e) or "Résumé parsing failed. Check OPENAI_API_KEY and model access.",
         )
-    except OpenAIAPIError as e:
+    except _openai_api_error() as e:
         logger.warning("resume_parse_openai_error", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -879,7 +901,7 @@ async def extract_job(
 
     domain = URLManager.extract_domain(url)
 
-    block_reason = _check_domain_blocked(domain)
+    block_reason = _check_extraction_blocked(url)
     if block_reason:
         raise HTTPException(status_code=400, detail=block_reason)
 
@@ -922,7 +944,7 @@ async def extract_batch(
                 continue
 
             domain = URLManager.extract_domain(url_str)
-            if _check_domain_blocked(domain):
+            if _check_extraction_blocked(url_str):
                 continue
 
             extraction = await repository.create(
@@ -990,6 +1012,7 @@ def _build_response(extraction) -> ExtractionResponse:
             posted_date=extraction.posted_date,
             application_deadline=extraction.application_deadline,
             remote_policy=extraction.remote_policy,
+            work_mode=extraction.work_mode,
             experience_level=extraction.experience_level,
             industry=extraction.industry,
             raw_metadata=extraction.raw_metadata or {},
@@ -1050,8 +1073,16 @@ async def submit_job(
     domain = URLManager.extract_domain(request.url)
 
     async with get_session() as session:
-        block_reason = _check_domain_blocked(domain)
+        block_reason = _check_extraction_blocked(request.url)
         if block_reason:
+            from app.services.job_exclusion_types import BLOCKED_DOMAIN_EXCLUSION, LINKEDIN_JOB_EXCLUSION
+            from app.services.linkedin_job_filter import is_linkedin_job_url
+
+            exclusion_type = (
+                LINKEDIN_JOB_EXCLUSION
+                if is_linkedin_job_url(request.url)
+                else BLOCKED_DOMAIN_EXCLUSION
+            )
             blocked_job = Job(
                 source_url=request.url,
                 normalized_url=normalized_url,
@@ -1075,7 +1106,7 @@ async def submit_job(
                     user_id=user_id,
                     job_id=blocked_job.id,
                     status="duplicated",
-                    exclusion_type="blocked_domain",
+                    exclusion_type=exclusion_type,
                     reason=block_reason,
                 )
             await session.commit()
@@ -1363,7 +1394,15 @@ def _dashboard_search_clauses(
     if source:
         clauses.append(Job.raw_metadata["source"].as_string() == source)
     if remote_only:
-        clauses.append(Job.raw_metadata["is_remote"].as_boolean() == True)  # noqa: E712
+        clauses.append(
+            or_(
+                Job.work_mode == "remote",
+                and_(
+                    Job.work_mode.is_(None),
+                    Job.raw_metadata["is_remote"].as_boolean() == True,  # noqa: E712
+                ),
+            )
+        )
     return clauses
 
 
@@ -1485,6 +1524,8 @@ async def get_dashboard_jobs(
                 JobExtraction.status.label("ext_status"),
                 JobExtraction.is_job_posting,
                 JobExtraction.salary_range,
+                JobExtraction.work_mode,
+                JobExtraction.remote_policy,
                 JobMatchResult.overall_score,
                 JobMatchInProgress.id.label("match_progress_id"),
                 ResumeBuildResult.resume_docx_status,
@@ -1529,12 +1570,18 @@ async def get_dashboard_jobs(
 
         items = []
         for (
-            job, ext_status, is_job_posting, ext_salary_range, match_score,
+            job, ext_status, is_job_posting, ext_salary_range, ext_work_mode, ext_remote_policy, match_score,
             match_progress_id, rb_docx_status, cg_status,
             rb_pdf_status, rb_pdf_path, cl_pdf_status, cl_pdf_path,
             applied_at, applied_by_name, ujs_status,
         ) in rows:
             meta = job.raw_metadata or {}
+            work_mode = resolve_display_work_mode(
+                analysis_work_mode=ext_work_mode or job.work_mode,
+                location=job.location,
+                remote_policy=ext_remote_policy,
+                is_remote=bool(meta.get("is_remote", False)),
+            )
             items.append(
                 DashboardJobResponse(
                     id=job.id,
@@ -1566,7 +1613,8 @@ async def get_dashboard_jobs(
                     sheet_posted_at=job.sheet_posted_at,
                     user_status=ujs_status,
                     source=meta.get("source"),
-                    is_remote=bool(meta.get("is_remote", False)),
+                    is_remote=work_mode == "remote" or bool(meta.get("is_remote", False)),
+                    work_mode=work_mode,
                     salary_raw=ext_salary_range or meta.get("salary_raw"),
                     job_type=meta.get("job_type"),
                 )
@@ -1747,7 +1795,7 @@ async def ai_search_valid_jobs(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
         spec = await interpret_job_search_prompt(body.prompt, user_id=user_id)
-    except OpenAIAPIError as e:
+    except _openai_api_error() as e:
         logger.warning("ai_search_openai_error", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1981,6 +2029,7 @@ async def get_job_analysis_panel(
                         posted_date=extraction.posted_date,
                         application_deadline=extraction.application_deadline,
                         remote_policy=extraction.remote_policy,
+                        work_mode=extraction.work_mode,
                         experience_level=extraction.experience_level,
                         industry=extraction.industry,
                         raw_metadata=extraction.raw_metadata or {},
@@ -2144,7 +2193,7 @@ async def _prepare_job_rescrape_in_session(
     if not is_valid:
         raise ValueError(error or "Invalid URL")
 
-    block_reason = _check_domain_blocked(URLManager.extract_domain(source_url))
+    block_reason = _check_extraction_blocked(source_url)
     if block_reason:
         raise ValueError(block_reason)
 
@@ -2640,6 +2689,8 @@ class UserSettingsResponse(BaseModel):
     cover_letter_prompt_instructions_custom: str
     default_cover_letter_prompt_instructions: str
     cover_letter_prompt_max_length: int
+    job_match_preferences: str = ""
+    job_match_preferences_max_length: int = 4000
     resume_template_status: str
     resume_template_source_filename: str | None = None
     resume_template_error: str | None = None
@@ -2674,6 +2725,8 @@ class UserSettingsUpdateRequest(BaseModel):
     resume_tailoring_prompt_custom: str | None = Field(default=None, max_length=12000)
     cover_letter_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     cover_letter_prompt_custom: str | None = Field(default=None, max_length=12000)
+    job_match_preferences: str | None = Field(default=None, max_length=4000)
+    clear_job_match_preferences: bool = False
 
 
 class OpenAiKeyTestRequest(BaseModel):
@@ -2942,6 +2995,8 @@ async def update_user_settings(
                 resume_tailoring_prompt_custom=body.resume_tailoring_prompt_custom,
                 cover_letter_prompt_mode=body.cover_letter_prompt_mode,
                 cover_letter_prompt_custom=body.cover_letter_prompt_custom,
+                job_match_preferences=body.job_match_preferences,
+                clear_job_match_preferences=body.clear_job_match_preferences,
             )
             await session.commit()
         except ValueError as e:
@@ -3096,7 +3151,7 @@ async def resume_builder_ai_chat(
       {"stage": "routing"|"analyzing"|"evidence"|"tailoring", "label": "..."}  # progress
       {"stage": "done", "result": <ResumeAiChatResponse json>}                  # success
       {"stage": "error", "message": "..."}                                     # failure
-    Job-less — nothing is persisted; the tailored content is returned to the builder."""
+    Job-less - nothing is persisted; the tailored content is returned to the builder."""
     import json as _json
 
     from app.services.resume_ai_chat_service import run_resume_ai_chat
@@ -3450,7 +3505,7 @@ async def promote_invalid_to_valid(
             logger.warning("promote_invalid_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Job not found")
 
-        block_reason = _check_domain_blocked(job.domain)
+        block_reason = _check_extraction_blocked(job.source_url or "")
         if block_reason:
             raise HTTPException(status_code=400, detail=block_reason)
 

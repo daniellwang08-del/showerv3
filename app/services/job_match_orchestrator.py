@@ -243,6 +243,7 @@ async def run_job_match_analysis(
                     settings.auto_generate_tailored_content
                     and has_profile
                     and is_job_posting
+                    and not result.get("requires_security_clearance")
                 )
                 result["extraction_id"] = ext_id
                 result["structured_company"] = structured_company
@@ -313,6 +314,7 @@ async def run_tailored_content_generation(
                     requirements=extraction.requirements or [],
                     benefits=extraction.benefits or [],
                     remote_policy=extraction.remote_policy,
+                    work_mode=extraction.work_mode,
                     experience_level=extraction.experience_level,
                     industry=extraction.industry,
                 )

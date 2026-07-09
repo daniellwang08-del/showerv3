@@ -124,7 +124,7 @@ const APPLY_EVENT = 'atomspace-apply';
  *
  * IMPORTANT: call this synchronously inside the click handler (do NOT `await`
  * anything before it). It dispatches a synchronous DOM CustomEvent so the
- * extension can open the side panel while the user gesture is still valid —
+ * extension can open the side panel while the user gesture is still valid -
  * user activation would be lost through window.postMessage or any async gap.
  *
  * Returns a promise that resolves `true` once the in-page bridge acknowledges
@@ -154,7 +154,7 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
     window.addEventListener('message', onMessage);
   });
 
-  // Synchronous dispatch — must run within the caller's user gesture.
+  // Synchronous dispatch - must run within the caller's user gesture.
   try {
     document.dispatchEvent(
       new CustomEvent(APPLY_EVENT, {

@@ -345,7 +345,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
         resumes: lib.resumes,
         activeResumeId: lib.active_id,
       };
-      // If we deleted the active resume, the backend re-activated another one — load it.
+      // If we deleted the active resume, the backend re-activated another one - load it.
       if (wasActive) {
         const active = lib.resumes.find((r) => r.id === lib.active_id) ?? null;
         if (active) {

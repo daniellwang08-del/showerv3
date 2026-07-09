@@ -17,7 +17,7 @@ interface ResumeAiSseFrame {
  *
  *  Streams Server-Sent Events; `onStage` is called for each progress step
  *  (routing → analyzing → evidence → tailoring). Resolves with the final tailored
- *  result. Job-less — the backend persists nothing. */
+ *  result. Job-less - the backend persists nothing. */
 export async function streamResumeAiChat(
   messages: ResumeAiChatRequestMessage[],
   lastJobDescription: string | null,

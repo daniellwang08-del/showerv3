@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, Loader2, Mail, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
+import { PageHeader } from '../components/layout/PageHeader';
+import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { ThemeGallery } from '../components/resumeBuilder/ThemeGallery';
 import { TypographyControls } from '../components/resumeBuilder/TypographyControls';
 import { ColorControls } from '../components/resumeBuilder/ColorControls';
@@ -146,10 +148,7 @@ export function ResumeBuilderPage() {
   if (store.loading || !store.design || !store.catalog) {
     return (
       <PageScrollArea>
-        <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-500">
-          <Loader2 size={18} className="animate-spin text-blue-500" />
-          {store.error ?? 'Loading resume builder…'}
-        </div>
+        <BrandedLoader label={store.error ?? 'Loading resume builder…'} />
       </PageScrollArea>
     );
   }
@@ -165,30 +164,26 @@ export function ResumeBuilderPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 px-5 pt-5">
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white">
-              <FileText size={22} />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">Resume Builder</h1>
-              <p className="mt-0.5 text-sm text-slate-600">
-                Pick a theme and fine-tune styling. Changes save automatically and update your active resume template.
-              </p>
-            </div>
-          </div>
-          <Toolbar
-            dirty={dirty}
-            saving={store.saving}
-            previewing={previewing}
-            downloading={downloading}
-            ready={store.ready}
-            onReset={store.resetToSaved}
-            onPreview={() => void handlePreview()}
-            onDownload={() => void handleDownload()}
-          />
-        </div>
+      <div className="shrink-0 px-4 pt-4">
+        <PageHeader
+          icon={FileText}
+          gradient="from-blue-600 to-indigo-600"
+          title="Resume Builder"
+          description="Pick a theme and fine-tune styling. Changes save automatically and update your active resume template."
+          className="mb-4"
+          actions={
+            <Toolbar
+              dirty={dirty}
+              saving={store.saving}
+              previewing={previewing}
+              downloading={downloading}
+              ready={store.ready}
+              onReset={store.resetToSaved}
+              onPreview={() => void handlePreview()}
+              onDownload={() => void handleDownload()}
+            />
+          }
+        />
 
         {store.saveError && (
           <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

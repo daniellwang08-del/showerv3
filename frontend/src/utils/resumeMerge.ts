@@ -4,6 +4,7 @@ import {
   type ProfileFormData,
   type TechnicalSkillBlock,
   type WorkExperienceBlock,
+  inferJobArrangement,
   isValidJobArrangement,
 } from '../types/profile';
 import type { UserProfile } from '../types/profile';
@@ -82,26 +83,41 @@ function hasMeaningfulExtra(form: ProfileFormData): boolean {
   return form.extra.some((x) => x.trim());
 }
 
-export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | undefined): Partial<ProfileFormData> {
-  const pick = (v: string | null | undefined) => (v != null && String(v).trim() ? String(v).trim() : undefined);
+function pick(v: string | null | undefined) {
+  return v != null && String(v).trim() ? String(v).trim() : undefined;
+}
 
+function normalizeLinkedIn(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const u = url.trim();
+  if (!u) return undefined;
+  if (!/^https?:\/\//i.test(u)) return `https://${u.replace(/^\/+/, '')}`;
+  return u;
+}
+
+export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | undefined): Partial<ProfileFormData> {
   const skills: TechnicalSkillBlock[] = (draft.technical_skills ?? [])
     .map((s) => ({
       category: pick(s.category) ?? '',
       skills: pick(s.skills) ?? '',
     }))
-    .filter((s) => s.category || s.skills);
+    .filter((s) => s.category.trim() && s.skills.trim());
 
   const work: WorkExperienceBlock[] = (draft.work_experience ?? [])
-    .map((w) => ({
-      company_name: pick(w.company_name) ?? '',
-      job_title: pick(w.job_title) ?? '',
-      period_start: pick(w.period_start) ?? '',
-      period_end: pick(w.period_end) ?? '',
-      location: pick(w.location) ?? '',
-      job_type: pick(w.job_type) ?? '',
-      description: pick(w.description) ?? '',
-    }))
+    .map((w) => {
+      const location = pick(w.location) ?? '';
+      const description = pick(w.description) ?? '';
+      const parsedType = pick(w.job_type);
+      return {
+        company_name: pick(w.company_name) ?? '',
+        job_title: pick(w.job_title) ?? '',
+        period_start: pick(w.period_start) ?? '',
+        period_end: pick(w.period_end) ?? '',
+        location,
+        job_type: inferJobArrangement(location, parsedType, description),
+        description,
+      };
+    })
     .filter((w) => w.company_name || w.job_title);
 
   const education: EducationBlock[] = (draft.education ?? [])
@@ -133,7 +149,8 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
   if (email !== undefined) partial.email = email;
   if (pick(draft.phone_country_code) !== undefined) partial.phone_country_code = pick(draft.phone_country_code)!;
   if (pick(draft.phone_number) !== undefined) partial.phone_number = pick(draft.phone_number)!;
-  if (pick(draft.linkedin_url) !== undefined) partial.linkedin_url = pick(draft.linkedin_url)!;
+  const linkedin = normalizeLinkedIn(pick(draft.linkedin_url));
+  if (linkedin !== undefined) partial.linkedin_url = linkedin;
   if (pick(draft.github_url) !== undefined) partial.github_url = pick(draft.github_url)!;
   if (pick(draft.profile_summary) !== undefined) partial.profile_summary = pick(draft.profile_summary)!;
   if (skills.length) partial.technical_skills = skills;

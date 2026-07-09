@@ -48,6 +48,8 @@ export interface UserSettings {
   cover_letter_prompt_instructions_custom: string;
   default_cover_letter_prompt_instructions: string;
   cover_letter_prompt_max_length: number;
+  job_match_preferences: string;
+  job_match_preferences_max_length: number;
   resume_template_status: ResumeTemplateStatus;
   resume_template_source_filename: string | null;
   resume_template_error: string | null;
@@ -82,6 +84,8 @@ export interface UserSettingsUpdate {
   resume_tailoring_prompt_custom?: string;
   cover_letter_prompt_mode?: SettingsMode;
   cover_letter_prompt_custom?: string;
+  job_match_preferences?: string;
+  clear_job_match_preferences?: boolean;
 }
 
 export const RESUME_TAILORING_PROMPT_MIN_LENGTH = 50;

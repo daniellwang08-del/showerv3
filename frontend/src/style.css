@@ -138,6 +138,11 @@ html.dark { color-scheme: dark; }
 .dark .bg-white\/25 { background-color: rgba(30, 41, 59, 0.25); }
 .dark .bg-white\/20 { background-color: rgba(30, 41, 59, 0.2); }
 .dark .hover\:bg-white:hover { background-color: #1b2740; }
+/* Focus-driven white surfaces (e.g. the agent composer that flips to bg-white
+   on focus-within) are a distinct utility class, so the .bg-white override
+   above does not reach them - map them to the same dark surface. */
+.dark .focus-within\:bg-white:focus-within { background-color: #1b2740; }
+.dark .focus\:bg-white:focus { background-color: #1b2740; }
 
 /* Modal/overlay scrims use bg-slate-900/xx; keep them dark (the palette
    inversion would otherwise flip them to a light wash). */
@@ -162,6 +167,19 @@ html.dark { color-scheme: dark; }
   color: #e2e8f0;
 }
 
+/* Dark slate GRADIENT chips (e.g. icon chips using
+   `bg-gradient-to-br from-slate-800 to-slate-900 text-white`) must stay dark
+   like the solid bg-slate-900 buttons above. Without this, the neutral palette
+   remap flips the 700/800/900 gradient stops to near-white and a white icon on
+   top disappears into a white box. */
+.dark .from-slate-700 { --tw-gradient-from: #1e293b var(--tw-gradient-from-position); }
+.dark .from-slate-800 { --tw-gradient-from: #1e293b var(--tw-gradient-from-position); }
+.dark .from-slate-900 { --tw-gradient-from: #0f172a var(--tw-gradient-from-position); }
+.dark .via-slate-800 { --tw-gradient-via: #1e293b var(--tw-gradient-via-position); }
+.dark .via-slate-900 { --tw-gradient-via: #0f172a var(--tw-gradient-via-position); }
+.dark .to-slate-800 { --tw-gradient-to: #1e293b var(--tw-gradient-to-position); }
+.dark .to-slate-900 { --tw-gradient-to: #0f172a var(--tw-gradient-to-position); }
+
 /* White gradient stops -> dark surface so light-to-white gradients stay dark. */
 .dark .from-white { --tw-gradient-from: #141d31 var(--tw-gradient-from-position); }
 .dark .via-white { --tw-gradient-via: #141d31 var(--tw-gradient-via-position); }
@@ -176,7 +194,13 @@ html.dark { color-scheme: dark; }
 .dark .bg-blue-50\/40, .dark .bg-blue-50\/30, .dark .bg-blue-50\/50 { background-color: rgba(59, 130, 246, 0.1); }
 .dark .bg-blue-50\/70, .dark .bg-blue-50\/80, .dark .bg-blue-50\/90, .dark .bg-blue-50\/95 { background-color: rgba(59, 130, 246, 0.16); }
 .dark .bg-blue-100\/80, .dark .bg-blue-100\/90 { background-color: rgba(59, 130, 246, 0.22); }
-.dark .from-blue-50, .dark .from-blue-50\/40, .dark .from-blue-50\/50, .dark .hover\:from-blue-50:hover { --tw-gradient-from: rgba(59, 130, 246, 0.1) var(--tw-gradient-from-position); }
+/* blue-100 gradient stops are NOT covered by the palette remap (blue is
+   excluded) so icon chips like `from-indigo-100 to-blue-100` ended in light
+   blue and rendered as a white box in dark mode. Map both stops to a dark tint. */
+.dark .from-blue-100 { --tw-gradient-from: rgba(59, 130, 246, 0.2) var(--tw-gradient-from-position); }
+.dark .to-blue-100 { --tw-gradient-to: rgba(59, 130, 246, 0.2) var(--tw-gradient-to-position); }
+.dark .via-blue-100 { --tw-gradient-via: rgba(59, 130, 246, 0.2) var(--tw-gradient-via-position); }
+.dark .from-blue-50, .dark .from-blue-50\/40, .dark .from-blue-50\/50, .dark .from-blue-50\/70, .dark .from-blue-50\/80, .dark .from-blue-50\/90, .dark .from-blue-50\/95, .dark .hover\:from-blue-50:hover { --tw-gradient-from: rgba(59, 130, 246, 0.12) var(--tw-gradient-from-position); }
 .dark .to-blue-50\/80, .dark .to-blue-50\/50, .dark .hover\:to-blue-50\/80:hover { --tw-gradient-to: rgba(59, 130, 246, 0.14) var(--tw-gradient-to-position); }
 .dark .to-white\/60 { --tw-gradient-to: rgba(20, 29, 49, 0.6) var(--tw-gradient-to-position); }
 .dark .border-blue-200 { border-color: rgba(59, 130, 246, 0.35); }
@@ -561,7 +585,7 @@ html.dark { color-scheme: dark; }
 }
 
 /* ============================================================
-   DARK MODE — custom component & scrollbar overrides
+   DARK MODE - custom component & scrollbar overrides
    ============================================================ */
 
 /* Long-form page scrollbars */

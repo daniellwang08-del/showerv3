@@ -44,7 +44,7 @@ const WELCOME: ResumeAiChatMessage = {
   id: 'rai-welcome',
   role: 'assistant',
   text:
-    "Paste a job description and I'll tailor your resume to it — or ask me to score how well you match. "
+    "Paste a job description and I'll tailor your resume to it - or ask me to score how well you match. "
     + 'The tailored content loads straight into the builder for you to fine-tune.',
 };
 
@@ -74,7 +74,7 @@ async function applyTailoredToBuilder(
   };
   // Inherit the current theme/styling; only swap in the tailored content.
   const design = { ...s.design, content: merged };
-  const name = [meta.jobTitle, meta.company].filter(Boolean).join(' — ') || 'Tailored resume';
+  const name = [meta.jobTitle, meta.company].filter(Boolean).join(' - ') || 'Tailored resume';
 
   await s.createResumeEntry({
     name: name.slice(0, 200),
@@ -161,7 +161,7 @@ export const useResumeAiStore = create<ResumeAiState>((set, get) => ({
         error: 'Could not reach the assistant. Please try again.',
         messages: st.messages.map((m) =>
           m.id === pendingMsg.id
-            ? { ...m, pending: false, text: 'Sorry — something went wrong. Please try again.' }
+            ? { ...m, pending: false, text: 'Sorry - something went wrong. Please try again.' }
             : m,
         ),
       }));

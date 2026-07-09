@@ -1,6 +1,9 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, createLogger } from 'vite'
+import type { ProxyOptions } from 'vite'
 import react from '@vitejs/plugin-react'
 import os from 'node:os'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Socket } from 'node:net'
 
 function isPrivateIpv4(ip: string): boolean {
   const parts = ip.split('.').map(Number)
@@ -32,6 +35,81 @@ function detectLanHost(): string | undefined {
   return candidates.find(isPrivateIpv4) ?? candidates[0]
 }
 
+/**
+ * When the backend API restarts (uvicorn --reload after a backend edit) or is
+ * briefly down, the proxied TCP connection is reset by the upstream. http-proxy
+ * emits an 'error' event; if it is unhandled Vite prints a noisy
+ * `read ECONNRESET` stack trace, and the browser sees a hung/aborted request.
+ *
+ * These upstream drops are expected in dev, so we handle them: log one concise
+ * line and, for HTTP, return a clean 503 the client can retry. WebSocket sockets
+ * are just closed quietly (the client reconnects on its own).
+ */
+const EXPECTED_UPSTREAM_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ECONNABORTED'])
+
+const BENIGN_UPSTREAM_CODE_RE = /\b(ECONNRESET|ECONNREFUSED|ECONNABORTED|EPIPE|ETIMEDOUT)\b/
+
+/**
+ * Vite attaches its OWN proxy 'error' handlers (for http, ws, and the per-socket
+ * ws upgrade) in addition to ours, and each logs a full stack trace via
+ * `config.logger.error`. When the backend restarts (uvicorn --reload) those are
+ * just expected upstream drops, so we filter out that specific noise while letting
+ * every other error through. Our own handler still logs one concise line + serves
+ * a clean 503 / closes the socket, so nothing is silently swallowed.
+ */
+function isBenignProxyNoise(msg: unknown): boolean {
+  if (typeof msg !== 'string') return false
+  return /proxy.*error/is.test(msg) && BENIGN_UPSTREAM_CODE_RE.test(msg)
+}
+
+function createQuietLogger() {
+  const logger = createLogger()
+  const baseError = logger.error
+  logger.error = (msg, options) => {
+    if (isBenignProxyNoise(msg)) return
+    baseError(msg, options)
+  }
+  return logger
+}
+
+function attachProxyErrorHandler(proxy: { on(event: 'error', listener: (err: NodeJS.ErrnoException, req: IncomingMessage, res: ServerResponse | Socket) => void): void }, label: string) {
+  proxy.on('error', (err, _req, res) => {
+    const code = err.code
+    if (code && EXPECTED_UPSTREAM_CODES.has(code)) {
+      console.warn(`[vite] ${label} upstream unavailable (${code}) - backend restarting or down; client will retry.`)
+    } else {
+      console.error(`[vite] ${label} proxy error:`, err.message)
+    }
+
+    // ServerResponse (HTTP) → send a clean 503 instead of leaving the socket hung.
+    if (res && 'writeHead' in res) {
+      const httpRes = res as ServerResponse
+      if (!httpRes.headersSent) {
+        try {
+          httpRes.writeHead(503, { 'Content-Type': 'application/json' })
+        } catch {
+          /* headers already flushed */
+        }
+      }
+      try {
+        httpRes.end(JSON.stringify({ detail: 'Backend temporarily unavailable (restarting). Please retry.' }))
+      } catch {
+        /* response already closed */
+      }
+      return
+    }
+
+    // net.Socket (WebSocket upgrade) → close quietly; the WS client reconnects.
+    if (res && 'destroy' in res) {
+      try {
+        ;(res as Socket).destroy()
+      } catch {
+        /* socket already gone */
+      }
+    }
+  })
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiTarget = env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000'
@@ -39,8 +117,23 @@ export default defineConfig(({ mode }) => {
   const lanHost = detectLanHost()
   const port = Number(env.VITE_DEV_PORT || 5173)
 
+  const proxy: Record<string, ProxyOptions> = {
+    '/api/v1/ws': {
+      target: wsTarget,
+      ws: true,
+      changeOrigin: true,
+      configure: (p) => attachProxyErrorHandler(p, '/api/v1/ws (ws)'),
+    },
+    '/api': {
+      target: apiTarget,
+      changeOrigin: true,
+      configure: (p) => attachProxyErrorHandler(p, '/api'),
+    },
+  }
+
   return {
     plugins: [react()],
+    customLogger: createQuietLogger(),
     server: {
       host: '0.0.0.0',
       port,
@@ -49,33 +142,13 @@ export default defineConfig(({ mode }) => {
       hmr: lanHost
         ? { host: lanHost, port, protocol: 'ws' }
         : { clientPort: port },
-      proxy: {
-        '/api/v1/ws': {
-          target: wsTarget,
-          ws: true,
-          changeOrigin: true,
-        },
-        '/api': {
-          target: apiTarget,
-          changeOrigin: true,
-        },
-      },
+      proxy,
     },
     preview: {
       host: '0.0.0.0',
       port,
       strictPort: true,
-      proxy: {
-        '/api/v1/ws': {
-          target: wsTarget,
-          ws: true,
-          changeOrigin: true,
-        },
-        '/api': {
-          target: apiTarget,
-          changeOrigin: true,
-        },
-      },
+      proxy,
     },
   }
 })

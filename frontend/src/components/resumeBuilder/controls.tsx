@@ -200,7 +200,7 @@ export function BoxSidesField({
         <button
           type="button"
           onClick={() => setLinked((x) => !x)}
-          title={linked ? 'Sides linked — edits apply to all four' : 'Sides independent'}
+          title={linked ? 'Sides linked - edits apply to all four' : 'Sides independent'}
           className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition ${
             linked ? 'bg-blue-50 text-blue-700' : 'text-slate-400 hover:text-slate-600'
           }`}

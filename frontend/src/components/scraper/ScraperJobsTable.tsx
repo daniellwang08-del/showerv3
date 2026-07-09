@@ -104,7 +104,7 @@ const columns = [
   { key: 'title',          label: 'Title',      sortable: true  },
   { key: 'company',        label: 'Company',    sortable: true  },
   { key: 'location',       label: 'Location',   sortable: false },
-  { key: 'is_remote',      label: 'Remote',     sortable: false },
+  { key: 'work_mode',      label: 'Work mode',  sortable: false },
   { key: 'salary_raw',     label: 'Salary',     sortable: false },
   { key: 'job_type',       label: 'Type',       sortable: false },
   { key: 'source',         label: 'Source',     sortable: false },
@@ -122,7 +122,7 @@ const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
   title: '220px',
   company: '118px',
   location: '108px',
-  is_remote: '74px',
+  work_mode: '74px',
   salary_raw: '100px',
   job_type: '78px',
   source: '108px',
@@ -362,6 +362,28 @@ function MatchScoreBadge({ score }: { score: number }) {
       <span className="text-[10px] font-medium leading-none opacity-70">{scoreLabel(score)}</span>
     </div>
   );
+}
+
+function WorkModeBadge({ mode, isRemoteFallback }: { mode: string | null | undefined; isRemoteFallback?: boolean }) {
+  const raw = (mode || '').trim().toLowerCase();
+  // "unknown" (and blanks) are not a real classification - fall back to is_remote.
+  const meaningful = raw && raw !== 'unknown' ? raw : '';
+  const normalized = meaningful || (isRemoteFallback ? 'remote' : '');
+  if (normalized === 'remote') {
+    return (
+      <span className="inline-flex items-center gap-1 text-emerald-600">
+        <Wifi size={13} />
+        <span className="text-[11px] font-medium">Remote</span>
+      </span>
+    );
+  }
+  if (normalized === 'hybrid') {
+    return <span className="text-[11px] font-semibold text-amber-700">Hybrid</span>;
+  }
+  if (normalized === 'onsite') {
+    return <span className="text-[11px] font-semibold text-slate-600">Onsite</span>;
+  }
+  return <span className="text-slate-300 text-xs">-</span>;
 }
 
 function SheetPostedBadge({ postedAt }: { postedAt: string }) {
@@ -870,7 +892,7 @@ export function ScraperJobsTable({
     try {
       const acked = await ackPromise;
       if (acked) {
-        showToast('success', 'Sent to the Job Application Assistant — opening it now…');
+        showToast('success', 'Sent to the Job Application Assistant - opening it now…');
         return;
       }
       const info = await detectExtension();
@@ -1250,11 +1272,9 @@ export function ScraperJobsTable({
                       {job.location || '-'}
                     </td>
 
-                    {/* Remote */}
+                    {/* Work mode */}
                     <td className={CELL}>
-                      {job.is_remote
-                        ? <span className="inline-flex items-center gap-1 text-emerald-600"><Wifi size={13} /><span className="text-[11px] font-medium">Remote</span></span>
-                        : <span className="text-slate-300 text-xs">-</span>}
+                      <WorkModeBadge mode={job.work_mode} isRemoteFallback={job.is_remote} />
                     </td>
 
                     {/* Salary */}

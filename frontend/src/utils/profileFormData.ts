@@ -8,6 +8,7 @@ import type {
   AddressInfo,
   UserProfile,
 } from '../types/profile';
+import { deriveWorkContent } from './workExperience';
 
 export const emptyTechSkill = (): TechnicalSkillBlock => ({ category: '', skills: '' });
 export const emptyWorkExp = (): WorkExperienceBlock => ({
@@ -128,7 +129,11 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
     technical_skills: ts.map((x) => ({ category: (x as TechnicalSkillBlock).category ?? '', skills: (x as TechnicalSkillBlock).skills ?? '' })),
     work_experience: we.map((x) => {
       const w = x as WorkExperienceBlock;
-      const contributions = Array.isArray(w.contributions) ? w.contributions.filter((c) => typeof c === 'string') : [];
+      // Older imported/AI-parsed roles packed the project title, intro, and bullets
+      // into a single `description` blob with empty structured fields. Derive the
+      // structured pieces (the same way the resume preview does) so the editor shows
+      // real values and the view renders proper bullets instead of one raw paragraph.
+      const derived = deriveWorkContent(w);
       return {
         company_name: w.company_name ?? '',
         job_title: w.job_title ?? '',
@@ -137,9 +142,9 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
         location: w.location ?? '',
         job_type: w.job_type ?? '',
         employment_type: w.employment_type ?? '',
-        project_title: w.project_title ?? '',
-        project_intro: w.project_intro ?? '',
-        contributions: contributions.length ? contributions : [''],
+        project_title: derived.projectTitle,
+        project_intro: derived.intro,
+        contributions: derived.contributions.length ? derived.contributions : [''],
         used_skills: w.used_skills ?? '',
         description: w.description ?? '',
       };

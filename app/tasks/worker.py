@@ -62,10 +62,66 @@ async def _hide_extraction_failure_for_user(
             await session.commit()
 
 
+async def _skip_linkedin_extraction(
+    extraction_id: str,
+    url: str,
+    user_id: str | None,
+) -> dict:
+    from app.models.schemas import ExtractionStatus
+    from app.services.linkedin_job_filter import (
+        LINKEDIN_JOB_BLOCK_REASON,
+        mark_linkedin_job_excluded_for_user,
+    )
+
+    async with get_session() as session:
+        repo = JobExtractionRepository(session)
+        await repo.update_status(
+            extraction_id,
+            ExtractionStatus.FAILED,
+            LINKEDIN_JOB_BLOCK_REASON,
+        )
+        if user_id:
+            job_repo = JobRepository(session)
+            job = await job_repo.get_by_extraction_id(extraction_id)
+            if job:
+                await mark_linkedin_job_excluded_for_user(
+                    session,
+                    job_id=job.id,
+                    user_id=user_id,
+                )
+        await session.commit()
+
+    if user_id:
+        await publish_ws_event({
+            "type": "extraction_failed",
+            "user_id": user_id,
+            "job_id": extraction_id,
+            "url": url,
+            "error": LINKEDIN_JOB_BLOCK_REASON,
+        })
+
+    logger.info(
+        "extract_job_linkedin_skipped",
+        extraction_id=extraction_id,
+        url=url,
+        user_id=user_id,
+    )
+    return {
+        "status": "skipped",
+        "reason": "linkedin_job",
+        "error": LINKEDIN_JOB_BLOCK_REASON,
+    }
+
+
 async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = None) -> dict:
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="extract_job", extraction_id=job_id, target_url=url, user_id=user_id)
     logger.info("worker_extract_job_started", job_id=job_id, url=url)
+
+    from app.services.linkedin_job_filter import is_linkedin_job_url
+
+    if is_linkedin_job_url(url):
+        return await _skip_linkedin_extraction(job_id, url, user_id)
 
     if user_id:
         await publish_ws_event({

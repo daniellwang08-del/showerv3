@@ -3,8 +3,10 @@ import pytest
 from app.services.job_field_utils import (
     clean_optional_job_field,
     infer_title_from_description,
+    normalize_work_mode_display,
     parse_job_title,
     repair_stored_job_title,
+    resolve_display_work_mode,
     resolve_job_display_title,
 )
 
@@ -111,3 +113,67 @@ class TestReportedBugEvidence:
             else None
         )
         assert title is None
+
+
+class TestNormalizeWorkModeDisplay:
+    def test_unknown_is_treated_as_no_signal(self):
+        assert normalize_work_mode_display("unknown") is None
+        assert normalize_work_mode_display("") is None
+        assert normalize_work_mode_display(None) is None
+
+    def test_canonical_values_pass_through(self):
+        assert normalize_work_mode_display("remote") == "remote"
+        assert normalize_work_mode_display("Hybrid") == "hybrid"
+        assert normalize_work_mode_display(" ONSITE ") == "onsite"
+
+    def test_partial_remote_counts_as_remote(self):
+        assert normalize_work_mode_display("Partially Remote") == "remote"
+        assert normalize_work_mode_display("partial remote") == "remote"
+
+    def test_free_text_keywords(self):
+        assert normalize_work_mode_display("Fully remote, work from anywhere") == "remote"
+        assert normalize_work_mode_display("Hybrid - 3 days in office") == "hybrid"
+        assert normalize_work_mode_display("On-site in Austin, TX") == "onsite"
+
+
+class TestResolveDisplayWorkMode:
+    def test_unknown_work_mode_falls_back_to_is_remote(self):
+        """Reported bug: work_mode='unknown' masked the scraper is_remote flag."""
+        assert resolve_display_work_mode(
+            analysis_work_mode="unknown",
+            location="Dallas, TX",
+            remote_policy=None,
+            is_remote=True,
+        ) == "remote"
+
+    def test_remote_from_location_when_no_flag(self):
+        assert resolve_display_work_mode(
+            analysis_work_mode="unknown",
+            location="Remote, United States",
+            remote_policy=None,
+            is_remote=False,
+        ) == "remote"
+
+    def test_remote_from_policy_text(self):
+        assert resolve_display_work_mode(
+            analysis_work_mode=None,
+            location="Atlanta, GA",
+            remote_policy="Remote within the United States",
+            is_remote=False,
+        ) == "remote"
+
+    def test_explicit_classification_wins(self):
+        assert resolve_display_work_mode(
+            analysis_work_mode="onsite",
+            location="Remote, United States",
+            remote_policy=None,
+            is_remote=True,
+        ) == "onsite"
+
+    def test_no_signal_returns_none(self):
+        assert resolve_display_work_mode(
+            analysis_work_mode="unknown",
+            location="Dallas, TX",
+            remote_policy=None,
+            is_remote=False,
+        ) is None

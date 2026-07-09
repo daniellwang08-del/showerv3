@@ -231,7 +231,7 @@ export function OneClickAICenter() {
         className="fixed bottom-5 left-1/2 z-[55] -translate-x-1/2 inline-flex items-center gap-2 rounded-full border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:scale-[1.02] hover:shadow-blue-600/40"
       >
         <Wand2 size={16} />
-        OneClick AI — tailor from a job description
+        OneClick AI - tailor from a job description
       </button>
     );
   }

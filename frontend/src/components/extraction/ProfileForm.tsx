@@ -150,11 +150,18 @@ function stripSectionErrors(section: SectionId): (prev: Record<string, string>) 
 }
 
 function formatMonthLabel(ym: string): string {
-  if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return '-';
-  const [y, m] = ym.split('-').map(Number);
-  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  if (m < 1 || m > 12) return ym;
-  return `${names[m - 1]} ${y}`;
+  const v = (ym ?? '').trim();
+  if (!v) return '-';
+  // Imported/parsed profiles sometimes store a year only (e.g. "2018") instead of
+  // "YYYY-MM"; show what we actually have rather than a blank dash.
+  if (/^\d{4}$/.test(v)) return v;
+  if (/^\d{4}-\d{2}$/.test(v)) {
+    const [y, m] = v.split('-').map(Number);
+    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (m < 1 || m > 12) return v;
+    return `${names[m - 1]} ${y}`;
+  }
+  return v;
 }
 
 function fieldRing(errors: Record<string, string>, key: string): string {
@@ -430,7 +437,10 @@ function MonthField({ value, onChange, placeholder, hasError, onPick }: MonthFie
     return { year: y, month: m };
   };
   const selected = parse(value);
-  const [viewYear, setViewYear] = useState<number>(selected?.year ?? currentYear);
+  // Imported/parsed profiles sometimes store a year only ("2018"); keep it visible
+  // and pre-focus the picker on that year instead of showing an empty field.
+  const yearOnly = !selected && /^\d{4}$/.test((value ?? '').trim()) ? Number((value ?? '').trim()) : null;
+  const [viewYear, setViewYear] = useState<number>(selected?.year ?? yearOnly ?? currentYear);
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   useEffect(() => {
@@ -446,10 +456,14 @@ function MonthField({ value, onChange, placeholder, hasError, onPick }: MonthFie
 
   useEffect(() => {
     if (!open) return;
-    setViewYear(selected?.year ?? currentYear);
-  }, [open, selected?.year, currentYear]);
+    setViewYear(selected?.year ?? yearOnly ?? currentYear);
+  }, [open, selected?.year, yearOnly, currentYear]);
 
-  const label = selected ? `${monthNames[selected.month - 1]} ${selected.year}` : placeholder;
+  const label = selected
+    ? `${monthNames[selected.month - 1]} ${selected.year}`
+    : yearOnly !== null
+      ? String(yearOnly)
+      : placeholder;
 
   return (
     <div className="relative" ref={rootRef}>
@@ -462,7 +476,7 @@ function MonthField({ value, onChange, placeholder, hasError, onPick }: MonthFie
       >
         <span className="inline-flex items-center gap-2">
           <CalendarDays className="h-4 w-4 text-slate-400" />
-          <span className={selected ? 'text-slate-900' : 'text-slate-400'}>{label}</span>
+          <span className={selected || yearOnly !== null ? 'text-slate-900' : 'text-slate-400'}>{label}</span>
         </span>
         <ChevronDown className={`h-4 w-4 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -546,6 +560,9 @@ function MonthField({ value, onChange, placeholder, hasError, onPick }: MonthFie
 type Props = {
   profile: UserProfile | null;
   onSubmit: (data: ProfileFormData) => Promise<void>;
+  importDraft?: ProfileFormData | null;
+  importErrors?: Record<string, string>;
+  onImportDraftApplied?: () => void;
 };
 
 // Voluntary yes/no answer with an explicit "unspecified" state (null) so we can
@@ -617,7 +634,7 @@ function triLabel(v: boolean | null | undefined, yes = 'Yes', no = 'No'): string
   return '-';
 }
 
-export function ProfileForm({ profile, onSubmit }: Props) {
+export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onImportDraftApplied }: Props) {
   const [form, setForm] = useState<ProfileFormData>(() => profileToForm(profile));
   const [savedForm, setSavedForm] = useState<ProfileFormData>(() => profileToForm(profile));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -633,6 +650,14 @@ export function ProfileForm({ profile, onSubmit }: Props) {
     setSectionEditing(defaultSectionEditing(!profile?.user_id));
     setErrors({});
   }, [profile?.user_id, profile?.updated_at]);
+
+  useEffect(() => {
+    if (!importDraft) return;
+    setForm(importDraft);
+    setErrors(importErrors ?? {});
+    setSectionEditing(defaultSectionEditing(true));
+    onImportDraftApplied?.();
+  }, [importDraft, importErrors, onImportDraftApplied]);
 
   const blurField = (key: string) => {
     const f = formRef.current;
@@ -1069,9 +1094,12 @@ export function ProfileForm({ profile, onSubmit }: Props) {
                       <p className="mt-1 text-sm text-slate-700 line-clamp-3">{w.description}</p>
                     ) : null}
                     {w.contributions?.some((c) => c.trim()) ? (
-                      <ul className="mt-1 space-y-0.5">
-                        {w.contributions.filter((c) => c.trim()).slice(0, 4).map((c, ci) => (
-                          <li key={ci} className="text-sm text-slate-700">&bull; {c}</li>
+                      <ul className="mt-1.5 space-y-1">
+                        {w.contributions.filter((c) => c.trim()).map((c, ci) => (
+                          <li key={ci} className="flex gap-2 text-sm text-slate-700">
+                            <span aria-hidden className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+                            <span>{c}</span>
+                          </li>
                         ))}
                       </ul>
                     ) : null}

@@ -8,6 +8,7 @@ from app.prompts.cover_letter_prompt import (
     COVER_LETTER_PROMPT_MAX_LENGTH,
     COVER_LETTER_PROMPT_MIN_LENGTH,
 )
+from app.prompts.job_match_phase_a_prompt import JOB_MATCH_PREFERENCES_MAX_LENGTH
 from app.prompts.job_match_phase_b_prompt import (
     JOB_MATCH_PHASE_B_OUTPUT_CONTRACT,
     RESUME_TAILORING_INSTRUCTIONS,
@@ -231,6 +232,19 @@ class UserRepository:
             )
         return cleaned
 
+    @staticmethod
+    def _validate_job_match_preferences(text: str | None) -> str | None:
+        if text is None:
+            return None
+        cleaned = text.strip()
+        if not cleaned:
+            return None
+        if len(cleaned) > JOB_MATCH_PREFERENCES_MAX_LENGTH:
+            raise ValueError(
+                f"Job match preferences must be at most {JOB_MATCH_PREFERENCES_MAX_LENGTH:,} characters"
+            )
+        return cleaned
+
     def _resume_tailoring_instructions_for_user(self, user: User | None) -> str:
         mode = getattr(user, "resume_tailoring_prompt_mode", None) or "default" if user else "default"
         if mode == "custom":
@@ -337,6 +351,8 @@ class UserRepository:
             "cover_letter_prompt_instructions_custom": stored_custom_cover_letter_prompt,
             "default_cover_letter_prompt_instructions": COVER_LETTER_INSTRUCTIONS.strip(),
             "cover_letter_prompt_max_length": COVER_LETTER_PROMPT_MAX_LENGTH,
+            "job_match_preferences": (getattr(user, "job_match_preferences", None) or "").strip(),
+            "job_match_preferences_max_length": JOB_MATCH_PREFERENCES_MAX_LENGTH,
             **template_status_payload(user),
             **cover_letter_template_status_payload(user),
         }
@@ -363,6 +379,8 @@ class UserRepository:
         resume_tailoring_prompt_custom: str | None = None,
         cover_letter_prompt_mode: str | None = None,
         cover_letter_prompt_custom: str | None = None,
+        job_match_preferences: str | None = None,
+        clear_job_match_preferences: bool = False,
     ) -> dict | None:
         user = await self.get_by_id(user_id)
         if not user:
@@ -443,6 +461,12 @@ class UserRepository:
             validated = self._validate_cover_letter_instructions(cover_letter_prompt_custom)
             user.cover_letter_prompt_custom = validated
             user.cover_letter_prompt_mode = "custom"
+
+        if clear_job_match_preferences:
+            user.job_match_preferences = None
+
+        if job_match_preferences is not None:
+            user.job_match_preferences = self._validate_job_match_preferences(job_match_preferences)
 
         await self.session.flush()
         logger.info("user_settings_updated", user_id=user_id)

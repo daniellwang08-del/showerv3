@@ -50,6 +50,7 @@ class JobDescriptionSchema(BaseModel):
     posted_date: datetime | None = None
     application_deadline: datetime | None = None
     remote_policy: str | None = Field(default=None, max_length=500)
+    work_mode: str | None = Field(default=None, max_length=20)
     experience_level: str | None = Field(default=None, max_length=500)
     industry: str | None = Field(default=None, max_length=200)
     raw_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -65,6 +66,7 @@ class JobDescriptionSchema(BaseModel):
         "employment_type",
         "salary_range",
         "remote_policy",
+        "work_mode",
         "experience_level",
         "industry",
         mode="before",
@@ -77,6 +79,7 @@ class JobDescriptionSchema(BaseModel):
             "employment_type": 500,
             "salary_range": 200,
             "remote_policy": 500,
+            "work_mode": 20,
             "experience_level": 500,
             "industry": 200,
         }
@@ -241,6 +244,7 @@ class DashboardJobResponse(BaseModel):
     user_status: str | None = None
     source: str | None = None
     is_remote: bool = False
+    work_mode: str | None = None
     salary_raw: str | None = None
     job_type: str | None = None
 

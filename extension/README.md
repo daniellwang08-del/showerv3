@@ -26,10 +26,19 @@ No build step is required. This is a plain ES-module extension you load directly
 3. Click **Load unpacked** and select this `extension/` folder.
 4. Click the extension's toolbar icon to open the side panel.
 
+**LAN / IP access:** Chrome does not allow subnet wildcards like `192.168.*.*` in
+`manifest.json`. Private-LAN dashboard tabs (`http://192.168.x.x:5173`, etc.) are
+supported via programmatic bridge injection in `background.js` and runtime host
+permissions (`optional_host_permissions` + prompt on sign-in). Open your dashboard
+at the LAN URL once so the extension can sync the backend address.
+
 ## Sign in
 
-- **Server URL**: the backend base URL, e.g. `http://localhost:8000` (no `/api/v1`).
-- **Email / Password**: your Job Scraper credentials.
+- **Email / Password**: your Atomspace credentials.
+- The backend URL is picked up automatically when you open the Atomspace
+  dashboard (localhost or your LAN IP, e.g. `http://192.168.x.x:5173`). Vite
+  proxies `/api/v1` on that same origin. Fallback default is in `config.js`
+  (`DEFAULT_BACKEND_URL`). For API-only setups, set it to `http://localhost:8000`.
 
 On first sign-in the extension requests permission to access the server origin
 and caches your profile, settings, and prompts.
@@ -43,8 +52,11 @@ and caches your profile, settings, and prompts.
 - **Cache + sync**: profile/settings/prompts are cached per user. The extension
   polls `GET /me/data-version`; if your data changed on the server it shows a
   "Sync now" banner.
-- **Ready-to-apply queue**: jobs whose tailored resume DOCX is `completed` and
-  that you have not applied to yet.
+- **Ready-to-apply queue**: uses the dashboard `suggested` view (match score at/above your
+  minimum) and keeps only jobs whose resume PDF/DOCX pipeline has finished.
+- **New today**: uses the dashboard `today` view (same jobs as the web app's
+  "Today's new jobs" tab), with sub-filters **All**, **From platform**, and
+  **From me** (platform = scraped jobs; me = jobs you submitted by URL).
 - **Conversation**: `POST /assistant/chat` streams answers (SSE). History is saved
   per job, so reopening a job restores the chat. The job description is treated as
   untrusted data (prompt-injection guarded) and answers are grounded in your
@@ -95,6 +107,8 @@ The extension id is shown on the `chrome://extensions` card after loading.
 ## Files
 
 - `manifest.json`: MV3 manifest (side panel, background worker, permissions).
+- `config.js`: default backend URL (`DEFAULT_BACKEND_URL`).
+- `icons/`: toolbar + store icons generated from `atomspace-logo.png`.
 - `background.js`: opens the side panel on toolbar click.
 - `sidepanel.html` / `styles.css`: UI shell.
 - `src/store.js`: `chrome.storage` wrappers (token, backend URL, per-user cache).

@@ -6,6 +6,7 @@ import { useScraperStore } from './stores/scraperStore';
 import { useJobsStore } from './stores/jobsStore';
 import { useModalStore } from './stores/modalStore';
 import { AppShell } from './components/layout/AppShell';
+import { BrandedLoader } from './components/layout/BrandedLoader';
 import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -15,7 +16,7 @@ import { JobActionModal } from './components/extraction/JobActionModal';
 import { ConfirmDialog } from './components/extraction/ConfirmDialog';
 
 function App() {
-  const { isAuthenticated, user, authPage, logout, onAuthSuccess } = useAuth();
+  const { isAuthenticated, user, authPage, logout, onAuthSuccess, refreshUser } = useAuth();
 
   const modal = useModalStore((s) => s.modal);
   const modalUrl = useModalStore((s) => s.modalUrl);
@@ -98,11 +99,7 @@ function App() {
   useWebSocket(!!isAuthenticated, handleWsEvent);
 
   if (isAuthenticated === null) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-600">
-        Loading...
-      </div>
-    );
+    return <BrandedLoader fullscreen label="Starting Atomspace…" />;
   }
 
   if (!isAuthenticated) {
@@ -153,13 +150,13 @@ function App() {
           element={
             <AppShell
               userEmail={user?.email}
-              userName={user?.name ?? undefined}
+              userName={user?.name || user?.display_name || undefined}
               onLogout={logout}
             />
           }
         >
           <Route path="/scraper" element={<ScraperDashboard />} />
-          <Route path="/profile" element={<ProfilePage user={user} onLogout={logout} />} />
+          <Route path="/profile" element={<ProfilePage user={user} onLogout={logout} onProfileSaved={refreshUser} />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/resume-builder" element={<ResumeBuilderPage />} />
           <Route path="*" element={<Navigate to="/scraper" replace />} />

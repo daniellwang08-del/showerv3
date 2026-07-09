@@ -279,6 +279,13 @@ def _rerun_response_from_promote_outcome(
             enqueued=enqueued,
             message=message,
         )
+    if bucket == "linkedin_skipped":
+        return RerunResponse(
+            status="blocked",
+            scraped_job_id=job_id,
+            target_url=target_url,
+            message=outcome.get("error") or "LinkedIn job postings are not supported",
+        )
     if bucket == "blocked":
         return RerunResponse(
             status="blocked",
@@ -318,6 +325,8 @@ async def _rerun_scraped_job_lifecycle(
         promote_single_scraped_row,
     )
 
+    from app.services.linkedin_job_filter import linkedin_job_block_reason
+
     job_id = str(scraped.get("id") or "")
     target_url = pick_target_url(scraped)
     if not target_url:
@@ -325,6 +334,15 @@ async def _rerun_scraped_job_lifecycle(
             status="invalid_url",
             scraped_job_id=job_id,
             message="Scraped job has no usable URL (origin_url and url are both empty)",
+        )
+
+    linkedin_reason = linkedin_job_block_reason(target_url)
+    if linkedin_reason:
+        return RerunResponse(
+            status="blocked",
+            scraped_job_id=job_id,
+            target_url=target_url,
+            message=linkedin_reason,
         )
 
     is_valid, validation_error = URLManager.validate_url(target_url)

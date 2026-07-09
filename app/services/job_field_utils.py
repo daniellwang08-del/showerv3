@@ -80,3 +80,72 @@ def repair_stored_job_title(
     if cleaned:
         return cleaned
     return infer_title_from_description(description)
+
+
+# Values that must NOT be treated as a real work-mode classification. The LLM
+# writes the sentinel "unknown" whenever it cannot classify; treating that as a
+# concrete value (instead of "no signal") previously masked the scraper's
+# is_remote flag and left the jobs table blank.
+_WORK_MODE_EMPTY_VALUES = frozenset({
+    "", "unknown", "none", "null", "n/a", "na", "tbd", "not specified", "undisclosed",
+})
+
+
+def normalize_work_mode_display(value) -> str | None:
+    """Map any work_mode string / free-text into ``remote|hybrid|onsite`` or None.
+
+    Returns None for empty, ``"unknown"`` and other placeholder values so callers
+    can fall back to other signals. Business rule: "partial(ly) remote" counts as
+    ``remote``.
+    """
+    if value is None:
+        return None
+    mode = str(value).strip().lower()
+    if mode in _WORK_MODE_EMPTY_VALUES:
+        return None
+    if mode in {"remote", "hybrid", "onsite"}:
+        return mode
+    if "partial" in mode and "remote" in mode:
+        return "remote"
+    if "hybrid" in mode or "flexible" in mode:
+        return "hybrid"
+    if "remote" in mode or "wfh" in mode or "work from home" in mode or "work-from-home" in mode:
+        return "remote"
+    if (
+        "onsite" in mode
+        or "on-site" in mode
+        or "on site" in mode
+        or "in-office" in mode
+        or "in office" in mode
+        or "in-person" in mode
+    ):
+        return "onsite"
+    return None
+
+
+def resolve_display_work_mode(
+    *,
+    analysis_work_mode: str | None = None,
+    location: str | None = None,
+    remote_policy: str | None = None,
+    is_remote: bool = False,
+) -> str | None:
+    """Resolve the work mode shown in the jobs table from all available signals.
+
+    Priority order:
+      1. An explicit remote/hybrid/onsite classification from analysis/extraction.
+      2. The location text (e.g. "Remote, United States", "Austin, TX (Hybrid)").
+      3. The remote-policy text (e.g. "Remote within the US").
+      4. The scraper's ``is_remote`` flag.
+    Returns None only when no signal indicates a work mode.
+    """
+    explicit = normalize_work_mode_display(analysis_work_mode)
+    if explicit:
+        return explicit
+    for text in (location, remote_policy):
+        signal = normalize_work_mode_display(text)
+        if signal:
+            return signal
+    if is_remote:
+        return "remote"
+    return None

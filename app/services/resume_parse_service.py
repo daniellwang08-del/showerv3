@@ -94,7 +94,7 @@ Work experience (critical - most errors happen here):
 - If the résumé uses tables or two-column layout, follow reading order so all lines for that job stay in that job’s `description`.
 
 - education.description: copy honors, coursework, or notes verbatim if present.
-- technical_skills: keep skill names and groupings as written (same names, same commas/phrasing). Only split into categories when the résumé clearly groups them.
+- technical_skills: copy ONLY from the résumé's dedicated Skills / Technical Skills section at the end of the document. Each object MUST include both `category` (e.g. "Languages", "Frameworks", "Cloud & DevOps") and `skills` (comma-separated list for that category). Do NOT put per-job "Technologies Used" lines here—those belong in work_experience.description.
 - extra: optional lines copied verbatim (e.g. languages, awards) not captured elsewhere.
 - period_*: use YYYY-MM when the document shows month+year; use YYYY if only year; use null if unclear-do not guess dates.
 - LinkedIn/GitHub: exact URLs from the document only.
@@ -308,6 +308,171 @@ def _draft_has_content(draft: ResumeExtractedDraft) -> bool:
     return False
 
 
+_US_PHONE_RE = re.compile(
+    r"(?:\+?1[\s\-.(]*)?"
+    r"(\d{3})[\s\).\-]*(\d{3})[\s.\-]*(\d{4})"
+)
+
+
+def _normalize_linkedin_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    u = str(url).strip()
+    if not u:
+        return None
+    if not u.lower().startswith("http"):
+        u = "https://" + u.lstrip("/")
+    return u
+
+
+def _normalize_phone_fields(country: str | None, number: str | None) -> tuple[str | None, str | None]:
+    """Split combined / US-formatted numbers so phone_number meets profile save rules."""
+    combined = " ".join(x for x in (country, number) if x and str(x).strip()).strip()
+    if not combined:
+        return None, None
+
+    m = _US_PHONE_RE.search(combined)
+    if m:
+        return "+1", f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
+
+    digits = re.sub(r"\D", "", combined)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return "+1", f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+
+    cc = str(country).strip() if country and str(country).strip() else None
+    num = str(number).strip() if number and str(number).strip() else None
+    if num and len(re.sub(r"\D", "", num)) >= 7:
+        return cc or "+1", num
+    if cc and len(re.sub(r"\D", "", cc)) >= 7 and not num:
+        return "+1", cc
+    return cc, num
+
+
+_LINKEDIN_IN_TEXT_RE = re.compile(r"(https?://)?(?:www\.)?linkedin\.com/in/[\w\-]+", re.IGNORECASE)
+_EMAIL_IN_TEXT_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.\w+")
+
+
+def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> list[str]:
+    """Backfill header contact fields when the vision LLM omits icon-row details."""
+    notes: list[str] = []
+    if not text or not text.strip():
+        return notes
+    header = text[:5000]
+
+    if not draft.phone_number:
+        m = _US_PHONE_RE.search(header)
+        if m:
+            cc, num = _normalize_phone_fields(None, m.group(0))
+            if num:
+                draft.phone_country_code = cc or "+1"
+                draft.phone_number = num
+                notes.append("Phone number was recovered from document text (AI parser omitted it).")
+
+    if not draft.linkedin_url:
+        lm = _LINKEDIN_IN_TEXT_RE.search(header)
+        if lm:
+            draft.linkedin_url = _normalize_linkedin_url(lm.group(0))
+            notes.append("LinkedIn URL was recovered from document text (AI parser omitted it).")
+
+    if not draft.email:
+        em = _EMAIL_IN_TEXT_RE.search(header)
+        if em:
+            draft.email = em.group(0).lower()
+
+    return notes
+
+
+_TECH_USED_LINE_RE = re.compile(r"^technologies\s+used\s*:", re.IGNORECASE)
+
+
+def _parse_skills_section_from_text(text: str) -> list[ResumeSkillBlock]:
+    """Parse a structured SKILLS section (category header + comma-separated list lines)."""
+    m = re.search(r"\bSKILLS\b", text, re.IGNORECASE)
+    if not m:
+        return []
+    section = text[m.end() :]
+    stop = re.search(
+        r"\n(?:CERTIFICATIONS?|AWARDS?|PROJECTS|PUBLICATIONS|REFERENCES?)\b",
+        section,
+        re.IGNORECASE,
+    )
+    if stop:
+        section = section[: stop.start()]
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in section.splitlines()]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return []
+
+    blocks: list[ResumeSkillBlock] = []
+    current_cat: str | None = None
+    skill_parts: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_cat, skill_parts
+        if current_cat and skill_parts:
+            blocks.append(ResumeSkillBlock(category=current_cat, skills=", ".join(skill_parts)))
+        current_cat = None
+        skill_parts = []
+
+    for line in lines:
+        is_skill_line = "," in line or (current_cat is not None and len(line) > 24)
+        if current_cat is None or not is_skill_line:
+            flush()
+            current_cat = line
+        else:
+            skill_parts.append(line)
+    flush()
+    return [b for b in blocks if b.category and b.skills]
+
+
+def _coerce_technical_skills(raw_skills: list[ResumeSkillBlock]) -> list[ResumeSkillBlock]:
+    """Keep only well-formed category+skills pairs; drop misplaced job tech-stack lines."""
+    out: list[ResumeSkillBlock] = []
+    for s in raw_skills:
+        c = (s.category or "").strip() or None
+        sk = (s.skills or "").strip() or None
+        if not c or not sk:
+            if sk and _TECH_USED_LINE_RE.match(sk):
+                continue
+            continue
+        out.append(ResumeSkillBlock(category=c, skills=sk))
+    return out
+
+
+def _fill_missing_skills_from_text(draft: ResumeExtractedDraft, text: str) -> list[str]:
+    """Replace sparse/invalid LLM skill rows with the document's SKILLS section."""
+    notes: list[str] = []
+    draft.technical_skills = _coerce_technical_skills(draft.technical_skills)
+    valid = len(draft.technical_skills)
+    parsed = _parse_skills_section_from_text(text or "")
+    if not parsed:
+        return notes
+    if valid < 2:
+        draft.technical_skills = parsed
+        notes.append("Technical skills were recovered from the SKILLS section in document text.")
+    return notes
+
+
+def _infer_job_type(
+    location: str | None,
+    job_type: str | None,
+    description: str | None = None,
+) -> str | None:
+    jt_allowed = {"onsite", "hybrid", "remote"}
+    if job_type and job_type.lower() in jt_allowed:
+        return job_type.lower()
+    blob = f"{location or ''} {description or ''}".lower()
+    if "hybrid" in blob:
+        return "hybrid"
+    if "remote" in blob:
+        return "remote"
+    if location and location.strip():
+        return "onsite"
+    return None
+
+
 def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     """Coerce loosely-typed LLM output into the draft model."""
     draft = ResumeExtractedDraft.model_validate(data)
@@ -323,9 +488,11 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     draft.name_last = _clean(draft.name_last)
     draft.title = _clean(draft.title)
     draft.email = _clean(draft.email)
-    draft.phone_country_code = _clean(draft.phone_country_code)
-    draft.phone_number = _clean(draft.phone_number)
-    draft.linkedin_url = _clean(draft.linkedin_url)
+    draft.phone_country_code, draft.phone_number = _normalize_phone_fields(
+        _clean(draft.phone_country_code),
+        _clean(draft.phone_number),
+    )
+    draft.linkedin_url = _normalize_linkedin_url(_clean(draft.linkedin_url))
     draft.github_url = _clean(draft.github_url)
     draft.profile_summary = _clean(draft.profile_summary)
 
@@ -343,6 +510,8 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
             jtype = None
         elif jtype:
             jtype = jtype.lower()
+        desc = _clean(w.description)
+        jtype = _infer_job_type(_clean(w.location), jtype, desc)
         clean_work.append(
             ResumeWorkBlock(
                 company_name=cn,
@@ -351,10 +520,12 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
                 period_end=_clean(w.period_end),
                 location=_clean(w.location),
                 job_type=jtype,
-                description=_clean(w.description),
+                description=desc,
             )
         )
     draft.work_experience = clean_work
+
+    draft.technical_skills = _coerce_technical_skills(draft.technical_skills)
 
     clean_edu = []
     for e in draft.education:
@@ -374,14 +545,6 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
             )
         )
     draft.education = clean_edu
-
-    skills_out = []
-    for s in draft.technical_skills:
-        c = _clean(s.category)
-        sk = _clean(s.skills)
-        if c or sk:
-            skills_out.append(ResumeSkillBlock(category=c, skills=sk))
-    draft.technical_skills = skills_out
 
     certs = []
     for c in draft.certificates:
@@ -487,18 +650,20 @@ async def parse_resume_bytes(*, raw: bytes, filename: str, user_id: str | None =
     warnings: list[str] = []
 
     if kind == "pdf":
+        text_fallback = pdf_to_plain_text_any(raw)
         if not pymupdf_available():
             logger.warning("pymupdf_not_installed_pdf_text_only")
-            text = pdf_to_plain_text_pypdf(raw)
-            if not text.strip():
+            if not text_fallback.strip():
                 raise ValueError(
                     "Could not read this PDF. Install PyMuPDF for better support: pip install pymupdf"
                 )
-            text = _clip_resume_text(text, warnings)
+            text = _clip_resume_text(text_fallback, warnings)
             draft = await _call_openai_resume(user_text=text, image_base64_pngs=None, user_id=user_id)
             warnings.append(
                 "PDF parsed as plain text (install pymupdf for page images / vision). Run: pip install pymupdf"
             )
+            warnings.extend(_fill_missing_contact_from_text(draft, text))
+            warnings.extend(_fill_missing_skills_from_text(draft, text))
             return ResumeParseResponse(draft=draft, source_kind="pdf", warnings=warnings)
 
         images, w = pdf_to_base64_pngs(raw)
@@ -509,12 +674,14 @@ async def parse_resume_bytes(*, raw: bytes, filename: str, user_id: str | None =
             draft = await _call_openai_resume(user_text=None, image_base64_pngs=images, user_id=user_id)
         except Exception as e:
             logger.warning("resume_pdf_vision_failed_trying_text", error=str(e))
-            text = pdf_to_plain_text_any(raw)
-            if not text.strip():
+            if not text_fallback.strip():
                 raise
-            text = _clip_resume_text(text, warnings)
+            text = _clip_resume_text(text_fallback, warnings)
             draft = await _call_openai_resume(user_text=text, image_base64_pngs=None, user_id=user_id)
             warnings.append("PDF was parsed from extracted text (vision path failed or model has no vision).")
+        else:
+            warnings.extend(_fill_missing_contact_from_text(draft, text_fallback))
+            warnings.extend(_fill_missing_skills_from_text(draft, text_fallback))
         return ResumeParseResponse(draft=draft, source_kind="pdf", warnings=warnings)
 
     text = docx_to_plain_text(raw)
@@ -522,5 +689,7 @@ async def parse_resume_bytes(*, raw: bytes, filename: str, user_id: str | None =
         raise ValueError("No text found in DOCX")
     text = _clip_resume_text(text, warnings)
     draft = await _call_openai_resume(user_text=text, image_base64_pngs=None, user_id=user_id)
+    warnings.extend(_fill_missing_contact_from_text(draft, text))
+    warnings.extend(_fill_missing_skills_from_text(draft, text))
     warnings.append("DOCX was parsed from text; use PDF for pixel-perfect layout.")
     return ResumeParseResponse(draft=draft, source_kind="docx", warnings=warnings)

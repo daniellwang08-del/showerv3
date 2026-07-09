@@ -51,7 +51,7 @@ def _reload_enabled() -> bool:
 def _reload_watch_config() -> tuple[list[str], list[str], list[str], float]:
     """Return (dirs, includes, excludes, delay) for uvicorn reload."""
     app_dir = str(ROOT / "app")
-    # Do NOT put ``*.py`` here — uvicorn adds it to exclude patterns and blocks app/ too.
+    # Do NOT put ``*.py`` here - uvicorn adds it to exclude patterns and blocks app/ too.
     # Directory names exclude everything under alembic/, frontend/, etc.
     excludes = [
         "**/__pycache__/**",
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     reload_dirs, reload_includes, reload_excludes, reload_delay = _reload_watch_config()
 
     if use_reload:
-        print(f"[reload] Watching {reload_dirs[0]}/*.py only — saves outside app/ will not restart the API.")
+        print(f"[reload] Watching {reload_dirs[0]}/*.py only - saves outside app/ will not restart the API.")
     else:
         print("[reload] Disabled (set RELOAD=1 or APP_ENV=local to enable).")
     if host == "127.0.0.1":

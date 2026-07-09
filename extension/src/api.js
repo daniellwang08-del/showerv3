@@ -60,7 +60,7 @@ export async function apiFetch(path, { method = "GET", body, headers } = {}) {
     res = await fetch(url, { method, headers: h, body: payload });
   } catch (networkErr) {
     throw new ApiError(
-      "Cannot reach the backend. Check the server URL and that the server is running.",
+      "Cannot reach the backend. Open the Atomspace dashboard in this browser first (it syncs the server address), or set DEFAULT_BACKEND_URL in extension/config.js.",
       0
     );
   }
@@ -120,13 +120,29 @@ export const getDataVersion = () => apiFetch("/me/data-version");
 
 export const getDashboard = (params = {}) => {
   const q = new URLSearchParams({
-    page: params.page || 1,
-    per_page: params.per_page || 50,
-    sort: params.sort || "match_score",
+    page: String(params.page || 1),
+    per_page: String(params.per_page || 50),
+    sort: params.sort || "created_at",
     order: params.order || "desc",
+    view: params.view || "all",
     ...(params.q ? { q: params.q } : {}),
+    ...(params.timezone ? { timezone: params.timezone } : {}),
+    ...(params.min_match_score != null && params.min_match_score !== ""
+      ? { min_match_score: String(params.min_match_score) }
+      : {}),
   });
   return apiFetch(`/jobs/dashboard?${q.toString()}`);
+};
+
+export const getDashboardCounts = (params = {}) => {
+  const q = new URLSearchParams({
+    ...(params.q ? { q: params.q } : {}),
+    ...(params.timezone ? { timezone: params.timezone } : {}),
+    ...(params.min_match_score != null && params.min_match_score !== ""
+      ? { min_match_score: String(params.min_match_score) }
+      : {}),
+  });
+  return apiFetch(`/jobs/dashboard/counts?${q.toString()}`);
 };
 
 export const getExtraction = (jobId) => apiFetch(`/extract/${jobId}`);

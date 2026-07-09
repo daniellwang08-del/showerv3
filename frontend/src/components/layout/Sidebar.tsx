@@ -120,7 +120,7 @@ export function Sidebar({ userEmail, userName, onLogout }: SidebarProps) {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-slate-800 truncate">{displayName}</p>
-            {userEmail && userName && (
+            {userEmail && userEmail !== displayName && (
               <p className="text-xs text-slate-500 truncate">{userEmail}</p>
             )}
           </div>

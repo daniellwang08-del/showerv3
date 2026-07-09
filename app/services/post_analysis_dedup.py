@@ -36,6 +36,7 @@ from app.services.job_location_classifier import LocationVerdict, classify_job_l
 from app.storage.repository import JobMatchRepository, UserJobStatusRepository
 from app.storage.database import get_session
 from app.api.websocket import publish_ws_event
+from app.core.config import get_settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -218,6 +219,7 @@ async def run_post_analysis_dedup(
 ) -> dict:
     """Returns {"action": "saved_active"|"saved_duplicated"|"skipped", ...}"""
 
+    settings = get_settings()
     overall_score = match_data.get("overall_score", 0)
 
     async with get_session() as session:
@@ -284,7 +286,7 @@ async def run_post_analysis_dedup(
                 exclusion_type=NON_US_LOCATION_EXCLUSION,
                 reason=f"Non-US job location ({location_detail}).",
             )
-        if location_verdict == LocationVerdict.UNKNOWN:
+        if location_verdict == LocationVerdict.UNKNOWN and settings.dedup_rule_location_unknown_enabled:
             logger.info(
                 "post_analysis_dedup_location_unknown",
                 job_id=job_id,
@@ -379,28 +381,33 @@ async def run_post_analysis_dedup(
             )
 
         pool_ids = [j.id for j in same_company_jobs]
-        applied_result = await session.execute(
-            select(ValidJobUserApplication).where(
-                ValidJobUserApplication.user_id == user_id,
-                ValidJobUserApplication.job_id.in_(pool_ids),
+
+        if settings.dedup_rule_applied_company_enabled:
+            applied_result = await session.execute(
+                select(ValidJobUserApplication).where(
+                    ValidJobUserApplication.user_id == user_id,
+                    ValidJobUserApplication.job_id.in_(pool_ids),
+                )
             )
-        )
-        applied = list(applied_result.scalars().all())
-        if applied:
-            applied_job_id = applied[0].job_id
-            return await _save_duplicated(
-                session,
-                job_id=job_id,
-                user_id=user_id,
-                match_data=match_data,
-                overall_score=overall_score,
-                duplicated_because_id=applied_job_id,
-                exclusion_type=APPLIED_COMPANY_EXCLUSION,
-                reason=(
-                    f"User already applied to another posting at this company "
-                    f"within the {recycle_days}-day recycle window."
-                ),
-            )
+            applied = list(applied_result.scalars().all())
+            if applied:
+                applied_job_id = applied[0].job_id
+                return await _save_duplicated(
+                    session,
+                    job_id=job_id,
+                    user_id=user_id,
+                    match_data=match_data,
+                    overall_score=overall_score,
+                    duplicated_because_id=applied_job_id,
+                    exclusion_type=APPLIED_COMPANY_EXCLUSION,
+                    reason=(
+                        f"User already applied to another posting at this company "
+                        f"within the {recycle_days}-day recycle window."
+                    ),
+                )
+
+        if not settings.dedup_rule_score_comparison_enabled:
+            return await _save_active(session, job_id, user_id, match_data, overall_score)
 
         match_rows_result = await session.execute(
             select(JobMatchResult).where(

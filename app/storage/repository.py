@@ -38,6 +38,7 @@ _JOB_EXTRACTION_LIMITS = {
     "employment_type": 500,
     "salary_range": 200,
     "remote_policy": 500,
+    "work_mode": 20,
     "experience_level": 500,
     "industry": 200,
 }
@@ -185,6 +186,7 @@ class JobExtractionRepository:
             "posted_date": job_data.posted_date,
             "application_deadline": job_data.application_deadline,
             "remote_policy": _truncate_for_db(job_data.remote_policy, limits["remote_policy"]),
+            "work_mode": _truncate_for_db(job_data.work_mode, limits["work_mode"]),
             "experience_level": _truncate_for_db(job_data.experience_level, limits["experience_level"]),
             "industry": _truncate_for_db(job_data.industry, limits["industry"]),
             "raw_metadata": metadata,
@@ -317,6 +319,7 @@ class JobRepository:
                 job.title = _truncate_for_db(recovered, 500) or job.title
         job.company = _truncate_for_db(job_data.company, 500) or job.company
         job.location = _truncate_for_db(job_data.location, 500) or job.location
+        job.work_mode = _truncate_for_db(job_data.work_mode, 20) or job.work_mode
         old_vj = (job.description or "").strip()
         new_vj = (job_data.description or "").strip()
         if new_vj and (len(new_vj) >= len(old_vj) or len(old_vj) < 300):

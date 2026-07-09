@@ -11,7 +11,7 @@ def install_uvicorn_reload_noise_filter() -> None:
 
     Uvicorn logs ``ERROR: Exception in 'lifespan' protocol`` with a CancelledError
     traceback when a second hot reload kills a worker still starting up. That is
-    expected on Windows and not a real failure — hide it so dev logs stay readable.
+    expected on Windows and not a real failure - hide it so dev logs stay readable.
     """
     if getattr(install_uvicorn_reload_noise_filter, "_installed", False):
         return

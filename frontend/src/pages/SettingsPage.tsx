@@ -16,6 +16,7 @@ import {
   saveMinMatchScoreSettings,
   saveResumeTailoringPromptSettings,
   saveCoverLetterPromptSettings,
+  saveJobMatchPreferences,
   fetchCoverLetterPromptDefaults,
   previewMinMatchScore,
   applyMinMatchScore,
@@ -33,6 +34,8 @@ import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSe
 import { ProviderKeysCard } from '../components/settings/ProviderKeysCard';
 import { SettingsCard } from '../components/settings/SettingsCard';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
+import { PageHeader } from '../components/layout/PageHeader';
+import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
 
@@ -142,6 +145,12 @@ export function SettingsPage() {
   const [coverPromptSaveOk, setCoverPromptSaveOk] = useState(false);
   const [coverPromptDefaults, setCoverPromptDefaults] = useState(BUILTIN_COVER_LETTER_PROMPT_INSTRUCTIONS);
 
+  // Job match preferences (Phase A scoring input)
+  const [matchPreferences, setMatchPreferences] = useState('');
+  const [matchPreferencesSaving, setMatchPreferencesSaving] = useState(false);
+  const [matchPreferencesSaveMsg, setMatchPreferencesSaveMsg] = useState('');
+  const [matchPreferencesSaveOk, setMatchPreferencesSaveOk] = useState(false);
+
   const applySettings = useCallback((data: UserSettings) => {
     setSettings(data);
     setDedupMode(data.dedup_recycle_mode);
@@ -152,6 +161,7 @@ export function SettingsPage() {
     setPromptText(resolveStoredPromptText(data));
     setCoverPromptMode(data.cover_letter_prompt_mode ?? 'default');
     setCoverPromptText(resolveStoredCoverLetterPromptText(data));
+    setMatchPreferences(data.job_match_preferences ?? '');
   }, []);
 
   const load = useCallback(async () => {
@@ -216,6 +226,12 @@ export function SettingsPage() {
     return () => window.clearTimeout(t);
   }, [coverPromptSaveOk]);
 
+  useEffect(() => {
+    if (!matchPreferencesSaveOk) return;
+    const t = window.setTimeout(() => setMatchPreferencesSaveOk(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [matchPreferencesSaveOk]);
+
   const defaultDedup = settings?.default_dedup_recycle_days ?? 60;
   const defaultMinScore = settings?.default_min_match_score ?? 0;
   const savedDedupMode = settings?.dedup_recycle_mode ?? 'default';
@@ -245,6 +261,9 @@ export function SettingsPage() {
   const coverPromptMaxLength =
     settings?.cover_letter_prompt_max_length ?? BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH;
   const safeCoverPromptText = coverPromptText ?? '';
+  const matchPreferencesMaxLength = settings?.job_match_preferences_max_length ?? 4000;
+  const savedMatchPreferences = settings?.job_match_preferences ?? '';
+  const matchPreferencesChanged = matchPreferences.trim() !== savedMatchPreferences.trim();
 
   const dedupChanged =
     dedupMode !== savedDedupMode ||
@@ -535,30 +554,59 @@ export function SettingsPage() {
     }
   };
 
+  const handleSaveMatchPreferences = async () => {
+    if (!settings || !matchPreferencesChanged) return;
+    const trimmed = matchPreferences.trim();
+    if (trimmed.length > matchPreferencesMaxLength) return;
+    setMatchPreferencesSaving(true);
+    setMatchPreferencesSaveMsg('');
+    try {
+      const data = await saveJobMatchPreferences(
+        trimmed
+          ? { job_match_preferences: trimmed }
+          : { clear_job_match_preferences: true },
+      );
+      applySettings(data);
+      setMatchPreferencesSaveOk(true);
+      setMatchPreferencesSaveMsg(
+        trimmed
+          ? 'Job match preferences saved. Re-run match analysis on jobs to apply the new scoring.'
+          : 'Job match preferences cleared.',
+      );
+    } catch (err: unknown) {
+      setMatchPreferencesSaveOk(false);
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setMatchPreferencesSaveMsg(typeof msg === 'string' ? msg : 'Failed to save job match preferences.');
+    } finally {
+      setMatchPreferencesSaving(false);
+    }
+  };
+
   const sliderValue = Math.min(dedupDays, DEDUP_SLIDER_MAX);
 
   return (
     <PageScrollArea>
-      <div className="w-full px-5 py-5">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white">
-            <Settings2 size={22} />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">Settings</h1>
-            <p className="mt-0.5 text-sm text-slate-600">Provider keys, matching, sync, and document templates.</p>
-          </div>
-        </div>
+      <div className="w-full px-4 py-4">
+        <PageHeader
+          icon={Settings2}
+          gradient="from-slate-700 to-slate-900"
+          title="Settings"
+          description="Provider keys, match scoring, dedup, sync, and document templates - all in one place."
+          className="mb-4"
+        />
 
         {loading ? (
-          <p className="text-sm text-slate-500">Loading settings…</p>
+          <BrandedLoader label="Loading settings…" className="min-h-[60vh]" />
         ) : loadError ? (
           <p className="text-sm text-rose-700">{loadError}</p>
         ) : (
-          <div className="space-y-5">
+          <div className="space-y-4">
             {settings && <ProviderKeysCard settings={settings} onSaved={applySettings} />}
 
-            <div className="grid items-stretch gap-5 lg:grid-cols-2">
+            <div className="grid items-stretch gap-4 lg:grid-cols-2">
               {/* Minimum match score */}
               <SettingsCard
                 icon={Target}
@@ -753,11 +801,66 @@ export function SettingsPage() {
               </SettingsCard>
             </div>
 
+            <SettingsCard
+              icon={Target}
+              iconClass="bg-gradient-to-br from-violet-500 to-fuchsia-600"
+              title="Job match preferences"
+              description="Tell the AI what kinds of roles you want. This feeds the User Preferences dimension (15% of match score) during analysis."
+            >
+              <div className="space-y-2.5">
+                <p className="text-xs text-slate-600">
+                  Examples: preferred work mode (remote only), target titles, industries, salary range,
+                  company size, tech stack, locations, or roles to avoid.
+                </p>
+                <div className="flex items-center justify-between">
+                  <span
+                    className={`text-xs tabular-nums ${
+                      matchPreferences.trim().length <= matchPreferencesMaxLength
+                        ? 'text-slate-400'
+                        : 'text-rose-600'
+                    }`}
+                  >
+                    {matchPreferences.trim().length.toLocaleString()} / {matchPreferencesMaxLength.toLocaleString()}
+                  </span>
+                </div>
+                <textarea
+                  id="job-match-preferences"
+                  value={matchPreferences}
+                  maxLength={matchPreferencesMaxLength}
+                  disabled={matchPreferencesSaving}
+                  onChange={(e) => {
+                    setMatchPreferences(e.target.value);
+                    setMatchPreferencesSaveMsg('');
+                  }}
+                  rows={6}
+                  placeholder={`e.g.\n- Remote only (US time zones)\n- Senior backend / platform engineer roles\n- Prefer fintech, developer tools, or infra startups\n- Target compensation $160k+\n- Avoid roles requiring security clearance`}
+                  className="w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-60"
+                />
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveMatchPreferences()}
+                  disabled={
+                    !matchPreferencesChanged ||
+                    matchPreferencesSaving ||
+                    matchPreferences.trim().length > matchPreferencesMaxLength
+                  }
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {matchPreferencesSaving ? 'Saving…' : 'Save preferences'}
+                </button>
+              </div>
+              {matchPreferencesSaveMsg && (
+                <SectionMessage ok={matchPreferencesSaveOk} text={matchPreferencesSaveMsg} />
+              )}
+            </SettingsCard>
+
             <GoogleSheetsSettingsSection />
 
             <JobSyncSettingsSection />
 
-            <div className="grid items-start gap-5 lg:grid-cols-2">
+            <div className="grid items-start gap-4 lg:grid-cols-2">
               {/* Resume tailoring prompt */}
               <SettingsCard
                 icon={FileText}

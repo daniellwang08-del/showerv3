@@ -20,12 +20,15 @@ import {
   mergeResumeImport,
   type ResumeDraft,
 } from '../../utils/resumeMerge';
+import { formatProfileValidationSummary, validateProfileForSave } from '../../utils/profileValidation';
 import { profileToForm } from './ProfileForm';
 
 type Props = {
   profile: UserProfile | null;
   accountEmail: string | undefined;
   applyProfile: (data: ProfileFormData) => Promise<void>;
+  /** When import data cannot be saved yet, push it into the profile form for manual fixes. */
+  onDraftToForm?: (data: ProfileFormData, errors: Record<string, string>) => void;
   disabled?: boolean;
 };
 
@@ -45,7 +48,7 @@ function profileCompanies(profile: UserProfile | null): string[] {
   return names;
 }
 
-export function ResumeImportSection({ profile, accountEmail, applyProfile, disabled }: Props) {
+export function ResumeImportSection({ profile, accountEmail, applyProfile, onDraftToForm, disabled }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const sourceInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -100,11 +103,20 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, disab
     async (draft: ResumeDraft, mode: 'empty_only' | 'replace') => {
       setLocalError('');
       const merged = mergeResumeImport(profile, draft, accountEmail, mode);
+      const validationErrors = validateProfileForSave(merged);
+      if (Object.keys(validationErrors).length > 0) {
+        const msg = formatProfileValidationSummary(validationErrors);
+        setLocalError(msg);
+        onDraftToForm?.(merged, validationErrors);
+        resetModal();
+        if (inputRef.current) inputRef.current.value = '';
+        return;
+      }
       await applyProfile(merged);
       resetModal();
       if (inputRef.current) inputRef.current.value = '';
     },
-    [accountEmail, applyProfile, profile, resetModal],
+    [accountEmail, applyProfile, onDraftToForm, profile, resetModal],
   );
 
   const afterParse = useCallback(

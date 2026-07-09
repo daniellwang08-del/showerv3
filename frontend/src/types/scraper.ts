@@ -77,6 +77,7 @@ export interface DashboardJob {
   user_status: string | null;
   source: string | null;
   is_remote: boolean;
+  work_mode: string | null;
   salary_raw: string | null;
   job_type: string | null;
 }

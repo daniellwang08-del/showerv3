@@ -87,9 +87,11 @@ export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
                 'flex h-full w-11 shrink-0 items-center justify-center border-r border-[rgba(147,197,253,0.65)] bg-gradient-to-b from-white to-slate-50/90 text-slate-500',
                 'shadow-[inset_-1px_0_0_rgba(255,255,255,0.9)] transition-colors duration-150',
                 'hover:bg-blue-50/80 hover:text-blue-700',
+                'dark:border-[rgba(59,130,246,0.4)] dark:bg-none dark:bg-[rgba(20,29,49,0.85)] dark:text-slate-400 dark:shadow-none',
+                'dark:hover:bg-slate-800 dark:hover:text-blue-300',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/35',
                 'disabled:cursor-not-allowed disabled:opacity-50',
-                attachmentFlow ? 'bg-blue-50/70 text-blue-700' : '',
+                attachmentFlow ? 'bg-blue-50/70 text-blue-700 dark:bg-slate-800 dark:text-blue-300' : '',
               ].join(' ')}
             >
               {attachmentFlow ? (
@@ -103,11 +105,11 @@ export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
               <AttachmentJobProgress status={attachmentFlow} />
             ) : hasPendingAttachment ? (
               <div
-                className="flex h-full min-w-0 flex-1 items-center gap-2 bg-gradient-to-r from-blue-50/95 via-sky-50/60 to-white pl-2 pr-1"
+                className="flex h-full min-w-0 flex-1 items-center gap-2 bg-gradient-to-r from-blue-50/95 via-sky-50/60 to-white pl-2 pr-1 dark:bg-none dark:from-transparent dark:via-transparent dark:to-transparent"
                 title={attachmentTitle}
               >
                 <FileText className="h-4 w-4 shrink-0 text-blue-600" strokeWidth={2} aria-hidden />
-                <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-none text-slate-800">
+                <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-none text-slate-800 dark:text-slate-200">
                   {attachmentLabel}
                 </span>
                 <button

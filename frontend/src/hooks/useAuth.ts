@@ -18,17 +18,26 @@ export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authPage, setAuthPage] = useState<AuthPage>('login');
 
+  // Fetch (or refetch) the current user from /auth/me. Returns the user or null.
+  // Used on mount, right after login/signup, and after a profile update so the
+  // sidebar name/avatar always reflect the real account instead of the "User"
+  // fallback that shows while `user` is still null.
+  const refreshUser = useCallback(async (): Promise<AuthUser | null> => {
+    try {
+      const res = await apiClient.get('/auth/me');
+      const nextUser: AuthUser | null = res.data ?? null;
+      setUser(nextUser);
+      setIsAuthenticated(true);
+      return nextUser;
+    } catch {
+      setUser(null);
+      setIsAuthenticated(false);
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
-    void requestOnce('auth:me', async () => {
-      try {
-        const res = await apiClient.get('/auth/me');
-        setUser(res.data ?? null);
-        setIsAuthenticated(true);
-      } catch {
-        setUser(null);
-        setIsAuthenticated(false);
-      }
-    });
+    void requestOnce('auth:me', () => refreshUser());
 
     const interceptor = apiClient.interceptors.response.use(
       (response) => response,
@@ -42,7 +51,7 @@ export function useAuth() {
     );
 
     return () => apiClient.interceptors.response.eject(interceptor);
-  }, []);
+  }, [refreshUser]);
 
   const logout = useCallback(async () => {
     try {
@@ -53,10 +62,13 @@ export function useAuth() {
     }
   }, []);
 
-  const onAuthSuccess = useCallback(() => {
-    setIsAuthenticated(true);
+  const onAuthSuccess = useCallback(async () => {
+    // Pull the freshly authenticated account so the sidebar shows the real
+    // name/email immediately instead of the "User" fallback (previously `user`
+    // stayed null until a full page reload re-ran /auth/me).
+    await refreshUser();
     setAuthPage('login');
-  }, []);
+  }, [refreshUser]);
 
   const getUserInitial = useCallback((): string => {
     if (user?.name) return user.name.charAt(0).toUpperCase();
@@ -71,6 +83,7 @@ export function useAuth() {
     setAuthPage,
     logout,
     onAuthSuccess,
+    refreshUser,
     getUserInitial,
     setIsAuthenticated,
     setUser,

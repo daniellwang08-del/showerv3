@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.models.database import JobExtraction, Job, UserJobStatus
 from app.services.url_manager import URLManager
+from app.services.linkedin_job_filter import is_linkedin_job_url, LINKEDIN_JOB_BLOCK_REASON
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, UserJobStatusRepository
 from app.utils.text_sanitizer import sanitize_for_postgres_text
@@ -156,6 +157,45 @@ async def _stamp_promoted(
     )
 
 
+async def _purge_linkedin_scraped_rows(
+    session: AsyncSession, scrape_run_id: str
+) -> int:
+    """Delete LinkedIn job postings from a scrape run before extraction starts."""
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT id, url, origin_url
+                FROM scraped_jobs
+                WHERE scrape_run_id = :rid
+                  AND promoted_extraction_id IS NULL
+                """
+            ),
+            {"rid": scrape_run_id},
+        )
+    ).mappings().all()
+
+    linkedin_ids = [
+        str(row["id"])
+        for row in rows
+        if is_linkedin_job_url(_pick_target_url(row) or row.get("url"))
+    ]
+    if not linkedin_ids:
+        return 0
+
+    await session.execute(
+        text("DELETE FROM scraped_jobs WHERE id = ANY(:ids)"),
+        {"ids": linkedin_ids},
+    )
+    await session.commit()
+    logger.info(
+        "scrape_promoter_linkedin_purged",
+        scrape_run_id=scrape_run_id,
+        count=len(linkedin_ids),
+    )
+    return len(linkedin_ids)
+
+
 async def promote_scrape_run(scrape_run_id: str, user_id: str | None = None) -> dict:
     """Promote every un-promoted ``scraped_jobs`` row from this run into a
     JobExtraction + Job and enqueue the extraction worker.
@@ -174,9 +214,14 @@ async def promote_scrape_run(scrape_run_id: str, user_id: str | None = None) -> 
         "linked_existing": 0,
         "blocked": 0,
         "skipped_invalid_url": 0,
+        "linkedin_skipped": 0,
         "failed": 0,
         "enqueued": 0,
+        "linkedin_purged": 0,
     }
+
+    async with get_session() as session:
+        stats["linkedin_purged"] = await _purge_linkedin_scraped_rows(session, scrape_run_id)
 
     async with get_session() as session:
         rows = (
@@ -267,6 +312,23 @@ async def _promote_single_scraped_row(
     if not target_url:
         result["bucket"] = "skipped_invalid_url"
         result["error"] = "No usable URL (origin_url and url both empty)"
+        return result
+
+    if is_linkedin_job_url(target_url):
+        result["bucket"] = "linkedin_skipped"
+        result["error"] = LINKEDIN_JOB_BLOCK_REASON
+        if scraped_job_id:
+            async with get_session() as session:
+                await session.execute(
+                    text("DELETE FROM scraped_jobs WHERE id = :sid"),
+                    {"sid": scraped_job_id},
+                )
+                await session.commit()
+        logger.info(
+            "scrape_promoter_linkedin_skipped",
+            scraped_job_id=scraped_job_id,
+            target_url=target_url,
+        )
         return result
 
     is_valid, validation_error = URLManager.validate_url(target_url)

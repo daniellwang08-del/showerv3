@@ -41,7 +41,7 @@ async def load_design_for_render(session, user: User | None) -> tuple[ResumeDesi
     The ``users.resume_template_design`` column is only a *mirror* of the active library
     resume (see ``_compile_design_into_user``). If that mirror is empty but the user does
     have a library resume with a design, render from the library design instead of silently
-    falling back to the default theme — otherwise a desynced or un-backfilled mirror makes
+    falling back to the default theme - otherwise a desynced or un-backfilled mirror makes
     every tailored résumé come out in the default theme. Only when no design exists anywhere
     do we use the default theme."""
     design, has_design = _load_design(user)

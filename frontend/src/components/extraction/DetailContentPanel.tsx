@@ -43,6 +43,7 @@ type JobData = {
   experience_level: string | null;
   industry: string | null;
   remote_policy?: string | null;
+  work_mode?: string | null;
 };
 
 type JobMatchPayload = {
@@ -107,8 +108,14 @@ const RECOMMENDATION_LABELS: Record<string, string> = {
 };
 
 const DIMENSION_LABELS: Record<string, string> = {
-  industry_alignment: 'Industry & project alignment',
+  skills_match: 'Skills match',
   experience_match: 'Experience match',
+  job_title_similarity: 'Job title similarity',
+  industry_domain_match: 'Industry / domain match',
+  education: 'Education',
+  user_preferences: 'Your preferences',
+  // Legacy keys from older analyses
+  industry_alignment: 'Industry & project alignment',
   technical_skills: 'Technical skills',
   work_environment: 'Work environment',
 };
@@ -213,29 +220,29 @@ function ResumeBuildBadges({ build, validJobId }: { build: ResumeBuildStatus; va
 /** Large overall score - same band language as `MatchScoreChip` */
 function matchScoreHeroClass(score: number): string {
   if (score >= 75) {
-    return 'border border-emerald-300/95 bg-gradient-to-b from-emerald-100 to-emerald-50/95 text-emerald-950 shadow-md shadow-emerald-900/12';
+    return 'border border-emerald-300/95 bg-gradient-to-b from-emerald-100 to-emerald-50/95 text-emerald-900 shadow-md shadow-emerald-900/12';
   }
   if (score >= 45) {
-    return 'border border-sky-300/90 bg-gradient-to-b from-sky-100 to-slate-50 text-sky-950 shadow-md shadow-sky-900/10';
+    return 'border border-sky-300/90 bg-gradient-to-b from-sky-100 to-slate-50 text-sky-900 shadow-md shadow-sky-900/10';
   }
-  return 'border border-amber-300/95 bg-gradient-to-b from-amber-100 to-amber-50/95 text-amber-950 shadow-md shadow-amber-900/12';
+  return 'border border-amber-300/95 bg-gradient-to-b from-amber-100 to-amber-50/95 text-amber-900 shadow-md shadow-amber-900/12';
 }
 
 /** Per-dimension mini badges - mid-strength tints */
 function matchScoreDimensionBadgeClass(score: number): string {
   if (score >= 80) {
-    return 'border border-emerald-300/85 bg-gradient-to-b from-emerald-100 to-emerald-50 text-emerald-950 shadow-sm';
+    return 'border border-emerald-300/85 bg-gradient-to-b from-emerald-100 to-emerald-50 text-emerald-900 shadow-sm';
   }
   if (score >= 65) {
-    return 'border border-green-300/85 bg-gradient-to-b from-green-100 to-green-50 text-green-950 shadow-sm';
+    return 'border border-green-300/85 bg-gradient-to-b from-green-100 to-green-50 text-green-900 shadow-sm';
   }
   if (score >= 50) {
-    return 'border border-amber-300/85 bg-gradient-to-b from-amber-100 to-amber-50 text-amber-950 shadow-sm';
+    return 'border border-amber-300/85 bg-gradient-to-b from-amber-100 to-amber-50 text-amber-900 shadow-sm';
   }
   if (score >= 35) {
-    return 'border border-orange-300/85 bg-gradient-to-b from-orange-100 to-orange-50 text-orange-950 shadow-sm';
+    return 'border border-orange-300/85 bg-gradient-to-b from-orange-100 to-orange-50 text-orange-900 shadow-sm';
   }
-  return 'border border-red-300/85 bg-gradient-to-b from-red-100 to-red-50 text-red-950 shadow-sm';
+  return 'border border-red-300/85 bg-gradient-to-b from-red-100 to-red-50 text-red-900 shadow-sm';
 }
 
 function MetaTile({
@@ -252,7 +259,7 @@ function MetaTile({
 }) {
   return (
     <div
-      className={`flex items-start gap-3 rounded-xl border border-blue-200/55 bg-gradient-to-br from-white/95 to-blue-50/35 p-3 shadow-sm ring-1 ring-blue-100/40 transition hover:border-blue-300/70 hover:shadow-md ${
+      className={`flex items-start gap-3 rounded-xl border border-blue-200/55 bg-gradient-to-br from-white/90 to-blue-50/50 p-3 shadow-sm ring-1 ring-blue-100/40 transition hover:border-blue-300/70 hover:shadow-md ${
         wide ? 'sm:col-span-2' : ''
       }`}
     >
@@ -316,6 +323,11 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
         {data.employment_type && (
           <MetaTile icon={Clock} label="Employment type">
             {data.employment_type}
+          </MetaTile>
+        )}
+        {data.work_mode && data.work_mode !== 'unknown' && (
+          <MetaTile icon={Home} label="Work mode">
+            {data.work_mode.charAt(0).toUpperCase() + data.work_mode.slice(1)}
           </MetaTile>
         )}
         {data.remote_policy && (
