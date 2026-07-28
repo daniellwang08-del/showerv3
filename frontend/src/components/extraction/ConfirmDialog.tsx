@@ -50,7 +50,7 @@ export function ConfirmDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 flex items-center justify-center bg-slate-900/50 p-3 sm:p-4 backdrop-blur-sm"
       style={{ zIndex: Z_INDEX.confirmDialog }}
       role="dialog"
       aria-modal="true"
@@ -59,7 +59,7 @@ export function ConfirmDialog({
         if (e.target === e.currentTarget && !loading) onCancel();
       }}
     >
-      <div className="glass-card relative w-full max-w-md rounded-2xl border border-slate-200/80 bg-white/95 shadow-2xl ring-1 ring-slate-200/60">
+      <div className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <button
           type="button"
           onClick={() => !loading && onCancel()}
@@ -69,7 +69,7 @@ export function ConfirmDialog({
           <X className="h-4 w-4" />
         </button>
 
-        <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+        <div className="border-b border-slate-100 px-4 pb-3 pt-4 pr-12 sm:px-5 sm:pb-4 sm:pt-5">
           <div className="flex items-start gap-3">
             {variant === 'danger' ? (
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600 ring-1 ring-red-100">
@@ -84,12 +84,12 @@ export function ConfirmDialog({
           </div>
         </div>
 
-        <div className="px-5 py-4">
+        <div className="px-4 py-3 sm:px-5 sm:py-4">
           <div className="text-sm leading-relaxed text-slate-600">{description}</div>
           {error ? <p className="mt-3 text-sm font-medium text-red-600">{error}</p> : null}
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-5 py-4 sm:flex-row sm:justify-end">
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-4 py-3 sm:flex-row sm:justify-end sm:px-5 sm:py-4">
           <button
             type="button"
             disabled={loading}

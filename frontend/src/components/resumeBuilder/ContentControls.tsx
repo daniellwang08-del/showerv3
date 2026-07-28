@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Award,
   Briefcase,
@@ -6,7 +6,9 @@ import {
   ChevronUp,
   GraduationCap,
   ListChecks,
+  Loader2,
   Plus,
+  Save,
   Trash2,
   User,
   Wrench,
@@ -15,12 +17,17 @@ import type { ReactNode } from 'react';
 import type { ResumeContent } from '../../types/resumeDesign';
 import { ControlCard } from './controls';
 import { PlainField, RichTextField } from './RichTextField';
+import { ContributionsField } from './ContributionsField';
+import { FlexibleDatePicker } from '../shared/FlexibleDatePicker';
+import { formatFlexiblePeriod } from '../../utils/flexibleDate';
 import {
   emptyContentCert,
   emptyContentEducation,
   emptyContentSkill,
   emptyContentWork,
 } from '../../utils/resumeContent';
+import { selectIsDirty, useResumeBuilderStore } from '../../stores/resumeBuilderStore';
+import { contributionsToEditorText, editorTextToContributions } from '../../utils/workExperience';
 
 type Work = ResumeContent['work_experience'][number];
 type Skill = ResumeContent['technical_skills'][number];
@@ -83,8 +90,8 @@ function AddButton({ onClick, label }: { onClick: () => void; label: string }) {
   );
 }
 
-function Collapsible({ title, subtitle, tools, children }: { title: string; subtitle?: string; tools: ReactNode; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+function Collapsible({ title, subtitle, tools, children, defaultOpen = false }: { title: string; subtitle?: string; tools: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/60">
       <div className="flex items-center gap-2 px-2.5 py-2">
@@ -102,6 +109,152 @@ function Collapsible({ title, subtitle, tools, children }: { title: string; subt
   );
 }
 
+function workFingerprint(w: Work): string {
+  return JSON.stringify({
+    ...w,
+    contributions: w.contributions ?? [],
+  });
+}
+
+/** Local draft editor for one role — Save commits to the resume design (avoids per-keystroke autosave). */
+function WorkExperienceEditor({
+  value,
+  index,
+  count,
+  onSave,
+  onMove,
+  onRemove,
+}: {
+  value: Work;
+  index: number;
+  count: number;
+  onSave: (next: Work) => void;
+  onMove: (dir: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [contribText, setContribText] = useState(() => contributionsToEditorText(value.contributions));
+
+  useEffect(() => {
+    setDraft(value);
+    setContribText(contributionsToEditorText(value.contributions));
+  }, [value]);
+
+  const pending: Work = { ...draft, contributions: editorTextToContributions(contribText) };
+  const dirty = workFingerprint(pending) !== workFingerprint(value);
+
+  const patchDraft = (p: Partial<Work>) => setDraft((d) => ({ ...d, ...p }));
+
+  const saveBlock = () => {
+    onSave({ ...draft, contributions: editorTextToContributions(contribText) });
+  };
+
+  const discard = () => {
+    setDraft(value);
+    setContribText(contributionsToEditorText(value.contributions));
+  };
+
+  return (
+    <Collapsible
+      title={draft.company_name || value.company_name || `Experience ${index + 1}`}
+      subtitle={[
+        draft.job_title || value.job_title,
+        (draft.period_start || value.period_start) &&
+          formatFlexiblePeriod(draft.period_start || value.period_start, draft.period_end || value.period_end),
+      ]
+        .filter(Boolean)
+        .join('  ·  ')}
+      tools={
+        <RowTools index={index} count={count} onMove={onMove} onRemove={onRemove} label="experience" />
+      }
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <PlainField label="Company" value={draft.company_name} onChange={(v) => patchDraft({ company_name: v })} />
+        <PlainField label="Role" value={draft.job_title} onChange={(v) => patchDraft({ job_title: v })} />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <FlexibleDatePicker
+          label="Start"
+          value={draft.period_start}
+          onChange={(v) => patchDraft({ period_start: v })}
+          placeholder="Start date"
+        />
+        <FlexibleDatePicker
+          label="End"
+          value={draft.period_end}
+          onChange={(v) => patchDraft({ period_end: v })}
+          placeholder="Present"
+          allowPresent
+        />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <PlainField label="Location" value={draft.location} onChange={(v) => patchDraft({ location: v })} />
+        <PlainField
+          label="Arrangement"
+          value={draft.job_type}
+          onChange={(v) => patchDraft({ job_type: v })}
+          placeholder="remote"
+        />
+        <PlainField
+          label="Type"
+          value={draft.employment_type}
+          onChange={(v) => patchDraft({ employment_type: v })}
+          placeholder="full-time"
+        />
+      </div>
+      <PlainField label="Project title" value={draft.project_title} onChange={(v) => patchDraft({ project_title: v })} />
+      <RichTextField
+        label="Project intro"
+        value={draft.project_intro}
+        onChange={(v) => patchDraft({ project_intro: v })}
+        rows={2}
+      />
+      <ContributionsField value={contribText} onChange={setContribText} rows={6} />
+      <RichTextField
+        label="Used skills"
+        value={draft.used_skills}
+        onChange={(v) => patchDraft({ used_skills: v })}
+        rows={2}
+        placeholder="React, Node, **AWS**"
+      />
+
+      <div
+        className={`sticky bottom-1 flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 ${
+          dirty ? 'border-amber-200 bg-amber-50/90' : 'border-slate-200 bg-white/90'
+        }`}
+      >
+        <span className={`min-w-0 flex-1 text-[11px] font-medium ${dirty ? 'text-amber-800' : 'text-slate-500'}`}>
+          {dirty
+            ? 'Unsaved changes in this role — preview updates after Save'
+            : 'Role saved to this resume'}
+        </span>
+        {dirty ? (
+          <button
+            type="button"
+            onClick={discard}
+            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Discard
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={saveBlock}
+          disabled={!dirty}
+          className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold shadow-sm disabled:opacity-40 ${
+            dirty
+              ? 'border border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
+              : 'border border-slate-200 bg-slate-50 text-slate-500'
+          }`}
+        >
+          <Save size={13} />
+          Save role
+        </button>
+      </div>
+    </Collapsible>
+  );
+}
+
 export function ContentControls({
   content,
   onChange,
@@ -109,6 +262,10 @@ export function ContentControls({
   content: ResumeContent;
   onChange: (next: ResumeContent) => void;
 }) {
+  const dirty = useResumeBuilderStore(selectIsDirty);
+  const saving = useResumeBuilderStore((s) => s.saving);
+  const save = useResumeBuilderStore((s) => s.save);
+  const lastSavedAt = useResumeBuilderStore((s) => s.lastSavedAt);
   const patch = (p: Partial<ResumeContent>) => onChange({ ...content, ...p });
 
   // ---- Header ----
@@ -159,7 +316,7 @@ export function ContentControls({
             </div>
             <div className="space-y-2">
               <PlainField label="Category" value={s.category} onChange={(v) => patch({ technical_skills: replaceAt(content.technical_skills, i, { ...s, category: v }) })} placeholder="e.g. Languages" />
-              <RichTextField label="Skills (comma separated)" value={s.skills} onChange={(v) => patch({ technical_skills: replaceAt(content.technical_skills, i, { ...s, skills: v }) })} rows={2} placeholder="Python, **Kafka**, SQL" />
+              <PlainField label="Skills (comma separated)" value={s.skills} onChange={(v) => patch({ technical_skills: replaceAt(content.technical_skills, i, { ...s, skills: v }) })} placeholder="Python, Kafka, SQL" />
             </div>
           </div>
         ))}
@@ -174,68 +331,15 @@ export function ContentControls({
     <ControlCard icon={Briefcase} title="Work experience">
       <div className="space-y-2">
         {content.work_experience.map((w: Work, i) => (
-          <Collapsible
+          <WorkExperienceEditor
             key={i}
-            title={w.company_name || `Experience ${i + 1}`}
-            subtitle={[w.job_title, w.period_start && `${w.period_start} – ${w.period_end || 'Present'}`].filter(Boolean).join('  ·  ')}
-            tools={
-              <RowTools
-                index={i}
-                count={content.work_experience.length}
-                onMove={(dir) => patch({ work_experience: move(content.work_experience, i, dir) })}
-                onRemove={() => patch({ work_experience: removeAt(content.work_experience, i) })}
-                label="experience"
-              />
-            }
-          >
-            <div className="grid grid-cols-2 gap-2">
-              <PlainField label="Company" value={w.company_name} onChange={(v) => updateWork(i, { ...w, company_name: v })} />
-              <PlainField label="Role" value={w.job_title} onChange={(v) => updateWork(i, { ...w, job_title: v })} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <PlainField label="Start" value={w.period_start} onChange={(v) => updateWork(i, { ...w, period_start: v })} placeholder="Jan 2022" />
-              <PlainField label="End" value={w.period_end} onChange={(v) => updateWork(i, { ...w, period_end: v })} placeholder="Present" />
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <PlainField label="Location" value={w.location} onChange={(v) => updateWork(i, { ...w, location: v })} />
-              <PlainField label="Arrangement" value={w.job_type} onChange={(v) => updateWork(i, { ...w, job_type: v })} placeholder="remote" />
-              <PlainField label="Type" value={w.employment_type} onChange={(v) => updateWork(i, { ...w, employment_type: v })} placeholder="full-time" />
-            </div>
-            <PlainField label="Project title" value={w.project_title} onChange={(v) => updateWork(i, { ...w, project_title: v })} />
-            <RichTextField label="Project intro" value={w.project_intro} onChange={(v) => updateWork(i, { ...w, project_intro: v })} rows={2} />
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-600">Key contributions</span>
-              </div>
-              <div className="space-y-2">
-                {(w.contributions.length ? w.contributions : ['']).map((c, ci) => (
-                  <div key={ci} className="flex items-start gap-1.5">
-                    <span className="mt-2 text-slate-300">•</span>
-                    <div className="min-w-0 flex-1">
-                      <RichTextField
-                        value={c}
-                        rows={2}
-                        onChange={(v) => updateWork(i, { ...w, contributions: replaceAt(w.contributions.length ? w.contributions : [''], ci, v) })}
-                      />
-                    </div>
-                    <div className="pt-1">
-                      <RowTools
-                        index={ci}
-                        count={Math.max(w.contributions.length, 1)}
-                        onMove={(dir) => updateWork(i, { ...w, contributions: move(w.contributions, ci, dir) })}
-                        onRemove={() => updateWork(i, { ...w, contributions: removeAt(w.contributions, ci) })}
-                        label="bullet"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2">
-                <AddButton label="Add bullet" onClick={() => updateWork(i, { ...w, contributions: [...w.contributions, ''] })} />
-              </div>
-            </div>
-            <RichTextField label="Used skills" value={w.used_skills} onChange={(v) => updateWork(i, { ...w, used_skills: v })} rows={2} placeholder="React, Node, **AWS**" />
-          </Collapsible>
+            value={w}
+            index={i}
+            count={content.work_experience.length}
+            onSave={(next) => updateWork(i, next)}
+            onMove={(dir) => patch({ work_experience: move(content.work_experience, i, dir) })}
+            onRemove={() => patch({ work_experience: removeAt(content.work_experience, i) })}
+          />
         ))}
       </div>
       <AddButton label="Add experience" onClick={() => patch({ work_experience: [...content.work_experience, emptyContentWork()] })} />
@@ -251,7 +355,7 @@ export function ContentControls({
           <Collapsible
             key={i}
             title={e.university_name || `Education ${i + 1}`}
-            subtitle={[e.degree, e.period_start && `${e.period_start} – ${e.period_end || ''}`].filter(Boolean).join('  ·  ')}
+            subtitle={[e.degree, (e.period_start || e.period_end) && formatFlexiblePeriod(e.period_start, e.period_end)].filter(Boolean).join('  ·  ')}
             tools={
               <RowTools
                 index={i}
@@ -267,8 +371,18 @@ export function ContentControls({
               <PlainField label="Degree" value={e.degree} onChange={(v) => updateEdu(i, { ...e, degree: v })} />
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <PlainField label="Start" value={e.period_start} onChange={(v) => updateEdu(i, { ...e, period_start: v })} />
-              <PlainField label="End" value={e.period_end} onChange={(v) => updateEdu(i, { ...e, period_end: v })} />
+              <FlexibleDatePicker
+                label="Start"
+                value={e.period_start}
+                onChange={(v) => updateEdu(i, { ...e, period_start: v })}
+                placeholder="Start"
+              />
+              <FlexibleDatePicker
+                label="End"
+                value={e.period_end}
+                onChange={(v) => updateEdu(i, { ...e, period_end: v })}
+                placeholder="End"
+              />
               <PlainField label="Grade" value={e.mark} onChange={(v) => updateEdu(i, { ...e, mark: v })} />
             </div>
             <PlainField label="Location" value={e.location} onChange={(v) => updateEdu(i, { ...e, location: v })} />
@@ -281,21 +395,46 @@ export function ContentControls({
   );
 
   // ---- Certificates ----
+  const updateCert = (i: number, cert: (typeof content.certificates)[number]) =>
+    patch({ certificates: replaceAt(content.certificates, i, cert) });
   const certificates = (
     <ControlCard icon={Award} title="Certifications">
       <div className="space-y-2">
         {content.certificates.map((cert, i) => (
-          <div key={i} className="flex items-center gap-1.5">
-            <div className="min-w-0 flex-1">
-              <PlainField value={cert.name} onChange={(v) => patch({ certificates: replaceAt(content.certificates, i, { name: v }) })} placeholder="Certification name" />
+          <div key={i} className="rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+            <div className="flex items-start gap-1.5">
+              <div className="min-w-0 flex-1 space-y-2">
+                <PlainField
+                  label="Name"
+                  value={cert.name}
+                  onChange={(v) => updateCert(i, { ...cert, name: v })}
+                  placeholder="Certification name"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <FlexibleDatePicker
+                    label="Issue date (optional)"
+                    value={cert.issued_at || ''}
+                    onChange={(v) => updateCert(i, { ...cert, issued_at: v })}
+                    placeholder="Issue date"
+                  />
+                  <PlainField
+                    label="Credential link (optional)"
+                    value={cert.url || ''}
+                    onChange={(v) => updateCert(i, { ...cert, url: v })}
+                    placeholder="https://…"
+                  />
+                </div>
+              </div>
+              <div className="pt-5">
+                <RowTools
+                  index={i}
+                  count={content.certificates.length}
+                  onMove={(dir) => patch({ certificates: move(content.certificates, i, dir) })}
+                  onRemove={() => patch({ certificates: removeAt(content.certificates, i) })}
+                  label="certificate"
+                />
+              </div>
             </div>
-            <RowTools
-              index={i}
-              count={content.certificates.length}
-              onMove={(dir) => patch({ certificates: move(content.certificates, i, dir) })}
-              onRemove={() => patch({ certificates: removeAt(content.certificates, i) })}
-              label="certificate"
-            />
           </div>
         ))}
       </div>
@@ -304,12 +443,13 @@ export function ContentControls({
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-20">
       <div className="flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-[11px] leading-snug text-blue-700">
         <ListChecks size={14} className="mt-0.5 shrink-0" />
         <span>
-          Edits here apply to <strong>this resume design</strong> and update the preview instantly. Select text and use
-          <strong> B / I / U</strong> to format. Your master profile stays untouched.
+          Edits here apply to <strong>this resume design</strong>. Work experience roles use a local draft — click{' '}
+          <strong>Save role</strong> to update the preview and persist. Select text and use <strong>B / I / U</strong>{' '}
+          to format. Your master profile stays untouched.
         </span>
       </div>
       {header}
@@ -318,6 +458,35 @@ export function ContentControls({
       {experience}
       {education}
       {certificates}
+
+      <div className="sticky bottom-2 z-10 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1 text-xs text-slate-600">
+            {saving ? (
+              <span className="font-medium text-blue-700">Saving content…</span>
+            ) : dirty ? (
+              <span className="font-medium text-amber-800">Unsaved content changes</span>
+            ) : lastSavedAt ? (
+              <span className="font-medium text-emerald-700">Content saved</span>
+            ) : (
+              <span>Save to keep this resume’s content</span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={!dirty || saving}
+            className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-4 text-sm font-semibold shadow-sm disabled:opacity-40 ${
+              dirty
+                ? 'border border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
+                : 'border border-slate-200 bg-slate-50 text-slate-500'
+            }`}
+          >
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+            Save content
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -29,7 +29,7 @@ class GlassdoorSpider(BaseJobSpider):
         "AUTOTHROTTLE_TARGET_CONCURRENCY": 1.0,
     }
 
-    def start_requests(self):
+    async def start(self):
         query = self.query or "software engineer"
         location = self.search_location or ""
 

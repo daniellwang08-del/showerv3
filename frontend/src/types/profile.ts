@@ -22,7 +22,13 @@ export type EducationBlock = {
   location?: string;
   description?: string;
 };
-export type CertificateBlock = { name: string };
+export type CertificateBlock = {
+  name: string;
+  /** Optional issue date (e.g. YYYY-MM or "2024"). */
+  issued_at?: string;
+  /** Optional credential / verification URL. */
+  url?: string;
+};
 
 /** Mailing address used to auto-fill application forms (Workday etc.). */
 export type AddressInfo = {

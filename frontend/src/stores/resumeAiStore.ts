@@ -3,7 +3,7 @@ import { streamResumeAiChat } from '../api/resumeAiApi';
 import type { ResumeAiMatch, ResumeAiTailoredContent } from '../types/resumeAi';
 import type { ResumeContent } from '../types/resumeDesign';
 import { useResumeBuilderStore } from './resumeBuilderStore';
-import { profileToContent } from '../utils/resumeContent';
+import { normalizeContentWork, profileToContent } from '../utils/resumeContent';
 
 export interface ResumeAiChatMessage {
   id: string;
@@ -44,8 +44,8 @@ const WELCOME: ResumeAiChatMessage = {
   id: 'rai-welcome',
   role: 'assistant',
   text:
-    "Paste a job description and I'll tailor your resume to it - or ask me to score how well you match. "
-    + 'The tailored content loads straight into the builder for you to fine-tune.',
+    "Paste a job description and I'll tailor your resume to it, or ask me to score how well you match. "
+    + 'Tailored content loads straight into the builder for you to refine.',
 };
 
 /** Merge tailored sections onto a profile-seeded content override and save it as a NEW
@@ -70,7 +70,9 @@ async function applyTailoredToBuilder(
     ...base,
     profile_summary: tailored.profile_summary || base.profile_summary,
     technical_skills: tailored.technical_skills.length ? tailored.technical_skills : base.technical_skills,
-    work_experience: tailored.work_experience.length ? tailored.work_experience : base.work_experience,
+    work_experience: tailored.work_experience.length
+      ? tailored.work_experience.map((w) => normalizeContentWork(w))
+      : base.work_experience,
   };
   // Inherit the current theme/styling; only swap in the tailored content.
   const design = { ...s.design, content: merged };

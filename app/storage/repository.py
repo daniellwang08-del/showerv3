@@ -485,6 +485,58 @@ class ResumeBuildRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id(self, build_id: str, user_id: str) -> ResumeBuildResult | None:
+        result = await self._session.execute(
+            select(ResumeBuildResult).where(
+                ResumeBuildResult.id == build_id,
+                ResumeBuildResult.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def search_completed_for_user(
+        self,
+        user_id: str,
+        *,
+        company: str | None = None,
+        job_title: str | None = None,
+        limit: int = 100,
+    ) -> list[tuple[ResumeBuildResult, Job]]:
+        """Search completed job-workflow builds by job company and/or title (AND).
+
+        Only returns rows with ``content_generation_status='completed'`` and
+        non-null ``tailored_resume_data`` (ready to open in the builder).
+        """
+        company_q = (company or "").strip()
+        role_q = (job_title or "").strip()
+        if not company_q and not role_q:
+            return []
+
+        def _pat(raw: str) -> str:
+            escaped = raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            return f"%{escaped}%"
+
+        clauses = []
+        if company_q:
+            clauses.append(Job.company.ilike(_pat(company_q), escape="\\"))
+        if role_q:
+            clauses.append(Job.title.ilike(_pat(role_q), escape="\\"))
+
+        stmt = (
+            select(ResumeBuildResult, Job)
+            .join(Job, Job.id == ResumeBuildResult.job_id)
+            .where(
+                ResumeBuildResult.user_id == user_id,
+                ResumeBuildResult.content_generation_status == "completed",
+                ResumeBuildResult.tailored_resume_data.isnot(None),
+                and_(*clauses),
+            )
+            .order_by(ResumeBuildResult.updated_at.desc())
+            .limit(max(1, min(limit, 200)))
+        )
+        result = await self._session.execute(stmt)
+        return [(row[0], row[1]) for row in result.all()]
+
     async def upsert(
         self,
         job_id: str,

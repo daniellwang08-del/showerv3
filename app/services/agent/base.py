@@ -28,6 +28,7 @@ class ToolContext:
 
     user_id: str
     timezone: str | None = None
+    is_admin: bool = False
 
 
 @dataclass

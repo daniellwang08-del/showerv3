@@ -36,7 +36,7 @@ export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps)
   return (
     /* ── Full-screen backdrop ────────────────────────────────────────── */
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center p-6 animate-modal-backdrop-in"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-4 md:p-6 animate-modal-backdrop-in"
       role="dialog"
       aria-modal="true"
       aria-label="Job analysis"
@@ -50,7 +50,7 @@ export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps)
 
       {/* ── Modal panel ─────────────────────────────────────────────── */}
       <div
-        className="relative z-10 flex h-[85vh] w-[70vw] min-w-[520px] max-w-[1200px] animate-modal-in flex-col overflow-hidden rounded-2xl shadow-2xl ring-1 ring-slate-900/10"
+        className="relative z-10 flex h-[min(85dvh,900px)] w-full max-w-[1200px] animate-modal-in flex-col overflow-hidden rounded-2xl shadow-2xl ring-1 ring-slate-900/10 sm:w-[min(92vw,1200px)] lg:w-[70vw]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close (×) button - top-right corner, above the panel header */}
@@ -58,7 +58,7 @@ export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps)
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-white/80 text-slate-500 shadow-sm ring-1 ring-slate-200/80 backdrop-blur-sm transition-colors hover:bg-red-50 hover:text-red-600 hover:ring-red-200"
+          className="absolute right-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
         >
           <X size={14} strokeWidth={2.5} />
         </button>

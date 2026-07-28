@@ -36,7 +36,6 @@ from app.services.job_location_classifier import LocationVerdict, classify_job_l
 from app.storage.repository import JobMatchRepository, UserJobStatusRepository
 from app.storage.database import get_session
 from app.api.websocket import publish_ws_event
-from app.core.config import get_settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -219,7 +218,8 @@ async def run_post_analysis_dedup(
 ) -> dict:
     """Returns {"action": "saved_active"|"saved_duplicated"|"skipped", ...}"""
 
-    settings = get_settings()
+    from app.services.system_settings_service import get_effective_value_sync
+
     overall_score = match_data.get("overall_score", 0)
 
     async with get_session() as session:
@@ -286,7 +286,9 @@ async def run_post_analysis_dedup(
                 exclusion_type=NON_US_LOCATION_EXCLUSION,
                 reason=f"Non-US job location ({location_detail}).",
             )
-        if location_verdict == LocationVerdict.UNKNOWN and settings.dedup_rule_location_unknown_enabled:
+        if location_verdict == LocationVerdict.UNKNOWN and bool(
+            get_effective_value_sync("dedup_rule_location_unknown_enabled")
+        ):
             logger.info(
                 "post_analysis_dedup_location_unknown",
                 job_id=job_id,
@@ -382,7 +384,7 @@ async def run_post_analysis_dedup(
 
         pool_ids = [j.id for j in same_company_jobs]
 
-        if settings.dedup_rule_applied_company_enabled:
+        if bool(get_effective_value_sync("dedup_rule_applied_company_enabled")):
             applied_result = await session.execute(
                 select(ValidJobUserApplication).where(
                     ValidJobUserApplication.user_id == user_id,
@@ -406,7 +408,7 @@ async def run_post_analysis_dedup(
                     ),
                 )
 
-        if not settings.dedup_rule_score_comparison_enabled:
+        if not bool(get_effective_value_sync("dedup_rule_score_comparison_enabled")):
             return await _save_active(session, job_id, user_id, match_data, overall_score)
 
         match_rows_result = await session.execute(

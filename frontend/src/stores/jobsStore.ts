@@ -16,6 +16,7 @@ import {
 import { runWithConcurrencyLimit } from '../utils/asyncPool';
 import type { AttachmentFlowStatus } from '../types/ui';
 import { useScraperStore } from './scraperStore';
+import { extractHttpUrlsFromText } from '../utils/extractHttpUrls';
 
 /** Extract a renderable error string from an Axios error (FastAPI 422 returns detail as an array of objects). */
 function extractErrorMessage(err: any, fallback: string): string {
@@ -35,6 +36,53 @@ async function syncDashboardAfterSubmit(): Promise<void> {
     await useScraperStore.getState().refreshAfterJobSubmit();
   } catch {
     // Dashboard refresh is best-effort; jobsStore lists still updated separately.
+  }
+}
+
+type JobsStoreSet = (partial: Record<string, unknown> | ((state: any) => Record<string, unknown>)) => void;
+type JobsStoreGet = () => {
+  refreshLists: (opts?: { showLoading?: boolean; reset?: boolean }) => Promise<void>;
+};
+
+/** Shared path: submit a list of extracted URLs with the attachment progress UI. */
+async function submitExtractedUrls(
+  get: JobsStoreGet,
+  set: JobsStoreSet,
+  urls: string[],
+  warnings?: string[],
+): Promise<void> {
+  set({
+    attachmentFlow: {
+      phase: 'submitting',
+      message: `Submitting ${urls.length} job URL${urls.length === 1 ? '' : 's'}\u2026`,
+      submitted: 0,
+      total: urls.length,
+    },
+  });
+  await runWithConcurrencyLimit(
+    urls,
+    ATTACHMENT_SUBMIT_CONCURRENCY,
+    async (u) => {
+      await apiClient.post<SubmissionResponse>('/jobs/submit', { url: u });
+    },
+    (done, tot) => {
+      set({
+        attachmentFlow: {
+          phase: 'submitting',
+          message: `Submitting job URLs (${done}/${tot})\u2026`,
+          submitted: done,
+          total: tot,
+        },
+      });
+    },
+  );
+  await get().refreshLists({ showLoading: false, reset: false });
+  await syncDashboardAfterSubmit();
+  if (warnings?.length) {
+    set({
+      submitNoticeKind: 'warning',
+      submitNotice: warnings.slice(0, 2).join(' \u00b7 ') + (warnings.length > 2 ? ' \u2026' : ''),
+    });
   }
 }
 
@@ -107,6 +155,8 @@ type JobsState = {
 
   submitJob: (submittedUrl: string) => Promise<void>;
   submitAttachmentFiles: (files: File[]) => Promise<void>;
+  /** Parse pasted text for http(s) URLs and submit them (same pipeline as attachments). */
+  submitPastedText: (text: string) => Promise<void>;
 
   markApplied: (items: SubmittedUrlItem[]) => Promise<void>;
   markUnapplied: (items: SubmittedUrlItem[]) => Promise<void>;
@@ -548,41 +598,37 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         set({ submitError: 'No job URLs found in the attachment.' });
         throw new Error('NO_URLS_IN_ATTACHMENT');
       }
-      set({
-        attachmentFlow: {
-          phase: 'submitting',
-          message: `Submitting ${urls.length} job URL${urls.length === 1 ? '' : 's'}\u2026`,
-          submitted: 0,
-          total: urls.length,
-        },
-      });
-      await runWithConcurrencyLimit(
-        urls,
-        ATTACHMENT_SUBMIT_CONCURRENCY,
-        async (u) => {
-          await apiClient.post<SubmissionResponse>('/jobs/submit', { url: u });
-        },
-        (done, tot) => {
-          set({
-            attachmentFlow: {
-              phase: 'submitting',
-              message: `Submitting job URLs (${done}/${tot})\u2026`,
-              submitted: done,
-              total: tot,
-            },
-          });
-        },
-      );
-      await get().refreshLists({ showLoading: false, reset: false });
-      await syncDashboardAfterSubmit();
-      if (warnings?.length) {
-        set({
-          submitNoticeKind: 'warning',
-          submitNotice: warnings.slice(0, 2).join(' \u00b7 ') + (warnings.length > 2 ? ' \u2026' : ''),
-        });
-      }
+      await submitExtractedUrls(get, set, urls, warnings);
     } catch (error: any) {
       const msg = extractErrorMessage(error, 'Attachment processing failed');
+      set({ submitError: msg });
+      throw error;
+    } finally {
+      set({ loading: false, attachmentFlow: null });
+    }
+  },
+
+  submitPastedText: async (text: string) => {
+    const urls = extractHttpUrlsFromText(text);
+    if (!urls.length) {
+      set({ submitError: 'No http(s) job URLs found in the pasted text.' });
+      throw new Error('NO_URLS_IN_PASTE');
+    }
+    set({
+      submitError: '',
+      submitNotice: '',
+      loading: true,
+      attachmentFlow: {
+        phase: 'submitting',
+        message: `Submitting ${urls.length} job URL${urls.length === 1 ? '' : 's'}\u2026`,
+        submitted: 0,
+        total: urls.length,
+      },
+    });
+    try {
+      await submitExtractedUrls(get, set, urls);
+    } catch (error: any) {
+      const msg = extractErrorMessage(error, 'Paste submit failed');
       set({ submitError: msg });
       throw error;
     } finally {

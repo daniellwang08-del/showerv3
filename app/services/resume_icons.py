@@ -4,14 +4,13 @@ The resume builder embeds these inline before each contact line in the generated
 .docx header so the output matches the live preview. Icons are described as SVG
 path data on a 24x24 grid and rasterised with Pillow:
 
-* ``fill`` icons (LinkedIn, GitHub) use the even-odd rule via XOR of per-subpath
-  masks, so interior cut-outs (the LinkedIn "in", the GitHub octocat eyes) render
-  correctly.
-* ``stroke`` icons (email envelope, phone handset) trace each subpath as a thick
-  rounded polyline.
+* Brand (default) uses ``fill`` for every kind — solid email / phone / LinkedIn /
+  GitHub. LinkedIn/GitHub use even-odd (XOR) so interior cut-outs render; email
+  uses nonzero (union) for body+flap.
+* Outline uses ``stroke`` line glyphs for every kind.
 
 Everything is supersampled and downscaled with LANCZOS for crisp antialiased edges,
-then tinted to the requested color. Results are cached per (kind, color, size).
+then tinted to the requested color. Results are cached per (kind, color, variant, size).
 """
 
 from __future__ import annotations
@@ -30,17 +29,32 @@ except Exception:  # pragma: no cover - import guard
     _PIL_AVAILABLE = False
 
 # 24x24 viewBox path data.
+# ``mode`` is the Brand (default) paint mode. Outline switches fill→stroke for
+# LinkedIn/GitHub and uses the stroke paths for email/phone.
 _ICONS: dict[str, dict[str, object]] = {
     "email": {
-        "mode": "stroke",
+        # Brand = solid envelope (body + flap union). Outline = line envelope.
+        "mode": "fill",
+        "fill_rule": "nonzero",
         "paths": [
+            # Body (below the flap crease).
+            "M1.5 8.67v8.58a3 3 0 0 0 3 3h15a3 3 0 0 0 3-3V8.67l-8.928 5.493a3 3 0 0 1-3.144 0L1.5 8.67z",
+            # Flap.
+            "M22.5 6.908V6.75a3 3 0 0 0-3-3h-15a3 3 0 0 0-3 3v.158l9.714 5.978a1.5 1.5 0 0 0 1.572 0L22.5 6.908z",
+        ],
+        "outline_mode": "stroke",
+        "outline_paths": [
             "M2.5 4.5h17a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1-2.5 2.5h-17A2.5 2.5 0 0 1 0 17V7a2.5 2.5 0 0 1 2.5-2.5z",
             "M1.5 6 12 13.2 22.5 6",
         ],
     },
     "phone": {
-        "mode": "stroke",
+        "mode": "fill",
         "paths": [
+            "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z",
+        ],
+        "outline_mode": "stroke",
+        "outline_paths": [
             "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z",
         ],
     },
@@ -332,8 +346,8 @@ def _rgb(color_hex: str) -> tuple[int, int, int]:
 def contact_icon_png(kind: str, color_hex: str, variant: str = "brand", px: int = 96) -> bytes | None:
     """Return PNG bytes for *kind* tinted to *color_hex*, or ``None`` if unknown.
 
-    ``variant`` is ``"brand"`` (filled LinkedIn / GitHub marks) or ``"outline"``
-    (line versions). Email / phone are always line icons.
+    ``variant`` is ``"brand"`` (solid/filled glyphs for every kind) or ``"outline"``
+    (line versions). Product default is brand.
     """
     if not _PIL_AVAILABLE:
         return None
@@ -345,30 +359,38 @@ def contact_icon_png(kind: str, color_hex: str, variant: str = "brand", px: int 
     scale = size / 24.0
     color = _rgb(color_hex)
 
-    mode = spec["mode"]
-    if variant == "outline" and kind in ("linkedin", "github"):
-        mode = "stroke"
+    use_outline = variant == "outline"
+    if use_outline and spec.get("outline_mode"):
+        mode = str(spec["outline_mode"])
+        path_src = spec.get("outline_paths") or spec["paths"]
+        fill_rule = "evenodd"
+    else:
+        mode = str(spec["mode"])
+        path_src = spec["paths"]
+        fill_rule = str(spec.get("fill_rule") or "evenodd")
+        if use_outline and kind in ("linkedin", "github"):
+            mode = "stroke"
 
     paths: list[list[tuple[float, float]]] = []
-    for d in spec["paths"]:  # type: ignore[index]
+    for d in path_src:  # type: ignore[union-attr]
         for sub in _parse_path(d):  # type: ignore[arg-type]
             paths.append([(x * scale, y * scale) for (x, y) in sub])
 
     if mode == "fill":
-        # Even-odd fill = XOR of each subpath's solid mask.
+        # evenodd = XOR (LinkedIn "in" cut-out); nonzero = union (email body+flap).
         acc = Image.new("1", (size, size), 0)
         for sub in paths:
             if len(sub) < 3:
                 continue
             m = Image.new("1", (size, size), 0)
             ImageDraw.Draw(m).polygon(sub, fill=1)
-            acc = ImageChops.logical_xor(acc, m)
+            acc = ImageChops.logical_or(acc, m) if fill_rule == "nonzero" else ImageChops.logical_xor(acc, m)
         mask = acc.convert("L")
     else:
         mask = Image.new("L", (size, size), 0)
         draw = ImageDraw.Draw(mask)
         # Thinner stroke for the detailed brand outlines than for the simple glyphs.
-        rel = 0.058 if (variant == "outline" and kind in ("linkedin", "github")) else 0.085
+        rel = 0.058 if (use_outline and kind in ("linkedin", "github")) else 0.085
         w = max(2, int(round(size * rel)))
         r = w / 2.0
         for sub in paths:

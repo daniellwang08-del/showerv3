@@ -65,6 +65,8 @@ class CloudflareSession:
         self.proxies_list = _load_proxies(proxy_path)
         self._session: Optional[cffi_requests.Session] = None
         self._authenticated = False
+        self.last_status_code: Optional[int] = None
+        self.last_failure_reason: Optional[str] = None
         self._create_session()
         self._load_saved_session()
 
@@ -117,38 +119,58 @@ class CloudflareSession:
     def fetch(self, url: str, max_retries: int = 3) -> Optional[str]:
         """Fetch a URL using the authenticated curl_cffi session.
 
-        Returns the HTML body on success, None on failure.
+        Returns the HTML/JSON body on success, None on failure.
+        On failure, ``last_failure_reason`` and ``last_status_code`` are set.
         """
+        self.last_status_code = None
+        self.last_failure_reason = None
         for attempt in range(max_retries):
             try:
                 html = self._try_curl_cffi(url)
                 if html:
+                    self.last_failure_reason = None
                     return html
+
+                # Auth expiry will not recover by retrying the same cookies.
+                if self.last_failure_reason == "auth_expired":
+                    break
 
                 delay = (2 ** attempt) + random.uniform(0, 1)
                 logger.warning("Retry %d/%d for %s in %.1fs", attempt + 1, max_retries, url, delay)
                 time.sleep(delay)
 
             except Exception as e:
+                self.last_failure_reason = "fetch_failed"
                 logger.error("Fetch error on attempt %d for %s: %s", attempt + 1, url, e)
                 delay = (2 ** attempt) + random.uniform(0, 1)
                 time.sleep(delay)
 
-        logger.error("All %d attempts failed for %s", max_retries, url)
+        if not self.last_failure_reason:
+            self.last_failure_reason = "fetch_failed"
+        logger.error(
+            "Fetch failed for %s (reason=%s, status=%s)",
+            url,
+            self.last_failure_reason,
+            self.last_status_code,
+        )
         return None
 
     def _try_curl_cffi(self, url: str) -> Optional[str]:
         try:
             proxy_dict = self._get_proxy_dict()
             resp = self._session.get(url, proxies=proxy_dict)
+            self.last_status_code = resp.status_code
             logger.info("curl_cffi %s → %d (%d bytes)", url[:80], resp.status_code, len(resp.content))
 
             if resp.status_code == 429:
+                self.last_failure_reason = "rate_limited"
                 logger.warning("Rate limited (429) on %s", url)
                 time.sleep(random.uniform(5, 15))
                 return None
 
             if resp.status_code == 403:
+                self.last_failure_reason = "auth_expired"
+                self._authenticated = False
                 logger.warning(
                     "Got 403 from %s - session may have expired. "
                     "Re-run: python -m app.scraper.auth setup",
@@ -160,6 +182,7 @@ class CloudflareSession:
             return resp.text
 
         except Exception as e:
+            self.last_failure_reason = "fetch_failed"
             logger.error("curl_cffi request failed for %s: %s", url, e)
             return None
 

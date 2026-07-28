@@ -72,6 +72,9 @@ interface Props {
   /** Reports the realized per-role body gaps (pt) so the compiler/fill engine reproduce
    *  the exact spacing the user designed. Wire on the main preview only. */
   onMeasureLayout?: (m: MeasuredLayoutMetrics) => void;
+  /** When true, only run the offscreen measure pass (no visible HTML pages). Used while
+   *  the builder shows accurate PDF page images as the primary preview. */
+  measureOnly?: boolean;
 }
 
 /**
@@ -98,6 +101,7 @@ export function ResumePageStack({
   onSelect,
   onMeasureHeader,
   onMeasureLayout,
+  measureOnly = false,
 }: Props) {
   const measureRef = useRef<HTMLDivElement>(null);
   const [pages, setPages] = useState<Page[]>([{ offset: 0, height: 0, topMargin: 0 }]);
@@ -132,9 +136,17 @@ export function ResumePageStack({
           if (top > bandBottom - 1 && top < firstTop) firstTop = top;
         }
         const gapPx = firstTop === Infinity ? null : Math.max(0, firstTop - bandBottom);
+        // Clamp absurd geometry. Do NOT null band_pt — a null pin lets dxpdf size the
+        // first-page header from nested contact tables, which can grow past the page
+        // and shove the Technical two-column body onto page 2 (blank page-1 body).
+        const twoCol = design.layout.columns === 2;
+        const bandCap = twoCol ? 110 : 220;
+        const gapCap = twoCol ? 16 : 48;
+        const rawBand = round1(bandRect.height / PT_TO_PX);
+        const rawGap = gapPx == null ? null : round1(gapPx / PT_TO_PX);
         next = {
-          band_pt: round1(bandRect.height / PT_TO_PX),
-          gap_pt: gapPx == null ? null : round1(gapPx / PT_TO_PX),
+          band_pt: Math.min(rawBand, bandCap),
+          gap_pt: rawGap == null ? null : Math.min(rawGap, gapCap),
           measured_at_px: RESUME_REF_WIDTH,
         };
       }
@@ -246,15 +258,18 @@ export function ResumePageStack({
     const compute = () => {
       const total = root.scrollHeight;
       const rootTop = root.getBoundingClientRect().top;
+
+      reportHeaderMetrics(root, rootTop);
+      reportLayoutMetrics(root, rootTop);
+
+      if (measureOnly) return;
+
       const ranges = (Array.from(root.querySelectorAll('[data-block]')) as HTMLElement[])
         .map((el) => {
           const r = el.getBoundingClientRect();
           return { top: r.top - rootTop, bottom: r.bottom - rootTop };
         })
         .sort((a, b) => a.top - b.top);
-
-      reportHeaderMetrics(root, rootTop);
-      reportLayoutMetrics(root, rootTop);
 
       const result: Page[] = [];
       let start = 0;
@@ -295,7 +310,7 @@ export function ResumePageStack({
     const ro = new ResizeObserver(compute);
     ro.observe(root);
     return () => ro.disconnect();
-  }, [design, profile, marginTop, marginBottom, hasBand, nativePageH, onMeasureHeader, onMeasureLayout]);
+  }, [design, profile, marginTop, marginBottom, hasBand, nativePageH, onMeasureHeader, onMeasureLayout, measureOnly]);
 
   const scale = displayWidth / RESUME_REF_WIDTH;
   const dispW = displayWidth;
@@ -303,14 +318,29 @@ export function ResumePageStack({
   const pageCount = pages.length;
 
   useEffect(() => {
+    if (measureOnly) return;
     onPageCount?.(pageCount);
-  }, [pageCount, onPageCount]);
+  }, [pageCount, onPageCount, measureOnly]);
+
+  if (measureOnly) {
+    return (
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed left-[-99999px] top-0 overflow-hidden opacity-0"
+        style={{ width: RESUME_REF_WIDTH }}
+      >
+        <div ref={measureRef}>
+          <ResumePreview design={design} profile={profile} paged />
+        </div>
+      </div>
+    );
+  }
 
   const interactive = Boolean(onSelect);
   const Frame = interactive ? 'button' : 'div';
 
   return (
-    <div className="flex flex-col items-center" style={{ gap }}>
+    <div className="flex w-full flex-col items-center" style={{ gap }}>
       {/* Hidden measuring instance at native width (vertical margin removed). */}
       <div
         aria-hidden="true"
@@ -361,7 +391,7 @@ export function ResumePageStack({
             </div>
           </div>
           {showBadges && (
-            <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded bg-slate-900/70 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white shadow-sm">
+            <span className="resume-page-badge pointer-events-none absolute bottom-1.5 right-1.5 z-10 min-w-[1.125rem] rounded px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none tabular-nums shadow-sm">
               {i + 1}
             </span>
           )}

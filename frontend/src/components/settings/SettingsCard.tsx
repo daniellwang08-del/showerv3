@@ -19,20 +19,24 @@ interface SettingsCardProps {
  */
 export function SettingsCard({ icon: Icon, iconClass, title, description, actions, children, className = '' }: SettingsCardProps) {
   return (
-    <section className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 ${className}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white ${iconClass}`}>
-            <Icon size={18} />
+    <section
+      className={`rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm dark:border-white/10 dark:bg-[#0f172a]/80 sm:p-4 md:p-5 ${className}`}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white ${iconClass}`}>
+            <Icon size={16} />
           </div>
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-bold text-slate-900">{title}</h2>
-            {description && <p className="mt-0.5 text-xs leading-snug text-slate-500">{description}</p>}
+            <h2 className="text-sm font-bold leading-tight text-slate-900 dark:text-white">{title}</h2>
+            {description && (
+              <p className="mt-0.5 text-xs leading-snug text-slate-600 dark:text-[#94a3b8]">{description}</p>
+            )}
           </div>
         </div>
-        {actions && <div className="shrink-0">{actions}</div>}
+        {actions && <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">{actions}</div>}
       </div>
-      {children && <div className="mt-3">{children}</div>}
+      {children && <div className="mt-2.5 min-w-0">{children}</div>}
     </section>
   );
 }

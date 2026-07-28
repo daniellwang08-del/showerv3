@@ -39,8 +39,8 @@ _JOB_CARD_KEYS = (
 )
 
 
-def _cu(ctx: ToolContext) -> dict[str, str]:
-    return {"user_id": ctx.user_id}
+def _cu(ctx: ToolContext) -> dict[str, Any]:
+    return {"user_id": ctx.user_id, "is_admin": bool(ctx.is_admin)}
 
 
 def _job_card(dumped: dict[str, Any]) -> dict[str, Any]:
@@ -311,6 +311,13 @@ async def _trigger_sync(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     from fastapi import HTTPException
 
     from app.api.scraper_routes import SyncRequest, trigger_sync
+
+    if not ctx.is_admin:
+        return ToolResult(
+            ok=False,
+            summary="Only admins can sync jobs.",
+            error="Admin access required",
+        )
 
     platforms = [str(p).strip() for p in (args.get("platforms") or []) if str(p).strip()]
     if platforms:

@@ -159,7 +159,7 @@ export function GoogleSheetTabGroupsModal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-blue-950/30 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-blue-950/30 p-3 sm:p-4 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-labelledby="google-sheet-modal-title"
@@ -168,10 +168,10 @@ export function GoogleSheetTabGroupsModal({
       }}
     >
       <div className="w-full max-w-lg rounded-2xl border border-blue-200/70 bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-blue-100 px-5 py-4">
-          <div className="flex items-center gap-2">
-            <Table2 className="h-5 w-5 text-blue-600" />
-            <h2 id="google-sheet-modal-title" className="text-lg font-semibold text-slate-800">
+        <div className="flex items-center justify-between border-b border-blue-100 px-4 py-3 sm:px-5 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Table2 className="h-5 w-5 shrink-0 text-blue-600" />
+            <h2 id="google-sheet-modal-title" className="truncate text-lg font-semibold text-slate-800">
               Configure tab groups
             </h2>
           </div>
@@ -184,7 +184,7 @@ export function GoogleSheetTabGroupsModal({
           </button>
         </div>
 
-        <div className="space-y-5 px-5 py-5">
+        <div className="space-y-4 px-4 py-4 sm:space-y-5 sm:px-5 sm:py-5">
           <p className="text-xs text-slate-500">
             Spreadsheet verified with <strong className="text-slate-700">{tabs.length}</strong> tab
             {tabs.length === 1 ? '' : 's'}. Auto-post threshold ({autoPostThreshold}) is set in Settings below.

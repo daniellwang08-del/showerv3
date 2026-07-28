@@ -17,7 +17,14 @@ SALARY_PATTERN = re.compile(
 class CleaningPipeline:
     """Normalize salary, location, and text fields."""
 
-    def process_item(self, item: JobItem, spider) -> JobItem:
+    def __init__(self, crawler):
+        self.crawler = crawler
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler)
+
+    def process_item(self, item: JobItem) -> JobItem:
         if item.description:
             item.description = self._clean_html(item.description)
 

@@ -12,11 +12,20 @@ import {
   disconnectSheets,
   fetchSheetsConfig,
   fetchSheetsStatus,
-  saveAutoPostThreshold,
+  saveSheetsAutoPostSettings,
+  setSheetsEnabled,
   verifySpreadsheet,
 } from '../../api/googleSheetsApi';
 import type { SheetsConfig, SheetsConfigSaveResult, SheetsStatus } from '../../types/googleSheets';
+import {
+  autoPostFiltersEqual,
+  DEFAULT_AUTO_POST_FILTERS,
+  normalizeAutoPostFilters,
+  type AutoPostFilters,
+} from '../../types/autoPostFilters';
 import { GoogleSheetTabGroupsModal } from './GoogleSheetTabGroupsModal';
+import { AutoPostFiltersEditor } from './AutoPostFiltersEditor';
+import { BrandedLoader } from '../layout/BrandedLoader';
 
 const SHEETS_URL_RE = /docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9_-]+/;
 const DEFAULT_AUTO_POST_THRESHOLD = 75;
@@ -44,13 +53,20 @@ function SectionMessage({ ok, text }: { ok?: boolean; text: string }) {
   );
 }
 
-export function GoogleSheetsSettingsSection() {
+type GoogleSheetsSettingsSectionProps = {
+  /** When `page`, hide the built-in icon header (Integrations page supplies logos). */
+  variant?: 'standalone' | 'page';
+};
+
+export function GoogleSheetsSettingsSection({ variant = 'standalone' }: GoogleSheetsSettingsSectionProps) {
+  const isPage = variant === 'page';
   const [serverStatus, setServerStatus] = useState<SheetsStatus | null>(null);
   const [savedConfig, setSavedConfig] = useState<SheetsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
   const [enabled, setEnabled] = useState(false);
+  const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [spreadsheetUrl, setSpreadsheetUrl] = useState('');
   const [verifyState, setVerifyState] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
   const [verifyError, setVerifyError] = useState('');
@@ -66,6 +82,8 @@ export function GoogleSheetsSettingsSection() {
 
   const [autoPostThreshold, setAutoPostThreshold] = useState(DEFAULT_AUTO_POST_THRESHOLD);
   const [savedAutoPostThreshold, setSavedAutoPostThreshold] = useState(DEFAULT_AUTO_POST_THRESHOLD);
+  const [autoPostFilters, setAutoPostFilters] = useState<AutoPostFilters>(DEFAULT_AUTO_POST_FILTERS);
+  const [savedAutoPostFilters, setSavedAutoPostFilters] = useState<AutoPostFilters>(DEFAULT_AUTO_POST_FILTERS);
   const [autoPostSaving, setAutoPostSaving] = useState(false);
   const [autoPostSaveMsg, setAutoPostSaveMsg] = useState('');
   const [autoPostSaveOk, setAutoPostSaveOk] = useState(false);
@@ -79,8 +97,12 @@ export function GoogleSheetsSettingsSection() {
     const threshold = config.auto_post_threshold ?? DEFAULT_AUTO_POST_THRESHOLD;
     setAutoPostThreshold(threshold);
     setSavedAutoPostThreshold(threshold);
+    const filters = normalizeAutoPostFilters(config.auto_post_filters);
+    setAutoPostFilters(filters);
+    setSavedAutoPostFilters(filters);
     if (config.configured) {
-      setEnabled(true);
+      // Soft enable flag — connection stays even when auto-post is off.
+      setEnabled(config.is_enabled !== false);
       setSpreadsheetUrl(config.spreadsheet_url ?? '');
       setVerifyState('ok');
       setVerifyTabCount(config.assigned_tab_count ?? null);
@@ -94,6 +116,8 @@ export function GoogleSheetsSettingsSection() {
       setIsChangingSheet(false);
       setAutoPostThreshold(DEFAULT_AUTO_POST_THRESHOLD);
       setSavedAutoPostThreshold(DEFAULT_AUTO_POST_THRESHOLD);
+      setAutoPostFilters(DEFAULT_AUTO_POST_FILTERS);
+      setSavedAutoPostFilters(DEFAULT_AUTO_POST_FILTERS);
     }
   }, []);
 
@@ -127,7 +151,9 @@ export function GoogleSheetsSettingsSection() {
     return () => window.clearTimeout(t);
   }, [autoPostSaveOk]);
 
-  const autoPostChanged = autoPostThreshold !== savedAutoPostThreshold;
+  const autoPostChanged =
+    autoPostThreshold !== savedAutoPostThreshold ||
+    !autoPostFiltersEqual(autoPostFilters, savedAutoPostFilters);
   const autoPostSaveEnabled = configured && autoPostChanged;
 
   const handleAutoPostChange = (value: number) => {
@@ -135,54 +161,82 @@ export function GoogleSheetsSettingsSection() {
     setAutoPostSaveMsg('');
   };
 
-  const handleSaveAutoPostThreshold = async () => {
+  const handleSaveAutoPostSettings = async () => {
     if (!configured || !autoPostChanged) return;
     setAutoPostSaving(true);
     setAutoPostSaveMsg('');
     try {
-      const result = await saveAutoPostThreshold(autoPostThreshold);
+      const result = await saveSheetsAutoPostSettings({
+        auto_post_threshold: autoPostThreshold,
+        auto_post_filters: normalizeAutoPostFilters(autoPostFilters),
+      });
       setSavedAutoPostThreshold(result.auto_post_threshold);
       setAutoPostThreshold(result.auto_post_threshold);
+      const filters = normalizeAutoPostFilters(result.auto_post_filters);
+      setAutoPostFilters(filters);
+      setSavedAutoPostFilters(filters);
       applyLoadedConfig({
         configured: true,
         spreadsheet_url: result.spreadsheet_url,
         tab_groups: result.tab_groups,
         auto_post_threshold: result.auto_post_threshold,
+        auto_post_filters: filters,
+        is_enabled: result.is_enabled ?? enabled,
         group_count: result.group_count,
         assigned_tab_count: result.assigned_tab_count,
       });
       setAutoPostSaveOk(true);
-      setAutoPostSaveMsg(`Auto-post threshold saved at ${result.auto_post_threshold}.`);
+      setAutoPostSaveMsg(`Auto-post settings saved (score ≥ ${result.auto_post_threshold}).`);
     } catch (err: unknown) {
       setAutoPostSaveOk(false);
-      setAutoPostSaveMsg(extractErrorMessage(err, 'Failed to save auto-post threshold.'));
+      setAutoPostSaveMsg(extractErrorMessage(err, 'Failed to save auto-post settings.'));
     } finally {
       setAutoPostSaving(false);
     }
   };
 
-  const handleToggleEnabled = (next: boolean) => {
+  const handleToggleEnabled = async (next: boolean) => {
     setActionMsg('');
-    if (next) {
-      setEnabled(true);
-      if (configured && savedConfig?.spreadsheet_url) {
-        setSpreadsheetUrl(savedConfig.spreadsheet_url);
+    // Not connected yet — toggle just reveals the setup form (local UI state).
+    if (!configured) {
+      setEnabled(next);
+      if (!next) {
+        setSpreadsheetUrl('');
+        setVerifyState('idle');
+        setVerifyError('');
+        setVerifyTabCount(null);
+        setVerifiedTabs([]);
+        setModalOpen(false);
       }
       return;
     }
 
-    if (configured) {
-      setDisconnectConfirm(true);
-      return;
+    // Connected: soft-toggle auto-post. Never delete the saved spreadsheet.
+    setTogglingEnabled(true);
+    try {
+      const result = await setSheetsEnabled(next);
+      applyLoadedConfig({
+        configured: true,
+        spreadsheet_url: result.spreadsheet_url,
+        tab_groups: result.tab_groups,
+        auto_post_threshold: result.auto_post_threshold,
+        auto_post_filters: result.auto_post_filters,
+        is_enabled: result.is_enabled,
+        group_count: result.group_count,
+        assigned_tab_count: result.assigned_tab_count,
+      });
+      setActionOk(true);
+      setActionMsg(
+        next
+          ? 'Auto-post after job analysis enabled.'
+          : 'Auto-post paused. Your spreadsheet connection was kept.',
+      );
+    } catch (err: unknown) {
+      setActionOk(false);
+      setActionMsg(extractErrorMessage(err, 'Failed to update auto-post setting.'));
+    } finally {
+      setTogglingEnabled(false);
     }
-
-    setEnabled(false);
-    setSpreadsheetUrl('');
-    setVerifyState('idle');
-    setVerifyError('');
-    setVerifyTabCount(null);
-    setVerifiedTabs([]);
-    setModalOpen(false);
   };
 
   const handleDisconnect = async () => {
@@ -275,6 +329,7 @@ export function GoogleSheetsSettingsSection() {
       spreadsheet_url: result.spreadsheet_url,
       tab_groups: result.tab_groups,
       auto_post_threshold: result.auto_post_threshold,
+      is_enabled: result.is_enabled ?? true,
       group_count: result.group_count,
       assigned_tab_count: result.assigned_tab_count,
     });
@@ -286,24 +341,37 @@ export function GoogleSheetsSettingsSection() {
     setIsChangingSheet(false);
   };
 
-  const showSetupForm = enabled && (!configured || isChangingSheet);
-  const showConfiguredSummary = enabled && configured && !isChangingSheet;
+  const showSetupForm = (!configured && enabled) || (configured && isChangingSheet);
+  // Connection summary stays visible when auto-post is off (soft disable).
+  const showConfiguredSummary = configured && !isChangingSheet;
 
   return (
     <>
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
-            <Table2 size={20} />
-          </div>
+      <section
+        className={
+          isPage
+            ? 'min-w-0 flex-1'
+            : 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6'
+        }
+      >
+        <div className={isPage ? 'min-w-0' : 'flex items-start gap-3'}>
+          {!isPage ? (
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+              <Table2 size={20} />
+            </div>
+          ) : null}
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-bold text-slate-900">Google Sheets integration</h2>
-            <p className="mt-0.5 text-sm leading-snug text-slate-500">
-              Post job URLs to spreadsheet tabs via round-robin groups.
-            </p>
+            {!isPage ? (
+              <>
+                <h2 className="text-base font-bold text-slate-900">Google Sheets integration</h2>
+                <p className="mt-0.5 text-sm leading-snug text-slate-500">
+                  Post job URLs to spreadsheet tabs via round-robin groups.
+                </p>
+              </>
+            ) : null}
 
             {loading ? (
-              <p className="mt-4 text-sm text-slate-500">Loading Google Sheets settings…</p>
+              <BrandedLoader compact label="Loading Google Sheets…" className="mt-2" />
             ) : loadError ? (
               <SectionMessage ok={false} text={loadError} />
             ) : (
@@ -320,32 +388,62 @@ export function GoogleSheetsSettingsSection() {
                 )}
 
                 {serverReady && serviceAccountEmail && (
-                  <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
-                    Share your spreadsheet with{' '}
-                    <code className="rounded bg-white px-1.5 py-0.5 text-xs font-mono text-slate-800">
-                      {serviceAccountEmail}
-                    </code>{' '}
-                    (Editor access) before verifying.
+                  <div className="mt-4 rounded-xl border-2 border-amber-400 bg-gradient-to-r from-amber-500 to-orange-500 px-3.5 py-3 text-sm font-medium text-white shadow-md shadow-amber-500/25">
+                    <p className="leading-relaxed">
+                      <span className="font-bold tracking-wide">Required:</span> Share your spreadsheet
+                      with{' '}
+                      <code className="rounded-md bg-black/25 px-1.5 py-0.5 text-[12px] font-mono font-semibold text-white ring-1 ring-white/30">
+                        {serviceAccountEmail}
+                      </code>{' '}
+                      as <span className="font-bold">Editor</span> before verifying.
+                    </p>
                   </div>
                 )}
 
-                <label className="mt-4 flex cursor-pointer items-center gap-2.5">
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    disabled={!serverReady || disconnecting}
-                    onChange={(e) => handleToggleEnabled(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-sm font-medium text-slate-800">Enable Google Sheets integration</span>
-                </label>
+                {!configured ? (
+                  <label className="mt-4 flex cursor-pointer items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={!serverReady || disconnecting || togglingEnabled}
+                      onChange={(e) => void handleToggleEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className="text-sm font-medium text-slate-800">
+                      Connect Google Sheets
+                    </span>
+                  </label>
+                ) : (
+                  <label className="mt-4 flex cursor-pointer items-start gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={!serverReady || disconnecting || togglingEnabled}
+                      onChange={(e) => void handleToggleEnabled(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-slate-800">
+                        Auto-post after job analysis
+                        {togglingEnabled ? (
+                          <Loader2 size={14} className="ml-1.5 inline animate-spin text-slate-400" />
+                        ) : null}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-slate-500">
+                        When off, your spreadsheet stays connected — only automatic posting pauses.
+                        Manual “Post to Google Sheet” still works.
+                      </span>
+                    </span>
+                  </label>
+                )}
 
-                {enabled && (
-                  <div className="mt-4 rounded-xl border border-teal-100 bg-teal-50/40 p-4">
-                    <h3 className="text-sm font-bold text-slate-900">Auto-post score threshold</h3>
+                {configured && (
+                  <div className={`mt-4 rounded-xl border p-4 ${enabled ? 'border-teal-100 bg-teal-50/40' : 'border-slate-200 bg-slate-50/60'}`}>
+                    <h3 className="text-sm font-bold text-slate-900">Auto-post settings</h3>
                     <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                      When auto-post runs after job analysis, only jobs with a match score at or above this
-                      value are written to your sheet. Set to 0 to post all analyzed jobs.
+                      {enabled
+                        ? 'After match analysis, jobs must meet the score threshold and every active filter below before they are written to your sheet.'
+                        : 'Auto-post is paused. Save settings now so they’re ready when you turn auto-post back on.'}
                     </p>
 
                     <div className="mt-4 space-y-4">
@@ -404,30 +502,36 @@ export function GoogleSheetsSettingsSection() {
                           ))}
                         </div>
                       </div>
+
+                      <div className="border-t border-teal-100/80 pt-4">
+                        <AutoPostFiltersEditor
+                          value={autoPostFilters}
+                          onChange={(next) => {
+                            setAutoPostFilters(next);
+                            setAutoPostSaveMsg('');
+                          }}
+                          disabled={autoPostSaving}
+                          accent="teal"
+                        />
+                      </div>
                     </div>
 
-                    {configured ? (
-                      <div className="mt-4 flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void handleSaveAutoPostThreshold()}
-                          disabled={!autoPostSaveEnabled || autoPostSaving}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {autoPostSaving ? <Loader2 size={14} className="animate-spin" /> : null}
-                          {autoPostSaving ? 'Saving…' : 'Save auto-post threshold'}
-                        </button>
-                        {!autoPostChanged && (
-                          <span className="text-xs text-slate-500">
-                            Saved threshold: <strong className="text-slate-700">{savedAutoPostThreshold}</strong>
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="mt-3 text-xs text-slate-500">
-                        This threshold is applied when you save tab groups after verifying your sheet.
-                      </p>
-                    )}
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveAutoPostSettings()}
+                        disabled={!autoPostSaveEnabled || autoPostSaving}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {autoPostSaving ? <Loader2 size={14} className="animate-spin" /> : null}
+                        {autoPostSaving ? 'Saving…' : 'Save auto-post settings'}
+                      </button>
+                      {!autoPostChanged && (
+                        <span className="text-xs text-slate-500">
+                          Saved score ≥ <strong className="text-slate-700">{savedAutoPostThreshold}</strong>
+                        </span>
+                      )}
+                    </div>
 
                     {autoPostSaveMsg && <SectionMessage ok={autoPostSaveOk} text={autoPostSaveMsg} />}
                   </div>
@@ -480,11 +584,15 @@ export function GoogleSheetsSettingsSection() {
 
                 {showConfiguredSummary && savedConfig && (
                   <div className="mt-4 space-y-3">
-                    <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-sm text-emerald-900">
+                    <div className={`rounded-lg border px-3 py-2.5 text-sm ${
+                      enabled
+                        ? 'border-emerald-100 bg-emerald-50/70 text-emerald-900'
+                        : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                         <span className="inline-flex items-center gap-1 font-semibold">
                           <CheckCircle2 size={15} />
-                          Connected
+                          {enabled ? 'Connected · Auto-post on' : 'Connected · Auto-post paused'}
                         </span>
                         <span>
                           {savedConfig.assigned_tab_count ?? 0} tab
@@ -493,12 +601,20 @@ export function GoogleSheetsSettingsSection() {
                           {(savedConfig.group_count ?? 0) === 1 ? '' : 's'}
                         </span>
                         <span>Auto-post ≥ {savedAutoPostThreshold}</span>
+                        {savedAutoPostFilters.work_modes.length > 0 ? (
+                          <span>Modes: {savedAutoPostFilters.work_modes.join(', ')}</span>
+                        ) : null}
+                        {savedAutoPostFilters.exclude_companies.length > 0 ? (
+                          <span>Exclude: {savedAutoPostFilters.exclude_companies.join(', ')}</span>
+                        ) : null}
                       </div>
                       <a
                         href={savedConfig.spreadsheet_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-emerald-800 underline-offset-2 hover:underline"
+                        className={`mt-2 inline-flex items-center gap-1 text-xs font-medium underline-offset-2 hover:underline ${
+                          enabled ? 'text-emerald-800' : 'text-slate-700'
+                        }`}
                       >
                         Open spreadsheet
                         <ExternalLink size={12} />

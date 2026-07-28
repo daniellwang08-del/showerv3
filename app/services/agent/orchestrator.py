@@ -119,15 +119,16 @@ async def run_agent_turn(
     history: list[dict[str, str]] | None = None,
     timezone: str | None = None,
     confirmed: dict[str, Any] | None = None,
+    is_admin: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Drive one user turn, yielding SSE-ready event dicts."""
 
-    ctx = ToolContext(user_id=user_id, timezone=timezone)
+    ctx = ToolContext(user_id=user_id, timezone=timezone, is_admin=is_admin)
     settings = get_settings()
     messages = _build_messages(message, history or [])
 
     try:
-        client = await get_llm_client_for_user(user_id)
+        client = await get_llm_client_for_user(user_id, job_type="agent")
     except Exception as exc:  # noqa: BLE001 - surface a clean error
         logger.warning("agent_llm_unavailable", user_id=user_id, error=str(exc)[:200])
         yield {"type": "error", "message": "The AI assistant is not configured. Add an LLM API key in Settings."}

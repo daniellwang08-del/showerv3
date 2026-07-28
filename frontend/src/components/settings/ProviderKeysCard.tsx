@@ -92,7 +92,7 @@ function ModeToggle({
   disabled?: boolean;
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+    <div className="inline-flex max-w-full flex-wrap rounded-lg border border-slate-200 bg-slate-50 p-0.5">
       {(['default', 'custom'] as const).map((mode) => (
         <button
           key={mode}
@@ -100,7 +100,7 @@ function ModeToggle({
           disabled={disabled}
           onClick={() => onChange(mode)}
           className={[
-            'rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition',
+            'rounded-md px-2.5 py-1.5 text-xs font-semibold capitalize transition sm:px-3',
             value === mode
               ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
               : 'text-slate-500 hover:text-slate-700',
@@ -309,7 +309,7 @@ export function ProviderKeysCard({ settings, onSaved }: ProviderKeysCardProps) {
   const activeMeta = PROVIDERS.find((p) => p.id === active) ?? PROVIDERS[0];
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+    <section className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-5 md:p-6">
       <div className="flex items-start gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 text-white">
           <KeyRound size={20} />
@@ -321,7 +321,7 @@ export function ProviderKeysCard({ settings, onSaved }: ProviderKeysCardProps) {
           </p>
 
           {/* Provider tabs */}
-          <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1">
+          <div className="mt-3 flex flex-wrap gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1 sm:grid sm:grid-cols-3 sm:gap-2">
             {PROVIDERS.map((p) => {
               const mode = settings[`${p.id}_key_mode`];
               const configured = settings[`${p.id}_key_configured`];
@@ -332,7 +332,7 @@ export function ProviderKeysCard({ settings, onSaved }: ProviderKeysCardProps) {
                   type="button"
                   onClick={() => setActive(p.id)}
                   className={[
-                    'group flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition',
+                    'group flex min-h-10 min-w-[7.5rem] flex-1 items-center justify-center gap-2 rounded-lg px-2.5 py-2 text-sm font-semibold transition sm:min-w-0',
                     isActive
                       ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
                       : 'text-slate-500 hover:text-slate-700',
@@ -343,7 +343,7 @@ export function ProviderKeysCard({ settings, onSaved }: ProviderKeysCardProps) {
                   {mode === 'custom' && configured ? (
                     <CheckCircle2 size={14} className="shrink-0 text-emerald-500" />
                   ) : (
-                    <span className="hidden text-[10px] font-medium uppercase tracking-wide text-slate-400 sm:inline">
+                    <span className="hidden text-[10px] font-medium uppercase tracking-wide text-slate-400 lg:inline">
                       {mode === 'custom' ? 'Custom' : 'Default'}
                     </span>
                   )}

@@ -40,7 +40,7 @@ export type ResumeDraft = {
     location?: string | null;
     description?: string | null;
   }>;
-  certificates?: Array<{ name?: string | null }>;
+  certificates?: Array<{ name?: string | null; issued_at?: string | null; url?: string | null }>;
   extra?: string[];
 };
 
@@ -87,10 +87,19 @@ function pick(v: string | null | undefined) {
   return v != null && String(v).trim() ? String(v).trim() : undefined;
 }
 
+/** Empty / Present / Current → open-ended role (empty end date). */
+function normalizePeriodEnd(raw: string | null | undefined): string {
+  const v = (raw ?? '').trim();
+  if (!v || /^(present|current|now|ongoing)$/i.test(v)) return '';
+  return v;
+}
+
 function normalizeLinkedIn(url: string | undefined): string | undefined {
   if (!url) return undefined;
   const u = url.trim();
   if (!u) return undefined;
+  const m = u.match(/(?:https?:\/\/)?(?:(?:www|[a-z]{2})\.)?linkedin\.com\/in\/([A-Za-z0-9][\w\-]{0,98})/i);
+  if (m?.[1]) return `https://www.linkedin.com/in/${m[1].replace(/-+$/, '')}`;
   if (!/^https?:\/\//i.test(u)) return `https://${u.replace(/^\/+/, '')}`;
   return u;
 }
@@ -112,7 +121,7 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
         company_name: pick(w.company_name) ?? '',
         job_title: pick(w.job_title) ?? '',
         period_start: pick(w.period_start) ?? '',
-        period_end: pick(w.period_end) ?? '',
+        period_end: normalizePeriodEnd(w.period_end),
         location,
         job_type: inferJobArrangement(location, parsedType, description),
         description,
@@ -126,14 +135,18 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
       degree: pick(e.degree) ?? '',
       mark: pick(e.mark) ?? '',
       period_start: pick(e.period_start) ?? '',
-      period_end: pick(e.period_end) ?? '',
+      period_end: normalizePeriodEnd(e.period_end),
       location: pick(e.location) ?? '',
       description: pick(e.description) ?? '',
     }))
     .filter((e) => e.university_name || e.degree);
 
   const certificates: CertificateBlock[] = (draft.certificates ?? [])
-    .map((c) => ({ name: pick(c.name) ?? '' }))
+    .map((c) => ({
+      name: pick(c.name) ?? '',
+      issued_at: pick(c.issued_at) ?? '',
+      url: pick(c.url) ?? '',
+    }))
     .filter((c) => c.name);
 
   const extra = (draft.extra ?? []).map((x) => String(x).trim()).filter(Boolean);

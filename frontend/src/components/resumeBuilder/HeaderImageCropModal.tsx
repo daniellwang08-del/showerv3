@@ -154,8 +154,8 @@ export function HeaderImageCropModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/70 p-3 sm:p-4 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-2xl bg-white p-4 shadow-2xl sm:p-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-800">Position your header image</h3>
           <button type="button" onClick={onCancel} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">

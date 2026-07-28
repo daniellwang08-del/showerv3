@@ -107,8 +107,13 @@ class Settings(BaseSettings):
     redis_pool_size: int = 10
 
     openai_api_key: str = Field(default="")
-    # GPT-5 reasoning models (e.g. gpt-5-nano) use max_completion_tokens and ignore
-    # custom temperature; the LLM client normalizes API kwargs automatically.
+    # OpenAI-compatible base URL (Azure, LiteLLM, private gateway, …).
+    # Empty = official OpenAI. Accepts with or without trailing `/v1`.
+    # One key may expose many models via GET {base}/models — bind per job in admin.
+    openai_api_base: str = Field(default="")
+    # Default chat model when a job binding does not select one. GPT-5 reasoning
+    # models (e.g. gpt-5.1) use max_completion_tokens and ignore custom
+    # temperature; the LLM client normalizes API kwargs automatically.
     openai_model: str = "gpt-5-nano-2025-08-07"
     openai_max_tokens: int = 4096
     openai_temperature: float = 0.1
@@ -117,8 +122,14 @@ class Settings(BaseSettings):
     openai_reasoning_effort: Literal["low", "medium", "high"] = "low"
     # HTTP timeout for each OpenAI request (stay below worker job_timeout so jobs fail cleanly).
     openai_timeout_seconds: float = 240.0
-    # Concurrent arq jobs on the analysis worker (each job = one OpenAI call).
+    # Concurrent arq jobs per worker process (overridable via System Settings).
+    # Applied at worker process start from DB overrides when present.
+    extraction_worker_max_jobs: int = 10
     analysis_worker_max_jobs: int = 6
+    tailoring_worker_max_jobs: int = 8
+    save_worker_max_jobs: int = 10
+    resume_worker_max_jobs: int = 10
+    scraper_worker_max_jobs: int = 2
     # Max parallel OpenAI calls when attachment text is split into chunks.
     openai_attachment_max_concurrent: int = 4
     phase_a_max_tokens: int = 8192
@@ -204,7 +215,7 @@ class Settings(BaseSettings):
     autofill_default_field_of_study: str = Field(default="Computer Engineering")
 
     resume_output_root: str = Field(default="./resume_output")
-    libreoffice_path: str | None = Field(default=None)
+    # DOCX -> PDF is always pure-Python via the ``dxpdf`` package (see requirements.txt).
     resume_template_path: str = Field(default="app/templates/resume_template.docx")
     cover_letter_template_path: str = Field(default="app/templates/cover_letter_template.docx")
     user_templates_root: str = Field(default="./user_templates")

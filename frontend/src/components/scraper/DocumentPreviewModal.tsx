@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { X, Download, ClipboardCopy, CheckCircle2, Loader2 } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { filenameFromContentDisposition, namedPdfFile, personResumePdfName } from '../../utils/resumeFileName';
+import { BrandedLoader } from '../layout/BrandedLoader';
 
 export type PreviewDocType = 'resume_pdf' | 'cover_letter_pdf';
 
@@ -12,11 +14,19 @@ interface DocumentPreviewModalProps {
   onClose: () => void;
 }
 
-async function fetchPdfBlob(jobId: string, fileType: PreviewDocType): Promise<Blob> {
+async function fetchPdfFile(jobId: string, fileType: PreviewDocType): Promise<File> {
   const res = await apiClient.get(`/jobs/valid/${jobId}/resume-build/download/${fileType}`, {
     responseType: 'blob',
   });
-  return new Blob([res.data], { type: 'application/pdf' });
+  const fallback =
+    fileType === 'cover_letter_pdf'
+      ? personResumePdfName(null, null, 'cover_letter')
+      : personResumePdfName(null, null, 'resume');
+  const name = filenameFromContentDisposition(
+    res.headers?.['content-disposition'] as string | undefined,
+    fallback,
+  );
+  return namedPdfFile(res.data, name);
 }
 
 export function DocumentPreviewModal({
@@ -55,9 +65,9 @@ export function DocumentPreviewModal({
       setLoading(true);
       setError(null);
       try {
-        const blob = await fetchPdfBlob(jobId, fileType);
+        const file = await fetchPdfFile(jobId, fileType);
         if (cancelled) return;
-        url = URL.createObjectURL(blob);
+        url = URL.createObjectURL(file);
         setBlobUrl(url);
       } catch {
         if (!cancelled) setError('Could not load this document. Try downloading instead.');
@@ -80,11 +90,11 @@ export function DocumentPreviewModal({
 
   const handleDownload = useCallback(async () => {
     try {
-      const blob = await fetchPdfBlob(jobId, fileType);
-      const url = URL.createObjectURL(blob);
+      const file = await fetchPdfFile(jobId, fileType);
+      const url = URL.createObjectURL(file);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${fileType}.pdf`;
+      a.download = file.name;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -104,7 +114,7 @@ export function DocumentPreviewModal({
 
   return (
     <div
-      className="fixed inset-0 z-[210] flex items-center justify-center p-4 animate-modal-backdrop-in"
+      className="fixed inset-0 z-[210] flex items-center justify-center p-3 sm:p-4 animate-modal-backdrop-in"
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -116,12 +126,12 @@ export function DocumentPreviewModal({
       />
 
       <div
-        className="relative z-10 flex h-[90vh] w-[88vw] min-w-[640px] max-w-[1500px] animate-modal-in flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10"
+        className="relative z-10 flex h-[min(90dvh,960px)] w-full max-w-[1500px] animate-modal-in flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 sm:w-[min(94vw,1500px)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-          <h2 className="truncate text-sm font-semibold text-slate-800">{title}</h2>
-          <div className="flex shrink-0 items-center gap-2">
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2.5 sm:px-4 sm:py-3">
+          <h2 className="min-w-0 truncate text-sm font-semibold text-slate-800">{title}</h2>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => void handleDownload()}
@@ -157,10 +167,7 @@ export function DocumentPreviewModal({
 
         <div className="min-h-0 flex-1 bg-slate-100">
           {loading && (
-            <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-500">
-              <Loader2 size={20} className="animate-spin text-blue-500" />
-              Loading document…
-            </div>
+            <BrandedLoader compact label="Loading document…" className="h-full" />
           )}
           {error && !loading && (
             <div className="flex h-full items-center justify-center px-6 text-sm text-red-600">

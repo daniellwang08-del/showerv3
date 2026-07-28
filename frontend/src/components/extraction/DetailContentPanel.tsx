@@ -29,6 +29,8 @@ import {
   ThumbsUp,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { namedDownloadFile } from '../../utils/resumeFileName';
+import { BrandedLoader } from '../layout/BrandedLoader';
 
 type JobData = {
   title: string;
@@ -171,12 +173,20 @@ function ResumeBuildBadges({ build, validJobId }: { build: ResumeBuildStatus; va
       const res = await apiClient.get(`/jobs/valid/${validJobId}/resume-build/download/${downloadType}`, {
         responseType: 'blob',
       });
-      const blob = new Blob([res.data]);
-      const url = URL.createObjectURL(blob);
+      const ext = downloadType.endsWith('_pdf') ? '.pdf' : '.docx';
+      const mime = downloadType.endsWith('_pdf')
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      const file = namedDownloadFile(
+        res.data,
+        res.headers?.['content-disposition'] as string | undefined,
+        `${downloadType}${ext}`,
+        mime,
+      );
+      const url = URL.createObjectURL(file);
       const a = document.createElement('a');
       a.href = url;
-      const ext = downloadType.endsWith('_pdf') ? '.pdf' : '.docx';
-      a.download = `${downloadType}${ext}`;
+      a.download = file.name;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -348,7 +358,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
       </div>
       <div>
         <SectionLabel icon={FileText}>Description</SectionLabel>
-        <div className="mt-2 max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-xl border border-blue-200/60 bg-white/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner backdrop-blur-sm">
+        <div className="mt-2 max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-inner">
           {data.description}
         </div>
       </div>
@@ -500,8 +510,8 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
   const extractionBusy = extractionStatus === 'pending' || extractionStatus === 'processing' || extractionStatus === 'extracted';
 
   return (
-    <div className="animate-detail-panel-in flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-blue-200/70 bg-white/90 shadow-lg backdrop-blur-md">
-      <div className="flex shrink-0 items-center gap-2 border-b border-blue-200/60 bg-gradient-to-r from-blue-50/90 to-white/90 px-4 py-3">
+    <div className="animate-detail-panel-in flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
         <button
           type="button"
           onClick={onClose}
@@ -537,13 +547,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
 
       <div className="flex-1 overflow-y-auto px-4 py-4 timeline-scroll">
         {initialLoading && (
-          <div className="flex flex-col items-center justify-center py-16 animate-panel-fade-in">
-            <div
-              className="h-10 w-10 animate-spinner rounded-full border-2 border-blue-200 border-t-blue-600"
-              aria-hidden
-            />
-            <p className="mt-4 text-sm text-slate-600">Loading analysis…</p>
-          </div>
+          <BrandedLoader compact label="Loading analysis…" className="py-16" />
         )}
 
         {loadError && (
@@ -674,7 +678,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
               )}
             </section>
 
-            <section className="glass-card rounded-xl border border-blue-200/50 p-4 shadow-sm">
+            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600">
                   <FileText className="h-4 w-4" strokeWidth={2} aria-hidden />

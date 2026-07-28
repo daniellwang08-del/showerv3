@@ -250,7 +250,7 @@ async def interpret_scraper_search_prompt(
     user_id: str | None = None,
 ) -> ScraperJobSearchQuerySpec:
     """Convert a natural language prompt into a structured ScraperJobSearchQuerySpec."""
-    client = await get_llm_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id, job_type="scraper_ai_search")
     settings = get_settings()
 
     user_msg = f'User search request:\n"""{prompt.strip()}"""\n\nRespond with the JSON object only.'

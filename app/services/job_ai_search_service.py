@@ -132,7 +132,7 @@ def _spec_has_constraints(spec: JobSearchQuerySpec) -> bool:
 
 @observe(name="interpret_job_search_prompt")
 async def interpret_job_search_prompt(prompt: str, *, user_id: str | None = None) -> JobSearchQuerySpec:
-    client = await get_llm_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id, job_type="job_ai_search")
     settings = get_settings()
 
     user_msg = f'User search request:\n"""{prompt.strip()}"""\n\nRespond with the JSON object only.'
@@ -438,6 +438,7 @@ async def apply_job_search_spec(
             "applied_at": applied_at.isoformat() if applied_at else None,
             "applied_by_name": applied_by_name,
             "sheet_posted_at": job.sheet_posted_at.isoformat() if job.sheet_posted_at else None,
+            "pumble_posted_at": job.pumble_posted_at.isoformat() if job.pumble_posted_at else None,
             "status": job.status,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "updated_at": job.updated_at.isoformat() if job.updated_at else None,

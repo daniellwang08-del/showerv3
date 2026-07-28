@@ -10,6 +10,7 @@ export type AuthUser = {
   name?: string | null;
   display_name?: string;
   is_active?: boolean;
+  is_admin?: boolean;
   created_at?: string;
 };
 

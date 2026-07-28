@@ -49,10 +49,11 @@ class WelcomeToTheJungleSpider(BaseJobSpider):
         "mobile developer",
     ]
 
-    def start_requests(self):
+    async def start(self):
         terms = [self.query] if self.query else self.DEFAULT_SEARCH_TERMS
         for term in terms:
-            yield from self._make_algolia_request(term, page=0)
+            for request in self._make_algolia_request(term, page=0):
+                yield request
 
     def _make_algolia_request(self, query: str, page: int = 0, filters: str = ""):
         body = {

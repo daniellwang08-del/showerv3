@@ -15,7 +15,8 @@ Optional but recommended:
 
 - **Playwright browsers** - SPA extraction and Scrapy Playwright spiders  
   `playwright install chromium`
-- **LibreOffice** - PDF export from generated DOCX (set `LIBREOFFICE_PATH` in `.env`)
+
+PDF export uses the pure-Python **`dxpdf`** package (`pip install` via `requirements.txt`). No LibreOffice / MS Office install is required.
 
 ---
 
@@ -99,7 +100,7 @@ From the project root, with `venv` already created and `.env` configured:
 start.cmd
 ```
 
-This opens 7 windows: API, extraction, analysis, save, resume, scraper workers, and the frontend.
+This opens 8 windows: API, extraction, analysis, tailoring, save, resume, scraper workers, and the frontend.
 
 Production-style env (uses `.env.production`):
 
@@ -118,19 +119,22 @@ python start_server.py
 # 2. Extraction worker (URL scraping)
 python run_worker.py extraction
 
-# 3. Analysis worker (AI match scoring)
+# 3. Analysis worker (Phase A match scoring)
 python run_worker.py analysis
 
-# 4. Save worker (post-analysis persistence)
+# 4. Tailoring worker (Phase B resume tailoring — dedicated queue)
+python run_worker.py tailoring
+
+# 5. Save worker (post-analysis persistence + auto-post)
 python run_worker.py save
 
-# 5. Resume build worker (DOCX/PDF generation)
+# 6. Resume build worker (DOCX/PDF generation)
 python run_worker.py resume
 
-# 6. Scraper worker (platform sync / Scrapy)
+# 7. Scraper worker (platform sync / Scrapy)
 python run_worker.py scraper
 
-# 7. Frontend (http://localhost:5173)
+# 8. Frontend (http://localhost:5173)
 cd frontend && npm run dev
 ```
 

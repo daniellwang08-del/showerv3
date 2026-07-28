@@ -320,6 +320,9 @@ def _design(
             header_align=header_align,  # type: ignore[arg-type]
             accent_rule=accent_rule,
             header_background=header_background,  # type: ignore[arg-type]
+            contact_icons="brand",
+            contact_icon_offset_x_pt=0.0,
+            contact_icon_offset_y_pt=0.0,
         ),
         sections=SectionOptions(),
     )
@@ -360,21 +363,6 @@ THEME_PRESETS: list[ThemePreset] = [
             heading_scale=1.35,
             name_scale=2.2,
             accent_rule=False,
-        ),
-    ),
-    ThemePreset(
-        id="technical",
-        label="Technical",
-        description="Two-column layout with a skills/education sidebar - great for engineers.",
-        accent_swatch="#1d4ed8",
-        design=_design(
-            theme_id="technical",
-            font="Calibri",
-            colors=COLOR_PRESETS[3].colors,
-            columns=2,
-            heading_scale=1.15,
-            name_scale=1.9,
-            header_background="soft",
         ),
     ),
     ThemePreset(

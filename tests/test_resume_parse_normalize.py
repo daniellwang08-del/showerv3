@@ -40,7 +40,27 @@ def test_infer_job_type_respects_explicit_value():
 
 
 def test_normalize_linkedin_adds_https():
-    assert _normalize_linkedin_url("linkedin.com/in/guojiwei428") == "https://linkedin.com/in/guojiwei428"
+    assert _normalize_linkedin_url("linkedin.com/in/guojiwei428") == "https://www.linkedin.com/in/guojiwei428"
+
+
+def test_normalize_linkedin_strips_query_and_slash():
+    assert (
+        _normalize_linkedin_url("https://www.linkedin.com/in/jane-doe/?trk=public")
+        == "https://www.linkedin.com/in/jane-doe"
+    )
+
+
+def test_fill_missing_linkedin_from_header_text():
+    header = """Jane Doe
+jane@example.com
+LinkedIn
+"""
+    # Simulate hyperlink extraction having prepended the real URL
+    text = "Document links:\nhttps://www.linkedin.com/in/jane-doe-123\n\n" + header
+    draft = ResumeExtractedDraft(name_first="Jane", name_last="Doe", email="jane@example.com")
+    notes = _fill_missing_contact_from_text(draft, text)
+    assert draft.linkedin_url == "https://www.linkedin.com/in/jane-doe-123"
+    assert any("LinkedIn URL was recovered" in n for n in notes)
 
 
 def test_fill_missing_phone_from_jiwei_header_text():

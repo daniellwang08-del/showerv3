@@ -44,7 +44,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="app-surface relative flex min-h-screen items-center justify-center overflow-hidden bg-gradient-to-br from-blue-100 via-blue-50 to-indigo-100 p-4 lg:justify-end lg:pr-[26vw]">
+    <div className="app-surface relative flex min-h-dvh items-center justify-center overflow-hidden bg-gradient-to-br from-blue-100 via-blue-50 to-indigo-100 p-3 sm:p-4 lg:justify-end lg:pr-[26vw]">
       {/* Final still background, revealed once the intro finishes */}
       <img
         src="/login-still.jpg"
@@ -96,7 +96,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
         <button
           type="button"
           onClick={finishIntro}
-          className="absolute bottom-5 right-5 z-20 rounded-full border border-white/40 bg-white/10 px-4 py-1.5 text-xs font-semibold text-white/90 backdrop-blur-md transition hover:bg-white/20"
+          className="absolute bottom-4 right-4 z-20 rounded-full border border-white/40 bg-white/10 px-4 py-1.5 text-xs font-semibold text-white/90 backdrop-blur-md transition hover:bg-white/20 sm:bottom-5 sm:right-5"
         >
           Skip
         </button>
@@ -115,7 +115,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
           aria-hidden="true"
         />
 
-        <div className="relative overflow-hidden rounded-3xl border border-white/25 bg-white/10 p-8 shadow-[0_20px_60px_-15px_rgba(2,6,23,0.7)] ring-1 ring-inset ring-white/15 backdrop-blur-2xl">
+        <div className="relative overflow-hidden rounded-3xl border border-white/25 bg-white/10 p-5 shadow-[0_20px_60px_-15px_rgba(2,6,23,0.7)] ring-1 ring-inset ring-white/15 backdrop-blur-2xl sm:p-8">
           {/* Glossy top sheen */}
           <div
             className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-white/25 to-transparent"
@@ -123,16 +123,16 @@ export function AuthShell({ children }: { children: ReactNode }) {
           />
 
           <div className="relative">
-            <div className="mb-8 text-center">
+            <div className="mb-6 text-center sm:mb-8">
               <div className="relative mx-auto mb-3 w-fit">
                 <div className="absolute inset-0 -z-10 rounded-full bg-sky-400/30 blur-2xl" aria-hidden="true" />
                 <img
                   src="/atomspace-logo.png"
                   alt="Atomspace"
-                  className="h-16 w-auto object-contain drop-shadow-[0_4px_18px_rgba(56,189,248,0.45)]"
+                  className="h-14 w-auto object-contain drop-shadow-[0_4px_18px_rgba(56,189,248,0.45)] sm:h-16"
                 />
               </div>
-              <h1 className="bg-gradient-to-r from-white via-blue-50 to-sky-200 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent drop-shadow-[0_2px_10px_rgba(56,189,248,0.45)]">
+              <h1 className="bg-gradient-to-r from-white via-blue-50 to-sky-200 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent drop-shadow-[0_2px_10px_rgba(56,189,248,0.45)] sm:text-4xl">
                 Atomspace
               </h1>
               <p className="mt-2 text-sm font-semibold text-blue-50">Your AI job application workspace</p>

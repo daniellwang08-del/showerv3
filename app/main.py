@@ -34,6 +34,8 @@ from app.api.routes import router
 from app.api.scraper_routes import scraper_router
 from app.api.assistant_routes import assistant_router
 from app.api.agent_routes import agent_router
+from app.api.data_management_routes import router as data_management_router
+from app.api.admin_routes import router as admin_router
 from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
@@ -115,6 +117,18 @@ async def lifespan(app: FastAPI):
                 )
     except Exception as e:
         logger.warning("startup_stale_runs_cleanup_failed", error=str(e))
+
+    try:
+        from app.storage.database import get_session as _get_sess
+        from app.services.blocked_domains_service import refresh_blocked_domains_cache
+        from app.services.system_settings_service import get_overrides_map
+
+        async with _get_sess() as _sess:
+            await refresh_blocked_domains_cache(_sess)
+            await get_overrides_map(_sess)
+        logger.info("admin_caches_warmed")
+    except Exception as e:
+        logger.warning("admin_caches_warmup_failed", error=str(e))
 
     try:
         await init_redis_pool()
@@ -285,6 +299,8 @@ def create_app() -> FastAPI:
     app.include_router(scraper_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")
     app.include_router(agent_router, prefix="/api/v1")
+    app.include_router(data_management_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 
     return app

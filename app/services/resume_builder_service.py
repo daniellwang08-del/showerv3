@@ -2,7 +2,8 @@
 Resume & cover letter document builder.
 
 Opens user-designed DOCX templates, replaces placeholder tags with AI-tailored
-content, and converts to PDF via LibreOffice.
+content, and converts to PDF via the pure-Python ``dxpdf`` engine (no external
+LibreOffice / MS Office binary required).
 
 Placeholders recognised in the resume template:
   {{PROFILE_SUMMARY}}  - single paragraph replacement
@@ -16,14 +17,10 @@ Placeholders recognised in the cover letter template:
 
 from __future__ import annotations
 
-import platform
 import re
 import shutil
-import subprocess
-import tempfile
 import zipfile
 from copy import deepcopy
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -840,25 +837,35 @@ _PX_TO_PT = 72.0 / 96.0
 _EXP_ROLE_GAP: dict[str, tuple[str, float]] = {
     "lead": ("exp_lead_pt", 2.0 * _PX_TO_PT),     # project / description <p margin-top 2px>
     "label": ("exp_label_pt", 3.0 * _PX_TO_PT),   # "Key Contributions:" <p margin-top 3px>
-    "bullet": ("exp_bullet_pt", 1.0 * _PX_TO_PT), # bullet row, gap before each line
+    "bullet": ("exp_bullet_pt", 1.5 * _PX_TO_PT), # bullet row, gap before each line
     "used": ("exp_used_pt", 3.0 * _PX_TO_PT),     # used-skills line <p margin-top 3px>
 }
+# Uniform body rhythm (pt) for lead / label / bullet lines. Measured per-role gaps from
+# 2-col layouts are noisy (cross-column measure noise, wrapped vs single-line rows) and
+# produced visibly uneven spacing between consecutive body lines in the PDF.
+_UNIFORM_BODY_GAP_PT = 2.0
 
 
 def _apply_experience_spacing(
     paragraphs: list[OxmlElement], roles: list[str], metrics: dict | None = None
 ) -> None:
-    """Pin each experience paragraph's gap to the browser-measured value for its role.
+    """Pin each experience paragraph's gap to a stable body rhythm.
 
     Every line owns the gap *above* it via ``space_before`` and carries ``space_after``
-    0, so the realized spacing equals the preview's regardless of how the user changed
-    the schema (line height, markers, item styles). The first line's space-before is the
-    header->first-line gap; the company-to-company gap is owned by the next header."""
+    0, so Word's non-collapsing margins never double a gap. Lead / label / bullet rows
+    share one uniform gap so contribution lists stay evenly spaced; only the used-skills
+    line keeps its measured/fallback gap (it's a distinct footer row, not body copy).
+    """
     if not paragraphs:
         return
     for p, role in zip(paragraphs, roles):
-        field, fallback = _EXP_ROLE_GAP.get(role, ("exp_bullet_pt", 1.0 * _PX_TO_PT))
-        _set_para_space_before(p, _metric(metrics, field, fallback))
+        if role in ("lead", "label", "bullet"):
+            _set_para_space_before(p, _UNIFORM_BODY_GAP_PT)
+        else:
+            field, fallback = _EXP_ROLE_GAP.get(role, ("exp_bullet_pt", 1.5 * _PX_TO_PT))
+            raw = _metric(metrics, field, fallback)
+            # Clamp noisy measured gaps so a bad 2-col manifest cannot stretch body lines.
+            _set_para_space_before(p, max(0.0, min(raw, 8.0)))
         _set_para_space_after(p, 0.0)
 
 
@@ -1264,89 +1271,57 @@ def fill_cover_letter_template(
     return output_path
 
 
-def _find_libreoffice() -> str | None:
-    settings = get_settings()
-    if settings.libreoffice_path:
-        p = Path(settings.libreoffice_path)
-        if p.exists():
-            return str(p)
-
-    candidates = [shutil.which("soffice"), shutil.which("libreoffice")]
-    if platform.system() == "Windows":
-        candidates.extend([
-            r"C:\Program Files\LibreOffice\program\soffice.exe",
-            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-        ])
-    for c in candidates:
-        if c and Path(c).exists():
-            return str(c)
-    return None
-
-
 def convert_docx_to_pdf(docx_path: Path, pdf_path: Path) -> Path:
-    """Convert DOCX to PDF using LibreOffice headless."""
-    libre = _find_libreoffice()
-    if not libre:
-        raise RuntimeError("LibreOffice not found. Install LibreOffice or set LIBREOFFICE_PATH.")
+    """Convert DOCX to PDF using the pure-Python ``dxpdf`` package only.
+
+    ``dxpdf`` ships as a self-contained pip wheel (Rust/Skia). No LibreOffice,
+    MS Office, or other system binary is used or required.
+    """
+    import dxpdf  # imported lazily so import cost stays off the hot path
 
     if pdf_path.exists():
         pdf_path.unlink()
 
-    outdir = pdf_path.parent
-    # A single shared LibreOffice user profile is locked to one process; two concurrent
-    # conversions (two users downloading at once) otherwise collide - the second either
-    # blocks on the profile lock or silently reuses the first instance and fails to emit a
-    # PDF. Give every conversion its own throwaway profile so they run independently.
-    with tempfile.TemporaryDirectory(prefix="lo_profile_") as profile_dir:
-        user_install = Path(profile_dir).as_uri()
-        cmd = [
-            libre,
-            "-env:UserInstallation=" + user_install,
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            str(outdir),
-            str(docx_path),
-        ]
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dxpdf.convert_file(str(docx_path), str(pdf_path))
+    except Exception as e:  # noqa: BLE001 - surface a clear, engine-specific error
+        raise RuntimeError(f"dxpdf conversion failed: {e}") from e
 
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"LibreOffice conversion failed: {e.stderr}") from e
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError("LibreOffice conversion timed out after 120s") from e
+    if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+        raise RuntimeError("dxpdf finished but produced no PDF output")
 
-    produced = outdir / f"{docx_path.stem}.pdf"
-    if not produced.exists():
-        raise RuntimeError("LibreOffice finished but PDF was not produced")
-
-    if produced.resolve() != pdf_path.resolve():
-        if pdf_path.exists():
-            pdf_path.unlink()
-        produced.replace(pdf_path)
-
-    logger.info("pdf_created", path=str(pdf_path))
+    logger.info("pdf_created", path=str(pdf_path), engine="dxpdf")
     return pdf_path
 
 
-def build_output_directory(
-    first_name: str,
-    last_name: str,
-    company_name: str,
-    position_title: str,
-) -> Path:
-    """Create the output directory for resume files."""
+def safe_path_segment(value: str, *, fallback: str = "Unknown", max_len: int = 80) -> str:
+    """Filesystem-safe single path segment (spaces → underscores, strip junk)."""
+    cleaned = re.sub(r"[^\w\s-]", "", value or "", flags=re.UNICODE).strip()
+    cleaned = re.sub(r"[\s_]+", "_", cleaned).strip("_")
+    return (cleaned[:max_len] if cleaned else "") or fallback
+
+
+def person_document_stem(first_name: str, last_name: str, kind: str = "resume") -> str:
+    """Filename stem: ``Zeyu_Wang_resume`` / ``Zeyu_Wang_cover_letter`` (no extension)."""
+    name = safe_path_segment(f"{first_name or ''} {last_name or ''}".strip(), fallback="Resume")
+    suffix = "cover_letter" if kind == "cover_letter" else "resume"
+    return f"{name}_{suffix}"
+
+
+def person_resume_stem(first_name: str, last_name: str) -> str:
+    """Alias for :func:`person_document_stem` with ``kind='resume'``."""
+    return person_document_stem(first_name, last_name, "resume")
+
+
+def build_output_directory(company_name: str) -> Path:
+    """Create ``{RESUME_OUTPUT_ROOT}/{Company}/`` for resume artifacts.
+
+    Files inside use ``{First_Last}_resume.pdf`` (see :func:`person_document_stem`).
+    """
     settings = get_settings()
     root = Path(settings.resume_output_root)
-
-    person_dir = f"{first_name}_{last_name}".strip("_") or "Unknown"
-    now = datetime.now()
-    timestamp = now.strftime("%Y-%m-%d_%H-%M")
-    company_clean = re.sub(r"[^\w\s-]", "", company_name or "Unknown").strip().replace(" ", "_")[:50]
-    position_clean = re.sub(r"[^\w\s-]", "", position_title or "Unknown").strip().replace(" ", "_")[:50]
-    job_dir = f"{timestamp}_{company_clean}_{position_clean}"
-
-    full_path = root / person_dir / job_dir
+    company_clean = safe_path_segment(company_name or "Unknown", fallback="Unknown", max_len=80)
+    full_path = root / company_clean
     full_path.mkdir(parents=True, exist_ok=True)
     return full_path

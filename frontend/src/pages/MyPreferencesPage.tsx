@@ -7,8 +7,8 @@ import {
   Mail,
   RefreshCw,
   Search,
-  Settings2,
   Target,
+  UserCog,
 } from 'lucide-react';
 import {
   fetchUserSettings,
@@ -29,20 +29,21 @@ import {
   BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH,
 } from '../constants/builtinCoverLetterPrompt';
 import { MarkdownPromptEditor } from '../components/settings/MarkdownPromptEditor';
-import { GoogleSheetsSettingsSection } from '../components/settings/GoogleSheetsSettingsSection';
 import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { ProviderKeysCard } from '../components/settings/ProviderKeysCard';
 import { SettingsCard } from '../components/settings/SettingsCard';
+import { EeoPreferencesSection } from '../components/preferences/EeoPreferencesSection';
+import { AddressPreferencesSection } from '../components/preferences/AddressPreferencesSection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
+import type { AppShellOutletContext } from '../components/layout/AppShell';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
+import { useOutletContext } from 'react-router-dom';
 
 const DEDUP_SLIDER_MAX = 365;
 const DEDUP_PRESETS = [30, 60, 90, 180] as const;
-const MATCH_SCORE_PRESETS = [0, 40, 50, 60, 70, 80] as const;
-
 function resolveStoredPromptText(data: Pick<UserSettings, 'resume_tailoring_prompt_instructions_custom' | 'default_resume_tailoring_prompt_instructions'>) {
   return (
     data.resume_tailoring_prompt_instructions_custom ||
@@ -71,7 +72,7 @@ function ModeToggle({
   disabled?: boolean;
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+    <div className="inline-flex max-w-full flex-wrap rounded-lg border border-slate-200 bg-slate-50 p-0.5">
       {(['default', 'custom'] as const).map((mode) => (
         <button
           key={mode}
@@ -79,7 +80,7 @@ function ModeToggle({
           disabled={disabled}
           onClick={() => onChange(mode)}
           className={[
-            'rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition',
+            'rounded-md px-2.5 py-1.5 text-xs font-semibold capitalize transition sm:px-3',
             value === mode
               ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
               : 'text-slate-500 hover:text-slate-700',
@@ -107,7 +108,8 @@ function SectionMessage({ ok, text }: { ok?: boolean; text: string }) {
   );
 }
 
-export function SettingsPage() {
+export function MyPreferencesPage() {
+  const { isAdmin } = useOutletContext<AppShellOutletContext>();
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -315,11 +317,6 @@ export function SettingsPage() {
     minScoreMode !== savedMinScoreMode ||
     (minScoreMode === 'custom' && minScore !== savedMinScore);
 
-  const minScoreSaveEnabled =
-    minScoreMode === 'default'
-      ? savedMinScoreMode !== 'default'
-      : minScoreChanged && minScore >= 0 && minScore <= 100;
-
   const handleMinScoreChange = (value: number) => {
     setMinScore(Math.max(0, Math.min(100, value)));
     setMinScoreSaveMsg('');
@@ -331,6 +328,48 @@ export function SettingsPage() {
     minScoreMode === 'default'
       ? ({ min_match_score_mode: 'default' as const })
       : ({ min_match_score_mode: 'custom' as const, min_match_score: minScore });
+
+  // Persist threshold as soon as mode/value settle — no separate Save button.
+  // "Hide from dashboard" still applies the hide/restore pass on top of this.
+  useEffect(() => {
+    if (!settings || !minScoreChanged) return;
+    if (minScoreMode === 'custom' && (minScore < 0 || minScore > 100)) return;
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setMinScoreSaving(true);
+        setMinScoreSaveMsg('');
+        try {
+          const data =
+            minScoreMode === 'default'
+              ? await saveMinMatchScoreSettings({ min_match_score_mode: 'default' })
+              : await saveMinMatchScoreSettings({
+                  min_match_score_mode: 'custom',
+                  min_match_score: minScore,
+                });
+          applySettings(data);
+          setMinScoreSaveOk(true);
+          setMinScoreSaveMsg(
+            minScoreMode === 'default'
+              ? `Threshold saved (system default: ${data.default_min_match_score ?? defaultMinScore}). New analyses use this automatically.`
+              : `Threshold saved at ${minScore}. New analyses below this are hidden automatically.`,
+          );
+        } catch (err: unknown) {
+          setMinScoreSaveOk(false);
+          const msg =
+            err && typeof err === 'object' && 'response' in err
+              ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+              : null;
+          setMinScoreSaveMsg(typeof msg === 'string' ? msg : 'Failed to save match score threshold.');
+        } finally {
+          setMinScoreSaving(false);
+        }
+      })();
+    }, 450);
+
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: save when draft differs from saved settings
+  }, [minScoreMode, minScore, minScoreChanged, settings]);
 
   const handleCheckMinScoreJobs = async () => {
     if (!settings) return;
@@ -406,37 +445,6 @@ export function SettingsPage() {
       setMinScoreSaveMsg(typeof msg === 'string' ? msg : 'Failed to hide jobs from dashboard.');
     } finally {
       setMinScoreApplying(false);
-    }
-  };
-
-  const handleSaveMinScore = async () => {
-    if (!settings || !minScoreSaveEnabled) return;
-    setMinScoreSaving(true);
-    setMinScoreSaveMsg('');
-    try {
-      const data =
-        minScoreMode === 'default'
-          ? await saveMinMatchScoreSettings({ min_match_score_mode: 'default' })
-          : await saveMinMatchScoreSettings({
-              min_match_score_mode: 'custom',
-              min_match_score: minScore,
-            });
-      applySettings(data);
-      setMinScoreSaveOk(true);
-      setMinScoreSaveMsg(
-        minScoreMode === 'default'
-          ? `Threshold saved (system default: ${defaultMinScore}). New analyses use this rule automatically.`
-          : `Threshold saved (${minScore}). New analyses below this score will be hidden automatically.`,
-      );
-    } catch (err: unknown) {
-      setMinScoreSaveOk(false);
-      const msg =
-        err && typeof err === 'object' && 'response' in err
-          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-          : null;
-      setMinScoreSaveMsg(typeof msg === 'string' ? msg : 'Failed to save match score threshold.');
-    } finally {
-      setMinScoreSaving(false);
     }
   };
 
@@ -589,24 +597,32 @@ export function SettingsPage() {
 
   return (
     <PageScrollArea>
-      <div className="w-full px-4 py-4">
+      <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
         <PageHeader
-          icon={Settings2}
+          icon={UserCog}
           gradient="from-slate-700 to-slate-900"
-          title="Settings"
-          description="Provider keys, match scoring, dedup, sync, and document templates - all in one place."
-          className="mb-4"
+          title="My Preferences"
+          description={
+            isAdmin
+              ? 'API keys, match scoring, prompts, EEO, address, and job sync - your personal defaults.'
+              : 'API keys, match scoring, prompts, EEO, and address - your personal defaults.'
+          }
         />
 
         {loading ? (
-          <BrandedLoader label="Loading settings…" className="min-h-[60vh]" />
+          <BrandedLoader label="Loading preferences…" className="min-h-[60vh]" />
         ) : loadError ? (
           <p className="text-sm text-rose-700">{loadError}</p>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3 sm:space-y-4">
+            <div className="grid items-start gap-3 sm:gap-4 xl:grid-cols-2">
+              <EeoPreferencesSection />
+              <AddressPreferencesSection />
+            </div>
+
             {settings && <ProviderKeysCard settings={settings} onSaved={applySettings} />}
 
-            <div className="grid items-stretch gap-4 lg:grid-cols-2">
+            <div className="grid items-stretch gap-3 sm:gap-4 xl:grid-cols-2">
               {/* Minimum match score */}
               <SettingsCard
                 icon={Target}
@@ -641,7 +657,7 @@ export function SettingsPage() {
                         max={100}
                         value={minScore}
                         onChange={(e) => handleMinScoreChange(Number(e.target.value))}
-                        className="h-2 flex-1 cursor-pointer accent-rose-600"
+                        className="h-5 flex-1 cursor-pointer accent-rose-600 text-rose-600"
                       />
                       <input
                         type="number"
@@ -651,22 +667,6 @@ export function SettingsPage() {
                         onChange={(e) => handleMinScoreChange(Number(e.target.value) || 0)}
                         className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center text-sm font-semibold text-slate-800 shadow-sm focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-200"
                       />
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {MATCH_SCORE_PRESETS.map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => handleMinScoreChange(preset)}
-                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
-                            minScore === preset
-                              ? 'border-rose-400 bg-rose-100 text-rose-800'
-                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                          }`}
-                        >
-                          {preset === 0 ? 'All' : preset}
-                        </button>
-                      ))}
                     </div>
                   </div>
                 )}
@@ -690,14 +690,12 @@ export function SettingsPage() {
                     {minScoreApplying ? <Loader2 size={14} className="animate-spin" /> : null}
                     {minScoreApplying ? 'Applying…' : 'Hide from dashboard'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveMinScore()}
-                    disabled={!minScoreSaveEnabled || minScoreSaving || minScoreApplying}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {minScoreSaving ? 'Saving…' : 'Save'}
-                  </button>
+                  {minScoreSaving ? (
+                    <span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                      <Loader2 size={13} className="animate-spin" />
+                      Saving threshold…
+                    </span>
+                  ) : null}
                 </div>
 
                 {minScoreCheckMsg && (
@@ -707,7 +705,7 @@ export function SettingsPage() {
                 )}
 
                 {minScoreCheckResult && (
-                  <div className="mt-3 grid grid-cols-4 gap-2">
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
                       ['Visible', minScoreCheckResult.analyzed_visible_count],
                       ['Hide', minScoreCheckResult.would_hide_count],
@@ -756,7 +754,7 @@ export function SettingsPage() {
                         max={DEDUP_SLIDER_MAX}
                         value={sliderValue}
                         onChange={(e) => handleDedupDaysChange(Number(e.target.value))}
-                        className="h-2 flex-1 cursor-pointer accent-indigo-600"
+                        className="h-5 flex-1 cursor-pointer accent-indigo-600 text-indigo-600"
                       />
                       <input
                         type="number"
@@ -856,11 +854,7 @@ export function SettingsPage() {
               )}
             </SettingsCard>
 
-            <GoogleSheetsSettingsSection />
-
-            <JobSyncSettingsSection />
-
-            <div className="grid items-start gap-4 lg:grid-cols-2">
+            <div className="grid items-start gap-3 sm:gap-4 xl:grid-cols-2">
               {/* Resume tailoring prompt */}
               <SettingsCard
                 icon={FileText}
@@ -979,6 +973,8 @@ export function SettingsPage() {
                 {coverPromptSaveMsg && <SectionMessage ok={coverPromptSaveOk} text={coverPromptSaveMsg} />}
               </SettingsCard>
             </div>
+
+            {isAdmin && <JobSyncSettingsSection />}
           </div>
         )}
       </div>

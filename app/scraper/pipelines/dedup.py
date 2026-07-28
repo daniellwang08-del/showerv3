@@ -14,13 +14,18 @@ class DedupPipeline:
     during a single spider run.
     """
 
-    def __init__(self):
+    def __init__(self, crawler):
+        self.crawler = crawler
         self.seen_hashes: set[str] = set()
 
-    def open_spider(self, spider):
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler)
+
+    def open_spider(self):
         self.seen_hashes.clear()
 
-    def process_item(self, item: JobItem, spider) -> JobItem:
+    def process_item(self, item: JobItem) -> JobItem:
         if item.content_hash in self.seen_hashes:
             raise DropItem(f"Duplicate within run: {item.source}:{item.source_job_id}")
         self.seen_hashes.add(item.content_hash)

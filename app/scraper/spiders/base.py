@@ -27,7 +27,7 @@ class BaseJobSpider(scrapy.Spider):
     """Base class for all job scraping spiders.
 
     Subclasses must implement:
-        - start_requests() or set start_urls
+        - async start() (or set start_urls)
         - parse_listing(response) -> yields requests to detail pages
         - parse_job(response) -> yields JobItem dicts
 

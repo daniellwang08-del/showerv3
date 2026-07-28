@@ -22,6 +22,7 @@ from urllib.parse import quote
 
 import scrapy
 from scrapy import signals
+from scrapy.exceptions import CloseSpider
 
 from app.scraper.spiders.base import BaseJobSpider
 from app.scraper.utils.cloudflare import CloudflareSession
@@ -222,16 +223,16 @@ class RemoteRocketshipSpider(BaseJobSpider):
         return f"{self.base_url}{API_PATH}?q={quote(q_json)}"
 
     # ------------------------------------------------------------------
-    # start_requests
+    # start (Scrapy 2.13+)
     # ------------------------------------------------------------------
 
-    def start_requests(self):
+    async def start(self):
         session = self._get_session()
         if not session.is_authenticated:
             self.logger.error(
                 "No saved session found. Run: python -m app.scraper.auth setup rrs"
             )
-            return
+            raise CloseSpider("auth_required")
 
         self._load_checkpoint()
 
@@ -265,13 +266,22 @@ class RemoteRocketshipSpider(BaseJobSpider):
         body = session.fetch(real_url)
 
         if not body:
-            self.logger.error("Failed to fetch page %d after all retries", page)
+            reason = session.last_failure_reason or "fetch_failed"
+            self.logger.error(
+                "Failed to fetch page %d after all retries (reason=%s)",
+                page,
+                reason,
+            )
+            if page == 1:
+                raise CloseSpider(reason)
             return
 
         try:
             data = json.loads(body)
         except json.JSONDecodeError as e:
             self.logger.error("Failed to parse JSON for page %d: %s", page, e)
+            if page == 1:
+                raise CloseSpider("json_parse_failed")
             return
 
         jobs = data.get("jobOpenings", [])

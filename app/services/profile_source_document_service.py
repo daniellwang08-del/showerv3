@@ -182,7 +182,7 @@ async def parse_source_document_structured(
     profile_companies: list[str],
     user_id: str | None = None,
 ) -> SourceDocumentStructured:
-    client = await get_llm_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id, job_type="profile_source_doc")
     settings = get_settings()
     clipped = _truncate(text, MAX_PARSE_TEXT_CHARS)
     profile_hint = ""

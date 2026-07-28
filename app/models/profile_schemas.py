@@ -82,6 +82,13 @@ class EducationBlock(BaseModel):
 
 class CertificateBlock(BaseModel):
     name: str = Field(..., min_length=1, max_length=300)
+    issued_at: str | None = Field(default=None, max_length=40)
+    url: str | None = Field(default=None, max_length=500)
+
+    @field_validator("issued_at", "url", mode="before")
+    @classmethod
+    def empty_optional(cls, v):
+        return _empty_to_none(v)
 
 
 class EEOPreferences(BaseModel):
@@ -188,6 +195,8 @@ class ResumeEducationBlock(BaseModel):
 
 class ResumeCertBlock(BaseModel):
     name: str | None = None
+    issued_at: str | None = None
+    url: str | None = None
 
 
 class ResumeExtractedDraft(BaseModel):

@@ -77,7 +77,7 @@ Copy profile fields from the résumé into structured JSON for a job-search appl
     "location": string | null,
     "description": string | null
   } ],
-  "certificates": [ { "name": string | null } ],
+  "certificates": [ { "name": string | null, "issued_at": string | null, "url": string | null } ],
   "extra": [ string ]
 }
 
@@ -94,10 +94,11 @@ Work experience (critical - most errors happen here):
 - If the résumé uses tables or two-column layout, follow reading order so all lines for that job stay in that job’s `description`.
 
 - education.description: copy honors, coursework, or notes verbatim if present.
-- technical_skills: copy ONLY from the résumé's dedicated Skills / Technical Skills section at the end of the document. Each object MUST include both `category` (e.g. "Languages", "Frameworks", "Cloud & DevOps") and `skills` (comma-separated list for that category). Do NOT put per-job "Technologies Used" lines here—those belong in work_experience.description.
+- technical_skills: copy ONLY from the résumé's dedicated Skills / Technical Skills section at the end of the document. Each object MUST include both `category` (e.g. "Languages", "Frameworks", "Cloud & DevOps") and `skills` (comma-separated list for that category). Do NOT put per-job "Technologies Used" lines here - those belong in work_experience.description.
 - extra: optional lines copied verbatim (e.g. languages, awards) not captured elsewhere.
 - period_*: use YYYY-MM when the document shows month+year; use YYYY if only year; use null if unclear-do not guess dates.
 - LinkedIn/GitHub: exact URLs from the document only.
+- certificates: include name; issued_at when a date is shown; url when a credential/verification link is present.
 - phone_country_code: like +1, +44; phone_number: national number without country code.
 - job_type: only if explicitly stated or unambiguous (remote/hybrid/onsite); else null.
 - Do not invent employers, degrees, or links. If something is unreadable, use null rather than guessing.
@@ -163,17 +164,81 @@ def pdf_to_base64_pngs(raw: bytes) -> tuple[list[str], list[str]]:
         doc.close()
 
 
+def _url_already_in_text(url: str, body_lower: str) -> bool:
+    """True if ``url`` (or a close variant) already appears in extracted body text."""
+    bare = re.sub(r"^https?://", "", url, flags=re.IGNORECASE).rstrip("/").lower()
+    no_www = re.sub(r"^www\.", "", bare)
+    candidates = {bare, no_www, "www." + no_www if not bare.startswith("www.") else bare}
+    return any(c and c in body_lower for c in candidates)
+
+
+def _merge_text_with_document_links(body: str, urls: list[str]) -> str:
+    """Prepend hyperlink targets that are not already present as visible text.
+
+    Résumés often store LinkedIn/GitHub as clickable icons/labels whose href is
+    never part of ``Paragraph.text`` / ``page.get_text``. Surfacing those URIs
+    at the top of the extracted text lets both the LLM and the contact regex
+    fallback recover them.
+    """
+    body = (body or "").strip()
+    body_lower = body.lower()
+    extra: list[str] = []
+    seen: set[str] = set()
+    for raw_url in urls:
+        u = (raw_url or "").strip()
+        if not u:
+            continue
+        lower = u.lower()
+        if lower.startswith(("mailto:", "javascript:", "file:", "#")):
+            continue
+        if not lower.startswith(("http://", "https://")):
+            if "://" in u:
+                continue
+            if "." not in u:
+                continue
+            u = "https://" + u.lstrip("/")
+            lower = u.lower()
+        key = lower.rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        if _url_already_in_text(u, body_lower):
+            continue
+        extra.append(u)
+    if not extra:
+        return body
+    block = "Document links:\n" + "\n".join(extra)
+    return f"{block}\n\n{body}" if body else block
+
+
+def _pdf_page_link_uris(page: Any) -> list[str]:
+    """URI targets from PDF link annotations (icon/label hyperlinks)."""
+    urls: list[str] = []
+    try:
+        links = page.get_links() or []
+    except Exception:
+        return urls
+    for link in links:
+        uri = (link or {}).get("uri")
+        if uri and str(uri).strip():
+            urls.append(str(uri).strip())
+    return urls
+
+
 def pdf_to_plain_text_fitz(raw: bytes, max_pages: int = MAX_PDF_PAGES) -> str:
     import fitz
 
     doc = fitz.open(stream=raw, filetype="pdf")
     try:
         parts: list[str] = []
+        urls: list[str] = []
         for i in range(min(len(doc), max_pages)):
-            t = doc[i].get_text("text") or ""
+            page = doc[i]
+            t = page.get_text("text") or ""
             if t.strip():
                 parts.append(t)
-        return "\n\n".join(parts)
+            urls.extend(_pdf_page_link_uris(page))
+        return _merge_text_with_document_links("\n\n".join(parts), urls)
     finally:
         doc.close()
 
@@ -183,6 +248,117 @@ def pdf_to_plain_text_any(raw: bytes, max_pages: int = MAX_PDF_PAGES) -> str:
     if pymupdf_available():
         return pdf_to_plain_text_fitz(raw, max_pages=max_pages)
     return pdf_to_plain_text_pypdf(raw, max_pages=max_pages)
+
+
+def _docx_paragraph_hyperlink_targets(paragraph: Any) -> list[str]:
+    """External hyperlink hrefs from a paragraph (not display text).
+
+    Covers both ``w:hyperlink`` relationships and legacy ``HYPERLINK \"url\"``
+    field instructions (common in some Word exports).
+    """
+    from docx.oxml.ns import qn
+
+    urls: list[str] = []
+    try:
+        part = paragraph.part
+    except Exception:
+        part = None
+    for el in paragraph._element.iter():
+        if el.tag == qn("w:hyperlink"):
+            r_id = el.get(qn("r:id"))
+            if not r_id or part is None:
+                continue
+            try:
+                rel = part.rels[r_id]
+                target = getattr(rel, "target_ref", None) or getattr(rel, "_target", None)
+                if target:
+                    urls.append(str(target).strip())
+            except Exception:
+                continue
+            continue
+        # Field code: HYPERLINK "https://..."
+        if el.tag == qn("w:instrText") and el.text:
+            m = re.search(r'HYPERLINK\s+"([^"]+)"', el.text, re.IGNORECASE)
+            if m:
+                urls.append(m.group(1).strip())
+    return urls
+
+
+def _docx_story_plain(container: Any) -> tuple[str, list[str]]:
+    """Plain text + hyperlink targets for a header, footer, or similar story."""
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    chunks: list[str] = []
+    urls: list[str] = []
+    try:
+        blocks = list(_iter_docx_body_blocks(container))
+    except TypeError:
+        # Header/Footer expose .paragraphs / .tables but not Document-style body walk
+        # for every python-docx version; fall back to paragraphs + tables.
+        blocks = []
+        for p in getattr(container, "paragraphs", None) or []:
+            blocks.append(p)
+        for t in getattr(container, "tables", None) or []:
+            blocks.append(t)
+    for block in blocks:
+        if isinstance(block, Paragraph):
+            t = (block.text or "").strip()
+            if t:
+                chunks.append(t)
+            urls.extend(_docx_paragraph_hyperlink_targets(block))
+        elif isinstance(block, Table):
+            nested_text, nested_urls = _docx_table_plain(block)
+            if nested_text:
+                chunks.append(nested_text)
+            urls.extend(nested_urls)
+    return "\n".join(chunks), urls
+
+
+def _docx_header_footer_plain(doc: Any) -> tuple[str, list[str]]:
+    """Contact rows often live in the page header (icon LinkedIn), not the body."""
+    chunks: list[str] = []
+    urls: list[str] = []
+    seen_parts: set[int] = set()
+    attrs = (
+        "header",
+        "footer",
+        "first_page_header",
+        "first_page_footer",
+        "even_page_header",
+        "even_page_footer",
+    )
+    for section in getattr(doc, "sections", None) or []:
+        for attr in attrs:
+            try:
+                story = getattr(section, attr, None)
+            except Exception:
+                continue
+            if story is None:
+                continue
+            try:
+                part_id = id(story.part)
+            except Exception:
+                part_id = id(story)
+            if part_id in seen_parts:
+                continue
+            seen_parts.add(part_id)
+            text, story_urls = _docx_story_plain(story)
+            if text.strip():
+                chunks.append(text.strip())
+            urls.extend(story_urls)
+            # Also collect any external hyperlink relationships on this part
+            # (covers picture/shape clicks that aren't w:hyperlink in a paragraph).
+            try:
+                for rel in story.part.rels.values():
+                    reltype = getattr(rel, "reltype", "") or ""
+                    if "hyperlink" in reltype and getattr(rel, "is_external", False):
+                        target = getattr(rel, "target_ref", None) or getattr(rel, "_target", None)
+                        if target:
+                            urls.append(str(target).strip())
+            except Exception:
+                pass
+    return "\n\n".join(chunks), urls
 
 
 def _iter_docx_body_blocks(document: Any):
@@ -206,7 +382,12 @@ def _iter_docx_body_blocks(document: Any):
     if isinstance(document, _Cell):
         yield from walk(document._tc, document)
         return
-    raise TypeError("expected Document or _Cell")
+    # Header / Footer stories expose the same CT_P / CT_Tbl children.
+    elm = getattr(document, "_element", None)
+    if elm is not None:
+        yield from walk(elm, document)
+        return
+    raise TypeError("expected Document, _Cell, Header, or Footer")
 
 
 def _dedupe_adjacent_preserve_order(parts: list[str]) -> list[str]:
@@ -217,50 +398,86 @@ def _dedupe_adjacent_preserve_order(parts: list[str]) -> list[str]:
     return out
 
 
-def _docx_cell_plain(cell: Any) -> str:
-    """Recursive plain text for a table cell (paragraphs + nested tables in order)."""
+def _docx_cell_plain(cell: Any) -> tuple[str, list[str]]:
+    """Recursive plain text + hyperlink targets for a table cell."""
     from docx.table import Table
     from docx.text.paragraph import Paragraph
 
     chunks: list[str] = []
+    urls: list[str] = []
     for block in _iter_docx_body_blocks(cell):
         if isinstance(block, Paragraph):
             t = (block.text or "").strip()
             if t:
                 chunks.append(t)
+            urls.extend(_docx_paragraph_hyperlink_targets(block))
         elif isinstance(block, Table):
-            chunks.append(_docx_table_plain(block))
-    return "\n".join(chunks)
+            nested_text, nested_urls = _docx_table_plain(block)
+            if nested_text:
+                chunks.append(nested_text)
+            urls.extend(nested_urls)
+    return "\n".join(chunks), urls
 
 
-def _docx_table_plain(table: Any) -> str:
+def _docx_table_plain(table: Any) -> tuple[str, list[str]]:
     row_texts: list[str] = []
+    urls: list[str] = []
     for row in table.rows:
-        cell_texts = [_docx_cell_plain(c).strip() for c in row.cells]
+        cell_payloads = [_docx_cell_plain(c) for c in row.cells]
+        cell_texts = [t.strip() for t, _ in cell_payloads]
+        for _, cell_urls in cell_payloads:
+            urls.extend(cell_urls)
         cell_texts = _dedupe_adjacent_preserve_order([c for c in cell_texts if c])
         if cell_texts:
             row_texts.append(" | ".join(cell_texts))
-    return "\n".join(row_texts)
+    return "\n".join(row_texts), urls
 
 
 def docx_to_plain_text(raw: bytes) -> str:
-    """Flatten DOCX to linear text in document order (paragraphs and tables interleaved)."""
+    """Flatten DOCX to linear text in document order (paragraphs and tables interleaved).
+
+    Also surfaces external hyperlink targets (e.g. LinkedIn behind an icon/label)
+    so contact URLs are not lost when display text is only \"LinkedIn\".
+    Headers/footers are included - many résumés put the contact icon row there.
+    """
     from docx import Document
     from docx.table import Table
     from docx.text.paragraph import Paragraph
 
     doc = Document(BytesIO(raw))
     parts: list[str] = []
+    urls: list[str] = []
+
+    hf_text, hf_urls = _docx_header_footer_plain(doc)
+    if hf_text.strip():
+        parts.append(hf_text.strip())
+    urls.extend(hf_urls)
+
     for block in _iter_docx_body_blocks(doc):
         if isinstance(block, Paragraph):
             t = (block.text or "").strip()
             if t:
                 parts.append(t)
+            urls.extend(_docx_paragraph_hyperlink_targets(block))
         elif isinstance(block, Table):
-            t = _docx_table_plain(block).strip()
+            t, table_urls = _docx_table_plain(block)
+            t = t.strip()
             if t:
                 parts.append(t)
-    return "\n\n".join(parts)
+            urls.extend(table_urls)
+
+    # Safety net: any external hyperlink on the main document part.
+    try:
+        for rel in doc.part.rels.values():
+            reltype = getattr(rel, "reltype", "") or ""
+            if "hyperlink" in reltype and getattr(rel, "is_external", False):
+                target = getattr(rel, "target_ref", None) or getattr(rel, "_target", None)
+                if target:
+                    urls.append(str(target).strip())
+    except Exception:
+        pass
+
+    return _merge_text_with_document_links("\n\n".join(parts), urls)
 
 
 def _clip_resume_text(text: str, warnings: list[str]) -> str:
@@ -313,13 +530,54 @@ _US_PHONE_RE = re.compile(
     r"(\d{3})[\s\).\-]*(\d{3})[\s.\-]*(\d{4})"
 )
 
+# Capture the profile handle; allow optional trailing slash / query / fragment.
+# Host may be www. or a regional subdomain (e.g. uk.linkedin.com).
+_LINKEDIN_IN_TEXT_RE = re.compile(
+    r"(?:https?://)?(?:(?:www|[a-z]{2})\.)?linkedin\.com/in/([A-Za-z0-9][\w\-]{0,98})",
+    re.IGNORECASE,
+)
+_EMAIL_IN_TEXT_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.\w+")
+_GITHUB_IN_TEXT_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9](?:[\w\-]|\.(?!\.)){0,38})",
+    re.IGNORECASE,
+)
+
 
 def _normalize_linkedin_url(url: str | None) -> str | None:
+    """Canonicalize a LinkedIn profile URL to https://www.linkedin.com/in/<handle>."""
     if not url:
         return None
     u = str(url).strip()
     if not u:
         return None
+    m = _LINKEDIN_IN_TEXT_RE.search(u)
+    if m:
+        handle = (m.group(1) or "").strip().strip("-")
+        if handle:
+            return f"https://www.linkedin.com/in/{handle}"
+    if not u.lower().startswith("http"):
+        u = "https://" + u.lstrip("/")
+    return u
+
+
+def _normalize_github_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    u = str(url).strip()
+    if not u:
+        return None
+    m = _GITHUB_IN_TEXT_RE.search(u)
+    if m:
+        handle = (m.group(1) or "").strip().strip("-.").strip()
+        if handle and handle.lower() not in {
+            "features",
+            "topics",
+            "collections",
+            "events",
+            "sponsors",
+            "settings",
+        }:
+            return f"https://github.com/{handle}"
     if not u.lower().startswith("http"):
         u = "https://" + u.lstrip("/")
     return u
@@ -350,15 +608,13 @@ def _normalize_phone_fields(country: str | None, number: str | None) -> tuple[st
     return cc, num
 
 
-_LINKEDIN_IN_TEXT_RE = re.compile(r"(https?://)?(?:www\.)?linkedin\.com/in/[\w\-]+", re.IGNORECASE)
-_EMAIL_IN_TEXT_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.\w+")
-
-
 def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> list[str]:
     """Backfill header contact fields when the vision LLM omits icon-row details."""
     notes: list[str] = []
     if not text or not text.strip():
         return notes
+    # Phone/email are almost always in the header; LinkedIn/GitHub may only appear
+    # in a prepended "Document links:" block or later in the file.
     header = text[:5000]
 
     if not draft.phone_number:
@@ -371,10 +627,16 @@ def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> l
                 notes.append("Phone number was recovered from document text (AI parser omitted it).")
 
     if not draft.linkedin_url:
-        lm = _LINKEDIN_IN_TEXT_RE.search(header)
+        lm = _LINKEDIN_IN_TEXT_RE.search(text)
         if lm:
             draft.linkedin_url = _normalize_linkedin_url(lm.group(0))
             notes.append("LinkedIn URL was recovered from document text (AI parser omitted it).")
+
+    if not draft.github_url:
+        gm = _GITHUB_IN_TEXT_RE.search(text)
+        if gm:
+            draft.github_url = _normalize_github_url(gm.group(0))
+            notes.append("GitHub URL was recovered from document text (AI parser omitted it).")
 
     if not draft.email:
         em = _EMAIL_IN_TEXT_RE.search(header)
@@ -493,7 +755,7 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
         _clean(draft.phone_number),
     )
     draft.linkedin_url = _normalize_linkedin_url(_clean(draft.linkedin_url))
-    draft.github_url = _clean(draft.github_url)
+    draft.github_url = _normalize_github_url(_clean(draft.github_url))
     draft.profile_summary = _clean(draft.profile_summary)
 
     if not draft.phone_country_code and draft.phone_number:
@@ -550,7 +812,13 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     for c in draft.certificates:
         n = _clean(c.name)
         if n:
-            certs.append(ResumeCertBlock(name=n))
+            certs.append(
+                ResumeCertBlock(
+                    name=n,
+                    issued_at=_clean(c.issued_at),
+                    url=_clean(c.url),
+                )
+            )
     draft.certificates = certs
 
     draft.extra = [x.strip() for x in draft.extra if x and str(x).strip()]
@@ -565,7 +833,7 @@ async def _call_openai_resume(
     image_base64_pngs: list[str] | None,
     user_id: str | None = None,
 ) -> ResumeExtractedDraft:
-    client = await get_llm_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id, job_type="resume_parse")
     settings = get_settings()
 
     sys_msg = (
@@ -582,7 +850,9 @@ async def _call_openai_resume(
                     "The images are résumé pages. Transcribe into the JSON schema with verbatim wording (no summarizing). "
                     "For work_experience: one object per distinct job. Each description must include **every** line of "
                     "body text that belongs to that job-all bullets, sub-bullets, intro lines, metrics-through the "
-                    "line immediately before the next job header (or before Education). Do not merge jobs or drop bullets."
+                    "line immediately before the next job header (or before Education). Do not merge jobs or drop bullets. "
+                    "For contact fields: read LinkedIn/GitHub carefully from the header icon row - copy the full "
+                    "profile URL when visible (linkedin.com/in/... or github.com/...), not just the word LinkedIn/GitHub."
                 ),
             }
         ]
@@ -679,6 +949,8 @@ async def parse_resume_bytes(*, raw: bytes, filename: str, user_id: str | None =
             text = _clip_resume_text(text_fallback, warnings)
             draft = await _call_openai_resume(user_text=text, image_base64_pngs=None, user_id=user_id)
             warnings.append("PDF was parsed from extracted text (vision path failed or model has no vision).")
+            warnings.extend(_fill_missing_contact_from_text(draft, text))
+            warnings.extend(_fill_missing_skills_from_text(draft, text))
         else:
             warnings.extend(_fill_missing_contact_from_text(draft, text_fallback))
             warnings.extend(_fill_missing_skills_from_text(draft, text_fallback))

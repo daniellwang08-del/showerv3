@@ -28,6 +28,7 @@ export type SubmittedUrlItem = {
   appliedBy?: string;
   posted_date_ms?: number;
   sheet_posted_at?: number | null;
+  pumble_posted_at?: number | null;
   table?: 'active' | 'duplicated';
   /** Duplication / exclusion metadata (populated for duplicated-table items) */
   duplication_reason?: string | null;

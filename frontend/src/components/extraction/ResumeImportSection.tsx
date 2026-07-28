@@ -22,6 +22,7 @@ import {
 } from '../../utils/resumeMerge';
 import { formatProfileValidationSummary, validateProfileForSave } from '../../utils/profileValidation';
 import { profileToForm } from './ProfileForm';
+import { BrandedLoader } from '../layout/BrandedLoader';
 
 type Props = {
   profile: UserProfile | null;
@@ -344,8 +345,8 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
               <tbody className="divide-y divide-slate-100 bg-white">
                 {docsLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-slate-500">
-                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                    <td colSpan={6} className="px-3 py-4">
+                      <BrandedLoader compact label="Loading documents…" className="py-6" />
                     </td>
                   </tr>
                 ) : sourceDocs.length === 0 ? (
@@ -481,7 +482,7 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
               </ul>
             </div>
 
-            <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-xl border border-slate-200 bg-white/80 p-3 text-sm text-slate-700">
+            <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
               <input
                 type="checkbox"
                 className="mt-1 rounded border-slate-300"

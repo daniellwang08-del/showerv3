@@ -31,7 +31,7 @@ class ZipRecruiterSpider(BaseJobSpider):
 
     RESULTS_PER_PAGE = 20
 
-    def start_requests(self):
+    async def start(self):
         query = self.query or "software engineer"
         location = self.search_location or "Remote"
 

@@ -50,13 +50,13 @@ export function DuplicatesModal({ onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Duplicate jobs"
-        className="fixed inset-0 flex items-center justify-center p-4 pointer-events-none"
+        className="fixed inset-0 flex items-center justify-center p-3 sm:p-4 pointer-events-none"
         style={{ zIndex: Z_INDEX.duplicatesModal }}
       >
         <div
           className="pointer-events-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
           style={{
-            height: 'min(88vh, 860px)',
+            height: 'min(88dvh, 860px)',
             animation: 'modal-in 0.2s ease-out both',
           }}
           onClick={(e) => e.stopPropagation()}

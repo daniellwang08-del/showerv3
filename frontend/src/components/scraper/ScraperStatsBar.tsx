@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ScraperStats } from '../../types/scraper';
+import { BrandedLoader } from '../layout/BrandedLoader';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,21 +91,17 @@ const MetricTile = memo(function MetricTile({
 }: MetricTileProps) {
   return (
     <div
-      className="group relative flex items-center gap-3 overflow-hidden rounded-2xl border border-slate-200/70 bg-white px-4 py-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md"
+      className="dashboard-metric-tile group relative flex items-center gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg dark:border-slate-700 dark:bg-[#141d31] dark:hover:border-blue-500/20"
       style={{ animationDelay: `${delay}ms` }}
       title={title}
     >
-      {/* Soft gradient wash that intensifies on hover */}
-      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${gradient} opacity-[0.06] transition-opacity duration-300 group-hover:opacity-[0.11]`} />
-      {/* Top accent line */}
-      <div className={`absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${gradient}`} />
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${gradient} opacity-[0.05] transition-opacity duration-300 group-hover:opacity-[0.12] dark:opacity-[0.08] dark:group-hover:opacity-[0.16]`} />
+      <div className={`absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r ${gradient} opacity-90`} />
 
-      {/* Avatar */}
-      <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${gradient} text-white shadow-md`}>
+      <div className={`dashboard-metric-icon relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${gradient} text-white shadow-md`}>
         <Icon size={20} strokeWidth={2.4} />
       </div>
 
-      {/* Value + label */}
       <div className="relative min-w-0">
         <div className="flex items-baseline gap-1.5 leading-none">
           <span className={`text-2xl font-black tabular-nums tracking-tight ${textColor}`}>
@@ -121,14 +118,6 @@ const MetricTile = memo(function MetricTile({
 });
 
 // ---------------------------------------------------------------------------
-// Loading skeleton
-// ---------------------------------------------------------------------------
-
-function SkeletonTile() {
-  return <div className="h-[72px] animate-pulse rounded-2xl bg-gradient-to-r from-slate-100 to-slate-50" />;
-}
-
-// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -137,15 +126,13 @@ interface ScraperStatsBarProps {
   loading: boolean;
 }
 
-const GRID_CLASS = 'grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6';
+const GRID_CLASS = 'grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6';
 
 export const ScraperStatsBar = memo(function ScraperStatsBar({ stats, loading }: ScraperStatsBarProps) {
   if (loading || !stats) {
     return (
-      <div className="w-full rounded-2xl border border-slate-100/80 bg-gradient-to-r from-slate-50/80 via-blue-50/30 to-slate-50/80 p-3 backdrop-blur-sm">
-        <div className={GRID_CLASS}>
-          {Array.from({ length: 6 }).map((_, i) => <SkeletonTile key={i} />)}
-        </div>
+      <div className="w-full rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-[#141d31]">
+        <BrandedLoader compact label="Loading stats…" className="py-6" />
       </div>
     );
   }
@@ -155,7 +142,7 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({ stats, loading }:
   const todayRemote = safe(stats.today_remote);
 
   return (
-    <div className="w-full rounded-2xl border border-slate-100/80 bg-gradient-to-r from-slate-50/80 via-blue-50/30 to-slate-50/80 p-3 backdrop-blur-sm">
+    <div className="w-full">
       <div className={GRID_CLASS}>
         <MetricTile
           icon={Layers}

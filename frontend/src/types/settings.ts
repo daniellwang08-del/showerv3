@@ -21,6 +21,9 @@ export interface UserSettings {
   llm_provider: LlmProvider;
   default_llm_provider: LlmProvider;
   available_providers: LlmProvider[];
+  /** Preferred OpenAI-compatible gateway model id (null = system default). */
+  llm_model: string | null;
+  default_llm_model: string;
   anthropic_key_mode: SettingsMode;
   anthropic_key_configured: boolean;
   anthropic_key_hint: string | null;
@@ -70,6 +73,8 @@ export interface UserSettingsUpdate {
   openai_api_key?: string;
   clear_openai_api_key?: boolean;
   llm_provider?: LlmProvider;
+  llm_model?: string | null;
+  clear_llm_model?: boolean;
   anthropic_key_mode?: SettingsMode;
   anthropic_api_key?: string;
   clear_anthropic_api_key?: boolean;

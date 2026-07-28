@@ -19,6 +19,7 @@ import {
 } from '../api/scraperApi';
 import type { ScrapeRun } from '../types/scraper';
 import { postJobsToSheet as postJobsToSheetApi } from '../api/googleSheetsApi';
+import { postJobsToPumble as postJobsToPumbleApi } from '../api/pumbleApi';
 import { apiClient } from '../api/client';
 import { toFiniteTimeMs } from '../utils/serverDate';
 
@@ -268,6 +269,11 @@ interface ScraperState {
   markJobsUnapplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   optimisticMarkJobsSheetPosted: (jobIds: string[]) => void;
   postJobsToSheet: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
+  optimisticMarkJobsPumblePosted: (jobIds: string[]) => void;
+  postJobsToPumble: (
+    jobIds: string[],
+    integrationIds?: string[],
+  ) => Promise<{ ok: boolean; message: string }>;
 
   setPage: (page: number) => void;
   setPerPage: (perPage: number) => void;
@@ -873,6 +879,59 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
       return { ok: false, message: 'No jobs were posted to the Google Sheet.' };
     } catch (err) {
       return { ok: false, message: extractErrorMessage(err, 'Failed to post to Google Sheet.') };
+    }
+  },
+
+  optimisticMarkJobsPumblePosted: (jobIds) => {
+    const idSet = new Set(jobIds.filter(Boolean));
+    if (idSet.size === 0) return;
+    const now = new Date().toISOString();
+    set({
+      jobs: get().jobs.map((j) =>
+        idSet.has(j.id) ? { ...j, pumble_posted_at: j.pumble_posted_at ?? now } : j,
+      ),
+    });
+  },
+
+  postJobsToPumble: async (jobIds, integrationIds) => {
+    const unique = [...new Set(jobIds.filter(Boolean))];
+    if (unique.length === 0) {
+      return { ok: false, message: 'No jobs selected to post.' };
+    }
+
+    try {
+      const data = await postJobsToPumbleApi(unique, integrationIds);
+      const posted = data.posted_count ?? 0;
+      const failed = data.failed_count ?? 0;
+      const alreadyInThread = data.skipped_already_in_thread ?? 0;
+      const notFound = data.skipped_not_found ?? 0;
+      const destCount = data.destination_count ?? 0;
+
+      const fullyPostedIds = (data.results ?? [])
+        .map((row) => String(row.job_id ?? ''))
+        .filter(Boolean);
+      const uniquePostedIds = [...new Set(fullyPostedIds)];
+      if (uniquePostedIds.length > 0) {
+        get().optimisticMarkJobsPumblePosted(uniquePostedIds);
+      }
+      void get().bgRefreshJobs();
+
+      const parts: string[] = [];
+      if (posted > 0) {
+        const destSuffix = destCount > 1 ? ` across ${destCount} destinations` : '';
+        parts.push(`Posted ${posted} job${posted === 1 ? '' : 's'} to Pumble${destSuffix}`);
+      }
+      if (failed > 0) parts.push(`${failed} failed to post`);
+      if (alreadyInThread > 0) parts.push(`${alreadyInThread} already in today's thread`);
+      if (notFound > 0) parts.push(`${notFound} not found`);
+
+      if (parts.length > 0) {
+        const ok = failed === 0;
+        return { ok, message: `${parts.join('; ')}.` };
+      }
+      return { ok: false, message: 'No jobs were posted to Pumble.' };
+    } catch (err) {
+      return { ok: false, message: extractErrorMessage(err, 'Failed to post to Pumble.') };
     }
   },
 

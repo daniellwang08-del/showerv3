@@ -28,6 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.database import GoogleSheetsConfig, Job
+from app.services.auto_post_filters import (
+    job_matches_auto_post_filters,
+    normalize_auto_post_filters,
+)
 from app.storage.database import get_session
 
 logger = get_logger(__name__)
@@ -431,6 +435,20 @@ async def delete_user_config(user_id: str) -> bool:
         return True
 
 
+async def set_enabled(user_id: str, is_enabled: bool) -> GoogleSheetsConfig:
+    """Soft-toggle auto-post without deleting spreadsheet URL / tab groups."""
+    async with get_session() as session:
+        r = await session.execute(
+            select(GoogleSheetsConfig).where(GoogleSheetsConfig.user_id == user_id)
+        )
+        config = r.scalar_one_or_none()
+        if not config:
+            raise ValueError("Google Sheets integration is not configured")
+        config.is_enabled = bool(is_enabled)
+        await session.flush()
+        return config
+
+
 async def save_config(
     user_id: str,
     spreadsheet_url: str,
@@ -453,6 +471,8 @@ async def save_config(
             config.spreadsheet_id = spreadsheet_id
             config.tab_groups = tab_groups
             config.auto_post_threshold = _clamp_auto_post_threshold(auto_post_threshold)
+            # Saving a connection turns auto-post back on (user explicitly configured).
+            config.is_enabled = True
         else:
             import uuid
             config = GoogleSheetsConfig(
@@ -463,6 +483,7 @@ async def save_config(
                 tab_groups=tab_groups,
                 round_robin_index=0,
                 auto_post_threshold=_clamp_auto_post_threshold(auto_post_threshold),
+                is_enabled=True,
             )
             session.add(config)
 
@@ -485,6 +506,28 @@ async def update_auto_post_threshold(user_id: str, auto_post_threshold: int) -> 
         if not config:
             raise ValueError("Google Sheets integration is not configured")
         config.auto_post_threshold = threshold
+        await session.flush()
+        return config
+
+
+async def update_auto_post_settings(
+    user_id: str,
+    *,
+    auto_post_threshold: int,
+    auto_post_filters: dict | None = None,
+) -> GoogleSheetsConfig:
+    """Update match-score threshold and dashboard-aligned auto-post filters together."""
+    threshold = _clamp_auto_post_threshold(auto_post_threshold)
+    filters = normalize_auto_post_filters(auto_post_filters)
+    async with get_session() as session:
+        r = await session.execute(
+            select(GoogleSheetsConfig).where(GoogleSheetsConfig.user_id == user_id)
+        )
+        config = r.scalar_one_or_none()
+        if not config:
+            raise ValueError("Google Sheets integration is not configured")
+        config.auto_post_threshold = threshold
+        config.auto_post_filters = filters
         await session.flush()
         return config
 
@@ -647,12 +690,16 @@ async def distribute_jobs(user_id: str, job_ids: list[str]) -> dict:
 
 async def auto_post_if_eligible(user_id: str, job_id: str, match_score: int) -> None:
     """
-    Called after match analysis. If score meets threshold and user has sheets
-    configured, post the job URL automatically.
+    Called after match analysis. If auto-post is enabled, score meets threshold,
+    dashboard-aligned filters pass, and the user has sheets configured, post the
+    job URL automatically.
     """
     try:
         config = await get_user_config(user_id)
         if not config or not config.tab_groups:
+            return
+        if not bool(getattr(config, "is_enabled", True)):
+            logger.info("google_sheets_auto_post_disabled", job_id=job_id, user_id=user_id)
             return
         if match_score < (config.auto_post_threshold or 75):
             logger.info(
@@ -662,6 +709,22 @@ async def auto_post_if_eligible(user_id: str, job_id: str, match_score: int) -> 
                 threshold=config.auto_post_threshold,
             )
             return
+
+        async with get_session() as session:
+            job = (
+                await session.execute(select(Job).where(Job.id == job_id))
+            ).scalar_one_or_none()
+            if not job:
+                return
+            filters = normalize_auto_post_filters(getattr(config, "auto_post_filters", None))
+            if not job_matches_auto_post_filters(job, filters):
+                logger.info(
+                    "google_sheets_auto_post_filtered_out",
+                    job_id=job_id,
+                    filters=filters,
+                )
+                return
+
         result = await distribute_jobs(user_id, [job_id])
         if result["posted"]:
             logger.info("google_sheets_auto_posted", job_id=job_id, result=result["posted"][0])

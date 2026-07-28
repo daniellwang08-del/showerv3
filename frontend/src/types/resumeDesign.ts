@@ -183,6 +183,10 @@ export interface LayoutConfig {
   layout_metrics?: LayoutMetrics | null;
   contact_layout: ContactLayout;
   contact_icons: ContactIconStyle;
+  /** Icon horizontal nudge (pt). Positive moves the icon right relative to the label. */
+  contact_icon_offset_x_pt?: number;
+  /** Icon vertical nudge (pt). Positive moves the icon down relative to the label. */
+  contact_icon_offset_y_pt?: number;
   accent_rule: boolean;
   section_order: SectionId[];
   hidden_sections: SectionId[];
@@ -265,7 +269,7 @@ export interface ResumeContent {
     location: string;
     description: string;
   }[];
-  certificates: { name: string }[];
+  certificates: { name: string; issued_at: string; url: string }[];
 }
 
 export interface ResumeDesign {
@@ -283,6 +287,8 @@ export interface ThemePreset {
   description: string;
   accent_swatch: string;
   design: ResumeDesign;
+  is_custom?: boolean;
+  is_loved?: boolean;
 }
 
 export interface FontOption {

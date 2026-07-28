@@ -206,10 +206,10 @@ class AdzunaSpider(BaseJobSpider):
         return f"{API_BASE}/{self.country}/search/{page}?{urlencode(params)}"
 
     # ------------------------------------------------------------------
-    # start_requests
+    # start (Scrapy 2.13+)
     # ------------------------------------------------------------------
 
-    def start_requests(self):
+    async def start(self):
         if not self._app_id or not self._app_key:
             self.logger.error(
                 "Adzuna API keys not configured. "

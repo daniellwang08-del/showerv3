@@ -1,9 +1,37 @@
 import { apiClient } from './client';
 import type { ResumeDesign } from '../types/resumeDesign';
-import type { ResumeLibraryResponse, ResumeSource, ResumeStatus } from '../types/resumeLibrary';
+import type {
+  ResumeLibraryResponse,
+  ResumeLibrarySearchResponse,
+  ResumeSource,
+  ResumeStatus,
+} from '../types/resumeLibrary';
 
 export async function fetchResumeLibrary(): Promise<ResumeLibraryResponse> {
   const { data } = await apiClient.get<ResumeLibraryResponse>('/resume-builder/resumes');
+  return data;
+}
+
+export async function searchResumeLibrary(args: {
+  company?: string;
+  job_title?: string;
+  limit?: number;
+}): Promise<ResumeLibrarySearchResponse> {
+  const { data } = await apiClient.get<ResumeLibrarySearchResponse>('/resume-builder/resumes/search', {
+    params: {
+      company: args.company?.trim() || undefined,
+      job_title: args.job_title?.trim() || undefined,
+      limit: args.limit ?? 100,
+    },
+  });
+  return data;
+}
+
+/** Materialize a completed job-workflow build into the library and activate it. */
+export async function openJobBuildResume(buildId: string): Promise<ResumeLibraryResponse> {
+  const { data } = await apiClient.post<ResumeLibraryResponse>(
+    `/resume-builder/resumes/from-job-build/${buildId}`,
+  );
   return data;
 }
 

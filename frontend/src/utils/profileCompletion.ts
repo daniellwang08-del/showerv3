@@ -26,7 +26,7 @@ function hasAtLeastOneWorkRole(form: ProfileFormData): boolean {
   return meaningfulWorkRoles(form).length > 0;
 }
 
-/** Location + onsite/hybrid/remote on every non-empty role (used for job matching). */
+/** Location + onsite/hybrid/remote on every non-empty role (optional profile-strength tip). */
 function everyWorkRoleHasLocationAndArrangement(form: ProfileFormData): boolean {
   const rows = meaningfulWorkRoles(form);
   if (!rows.length) return false;
@@ -75,15 +75,15 @@ export function computeProfileCompletion(profile: UserProfile | null): ProfileCo
       label: 'At least one work experience entry (company & job title)',
       ok: hasAtLeastOneWorkRole(form),
     },
-    {
-      id: 'work_location_type',
-      label: 'Each work role has location and work arrangement (remote / hybrid / onsite)',
-      ok: everyWorkRoleHasLocationAndArrangement(form),
-    },
     { id: 'education', label: 'At least one education entry', ok: hasCompleteEducation(form) },
   ];
 
   const optionalItems = [
+    {
+      id: 'work_location_type',
+      label: 'Each work role has location and work arrangement (remote / hybrid / onsite)',
+      done: everyWorkRoleHasLocationAndArrangement(form),
+    },
     {
       id: 'github',
       label: 'GitHub profile',

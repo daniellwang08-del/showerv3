@@ -7,6 +7,7 @@ from typing import Any
 
 from app.models.database import Job, User
 from app.services.job_field_utils import parse_job_title
+from app.utils.flexible_date import format_flexible_date, format_flexible_period
 
 
 # Markdown stripping: LLM-tailored text (bullets, summaries, project descriptions)
@@ -65,14 +66,7 @@ def _render_text(text: Any) -> str:
 
 
 def _format_period(start: str | None, end: str | None) -> str:
-    s = (start or "").strip()
-    e = (end or "").strip()
-    if s and e:
-        return f"{s} – {e}"
-    # An open-ended role (start, no end) is ongoing - show "Present".
-    if s:
-        return f"{s} – Present"
-    return e or ""
+    return format_flexible_period(start, end)
 
 
 def _format_phone(user: User) -> str:
@@ -246,7 +240,14 @@ def build_render_context(
         if isinstance(item, dict):
             name = (item.get("name") or "").strip()
             if name:
-                certificates.append({"name": name})
+                row = {"name": name}
+                issued = format_flexible_date((item.get("issued_at") or "").strip())
+                url = (item.get("url") or "").strip()
+                if issued:
+                    row["issued_at"] = issued
+                if url:
+                    row["url"] = url
+                certificates.append(row)
 
     return {
         "profile": {

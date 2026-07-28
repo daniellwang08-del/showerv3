@@ -4,6 +4,7 @@ import type {
   SheetsConfig,
   SheetsConfigSaveBody,
   SheetsConfigSaveResult,
+  SheetsEnabledResult,
   SheetsStatus,
   SheetsVerifyResult,
   PostJobsToSheetResult,
@@ -38,6 +39,24 @@ export async function saveAutoPostThreshold(
     '/sheets/config/auto-post-threshold',
     { auto_post_threshold },
   );
+  return data;
+}
+
+export async function saveSheetsAutoPostSettings(body: {
+  auto_post_threshold: number;
+  auto_post_filters: import('../types/autoPostFilters').AutoPostFilters;
+}): Promise<import('../types/googleSheets').SheetsAutoPostSettingsResult> {
+  const { data } = await apiClient.patch(
+    '/sheets/config/auto-post-settings',
+    body,
+  );
+  return data;
+}
+
+export async function setSheetsEnabled(is_enabled: boolean): Promise<SheetsEnabledResult> {
+  const { data } = await apiClient.patch<SheetsEnabledResult>('/sheets/config/enabled', {
+    is_enabled,
+  });
   return data;
 }
 

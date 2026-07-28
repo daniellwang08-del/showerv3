@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImageIcon, Trash2, Upload, Crop as CropIcon } from 'lucide-react';
 import type { HeaderImage, HeaderImageText, ResumeDesign } from '../../types/resumeDesign';
 import { headerPadSides } from '../../types/resumeDesign';
@@ -13,21 +13,28 @@ import {
 } from './headerBackgrounds';
 import { HeaderImageCropModal, type CropResult } from './HeaderImageCropModal';
 
-/** Header band aspect (page width / band height) estimated from typography + padding.
- * Kept close to the .docx band height so the cropped image fills it with negligible
- * distortion. */
+/** Header band aspect (page width / band height).
+
+ * Must stay in lockstep with ``_header_band_height_pt`` in
+ * ``resume_design_compiler.py`` and with the live preview's measured
+ * ``layout.header_metrics.band_pt`` when available. The .docx stretches the baked
+ * picture to ``page_width × band_height``; if this aspect drifts, the PDF and live
+ * preview show different crops/distortion of the same image.
+ */
 export function estimateBandAspect(design: ResumeDesign): number {
-  // These per-line factors MUST match the backend `_header_band_height_pt`
-  // (resume_design_compiler.py): the .docx stretches the baked picture to
-  // `page_width x band_height`, so any divergence here distorts the image. Keeping
-  // them identical means the picture is shown at exactly the proportions it was baked.
+  const pageW = 612; // Letter pt
+  const measured = design.layout.header_metrics?.band_pt;
+  if (measured && measured > 0) {
+    return Math.max(2.2, Math.min(9, pageW / measured));
+  }
+  // Fallback estimate — identical factors to `_header_band_height_pt`.
   const base = design.typography.base_font_pt;
   const hp = headerPadSides(design.layout);
-  const name = base * design.typography.name_scale * 1.32;
-  const title = base * 1.1 * 1.5;
-  const contact = base * 0.95 * 1.7;
-  const bandH = hp.top + hp.bottom + name + title + contact + 6;
-  const pageW = 612; // Letter pt
+  let content = base * design.typography.name_scale * 1.1;
+  // Bake reserves title + contact rows so the image isn't short when both are present.
+  content += base * 1.1 * 1.22 + 1.5;
+  content += base * 0.95 * 1.18 + 3.0;
+  const bandH = hp.top + hp.bottom + content + 2.0;
   return Math.max(2.2, Math.min(9, pageW / bandH));
 }
 
@@ -97,6 +104,29 @@ export function HeaderImageControls({
     onChange({ data_url: result.dataUrl, aspect, source: 'upload', overlay, text });
     setCropSrc(null);
   };
+
+  // When the live-measured (or estimated) band aspect drifts, re-bake so the stored
+  // pixels match the height the .docx will stretch into — otherwise preview+PDF both
+  // distort, or worse, preview `cover` crops differently than PDF stretch.
+  const storedAspect = image?.aspect ?? 0;
+  useEffect(() => {
+    if (!image?.data_url) return;
+    if (!(aspect > 0) || Math.abs(storedAspect - aspect) < 0.08) return;
+    const w = workingRef.current;
+    if (w?.kind === 'preset') {
+      const dataUrl = bakePreset(w.presetId, accent, { aspect, overlay, text });
+      onChange({ data_url: dataUrl, aspect, source: `preset:${w.presetId}`, overlay, text });
+      return;
+    }
+    if (w?.kind === 'upload') {
+      const src = w.src;
+      const crop = w.crop;
+      void loadImage(src).then((img) => {
+        const dataUrl = bakeFromImage(img, crop, { aspect, overlay, text });
+        onChange({ data_url: dataUrl, aspect, source: 'upload', overlay, text });
+      });
+    }
+  }, [aspect, storedAspect, accent, overlay, text, image?.data_url, onChange]);
 
   const isUpload = image?.source === 'upload';
 

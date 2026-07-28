@@ -1,6 +1,6 @@
 import asyncio
 import traceback
-from arq import create_pool
+from arq import create_pool, func
 from arq.connections import RedisSettings, ArqRedis
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
@@ -16,6 +16,7 @@ logger = get_logger(__name__)
 
 EXTRACTION_QUEUE = "job_extraction"
 ANALYSIS_QUEUE = "job_analysis"
+TAILORING_QUEUE = "job_tailoring"
 RESUME_BUILD_QUEUE = "resume_build"
 SCRAPER_QUEUE = "job_scraper_crawl"
 SAVE_QUEUE = "job_save"
@@ -274,6 +275,7 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
     lock-contention does NOT consume max_tries (which would permanently drop
     jobs after 10 lock-busy retries).
     """
+    from app.services.job_match_orchestrator import run_match_auto_posts
     from app.services.post_analysis_dedup import run_post_analysis_dedup
 
     set_request_id(new_request_id())
@@ -283,6 +285,8 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
     redis = ctx.get("redis")
     lock_key = f"job_save_lock:{user_id}"
     lock_ttl = 120
+    dedup_result: dict | None = None
+    action: str | None = None
 
     if redis:
         max_wait = 90
@@ -334,13 +338,14 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
 
         if action == "saved_active" and match_data.get("should_run_phase_b"):
             try:
-                pool = await get_analysis_pool()
-                await pool.enqueue_job("generate_tailored_content", job_id, user_id, extraction_id)
+                pool = await get_tailoring_pool()
+                await pool.enqueue_job(
+                    "generate_tailored_content", job_id, user_id, extraction_id,
+                )
             except Exception as e:
                 logger.warning("tailored_content_enqueue_from_save_failed", job_id=job_id, error=str(e))
 
         logger.info("worker_save_analyzed_job_completed", job_id=job_id, action=action)
-        return dedup_result
     except Exception as e:
         logger.exception("worker_save_analyzed_job_failed", job_id=job_id, error=str(e))
         await clear_job_match_progress(job_id, user_id)
@@ -350,11 +355,37 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
             "valid_job_id": job_id,
             "error": str(e),
         })
-        return None
+        dedup_result = None
+        action = None
     finally:
         if redis:
             await redis.delete(lock_key)
-        clear_logging_context()
+
+    # Auto-post after the per-user lock is released so Sheets/Pumble latency
+    # does not serialize other saves for this user.
+    if action == "saved_active":
+        await run_match_auto_posts(user_id, job_id, match_data.get("overall_score"))
+
+    clear_logging_context()
+    return dedup_result
+
+
+async def _forward_phase_b_to_tailoring_queue(
+    ctx: dict,
+    job_id: str,
+    user_id: str,
+    extraction_id: str | None = None,
+) -> dict | None:
+    """Compat shim: old Phase B jobs still on job_analysis are re-queued."""
+    pool = await get_tailoring_pool()
+    await pool.enqueue_job("generate_tailored_content", job_id, user_id, extraction_id)
+    logger.info(
+        "phase_b_redirected_to_tailoring_queue",
+        valid_job_id=job_id,
+        user_id=user_id,
+        queue=TAILORING_QUEUE,
+    )
+    return {"redirected": True, "queue": TAILORING_QUEUE}
 
 
 async def generate_tailored_content(
@@ -364,6 +395,7 @@ async def generate_tailored_content(
     extraction_id: str | None = None,
 ) -> dict | None:
     from app.services.job_match_orchestrator import run_tailored_content_generation
+    from app.storage.repository import ResumeBuildRepository
 
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="generate_tailored_content", valid_job_id=job_id, user_id=user_id)
@@ -383,6 +415,17 @@ async def generate_tailored_content(
             logger.info("worker_generate_tailored_content_completed", valid_job_id=job_id)
         return result
     except asyncio.CancelledError:
+        try:
+            async with get_session() as session:
+                await ResumeBuildRepository(session).fail_content_generation(
+                    job_id, user_id, "Cancelled or timed out",
+                )
+        except Exception as cleanup_err:
+            logger.warning(
+                "worker_generate_tailored_content_cancel_cleanup_failed",
+                valid_job_id=job_id,
+                error=str(cleanup_err),
+            )
         await publish_ws_event({
             "type": "tailored_content_failed",
             "user_id": user_id,
@@ -613,24 +656,42 @@ async def run_scraper_task(
         if len(plan) == 1:
             summary = dict(results[0])
             summary["promotion"] = promotions.get(plan[0][0])
+            overall_ok = bool(summary.get("success"))
         else:
+            succeeded = sum(1 for r in results if r.get("success"))
+            failed = sum(1 for r in results if not r.get("success"))
             summary = {
                 "spider": spider_name,
                 "sync_mode": sync_mode,
                 "total": len(results),
-                "succeeded": sum(1 for r in results if r.get("success")),
-                "failed": sum(1 for r in results if not r.get("success")),
+                "succeeded": succeeded,
+                "failed": failed,
                 "results": results,
             }
+            overall_ok = failed == 0
 
-        await publish_ws_event({
-            "type": "sync_completed",
-            "user_id": user_id,
-            "spider_name": spider_name,
-            "summary": summary,
-        })
-
-        logger.info("worker_scraper_completed", spider_name=spider_name)
+        if overall_ok:
+            await publish_ws_event({
+                "type": "sync_completed",
+                "user_id": user_id,
+                "spider_name": spider_name,
+                "summary": summary,
+            })
+            logger.info("worker_scraper_completed", spider_name=spider_name)
+        else:
+            error = summary.get("error") or summary.get("message") or "scrape_failed"
+            await publish_ws_event({
+                "type": "sync_failed",
+                "user_id": user_id,
+                "spider_name": spider_name,
+                "error": error,
+                "summary": summary,
+            })
+            logger.error(
+                "worker_scraper_failed",
+                spider_name=spider_name,
+                error=error,
+            )
         return summary
 
     except asyncio.CancelledError:
@@ -680,6 +741,7 @@ class ExtractionWorkerSettings:
     redis_settings = _redis_settings
     queue_name = EXTRACTION_QUEUE
     job_timeout = 300
+    max_jobs = get_settings().extraction_worker_max_jobs
     max_tries = 1
     on_startup = _extraction_worker_startup
     on_shutdown = _flush_langfuse
@@ -687,12 +749,19 @@ class ExtractionWorkerSettings:
 
 async def _analysis_worker_startup(ctx: dict) -> None:
     from app.services.extraction_cache import init_redis_pool
+    from app.services.pipeline_health import heal_stale_pipeline_state
+
     await init_redis_pool()
+    await heal_stale_pipeline_state()
 
 
 class AnalysisWorkerSettings:
-    """arq settings for the AI match analysis pipeline (API-heavy: OpenAI)."""
-    functions = [analyze_job_match, generate_tailored_content]
+    """arq settings for Phase A match scoring (LLM). Phase B has its own queue."""
+    functions = [
+        analyze_job_match,
+        # Drain any Phase B jobs still sitting on the old shared analysis queue.
+        func(_forward_phase_b_to_tailoring_queue, name="generate_tailored_content"),
+    ]
     redis_settings = _redis_settings
     queue_name = ANALYSIS_QUEUE
     job_timeout = 360
@@ -702,12 +771,33 @@ class AnalysisWorkerSettings:
     on_shutdown = _flush_langfuse
 
 
+async def _tailoring_worker_startup(ctx: dict) -> None:
+    from app.services.extraction_cache import init_redis_pool
+    from app.services.pipeline_health import heal_stale_pipeline_state
+
+    await init_redis_pool()
+    await heal_stale_pipeline_state()
+
+
+class TailoringWorkerSettings:
+    """arq settings for Phase B resume tailoring (dedicated concurrency)."""
+    functions = [generate_tailored_content]
+    redis_settings = _redis_settings
+    queue_name = TAILORING_QUEUE
+    job_timeout = 480
+    max_jobs = get_settings().tailoring_worker_max_jobs
+    max_tries = 1
+    on_startup = _tailoring_worker_startup
+    on_shutdown = _flush_langfuse
+
+
 class SaveWorkerSettings:
     """arq settings for the sequential job save pipeline (per-user lock)."""
     functions = [save_analyzed_job]
     redis_settings = _redis_settings
     queue_name = SAVE_QUEUE
-    job_timeout = 120
+    job_timeout = 180
+    max_jobs = get_settings().save_worker_max_jobs
     max_tries = 1
     on_shutdown = _flush_langfuse
 
@@ -718,6 +808,7 @@ class ResumeBuildWorkerSettings:
     redis_settings = _redis_settings
     queue_name = RESUME_BUILD_QUEUE
     job_timeout = 180
+    max_jobs = get_settings().resume_worker_max_jobs
     max_tries = 1
     on_shutdown = _flush_langfuse
 
@@ -761,6 +852,10 @@ async def get_analysis_pool() -> ArqRedis:
     return await _get_shared_pool(ANALYSIS_QUEUE)
 
 
+async def get_tailoring_pool() -> ArqRedis:
+    return await _get_shared_pool(TAILORING_QUEUE)
+
+
 async def get_save_pool() -> ArqRedis:
     return await _get_shared_pool(SAVE_QUEUE)
 
@@ -779,4 +874,5 @@ class ScraperWorkerSettings:
     redis_settings = _redis_settings
     queue_name = SCRAPER_QUEUE
     job_timeout = 3600
+    max_jobs = get_settings().scraper_worker_max_jobs
     max_tries = 1

@@ -93,8 +93,8 @@ async def _enqueue_extraction(
     """Enqueue arq extract_job. Returns True on success, False on failure.
 
     When *user_id* is provided the extraction worker will automatically chain
-    ``analyze_job_match`` (Phase A: match + structured job) and, after that,
-    ``generate_tailored_content`` (Phase B) + ``build_resume_task`` (DOCX/PDF).
+    ``analyze_job_match`` (Phase A), then save → ``generate_tailored_content``
+    (Phase B on the dedicated tailoring queue) → ``build_resume_task`` (DOCX/PDF).
     """
     try:
         from app.tasks.worker import get_extraction_pool, EXTRACTION_QUEUE

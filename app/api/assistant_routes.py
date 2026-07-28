@@ -626,7 +626,7 @@ async def assistant_chat(req: AssistantChatRequest, current_user: dict = Depends
     async def event_stream():
         parts: list[str] = []
         try:
-            client = await get_llm_client_for_user(user_id)
+            client = await get_llm_client_for_user(user_id, job_type="assistant_chat")
             async for delta in client.stream_chat(
                 messages=messages, temperature=0.4, max_tokens=max_tokens
             ):
@@ -996,7 +996,7 @@ async def assistant_autofill(
     user_content = "FIELD BLOCKS (untrusted):\n" + json.dumps(fields_payload, ensure_ascii=False)
     settings = get_settings()
     try:
-        client = await get_llm_client_for_user(user_id)
+        client = await get_llm_client_for_user(user_id, job_type="extension_autofill")
         resp = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[
@@ -1281,7 +1281,7 @@ async def _llm_company_locations(companies: list[str], home: str, user_id: str) 
         {"home_location": home or "Unknown", "companies": companies}, ensure_ascii=False
     )
     try:
-        client = await get_llm_client_for_user(user_id)
+        client = await get_llm_client_for_user(user_id, job_type="extension_autofill")
         resp = await client.chat.completions.create(
             model=settings.openai_model,
             messages=[

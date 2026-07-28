@@ -76,7 +76,7 @@ def _history_text(messages: list[ResumeAiChatMessage]) -> str:
 async def _route(user_id: str, messages: list[ResumeAiChatMessage], latest: str) -> dict:
     """Classify intent with a cheap LLM call, with a robust heuristic fallback."""
     try:
-        client = await get_llm_client_for_user(user_id)
+        client = await get_llm_client_for_user(user_id, job_type="resume_ai_chat")
         settings = get_settings()
         resp = await client.chat.completions.create(
             model=settings.openai_model,
@@ -284,7 +284,7 @@ async def run_resume_ai_chat(
 
     if intent == "chat":
         reply = route["reply"] or (
-            "I'm your resume tailoring assistant. Paste a job description and I'll tailor your "
+            "I'm Atomspace OneClick AI. Paste a job description and I'll tailor your "
             "resume to it, score your match, or refine the result on request."
         )
         return ResumeAiChatResponse(reply=reply, intent="chat", action="none")

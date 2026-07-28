@@ -167,6 +167,17 @@ export const nextJob = (after) =>
 export const markApplied = (jobIds) =>
   apiFetch("/jobs/valid/applied/batch", { method: "POST", body: { job_ids: jobIds } });
 
+export const getPumbleConfig = () => apiFetch("/pumble/config");
+
+export const postJobsToPumble = (jobIds, integrationIds) =>
+  apiFetch("/pumble/post-jobs", {
+    method: "POST",
+    body: {
+      job_ids: jobIds,
+      integration_ids: integrationIds?.length ? integrationIds : undefined,
+    },
+  });
+
 // Hide a job from the active list (e.g. the posting expired / link is dead).
 export const reportJobInvalid = (jobId, reason) =>
   apiFetch(`/jobs/valid/${jobId}/report-invalid`, {

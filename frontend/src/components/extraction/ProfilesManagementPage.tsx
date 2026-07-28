@@ -5,11 +5,13 @@ import { apiClient } from '../../api/client';
 import { ProfileForm } from './ProfileForm';
 import { ResumeImportSection } from './ResumeImportSection';
 import { PageHeader } from '../layout/PageHeader';
+import { PageScrollArea } from '../layout/PageScrollArea';
 import { BrandedLoader } from '../layout/BrandedLoader';
 import type { UserProfile } from '../../types/profile';
 import type { ProfileFormData } from '../../types/profile';
 import { computeProfileCompletion } from '../../utils/profileCompletion';
 import { formatProfileValidationSummary } from '../../utils/profileValidation';
+import { profileFormToPayload } from '../../utils/profilePayload';
 
 type Props = {
   onBack: () => void;
@@ -17,73 +19,6 @@ type Props = {
   /** Called after a successful save so the app can refresh the sidebar name. */
   onProfileSaved?: () => void | Promise<unknown>;
 };
-
-function toPayload(data: ProfileFormData) {
-  const emptyToNull = (s: string | undefined) => (s?.trim() ? s.trim() : null);
-  return {
-    name_first: data.name_first.trim(),
-    name_middle: emptyToNull(data.name_middle),
-    name_last: data.name_last.trim(),
-    title: data.title.trim(),
-    email: data.email.trim(),
-    phone_country_code: data.phone_country_code,
-    phone_number: data.phone_number.trim(),
-    linkedin_url: data.linkedin_url.trim(),
-    github_url: emptyToNull(data.github_url),
-    profile_summary: data.profile_summary.trim(),
-    technical_skills: data.technical_skills
-      .filter((t) => t.category.trim() && t.skills.trim())
-      .map((t) => ({ category: t.category.trim(), skills: t.skills.trim() })),
-    work_experience: data.work_experience
-      .filter((w) => w.company_name.trim() && w.job_title.trim())
-      .map((w) => ({
-      company_name: w.company_name.trim(),
-      job_title: w.job_title.trim(),
-      period_start: emptyToNull(w.period_start),
-      period_end: emptyToNull(w.period_end),
-      location: emptyToNull(w.location),
-      job_type: emptyToNull(w.job_type) || null,
-      employment_type: emptyToNull(w.employment_type) || null,
-      project_title: emptyToNull(w.project_title),
-      project_intro: emptyToNull(w.project_intro),
-      contributions: (w.contributions ?? []).map((c) => c.trim()).filter(Boolean),
-      used_skills: emptyToNull(w.used_skills),
-      description: emptyToNull(w.description),
-    })),
-    education: data.education
-      .filter((e) => e.university_name.trim() && e.degree.trim())
-      .map((e) => ({
-      university_name: e.university_name.trim(),
-      degree: e.degree.trim(),
-      mark: emptyToNull(e.mark),
-      period_start: emptyToNull(e.period_start),
-      period_end: emptyToNull(e.period_end),
-      location: emptyToNull(e.location),
-      description: emptyToNull(e.description),
-    })),
-    certificates: data.certificates
-      .filter((c) => c.name.trim())
-      .map((c) => ({ name: c.name.trim() })),
-    extra: data.extra.filter((x) => x.trim()),
-    eeo_preferences: {
-      gender: emptyToNull(data.eeo_preferences.gender ?? undefined),
-      race: emptyToNull(data.eeo_preferences.race ?? undefined),
-      hispanic_latino: data.eeo_preferences.hispanic_latino ?? null,
-      veteran_status: data.eeo_preferences.veteran_status ?? null,
-      disability_status: data.eeo_preferences.disability_status ?? null,
-      work_authorized: data.eeo_preferences.work_authorized ?? null,
-      needs_sponsorship: data.eeo_preferences.needs_sponsorship ?? null,
-    },
-    address: {
-      line1: emptyToNull(data.address.line1 ?? undefined),
-      line2: emptyToNull(data.address.line2 ?? undefined),
-      city: emptyToNull(data.address.city ?? undefined),
-      state: emptyToNull(data.address.state ?? undefined),
-      postal_code: emptyToNull(data.address.postal_code ?? undefined),
-      country: emptyToNull(data.address.country ?? undefined),
-    },
-  };
-}
 
 function ProfileFormSkeleton() {
   return (
@@ -144,7 +79,7 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
     try {
       setError('');
       setSaveOk(false);
-      const res = await apiClient.put<UserProfile>('/profile', toPayload(data));
+      const res = await apiClient.put<UserProfile>('/profile', profileFormToPayload(data));
       setProfile(res.data);
       setSaveOk(true);
       // Refresh the authenticated user so the sidebar name/avatar reflect the
@@ -170,25 +105,24 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
   if (loading) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <BrandedLoader label="Loading your profile…" />
+        <BrandedLoader label="Loading your profile…" className="min-h-[60vh]" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="page-scroll-y min-h-0 flex-1 px-4 py-4">
-        <div className="w-full space-y-5 pb-8">
-          <PageHeader
-            icon={UserCircle2}
-            gradient="from-blue-600 to-indigo-600"
-            title="Your profile"
-            description="Structured profile data powers match summaries, dimension scores, and gap analysis when you run job fit checks."
-          />
+    <PageScrollArea>
+      <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+        <PageHeader
+          icon={UserCircle2}
+          gradient="from-blue-600 to-indigo-600"
+          title="Your profile"
+          description="Structured profile data powers match summaries, dimension scores, and gap analysis when you run job fit checks."
+        />
 
-          {/* Row 1 - overview + import */}
-          <section className="space-y-4" aria-label="Profile overview">
-            <div className="grid gap-4 xl:grid-cols-2">
+        {/* Row 1 - overview + import */}
+        <section className="space-y-5" aria-label="Profile overview">
+          <div className="grid gap-5 xl:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
                 <div className="flex items-start gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white">
@@ -294,9 +228,9 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
 
             {!loading && (
               <p className="text-xs text-slate-500">
-                OpenAI key and company check cycle are in{' '}
-                <Link to="/settings" className="font-medium text-blue-600 hover:text-blue-800">
-                  Settings
+                API keys, match scoring, EEO, and address are in{' '}
+                <Link to="/preferences" className="font-medium text-blue-600 hover:text-blue-800">
+                  My Preferences
                 </Link>
                 .
               </p>
@@ -344,9 +278,8 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
               />
             )}
           </section>
-        </div>
       </div>
-    </div>
+    </PageScrollArea>
   );
 }
 

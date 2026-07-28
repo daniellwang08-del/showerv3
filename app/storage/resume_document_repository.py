@@ -1,7 +1,13 @@
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import ResumeDocument
+
+
+def resume_search_ilike_pattern(raw: str) -> str:
+    """Build an ILIKE pattern that treats user input literally (escaped wildcards)."""
+    escaped = raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 class ResumeDocumentRepository:
@@ -15,6 +21,53 @@ class ResumeDocumentRepository:
             select(ResumeDocument)
             .where(ResumeDocument.user_id == user_id)
             .order_by(ResumeDocument.updated_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def search_for_user(
+        self,
+        user_id: str,
+        *,
+        company: str | None = None,
+        job_title: str | None = None,
+        limit: int = 100,
+    ) -> list[ResumeDocument]:
+        """Search resumes by company and/or role (job_title).
+
+        Matching is case-insensitive substring (ILIKE). When both terms are
+        provided, rows must match **both** (AND). Empty terms are ignored; if
+        both are empty, returns an empty list.
+        """
+        company_q = (company or "").strip()
+        role_q = (job_title or "").strip()
+        if not company_q and not role_q:
+            return []
+
+        groups = []
+        if company_q:
+            pattern = resume_search_ilike_pattern(company_q)
+            # Company column, or display name for older/manual rows.
+            groups.append(
+                or_(
+                    ResumeDocument.company.ilike(pattern, escape="\\"),
+                    ResumeDocument.name.ilike(pattern, escape="\\"),
+                )
+            )
+        if role_q:
+            pattern = resume_search_ilike_pattern(role_q)
+            groups.append(
+                or_(
+                    ResumeDocument.job_title.ilike(pattern, escape="\\"),
+                    ResumeDocument.name.ilike(pattern, escape="\\"),
+                )
+            )
+
+        stmt = (
+            select(ResumeDocument)
+            .where(ResumeDocument.user_id == user_id, and_(*groups))
+            .order_by(ResumeDocument.updated_at.desc())
+            .limit(max(1, min(limit, 200)))
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

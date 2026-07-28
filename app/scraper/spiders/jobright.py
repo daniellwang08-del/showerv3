@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 
 import scrapy
 from scrapy import signals
+from scrapy.exceptions import CloseSpider
 from curl_cffi import requests as cffi_requests
 
 from app.scraper.spiders.base import BaseJobSpider
@@ -247,15 +248,15 @@ class JobrightSpider(BaseJobSpider):
             session.close()
 
     # ------------------------------------------------------------------
-    # start_requests
+    # start (Scrapy 2.13+)
     # ------------------------------------------------------------------
 
-    def start_requests(self):
+    async def start(self):
         if not self._create_session():
             self.logger.error(
                 "No saved session. Run: python -m app.scraper.auth setup jobright"
             )
-            return
+            raise CloseSpider("auth_required")
 
         self._load_checkpoint()
 

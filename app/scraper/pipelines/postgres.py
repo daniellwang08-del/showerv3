@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class PostgresPipeline:
-    def __init__(self):
+    def __init__(self, crawler):
+        self.crawler = crawler
         self.session = None
         self.engine = None
         self.scrape_run = None
@@ -20,7 +21,14 @@ class PostgresPipeline:
         self.items_updated = 0
         self._progress_flush_every = 5
 
-    def _flush_run_counters(self, spider, *, force: bool = False) -> None:
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler)
+
+    def _spider(self):
+        return self.crawler.spider
+
+    def _flush_run_counters(self, *, force: bool = False) -> None:
         if not self.scrape_run:
             return
         total = self.items_new + self.items_updated
@@ -30,7 +38,7 @@ class PostgresPipeline:
         self.scrape_run.items_new = self.items_new
         self.scrape_run.items_updated = self.items_updated
         self.session.commit()
-        spider.logger.info(
+        self._spider().logger.info(
             "ScrapeRun %s progress: %d scraped (%d new, %d updated)",
             self.scrape_run.id,
             total,
@@ -38,7 +46,8 @@ class PostgresPipeline:
             self.items_updated,
         )
 
-    def open_spider(self, spider):
+    def open_spider(self):
+        spider = self._spider()
         db_url = spider.settings.get("DATABASE_URL")
         self.engine = get_engine(db_url)
         Base.metadata.create_all(self.engine)
@@ -54,22 +63,38 @@ class PostgresPipeline:
         self.session.commit()
         spider.logger.info("ScrapeRun %s started", self.scrape_run.id)
 
-    def close_spider(self, spider):
+    def close_spider(self):
+        spider = self._spider()
         if self.scrape_run:
-            self._flush_run_counters(spider, force=True)
+            self._flush_run_counters(force=True)
             self.scrape_run.finished_at = utcnow_naive()
-            self.scrape_run.status = "success"
+            # Scrapy's normal completion reason is "finished". Custom
+            # CloseSpider reasons (auth_expired, fetch_failed, …) must not
+            # be recorded as success — that caused false-green sync runs.
+            finish_reason = self.crawler.stats.get_value("finish_reason") or "finished"
+            if finish_reason == "finished":
+                self.scrape_run.status = "success"
+                spider.logger.info(
+                    "ScrapeRun %s finished: %d new, %d updated",
+                    self.scrape_run.id,
+                    self.items_new,
+                    self.items_updated,
+                )
+            else:
+                self.scrape_run.status = finish_reason
+                self.scrape_run.errors = (self.scrape_run.errors or 0) + 1
+                spider.logger.error(
+                    "ScrapeRun %s finished with failure reason=%s: %d new, %d updated",
+                    self.scrape_run.id,
+                    finish_reason,
+                    self.items_new,
+                    self.items_updated,
+                )
             self.session.commit()
-            spider.logger.info(
-                "ScrapeRun %s finished: %d new, %d updated",
-                self.scrape_run.id,
-                self.items_new,
-                self.items_updated,
-            )
         if self.session:
             self.session.close()
 
-    def process_item(self, item: JobItem, spider) -> JobItem:
+    def process_item(self, item: JobItem) -> JobItem:
         now = utcnow_naive()
         data = item.model_dump()
         data["scraped_at"] = now
@@ -95,6 +120,6 @@ class PostgresPipeline:
             self.session.commit()
             self.items_new += 1
 
-        self._flush_run_counters(spider)
+        self._flush_run_counters()
 
         return item

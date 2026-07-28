@@ -168,12 +168,15 @@ def _mark_scrape_run_interrupted(spider_name: str, started_after: datetime) -> N
         logger.warning("scrape_run_interrupt_mark_failed: %s", e)
 
 
-def _latest_scrape_run_id(spider_name: str, started_after: datetime) -> str | None:
+def _latest_scrape_run(spider_name: str, started_after: datetime) -> dict | None:
     """Read the scrape_runs row for the subprocess that just finished.
 
     ``started_after`` is UTC-naive (captured just before launching Scrapy).
     Uses the sync scraper engine so this can be called from the async runner
     without crossing into the running event loop.
+
+    Returns ``{"id", "status", "items_scraped", "items_new", "items_updated"}``
+    or ``None``.
     """
     try:
         from app.scraper.models.db import get_engine, ScrapeRun
@@ -196,16 +199,21 @@ def _latest_scrape_run_id(spider_name: str, started_after: datetime) -> str | No
                 .first()
             )
             if row:
-                return row.id
+                return {
+                    "id": row.id,
+                    "status": row.status,
+                    "items_scraped": row.items_scraped or 0,
+                    "items_new": row.items_new or 0,
+                    "items_updated": row.items_updated or 0,
+                }
 
             # Fallback: legacy rows may store local wall time (aware UTC converted
-            # by psycopg2 into timestamp without time zone). After a successful
-            # subprocess there should be a fresh success row for this spider.
+            # by psycopg2 into timestamp without time zone). Prefer the newest
+            # finished row for this spider when the primary window misses.
             row = (
                 session.query(ScrapeRun)
                 .filter(
                     ScrapeRun.spider_name == spider_name,
-                    ScrapeRun.status == "success",
                     ScrapeRun.finished_at.isnot(None),
                 )
                 .order_by(ScrapeRun.finished_at.desc())
@@ -213,17 +221,30 @@ def _latest_scrape_run_id(spider_name: str, started_after: datetime) -> str | No
             )
             if row:
                 logger.info(
-                    "scrape_run_lookup_used_fallback spider=%s run_id=%s",
+                    "scrape_run_lookup_used_fallback spider=%s run_id=%s status=%s",
                     spider_name,
                     row.id,
+                    row.status,
                 )
-                return row.id
+                return {
+                    "id": row.id,
+                    "status": row.status,
+                    "items_scraped": row.items_scraped or 0,
+                    "items_new": row.items_new or 0,
+                    "items_updated": row.items_updated or 0,
+                }
             return None
         finally:
             session.close()
     except Exception as e:
         logger.warning("scrape_run_lookup_failed: %s", e)
         return None
+
+
+def _latest_scrape_run_id(spider_name: str, started_after: datetime) -> str | None:
+    """Compatibility wrapper — prefer ``_latest_scrape_run`` for status-aware checks."""
+    row = _latest_scrape_run(spider_name, started_after)
+    return row["id"] if row else None
 
 
 async def run_spider(
@@ -328,17 +349,31 @@ async def run_spider(
             stop_monitor.set()
             await asyncio.gather(monitor_task, stdout_task, stderr_task, return_exceptions=True)
 
-        success = proc.returncode == 0
-        scrape_run_id = await asyncio.to_thread(
-            _latest_scrape_run_id, spider_name, started_at
+        scrape_run = await asyncio.to_thread(
+            _latest_scrape_run, spider_name, started_at
         )
+        scrape_run_id = scrape_run["id"] if scrape_run else None
+        run_status = scrape_run["status"] if scrape_run else None
+
+        # Scrapy exits 0 even when CloseSpider("auth_expired") closes the crawl.
+        # Trust scrape_runs.status so auth/fetch failures are not reported as success.
+        success = proc.returncode == 0 and run_status in (None, "success")
 
         result = {
             "spider": spider_name,
             "success": success,
             "return_code": proc.returncode,
             "scrape_run_id": scrape_run_id,
+            "scrape_run_status": run_status,
         }
+        if not success and run_status and run_status != "success":
+            result["error"] = run_status
+            if run_status in ("auth_expired", "auth_required"):
+                auth = check_spider_auth(spider_name)
+                cmd = auth.get("auth_setup_command") or "python -m app.scraper.auth setup"
+                result["message"] = (
+                    f"Authentication failed ({run_status}). Re-run: {cmd}"
+                )
 
         if success:
             logger.info(
@@ -347,8 +382,8 @@ async def run_spider(
             )
         else:
             logger.error(
-                "Spider '%s' failed (rc=%d)",
-                spider_name, proc.returncode,
+                "Spider '%s' failed (rc=%d status=%s)",
+                spider_name, proc.returncode, run_status,
             )
 
         return result

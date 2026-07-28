@@ -164,6 +164,10 @@ class LayoutConfig(BaseModel):
     layout_metrics: LayoutMetrics | None = None
     contact_layout: ContactLayout = "inline"
     contact_icons: ContactIconStyle = "brand"
+    # Manual icon↔text alignment (pt). Positive X = icon right; positive Y = icon down.
+    # Preview and PDF both honor these so users can correct theme-specific dxpdf drift.
+    contact_icon_offset_x_pt: float = Field(default=0.0, ge=-6.0, le=6.0)
+    contact_icon_offset_y_pt: float = Field(default=0.0, ge=-6.0, le=6.0)
     accent_rule: bool = True
     section_order: list[str] = Field(default_factory=lambda: list(DEFAULT_SECTION_ORDER))
     hidden_sections: list[str] = Field(default_factory=list)
@@ -343,6 +347,8 @@ class ContentEducation(BaseModel):
 
 class ContentCertificate(BaseModel):
     name: str = ""
+    issued_at: str = ""
+    url: str = ""
 
 
 class ResumeContent(BaseModel):
@@ -386,6 +392,23 @@ class ThemePreset(BaseModel):
     description: str
     accent_swatch: str
     design: ResumeDesign
+    is_custom: bool = False
+    is_loved: bool = False
+
+
+class SaveCustomThemeRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    design: ResumeDesign
+
+
+class ToggleThemeLoveResponse(BaseModel):
+    theme_id: str
+    is_loved: bool
+
+
+class CustomThemeMutationResponse(BaseModel):
+    theme: ThemePreset
+    themes: list[ThemePreset] = Field(default_factory=list)
 
 
 class FontOption(BaseModel):

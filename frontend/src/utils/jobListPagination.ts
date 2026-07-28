@@ -21,6 +21,7 @@ export type JobApiRow = {
   appliedAt?: string | null;
   applied_by?: string | null;
   sheet_posted_at?: string | null;
+  pumble_posted_at?: string | null;
 };
 
 export type DuplicatedJobApiRow = {
@@ -66,6 +67,7 @@ export function mapJobRow(j: JobApiRow): SubmittedUrlItem {
     appliedAt: appliedAtParsed,
     appliedBy: nameRaw?.trim() ? nameRaw.trim() : undefined,
     sheet_posted_at: j.sheet_posted_at ? parseServerDateTime(j.sheet_posted_at) : undefined,
+    pumble_posted_at: j.pumble_posted_at ? parseServerDateTime(j.pumble_posted_at) : undefined,
     table: 'active',
   };
 }

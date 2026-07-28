@@ -8,6 +8,7 @@ Every résumé and cover letter is rendered from the user's Resume Builder desig
 There is no uploaded-.docx-template path anymore.
 """
 
+import asyncio
 from pathlib import Path
 
 from sqlalchemy import select
@@ -21,6 +22,7 @@ from app.services.resume_builder_service import (
     fill_cover_letter_template,
     convert_docx_to_pdf,
     build_output_directory,
+    person_document_stem,
 )
 from app.services.cover_letter_design_compiler import compile_cover_letter_design
 from app.services.cover_letter_template_service import user_cover_letter_template_dir
@@ -91,20 +93,21 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
 
             first = (user.name_first or "").strip()
             last = (user.name_last or "").strip()
-            person_name = f"{first} {last}".strip() or "Resume"
+            resume_stem = person_document_stem(first, last, "resume")
+            cover_stem = person_document_stem(first, last, "cover_letter")
 
             r = await session.execute(select(Job).where(Job.id == job_id))
             job = r.scalar_one_or_none()
             company = (job.company if job else None) or "Unknown"
-            position = (job.title if job else None) or "Unknown"
 
-            out_dir = build_output_directory(first, last, company, position)
+            # Disk layout: resume_output/{Company}/{First_Last}_resume.pdf
+            out_dir = build_output_directory(company)
             await repo.set_output_directory(build.id, str(out_dir))
 
-            resume_docx_name = f"{person_name} Resume.docx"
-            resume_pdf_name = f"{person_name} Resume.pdf"
-            cl_docx_name = f"{person_name} Cover Letter.docx"
-            cl_pdf_name = f"{person_name} Cover Letter.pdf"
+            resume_docx_name = f"{resume_stem}.docx"
+            resume_pdf_name = f"{resume_stem}.pdf"
+            cl_docx_name = f"{cover_stem}.docx"
+            cl_pdf_name = f"{cover_stem}.pdf"
 
             results: dict[str, str | None] = {}
             render_context = build_render_context(user, tailored, job)
@@ -160,7 +163,9 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                         "file_type": "resume_pdf",
                     })
 
-                    pdf_path = convert_docx_to_pdf(Path(results["resume_docx"]), out_dir / resume_pdf_name)
+                    pdf_path = await asyncio.to_thread(
+                        convert_docx_to_pdf, Path(results["resume_docx"]), out_dir / resume_pdf_name
+                    )
                     await repo.update_file_status(build.id, "resume_pdf", "completed", path=str(pdf_path))
                     results["resume_pdf"] = str(pdf_path)
                     await publish_resume_event({
@@ -240,7 +245,9 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                             "file_type": "cover_letter_pdf",
                         })
 
-                        cl_pdf = convert_docx_to_pdf(Path(results["cover_letter_docx"]), out_dir / cl_pdf_name)
+                        cl_pdf = await asyncio.to_thread(
+                            convert_docx_to_pdf, Path(results["cover_letter_docx"]), out_dir / cl_pdf_name
+                        )
                         await repo.update_file_status(build.id, "cover_letter_pdf", "completed", path=str(cl_pdf))
                         results["cover_letter_pdf"] = str(cl_pdf)
                         await publish_resume_event({

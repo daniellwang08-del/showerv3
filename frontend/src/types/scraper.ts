@@ -74,6 +74,7 @@ export interface DashboardJob {
   applied_at: string | null;
   applied_by_name: string | null;
   sheet_posted_at: string | null;
+  pumble_posted_at: string | null;
   user_status: string | null;
   source: string | null;
   is_remote: boolean;

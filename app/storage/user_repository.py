@@ -57,15 +57,48 @@ class UserRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def list_active_users(self, *, limit: int = 500) -> list[User]:
+        """Return active users ordered by email (for analysis multi-select)."""
+        stmt = (
+            select(User)
+            .where(User.is_active.is_(True))
+            .order_by(User.email.asc())
+            .limit(max(1, min(limit, 1000)))
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_all_users(self, *, limit: int = 2000) -> list[User]:
+        """Return all users (active + inactive) ordered by email."""
+        stmt = (
+            select(User)
+            .order_by(User.email.asc())
+            .limit(max(1, min(limit, 5000)))
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_admins(self) -> int:
+        """Count active admin users."""
+        from sqlalchemy import func
+
+        stmt = select(func.count()).select_from(User).where(
+            User.is_admin.is_(True),
+            User.is_active.is_(True),
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def create(self, email: str, password: str) -> User:
-        """Create a new user with hashed password"""
+        """Create a new user with hashed password (non-admin by default)."""
         email = email.lower().strip()
         password_hash = AuthService.hash_password(password)
         
         user = User(
             email=email,
             password_hash=password_hash,
-            is_active=True
+            is_active=True,
+            is_admin=False,
         )
         
         self.session.add(user)
@@ -104,6 +137,33 @@ class UserRepository:
             logger.info("user_deactivated", user_id=user_id)
             return True
         return False
+
+    async def activate(self, user_id: str) -> bool:
+        """Re-activate a user"""
+        user = await self.update_user(user_id, is_active=True)
+        if user:
+            logger.info("user_activated", user_id=user_id)
+            return True
+        return False
+
+    async def set_password(self, user_id: str, password: str) -> bool:
+        """Set a new password hash for the user."""
+        password_hash = AuthService.hash_password(password)
+        user = await self.update_user(user_id, password_hash=password_hash)
+        if user:
+            logger.info("user_password_reset", user_id=user_id)
+            return True
+        return False
+
+    async def delete_user(self, user_id: str) -> bool:
+        """Hard-delete a user row (cascades via FKs)."""
+        user = await self.get_by_id(user_id)
+        if not user:
+            return False
+        await self.session.delete(user)
+        await self.session.flush()
+        logger.info("user_deleted", user_id=user_id)
+        return True
 
     async def update_profile(self, user_id: str, data: dict) -> tuple[User | None, bool]:
         """Update user's single profile (stored on User model).
@@ -164,19 +224,23 @@ class UserRepository:
 
     async def get_effective_dedup_recycle_days(self, user_id: str) -> int:
         """Return recycle days: system default or user's custom value."""
-        settings = get_settings()
+        from app.services.system_settings_service import get_effective_value
+
+        default_days = int(await get_effective_value("default_dedup_recycle_days", self.session))
         user = await self.get_by_id(user_id)
         if not user:
-            return settings.default_dedup_recycle_days
+            return default_days
         mode = getattr(user, "dedup_recycle_mode", None) or "default"
         if mode == "custom":
-            return self._clamp_dedup_days(getattr(user, "dedup_recycle_days", None))
-        return settings.default_dedup_recycle_days
+            return self._clamp_dedup_days(getattr(user, "dedup_recycle_days", None), fallback=default_days)
+        return default_days
 
     @staticmethod
-    def _clamp_dedup_days(val: int | None) -> int:
-        settings = get_settings()
-        fallback = settings.default_dedup_recycle_days
+    def _clamp_dedup_days(val: int | None, fallback: int | None = None) -> int:
+        from app.services.system_settings_service import get_effective_value_sync
+
+        if fallback is None:
+            fallback = int(get_effective_value_sync("default_dedup_recycle_days"))
         if val is None:
             return fallback
         try:
@@ -185,9 +249,11 @@ class UserRepository:
             return fallback
 
     @staticmethod
-    def _clamp_min_match_score(val: int | None) -> int:
-        settings = get_settings()
-        fallback = settings.default_min_match_score
+    def _clamp_min_match_score(val: int | None, fallback: int | None = None) -> int:
+        from app.services.system_settings_service import get_effective_value_sync
+
+        if fallback is None:
+            fallback = int(get_effective_value_sync("default_min_match_score"))
         if val is None:
             return fallback
         try:
@@ -197,14 +263,16 @@ class UserRepository:
 
     async def get_effective_min_match_score(self, user_id: str) -> int:
         """Return minimum match score threshold (0 = show all)."""
-        settings = get_settings()
+        from app.services.system_settings_service import get_effective_value
+
+        default_score = int(await get_effective_value("default_min_match_score", self.session))
         user = await self.get_by_id(user_id)
         if not user:
-            return settings.default_min_match_score
+            return default_score
         mode = getattr(user, "min_match_score_mode", None) or "default"
         if mode == "custom":
-            return self._clamp_min_match_score(getattr(user, "min_match_score", None))
-        return settings.default_min_match_score
+            return self._clamp_min_match_score(getattr(user, "min_match_score", None), fallback=default_score)
+        return default_score
 
     @staticmethod
     def _validate_resume_tailoring_instructions(text: str) -> str:
@@ -292,10 +360,16 @@ class UserRepository:
         user = await self.get_by_id(user_id)
         if not user:
             return None
+        from app.services.system_settings_service import get_effective_value
+
         settings = get_settings()
+        default_dedup = int(await get_effective_value("default_dedup_recycle_days", self.session))
+        default_min_score = int(await get_effective_value("default_min_match_score", self.session))
         mode = getattr(user, "openai_key_mode", None) or "default"
         dedup_mode = getattr(user, "dedup_recycle_mode", None) or "default"
-        custom_days = self._clamp_dedup_days(getattr(user, "dedup_recycle_days", None))
+        custom_days = self._clamp_dedup_days(
+            getattr(user, "dedup_recycle_days", None), fallback=default_dedup
+        )
         has_custom_key = bool(getattr(user, "openai_api_key_encrypted", None))
         key_hint: str | None = None
         if mode == "custom" and has_custom_key:
@@ -305,13 +379,13 @@ class UserRepository:
             except ValueError:
                 key_hint = "••••••••"
 
-        effective_days = (
-            custom_days if dedup_mode == "custom" else settings.default_dedup_recycle_days
-        )
+        effective_days = custom_days if dedup_mode == "custom" else default_dedup
         min_score_mode = getattr(user, "min_match_score_mode", None) or "default"
-        custom_min_score = self._clamp_min_match_score(getattr(user, "min_match_score", None))
+        custom_min_score = self._clamp_min_match_score(
+            getattr(user, "min_match_score", None), fallback=default_min_score
+        )
         effective_min_score = (
-            custom_min_score if min_score_mode == "custom" else settings.default_min_match_score
+            custom_min_score if min_score_mode == "custom" else default_min_score
         )
         prompt_mode = getattr(user, "resume_tailoring_prompt_mode", None) or "default"
         stored_custom_prompt = (getattr(user, "resume_tailoring_prompt_custom", None) or "").strip()
@@ -319,27 +393,34 @@ class UserRepository:
         cover_letter_prompt_mode = getattr(user, "cover_letter_prompt_mode", None) or "default"
         stored_custom_cover_letter_prompt = (getattr(user, "cover_letter_prompt_custom", None) or "").strip()
         effective_cover_letter_instructions = self._cover_letter_instructions_for_user(user)
+        default_provider = str(
+            await get_effective_value("default_llm_provider", self.session)
+        )
         active_provider = (getattr(user, "llm_provider", None) or "").strip().lower()
         if active_provider not in self.LLM_PROVIDERS:
-            active_provider = settings.default_llm_provider
+            active_provider = default_provider
+        default_openai_model = str(await get_effective_value("openai_model", self.session))
+        user_llm_model = (getattr(user, "llm_model", None) or "").strip() or None
         return {
             "openai_key_mode": mode,
             "openai_key_configured": has_custom_key,
             "openai_key_hint": key_hint,
             "system_openai_available": bool(settings.openai_api_key),
             "llm_provider": active_provider,
-            "default_llm_provider": settings.default_llm_provider,
+            "default_llm_provider": default_provider,
             "available_providers": self._available_providers(user),
+            "llm_model": user_llm_model,
+            "default_llm_model": default_openai_model,
             **self._provider_key_info(user, "anthropic"),
             **self._provider_key_info(user, "gemini"),
             "dedup_recycle_mode": dedup_mode,
             "dedup_recycle_days": effective_days,
             "dedup_recycle_days_custom": custom_days,
-            "default_dedup_recycle_days": settings.default_dedup_recycle_days,
+            "default_dedup_recycle_days": default_dedup,
             "min_match_score_mode": min_score_mode,
             "min_match_score": effective_min_score,
             "min_match_score_custom": custom_min_score,
-            "default_min_match_score": settings.default_min_match_score,
+            "default_min_match_score": default_min_score,
             "resume_tailoring_prompt_mode": prompt_mode,
             "resume_tailoring_prompt_instructions": effective_instructions,
             "resume_tailoring_prompt_instructions_custom": stored_custom_prompt,
@@ -365,6 +446,8 @@ class UserRepository:
         openai_api_key: str | None = None,
         clear_openai_api_key: bool = False,
         llm_provider: str | None = None,
+        llm_model: str | None = None,
+        clear_llm_model: bool = False,
         anthropic_key_mode: str | None = None,
         anthropic_api_key: str | None = None,
         clear_anthropic_api_key: bool = False,
@@ -408,6 +491,19 @@ class UserRepository:
             if normalized not in self.LLM_PROVIDERS:
                 raise ValueError("llm_provider must be 'openai', 'anthropic', or 'gemini'")
             user.llm_provider = normalized
+
+        if clear_llm_model:
+            user.llm_model = None
+        elif llm_model is not None:
+            cleaned = llm_model.strip()
+            if not cleaned:
+                user.llm_model = None
+            elif len(cleaned) > 200:
+                raise ValueError("llm_model is too long")
+            else:
+                user.llm_model = cleaned
+                # Gateway models are invoked via the OpenAI-compatible adapter.
+                user.llm_provider = "openai"
 
         self._apply_provider_key_update(
             user,
@@ -510,12 +606,13 @@ class UserRepository:
 
     async def resolve_llm_provider(self, user_id: str) -> str:
         """Return the user's selected LLM provider (defaults to server default)."""
-        settings = get_settings()
+        from app.services.system_settings_service import get_effective_value
+
         user = await self.get_by_id(user_id)
         provider = (getattr(user, "llm_provider", None) or "").strip().lower() if user else ""
         if provider in self.LLM_PROVIDERS:
             return provider
-        return settings.default_llm_provider
+        return str(await get_effective_value("default_llm_provider", self.session))
 
     async def resolve_provider_api_key(self, user_id: str, provider: str) -> str:
         """Return the usable API key for ``provider`` (custom user key or server key).

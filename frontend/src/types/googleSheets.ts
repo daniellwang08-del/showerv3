@@ -8,6 +8,9 @@ export interface SheetsConfig {
   spreadsheet_url?: string;
   tab_groups?: string[][];
   auto_post_threshold?: number;
+  /** Soft toggle for auto-post after analysis — connection is kept when false. */
+  is_enabled?: boolean;
+  auto_post_filters?: import('./autoPostFilters').AutoPostFilters;
   group_count?: number;
   assigned_tab_count?: number;
 }
@@ -29,6 +32,7 @@ export interface SheetsConfigSaveResult {
   spreadsheet_url: string;
   tab_groups: string[][];
   auto_post_threshold: number;
+  is_enabled?: boolean;
   group_count: number;
   assigned_tab_count: number;
 }
@@ -38,6 +42,22 @@ export interface SheetsAutoPostThresholdResult {
   auto_post_threshold: number;
   spreadsheet_url: string;
   tab_groups: string[][];
+  is_enabled?: boolean;
+  auto_post_filters?: import('./autoPostFilters').AutoPostFilters;
+  group_count: number;
+  assigned_tab_count: number;
+}
+
+export interface SheetsAutoPostSettingsResult extends SheetsAutoPostThresholdResult {}
+
+export interface SheetsEnabledResult {
+  success: boolean;
+  is_enabled: boolean;
+  configured: boolean;
+  spreadsheet_url: string;
+  tab_groups: string[][];
+  auto_post_threshold: number;
+  auto_post_filters?: import('./autoPostFilters').AutoPostFilters;
   group_count: number;
   assigned_tab_count: number;
 }

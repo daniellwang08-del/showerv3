@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, FileText, Loader2, Mail, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  AlertCircle,
+  FileText,
+  Loader2,
+  Maximize2,
+  X,
+} from 'lucide-react';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
@@ -15,20 +21,18 @@ import { ExperienceControls } from '../components/resumeBuilder/ExperienceContro
 import { EducationControls } from '../components/resumeBuilder/EducationControls';
 import { CertificatesControls } from '../components/resumeBuilder/CertificatesControls';
 import { SectionManager } from '../components/resumeBuilder/SectionManager';
-import { ResumePageStack, RESUME_REF_WIDTH } from '../components/resumeBuilder/PagedResumePreview';
-
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 2;
-const ZOOM_STEP = 0.1;
+import { ResumePageStack } from '../components/resumeBuilder/PagedResumePreview';
+import { ResumePdfEmbed } from '../components/resumeBuilder/ResumePdfEmbed';
 import { Toolbar } from '../components/resumeBuilder/Toolbar';
 import { selectIsDirty, useResumeBuilderStore } from '../stores/resumeBuilderStore';
-import { effectiveProfile, profileToContent } from '../utils/resumeContent';
+import { effectiveProfile, normalizeResumeContent, profileToContent } from '../utils/resumeContent';
 import { ContentControls } from '../components/resumeBuilder/ContentControls';
 import { ResumeLibraryPanel } from '../components/resumeBuilder/ResumeLibraryPanel';
-import { OneClickAICenter } from '../components/resumeBuilder/OneClickAICenter';
+import { OneClickAICenter, OneClickAILauncher } from '../components/resumeBuilder/OneClickAICenter';
 import { previewResumeDesignPdf } from '../api/resumeDesignApi';
-import { downloadResumeTemplatePreview } from '../api/resumeTemplateApi';
-import { generateCoverLetterFromResumeDesign } from '../api/coverLetterTemplateApi';
+
+/** Wait for style/content edits (and metric settle) before re-running compile→dxpdf. */
+const PREVIEW_DEBOUNCE_MS = 450;
 
 interface AxiosLikeError {
   response?: { status?: number; data?: { detail?: string } };
@@ -49,101 +53,92 @@ export function ResumeBuilderPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [previewPageCount, setPreviewPageCount] = useState(1);
-  const [zoom, setZoom] = useState(1);
-  const previewBoxRef = useRef<HTMLDivElement>(null);
-  const [previewWidth, setPreviewWidth] = useState(0);
-  const [coverState, setCoverState] = useState<{ loading: boolean; msg: string | null; ok: boolean }>({
-    loading: false,
-    msg: null,
-    ok: false,
-  });
 
   useEffect(() => {
     void store.load();
     return () => {
-      // Persist any debounced edit before the builder unmounts, and clear the
-      // module-global timer so it can't fire after we're gone.
       useResumeBuilderStore.getState().flushAutoSave();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      const s = useResumeBuilderStore.getState();
+      if (!selectIsDirty(s)) return;
+      s.flushAutoSave();
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
+  useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
 
-  useEffect(() => {
-    const el = previewBoxRef.current;
-    if (!el) return;
-    const update = () => setPreviewWidth(el.clientWidth);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const previewGenRef = useRef(0);
 
-  const handlePreview = useCallback(async () => {
+  /** Debounced real PDF — primary preview source of truth. */
+  useEffect(() => {
+    if (!store.design) return;
+    const design = store.design;
+    const gen = ++previewGenRef.current;
+    setPreviewing(true);
+    setPreviewError(null);
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const preview = await previewResumeDesignPdf(design);
+          if (gen !== previewGenRef.current) return;
+          setPreviewUrl((prev) => {
+            if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+            return preview.url;
+          });
+          setPreviewError(null);
+        } catch (err) {
+          if (gen !== previewGenRef.current) return;
+          const aborted = err instanceof DOMException && err.name === 'AbortError';
+          if (!aborted) {
+            setPreviewError(errorDetail(err, 'Could not render the PDF preview.'));
+          }
+        } finally {
+          if (gen === previewGenRef.current) setPreviewing(false);
+        }
+      })();
+    }, PREVIEW_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [store.design]);
+
+  const handleRefreshPreview = useCallback(async () => {
     if (!store.design) return;
     const gen = ++previewGenRef.current;
     setPreviewing(true);
     setPreviewError(null);
-    setPreviewOpen(true);
     try {
-      const blob = await previewResumeDesignPdf(store.design);
+      const preview = await previewResumeDesignPdf(store.design);
       if (gen !== previewGenRef.current) return;
-      const url = URL.createObjectURL(blob);
       setPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
+        if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+        return preview.url;
       });
     } catch (err) {
       if (gen !== previewGenRef.current) return;
       const aborted = err instanceof DOMException && err.name === 'AbortError';
       if (!aborted) {
-        setPreviewError(errorDetail(err, 'Could not generate the PDF preview.'));
+        setPreviewError(errorDetail(err, 'Could not render the PDF preview.'));
       }
     } finally {
       if (gen === previewGenRef.current) setPreviewing(false);
     }
   }, [store.design]);
-
-  const handleDownload = useCallback(async () => {
-    if (!store.design) return;
-    setDownloading(true);
-    try {
-      if (dirty) await store.save();
-      const blob = await downloadResumeTemplatePreview();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'resume-template.docx';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch {
-      /* ignore */
-    } finally {
-      setDownloading(false);
-    }
-  }, [store, dirty]);
-
-  const handleGenerateCoverLetter = useCallback(async () => {
-    setCoverState({ loading: true, msg: null, ok: false });
-    try {
-      if (dirty) await store.save();
-      await generateCoverLetterFromResumeDesign();
-      setCoverState({ loading: false, ok: true, msg: 'Cover letter template generated from this theme.' });
-    } catch (err) {
-      setCoverState({ loading: false, ok: false, msg: errorDetail(err, 'Could not generate the cover letter template.') });
-    }
-  }, [store, dirty]);
 
   if (store.loading || !store.design || !store.catalog) {
     return (
@@ -154,220 +149,215 @@ export function ResumeBuilderPage() {
   }
 
   const { design, catalog, profile } = store;
-  // The live preview renders the manual content override when present, else the profile.
   const previewProfile = effectiveProfile(profile, design.content);
 
-  const baseWidth = Math.min((previewWidth || RESUME_REF_WIDTH) - 4, RESUME_REF_WIDTH);
-  const mainDisplayWidth = Math.max(240, baseWidth * zoom);
-  const zoomOut = () => setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - ZOOM_STEP) * 10) / 10));
-  const zoomIn = () => setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + ZOOM_STEP) * 10) / 10));
+  const editPanel = (
+    <div className="builder-scroll min-h-0 min-w-0 space-y-3 overflow-y-auto overscroll-contain pr-0.5 sm:space-y-4 lg:h-full lg:pr-1">
+      <div className="sticky top-0 z-20 space-y-2.5 bg-slate-50/95 pb-1 backdrop-blur-sm dark:bg-transparent">
+        <OneClickAILauncher compact />
+        <div className="inline-flex w-full rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+          {(['style', 'content'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setPanelTab(tab)}
+              className={`min-h-10 flex-1 rounded-lg px-2 py-2 text-sm font-semibold capitalize transition sm:px-3 ${
+                panelTab === tab
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {tab === 'style' ? 'Style' : 'Content'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {panelTab === 'content' ? (
+        <ContentControls
+          content={design.content ? normalizeResumeContent(design.content) : profileToContent(profile)}
+          onChange={store.setContent}
+        />
+      ) : (
+        <>
+          <ThemeGallery themes={catalog.themes} design={design} onApply={store.applyTheme} />
+          <TypographyControls design={design} fonts={catalog.fonts} onChange={store.updateTypography} />
+          <ColorControls
+            design={design}
+            presets={catalog.color_presets}
+            onChange={store.updateColors}
+            onApplyPreset={store.applyColorPreset}
+          />
+          <LayoutControls design={design} onLayout={store.updateLayout} onSections={store.updateSectionOptions} />
+          <HeaderImageControls design={design} image={design.layout.header_image} onChange={store.setHeaderImage} />
+          {catalog.summary_styles?.length > 0 && (
+            <SummaryStyleGallery styles={catalog.summary_styles} design={design} onApply={store.applySummaryStyle} />
+          )}
+          {catalog.skills_styles?.length > 0 && (
+            <SkillsStyleGallery styles={catalog.skills_styles} design={design} onApply={store.applySkillsStyle} />
+          )}
+          {catalog.experience_styles?.length > 0 && (
+            <ExperienceStyleGallery
+              styles={catalog.experience_styles}
+              design={design}
+              onApply={store.applyExperienceStyle}
+            />
+          )}
+          <ExperienceControls style={design.sections.experience_style} onChange={store.updateExperienceStyle} />
+          <EducationControls style={design.sections.education_style} onChange={store.updateEducationStyle} />
+          <CertificatesControls
+            style={design.sections.certificates_style}
+            onChange={store.updateCertificatesStyle}
+          />
+          <SectionManager design={design} onToggle={store.toggleSection} onMove={store.moveSection} />
+        </>
+      )}
+    </div>
+  );
+
+  const resumesRail = (
+    <div className="min-h-0 min-w-0 lg:h-full">
+      <ResumeLibraryPanel />
+    </div>
+  );
+
+  const previewPanel = (
+    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden lg:h-full lg:min-w-0">
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 p-2 shadow-inner sm:p-2.5 lg:p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-0.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:text-xs">
+              PDF preview
+            </span>
+            {previewing ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-blue-600">
+                <Loader2 size={11} className="animate-spin" />
+                Updating…
+              </span>
+            ) : (
+              <span className="hidden text-[10px] text-slate-400 sm:inline">
+                Native PDF · same file as export
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="relative min-h-0 min-w-0 w-full flex-1 overflow-hidden rounded-xl bg-white ring-1 ring-slate-200/80">
+          {previewError && !previewUrl && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+              <p className="text-sm text-red-600">{previewError}</p>
+              <button
+                type="button"
+                onClick={() => void handleRefreshPreview()}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {!previewError && !previewUrl && previewing && (
+            <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-500">
+              <Loader2 size={20} className="animate-spin text-blue-500" />
+              Rendering PDF…
+            </div>
+          )}
+          {previewUrl && (
+            <div className={`h-full w-full ${previewing ? 'opacity-90' : ''}`}>
+              <ResumePdfEmbed url={previewUrl} />
+            </div>
+          )}
+          {previewError && previewUrl && (
+            <div className="absolute bottom-2 left-1/2 z-10 w-[min(100%-1rem,24rem)] -translate-x-1/2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-center text-xs text-amber-800 shadow-sm">
+              {previewError} — showing last good PDF.{' '}
+              <button type="button" className="font-semibold underline" onClick={() => void handleRefreshPreview()}>
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 px-4 pt-4">
+      {/* Offscreen HTML measure pass — feeds header/layout metrics into the PDF compiler. */}
+      <ResumePageStack
+        design={design}
+        profile={previewProfile}
+        displayWidth={816}
+        measureOnly
+        onMeasureHeader={store.setHeaderMetrics}
+        onMeasureLayout={store.setLayoutMetrics}
+      />
+
+      <div className="shrink-0 space-y-3 px-3 pt-3 sm:space-y-3.5 sm:px-5 sm:pt-4">
         <PageHeader
           icon={FileText}
           gradient="from-blue-600 to-indigo-600"
           title="Resume Builder"
-          description="Pick a theme and fine-tune styling. Changes save automatically and update your active resume template."
-          className="mb-4"
+          description="Style and edit this resume. Preview is the real PDF. Changes auto-save after a short pause."
           actions={
             <Toolbar
               dirty={dirty}
               saving={store.saving}
               previewing={previewing}
-              downloading={downloading}
               ready={store.ready}
+              savingTheme={store.savingTheme}
               onReset={store.resetToSaved}
-              onPreview={() => void handlePreview()}
-              onDownload={() => void handleDownload()}
+              onPreview={() => setPreviewOpen(true)}
+              onSaveTheme={(name) => store.saveCurrentAsTheme(name)}
             />
           }
         />
 
         {store.saveError && (
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            <AlertCircle size={15} />
-            {store.saveError}
+          <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">{store.saveError}</span>
+          </div>
+        )}
+        {store.themeError && (
+          <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">{store.themeError}</span>
           </div>
         )}
         {store.profileWorkCount === 0 && (
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <AlertCircle size={15} />
-            Add work experience in your Profile so the builder can create experience slots.
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">
+              Add work experience in your Profile so the builder can create experience slots.
+            </span>
           </div>
         )}
+      </div>
 
-        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-          <Mail size={16} className="text-indigo-500" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-slate-800">Matching cover letter</p>
-            <p className="text-xs text-slate-500">
-              Generate a cover letter template that reuses this theme. Saves the current design first.
-            </p>
-          </div>
-          {coverState.msg && (
-            <span
-              className={`inline-flex items-center gap-1 text-xs font-medium ${
-                coverState.ok ? 'text-emerald-700' : 'text-red-600'
-              }`}
-            >
-              {coverState.ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-              {coverState.msg}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => void handleGenerateCoverLetter()}
-            disabled={coverState.loading}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
-          >
-            {coverState.loading ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
-            Generate
-          </button>
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-3 pb-3 pt-3 sm:px-5 sm:pb-4">
+        <div className="grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(12rem,2.5fr)_minmax(0,6fr)_minmax(8rem,1.5fr)] gap-3 sm:gap-4 lg:grid-cols-[minmax(0,2.5fr)_minmax(0,6fr)_minmax(0,1.5fr)] lg:grid-rows-1 xl:gap-4">
+          {editPanel}
+          {previewPanel}
+          {resumesRail}
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 overflow-y-auto px-5 pb-5 lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)_auto] lg:overflow-hidden lg:[grid-template-rows:minmax(0,1fr)]">
-        <div className="builder-scroll min-w-0 space-y-4 lg:h-full lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:pr-2">
-            <div className="sticky top-0 z-10 -mx-0.5 inline-flex w-full rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-              {(['style', 'content', 'resumes'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setPanelTab(tab)}
-                  className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold capitalize transition ${
-                    panelTab === tab ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  {tab === 'style' ? 'Style' : tab === 'content' ? 'Content' : 'Resumes'}
-                </button>
-              ))}
-            </div>
-            {panelTab === 'resumes' ? (
-              <ResumeLibraryPanel />
-            ) : panelTab === 'content' ? (
-              <ContentControls content={design.content ?? profileToContent(profile)} onChange={store.setContent} />
-            ) : (
-            <>
-            <ThemeGallery themes={catalog.themes} design={design} onApply={store.applyTheme} />
-            <TypographyControls design={design} fonts={catalog.fonts} onChange={store.updateTypography} />
-            <ColorControls
-              design={design}
-              presets={catalog.color_presets}
-              onChange={store.updateColors}
-              onApplyPreset={store.applyColorPreset}
-            />
-            <LayoutControls design={design} onLayout={store.updateLayout} onSections={store.updateSectionOptions} />
-            <HeaderImageControls design={design} image={design.layout.header_image} onChange={store.setHeaderImage} />
-            {catalog.summary_styles?.length > 0 && (
-              <SummaryStyleGallery styles={catalog.summary_styles} design={design} onApply={store.applySummaryStyle} />
-            )}
-            {catalog.skills_styles?.length > 0 && (
-              <SkillsStyleGallery styles={catalog.skills_styles} design={design} onApply={store.applySkillsStyle} />
-            )}
-            {catalog.experience_styles?.length > 0 && (
-              <ExperienceStyleGallery styles={catalog.experience_styles} design={design} onApply={store.applyExperienceStyle} />
-            )}
-            <ExperienceControls style={design.sections.experience_style} onChange={store.updateExperienceStyle} />
-            <EducationControls style={design.sections.education_style} onChange={store.updateEducationStyle} />
-            <CertificatesControls style={design.sections.certificates_style} onChange={store.updateCertificatesStyle} />
-            <SectionManager design={design} onToggle={store.toggleSection} onMove={store.moveSection} />
-            </>
-            )}
-          </div>
-
-          <div className="flex min-w-0 flex-col lg:min-h-0">
-            <div className="flex flex-col rounded-2xl border border-slate-200 bg-slate-100 p-3 shadow-inner sm:p-4 lg:min-h-0 lg:flex-1">
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Live preview</span>
-                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                    {previewPageCount} page{previewPageCount === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
-                  <button
-                    type="button"
-                    onClick={zoomOut}
-                    disabled={zoom <= ZOOM_MIN}
-                    aria-label="Zoom out"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <ZoomOut size={15} />
-                  </button>
-                  <span className="w-11 text-center text-xs font-semibold tabular-nums text-slate-700">
-                    {Math.round(zoom * 100)}%
-                  </span>
-                  <button
-                    type="button"
-                    onClick={zoomIn}
-                    disabled={zoom >= ZOOM_MAX}
-                    aria-label="Zoom in"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <ZoomIn size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setZoom(1)}
-                    disabled={zoom === 1}
-                    aria-label="Reset zoom"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <RotateCcw size={14} />
-                  </button>
-                </div>
-              </div>
-              <div ref={previewBoxRef} className="builder-scroll overflow-auto lg:min-h-0 lg:flex-1">
-                <div className="mx-auto w-max">
-                  <ResumePageStack
-                    design={design}
-                    profile={previewProfile}
-                    displayWidth={mainDisplayWidth}
-                    idPrefix="resume-page"
-                    onPageCount={setPreviewPageCount}
-                    onMeasureHeader={store.setHeaderMetrics}
-                    onMeasureLayout={store.setLayoutMetrics}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Page thumbnail rail (like the slide list in PowerPoint) */}
-          <aside className="hidden lg:flex lg:min-h-0 lg:flex-col">
-            <div className="flex flex-col rounded-2xl border border-slate-200 bg-slate-100 p-2 shadow-inner lg:min-h-0 lg:flex-1">
-              <div className="px-1 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                Pages
-              </div>
-              <div className="builder-scroll flex flex-col items-center gap-3 overflow-y-auto px-1 pb-1 lg:min-h-0 lg:flex-1">
-                <ResumePageStack
-                  design={design}
-                  profile={previewProfile}
-                  displayWidth={132}
-                  gap={12}
-                  onSelect={(i) =>
-                    document
-                      .getElementById(`resume-page-${i}`)
-                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                  }
-                />
-              </div>
-            </div>
-          </aside>
-        </div>
-
       {previewOpen && (
-        <div className="fixed inset-0 z-[210] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-[210] flex items-center justify-center p-3 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+        >
           <div
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-[3px]"
             onClick={() => setPreviewOpen(false)}
             aria-hidden="true"
           />
-          <div className="relative z-10 flex h-[90vh] w-[88vw] min-w-[640px] max-w-[1100px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
+          <div className="relative z-10 flex h-[min(92dvh,980px)] w-full max-w-[1100px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 sm:w-[min(94vw,1100px)]">
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-              <h2 className="text-sm font-semibold text-slate-800">Accurate PDF preview</h2>
+              <h2 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Maximize2 size={15} className="text-slate-400" />
+                Fullscreen PDF
+              </h2>
               <button
                 type="button"
                 onClick={() => setPreviewOpen(false)}
@@ -378,20 +368,18 @@ export function ResumeBuilderPage() {
               </button>
             </header>
             <div className="min-h-0 flex-1 bg-slate-100">
-              {previewing && (
+              {previewing && !previewUrl && (
                 <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-500">
                   <Loader2 size={20} className="animate-spin text-blue-500" />
                   Rendering document…
                 </div>
               )}
-              {previewError && !previewing && (
+              {previewError && !previewUrl && (
                 <div className="flex h-full items-center justify-center px-8 text-center text-sm text-red-600">
                   {previewError}
                 </div>
               )}
-              {previewUrl && !previewing && !previewError && (
-                <iframe title="Resume PDF preview" src={previewUrl} className="h-full w-full border-0 bg-white" />
-              )}
+              {previewUrl && <ResumePdfEmbed url={previewUrl} />}
             </div>
           </div>
         </div>

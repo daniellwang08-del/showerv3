@@ -34,7 +34,7 @@ export const emptyEducation = (): EducationBlock => ({
   location: '',
   description: '',
 });
-export const emptyCert = (): CertificateBlock => ({ name: '' });
+export const emptyCert = (): CertificateBlock => ({ name: '', issued_at: '', url: '' });
 export const emptyEEO = (): EEOPreferences => ({
   gender: '',
   race: '',
@@ -158,7 +158,11 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
       location: (x as EducationBlock).location ?? '',
       description: (x as EducationBlock).description ?? '',
     })),
-    certificates: cert.map((x) => ({ name: (x as CertificateBlock).name ?? '' })),
+    certificates: cert.map((x) => ({
+      name: (x as CertificateBlock).name ?? '',
+      issued_at: (x as CertificateBlock).issued_at ?? '',
+      url: (x as CertificateBlock).url ?? '',
+    })),
     extra,
     eeo_preferences: eeoToForm(p.eeo_preferences),
     address: addressToForm(p.address),

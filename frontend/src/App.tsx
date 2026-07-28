@@ -9,11 +9,22 @@ import { AppShell } from './components/layout/AppShell';
 import { BrandedLoader } from './components/layout/BrandedLoader';
 import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
-import { SettingsPage } from './pages/SettingsPage';
+import { MyPreferencesPage } from './pages/MyPreferencesPage';
+import { IntegrationsPage } from './pages/IntegrationsPage';
 import { ResumeBuilderPage } from './pages/ResumeBuilderPage';
+import { DataAnalysisManagementPage } from './pages/DataManagementPage';
+import { UserManagementPage } from './pages/UserManagementPage';
+import { SystemSettingsPage } from './pages/SystemSettingsPage';
 import { AuthScreen } from './components/extraction/AuthScreen';
 import { JobActionModal } from './components/extraction/JobActionModal';
 import { ConfirmDialog } from './components/extraction/ConfirmDialog';
+
+function AdminOnly({ isAdmin, children }: { isAdmin: boolean; children: React.ReactNode }) {
+  if (!isAdmin) {
+    return <Navigate to="/scraper" replace />;
+  }
+  return <>{children}</>;
+}
 
 function App() {
   const { isAuthenticated, user, authPage, logout, onAuthSuccess, refreshUser } = useAuth();
@@ -151,14 +162,49 @@ function App() {
             <AppShell
               userEmail={user?.email}
               userName={user?.name || user?.display_name || undefined}
+              isAdmin={!!user?.is_admin}
               onLogout={logout}
             />
           }
         >
           <Route path="/scraper" element={<ScraperDashboard />} />
           <Route path="/profile" element={<ProfilePage user={user} onLogout={logout} onProfileSaved={refreshUser} />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/preferences" element={<MyPreferencesPage />} />
+          <Route path="/settings" element={<Navigate to="/preferences" replace />} />
+          <Route path="/integrations" element={<IntegrationsPage />} />
           <Route path="/resume-builder" element={<ResumeBuilderPage />} />
+          <Route
+            path="/data-analysis"
+            element={
+              <AdminOnly isAdmin={!!user?.is_admin}>
+                <DataAnalysisManagementPage />
+              </AdminOnly>
+            }
+          />
+          <Route
+            path="/data-management"
+            element={
+              <AdminOnly isAdmin={!!user?.is_admin}>
+                <DataAnalysisManagementPage />
+              </AdminOnly>
+            }
+          />
+          <Route
+            path="/user-management"
+            element={
+              <AdminOnly isAdmin={!!user?.is_admin}>
+                <UserManagementPage />
+              </AdminOnly>
+            }
+          />
+          <Route
+            path="/system-settings"
+            element={
+              <AdminOnly isAdmin={!!user?.is_admin}>
+                <SystemSettingsPage />
+              </AdminOnly>
+            }
+          />
           <Route path="*" element={<Navigate to="/scraper" replace />} />
         </Route>
       </Routes>

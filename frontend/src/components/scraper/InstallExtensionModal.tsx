@@ -70,7 +70,7 @@ export function InstallExtensionModal({ open, onClose, onInstalled }: Props) {
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 flex items-center justify-center bg-slate-900/50 p-3 sm:p-4 backdrop-blur-sm"
       style={{ zIndex: Z_INDEX.confirmDialog }}
       role="dialog"
       aria-modal="true"
@@ -79,7 +79,7 @@ export function InstallExtensionModal({ open, onClose, onInstalled }: Props) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="glass-card relative w-full max-w-lg rounded-2xl border border-slate-200/80 bg-white/95 shadow-2xl ring-1 ring-slate-200/60">
+      <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <button
           type="button"
           onClick={onClose}
@@ -89,7 +89,7 @@ export function InstallExtensionModal({ open, onClose, onInstalled }: Props) {
           <X className="h-4 w-4" />
         </button>
 
-        <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+        <div className="border-b border-slate-100 px-4 pb-3 pt-4 pr-12 sm:px-5 sm:pb-4 sm:pt-5">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-100">
               <Rocket className="h-5 w-5" aria-hidden />
@@ -106,7 +106,7 @@ export function InstallExtensionModal({ open, onClose, onInstalled }: Props) {
           </div>
         </div>
 
-        <div className="px-5 py-4">
+        <div className="px-4 py-3 sm:px-5 sm:py-4">
           <ol className="space-y-3">
             {STEPS.map((step, i) => (
               <li key={i} className="flex items-start gap-3">
@@ -115,10 +115,10 @@ export function InstallExtensionModal({ open, onClose, onInstalled }: Props) {
                 </span>
                 <div className="min-w-0 text-sm text-slate-700">
                   <span className="font-medium text-slate-800">{step.title}</span>
-                  {step.body ? <div className="mt-1 text-slate-600">{step.body}</div> : null}
+                  {step.body ? <div className="mt-1 break-words text-slate-600">{step.body}</div> : null}
                   {i === 3 ? (
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <code className="truncate rounded bg-slate-100 px-2 py-1 text-[12px] text-slate-700">{EXTENSION_PATH}</code>
+                    <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
+                      <code className="min-w-0 max-w-full truncate rounded bg-slate-100 px-2 py-1 text-[12px] text-slate-700">{EXTENSION_PATH}</code>
                       <button
                         type="button"
                         onClick={copyPath}
@@ -143,7 +143,7 @@ export function InstallExtensionModal({ open, onClose, onInstalled }: Props) {
           ) : null}
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-5 py-4 sm:flex-row sm:justify-end">
+        <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-4 py-3 sm:flex-row sm:justify-end sm:px-5 sm:py-4">
           <button
             type="button"
             onClick={onClose}

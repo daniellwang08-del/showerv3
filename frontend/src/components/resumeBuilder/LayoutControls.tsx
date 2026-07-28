@@ -34,15 +34,6 @@ export function LayoutControls({
   return (
     <ControlCard icon={LayoutGrid} title="Layout">
       <Segmented
-        label="Columns"
-        value={l.columns}
-        options={[
-          { value: 1, label: 'Single' },
-          { value: 2, label: 'Two-column' },
-        ]}
-        onChange={(v) => onLayout({ columns: v as 1 | 2 })}
-      />
-      <Segmented
         label="Header alignment"
         value={l.header_align}
         options={[
@@ -99,7 +90,7 @@ export function LayoutControls({
       />
       <Segmented
         label="Contact icons"
-        value={l.contact_icons}
+        value={l.contact_icons === 'outline' || l.contact_icons === 'none' ? l.contact_icons : 'brand'}
         options={[
           { value: 'brand', label: 'Brand' },
           { value: 'outline', label: 'Outline' },
@@ -107,6 +98,33 @@ export function LayoutControls({
         ]}
         onChange={(v) => onLayout({ contact_icons: v as LayoutConfig['contact_icons'] })}
       />
+      {l.contact_icons !== 'none' && (
+        <div className="space-y-2 rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-2">
+          <p className="text-[11px] font-medium text-slate-500">
+            Icon position (pt) — nudge until the PDF matches the preview
+          </p>
+          <Slider
+            label="Horizontal"
+            value={l.contact_icon_offset_x_pt ?? 0}
+            min={-4}
+            max={4}
+            step={0.25}
+            suffix=" pt"
+            format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} pt`}
+            onChange={(v) => onLayout({ contact_icon_offset_x_pt: v })}
+          />
+          <Slider
+            label="Vertical"
+            value={l.contact_icon_offset_y_pt ?? 0}
+            min={-4}
+            max={4}
+            step={0.25}
+            suffix=" pt"
+            format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} pt`}
+            onChange={(v) => onLayout({ contact_icon_offset_y_pt: v })}
+          />
+        </div>
+      )}
       <BoxSidesField
         label="Page margin"
         suffix=" (pt)"

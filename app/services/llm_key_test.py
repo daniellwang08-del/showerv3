@@ -33,11 +33,17 @@ async def test_provider_api_key(provider: str, api_key: str) -> tuple[bool, str]
             from openai import AsyncOpenAI
 
             t = min(30.0, settings.openai_timeout_seconds)
-            client = AsyncOpenAI(
-                api_key=key,
-                max_retries=0,
-                timeout=httpx.Timeout(t, connect=min(15.0, t)),
-            )
+            kwargs: dict = {
+                "api_key": key,
+                "max_retries": 0,
+                "timeout": httpx.Timeout(t, connect=min(15.0, t)),
+            }
+            base = (settings.openai_api_base or "").strip().rstrip("/")
+            if base:
+                if not base.endswith("/v1"):
+                    base = f"{base}/v1"
+                kwargs["base_url"] = base
+            client = AsyncOpenAI(**kwargs)
             await client.models.list()
 
         elif provider == "gemini":

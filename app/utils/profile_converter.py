@@ -5,6 +5,8 @@ Produces a resume-style document for use as context in Chat Completions.
 
 from typing import Any
 
+from app.utils.flexible_date import format_flexible_date, format_flexible_period
+
 
 def _s(obj: Any, key: str, default: str = "") -> str:
     """Safe string getter for dict or object."""
@@ -27,13 +29,7 @@ def _list(obj: Any, key: str) -> list:
 
 
 def _format_period(start: str, end: str) -> str:
-    if start and end:
-        return f"{start} – {end}"
-    if start:
-        return f"{start} – Present"
-    if end:
-        return end
-    return ""
+    return format_flexible_period(start, end)
 
 
 def user_profile_to_openai_text(profile: Any) -> str:
@@ -188,8 +184,18 @@ def user_profile_to_openai_text(profile: Any) -> str:
         parts.append("## Certificates")
         for c in certs:
             name = (c.get("name") if isinstance(c, dict) else getattr(c, "name", "")) or ""
-            if name:
-                parts.append(f"- {name}")
+            if not name:
+                continue
+            issued = format_flexible_date(
+                (c.get("issued_at") if isinstance(c, dict) else getattr(c, "issued_at", None)) or ""
+            )
+            url = (c.get("url") if isinstance(c, dict) else getattr(c, "url", None)) or ""
+            line = f"- {name}"
+            if issued:
+                line += f" ({issued})"
+            if url:
+                line += f" — {url}"
+            parts.append(line)
         parts.append("")
 
     # Extra

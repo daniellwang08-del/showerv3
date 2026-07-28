@@ -12,7 +12,7 @@ if /i "%APP_ENV%"=="production" (
 ) else (
   set RELOAD=1
   :: API hot-reloads on app/ saves; workers stay up unless WORKER_RELOAD=1.
-  :: Five workers all watching app/ with RELOAD=1 causes a restart storm on
+  :: Multiple workers all watching app/ with RELOAD=1 causes a restart storm on
   :: bulk saves (IDE/agent touching many .py files at once).
   set WORKER_RELOAD=0
 )
@@ -45,42 +45,46 @@ echo.
 :: silently loses the port race and the stale code keeps answering). We scope
 :: the kill to this project's start_server.py / run_worker.py processes, their
 :: uvicorn reload children, and whatever currently owns port 8000.
-echo [0/7] Stopping any existing API/worker processes...
+echo [0/8] Stopping any existing API/worker processes...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $p=Get-CimInstance Win32_Process; $s=$p | Where-Object { $_.CommandLine -match 'start_server\.py|run_worker\.py' }; $ids=$s | ForEach-Object { $_.ProcessId }; $f=$p | Where-Object { $_.CommandLine -match 'multiprocessing-fork' -and $ids -contains $_.ParentProcessId }; $s + $f | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }"
 timeout /t 2 /nobreak >nul
 
 :: Backend API server
-echo [1/7] Starting backend API server...
+echo [1/8] Starting backend API server...
 start "Backend API (port 8000)" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "RELOAD=%RELOAD%" && venv\Scripts\python.exe start_server.py"
 
 :: arq extraction worker (scraping individual URLs)
-echo [2/7] Starting extraction worker...
+echo [2/8] Starting extraction worker...
 start "Extraction Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "WORKER_RELOAD=%WORKER_RELOAD%" && venv\Scripts\python.exe run_worker.py extraction"
 
-:: arq analysis worker (OpenAI match scoring)
-echo [3/7] Starting analysis worker...
+:: arq analysis worker (Phase A match scoring)
+echo [3/8] Starting analysis worker...
 start "Analysis Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "WORKER_RELOAD=%WORKER_RELOAD%" && venv\Scripts\python.exe run_worker.py analysis"
 
-:: arq save worker (post-analysis dedup + persistence)
-echo [4/7] Starting save worker...
+:: arq tailoring worker (Phase B resume tailoring)
+echo [4/8] Starting tailoring worker...
+start "Tailoring Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "WORKER_RELOAD=%WORKER_RELOAD%" && venv\Scripts\python.exe run_worker.py tailoring"
+
+:: arq save worker (post-analysis dedup + persistence + auto-post)
+echo [5/8] Starting save worker...
 start "Save Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "WORKER_RELOAD=%WORKER_RELOAD%" && venv\Scripts\python.exe run_worker.py save"
 
 :: arq resume build worker (DOCX/PDF generation)
-echo [5/7] Starting resume build worker...
+echo [6/8] Starting resume build worker...
 start "Resume Build Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "WORKER_RELOAD=%WORKER_RELOAD%" && venv\Scripts\python.exe run_worker.py resume"
 
 :: arq scraper worker (Scrapy spiders via Sync button)
-echo [6/7] Starting scraper worker...
+echo [7/8] Starting scraper worker...
 start "Scraper Worker" cmd /k "cd /d "%~dp0" && set "APP_ENV=%APP_ENV%" && set "WORKER_RELOAD=%WORKER_RELOAD%" && venv\Scripts\python.exe run_worker.py scraper"
 
 :: Frontend dev server (Vite HMR - hot reload built in)
-echo [7/7] Starting frontend dev server...
+echo [8/8] Starting frontend dev server...
 for /f "delims=" %%i in ('venv\Scripts\python.exe scripts\lan_urls.py --ip 2^>nul') do set "LAN_HOST=%%i"
 start "Frontend (port 5173)" cmd /k "cd /d "%~dp0\frontend" && set "LAN_HOST=%LAN_HOST%" && npm run dev"
 
 echo.
 echo ============================================
-echo   All 7 services launched!  [%APP_ENV%]
+echo   All 8 services launched!  [%APP_ENV%]
 echo.
 echo   Backend API:  http://localhost:8000
 echo   Frontend:     http://localhost:5173

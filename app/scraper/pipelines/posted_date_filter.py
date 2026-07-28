@@ -4,7 +4,15 @@ from scrapy.exceptions import DropItem
 
 
 class PostedDateFilterPipeline:
-    def process_item(self, item, spider):
+    def __init__(self, crawler):
+        self.crawler = crawler
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler)
+
+    def process_item(self, item):
+        spider = self.crawler.spider
         if not hasattr(spider, "_posted_in_range"):
             return item
         posted_at = getattr(item, "posted_at", None)

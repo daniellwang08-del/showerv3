@@ -81,7 +81,7 @@ async def extract_job_urls_from_text_combined(text: str, *, user_id: str | None 
         return []
 
     settings = get_settings()
-    client = await get_llm_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id, job_type="attachment_url_ai")
 
     chunks: list[str] = []
     if len(text) <= _CHUNK_CHARS:

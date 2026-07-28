@@ -1,8 +1,10 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useScraperStore } from '../stores/scraperStore';
 import { useJobsStore } from '../stores/jobsStore';
 import { apiClient } from '../api/client';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
+import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { ScraperStatsBar } from '../components/scraper/ScraperStatsBar';
 import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
@@ -14,13 +16,14 @@ import { MatchScoreFilter, RemoteFilterToggle } from '../components/scraper/Dash
 import { SearchInput } from '../components/shared/SearchInput';
 import { SubmitForm } from '../components/extraction/SubmitForm';
 import { DuplicatesModal } from '../components/scraper/DuplicatesModal';
+import type { AppShellOutletContext } from '../components/layout/AppShell';
 import { AlertTriangle, Briefcase, Building2, Wand2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { useResumeAiStore } from '../stores/resumeAiStore';
 import type { DashboardJob } from '../types/scraper';
 import type { DashboardView } from '../api/scraperApi';
 
 export function ScraperDashboard() {
+  const { isAdmin } = useOutletContext<AppShellOutletContext>();
   const {
     jobs, total, page, perPage, pages, loading,
     stats, statsLoading,
@@ -145,45 +148,44 @@ export function ScraperDashboard() {
 
   return (
     <PageScrollArea alwaysShowScrollbar={false}>
-    <div className="px-5 py-5 w-full space-y-5">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-800">Jobs Dashboard</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Browse and manage processed job listings across all platforms.
-          </p>
-        </div>
-        {/* relative z-40 lifts this group (and the open Sync dropdown) above the toolbar/table below. */}
-        <div className="relative z-40 flex items-start gap-2">
-          <button
-            type="button"
-            onClick={openResumeAiCenter}
-            title="Paste a job description and tailor your resume with AI"
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:shadow-md"
-          >
-            <Wand2 size={15} />
-            Tailor with AI
-          </button>
-          <LlmProviderSelector />
-          <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} lastSyncRuns={lastSyncRuns} onSync={handleSync} />
-        </div>
+    <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+      <PageHeader
+        icon={Briefcase}
+        gradient="from-slate-700 to-slate-900"
+        title="Jobs Dashboard"
+        description="Browse and manage processed job listings across all platforms."
+        actions={
+          <div className="flex w-full flex-wrap items-start gap-2 sm:w-auto sm:justify-end">
+            <button
+              type="button"
+              onClick={openResumeAiCenter}
+              title="Paste a job description and tailor your resume with AI"
+              className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:shadow-md sm:flex-none"
+            >
+              <Wand2 size={15} className="shrink-0" />
+              <span className="truncate">Tailor with AI</span>
+            </button>
+            <LlmProviderSelector />
+            {isAdmin && (
+              <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} lastSyncRuns={lastSyncRuns} onSync={handleSync} />
+            )}
+          </div>
+        }
+      />
+
+      {/* z-0 keeps metric tiles below PageHeader menus (header is z-40). */}
+      <div className="relative z-0">
+        <ScraperStatsBar stats={stats} loading={statsLoading} />
       </div>
 
-      <ScraperStatsBar stats={stats} loading={statsLoading} />
-
-      {/* ── Toolbar: view + filters + add-job URL (one line) ─────────────── */}
-      {/* relative z-30 lifts this stacking context (and its open dropdowns) above the jobs table below. */}
-      <div className="relative z-30 rounded-2xl border border-slate-200 bg-white/70 p-3 shadow-sm backdrop-blur-sm">
+      <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
-          {/* Viewing dropdown */}
           <div className="shrink-0">
             <DashboardViewSwitcher view={view} counts={counts} onChange={handleViewChange} />
           </div>
 
           <div className="hidden self-stretch w-px bg-slate-200 xl:block" />
 
-          {/* Title / company / remote / match-score filters */}
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:shrink-0">
             <SearchInput
               value={titleFilter}
@@ -207,9 +209,8 @@ export function ScraperDashboard() {
 
           <div className="hidden self-stretch w-px bg-slate-200 xl:block" />
 
-          {/* Add job URL + duplicates */}
-          <div className="flex w-full items-start gap-3 xl:flex-1 xl:min-w-[18rem]">
-            <div className="min-w-0 flex-1">
+          <div className="flex w-full min-w-0 flex-wrap items-start gap-2 sm:gap-3 xl:flex-1 xl:min-w-[18rem]">
+            <div className="min-w-0 flex-1 basis-[min(100%,16rem)]">
               <SubmitForm inline />
             </div>
             <button
@@ -218,7 +219,7 @@ export function ScraperDashboard() {
               title="View duplicate jobs"
               aria-label="Open duplicates panel"
               className={[
-                'group inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border border-orange-600/20 px-3.5 text-sm font-bold text-white',
+                'group inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border border-orange-600/20 px-3 sm:px-3.5 text-sm font-bold text-white',
                 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-md shadow-orange-500/25 transition-all',
                 'hover:from-amber-500 hover:to-orange-500 hover:shadow-lg hover:shadow-orange-500/30',
                 'focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:ring-offset-1',
@@ -245,6 +246,7 @@ export function ScraperDashboard() {
         sortOrder={sortOrder}
         onSort={setSort}
         rowOffset={(page - 1) * perPage}
+        canSync={isAdmin}
       />
 
       {total > 0 && (

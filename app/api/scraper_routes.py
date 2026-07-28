@@ -840,10 +840,13 @@ async def list_scrape_runs(
 
 @scraper_router.post("/sync", response_model=SyncStatusResponse)
 async def trigger_sync(body: SyncRequest, user=Depends(_get_current_user)):
-    """Queue a spider run via arq."""
+    """Queue a spider run via arq. Admin-only."""
     from app.scraper.runner import check_spider_auth
     from app.services.scraper_sync_service import build_run_plan
     from app.tasks.worker import get_scraper_pool
+
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     user_id = user.get("user_id", "")
 

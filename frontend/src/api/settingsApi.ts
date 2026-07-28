@@ -48,6 +48,8 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     available_providers: Array.isArray(data.available_providers)
       ? (data.available_providers as LlmProvider[])
       : ['openai'],
+    llm_model: (data.llm_model as string | null | undefined) ?? null,
+    default_llm_model: String(data.default_llm_model ?? ''),
     anthropic_key_mode: (data.anthropic_key_mode as SettingsMode) ?? 'default',
     anthropic_key_configured: Boolean(data.anthropic_key_configured),
     anthropic_key_hint: (data.anthropic_key_hint as string | null | undefined) ?? null,
@@ -135,6 +137,11 @@ export async function testProviderKey(
 
 export async function setActiveLlmProvider(provider: LlmProvider): Promise<UserSettings> {
   return updateUserSettings({ llm_provider: provider });
+}
+
+export async function setActiveLlmModel(model: string | null): Promise<UserSettings> {
+  if (!model) return updateUserSettings({ clear_llm_model: true });
+  return updateUserSettings({ llm_model: model });
 }
 
 export async function saveProviderKeySettings(

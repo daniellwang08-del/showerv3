@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, type ComponentType, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Plus,
   Trash2,
@@ -14,21 +15,24 @@ import {
   Award,
   ListTree,
   ChevronDown,
-  CalendarDays,
   Search,
-  ChevronLeft,
-  ChevronRight,
   Check,
   Pencil,
   CheckCircle,
   X,
-  ShieldCheck,
-  MapPin,
 } from 'lucide-react';
 import { COUNTRY_CODES } from '../../constants/countryCodes';
-import type { ProfileFormData, EEOPreferences } from '../../types/profile';
+import type { ProfileFormData } from '../../types/profile';
 import type { UserProfile } from '../../types/profile';
-import { JOB_TYPES, EMPLOYMENT_TYPES, isValidJobArrangement, GENDER_OPTIONS, RACE_OPTIONS } from '../../types/profile';
+import { JOB_TYPES, EMPLOYMENT_TYPES, isValidJobArrangement } from '../../types/profile';
+import { FlexibleDatePicker } from '../shared/FlexibleDatePicker';
+import { ContributionsField } from '../resumeBuilder/ContributionsField';
+import {
+  formatFlexibleDate,
+  isFlexibleDateAfter,
+  parseFlexibleDate,
+} from '../../utils/flexibleDate';
+import { contributionsToEditorText, editorTextToContributions } from '../../utils/workExperience';
 import {
   profileToForm,
   emptyTechSkill,
@@ -53,7 +57,7 @@ function validatePhone(s: string): boolean {
   return /^[\d\s\-+()]{7,25}$/.test(s.trim());
 }
 
-type SectionId = 'contact' | 'summary' | 'skills' | 'work' | 'education' | 'certificates' | 'extra' | 'eeo' | 'address';
+type SectionId = 'contact' | 'summary' | 'skills' | 'work' | 'education' | 'certificates' | 'extra';
 
 function defaultSectionEditing(allEditing: boolean): Record<SectionId, boolean> {
   return {
@@ -64,8 +68,6 @@ function defaultSectionEditing(allEditing: boolean): Record<SectionId, boolean> 
     education: allEditing,
     certificates: allEditing,
     extra: allEditing,
-    eeo: allEditing,
-    address: allEditing,
   };
 }
 
@@ -96,13 +98,19 @@ function collectErrors(form: ProfileFormData): Record<string, string> {
     const jt = w.job_title.trim();
     if (co && !jt) err[`work_${i}_job_title`] = 'Job title is required when company is set';
     if (!co && jt) err[`work_${i}_company_name`] = 'Company is required when job title is set';
-    if (co && jt) {
-      if (!w.location?.trim()) err[`work_${i}_location`] = 'Location is required for job matching';
-      if (!isValidJobArrangement(w.job_type)) err[`work_${i}_job_type`] = 'Choose remote, hybrid, or onsite';
+    // Location / arrangement are optional suggestions for profile strength, not required to save.
+    const arrangement = (w.job_type ?? '').trim();
+    if (arrangement && !isValidJobArrangement(arrangement)) {
+      err[`work_${i}_job_type`] = 'Choose remote, hybrid, or onsite';
     }
     const ps = (w.period_start ?? '').trim();
     const pe = (w.period_end ?? '').trim();
-    if (ps && pe && ps > pe) err[`work_${i}_period_end`] = 'End month must be after start';
+    const peIsPresent = !pe || /^(present|current|now|ongoing)$/i.test(pe);
+    if (ps && !parseFlexibleDate(ps)) err[`work_${i}_period_start`] = 'Pick a valid start date';
+    if (pe && !peIsPresent && !parseFlexibleDate(pe)) err[`work_${i}_period_end`] = 'Pick a valid end date';
+    if (ps && pe && !peIsPresent && parseFlexibleDate(ps) && parseFlexibleDate(pe) && isFlexibleDateAfter(ps, pe)) {
+      err[`work_${i}_period_end`] = 'End date must be after start';
+    }
   });
 
   form.education.forEach((ed, i) => {
@@ -112,7 +120,11 @@ function collectErrors(form: ProfileFormData): Record<string, string> {
     if (!u && d) err[`edu_${i}_university`] = 'University is required when degree is set';
     const ps = (ed.period_start ?? '').trim();
     const pe = (ed.period_end ?? '').trim();
-    if (ps && pe && ps > pe) err[`edu_${i}_period_end`] = 'End month must be after start';
+    if (ps && !parseFlexibleDate(ps)) err[`edu_${i}_period_start`] = 'Pick a valid start date';
+    if (pe && !parseFlexibleDate(pe)) err[`edu_${i}_period_end`] = 'Pick a valid end date';
+    if (ps && pe && parseFlexibleDate(ps) && parseFlexibleDate(pe) && isFlexibleDateAfter(ps, pe)) {
+      err[`edu_${i}_period_end`] = 'End date must be after start';
+    }
   });
 
   form.extra.forEach((line, i) => {
@@ -121,6 +133,14 @@ function collectErrors(form: ProfileFormData): Record<string, string> {
 
   form.certificates.forEach((c, i) => {
     if ((c.name?.length ?? 0) > 200) err[`cert_${i}_name`] = 'Max 200 characters';
+    const issued = (c.issued_at ?? '').trim();
+    if (issued.length > 40) err[`cert_${i}_issued_at`] = 'Max 40 characters';
+    else if (issued && !parseFlexibleDate(issued)) err[`cert_${i}_issued_at`] = 'Pick a valid issue date';
+    const url = (c.url ?? '').trim();
+    if (url.length > 500) err[`cert_${i}_url`] = 'Max 500 characters';
+    else if (url && !/^https?:\/\//i.test(url) && !/^[a-z0-9.-]+\.[a-z]{2,}/i.test(url)) {
+      err[`cert_${i}_url`] = 'Enter a valid URL';
+    }
   });
 
   return err;
@@ -147,21 +167,6 @@ function stripSectionErrors(section: SectionId): (prev: Record<string, string>) 
     }
     return next;
   };
-}
-
-function formatMonthLabel(ym: string): string {
-  const v = (ym ?? '').trim();
-  if (!v) return '-';
-  // Imported/parsed profiles sometimes store a year only (e.g. "2018") instead of
-  // "YYYY-MM"; show what we actually have rather than a blank dash.
-  if (/^\d{4}$/.test(v)) return v;
-  if (/^\d{4}-\d{2}$/.test(v)) {
-    const [y, m] = v.split('-').map(Number);
-    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    if (m < 1 || m > 12) return v;
-    return `${names[m - 1]} ${y}`;
-  }
-  return v;
 }
 
 function fieldRing(errors: Record<string, string>, key: string): string {
@@ -221,10 +226,6 @@ function mergeSection(base: ProfileFormData, draft: ProfileFormData, section: Se
       return { ...base, certificates: draft.certificates };
     case 'extra':
       return { ...base, extra: draft.extra };
-    case 'eeo':
-      return { ...base, eeo_preferences: draft.eeo_preferences };
-    case 'address':
-      return { ...base, address: draft.address };
     default:
       return base;
   }
@@ -308,7 +309,7 @@ function ProfileSection({
       {isEditing ? (
         children
       ) : (
-        <div className="rounded-xl border border-blue-100/70 bg-white/55 px-4 py-4 text-sm leading-relaxed text-slate-800 shadow-sm">{viewContent}</div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-4 text-sm leading-relaxed text-slate-800 shadow-sm">{viewContent}</div>
       )}
     </section>
   );
@@ -320,8 +321,6 @@ const inputCls =
 const fieldErrorCls = 'mt-1.5 flex items-center gap-1 text-xs font-medium text-rose-600';
 const selectCls =
   'blue-outline-input w-full appearance-none rounded-xl px-4 py-2.5 pr-10 text-sm font-medium text-slate-900 outline-none transition';
-const monthCls =
-  'blue-outline-input w-full rounded-xl px-4 py-2.5 pl-10 text-sm font-medium text-slate-900 outline-none transition';
 
 type FancySelectProps = {
   value: string;
@@ -418,145 +417,6 @@ function FancySelect({ value, onChange, options, placeholder, hasError }: FancyS
   );
 }
 
-type MonthFieldProps = {
-  value: string;
-  onChange: (next: string) => void;
-  placeholder: string;
-  hasError?: boolean;
-  onPick?: () => void;
-};
-
-function MonthField({ value, onChange, placeholder, hasError, onPick }: MonthFieldProps) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const currentYear = useMemo(() => new Date().getFullYear(), []);
-  const parse = (v: string): { year: number; month: number } | null => {
-    if (!v || !/^\d{4}-\d{2}$/.test(v)) return null;
-    const [y, m] = v.split('-').map(Number);
-    if (!y || !m || m < 1 || m > 12) return null;
-    return { year: y, month: m };
-  };
-  const selected = parse(value);
-  // Imported/parsed profiles sometimes store a year only ("2018"); keep it visible
-  // and pre-focus the picker on that year instead of showing an empty field.
-  const yearOnly = !selected && /^\d{4}$/.test((value ?? '').trim()) ? Number((value ?? '').trim()) : null;
-  const [viewYear, setViewYear] = useState<number>(selected?.year ?? yearOnly ?? currentYear);
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (rootRef.current && e.target instanceof Node && !rootRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    setViewYear(selected?.year ?? yearOnly ?? currentYear);
-  }, [open, selected?.year, yearOnly, currentYear]);
-
-  const label = selected
-    ? `${monthNames[selected.month - 1]} ${selected.year}`
-    : yearOnly !== null
-      ? String(yearOnly)
-      : placeholder;
-
-  return (
-    <div className="relative" ref={rootRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((s) => !s)}
-        className={`${monthCls} flex items-center justify-between gap-2 text-left${hasError ? ' ring-2 ring-rose-200/90 border-rose-400/70' : ''}`}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-      >
-        <span className="inline-flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-slate-400" />
-          <span className={selected || yearOnly !== null ? 'text-slate-900' : 'text-slate-400'}>{label}</span>
-        </span>
-        <ChevronDown className={`h-4 w-4 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
-      </button>
-
-      {open && (
-        <div className="glass-panel absolute left-0 z-30 mt-2 w-[260px] rounded-xl border border-blue-200/80 p-3 shadow-xl">
-          <div className="mb-3 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => setViewYear((y) => y - 1)}
-              className="rounded-lg border border-blue-200/80 bg-white/90 p-1.5 text-slate-600 hover:bg-blue-50"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="text-sm font-bold text-slate-800">{viewYear}</span>
-            <button
-              type="button"
-              onClick={() => setViewYear((y) => y + 1)}
-              className="rounded-lg border border-blue-200/80 bg-white/90 p-1.5 text-slate-600 hover:bg-blue-50"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-4 gap-1.5">
-            {monthNames.map((m, idx) => {
-              const monthNum = idx + 1;
-              const isActive = selected?.year === viewYear && selected?.month === monthNum;
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => {
-                    onChange(`${viewYear}-${String(monthNum).padStart(2, '0')}`);
-                    onPick?.();
-                    setOpen(false);
-                  }}
-                  className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
-                    isActive
-                      ? 'bg-blue-600 text-white shadow-sm shadow-blue-400/40'
-                      : 'bg-white/90 text-slate-700 hover:bg-blue-50'
-                  }`}
-                >
-                  {m}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-3 flex items-center justify-between text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                onChange('');
-                onPick?.();
-                setOpen(false);
-              }}
-              className="font-semibold text-slate-500 hover:text-slate-700"
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const t = new Date();
-                onChange(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`);
-                onPick?.();
-                setOpen(false);
-              }}
-              className="font-semibold text-blue-700 hover:text-blue-800"
-            >
-              This month
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 type Props = {
   profile: UserProfile | null;
   onSubmit: (data: ProfileFormData) => Promise<void>;
@@ -564,75 +424,6 @@ type Props = {
   importErrors?: Record<string, string>;
   onImportDraftApplied?: () => void;
 };
-
-// Voluntary yes/no answer with an explicit "unspecified" state (null) so we can
-// distinguish "no" from "not provided" (the latter falls back to engine defaults).
-function TriStateToggle({
-  value,
-  onChange,
-  yesLabel = 'Yes',
-  noLabel = 'No',
-}: {
-  value: boolean | null | undefined;
-  onChange: (v: boolean | null) => void;
-  yesLabel?: string;
-  noLabel?: string;
-}) {
-  const opts: Array<{ v: boolean | null; label: string }> = [
-    { v: true, label: yesLabel },
-    { v: false, label: noLabel },
-    { v: null, label: 'Unspecified' },
-  ];
-  const current = value ?? null;
-  return (
-    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
-      {opts.map((o) => {
-        const active = current === o.v;
-        return (
-          <button
-            key={String(o.v)}
-            type="button"
-            onClick={() => onChange(o.v)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-              active ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white'
-            }`}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-const EEO_YESNO_FIELDS: Array<{ key: keyof EEOPreferences; label: string; yesLabel?: string; noLabel?: string }> = [
-  { key: 'hispanic_latino', label: 'Hispanic or Latino' },
-  { key: 'veteran_status', label: 'Protected veteran', yesLabel: 'I am a veteran', noLabel: 'Not a veteran' },
-  { key: 'disability_status', label: 'Disability status', yesLabel: 'Have a disability', noLabel: 'No disability' },
-  { key: 'work_authorized', label: 'Authorized to work in the country' },
-  { key: 'needs_sponsorship', label: 'Require visa sponsorship' },
-];
-
-const ADDRESS_FIELDS: Array<{
-  key: keyof ProfileFormData['address'];
-  label: string;
-  placeholder?: string;
-  autoComplete?: string;
-  full?: boolean;
-}> = [
-  { key: 'line1', label: 'Address line 1', placeholder: '123 Main St', autoComplete: 'address-line1', full: true },
-  { key: 'line2', label: 'Address line 2', placeholder: 'Apt, suite, unit (optional)', autoComplete: 'address-line2', full: true },
-  { key: 'city', label: 'City', placeholder: 'San Francisco', autoComplete: 'address-level2' },
-  { key: 'state', label: 'State / Province', placeholder: 'California', autoComplete: 'address-level1' },
-  { key: 'postal_code', label: 'Postal code', placeholder: '94105', autoComplete: 'postal-code' },
-  { key: 'country', label: 'Country', placeholder: 'United States of America', autoComplete: 'country-name' },
-];
-
-function triLabel(v: boolean | null | undefined, yes = 'Yes', no = 'No'): string {
-  if (v === true) return yes;
-  if (v === false) return no;
-  return '-';
-}
 
 export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onImportDraftApplied }: Props) {
   const [form, setForm] = useState<ProfileFormData>(() => profileToForm(profile));
@@ -869,8 +660,8 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
             />
             {errors.email ? <p className={fieldErrorCls}>{errors.email}</p> : null}
           </div>
-          <div className="flex flex-wrap gap-4">
-            <div className="min-w-[120px] flex-1">
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap">
+            <div className="w-full sm:min-w-[120px] sm:flex-1">
               <label className={`${labelCls} flex items-center gap-1.5`}>
                 <Phone className="h-3.5 w-3.5 text-slate-400" />
                 Country code *
@@ -885,7 +676,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
                 hasError={!!errors.phone_country_code}
               />
             </div>
-            <div className="min-w-[180px] flex-[2]">
+            <div className="w-full sm:min-w-[180px] sm:flex-[2]">
               <label className={labelCls} htmlFor="phone_number">
                 Phone number *
               </label>
@@ -1010,10 +801,10 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
         {form.technical_skills.map((t, i) => (
           <div
             key={i}
-            className="mb-3 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4 last:mb-0"
+            className="mb-3 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 last:mb-0 sm:flex-row sm:flex-wrap sm:items-end sm:p-4"
             style={{ animationDelay: `${Math.min(i * 35, 200)}ms` }}
           >
-            <div className="min-w-[140px] flex-1">
+            <div className="w-full sm:min-w-[140px] sm:flex-1">
               <input
                 type="text"
                 placeholder="Category (e.g. Languages)"
@@ -1030,7 +821,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
               />
               {errors[`skills_${i}_category`] ? <p className={fieldErrorCls}>{errors[`skills_${i}_category`]}</p> : null}
             </div>
-            <div className="min-w-[180px] flex-[2]">
+            <div className="w-full sm:min-w-[180px] sm:flex-[2]">
               <input
                 type="text"
                 placeholder="Skills (comma-separated)"
@@ -1080,7 +871,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
                       {w.company_name.trim() || '-'}
                     </p>
                     <p className="text-xs text-slate-600">
-                      {formatMonthLabel(w.period_start ?? '')} – {formatMonthLabel(w.period_end ?? '')}
+                      {formatFlexibleDate(w.period_start, '-')} – {formatFlexibleDate(w.period_end) || '-'}
                       {w.location?.trim() ? ` · ${w.location.trim()}` : ''}
                       {w.job_type?.trim() ? ` · ${w.job_type}` : ''}
                       {w.employment_type?.trim() ? ` · ${w.employment_type}` : ''}
@@ -1157,27 +948,38 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <MonthField
-                  placeholder="Start month"
+                <FlexibleDatePicker
+                  size="md"
+                  placeholder="Start date"
                   value={w.period_start ?? ''}
                   onChange={(nextValue) => {
                     const next = [...form.work_experience];
                     next[i] = { ...next[i], period_start: nextValue };
                     update('work_experience', next);
                   }}
-                  hasError={!!errors[`work_${i}_period_end`]}
-                  onPick={() => window.setTimeout(() => blurField(`work_${i}_period_end`), 0)}
+                  hasError={!!errors[`work_${i}_period_start`] || !!errors[`work_${i}_period_end`]}
+                  onPick={() =>
+                    window.setTimeout(() => {
+                      blurField(`work_${i}_period_start`);
+                      blurField(`work_${i}_period_end`);
+                    }, 0)
+                  }
                 />
+                {errors[`work_${i}_period_start`] ? (
+                  <p className={fieldErrorCls}>{errors[`work_${i}_period_start`]}</p>
+                ) : null}
               </div>
               <div>
-                <MonthField
-                  placeholder="End month"
+                <FlexibleDatePicker
+                  size="md"
+                  placeholder="End date"
                   value={w.period_end ?? ''}
                   onChange={(nextValue) => {
                     const next = [...form.work_experience];
                     next[i] = { ...next[i], period_end: nextValue };
                     update('work_experience', next);
                   }}
+                  allowPresent
                   hasError={!!errors[`work_${i}_period_end`]}
                   onPick={() => window.setTimeout(() => blurField(`work_${i}_period_end`), 0)}
                 />
@@ -1188,7 +990,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
               <div>
                 <input
                   type="text"
-                  placeholder="Location *"
+                  placeholder="Location (optional)"
                   value={w.location}
                   onChange={(e) => {
                     const next = [...form.work_experience];
@@ -1210,7 +1012,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
                     update('work_experience', next);
                     window.setTimeout(() => blurField(`work_${i}_job_type`), 0);
                   }}
-                  placeholder="Work arrangement *"
+                  placeholder="Work arrangement (optional)"
                   options={JOB_TYPES.map((jt) => ({ value: jt, label: jt }))}
                   hasError={!!errors[`work_${i}_job_type`]}
                 />
@@ -1268,51 +1070,16 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
                 }}
                 className={`${inputCls} resize-y`}
               />
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-slate-600">Key contributions</p>
-                {(w.contributions && w.contributions.length ? w.contributions : ['']).map((contribution, ci) => (
-                  <div key={ci} className="flex items-start gap-2">
-                    <span className="mt-2.5 text-slate-400">&bull;</span>
-                    <textarea
-                      rows={1}
-                      placeholder={`Contribution ${ci + 1}`}
-                      value={contribution}
-                      onChange={(e) => {
-                        const next = [...form.work_experience];
-                        const list = [...(next[i].contributions ?? [])];
-                        list[ci] = e.target.value;
-                        next[i] = { ...next[i], contributions: list };
-                        update('work_experience', next);
-                      }}
-                      className={`${inputCls} min-h-0 flex-1 resize-y py-1.5`}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Remove contribution"
-                      onClick={() => {
-                        const next = [...form.work_experience];
-                        const list = (next[i].contributions ?? []).filter((_, k) => k !== ci);
-                        next[i] = { ...next[i], contributions: list.length ? list : [''] };
-                        update('work_experience', next);
-                      }}
-                      className="mt-1.5 rounded-md p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
+              <div>
+                <ContributionsField
+                  value={contributionsToEditorText(w.contributions)}
+                  onChange={(text) => {
                     const next = [...form.work_experience];
-                    next[i] = { ...next[i], contributions: [...(next[i].contributions ?? []), ''] };
+                    next[i] = { ...next[i], contributions: editorTextToContributions(text) };
                     update('work_experience', next);
                   }}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 transition hover:text-indigo-700"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add contribution
-                </button>
+                  rows={5}
+                />
               </div>
             </div>
             <button
@@ -1350,7 +1117,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
                   <li key={i} className="rounded-lg border border-slate-100 bg-white/70 px-3 py-2">
                     <p className="font-semibold text-slate-900">{ed.degree.trim() || 'Degree'} - {ed.university_name.trim() || '-'}</p>
                     <p className="text-xs text-slate-600">
-                      {formatMonthLabel(ed.period_start ?? '')} – {formatMonthLabel(ed.period_end ?? '')}
+                      {formatFlexibleDate(ed.period_start, '-')} – {formatFlexibleDate(ed.period_end) || '-'}
                       {ed.mark?.trim() ? ` · ${ed.mark.trim()}` : ''}
                       {ed.location?.trim() ? ` · ${ed.location.trim()}` : ''}
                     </p>
@@ -1429,20 +1196,32 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <MonthField
-                placeholder="Start month"
-                value={ed.period_start ?? ''}
-                onChange={(nextValue) => {
-                  const next = [...form.education];
-                  next[i] = { ...next[i], period_start: nextValue };
-                  update('education', next);
-                }}
-                hasError={!!errors[`edu_${i}_period_end`]}
-                onPick={() => window.setTimeout(() => blurField(`edu_${i}_period_end`), 0)}
-              />
               <div>
-                <MonthField
-                  placeholder="End month"
+                <FlexibleDatePicker
+                  size="md"
+                  placeholder="Start date"
+                  value={ed.period_start ?? ''}
+                  onChange={(nextValue) => {
+                    const next = [...form.education];
+                    next[i] = { ...next[i], period_start: nextValue };
+                    update('education', next);
+                  }}
+                  hasError={!!errors[`edu_${i}_period_start`] || !!errors[`edu_${i}_period_end`]}
+                  onPick={() =>
+                    window.setTimeout(() => {
+                      blurField(`edu_${i}_period_start`);
+                      blurField(`edu_${i}_period_end`);
+                    }, 0)
+                  }
+                />
+                {errors[`edu_${i}_period_start`] ? (
+                  <p className={fieldErrorCls}>{errors[`edu_${i}_period_start`]}</p>
+                ) : null}
+              </div>
+              <div>
+                <FlexibleDatePicker
+                  size="md"
+                  placeholder="End date"
                   value={ed.period_end ?? ''}
                   onChange={(nextValue) => {
                     const next = [...form.education];
@@ -1499,7 +1278,23 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
               form.certificates.map((c, i) =>
                 c.name.trim() ? (
                   <li key={i} className="text-sm font-medium">
-                    {c.name.trim()}
+                    {c.url?.trim() ? (
+                      <a
+                        href={/^https?:\/\//i.test(c.url.trim()) ? c.url.trim() : `https://${c.url.trim()}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-700 hover:underline"
+                      >
+                        {c.name.trim()}
+                      </a>
+                    ) : (
+                      c.name.trim()
+                    )}
+                    {c.issued_at?.trim() ? (
+                      <span className="ml-1.5 font-normal text-slate-500">
+                        ({formatFlexibleDate(c.issued_at)})
+                      </span>
+                    ) : null}
                   </li>
                 ) : null,
               )
@@ -1510,27 +1305,67 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
         }
       >
         {form.certificates.map((c, i) => (
-          <div key={i} className="mb-2 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
-            <div className="min-w-0 flex-1">
-              <input
-                type="text"
-                placeholder="Certificate name"
-                value={c.name}
-                onChange={(e) => {
-                  const next = [...form.certificates];
-                  next[i] = { name: e.target.value };
-                  update('certificates', next);
-                }}
-                onBlur={() => blurField(`cert_${i}_name`)}
-                className={`${inputCls} w-full${fieldRing(errors, `cert_${i}_name`)}`}
-                maxLength={220}
-                aria-invalid={!!errors[`cert_${i}_name`]}
-              />
-              {errors[`cert_${i}_name`] ? <p className={fieldErrorCls}>{errors[`cert_${i}_name`]}</p> : null}
+          <div key={i} className="mb-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1 space-y-2">
+                <div>
+                  <input
+                    type="text"
+                    placeholder="Certificate name"
+                    value={c.name}
+                    onChange={(e) => {
+                      const next = [...form.certificates];
+                      next[i] = { ...c, name: e.target.value };
+                      update('certificates', next);
+                    }}
+                    onBlur={() => blurField(`cert_${i}_name`)}
+                    className={`${inputCls} w-full${fieldRing(errors, `cert_${i}_name`)}`}
+                    maxLength={220}
+                    aria-invalid={!!errors[`cert_${i}_name`]}
+                  />
+                  {errors[`cert_${i}_name`] ? <p className={fieldErrorCls}>{errors[`cert_${i}_name`]}</p> : null}
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div>
+                    <FlexibleDatePicker
+                      size="md"
+                      placeholder="Issue date (optional)"
+                      value={c.issued_at ?? ''}
+                      onChange={(nextValue) => {
+                        const next = [...form.certificates];
+                        next[i] = { ...c, issued_at: nextValue };
+                        update('certificates', next);
+                      }}
+                      hasError={!!errors[`cert_${i}_issued_at`]}
+                      onPick={() => window.setTimeout(() => blurField(`cert_${i}_issued_at`), 0)}
+                    />
+                    {errors[`cert_${i}_issued_at`] ? (
+                      <p className={fieldErrorCls}>{errors[`cert_${i}_issued_at`]}</p>
+                    ) : null}
+                  </div>
+                  <div>
+                    <input
+                      type="url"
+                      placeholder="Credential link (optional)"
+                      value={c.url ?? ''}
+                      onChange={(e) => {
+                        const next = [...form.certificates];
+                        next[i] = { ...c, url: e.target.value };
+                        update('certificates', next);
+                      }}
+                      onBlur={() => blurField(`cert_${i}_url`)}
+                      className={`${inputCls} w-full${fieldRing(errors, `cert_${i}_url`)}`}
+                      maxLength={500}
+                      aria-invalid={!!errors[`cert_${i}_url`]}
+                    />
+                    {errors[`cert_${i}_url`] ? <p className={fieldErrorCls}>{errors[`cert_${i}_url`]}</p> : null}
+                  </div>
+                </div>
+              </div>
+              <button type="button" onClick={() => update('certificates', form.certificates.filter((_, j) => j !== i))} className={removeIconBtn}>
+                <Trash2 className="h-4 w-4" />
+              </button>
             </div>
-            <button type="button" onClick={() => update('certificates', form.certificates.filter((_, j) => j !== i))} className={removeIconBtn}>
-              <Trash2 className="h-4 w-4" />
-            </button>
           </div>
         ))}
         <button type="button" onClick={() => update('certificates', [...form.certificates, emptyCert()])} className={addRowBtn}>
@@ -1596,110 +1431,13 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
         </button>
       </ProfileSection>
 
-      <ProfileSection
-        layoutClassName="h-full xl:col-span-2"
-        icon={ShieldCheck}
-        title="EEO / demographics (voluntary)"
-        hint="Used only to auto-fill voluntary disclosure questions on application forms (e.g. Workday). Leave anything as Unspecified to use sensible defaults."
-        sectionId="eeo"
-        isEditing={sectionEditing.eeo}
-        onEdit={() => setSectionEditing((s) => ({ ...s, eeo: true }))}
-        onCancel={() => cancelSectionEdit('eeo')}
-        onSave={() => saveSection('eeo')}
-        saving={savingSection === 'eeo'}
-        viewContent={
-          <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-            <div className="flex justify-between gap-3 border-b border-slate-100 py-1">
-              <dt className="text-slate-500">Gender</dt>
-              <dd className="font-medium text-slate-800">{form.eeo_preferences.gender?.trim() || '-'}</dd>
-            </div>
-            <div className="flex justify-between gap-3 border-b border-slate-100 py-1">
-              <dt className="text-slate-500">Race / Ethnicity</dt>
-              <dd className="font-medium text-slate-800">{form.eeo_preferences.race?.trim() || '-'}</dd>
-            </div>
-            {EEO_YESNO_FIELDS.map((f) => (
-              <div key={f.key} className="flex justify-between gap-3 border-b border-slate-100 py-1">
-                <dt className="text-slate-500">{f.label}</dt>
-                <dd className="font-medium text-slate-800">
-                  {triLabel(form.eeo_preferences[f.key] as boolean | null | undefined, f.yesLabel, f.noLabel)}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        }
-      >
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div>
-            <label className={labelCls}>Gender</label>
-            <FancySelect
-              value={form.eeo_preferences.gender ?? ''}
-              onChange={(next) => update('eeo_preferences', { ...form.eeo_preferences, gender: next })}
-              options={GENDER_OPTIONS.map((o) => ({ value: o, label: o }))}
-              placeholder="Select or leave blank"
-            />
-          </div>
-          <div>
-            <label className={labelCls}>Race / Ethnicity</label>
-            <FancySelect
-              value={form.eeo_preferences.race ?? ''}
-              onChange={(next) => update('eeo_preferences', { ...form.eeo_preferences, race: next })}
-              options={RACE_OPTIONS.map((o) => ({ value: o, label: o }))}
-              placeholder="Select or leave blank"
-            />
-          </div>
-          {EEO_YESNO_FIELDS.map((f) => (
-            <div key={f.key}>
-              <label className={labelCls}>{f.label}</label>
-              <div>
-                <TriStateToggle
-                  value={form.eeo_preferences[f.key] as boolean | null | undefined}
-                  onChange={(v) => update('eeo_preferences', { ...form.eeo_preferences, [f.key]: v })}
-                  yesLabel={f.yesLabel}
-                  noLabel={f.noLabel}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </ProfileSection>
-
-      <ProfileSection
-        layoutClassName="h-full xl:col-span-2"
-        icon={MapPin}
-        title="Address"
-        hint="Used to auto-fill the Address / City / State / Postal Code fields on application forms (e.g. Workday)."
-        sectionId="address"
-        isEditing={sectionEditing.address}
-        onEdit={() => setSectionEditing((s) => ({ ...s, address: true }))}
-        onCancel={() => cancelSectionEdit('address')}
-        onSave={() => saveSection('address')}
-        saving={savingSection === 'address'}
-        viewContent={
-          <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-            {ADDRESS_FIELDS.map((f) => (
-              <div key={f.key} className="flex justify-between gap-3 border-b border-slate-100 py-1">
-                <dt className="text-slate-500">{f.label}</dt>
-                <dd className="font-medium text-slate-800">{form.address[f.key]?.trim() || '-'}</dd>
-              </div>
-            ))}
-          </dl>
-        }
-      >
-        <div className="grid gap-5 sm:grid-cols-2">
-          {ADDRESS_FIELDS.map((f) => (
-            <div key={f.key} className={f.full ? 'sm:col-span-2' : ''}>
-              <label className={labelCls}>{f.label}</label>
-              <input
-                className={inputCls}
-                value={form.address[f.key] ?? ''}
-                onChange={(e) => update('address', { ...form.address, [f.key]: e.target.value })}
-                placeholder={f.placeholder}
-                autoComplete={f.autoComplete}
-              />
-            </div>
-          ))}
-        </div>
-      </ProfileSection>
+      <p className="xl:col-span-2 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
+        EEO demographics and mailing address for application autofill live in{' '}
+        <Link to="/preferences" className="font-semibold text-blue-700 hover:underline">
+          My Preferences
+        </Link>
+        .
+      </p>
 
       </div>
   );

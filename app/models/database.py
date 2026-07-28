@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, DateTime, Float, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Text, Date, DateTime, Float, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 from app.models.schemas import ExtractionMethod, ExtractionStatus
@@ -16,6 +16,9 @@ class User(Base):
     name = Column(String(100), nullable=True)  # Display name (header)
     password_hash = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, index=True)
+    # Platform admin. Existing users are bootstrapped true via migration 048;
+    # new signups default to false.
+    is_admin = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -62,6 +65,9 @@ class User(Base):
 
     # Active LLM provider powering this user's AI work ("openai" | "anthropic" | "gemini").
     llm_provider = Column(String(20), default="openai", nullable=False, server_default="openai")
+    # Preferred model id for the OpenAI-compatible gateway (many models per key).
+    # Null = fall back to admin job binding model, then system openai_model.
+    llm_model = Column(String(200), nullable=True)
 
     # Anthropic / Gemini bring-your-own keys (mode "default" uses the server key;
     # "custom" uses the encrypted user-provided key). Mirrors the OpenAI pattern.
@@ -109,6 +115,45 @@ class User(Base):
         Index("ix_users_email", "email"),
         Index("ix_users_is_active", "is_active"),
     )
+
+
+class ResumeCustomTheme(Base):
+    """A user-saved resume style theme (typography/colors/layout/sections snapshot)."""
+
+    __tablename__ = "resume_custom_themes"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name = Column(String(200), nullable=False)
+    description = Column(String(500), nullable=False, default="Custom theme", server_default="Custom theme")
+    accent_swatch = Column(String(32), nullable=False, default="#2563eb", server_default="#2563eb")
+    design = Column(JSON, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (Index("ix_resume_custom_themes_user_id", "user_id"),)
+
+
+class ResumeThemeLove(Base):
+    """Per-user loved theme ids (built-in catalog ids or custom theme ids)."""
+
+    __tablename__ = "resume_theme_loves"
+
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    theme_id = Column(String(64), primary_key=True, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (Index("ix_resume_theme_loves_user_id", "user_id"),)
 
 
 class ResumeDocument(Base):
@@ -234,6 +279,7 @@ class Job(Base):
     scraped_at = Column(DateTime, nullable=True)
     click_count = Column(Integer, default=0, nullable=False)
     sheet_posted_at = Column(DateTime, nullable=True)
+    pumble_posted_at = Column(DateTime, nullable=True)
     status = Column(String(30), default="active", nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -368,6 +414,36 @@ class ResumeBuildResult(Base):
     )
 
 
+class PumbleConfig(Base):
+    """Per-user Pumble destination. Users may connect multiple workspaces/channels.
+
+    Jobs are posted as thread replies under a daily parent message in the
+    configured channel. parent_message_id + parent_posted_date track the
+    current day's thread root per destination.
+    """
+    __tablename__ = "pumble_config"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = Column(String(255), nullable=True)
+    api_key_encrypted = Column(Text, nullable=False)
+    workspace_id = Column(String(255), nullable=True)
+    channel_id = Column(String(255), nullable=False)
+    channel_name = Column(String(255), nullable=False)
+    parent_message_id = Column(String(255), nullable=True)
+    parent_posted_date = Column(Date, nullable=True)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    auto_post_threshold = Column(Integer, default=75)
+    # Auto-post filters JSON: work_modes[], exclude_companies[].
+    auto_post_filters = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "channel_id", name="uq_pumble_config_user_channel"),
+    )
+
+
 class GoogleSheetsConfig(Base):
     """Per-user Google Sheets integration settings.
 
@@ -384,6 +460,10 @@ class GoogleSheetsConfig(Base):
     tab_groups = Column(JSON, default=list)
     round_robin_index = Column(Integer, default=0)
     auto_post_threshold = Column(Integer, default=75)
+    # Soft toggle: disable auto-post without deleting spreadsheet URL / tab groups.
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    # Auto-post filters JSON: work_modes[], exclude_companies[].
+    auto_post_filters = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -452,3 +532,65 @@ class APIPatternRegistry(Base):
     last_success_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class SystemSetting(Base):
+    """DB overrides for allowlisted Settings fields (admin System Settings)."""
+
+    __tablename__ = "system_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    updated_by_user_id = Column(String(36), nullable=True)
+
+
+class BlockedDomain(Base):
+    """Domains that reject auto job extraction (admin-managed)."""
+
+    __tablename__ = "blocked_domains"
+
+    domain = Column(String(255), primary_key=True)
+    reason = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class LlmProviderKey(Base):
+    """Admin-managed API key pool entry for a single LLM provider."""
+
+    __tablename__ = "llm_provider_keys"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider = Column(String(20), nullable=False, index=True)  # openai | anthropic | gemini
+    label = Column(String(100), nullable=False)
+    api_key_encrypted = Column(Text, nullable=False)
+    key_hint = Column(String(32), nullable=True)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_by_user_id = Column(String(36), nullable=True)
+
+    __table_args__ = (
+        Index("ix_llm_provider_keys_provider_label", "provider", "label", unique=True),
+    )
+
+
+class LlmJobBinding(Base):
+    """Maps a platform LLM job type to a provider key and optional model id.
+
+    ``model`` is especially important for OpenAI-compatible gateways where one
+    API key can access many models (discovered via GET /v1/models).
+    """
+
+    __tablename__ = "llm_job_bindings"
+
+    job_type = Column(String(50), primary_key=True)
+    provider_key_id = Column(
+        String(36),
+        ForeignKey("llm_provider_keys.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    provider = Column(String(20), nullable=True)  # optional provider override
+    model = Column(String(200), nullable=True)  # optional model id for the bound provider
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    updated_by_user_id = Column(String(36), nullable=True)

@@ -15,7 +15,15 @@ class ValidationPipeline:
     Invalid items are dropped with a log warning.
     """
 
-    def process_item(self, item, spider):
+    def __init__(self, crawler):
+        self.crawler = crawler
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(crawler)
+
+    def process_item(self, item):
+        spider = self.crawler.spider
         try:
             if isinstance(item, JobItem):
                 return item

@@ -77,6 +77,7 @@ async def agent_chat(req: AgentChatRequest, current_user: dict = Depends(get_cur
                 history=history,
                 timezone=req.timezone,
                 confirmed=confirmed,
+                is_admin=bool(current_user.get("is_admin")),
             ):
                 if event.get("type") in {"done", "error"}:
                     saw_terminal = True

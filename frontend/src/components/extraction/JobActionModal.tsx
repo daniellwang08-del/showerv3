@@ -34,7 +34,7 @@ export function JobActionModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center bg-blue-950/40 p-4 backdrop-blur-md"
+      className="fixed inset-0 flex items-center justify-center bg-slate-900/50 p-3 sm:p-4 backdrop-blur-sm"
       style={{ zIndex: Z_INDEX.jobActionModal }}
       role="dialog"
       aria-modal="true"
@@ -42,8 +42,8 @@ export function JobActionModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="glass-card w-full max-w-lg rounded-2xl border border-blue-200/70 bg-white/90 shadow-2xl">
-        <div className="border-b border-blue-200/60 px-5 py-4">
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="border-b border-blue-200/60 px-4 py-3 sm:px-5 sm:py-4">
           <div className="flex items-center gap-2 text-base font-bold text-slate-900">
             {modal.kind === 'edit' && <Edit2 className="h-5 w-5 text-blue-600" />}
             {modal.kind === 'reportInvalid' && <XCircle className="h-5 w-5 text-red-600" />}
@@ -67,7 +67,7 @@ export function JobActionModal({
           )}
         </div>
 
-        <div className="px-5 py-4">
+        <div className="px-4 py-3 sm:px-5 sm:py-4">
           {modal.kind === 'edit' && (
             <div>
               <label className="block text-sm font-semibold text-slate-900">New URL</label>
@@ -167,7 +167,7 @@ export function JobActionModal({
           {modalError && <div className="mt-3 text-sm font-medium text-red-700">{modalError}</div>}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-blue-200/60 px-5 py-3">
+        <div className="flex flex-col-reverse gap-2 border-t border-blue-200/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-5">
           <button
             type="button"
             className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-blue-50"

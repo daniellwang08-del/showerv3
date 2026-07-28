@@ -10,7 +10,7 @@ type Props = {
 
 export function ProfilesPage({ onBack, userEmail, onProfileSaved }: Props) {
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 text-slate-900">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <ProfilesManagementPage onBack={onBack} userEmail={userEmail} onProfileSaved={onProfileSaved} />
     </div>
   );

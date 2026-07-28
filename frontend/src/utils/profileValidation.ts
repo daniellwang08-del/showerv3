@@ -1,5 +1,6 @@
 import type { ProfileFormData } from '../types/profile';
 import { isValidJobArrangement } from '../types/profile';
+import { isFlexibleDateAfter, parseFlexibleDate } from './flexibleDate';
 
 function validateEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -47,13 +48,19 @@ export function validateProfileForSave(form: ProfileFormData): Record<string, st
     const jt = w.job_title.trim();
     if (co && !jt) err[`work_${i}_job_title`] = 'Job title is required when company is set';
     if (!co && jt) err[`work_${i}_company_name`] = 'Company is required when job title is set';
-    if (co && jt) {
-      if (!w.location?.trim()) err[`work_${i}_location`] = 'Location is required for job matching';
-      if (!isValidJobArrangement(w.job_type)) err[`work_${i}_job_type`] = 'Choose remote, hybrid, or onsite';
+    // Location and work arrangement are optional (profile-strength suggestions), not save blockers.
+    const arrangement = (w.job_type ?? '').trim();
+    if (arrangement && !isValidJobArrangement(arrangement)) {
+      err[`work_${i}_job_type`] = 'Choose remote, hybrid, or onsite';
     }
     const ps = (w.period_start ?? '').trim();
     const pe = (w.period_end ?? '').trim();
-    if (ps && pe && ps > pe) err[`work_${i}_period_end`] = 'End month must be after start';
+    const peIsPresent = !pe || /^(present|current|now|ongoing)$/i.test(pe);
+    if (ps && !parseFlexibleDate(ps)) err[`work_${i}_period_start`] = 'Pick a valid start date';
+    if (pe && !peIsPresent && !parseFlexibleDate(pe)) err[`work_${i}_period_end`] = 'Pick a valid end date';
+    if (ps && pe && !peIsPresent && parseFlexibleDate(ps) && parseFlexibleDate(pe) && isFlexibleDateAfter(ps, pe)) {
+      err[`work_${i}_period_end`] = 'End date must be after start';
+    }
   });
 
   form.education.forEach((ed, i) => {
@@ -63,7 +70,11 @@ export function validateProfileForSave(form: ProfileFormData): Record<string, st
     if (!u && d) err[`edu_${i}_university`] = 'University is required when degree is set';
     const ps = (ed.period_start ?? '').trim();
     const pe = (ed.period_end ?? '').trim();
-    if (ps && pe && ps > pe) err[`edu_${i}_period_end`] = 'End month must be after start';
+    if (ps && !parseFlexibleDate(ps)) err[`edu_${i}_period_start`] = 'Pick a valid start date';
+    if (pe && !parseFlexibleDate(pe)) err[`edu_${i}_period_end`] = 'Pick a valid end date';
+    if (ps && pe && parseFlexibleDate(ps) && parseFlexibleDate(pe) && isFlexibleDateAfter(ps, pe)) {
+      err[`edu_${i}_period_end`] = 'End date must be after start';
+    }
   });
 
   form.extra.forEach((line, i) => {
@@ -72,6 +83,14 @@ export function validateProfileForSave(form: ProfileFormData): Record<string, st
 
   form.certificates.forEach((c, i) => {
     if ((c.name?.length ?? 0) > 200) err[`cert_${i}_name`] = 'Max 200 characters';
+    const issued = (c.issued_at ?? '').trim();
+    if (issued.length > 40) err[`cert_${i}_issued_at`] = 'Max 40 characters';
+    else if (issued && !parseFlexibleDate(issued)) err[`cert_${i}_issued_at`] = 'Pick a valid issue date';
+    const url = (c.url ?? '').trim();
+    if (url.length > 500) err[`cert_${i}_url`] = 'Max 500 characters';
+    else if (url && !/^https?:\/\//i.test(url) && !/^[a-z0-9.-]+\.[a-z]{2,}/i.test(url)) {
+      err[`cert_${i}_url`] = 'Enter a valid URL';
+    }
   });
 
   return err;

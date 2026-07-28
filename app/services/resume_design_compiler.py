@@ -9,8 +9,10 @@ simply *produces* a template instead of requiring the user to upload one.
 from __future__ import annotations
 
 import base64
+import os
 import re
 import uuid
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,7 @@ from app.services.resume_context_builder import (
     _full_name,
     _profile_work_rows,
 )
+from app.utils.flexible_date import format_flexible_date
 from app.services.resume_icons import contact_icon_png
 from app.services.resume_template_service import _default_blueprint_from_tags, count_work_roles
 
@@ -51,6 +54,33 @@ SIDEBAR_SECTIONS = {"skills", "education", "certificates"}
 # US Letter page width in EMU (8.5 in × 914_400 EMU/in = 612 pt). Used to place the
 # right-aligned date tab stop at the true right text edge so it matches the preview.
 _LETTER_WIDTH_EMU = 7_772_400
+
+
+def _page_usable_emu(design: ResumeDesign) -> int:
+    """Full-page content width (page minus left/right margins) in EMU."""
+    return max(int(_LETTER_WIDTH_EMU - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
+
+
+def _container_usable_emu(container: Any, design: ResumeDesign) -> int:
+    """Right-tab stop position for the container being written into.
+
+    In a two-column layout education lives in a ~34% sidebar cell. Using the full-page
+    width as the tab stop places the date past the cell edge into the main column — the
+    same visual bleed as the preview flex overflow. Prefer the cell width when present.
+    """
+    full = _page_usable_emu(design)
+    width = getattr(container, "width", None)
+    if width is None:
+        return full
+    try:
+        # python-docx Length is int-like (EMU). Leave a small inset so the date stays
+        # inside the cell padding rather than kissing the border.
+        cell_emu = int(width)
+    except (TypeError, ValueError):
+        return full
+    if cell_emu <= 0:
+        return full
+    return max(int(cell_emu * 0.96), 200_000)
 
 # Bundled OFL font directory (shipped so any render host has the exact face the preview
 # uses). Carlito is metric-identical to Calibri and embeds cleanly into the .docx.
@@ -224,6 +254,56 @@ def _clean_url(value: str | None) -> str:
     return v.rstrip("/")
 
 
+def _ensure_http_url(value: str | None) -> str | None:
+    v = (value or "").strip()
+    if not v:
+        return None
+    if v.lower().startswith(("http://", "https://")):
+        return v
+    return "https://" + v.lstrip("/")
+
+
+def _contact_href(kind: str, raw: str | None, display: str) -> str | None:
+    """Absolute href for a contact item (mailto / tel / https)."""
+    if kind == "email" and display.strip():
+        return f"mailto:{display.strip()}"
+    if kind == "phone" and display.strip():
+        digits = re.sub(r"[^\d+]", "", display)
+        return f"tel:{digits}" if digits else None
+    if kind in ("linkedin", "github"):
+        return _ensure_http_url(raw or display)
+    return None
+
+
+def _add_hyperlink_text(
+    paragraph,
+    url: str,
+    text: str,
+    *,
+    font: str,
+    size_pt: float,
+    color: RGBColor,
+) -> None:
+    """Append an external hyperlink run styled like normal contact text (no blue underline)."""
+    part = paragraph.part
+    r_id = part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    hyperlink.set(qn("w:history"), "1")
+
+    run = paragraph.add_run(text)
+    _set_run(run, font=font, size_pt=size_pt, color=color)
+    run.font.underline = False
+    r_el = run._r
+    paragraph._p.remove(r_el)
+    hyperlink.append(r_el)
+    paragraph._p.append(hyperlink)
+
+
 def _hex_to_rgb(value: str) -> RGBColor:
     v = (value or "#000000").lstrip("#")
     if len(v) == 3:
@@ -311,29 +391,33 @@ def _reorder_tblpr(tbl_pr) -> None:
 def _set_table_full_bleed(
     table, page_width_emu: int, left_margin_emu: int, right_margin_emu: int = 0
 ) -> None:
-    """Stretch *table* across the whole page width and shift it left into the margin
-    so a header band touches the page's left and right edges (no margin gap).
+    """Stretch *table* across the page and shift it left into the margin so a header
+    band touches the page's left and right edges.
 
-    The table is shifted left by the left margin (negative ``tblInd``) so its left
-    edge sits on the page edge. Its width is the page width PLUS both margins: a plain
-    ``page_width`` under-extends on the right in LibreOffice (the rendered table stops
-    ~a margin short, leaving a white strip - and any behind-text picture, which is
-    clipped to the cell, is cut off with it). Over-sizing is safe because the renderer
-    clamps the right edge to the physical page edge."""
+    Width is exactly ``page_width`` (not page+margins). dxpdf centers text inside the
+    declared table width; the old LibreOffice oversize (page+both margins) made the
+    layout box ~720 pt starting at x=0, so ``jc=center`` landed at page_center+left_margin
+    (+54 pt). Page-width + negative ``tblInd`` keeps left flush and centers correctly.
+    ``right_margin_emu`` is accepted for call-site compatibility but unused.
+    """
+    del right_margin_emu  # unused under dxpdf; kept so callers need not change
     table.allow_autofit = False
     tbl_pr = table._tbl.tblPr
-    for tag in ("w:tblW", "w:tblInd"):
+    for tag in ("w:tblW", "w:tblInd", "w:tblLayout"):
         for el in tbl_pr.findall(qn(tag)):
             tbl_pr.remove(el)
-    full_width = page_width_emu + left_margin_emu + right_margin_emu
     tbl_w = OxmlElement("w:tblW")
     tbl_w.set(qn("w:type"), "dxa")
-    tbl_w.set(qn("w:w"), str(_emu_to_twips(full_width)))
+    tbl_w.set(qn("w:w"), str(_emu_to_twips(page_width_emu)))
     tbl_pr.append(tbl_w)
     tbl_ind = OxmlElement("w:tblInd")
     tbl_ind.set(qn("w:type"), "dxa")
     tbl_ind.set(qn("w:w"), str(-_emu_to_twips(left_margin_emu)))
     tbl_pr.append(tbl_ind)
+    # Never emit OOXML "autofit" — dxpdf only accepts "auto" | "fixed".
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    tbl_pr.append(layout)
     _reorder_tblpr(tbl_pr)
 
 
@@ -437,13 +521,27 @@ def _layout_gap(design: ResumeDesign, field: str, fallback: float) -> float:
     drew before each kind of block (see ``LayoutMetrics``) so the .docx reproduces it
     regardless of how the user changed the schema (section gap, entry gap, line height,
     surface, markers, ...). ``fallback`` is used only for designs the preview has not
-    measured yet (older saves / API-only requests)."""
+    measured yet (older saves / API-only requests).
+
+    Values are clamped so a bad 2-column measure cannot insert multi-inch gaps between
+    body lines (uneven bullet rhythm) or shove the first section off page 1.
+    """
     metrics = getattr(design.layout, "layout_metrics", None)
+    value: float | None = None
     if metrics is not None:
-        value = getattr(metrics, field, None)
-        if value is not None:
-            return float(value)
-    return float(fallback)
+        raw = getattr(metrics, field, None)
+        if raw is not None:
+            value = float(raw)
+    if value is None:
+        value = float(fallback)
+    # Keep body rhythm tight and even — especially experience bullets.
+    if field == "exp_bullet_pt":
+        return max(1.0, min(value, 3.5))
+    if field == "heading_before_pt" and design.layout.columns == 2:
+        return max(0.0, min(value, 12.0))
+    if field.startswith("exp_") or field in {"skill_row_pt", "edu_entry_pt", "cert_row_pt", "heading_after_pt"}:
+        return max(0.0, min(value, 28.0))
+    return value
 
 
 def _heading(container, text: str, design: ResumeDesign) -> None:
@@ -521,6 +619,402 @@ def _remove_leading_empty(container) -> None:
             parent.remove(el)
 
 
+def _remove_trailing_empty(container) -> None:
+    """Drop a trailing blank paragraph Word inserts after nested tables."""
+    paras = container.paragraphs
+    if not paras:
+        return
+    last = paras[-1]
+    if last.runs or last.text.strip():
+        return
+    el = last._p
+    parent = el.getparent()
+    if parent is not None:
+        parent.remove(el)
+
+
+def _remove_empty_paragraphs(container) -> None:
+    """Remove blank paragraphs (no text / drawings) from a cell or document body.
+
+    ``add_table`` leaves an empty ``w:p`` after each table. In stacked contacts those
+    default-spaced blanks sat *between* rows and added ~26 pt gaps (measured), which
+    blew past the pinned band height and spilled white-on-white contact text.
+    """
+    parent = getattr(container, "_tc", None)
+    if parent is None:
+        parent = getattr(container, "_element", None)
+    if parent is None:
+        return
+    for child in list(parent):
+        if child.tag != qn("w:p"):
+            continue
+        if child.find(".//" + qn("w:drawing")) is not None:
+            continue
+        if child.find(".//" + qn("w:pict")) is not None:
+            continue
+        texts = child.findall(".//" + qn("w:t"))
+        if any((t.text or "").strip() for t in texts):
+            continue
+        parent.remove(child)
+
+
+def _clear_table_borders(table) -> None:
+    tbl_pr = table._tbl.tblPr
+    for old in tbl_pr.findall(qn("w:tblBorders")):
+        tbl_pr.remove(old)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        node = OxmlElement(f"w:{edge}")
+        node.set(qn("w:val"), "nil")
+        node.set(qn("w:sz"), "0")
+        node.set(qn("w:space"), "0")
+        node.set(qn("w:color"), "auto")
+        borders.append(node)
+    tbl_pr.append(borders)
+
+
+# Common Windows / Linux font filenames for contact-width measurement.
+_FONT_FILES: dict[str, tuple[str, ...]] = {
+    "Arial": ("arial.ttf", "Arial.ttf", "Arial.ttf"),
+    "Calibri": ("calibri.ttf", "Calibri.ttf"),
+    "Georgia": ("georgia.ttf", "Georgia.ttf"),
+    "Times New Roman": ("times.ttf", "timesnr.ttf", "Times New Roman.ttf"),
+    "Verdana": ("verdana.ttf", "Verdana.ttf"),
+    "Tahoma": ("tahoma.ttf", "Tahoma.ttf"),
+    "Helvetica": ("arial.ttf", "Helvetica.ttf"),  # close metric stand-in
+}
+
+
+def _font_search_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    windir = os.environ.get("WINDIR") or os.environ.get("SystemRoot")
+    if windir:
+        dirs.append(Path(windir) / "Fonts")
+    dirs.extend(
+        [
+            Path("/usr/share/fonts"),
+            Path("/usr/local/share/fonts"),
+            Path.home() / ".fonts",
+            Path.home() / ".local/share/fonts",
+        ]
+    )
+    return dirs
+
+
+@lru_cache(maxsize=32)
+def _resolve_measure_font_path(font_family: str) -> str | None:
+    family = (font_family or "Arial").strip() or "Arial"
+    names = list(_FONT_FILES.get(family, ()))
+    # Always fall back to Arial/Calibri so measurement still works for odd families.
+    names.extend(("arial.ttf", "Arial.ttf", "calibri.ttf", "Calibri.ttf"))
+    seen: set[str] = set()
+    for name in names:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        for d in _font_search_dirs():
+            cand = d / name
+            if cand.is_file():
+                return str(cand)
+    return None
+
+
+@lru_cache(maxsize=512)
+def _measure_text_width_pt(text: str, size_pt: float, font_family: str) -> float:
+    """Measure string width in points using the real TTF (dxpdf uses system fonts).
+
+    The old ``len(text) * 0.49em`` heuristic under-sized emails (wide glyphs) and
+    let the icon+text wrap onto two lines inside the fixed contact cell.
+    """
+    if not text or size_pt <= 0:
+        return 0.0
+    path = _resolve_measure_font_path(font_family)
+    if path:
+        try:
+            from PIL import ImageFont
+
+            # Load oversized then scale down for sub-pt accuracy.
+            scale = 64.0
+            font = ImageFont.truetype(path, size=max(1, int(round(size_pt * scale))))
+            return float(font.getlength(text)) / scale
+        except Exception:
+            pass
+    # Conservative fallback: wide enough for mixed email/URL glyphs.
+    return len(text) * size_pt * 0.62
+
+
+def _set_tc_width_twips(cell, width_tw: int) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    for el in tc_pr.findall(qn("w:tcW")):
+        tc_pr.remove(el)
+    tc_w = OxmlElement("w:tcW")
+    tc_w.set(qn("w:type"), "dxa")
+    tc_w.set(qn("w:w"), str(max(1, int(width_tw))))
+    tc_pr.insert(0, tc_w)
+
+
+def _emit_contact_icon_text_pair(
+    cell,
+    *,
+    kind: str,
+    text: str,
+    href: str | None,
+    icon_h: float,
+    contact_size: float,
+    contact_hex: str,
+    contact_color: RGBColor,
+    font_family: str,
+    icon_style: str,
+    offset_x_pt: float = 0.0,
+    offset_y_pt: float = 0.0,
+) -> None:
+    """Emit one contact as a 2-col nested table so the icon can be nudged vs the label.
+
+    dxpdf top-aligns ``wp:inline`` pictures with the text span top and ignores
+    ``w:position`` on image runs, so icon+text in one paragraph always looks high.
+    Transparent PNG padding also fails (dxpdf flattens alpha to opaque black).
+
+    User nudges (``offset_x_pt`` / ``offset_y_pt``, + = right / down) MUST use
+    paragraph ``space_before`` (Y) and text ``left_indent = -offset_x`` (X) — not
+    ``tcMar``. Proven under dxpdf: cell top margins apply to the whole row (Y± leave
+    relative midY unchanged); icon ``left_indent`` clips in the narrow icon column;
+    growing that column by the indent cancels +X.
+    """
+    png = None
+    # Product default is brand (filled LinkedIn/GitHub). Treat unknown as brand.
+    style = "outline" if icon_style == "outline" else ("none" if icon_style == "none" else "brand")
+    if style != "none":
+        try:
+            png = contact_icon_png(kind, contact_hex, style)
+        except Exception:
+            png = None
+
+    # Drop the empty paragraph python-docx leaves in a new cell before the table.
+    _remove_leading_empty(cell)
+
+    if not png:
+        p = cell.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        _set_exact_line_spacing(p, contact_size, 1.2)
+        if href:
+            _add_hyperlink_text(
+                p, href, text, font=font_family, size_pt=contact_size, color=contact_color
+            )
+        else:
+            r = p.add_run(text)
+            _set_run(r, font=font_family, size_pt=contact_size, color=contact_color)
+        _remove_trailing_empty(cell)
+        return
+
+    nudge_x = max(-6.0, min(6.0, float(offset_x_pt or 0.0)))
+    nudge_y = max(-6.0, min(6.0, float(offset_y_pt or 0.0)))
+
+    inner = cell.add_table(rows=1, cols=2)
+    _clear_table_borders(inner)
+    inner.allow_autofit = False
+    # Thin space between icon and label (~1.5pt) via icon-col right margin.
+    gap_tw = 30
+    icon_content_tw = max(120, int(round(icon_h * 20)))
+    # Fixed icon-col width: +X is applied as paragraph left_indent *inside* this box.
+    # Growing the column by the indent shifts the text column identically and cancels +X
+    # (proven: indent=4pt + col+=4pt → relative dX unchanged).
+    icon_col_tw = icon_content_tw + gap_tw
+    # When nudge_x < 0, text gets a positive left_indent; grow the text column so the
+    # label does not wrap (indent steals content width under dxpdf).
+    text_indent_tw = max(0, int(round(-nudge_x * 20)))
+    text_col_tw = max(
+        240,
+        int(round(_measure_text_width_pt(text, contact_size, font_family) * 20))
+        + 40
+        + text_indent_tw,
+    )
+    tbl = inner._tbl
+    grid = tbl.tblGrid
+    for child in list(grid):
+        grid.remove(child)
+    for w in (icon_col_tw, text_col_tw):
+        gc = OxmlElement("w:gridCol")
+        gc.set(qn("w:w"), str(w))
+        grid.append(gc)
+    tbl_pr = tbl.tblPr
+    for tag in ("w:tblW", "w:tblLayout"):
+        for el in tbl_pr.findall(qn(tag)):
+            tbl_pr.remove(el)
+    tbl_w = OxmlElement("w:tblW")
+    tbl_w.set(qn("w:type"), "dxa")
+    tbl_w.set(qn("w:w"), str(icon_col_tw + text_col_tw))
+    tbl_pr.append(tbl_w)
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    tbl_pr.append(layout)
+    _reorder_tblpr(tbl_pr)
+
+    icon_cell, text_cell = inner.rows[0].cells
+    _set_tc_width_twips(icon_cell, icon_col_tw)
+    _set_tc_width_twips(text_cell, text_col_tw)
+    _set_cell_margins(icon_cell, top=0, bottom=0, left=0, right=gap_tw)
+    _set_cell_margins(text_cell, top=0, bottom=0, left=0, right=0)
+    # TOP + paragraph space_before/indent: relative nudges survive dxpdf. CENTER + tcMar
+    # does not (row-shared top margin; +X column growth cancel).
+    icon_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+    text_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+
+    # Slightly taller icon line box + CENTER was mid≈0; with TOP, keep the line box and
+    # let the user nudge. Baseline optical center is still close for Modern sizes.
+    icon_line_pt = icon_h + contact_size * 0.11
+    p_icon = icon_cell.paragraphs[0]
+    p_icon.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p_icon.paragraph_format.space_before = Pt(max(0.0, nudge_y))
+    p_icon.paragraph_format.space_after = Pt(0)
+    p_icon.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    p_icon.paragraph_format.line_spacing = Pt(icon_line_pt)
+    try:
+        p_icon.add_run().add_picture(BytesIO(png), height=Pt(icon_h))
+    except Exception:
+        pass
+
+    p_text = text_cell.paragraphs[0]
+    p_text.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    # X nudge on the *text* indent (inverted): icon left_indent clips inside the narrow
+    # icon column under dxpdf, and growing that column cancels +X. Moving the label by
+    # ``-nudge_x`` yields the same relative shift as translating the icon (proven).
+    p_text.paragraph_format.left_indent = Pt(-nudge_x)
+    p_text.paragraph_format.space_before = Pt(max(0.0, -nudge_y))
+    p_text.paragraph_format.space_after = Pt(0)
+    _set_exact_line_spacing(p_text, contact_size, 1.2)
+    if href:
+        _add_hyperlink_text(
+            p_text, href, text, font=font_family, size_pt=contact_size, color=contact_color
+        )
+    else:
+        r = p_text.add_run(text)
+        _set_run(r, font=font_family, size_pt=contact_size, color=contact_color)
+
+    _remove_trailing_empty(cell)
+
+
+def _estimate_contact_col_twips(
+    text: str,
+    size_pt: float,
+    *,
+    has_icon: bool,
+    icon_h_pt: float,
+    font_family: str,
+) -> int:
+    """Content width (twips) for one contact cell under dxpdf fixed-column layout.
+
+    Must be ≥ icon + thin-space + text or the paragraph wraps: icon on line 1,
+    text on line 2 (the broken email row in the Modern image header).
+    """
+    # Include the thin space emitted between icon and label.
+    label = ("\u2009" + text) if has_icon else text
+    text_pt = _measure_text_width_pt(label, size_pt, font_family)
+    # Contact icons are square PNGs sized to ``icon_h`` (base_font * 0.66), not contact_size.
+    icon_pt = float(icon_h_pt) if has_icon else 0.0
+    # dxpdf wrap is strict at the cell edge — keep a few pt of slack.
+    return max(240, int(round((text_pt + icon_pt + 5.0) * 20)))
+
+
+def _set_centered_fixed_table(
+    table, col_widths_tw: list[int], *, contain_tw: int
+) -> None:
+    """Center a nested table with explicit fixed column widths (dxpdf-safe).
+
+    Must rewrite ``w:gridCol`` / ``w:tcW`` — leaving python-docx's equal parent-width
+    splits makes contacts sit at 0/180/360/540 and clips GitHub.
+
+    dxpdf ignores ``tblJc=center`` on nested tables inside a header cell, so we
+    center with a positive ``tblInd`` = (contain_tw - table_width) / 2.
+    Uses ``tblLayout=fixed`` (never OOXML ``autofit``, which dxpdf rejects).
+    """
+    if not col_widths_tw:
+        return
+    widths = [max(120, int(w)) for w in col_widths_tw]
+    total = sum(widths)
+    contain = max(total, int(contain_tw))
+    indent = max(0, (contain - total) // 2)
+
+    tbl = table._tbl
+    tbl_grid = tbl.tblGrid
+    for child in list(tbl_grid):
+        tbl_grid.remove(child)
+    for w in widths:
+        gc = OxmlElement("w:gridCol")
+        gc.set(qn("w:w"), str(w))
+        tbl_grid.append(gc)
+
+    row = table.rows[0]
+    for i, cell in enumerate(row.cells):
+        tc_pr = cell._tc.get_or_add_tcPr()
+        for el in tc_pr.findall(qn("w:tcW")):
+            tc_pr.remove(el)
+        tc_w = OxmlElement("w:tcW")
+        tc_w.set(qn("w:type"), "dxa")
+        tc_w.set(qn("w:w"), str(widths[i]))
+        tc_pr.insert(0, tc_w)
+
+    table.allow_autofit = False
+    tbl_pr = table._tbl.tblPr
+    for tag in ("w:tblW", "w:tblJc", "w:tblInd", "w:tblLayout"):
+        for el in tbl_pr.findall(qn(tag)):
+            tbl_pr.remove(el)
+    tbl_w = OxmlElement("w:tblW")
+    tbl_w.set(qn("w:type"), "dxa")
+    tbl_w.set(qn("w:w"), str(total))
+    tbl_pr.append(tbl_w)
+    # Left-align the table, then push it with tblInd — dxpdf honors this path.
+    tbl_jc = OxmlElement("w:tblJc")
+    tbl_jc.set(qn("w:val"), "left")
+    tbl_pr.append(tbl_jc)
+    if indent:
+        tbl_ind = OxmlElement("w:tblInd")
+        tbl_ind.set(qn("w:type"), "dxa")
+        tbl_ind.set(qn("w:w"), str(indent))
+        tbl_pr.append(tbl_ind)
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    tbl_pr.append(layout)
+    _clear_table_borders(table)
+    _reorder_tblpr(tbl_pr)
+
+
+def _apply_header_contact_scrim(raw: bytes, *, light_text: bool) -> bytes:
+    """Darken the lower portion of a header-band photo so light contact text remains
+    readable over bright spots (ceiling lights, windows, etc.).
+
+    The baked overlay is uniform; local highlights still wash out ``#e2e8f0`` contacts.
+    A bottom gradient scrim targets exactly where the contact row sits."""
+    if not light_text or not raw:
+        return raw
+    try:
+        from PIL import Image as _PILImage
+        from PIL import ImageDraw as _PILDraw
+
+        with _PILImage.open(BytesIO(raw)) as src:
+            im = src.convert("RGBA")
+            w, h = im.size
+            if w < 8 or h < 8:
+                return raw
+            overlay = _PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
+            draw = _PILDraw.Draw(overlay)
+            y0 = int(h * 0.52)
+            span = max(1, h - y0)
+            for y in range(y0, h):
+                t = (y - y0) / span
+                # Ease-in: stronger near the bottom where contacts live.
+                alpha = int(155 * (t ** 1.15))
+                draw.line([(0, y), (w - 1, y)], fill=(0, 0, 0, alpha))
+            composed = _PILImage.alpha_composite(im, overlay)
+            buf = BytesIO()
+            composed.convert("RGB").save(buf, format="PNG", optimize=True)
+            return buf.getvalue()
+    except Exception:
+        return raw
+
+
 # ── Section renderers ──────────────────────────────────────────────────────
 
 def _render_header(
@@ -530,17 +1024,35 @@ def _render_header(
     *,
     on_dark: bool = False,
     trailing_space_pt: float | None = None,
+    # Horizontal band padding is applied as cell margins on the band table (dxpdf
+    # honors tcMar). Paragraph indents here are only for non-band callers.
+    band_pad_left_pt: float | None = None,
+    band_pad_right_pt: float | None = None,
 ) -> None:
     typo = design.typography
     align = WD_ALIGN_PARAGRAPH.CENTER if design.layout.header_align == "center" else WD_ALIGN_PARAGRAPH.LEFT
+    pad_left = float(band_pad_left_pt) if band_pad_left_pt is not None else 0.0
+    pad_right = float(band_pad_right_pt) if band_pad_right_pt is not None else 0.0
+
+    def _apply_band_insets(para) -> None:
+        if pad_left <= 0 and pad_right <= 0:
+            return
+        para.paragraph_format.left_indent = Pt(pad_left)
+        para.paragraph_format.right_indent = Pt(pad_right)
 
     name_color = _hex_to_rgb("#ffffff" if on_dark else design.colors.heading)
     title_color = _hex_to_rgb("#f1f5f9" if on_dark else design.colors.accent)
-    contact_color = _hex_to_rgb("#dbe4f0" if on_dark else design.colors.muted)
+    # Pure white on dark/image bands — `#e2e8f0` washes out over bright photo regions.
+    contact_hex = "#ffffff" if on_dark else design.colors.muted
+    contact_color = _hex_to_rgb(contact_hex)
 
     name_para = container.add_paragraph()
     name_para.alignment = align
-    name_para.paragraph_format.space_after = Pt(2)
+    name_para.paragraph_format.space_before = Pt(0)
+    # Preview title uses marginTop: 2px ≈ 1.5 pt.
+    name_para.paragraph_format.space_after = Pt(1.5)
+    _apply_band_insets(name_para)
+    _set_exact_line_spacing(name_para, typo.base_font_pt * typo.name_scale, 1.1)
     name_run = name_para.add_run(profile.get("full_name") or "Your Name")
     _set_run(
         name_run,
@@ -554,7 +1066,11 @@ def _render_header(
     if profile.get("title"):
         title_para = container.add_paragraph()
         title_para.alignment = align
+        title_para.paragraph_format.space_before = Pt(0)
+        # Preview contact row uses marginTop: 4px ≈ 3 pt.
         title_para.paragraph_format.space_after = Pt(3)
+        _apply_band_insets(title_para)
+        _set_exact_line_spacing(title_para, typo.base_font_pt * 1.1, 1.2)
         title_run = title_para.add_run(profile["title"])
         _set_run(
             title_run,
@@ -565,63 +1081,130 @@ def _render_header(
         )
         last_para = title_para
 
-    contact_items = [
-        (kind, val)
-        for kind, val in (
-            ("email", profile.get("email")),
-            ("phone", profile.get("phone")),
-            ("linkedin", _clean_url(profile.get("linkedin"))),
-            ("github", _clean_url(profile.get("github"))),
+    raw_email = (profile.get("email") or "").strip() or None
+    raw_phone = (profile.get("phone") or "").strip() or None
+    raw_linkedin = (profile.get("linkedin") or "").strip() or None
+    raw_github = (profile.get("github") or "").strip() or None
+    contact_items: list[tuple[str, str, str | None]] = []
+    if raw_email:
+        contact_items.append(("email", raw_email, _contact_href("email", raw_email, raw_email)))
+    if raw_phone:
+        contact_items.append(("phone", raw_phone, _contact_href("phone", raw_phone, raw_phone)))
+    if raw_linkedin:
+        contact_items.append(
+            ("linkedin", _clean_url(raw_linkedin), _contact_href("linkedin", raw_linkedin, raw_linkedin))
         )
-        if val
-    ]
-    contact_hex = "#dbe4f0" if on_dark else design.colors.muted
+    if raw_github:
+        contact_items.append(
+            ("github", _clean_url(raw_github), _contact_href("github", raw_github, raw_github))
+        )
     # Preview contactStyle == base * 0.92 (ResumePreview.tsx).
     contact_size = typo.base_font_pt * 0.92
-    # Inline pictures in Word/LibreOffice are anchored to the text baseline (and the
-    # baseline shift `w:position` is ignored for image runs), so a full-em icon ends up
-    # ~half its height above the text's optical centre and looks raised. Sizing the icon
-    # to roughly the font's cap-height makes it sit from the baseline to the cap line,
-    # i.e. visually centred with the text - matching the live preview.
+    # Cap-height-ish glyph; vertical centering via nested icon|text table (not inline).
     icon_h = typo.base_font_pt * 0.66
-    icon_style = getattr(design.layout, "contact_icons", "brand")
+    raw_icon_style = getattr(design.layout, "contact_icons", "brand") or "brand"
+    # Default / unknown → brand (filled LinkedIn & GitHub).
+    icon_style = (
+        "none"
+        if raw_icon_style == "none"
+        else ("outline" if raw_icon_style == "outline" else "brand")
+    )
+    icon_off_x = float(getattr(design.layout, "contact_icon_offset_x_pt", 0.0) or 0.0)
+    icon_off_y = float(getattr(design.layout, "contact_icon_offset_y_pt", 0.0) or 0.0)
 
-    def emit_item(p, kind: str, text: str) -> None:
-        png = None
-        if icon_style != "none":
-            try:
-                png = contact_icon_png(kind, contact_hex, icon_style)
-            except Exception:
-                png = None
-        if png:
-            icon_run = p.add_run()
-            try:
-                icon_run.add_picture(BytesIO(png), height=Pt(icon_h))
-            except Exception:
-                pass
-            sp = p.add_run("\u2009")  # thin space between icon and text
-            _set_run(sp, font=typo.font_family, size_pt=contact_size, color=contact_color)
-        r = p.add_run(text)
-        _set_run(r, font=typo.font_family, size_pt=contact_size, color=contact_color)
+    def emit_pair(host_cell, kind: str, text: str, href: str | None) -> None:
+        _emit_contact_icon_text_pair(
+            host_cell,
+            kind=kind,
+            text=text,
+            href=href,
+            icon_h=icon_h,
+            contact_size=contact_size,
+            contact_hex=contact_hex,
+            contact_color=contact_color,
+            font_family=typo.font_family,
+            icon_style=icon_style,
+            offset_x_pt=icon_off_x,
+            offset_y_pt=icon_off_y,
+        )
 
     if contact_items:
+        # One outer cell per contact; each hosts a nested icon|text pair table so
+        # dxpdf can vertically center the picture (inline runs cannot).
+        gap_tw = 120  # 6pt ≈ preview flex gap / 2 as left margin on cols 1..n
+        has_icon = icon_style != "none"
+        col_widths = [
+            _estimate_contact_col_twips(
+                val,
+                contact_size,
+                has_icon=has_icon,
+                icon_h_pt=icon_h,
+                font_family=typo.font_family,
+            )
+            for _, val, _ in contact_items
+        ]
         if design.layout.contact_layout == "stacked":
-            for kind, val in contact_items:
-                p = container.add_paragraph()
-                p.alignment = align
-                p.paragraph_format.space_after = Pt(1)
-                emit_item(p, kind, val)
-                last_para = p
+            for kind, val, href in contact_items:
+                # Single-column host so stacked rows still get icon|text centering.
+                row_tbl = container.add_table(rows=1, cols=1)
+                _clear_table_borders(row_tbl)
+                host = row_tbl.rows[0].cells[0]
+                # Preview stacked gap ≈ 2px (~1.5 pt); keep a 1 pt bottom margin.
+                _set_cell_margins(host, top=0, bottom=20, left=0, right=0)
+                if design.layout.header_align == "center":
+                    page_pt = _LETTER_WIDTH_EMU / 12_700.0
+                    contain_tw = int(
+                        round(
+                            (
+                                page_pt
+                                - design.layout.hp_left
+                                - design.layout.hp_right
+                                - pad_left
+                                - pad_right
+                            )
+                            * 20
+                        )
+                    )
+                    w = _estimate_contact_col_twips(
+                        val,
+                        contact_size,
+                        has_icon=has_icon,
+                        icon_h_pt=icon_h,
+                        font_family=typo.font_family,
+                    )
+                    _set_centered_fixed_table(row_tbl, [w], contain_tw=contain_tw)
+                emit_pair(host, kind, val, href)
+                last_para = host.paragraphs[0] if host.paragraphs else last_para
+            # Drop the empty ``w:p`` stubs ``add_table`` inserts between stacked rows.
+            _remove_empty_paragraphs(container)
         else:
-            p = container.add_paragraph()
-            p.alignment = align
-            p.paragraph_format.space_after = Pt(2)
-            for idx, (kind, val) in enumerate(contact_items):
-                if idx:
-                    gap = p.add_run("    ")
-                    _set_run(gap, font=typo.font_family, size_pt=contact_size, color=contact_color)
-                emit_item(p, kind, val)
-            last_para = p
+            for i in range(1, len(col_widths)):
+                col_widths[i] += gap_tw
+            page_pt = _LETTER_WIDTH_EMU / 12_700.0
+            contain_tw = int(
+                round(
+                    (page_pt - design.layout.hp_left - design.layout.hp_right - pad_left - pad_right)
+                    * 20
+                )
+            )
+            table = container.add_table(rows=1, cols=len(contact_items))
+            if design.layout.header_align == "center":
+                _set_centered_fixed_table(table, col_widths, contain_tw=contain_tw)
+            else:
+                # Left-aligned: fixed cols, no centering indent.
+                _set_centered_fixed_table(table, col_widths, contain_tw=sum(col_widths))
+            for i, (kind, val, href) in enumerate(contact_items):
+                cell = table.rows[0].cells[i]
+                _set_cell_margins(
+                    cell,
+                    top=0,
+                    bottom=0,
+                    left=gap_tw if i > 0 else 0,
+                    right=0,
+                )
+                emit_pair(cell, kind, val, href)
+                last_para = cell.paragraphs[0] if cell.paragraphs else last_para
+            _remove_trailing_empty(container)
 
     if trailing_space_pt is not None:
         last_para.paragraph_format.space_after = Pt(trailing_space_pt)
@@ -671,48 +1254,90 @@ def _coerce_docx_image(raw: bytes) -> bytes:
         return raw
 
 
-def _effective_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> float:
-    """The header band height (pt) to pin the .docx band to.
+# Hard ceilings for browser-reported header geometry. Values above these (seen after
+# theme/column switches or bad measure passes) pin a near-page-tall first-page header
+# and push the body — especially the Technical two-column table — onto page 2, so page
+# 1 shows only the name band over blank white.
+#
+# Evidence (dxpdf): removing the exact ``trHeight`` pin and letting nested contact
+# tables define natural header height produced pages=2 with page-0 text = header only
+# and no body — matching the Technical blank-page-1 bug in production.
+_MAX_PINNED_BAND_PT = 220.0
+_MAX_PINNED_BAND_PT_TWO_COL = 110.0
+_MAX_HEADER_GAP_CONTRIB_PT = 48.0
+_MAX_HEADER_GAP_CONTRIB_PT_TWO_COL = 16.0
 
-    Prefers the browser-measured value (``layout.header_metrics.band_pt``) so the
-    rendered PDF band is identical to the live preview's real line-box height. Falls
-    back to the estimate for designs saved before the preview measured the band."""
+
+def _max_pinned_band_pt(design: ResumeDesign) -> float:
+    return _MAX_PINNED_BAND_PT_TWO_COL if design.layout.columns == 2 else _MAX_PINNED_BAND_PT
+
+
+def _max_header_gap_contrib_pt(design: ResumeDesign) -> float:
+    return (
+        _MAX_HEADER_GAP_CONTRIB_PT_TWO_COL
+        if design.layout.columns == 2
+        else _MAX_HEADER_GAP_CONTRIB_PT
+    )
+
+
+def _effective_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> float:
+    """Visible header band height (pt) for the behindDoc band image / body spacer.
+
+    Uses the browser-measured ``header_metrics.band_pt`` when present, but never
+    shorter than the typography estimate. Stale inline metrics (e.g. 87.9 pt) must
+    not clip stacked contacts — proven: undersized band paints white ``on_dark``
+    text onto the page and hides labels.
+
+    Also rejects absurdly *large* measurements so a bad measure cannot evacuate the
+    body from page 1 via an oversized page-1 spacer.
+    """
+    estimate = _header_band_height_pt(design, profile)
+    ceiling = _max_pinned_band_pt(design)
     metrics = getattr(design.layout, "header_metrics", None)
     if metrics is not None and metrics.band_pt and metrics.band_pt > 0:
-        return float(metrics.band_pt)
-    return _header_band_height_pt(design, profile)
+        measured = float(metrics.band_pt)
+        if measured > ceiling:
+            return min(estimate, ceiling)
+        return min(max(measured, estimate), ceiling)
+    return min(estimate, ceiling)
+
+
+def _header_gap_contrib_pt(design: ResumeDesign) -> float:
+    """Extra page-1 gap (pt) after the band, before the first section (excl. section_gap)."""
+    ceiling = _max_header_gap_contrib_pt(design)
+    measured = getattr(design.layout, "header_metrics", None)
+    if measured is not None and measured.gap_pt is not None and measured.gap_pt >= 0:
+        gap_contrib = max(0.0, float(measured.gap_pt) - design.layout.section_gap_pt)
+        if gap_contrib <= ceiling:
+            return gap_contrib
+    return min(max(0.0, design.layout.m_top * 0.6), ceiling)
 
 
 def _header_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> float:
     """Estimate the header band height (pt) from typography + padding + present
     content, so the behind-text image is sized to fill exactly that band."""
-    # Per-line factors are calibrated against the LibreOffice-rendered band so the
-    # picture height matches the natural content height (a solid band of the same
-    # content renders at ~the same height). Being marginally generous is safe: the
-    # band uses an *exact* row height, so a slight over-estimate only adds a hair of
-    # padding, whereas an under-estimate would clip the text.
+    # Being marginally generous is safe: the band uses an *exact* row height, so a
+    # slight over-estimate only adds padding; an under-estimate clips contacts.
     typo = design.typography
     base = typo.base_font_pt
     lay = design.layout
-    # The content height mirrors the CSS preview's line boxes so the band matches the
-    # live-preview height (otherwise the .docx band is visibly taller than designed):
-    #   name  -> font * name_scale, line-height 1.1
-    #   title -> font * 1.1, normal line (~1.22) + 2 px (1.5 pt) top margin
-    #   contact -> font * 0.95, normal line (~1.18) + 4 px (3 pt) top margin
+    contact_size = base * 0.92
+    # Mirrors compiler line boxes:
+    #   name  -> base * name_scale, exact line 1.1
+    #   title -> base * 1.1, exact 1.2 + 1.5 pt space_after on name / 3 pt on title
+    #   contact row -> nested icon|text table, height ≈ contact_size * 1.2
     content = base * typo.name_scale * 1.10
     if profile.get("title"):
-        content += base * 1.1 * 1.22 + 1.5
-    has_contact = any(
-        profile.get(k) for k in ("email", "phone", "linkedin", "github")
-    )
-    if has_contact:
+        content += base * 1.1 * 1.20 + 1.5 + 3.0
+    n_contacts = sum(1 for k in ("email", "phone", "linkedin", "github") if profile.get(k))
+    if n_contacts:
+        row_h = contact_size * 1.2
         if lay.contact_layout == "stacked":
-            n = sum(1 for k in ("email", "phone", "linkedin", "github") if profile.get(k))
-            content += base * 0.95 * 1.18 * max(1, n) + 3.0
+            # Each stacked host keeps a 1 pt bottom cell margin (20 twips).
+            content += n_contacts * (row_h + 1.0) + 3.0
         else:
-            content += base * 0.95 * 1.18 + 3.0
-    # hp_top/hp_bottom are the designed band paddings; +2 pt is a small anti-clip
-    # margin (the band uses an exact row height).
+            content += row_h + 3.0
+    # hp_top/hp_bottom are the designed band paddings; +2 pt anti-clip margin.
     return lay.hp_top + lay.hp_bottom + content + 2.0
 
 
@@ -784,13 +1409,39 @@ def _add_band_background_image(paragraph, image_bytes: bytes, width_emu: int, he
         return False
 
 
+# dxpdf reserves the first-page header's *row* height as the top inset on EVERY page,
+# even when that header only paints on page 1 (proven: pin 90pt → page2 y0≈91; pin 1pt
+# → page2 y0≈m_top). Keep the visual band via a page-anchored behindDoc image and pin
+# geometry to 1pt so continuation pages use only the real top margin.
+_FIRST_HEADER_GEOMETRY_PIN_PT = 1.0
+
+
+def _solid_fill_png(hex6: str, *, width_px: int, height_px: int) -> bytes:
+    """Flat RGB PNG used as a full-bleed behindDoc band fill (soft/solid headers)."""
+    from PIL import Image as _PILImage
+
+    h = (hex6 or "2563eb").lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    try:
+        rgb = (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except ValueError:
+        rgb = (37, 99, 235)
+    img = _PILImage.new("RGB", (max(2, int(width_px)), max(2, int(height_px))), rgb)
+    buf = BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], section) -> None:
     """Render the header inside a full-bleed shaded band (single-cell table) that
-    touches the page's top, left, and right edges. The section top margin is set to
-    zero by the caller; cell padding keeps the text aligned with the body margins.
+    touches the page's top, left, and right edges.
 
-    When ``header_background == "image"`` the band fill is replaced by a behind-text
-    picture anchored to the page, sized to the estimated band height."""
+    The band lives in the first-page header so it can sit flush at y=0 while
+    ``section.top_margin`` stays at ``m_top`` for continuation pages. The header
+    *geometry* is pinned to 1pt (see ``_FIRST_HEADER_GEOMETRY_PIN_PT``); the visible
+    band height comes from a behindDoc image so dxpdf does not inflate page 2+ tops.
+    """
     bg = design.layout.header_background
     header_image = design.layout.header_image if bg == "image" else None
     image_bytes = _decode_data_url(header_image.data_url) if header_image else None
@@ -800,19 +1451,17 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
         on_dark = light_text
         # Fallback fill (shown only if the image fails to render) matches the text mode.
         fill = "0f172a" if light_text else "e2e8f0"
+        # Extra bottom scrim so contact text stays readable over bright photo regions.
+        image_bytes = _apply_header_contact_scrim(image_bytes, light_text=light_text)
     elif bg == "solid":
         fill = (design.colors.accent or "#2563eb").lstrip("#")
         on_dark = True
+        image_bytes = None
     else:
         fill = _tint(design.colors.accent, 0.14).lstrip("#")
         on_dark = False
+        image_bytes = None
 
-    # Render the band into the FIRST-PAGE header so the section top margin can stay at
-    # m_top for every page - continuation pages then keep their top margin (matching the
-    # preview) while the band still sits flush at the very top of page 1, because a tall
-    # first-page header pushes the page-1 body down past the band. (A zero section top
-    # margin strips the top margin from pages 2+; a continuous section break does not
-    # change page margins in LibreOffice - both verified by rendering.)
     section.different_first_page_header_footer = True
     section.header_distance = Pt(0)
     band_container = section.first_page_header
@@ -820,7 +1469,7 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
         _hp._p.getparent().remove(_hp._p)
     table = band_container.add_table(rows=1, cols=1, width=section.page_width)
     # A header must not end on a table; a 1 pt trailing paragraph keeps it valid without
-    # adding meaningful height below the band.
+    # adding meaningful height below the band. Also anchors the behindDoc band image.
     band_tail = band_container.add_paragraph()
     band_tail.paragraph_format.space_before = Pt(0)
     band_tail.paragraph_format.space_after = Pt(0)
@@ -828,95 +1477,71 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
     band_tail.paragraph_format.line_spacing = Pt(1)
     cell = table.rows[0].cells[0]
     _set_table_full_bleed(table, section.page_width, section.left_margin, section.right_margin)
-    # The cell spans the same full-bleed width so a behind-text picture (clipped to the
-    # cell) is not cut off before the right page edge.
-    cell.width = section.page_width + section.left_margin + section.right_margin
-    # Each band padding side is independently controllable; 1 pt = 20 twips.
+    # Match page-width band (not page+margins) so dxpdf centering stays on page center.
+    cell.width = section.page_width
     lay = design.layout
+    pad_l_tw = max(0, int(round(lay.hp_left * 20)))
+    pad_r_tw = max(0, int(round(lay.hp_right * 20)))
+    band_h_pt = _effective_band_height_pt(design, profile)
 
-    if header_image and image_bytes:
-        # --- Image band -------------------------------------------------------
-        # A solid cell fill would paint OVER the behind-text picture and hide it
-        # entirely (the band would show the flat fallback colour instead of the
-        # chosen image), so we deliberately do NOT shade the cell here. The band is
-        # pinned to an exact height equal to the picture height: the image fills it
-        # edge to edge (no fallback strip, no bleed into the body), and the text is
-        # vertically centred over the picture - matching the CSS preview, whose band
-        # is `background-size: cover` with centred content.
-        band_h_pt = _effective_band_height_pt(design, profile)
-        # Honour the designed *asymmetric* vertical padding: inset the content from the
-        # top by hp_top and top-align it (rather than vertically centring, which splits
-        # the slack evenly and ignores a smaller hp_bottom). The remaining space below
-        # the content equals hp_bottom, matching the CSS preview's top/bottom padding.
-        _set_cell_margins(
-            cell,
-            top=max(0, int(round(lay.hp_top * 20))),
-            bottom=0,
-            left=max(0, int(round(lay.hp_left * 20))),
-            right=max(0, int(round(lay.hp_right * 20))),
+    # Honour asymmetric vertical padding: top-align with hp_top (preview match).
+    # Do NOT shade the cell when a behindDoc image supplies the band — cell fill would
+    # paint over the picture (image mode) or only fill the 1pt geometry pin (soft/solid).
+    _set_cell_margins(
+        cell,
+        top=max(0, int(round(lay.hp_top * 20))),
+        bottom=0,
+        left=pad_l_tw,
+        right=pad_r_tw,
+    )
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+    _render_header(cell, design, profile, on_dark=on_dark)
+    _remove_leading_empty(cell)
+    _remove_trailing_empty(cell)
+    _set_row_exact_height(table.rows[0], int(round(_FIRST_HEADER_GEOMETRY_PIN_PT * 20)))
+
+    # Paint the full band as a page-anchored behindDoc image (photo or flat soft/solid).
+    paint_bytes = image_bytes
+    if paint_bytes is None:
+        # ~2× page width in px keeps the stretch crisp; height tracks band_h.
+        paint_bytes = _solid_fill_png(
+            fill,
+            width_px=1224,
+            height_px=max(2, int(round(band_h_pt * 2))),
         )
-        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-        _render_header(cell, design, profile, on_dark=on_dark)
-        _remove_leading_empty(cell)
-        _set_row_exact_height(table.rows[0], int(round(band_h_pt * 20)))
-        # CRITICAL: anchor the behind-text picture to the header-level ``band_tail``
-        # paragraph (OUTSIDE the table), never to a cell paragraph. LibreOffice draws a
-        # ``behindDoc`` floating image that is anchored *inside a table cell* ON TOP of
-        # that cell's text - so the white name/contacts vanish under the band image
-        # (verified by rendering: 0 visible text pixels when cell-anchored vs. fully
-        # visible when header-anchored). The picture is page-positioned at (0,0), so the
-        # anchor paragraph only controls z-layer, not placement.
-        ok = _add_band_background_image(
-            band_tail,
-            image_bytes,
-            width_emu=section.page_width,
-            height_emu=int(round(band_h_pt * 12700)),
-        )
-        if not ok:
-            # Embedding failed - fall back to a solid fill so the text stays legible.
-            _set_cell_background(cell, fill)
-    else:
-        # --- Solid / soft band ------------------------------------------------
+    ok = _add_band_background_image(
+        band_tail,
+        paint_bytes,
+        width_emu=section.page_width,
+        height_emu=int(round(band_h_pt * 12700)),
+    )
+    if not ok:
+        # Embedding failed — fall back to a cell fill and accept a taller geometry pin
+        # so page-1 text stays on the coloured band (page 2+ may gain a larger top inset).
         _set_cell_background(cell, fill)
-        measured = getattr(design.layout, "header_metrics", None)
-        pin = bool(measured is not None and measured.band_pt and measured.band_pt > 0)
-        # LibreOffice renders an *exact* table row as ``trHeight + bottom cell margin``
-        # (the bottom inset is added OUTSIDE the exact height - proven by rendering).
-        # So when we pin the band to the browser-measured height we must drop the bottom
-        # cell margin to zero and bake hp_bottom into the row height instead (top-aligned
-        # content then sits hp_top from the top with hp_bottom of space below), exactly
-        # like the image band. Without a measurement we keep the natural-growth layout
-        # (real hp_bottom margin) so the estimate can never clip the text.
-        _set_cell_margins(
-            cell,
-            top=max(0, int(round(lay.hp_top * 20))),
-            bottom=0 if pin else max(0, int(round(lay.hp_bottom * 20))),
-            left=max(0, int(round(lay.hp_left * 20))),
-            right=max(0, int(round(lay.hp_right * 20))),
-        )
-        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-        _render_header(cell, design, profile, on_dark=on_dark)
-        _remove_leading_empty(cell)
-        if pin:
-            _set_row_exact_height(table.rows[0], int(round(float(measured.band_pt) * 20)))
+        _set_row_exact_height(table.rows[0], int(round(float(band_h_pt) * 20)))
 
-    # Breathing room between the band and the first section. The browser-measured gap
-    # (band bottom -> first content block top) already includes the first section's own
-    # space-before (== section_gap, which the first heading/summary paragraph re-creates
-    # in the .docx). So the spacer only needs to contribute the remainder; subtracting
-    # section_gap avoids double-counting. The spacer's own line height is collapsed to an
-    # exact 1 pt so it never stacks a stray blank line on top. Without a measurement we
-    # fall back to the preview's body top padding (~0.6 * top-margin).
-    measured = getattr(design.layout, "header_metrics", None)
-    if measured is not None and measured.gap_pt is not None and measured.gap_pt >= 0:
-        spacer_before = max(0.0, float(measured.gap_pt) - design.layout.section_gap_pt)
+    # Body starts at ~m_top when the geometry pin is 1pt. Push page-1 content down to
+    # band_h + gap (same as when the header row itself was band_h tall):
+    #   spacer = band_h + gap_contrib - m_top
+    # The spacer is document-leading only, so pages 2+ keep a clean m_top inset.
+    #
+    # CRITICAL: use exact line height, not space_before (engines suppress space_before
+    # on the first body paragraph after a header). Cap gap_contrib so a bad measure
+    # cannot evacuate the body from page 1.
+    gap_ceiling = _max_header_gap_contrib_pt(design)
+    gap_contrib = min(max(0.0, _header_gap_contrib_pt(design)), gap_ceiling)
+    if ok:
+        spacer_pt = max(1.0, float(band_h_pt) + gap_contrib - float(lay.m_top))
     else:
-        spacer_before = design.layout.m_top * 0.6
+        spacer_pt = max(1.0, gap_contrib)
+    # Absolute ceiling: never let the spacer alone approach a page height.
+    spacer_pt = min(spacer_pt, gap_ceiling + max(0.0, float(band_h_pt) - float(lay.m_top)))
     spacer = doc.add_paragraph()
-    spacer.paragraph_format.space_before = Pt(spacer_before)
+    spacer.paragraph_format.space_before = Pt(0)
     spacer.paragraph_format.space_after = Pt(0)
     spacer.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    spacer.paragraph_format.line_spacing = Pt(1)
+    spacer.paragraph_format.line_spacing = Pt(spacer_pt)
 
 
 _SUMMARY_TITLE = "Professional Summary"
@@ -1099,8 +1724,9 @@ def _render_experience(container, design: ResumeDesign, rows: list[dict[str, Any
     company_color = _hex_to_rgb(design.colors.accent if style.accent_target == "company" else design.colors.heading)
     role_color = _hex_to_rgb(design.colors.accent if style.accent_target == "role" else design.colors.text)
     date_color = _hex_to_rgb(design.colors.accent if style.accent_target == "date" else design.colors.muted)
-    # Right-aligned tab stop sits at the true right text edge (page width minus margins).
-    usable_emu = max(int(_LETTER_WIDTH_EMU - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
+    # Right-aligned tab stop sits at the container's right text edge (cell width in
+    # two-column layouts, otherwise the full page content width).
+    usable_emu = _container_usable_emu(container, design)
 
     for i in range(1, slot_count + 1):
         row = rows[i - 1] if i - 1 < len(rows) else {}
@@ -1196,7 +1822,7 @@ def _render_education(container, design: ResumeDesign, education: list[dict[str,
     muted = _hex_to_rgb(design.colors.muted)
     uni_color = _hex_to_rgb(design.colors.accent if style.accent_target == "university" else design.colors.heading)
     degree_color = _hex_to_rgb(design.colors.accent if style.accent_target == "degree" else design.colors.text)
-    usable_emu = max(int(_LETTER_WIDTH_EMU - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
+    usable_emu = _container_usable_emu(container, design)
 
     # Each entry owns the gap above it via space-before (space-after stays 0 on the
     # entry's last line). The first entry's gap is the heading->content gap (owned by the
@@ -1284,34 +1910,6 @@ _CERT_GLYPH: dict[str, str] = {
 }
 
 
-def _render_certificates(container, design: ResumeDesign, certificates: list[dict[str, Any]]) -> None:
-    _heading(container, "Certifications", design)
-    style = design.sections.certificates_style
-    names = [str(item.get("name") or "").strip() for item in certificates]
-    names = [n for n in names if n]
-    if not names:
-        return
-
-    if style.layout == "inline":
-        _body(container, ", ".join(names), design, space_after=2.0)
-    elif style.layout == "pipe":
-        _body(container, "  |  ".join(names), design, space_after=2.0)
-    elif style.layout == "chips":
-        # Word has no chip primitive; keep the names on one flowing line.
-        _body(container, "    ".join(names), design, space_after=2.0)
-    else:
-        # list / grid: one entry per line with the chosen marker glyph.
-        glyph = _CERT_GLYPH.get(style.marker, "\u2022")
-        prefix = f"{glyph}  " if glyph else ""
-        # Each row owns the gap above it via space-before (space-after stays 0). The first
-        # row's gap is the heading->content gap (owned by the heading); later rows use the
-        # measured row-to-row gap. Fallback mirrors the preview's <div margin: 0 0 1px>.
-        row_gap = _layout_gap(design, "cert_row_pt", 1.0 * 72.0 / 96.0)
-        for idx_n, n in enumerate(names):
-            para = _body(container, f"{prefix}{n}", design, space_after=0.0)
-            para.paragraph_format.space_before = Pt(0.0 if idx_n == 0 else row_gap)
-
-
 # ── Profile extraction ─────────────────────────────────────────────────────
 
 def _profile_dict(user: User) -> dict[str, Any]:
@@ -1347,9 +1945,110 @@ def _education_rows(user: User) -> list[dict[str, Any]]:
 def _certificate_rows(user: User) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in getattr(user, "certificates", None) or []:
-        if isinstance(item, dict) and (item.get("name") or "").strip():
-            rows.append({"name": item["name"].strip()})
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        rows.append({
+            "name": name,
+            "issued_at": format_flexible_date((item.get("issued_at") or "").strip()),
+            "url": (item.get("url") or "").strip(),
+        })
     return rows
+
+
+def _cert_display_text(item: dict[str, Any]) -> str:
+    name = str(item.get("name") or "").strip()
+    issued = format_flexible_date(str(item.get("issued_at") or "").strip())
+    return f"{name} ({issued})" if issued else name
+
+
+def _emit_cert_entry(
+    paragraph,
+    item: dict[str, Any],
+    design: ResumeDesign,
+    *,
+    prefix: str = "",
+) -> None:
+    """Write one certification into *paragraph*, hyperlinking the name when a URL exists."""
+    typo = design.typography
+    color = _hex_to_rgb(design.colors.text)
+    muted = _hex_to_rgb(design.colors.muted)
+    size = typo.base_font_pt
+    name = str(item.get("name") or "").strip()
+    issued = format_flexible_date(str(item.get("issued_at") or "").strip())
+    href = _ensure_http_url(item.get("url"))
+
+    if prefix:
+        pre = paragraph.add_run(prefix)
+        _set_run(pre, font=typo.font_family, size_pt=size, color=color)
+
+    if href and name:
+        _add_hyperlink_text(
+            paragraph,
+            href,
+            name,
+            font=typo.font_family,
+            size_pt=size,
+            color=color,
+        )
+        if issued:
+            tail = paragraph.add_run(f" ({issued})")
+            _set_run(tail, font=typo.font_family, size_pt=size, color=muted)
+    else:
+        text = _cert_display_text(item)
+        run = paragraph.add_run(text)
+        _set_run(run, font=typo.font_family, size_pt=size, color=color)
+
+
+def _render_certificates(container, design: ResumeDesign, certificates: list[dict[str, Any]]) -> None:
+    _heading(container, "Certifications", design)
+    style = design.sections.certificates_style
+    items = [c for c in certificates if str(c.get("name") or "").strip()]
+    if not items:
+        return
+
+    typo = design.typography
+
+    if style.layout == "inline":
+        para = container.add_paragraph()
+        para.paragraph_format.space_after = Pt(2.0)
+        _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+        for idx, item in enumerate(items):
+            if idx:
+                sep = para.add_run(", ")
+                _set_run(sep, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.text))
+            _emit_cert_entry(para, item, design)
+    elif style.layout == "pipe":
+        para = container.add_paragraph()
+        para.paragraph_format.space_after = Pt(2.0)
+        _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+        for idx, item in enumerate(items):
+            if idx:
+                sep = para.add_run("  |  ")
+                _set_run(sep, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.text))
+            _emit_cert_entry(para, item, design)
+    elif style.layout == "chips":
+        para = container.add_paragraph()
+        para.paragraph_format.space_after = Pt(2.0)
+        _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+        for idx, item in enumerate(items):
+            if idx:
+                sep = para.add_run("    ")
+                _set_run(sep, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.text))
+            _emit_cert_entry(para, item, design)
+    else:
+        # list / grid: one entry per line with the chosen marker glyph.
+        glyph = _CERT_GLYPH.get(style.marker, "\u2022")
+        prefix = f"{glyph}  " if glyph else ""
+        row_gap = _layout_gap(design, "cert_row_pt", 1.0 * 72.0 / 96.0)
+        for idx_n, item in enumerate(items):
+            para = container.add_paragraph()
+            para.paragraph_format.space_after = Pt(0.0)
+            para.paragraph_format.space_before = Pt(0.0 if idx_n == 0 else row_gap)
+            _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+            _emit_cert_entry(para, item, design, prefix=prefix)
 
 
 def _skill_count(user: User) -> int:
@@ -1404,6 +2103,10 @@ def compile_design(
     # page breaks) as the live preview, on any OS - the design is deep-copied first so
     # the caller's object is untouched.
     design = design.model_copy(deep=True)
+    # Two-column page body (Technical theme) is retired — keep single-column only.
+    design.layout.columns = 1
+    if design.theme_id == "technical":
+        design.theme_id = "classic"
     design.typography.font_family = _render_font_family(design.typography.font_family)
     if apply_content:
         from app.services.resume_content_overlay import apply_content_overlay
@@ -1457,9 +2160,8 @@ def compile_design(
 
     usable = max(section.page_width - section.left_margin - section.right_margin, Pt(360))
     if design.layout.header_background != "none":
-        # The band is rendered into the first-page header (see _render_header_band), which
-        # lets it sit flush at the page top WITHOUT zeroing the section top margin - so
-        # continuation pages keep their top margin, matching the live preview.
+        # First-page header band (flush top) + m_top section margin for pages 2+.
+        # Geometry pin is 1pt; visible band height is a behindDoc image (see helper).
         _render_header_band(doc, design, profile, section)
     else:
         _render_header(doc, design, profile, trailing_space_pt=design.layout.hp_bottom)
@@ -1468,16 +2170,53 @@ def compile_design(
         sidebar = [s for s in order if s in SIDEBAR_SECTIONS]
         main = [s for s in order if s not in SIDEBAR_SECTIONS]
         table = doc.add_table(rows=1, cols=2)
+        # Fixed column widths (twips). python-docx's default equal gridCols + autofit
+        # confuse dxpdf; pin sidebar/main explicitly like nested contact tables.
+        usable_tw = max(1, int(round(float(usable) / 914400.0 * 1440.0)))
+        left_tw = max(1, int(round(usable_tw * 0.34)))
+        right_tw = max(1, usable_tw - left_tw)
         table.allow_autofit = False
+        tbl = table._tbl
+        tbl_pr = tbl.tblPr
+        for tag in ("w:tblW", "w:tblLayout"):
+            for el in tbl_pr.findall(qn(tag)):
+                tbl_pr.remove(el)
+        tbl_w = OxmlElement("w:tblW")
+        tbl_w.set(qn("w:type"), "dxa")
+        tbl_w.set(qn("w:w"), str(usable_tw))
+        tbl_pr.append(tbl_w)
+        layout_el = OxmlElement("w:tblLayout")
+        layout_el.set(qn("w:type"), "fixed")
+        tbl_pr.append(layout_el)
+        tbl_grid = tbl.tblGrid
+        for el in list(tbl_grid):
+            tbl_grid.remove(el)
+        for w in (left_tw, right_tw):
+            gc = OxmlElement("w:gridCol")
+            gc.set(qn("w:w"), str(w))
+            tbl_grid.append(gc)
         left_cell, right_cell = table.rows[0].cells
-        left_cell.width = int(usable * 0.34)
-        right_cell.width = int(usable * 0.66)
+        for cell, w in ((left_cell, left_tw), (right_cell, right_tw)):
+            cell.width = w
+            tc_pr = cell._tc.get_or_add_tcPr()
+            for el in tc_pr.findall(qn("w:tcW")):
+                tc_pr.remove(el)
+            tc_w = OxmlElement("w:tcW")
+            tc_w.set(qn("w:type"), "dxa")
+            tc_w.set(qn("w:w"), str(w))
+            tc_pr.insert(0, tc_w)
         for sec in main:
             render_section(right_cell, sec)
         for sec in sidebar:
             render_section(left_cell, sec)
         _remove_leading_empty(left_cell)
         _remove_leading_empty(right_cell)
+        # First block in each column should not inherit a large heading_before — that
+        # reads as a blank band under the name header on page 1.
+        for col_cell in (left_cell, right_cell):
+            paras = col_cell.paragraphs
+            if paras:
+                paras[0].paragraph_format.space_before = Pt(0)
     else:
         for sec in order:
             render_section(doc, sec)

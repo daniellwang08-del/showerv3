@@ -1,6 +1,5 @@
 import { useRef } from 'react';
 import { Bold, Italic, Underline } from 'lucide-react';
-import { renderRich } from '../../utils/richText';
 
 type Marker = { open: string; close: string };
 
@@ -35,12 +34,14 @@ export function RichTextField({
   onChange,
   rows = 3,
   placeholder,
+  hint,
 }: {
   label?: string;
   value: string;
   onChange: (v: string) => void;
   rows?: number;
   placeholder?: string;
+  hint?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -74,7 +75,7 @@ export function RichTextField({
           <button type="button" className={btn} title="Underline (__)" onMouseDown={(e) => e.preventDefault()} onClick={() => apply('underline')}>
             <Underline size={13} />
           </button>
-          <span className="ml-auto text-[10px] text-slate-300">select text, then format</span>
+          <span className="ml-auto text-[10px] text-slate-300">{hint || 'select text, then format'}</span>
         </div>
         <textarea
           ref={ref}
@@ -85,11 +86,6 @@ export function RichTextField({
           className="block w-full resize-y rounded-b-lg bg-transparent px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-300 focus:outline-none"
         />
       </div>
-      {value.trim() ? (
-        <div className="mt-1 rounded-md bg-slate-50 px-2 py-1 text-[11px] leading-snug text-slate-600">
-          {renderRich(value)}
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { RefreshCw, ChevronDown, CheckCircle, AlertTriangle, Terminal, Clock } from 'lucide-react';
 import type { SpiderInfo, SyncProgress, ScrapeRun } from '../../types/scraper';
 
@@ -51,9 +52,15 @@ function statusDot(status: string | null | undefined): string {
   return 'bg-slate-300';
 }
 
+const MENU_WIDTH = 288; // w-72
+/** Above stats tiles / filter board (≤40) and below modals. */
+const MENU_Z = 180;
+
 export function SyncButton({ syncing, syncProgress, spiders, lastSyncRuns = [], onSync }: SyncButtonProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showCommandFor, setShowCommandFor] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   const progressLabel = syncing
     ? (syncProgress?.message || 'Syncing…')
@@ -72,6 +79,43 @@ export function SyncButton({ syncing, syncProgress, spiders, lastSyncRuns = [], 
     return { lastBySpider: map, overall: latest };
   }, [lastSyncRuns]);
 
+  const closeMenu = () => {
+    setDropdownOpen(false);
+    setShowCommandFor(null);
+  };
+
+  const updateMenuPos = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(8, rect.right - MENU_WIDTH),
+      window.innerWidth - MENU_WIDTH - 8,
+    );
+    setMenuPos({ top: rect.bottom + 4, left });
+  };
+
+  useLayoutEffect(() => {
+    if (!dropdownOpen) {
+      setMenuPos(null);
+      return;
+    }
+    updateMenuPos();
+  }, [dropdownOpen]);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const onReposition = () => updateMenuPos();
+    window.addEventListener('resize', onReposition);
+    // Capture scroll from any ancestor (PageScrollArea) so the menu stays glued
+    // to the trigger while content scrolls underneath.
+    window.addEventListener('scroll', onReposition, true);
+    return () => {
+      window.removeEventListener('resize', onReposition);
+      window.removeEventListener('scroll', onReposition, true);
+    };
+  }, [dropdownOpen]);
+
   const renderSpiderSyncTime = (spiderName: string) => {
     const run = lastBySpider.get(spiderName.toLowerCase());
     const ms = run ? runTimeMs(run) : undefined;
@@ -89,31 +133,20 @@ export function SyncButton({ syncing, syncProgress, spiders, lastSyncRuns = [], 
     );
   };
 
-  return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="relative inline-flex">
-        <button
-          disabled={syncing}
-          onClick={() => onSync('all')}
-          className="inline-flex items-center gap-2 rounded-l-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-        >
-          <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-          {progressLabel}
-        </button>
-
-        <button
-          disabled={syncing}
-          onClick={() => setDropdownOpen(!dropdownOpen)}
-          className="inline-flex items-center rounded-r-lg border-l border-blue-500 bg-blue-600 px-2 py-2 text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-        >
-          <ChevronDown size={16} />
-        </button>
-
-        {dropdownOpen && (
+  const menu =
+    dropdownOpen && menuPos
+      ? createPortal(
           <>
-            <div className="fixed inset-0 z-40" onClick={() => { setDropdownOpen(false); setShowCommandFor(null); }} />
-            <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-lg py-1">
-              {/* Overall last-sync summary */}
+            <div
+              className="fixed inset-0"
+              style={{ zIndex: MENU_Z }}
+              onClick={closeMenu}
+            />
+            <div
+              className="fixed w-72 rounded-lg border border-slate-200 bg-white py-1 shadow-xl"
+              style={{ zIndex: MENU_Z + 1, top: menuPos.top, left: menuPos.left }}
+              role="menu"
+            >
               <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100">
                 <Clock size={13} className="shrink-0 text-slate-400" />
                 {overall ? (
@@ -137,11 +170,11 @@ export function SyncButton({ syncing, syncProgress, spiders, lastSyncRuns = [], 
                 return (
                   <div key={spider.name}>
                     <button
+                      type="button"
                       disabled={needsAuth || syncing}
                       onClick={() => {
                         if (!needsAuth) {
-                          setDropdownOpen(false);
-                          setShowCommandFor(null);
+                          closeMenu();
                           onSync(spider.name);
                         }
                       }}
@@ -189,9 +222,37 @@ export function SyncButton({ syncing, syncProgress, spiders, lastSyncRuns = [], 
                 );
               })}
             </div>
-          </>
-        )}
+          </>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div ref={triggerRef} className="relative inline-flex">
+        <button
+          type="button"
+          disabled={syncing}
+          onClick={() => onSync('all')}
+          className="inline-flex items-center gap-2 rounded-l-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+          {progressLabel}
+        </button>
+
+        <button
+          type="button"
+          disabled={syncing}
+          onClick={() => setDropdownOpen((v) => !v)}
+          aria-expanded={dropdownOpen}
+          aria-haspopup="menu"
+          className="inline-flex items-center rounded-r-lg border-l border-blue-500 bg-blue-600 px-2 py-2 text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        >
+          <ChevronDown size={16} />
+        </button>
       </div>
+
+      {menu}
 
       {syncing && syncProgress ? (
         <p className="max-w-sm text-right text-[11px] leading-snug text-slate-500">

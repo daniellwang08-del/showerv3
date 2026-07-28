@@ -1,18 +1,20 @@
 """
 Orchestrates two-phase job match analysis:
 
-Phase A (analyze_job_match worker): validation + structured job + match score.
-Phase B (generate_tailored_content worker): tailored resume JSON + cover letter.
+Phase A (analyze_job_match on job_analysis): validation + structured job + match score.
+Phase B (generate_tailored_content on job_tailoring): tailored resume JSON + cover letter.
 """
 
 import asyncio
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.logging import bind_logging_context, get_logger
 from app.models.database import Job
 from app.models.schemas import JobDescriptionSchema
+from app.services.system_settings_service import get_effective_value_sync
 from app.services.job_match_service import (
     analyze_job_match_phase_a,
     generate_tailored_content_phase_b,
@@ -125,8 +127,8 @@ async def enqueue_tailored_content_generation(
     extraction_id: str | None = None,
 ) -> bool:
     try:
-        from app.tasks.worker import get_analysis_pool, ANALYSIS_QUEUE
-        pool = await get_analysis_pool()
+        from app.tasks.worker import get_tailoring_pool, TAILORING_QUEUE
+        pool = await get_tailoring_pool()
         await pool.enqueue_job(
             "generate_tailored_content",
             job_id,
@@ -137,7 +139,7 @@ async def enqueue_tailored_content_generation(
             "tailored_content_enqueued",
             job_id=job_id,
             user_id=user_id,
-            queue=ANALYSIS_QUEUE,
+            queue=TAILORING_QUEUE,
         )
         return True
     except Exception as e:
@@ -148,6 +150,39 @@ async def enqueue_tailored_content_generation(
             error=str(e),
         )
         return False
+
+
+async def run_match_auto_posts(
+    user_id: str,
+    job_id: str,
+    overall_score: Any,
+) -> None:
+    """Pumble/Sheets auto-post (runs on save worker — not analysis slots)."""
+    try:
+        from app.services.pumble_service import auto_post_if_eligible
+
+        await auto_post_if_eligible(user_id, job_id, overall_score)
+    except Exception as auto_post_err:
+        logger.warning(
+            "pumble_auto_post_hook_failed",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(auto_post_err),
+        )
+
+    try:
+        from app.services.google_sheets_service import (
+            auto_post_if_eligible as sheets_auto_post_if_eligible,
+        )
+
+        await sheets_auto_post_if_eligible(user_id, job_id, overall_score)
+    except Exception as sheets_auto_post_err:
+        logger.warning(
+            "sheets_auto_post_hook_failed",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(sheets_auto_post_err),
+        )
 
 
 async def _enqueue_resume_doc_build(job_id: str, user_id: str) -> None:
@@ -174,7 +209,6 @@ async def run_job_match_analysis(
     downstream by the save_analyzed_job worker task.
     """
     bind_logging_context(job_id=job_id, user_id=user_id)
-    settings = get_settings()
     ext_id: str | None = None
     is_job_posting = False
     has_profile = False
@@ -240,7 +274,7 @@ async def run_job_match_analysis(
                     pass
 
                 result["should_run_phase_b"] = (
-                    settings.auto_generate_tailored_content
+                    bool(get_effective_value_sync("auto_generate_tailored_content"))
                     and has_profile
                     and is_job_posting
                     and not result.get("requires_security_clearance")
@@ -255,8 +289,6 @@ async def run_job_match_analysis(
                     score=result["overall_score"],
                     phase_b=result["should_run_phase_b"],
                 )
-
-                return result
             except Exception as e:
                 logger.error(
                     "job_match_phase_a_persist_failed",
@@ -265,6 +297,10 @@ async def run_job_match_analysis(
                     error=str(e),
                 )
                 return None
+
+        # Auto-post runs on the save worker after persistence so Phase A does not
+        # hold analysis concurrency slots on Pumble/Sheets network I/O.
+        return result
     except asyncio.CancelledError:
         await clear_job_match_progress(job_id, user_id)
         raise
@@ -404,4 +440,16 @@ async def run_tailored_content_generation(
         logger.info("job_match_phase_b_stored", job_id=job_id, user_id=user_id)
         return tailored_resume
     except asyncio.CancelledError:
+        try:
+            async with get_session() as session:
+                await ResumeBuildRepository(session).fail_content_generation(
+                    job_id, user_id, "Cancelled or timed out",
+                )
+        except Exception as cleanup_err:
+            logger.warning(
+                "phase_b_cancel_cleanup_failed",
+                job_id=job_id,
+                user_id=user_id,
+                error=str(cleanup_err),
+            )
         raise

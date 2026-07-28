@@ -13,9 +13,9 @@ export function ControlCard({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-4">
       <div className="mb-3 flex items-center gap-2">
-        <Icon size={16} className="text-slate-500" />
+        <Icon size={16} className="shrink-0 text-slate-500" />
         <h3 className="text-sm font-bold text-slate-900">{title}</h3>
       </div>
       <div className="space-y-3">{children}</div>
@@ -78,7 +78,7 @@ export function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-blue-600"
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-blue-600 sm:h-1.5"
       />
     </label>
   );
@@ -101,14 +101,14 @@ export function Toggle({
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent p-0 transition-colors ${
+        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-transparent p-0 transition-colors sm:h-5 sm:w-9 ${
           checked ? 'bg-blue-600' : 'bg-slate-300'
         }`}
       >
         <span
           aria-hidden="true"
-          className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
-            checked ? 'translate-x-[18px]' : 'translate-x-[2px]'
+          className={`pointer-events-none inline-block h-[1.125rem] w-[1.125rem] transform rounded-full bg-white shadow transition-transform duration-200 sm:h-4 sm:w-4 ${
+            checked ? 'translate-x-[22px] sm:translate-x-[18px]' : 'translate-x-[3px] sm:translate-x-[2px]'
           }`}
         />
       </button>
@@ -209,7 +209,7 @@ export function BoxSidesField({
           {linked ? 'Linked' : 'Per side'}
         </button>
       </div>
-      <div className="grid grid-cols-4 gap-1.5">
+      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
         {fields.map(({ side, short }) => (
           <label key={side} className="flex flex-col gap-0.5">
             <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{short}</span>

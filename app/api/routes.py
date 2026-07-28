@@ -89,18 +89,11 @@ def _openai_api_error() -> type[Exception]:
 
     return APIError
 
-BLOCKED_DOMAINS: dict[str, str] = {
-    "paycomonline.net": "Paycom ATS requires lengthy manual registration; auto-extraction not supported.",
-}
-
-
 def _check_domain_blocked(domain: str) -> str | None:
     """Return block reason if the domain (or its parent) is in the blocklist, else None."""
-    lowered = domain.lower()
-    for blocked, reason in BLOCKED_DOMAINS.items():
-        if lowered == blocked or lowered.endswith(f".{blocked}"):
-            return reason
-    return None
+    from app.services.blocked_domains_service import get_blocked_reason
+
+    return get_blocked_reason(domain)
 
 
 def _check_extraction_blocked(url: str) -> str | None:
@@ -194,21 +187,43 @@ async def get_current_user(request: Request):
     if not payload:
         logger.warning("auth_required_invalid_token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    user_id: str | None = None
     uid = payload.get("user_id")
     if uid is not None and str(uid).strip():
-        normalized_uid = str(uid).strip()
-        bind_logging_context(user_id=normalized_uid, user_email=payload.get("sub"))
-        return {**payload, "user_id": normalized_uid}
-    sub = payload.get("sub")
-    if isinstance(sub, str) and sub.strip():
+        user_id = str(uid).strip()
+    elif isinstance(payload.get("sub"), str) and payload["sub"].strip():
         async with get_session() as session:
             user_repo = UserRepository(session)
-            user = await user_repo.get_by_email(sub.lower().strip())
+            user = await user_repo.get_by_email(payload["sub"].lower().strip())
             if user:
-                bind_logging_context(user_id=user.id, user_email=user.email)
-                return {**payload, "user_id": user.id}
-    bind_logging_context(user_email=payload.get("sub"))
-    return payload
+                user_id = user.id
+
+    if not user_id:
+        bind_logging_context(user_email=payload.get("sub"))
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # Reject deactivated accounts even if the JWT is still valid.
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        if not user or not user.is_active:
+            logger.warning("auth_required_inactive_user", user_id=user_id)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
+        bind_logging_context(user_id=user.id, user_email=user.email)
+        return {
+            **payload,
+            "user_id": user.id,
+            "is_admin": bool(getattr(user, "is_admin", False)),
+            "is_active": True,
+        }
+
+
+async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Require an active admin user. Use as Depends(require_admin) on admin routes."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
 
 
 @router.post("/auth/signup", response_model=AuthResponse)
@@ -290,8 +305,11 @@ async def login(request: LoginRequest, response: Response) -> AuthResponse:
         
         # Long-lived token for non-cookie clients (extension); default 24h otherwise.
         if request.long_lived:
-            expires_seconds = settings.extension_token_expire_days * 86400
-            expires_delta = timedelta(days=settings.extension_token_expire_days)
+            from app.services.system_settings_service import get_effective_value
+
+            expire_days = int(await get_effective_value("extension_token_expire_days", session))
+            expires_seconds = expire_days * 86400
+            expires_delta = timedelta(days=expire_days)
         else:
             expires_seconds = 86400
             expires_delta = None
@@ -353,6 +371,7 @@ async def read_users_me(current_user: dict = Depends(get_current_user)) -> UserR
             name=getattr(user, "name", None),
             display_name=user_applied_by_display_name(user),
             is_active=user.is_active,
+            is_admin=bool(getattr(user, "is_admin", False)),
             created_at=user.created_at,
         )
 
@@ -384,6 +403,7 @@ async def update_profile(
             name=getattr(user, "name", None),
             display_name=user_applied_by_display_name(user),
             is_active=user.is_active,
+            is_admin=bool(getattr(user, "is_admin", False)),
             created_at=user.created_at,
         )
 
@@ -799,10 +819,10 @@ async def _fallback_match_batch_parallel(user_id: str, job_ids: list[str]) -> No
     When Redis is unavailable, run many matches with bounded concurrency (not one-by-one
     Starlette background tasks, which would serialize all match calls).
     """
-    from app.core.config import get_settings
     from app.services.job_match_orchestrator import run_job_match_analysis
+    from app.services.system_settings_service import get_effective_value_sync
 
-    sem = asyncio.Semaphore(max(1, get_settings().analysis_worker_max_jobs))
+    sem = asyncio.Semaphore(max(1, int(get_effective_value_sync("analysis_worker_max_jobs"))))
 
     async def one(jid: str) -> None:
         async with sem:
@@ -1611,6 +1631,7 @@ async def get_dashboard_jobs(
                     applied_at=applied_at,
                     applied_by_name=applied_by_name,
                     sheet_posted_at=job.sheet_posted_at,
+                    pumble_posted_at=job.pumble_posted_at,
                     user_status=ujs_status,
                     source=meta.get("source"),
                     is_remote=work_mode == "remote" or bool(meta.get("is_remote", False)),
@@ -1776,6 +1797,7 @@ async def get_valid_jobs(
                 applied_at=applied_at,
                 applied_by_name=applied_by_name,
                 sheet_posted_at=job.sheet_posted_at,
+                pumble_posted_at=job.pumble_posted_at,
                 status=job.status,
                 created_at=job.created_at,
                 updated_at=job.updated_at,
@@ -1869,6 +1891,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
             applied_at=applied_at,
             applied_by_name=applied_by_name,
             sheet_posted_at=job.sheet_posted_at,
+            pumble_posted_at=job.pumble_posted_at,
             status=job.status,
             created_at=job.created_at,
             updated_at=job.updated_at,
@@ -2662,6 +2685,8 @@ class UserSettingsResponse(BaseModel):
     llm_provider: str = "openai"
     default_llm_provider: str = "openai"
     available_providers: list[str] = Field(default_factory=lambda: ["openai"])
+    llm_model: str | None = None
+    default_llm_model: str = ""
     anthropic_key_mode: str = "default"
     anthropic_key_configured: bool = False
     anthropic_key_hint: str | None = None
@@ -2711,6 +2736,8 @@ class UserSettingsUpdateRequest(BaseModel):
     openai_api_key: str | None = Field(default=None, max_length=512)
     clear_openai_api_key: bool = False
     llm_provider: str | None = Field(default=None, pattern="^(openai|anthropic|gemini)$")
+    llm_model: str | None = Field(default=None, max_length=200)
+    clear_llm_model: bool = False
     anthropic_key_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     anthropic_api_key: str | None = Field(default=None, max_length=512)
     clear_anthropic_api_key: bool = False
@@ -2783,12 +2810,11 @@ class MinMatchScoreApplyResponse(BaseModel):
 
 
 def _resolve_draft_min_match_score(mode: str, score: int | None) -> int:
-    from app.core.config import get_settings
     from app.storage.user_repository import UserRepository
+    from app.services.system_settings_service import get_effective_value_sync
 
-    settings = get_settings()
     if mode == "default":
-        return settings.default_min_match_score
+        return int(get_effective_value_sync("default_min_match_score"))
     return UserRepository._clamp_min_match_score(score)
 
 
@@ -2942,6 +2968,42 @@ async def test_llm_provider_key_endpoint(
 
 
 @router.get(
+    "/settings/llm/models",
+    dependencies=[Depends(get_current_user)],
+)
+async def list_user_llm_models(
+    current_user: dict = Depends(get_current_user),
+):
+    """Discover chat models available on the user's OpenAI-compatible gateway key.
+
+    Uses the same credential resolution as job analysis (admin binding → user key → .env).
+    """
+    from app.services.llm_model_discovery import list_models_for_api_key
+    from app.services.llm_provider_keys_service import resolve_job_llm_credentials
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    async with get_session() as session:
+        creds = await resolve_job_llm_credentials(
+            session, job_type="job_analysis", user_id=user_id
+        )
+    api_key = (creds.get("openai_api_key") or "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="No OpenAI-compatible API key available. Add one in Preferences or ask an admin.",
+        )
+    try:
+        return await list_models_for_api_key(provider="openai", api_key=api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
     "/settings",
     response_model=UserSettingsResponse,
     dependencies=[Depends(get_current_user)],
@@ -2981,6 +3043,8 @@ async def update_user_settings(
                 openai_api_key=body.openai_api_key,
                 clear_openai_api_key=body.clear_openai_api_key,
                 llm_provider=body.llm_provider,
+                llm_model=body.llm_model,
+                clear_llm_model=body.clear_llm_model,
                 anthropic_key_mode=body.anthropic_key_mode,
                 anthropic_api_key=body.anthropic_api_key,
                 clear_anthropic_api_key=body.clear_anthropic_api_key,
@@ -3043,12 +3107,81 @@ async def download_resume_design_docx(
 async def get_resume_template_themes(
     current_user: dict = Depends(get_current_user),
 ):
+    from app.services.resume_custom_theme_service import list_user_themes
     from app.services.resume_themes import build_catalog
 
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return build_catalog()
+    catalog = build_catalog()
+    catalog.themes = await list_user_themes(user_id)
+    return catalog
+
+
+@router.post(
+    "/resume-builder/themes",
+    dependencies=[Depends(get_current_user)],
+)
+async def save_resume_custom_theme(
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.models.resume_design_schemas import ResumeDesign, SaveCustomThemeRequest
+    from app.services.resume_custom_theme_service import save_custom_theme
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        req = SaveCustomThemeRequest(
+            name=str(body.get("name") or ""),
+            design=ResumeDesign.model_validate(body.get("design") or {}),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    result = await save_custom_theme(user_id, req.name, req.design)
+    return result
+
+
+@router.post(
+    "/resume-builder/themes/{theme_id}/love",
+    dependencies=[Depends(get_current_user)],
+)
+async def toggle_resume_theme_love(
+    theme_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_custom_theme_service import toggle_theme_love
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        return await toggle_theme_love(user_id, theme_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/resume-builder/themes/{theme_id}",
+    dependencies=[Depends(get_current_user)],
+)
+async def delete_resume_custom_theme(
+    theme_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.resume_custom_theme_service import delete_custom_theme
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        themes = await delete_custom_theme(user_id, theme_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return {"themes": themes}
 
 
 @router.get(
@@ -3104,34 +3237,85 @@ async def preview_resume_template_design(
     body: ResumeDesignSaveRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    from app.services.resume_builder_service import convert_docx_to_pdf
-    from app.services.resume_design_service import generate_design_preview_docx
+    """Return the real dxpdf PDF for the builder's native PDF viewer embed."""
+    from urllib.parse import quote
+
+    from app.services.resume_builder_service import person_document_stem
+    from app.services.resume_design_service import (
+        generate_design_preview_pdf_bytes,
+        register_preview_pdf_token,
+    )
+    from app.storage.user_repository import UserRepository
 
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
-        docx_path = await generate_design_preview_docx(user_id, body.design)
+        pdf_bytes, cache_key = await generate_design_preview_pdf_bytes(user_id, body.design)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("resume_design_preview_failed", user_id=user_id, error=str(e))
-        raise HTTPException(status_code=500, detail="Failed to generate preview.")
-
-    try:
-        pdf_path = docx_path.with_suffix(".pdf")
-        convert_docx_to_pdf(docx_path, pdf_path)
-    except Exception as e:
-        logger.warning("resume_design_preview_pdf_failed", user_id=user_id, error=str(e))
         raise HTTPException(
             status_code=503,
-            detail="Accurate PDF preview requires LibreOffice on the server. Use the live preview instead.",
+            detail="Failed to render the accurate PDF preview.",
         )
 
-    return FileResponse(
-        path=str(pdf_path),
+    # Named file so the browser PDF chrome shows ``Name_resume.pdf`` instead of a blob UUID.
+    first = last = ""
+    async with get_session() as session:
+        user = await UserRepository(session).get_by_id(user_id)
+        if user:
+            first = (user.name_first or "").strip()
+            last = (user.name_last or "").strip()
+    filename = f"{person_document_stem(first, last, 'resume')}.pdf"
+    token = register_preview_pdf_token(user_id, cache_key, filename)
+    # Path ends with the real filename so Chromium's PDF viewer title is not a UUID.
+    preview_path = f"/api/v1/settings/resume-template/design/preview-doc/{token}/{quote(filename)}"
+    disposition = f"inline; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"
+
+    return Response(
+        content=pdf_bytes,
         media_type="application/pdf",
-        filename="resume-design-preview.pdf",
+        headers={
+            "Content-Disposition": disposition,
+            "Cache-Control": "no-store",
+            "X-Resume-Preview-Path": preview_path,
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Resume-Preview-Path",
+        },
+    )
+
+
+@router.get(
+    "/settings/resume-template/design/preview-doc/{token}/{filename}",
+    dependencies=[Depends(get_current_user)],
+)
+async def preview_resume_template_design_doc(
+    token: str,
+    filename: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Serve a cached preview PDF under a real ``Name_resume.pdf`` URL for the iframe."""
+    from urllib.parse import quote
+
+    from app.services.resume_design_service import get_preview_pdf_by_token
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    hit = get_preview_pdf_by_token(token, user_id)
+    if not hit:
+        raise HTTPException(status_code=404, detail="Preview expired — refresh the builder.")
+    pdf_bytes, stored_name = hit
+    safe_name = stored_name if stored_name.endswith(".pdf") else f"{stored_name}.pdf"
+    disposition = f"inline; filename=\"{safe_name}\"; filename*=UTF-8''{quote(safe_name)}"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": disposition,
+            "Cache-Control": "no-store",
+        },
     )
 
 
@@ -3254,6 +3438,54 @@ async def list_resume_library(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         logger.exception("resume_library_list_failed", user_id=user_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to load resumes.")
+
+
+@router.get("/resume-builder/resumes/search", dependencies=[Depends(get_current_user)])
+async def search_resume_library(
+    company: str | None = None,
+    job_title: str | None = None,
+    limit: int = 100,
+    current_user: dict = Depends(get_current_user),
+):
+    """Search library resumes and completed job-workflow builds (company AND role)."""
+    from app.services.resume_design_service import search_resumes
+
+    user_id = _require_user_id(current_user)
+    try:
+        return await search_resumes(
+            user_id,
+            company=company,
+            job_title=job_title,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_library_search_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to search resumes.")
+
+
+@router.post(
+    "/resume-builder/resumes/from-job-build/{build_id}",
+    dependencies=[Depends(get_current_user)],
+)
+async def open_job_build_resume(
+    build_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Open a completed automated job resume in the builder (creates/updates library entry)."""
+    from app.services.resume_design_service import open_job_build_as_library_resume
+
+    user_id = _require_user_id(current_user)
+    try:
+        return await open_job_build_as_library_resume(user_id, build_id)
+    except ValueError as e:
+        detail = str(e)
+        code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=code, detail=detail)
+    except Exception as e:
+        logger.exception("resume_from_job_build_failed", user_id=user_id, build_id=build_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to open job resume.")
 
 
 @router.post("/resume-builder/resumes", dependencies=[Depends(get_current_user)])
@@ -4092,6 +4324,22 @@ class SheetsAutoPostThresholdRequest(BaseModel):
     auto_post_threshold: int = Field(ge=0, le=100)
 
 
+class AutoPostFiltersPayload(BaseModel):
+    """Auto-post filters: work mode allow-list + company exclude list."""
+
+    work_modes: list[str] = Field(default_factory=list)
+    exclude_companies: list[str] = Field(default_factory=list)
+
+
+class SheetsAutoPostSettingsRequest(BaseModel):
+    auto_post_threshold: int = Field(ge=0, le=100)
+    auto_post_filters: AutoPostFiltersPayload = Field(default_factory=AutoPostFiltersPayload)
+
+
+class SheetsEnabledRequest(BaseModel):
+    is_enabled: bool
+
+
 @router.get("/sheets/status", dependencies=[Depends(get_current_user)])
 async def get_sheets_status():
     """Server-side Google Sheets credentials readiness."""
@@ -4126,6 +4374,7 @@ async def get_sheets_config(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     from app.services.google_sheets_service import get_user_config
+    from app.services.auto_post_filters import normalize_auto_post_filters
     config = await get_user_config(user_id)
     if not config:
         return {"configured": False}
@@ -4136,6 +4385,8 @@ async def get_sheets_config(current_user: dict = Depends(get_current_user)):
         "spreadsheet_url": config.spreadsheet_url,
         "tab_groups": tab_groups,
         "auto_post_threshold": config.auto_post_threshold,
+        "auto_post_filters": normalize_auto_post_filters(getattr(config, "auto_post_filters", None)),
+        "is_enabled": bool(getattr(config, "is_enabled", True)),
         "group_count": len(tab_groups),
         "assigned_tab_count": len(assigned_tabs),
     }
@@ -4201,6 +4452,7 @@ async def save_sheets_config(
         "spreadsheet_url": config.spreadsheet_url,
         "tab_groups": config.tab_groups,
         "auto_post_threshold": config.auto_post_threshold,
+        "is_enabled": bool(getattr(config, "is_enabled", True)),
         "group_count": len(config.tab_groups or []),
         "assigned_tab_count": len([t for g in (config.tab_groups or []) for t in g]),
         "tab_warnings": tab_warnings,
@@ -4217,6 +4469,7 @@ async def patch_sheets_auto_post_threshold(
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    from app.services.auto_post_filters import normalize_auto_post_filters
     from app.services.google_sheets_service import update_auto_post_threshold
 
     try:
@@ -4231,8 +4484,84 @@ async def patch_sheets_auto_post_threshold(
     return {
         "success": True,
         "auto_post_threshold": config.auto_post_threshold,
+        "auto_post_filters": normalize_auto_post_filters(getattr(config, "auto_post_filters", None)),
         "spreadsheet_url": config.spreadsheet_url,
         "tab_groups": tab_groups,
+        "is_enabled": bool(getattr(config, "is_enabled", True)),
+        "group_count": len(tab_groups),
+        "assigned_tab_count": len([t for g in tab_groups for t in g]),
+    }
+
+
+@router.patch("/sheets/config/auto-post-settings", dependencies=[Depends(get_current_user)])
+async def patch_sheets_auto_post_settings(
+    body: SheetsAutoPostSettingsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update match-score threshold + dashboard-aligned auto-post filters together."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    from app.services.auto_post_filters import normalize_auto_post_filters
+    from app.services.google_sheets_service import update_auto_post_settings
+
+    try:
+        config = await update_auto_post_settings(
+            user_id,
+            auto_post_threshold=body.auto_post_threshold,
+            auto_post_filters=body.auto_post_filters.model_dump(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("sheets_patch_auto_post_settings_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to update auto-post settings: {e}")
+
+    tab_groups = config.tab_groups or []
+    return {
+        "success": True,
+        "auto_post_threshold": config.auto_post_threshold,
+        "auto_post_filters": normalize_auto_post_filters(config.auto_post_filters),
+        "spreadsheet_url": config.spreadsheet_url,
+        "tab_groups": tab_groups,
+        "is_enabled": bool(getattr(config, "is_enabled", True)),
+        "group_count": len(tab_groups),
+        "assigned_tab_count": len([t for g in tab_groups for t in g]),
+    }
+
+
+@router.patch("/sheets/config/enabled", dependencies=[Depends(get_current_user)])
+async def patch_sheets_enabled(
+    body: SheetsEnabledRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Soft-toggle Google Sheets auto-post without deleting the saved connection."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    from app.services.google_sheets_service import set_enabled
+
+    try:
+        config = await set_enabled(user_id, body.is_enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("sheets_patch_enabled_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to update Sheets enabled state: {e}")
+
+    from app.services.auto_post_filters import normalize_auto_post_filters
+
+    tab_groups = config.tab_groups or []
+    return {
+        "success": True,
+        "is_enabled": bool(config.is_enabled),
+        "configured": True,
+        "spreadsheet_url": config.spreadsheet_url,
+        "tab_groups": tab_groups,
+        "auto_post_threshold": config.auto_post_threshold,
+        "auto_post_filters": normalize_auto_post_filters(getattr(config, "auto_post_filters", None)),
         "group_count": len(tab_groups),
         "assigned_tab_count": len([t for g in tab_groups for t in g]),
     }
@@ -4288,6 +4617,385 @@ async def post_jobs_to_sheet(
         "results": summary["posted"],
         "partial_results": summary.get("partial", []),
         "failed_results": summary.get("failed", []),
+    }
+
+
+# ── Pumble integration ─────────────────────────────────────────────────────
+
+
+class PumbleVerifyRequest(BaseModel):
+    api_key: str = Field(..., min_length=10)
+
+
+class PumbleChannelsRequest(BaseModel):
+    api_key: str | None = Field(default=None, min_length=10)
+    integration_id: str | None = None
+
+
+class PumbleConfigRequest(BaseModel):
+    api_key: str = Field(..., min_length=10)
+    channel_id: str = Field(..., min_length=1)
+    channel_name: str = Field(..., min_length=1)
+    workspace_id: str | None = None
+    label: str | None = None
+    auto_post_threshold: int = 75
+
+
+class PumblePostJobsRequest(BaseModel):
+    job_ids: list[str] = Field(..., min_length=1, max_length=200)
+    integration_ids: list[str] | None = None
+
+
+class PumbleAutoPostThresholdRequest(BaseModel):
+    auto_post_threshold: int = Field(ge=0, le=100)
+
+
+class PumbleAutoPostSettingsRequest(BaseModel):
+    auto_post_threshold: int = Field(ge=0, le=100)
+    auto_post_filters: AutoPostFiltersPayload = Field(default_factory=AutoPostFiltersPayload)
+
+
+class PumbleEnabledRequest(BaseModel):
+    is_enabled: bool
+
+
+@router.get("/pumble/status", dependencies=[Depends(get_current_user)])
+async def get_pumble_status():
+    """Pumble integration is always available (user-provided API keys)."""
+    return {"integration_available": True}
+
+
+@router.post("/pumble/verify", dependencies=[Depends(get_current_user)])
+async def verify_pumble_api_key(body: PumbleVerifyRequest):
+    from app.services.pumble_service import verify_api_key
+
+    try:
+        return await verify_api_key(body.api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("pumble_verify_failed", error=str(e))
+        raise HTTPException(status_code=502, detail=f"Could not verify Pumble API key: {e}")
+
+
+@router.post("/pumble/channels", dependencies=[Depends(get_current_user)])
+async def list_pumble_channels(
+    body: PumbleChannelsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.pumble_service import get_config_by_id, list_channels
+    from app.utils.secret_encryption import decrypt_secret
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    api_key = (body.api_key or "").strip()
+    if not api_key and body.integration_id:
+        config = await get_config_by_id(user_id, body.integration_id)
+        if not config:
+            raise HTTPException(status_code=404, detail="Pumble destination not found")
+        try:
+            api_key = decrypt_secret(config.api_key_encrypted)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail="Stored API key could not be decrypted") from e
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key is required")
+
+    try:
+        channels = await list_channels(api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("pumble_list_channels_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=502, detail=f"Could not list Pumble channels: {e}")
+
+    return {"channels": channels, "channel_count": len(channels)}
+
+
+@router.get("/pumble/config", dependencies=[Depends(get_current_user)])
+async def get_pumble_config(current_user: dict = Depends(get_current_user)):
+    from app.utils.secret_encryption import decrypt_secret, mask_api_key
+    from app.services.pumble_service import _serialize_integration, list_user_configs
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    configs = await list_user_configs(user_id)
+    if not configs:
+        return {"configured": False, "integrations": [], "integration_count": 0}
+
+    integrations = []
+    for config in configs:
+        try:
+            api_key_hint = mask_api_key(decrypt_secret(config.api_key_encrypted))
+        except ValueError:
+            api_key_hint = "••••••••"
+        integrations.append(_serialize_integration(config, api_key_hint=api_key_hint))
+
+    threshold = configs[0].auto_post_threshold
+    from app.services.auto_post_filters import normalize_auto_post_filters
+
+    return {
+        "configured": True,
+        "integration_count": len(integrations),
+        "integrations": integrations,
+        "auto_post_threshold": threshold,
+        "auto_post_filters": normalize_auto_post_filters(
+            getattr(configs[0], "auto_post_filters", None)
+        ),
+    }
+
+
+@router.post("/pumble/config", dependencies=[Depends(get_current_user)])
+async def save_pumble_config(
+    body: PumbleConfigRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.pumble_service import _serialize_integration, create_config
+    from app.utils.secret_encryption import mask_api_key
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        config = await create_config(
+            user_id,
+            body.api_key,
+            body.channel_id,
+            body.channel_name,
+            workspace_id=body.workspace_id,
+            label=body.label,
+            auto_post_threshold=body.auto_post_threshold,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("pumble_save_config_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to save Pumble config: {e}")
+
+    return {
+        "success": True,
+        "integration": _serialize_integration(config, api_key_hint=mask_api_key(body.api_key.strip())),
+    }
+
+
+@router.patch("/pumble/config/auto-post-threshold", dependencies=[Depends(get_current_user)])
+async def patch_pumble_auto_post_threshold(
+    body: PumbleAutoPostThresholdRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.auto_post_filters import normalize_auto_post_filters
+    from app.services.pumble_service import update_auto_post_threshold
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        configs = await update_auto_post_threshold(user_id, body.auto_post_threshold)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("pumble_patch_auto_post_threshold_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to update auto-post threshold: {e}")
+
+    return {
+        "success": True,
+        "auto_post_threshold": body.auto_post_threshold,
+        "auto_post_filters": normalize_auto_post_filters(
+            getattr(configs[0], "auto_post_filters", None) if configs else None
+        ),
+        "integration_count": len(configs),
+    }
+
+
+@router.patch("/pumble/config/auto-post-settings", dependencies=[Depends(get_current_user)])
+async def patch_pumble_auto_post_settings(
+    body: PumbleAutoPostSettingsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update match-score threshold + dashboard-aligned filters on all destinations."""
+    from app.services.auto_post_filters import normalize_auto_post_filters
+    from app.services.pumble_service import update_auto_post_settings
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        configs = await update_auto_post_settings(
+            user_id,
+            auto_post_threshold=body.auto_post_threshold,
+            auto_post_filters=body.auto_post_filters.model_dump(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("pumble_patch_auto_post_settings_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to update auto-post settings: {e}")
+
+    return {
+        "success": True,
+        "auto_post_threshold": body.auto_post_threshold,
+        "auto_post_filters": normalize_auto_post_filters(
+            getattr(configs[0], "auto_post_filters", None) if configs else None
+        ),
+        "integration_count": len(configs),
+    }
+
+
+@router.patch("/pumble/config/enabled", dependencies=[Depends(get_current_user)])
+async def patch_pumble_all_enabled(
+    body: PumbleEnabledRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Soft-toggle auto-post for every Pumble destination (preserves connections)."""
+    from app.services.auto_post_filters import normalize_auto_post_filters
+    from app.services.pumble_service import _serialize_integration, set_all_enabled
+    from app.utils.secret_encryption import decrypt_secret, mask_api_key
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        configs = await set_all_enabled(user_id, body.is_enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("pumble_patch_all_enabled_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to update Pumble enabled state: {e}")
+
+    integrations = []
+    for config in configs:
+        try:
+            api_key_hint = mask_api_key(decrypt_secret(config.api_key_encrypted))
+        except ValueError:
+            api_key_hint = "••••••••"
+        integrations.append(_serialize_integration(config, api_key_hint=api_key_hint))
+
+    return {
+        "success": True,
+        "is_enabled": body.is_enabled,
+        "configured": True,
+        "integration_count": len(integrations),
+        "integrations": integrations,
+        "auto_post_threshold": configs[0].auto_post_threshold if configs else 75,
+        "auto_post_filters": normalize_auto_post_filters(
+            getattr(configs[0], "auto_post_filters", None) if configs else None
+        ),
+    }
+
+
+@router.patch("/pumble/config/{integration_id}/enabled", dependencies=[Depends(get_current_user)])
+async def patch_pumble_integration_enabled(
+    integration_id: str,
+    body: PumbleEnabledRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Soft-toggle auto-post for a single Pumble destination."""
+    from app.services.pumble_service import _serialize_integration, set_integration_enabled
+    from app.utils.secret_encryption import decrypt_secret, mask_api_key
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        config = await set_integration_enabled(user_id, integration_id, body.is_enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "pumble_patch_integration_enabled_failed",
+            user_id=user_id,
+            integration_id=integration_id,
+            error=str(e),
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to update destination: {e}")
+
+    try:
+        api_key_hint = mask_api_key(decrypt_secret(config.api_key_encrypted))
+    except ValueError:
+        api_key_hint = "••••••••"
+
+    return {
+        "success": True,
+        "integration": _serialize_integration(config, api_key_hint=api_key_hint),
+    }
+
+
+@router.delete("/pumble/config/{integration_id}", dependencies=[Depends(get_current_user)])
+async def delete_pumble_integration(
+    integration_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.pumble_service import delete_config_by_id
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    removed = await delete_config_by_id(user_id, integration_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Pumble destination not found")
+    return {"success": True, "removed": True}
+
+
+@router.delete("/pumble/config", dependencies=[Depends(get_current_user)])
+async def delete_pumble_config(current_user: dict = Depends(get_current_user)):
+    from app.services.pumble_service import delete_user_config
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    removed = await delete_user_config(user_id)
+    return {"success": True, "removed": removed}
+
+
+@router.post("/pumble/post-jobs", dependencies=[Depends(get_current_user)])
+async def post_jobs_to_pumble(
+    body: PumblePostJobsRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.pumble_service import PumbleApiError, distribute_jobs, list_user_configs
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    configs = await list_user_configs(user_id, enabled_only=True)
+    if not configs:
+        raise HTTPException(
+            status_code=400,
+            detail="Pumble integration not configured. Set it up in Settings first.",
+        )
+
+    try:
+        summary = await distribute_jobs(user_id, body.job_ids, integration_ids=body.integration_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except PumbleApiError as e:
+        logger.error("pumble_distribute_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.error("pumble_distribute_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=502, detail=f"Failed to post jobs to Pumble: {e}")
+
+    return {
+        "success": True,
+        "posted_count": len(summary["posted"]),
+        "failed_count": len(summary.get("failed", [])),
+        "skipped_already_in_thread": summary["skipped_already_in_thread"],
+        "skipped_not_found": summary["skipped_not_found"],
+        "results": summary["posted"],
+        "failed_results": summary.get("failed", []),
+        "integrations": summary.get("integrations", []),
+        "destination_count": len(summary.get("integrations", [])),
     }
 
 

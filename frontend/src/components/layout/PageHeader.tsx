@@ -20,11 +20,14 @@ interface PageHeaderProps {
 export function PageHeader({ icon: Icon, gradient, title, description, actions, className = '' }: PageHeaderProps) {
   return (
     <header
-      className={`relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:gap-4 ${className}`.trim()}
+      // overflow-visible so action menus (Sync All, LLM, etc.) are not clipped at the
+      // header edge. z-40 keeps this band above later siblings (stats tiles, filter
+      // board) that would otherwise paint over absolutely/fixed-positioned menus.
+      className={`relative z-40 flex flex-col gap-3 overflow-visible rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:gap-4 ${className}`.trim()}
     >
       <span
         aria-hidden
-        className={`pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b ${gradient}`}
+        className={`pointer-events-none absolute inset-y-0 left-0 w-1.5 rounded-l-2xl bg-gradient-to-b ${gradient}`}
       />
       <div className="flex min-w-0 items-center gap-3">
         <div
@@ -37,7 +40,11 @@ export function PageHeader({ icon: Icon, gradient, title, description, actions, 
           <p className="mt-0.5 text-xs leading-snug text-slate-500 sm:text-sm">{description}</p>
         </div>
       </div>
-      {actions && <div className="shrink-0 sm:ml-auto">{actions}</div>}
+      {actions && (
+        <div className="relative z-50 w-full min-w-0 sm:ml-auto sm:w-auto sm:shrink-0">
+          {actions}
+        </div>
+      )}
     </header>
   );
 }

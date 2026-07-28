@@ -28,6 +28,7 @@ import type {
 } from '../../types/profile';
 import { renderRich } from '../../utils/richText';
 import { deriveWorkContent } from '../../utils/workExperience';
+import { formatFlexibleDate, formatFlexiblePeriod } from '../../utils/flexibleDate';
 
 export const PT_TO_PX = 1.3333;
 
@@ -74,12 +75,55 @@ function tint(hex: string, keep: number): string {
 }
 
 function period(start?: string, end?: string): string {
-  const s = (start || '').trim();
-  const e = (end || '').trim();
-  if (s && e) return `${s} – ${e}`;
-  // An open-ended role (start, no end) is ongoing - show "Present".
-  if (s) return `${s} – Present`;
-  return e || '';
+  return formatFlexiblePeriod(start, end);
+}
+
+/**
+ * Title + right-aligned date row that stays inside narrow columns (e.g. 2-col sidebar).
+ *
+ * Root cause of overflow: date used `flex: 0 0 auto` (intrinsic width, never shrinks) while
+ * the title lacked `minWidth: 0`, so long periods like "Jan 2016 - Dec 2019" blew past the
+ * 34% education column into the main column.
+ */
+function TitleDateRow({
+  title,
+  date,
+  right,
+}: {
+  title: ReactNode;
+  date: ReactNode | null;
+  right: boolean;
+}) {
+  if (!right || !date) {
+    return <div style={{ minWidth: 0, maxWidth: '100%' }}>{title}</div>;
+  }
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        gap: 8,
+        width: '100%',
+        minWidth: 0,
+        maxWidth: '100%',
+      }}
+    >
+      <div style={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{title}</div>
+      <div
+        style={{
+          flex: '0 1 auto',
+          minWidth: 0,
+          maxWidth: '48%',
+          textAlign: 'right',
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
+        }}
+      >
+        {date}
+      </div>
+    </div>
+  );
 }
 
 function fullName(p: UserProfile | null): string {
@@ -91,19 +135,54 @@ function fullName(p: UserProfile | null): string {
 
 type ContactKind = 'email' | 'phone' | 'linkedin' | 'github';
 
+type ContactItem = { kind: ContactKind; text: string; href?: string };
+
 function cleanUrl(u: string): string {
   return (u || '').trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '');
 }
 
-function contactItems(p: UserProfile | null): { kind: ContactKind; text: string }[] {
-  if (!p) return [{ kind: 'email', text: 'you@email.com' }];
+function ensureHttpUrl(u: string): string {
+  const v = (u || '').trim();
+  if (!v) return '';
+  if (/^https?:\/\//i.test(v)) return v;
+  return `https://${v.replace(/^\/+/, '')}`;
+}
+
+function contactItems(p: UserProfile | null): ContactItem[] {
+  if (!p) return [{ kind: 'email', text: 'you@email.com', href: 'mailto:you@email.com' }];
   const phone = [p.phone_country_code, p.phone_number].map((x) => (x || '').trim()).filter(Boolean).join(' ');
-  const items: { kind: ContactKind; text: string }[] = [];
-  if ((p.email || '').trim()) items.push({ kind: 'email', text: p.email!.trim() });
-  if (phone) items.push({ kind: 'phone', text: phone });
-  if ((p.linkedin_url || '').trim()) items.push({ kind: 'linkedin', text: cleanUrl(p.linkedin_url!) });
-  if ((p.github_url || '').trim()) items.push({ kind: 'github', text: cleanUrl(p.github_url!) });
+  const items: ContactItem[] = [];
+  if ((p.email || '').trim()) {
+    const email = p.email!.trim();
+    items.push({ kind: 'email', text: email, href: `mailto:${email}` });
+  }
+  if (phone) {
+    const tel = phone.replace(/[^\d+]/g, '');
+    items.push({ kind: 'phone', text: phone, href: tel ? `tel:${tel}` : undefined });
+  }
+  if ((p.linkedin_url || '').trim()) {
+    const raw = p.linkedin_url!.trim();
+    items.push({ kind: 'linkedin', text: cleanUrl(raw), href: ensureHttpUrl(raw) });
+  }
+  if ((p.github_url || '').trim()) {
+    const raw = p.github_url!.trim();
+    items.push({ kind: 'github', text: cleanUrl(raw), href: ensureHttpUrl(raw) });
+  }
   return items;
+}
+
+function ContactText({ item }: { item: ContactItem }) {
+  if (!item.href) return <span>{item.text}</span>;
+  return (
+    <a
+      href={item.href}
+      target={item.href.startsWith('http') ? '_blank' : undefined}
+      rel={item.href.startsWith('http') ? 'noopener noreferrer' : undefined}
+      style={{ color: 'inherit', textDecoration: 'none' }}
+    >
+      {item.text}
+    </a>
+  );
 }
 
 const LINKEDIN_PATH =
@@ -111,9 +190,8 @@ const LINKEDIN_PATH =
 const GITHUB_PATH =
   'M12 .3a12 12 0 0 0-3.8 23.4c.6.1.82-.26.82-.58l-.01-2.04c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.3-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22l-.01 3.29c0 .32.22.69.82.57A12 12 0 0 0 12 .3z';
 
-/** Official brand marks (LinkedIn / GitHub) plus clean mail / phone glyphs, monochrome
- *  in the supplied color. ``variant`` switches the brand marks between filled and outline;
- *  mail / phone are always line icons. */
+/** Contact glyphs monochrome in the supplied color. Brand = solid fill for every
+ *  kind (email / phone / LinkedIn / GitHub); outline = line versions. */
 function ContactIcon({
   kind,
   size,
@@ -139,18 +217,29 @@ function ContactIcon({
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
   };
+  const phonePath =
+    'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z';
   switch (kind) {
     case 'email':
-      return (
+      return variant === 'outline' ? (
         <svg {...common} {...strokeProps}>
           <rect x="2.5" y="4.5" width="19" height="15" rx="2.5" />
           <path d="m3 6 9 6.5L21 6" />
         </svg>
+      ) : (
+        <svg {...common} fill={color}>
+          <path d="M1.5 8.67v8.58a3 3 0 0 0 3 3h15a3 3 0 0 0 3-3V8.67l-8.928 5.493a3 3 0 0 1-3.144 0L1.5 8.67z" />
+          <path d="M22.5 6.908V6.75a3 3 0 0 0-3-3h-15a3 3 0 0 0-3 3v.158l9.714 5.978a1.5 1.5 0 0 0 1.572 0L22.5 6.908z" />
+        </svg>
       );
     case 'phone':
-      return (
+      return variant === 'outline' ? (
         <svg {...common} {...strokeProps}>
-          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z" />
+          <path d={phonePath} />
+        </svg>
+      ) : (
+        <svg {...common} fill={color}>
+          <path d={phonePath} />
         </svg>
       );
     case 'linkedin':
@@ -620,8 +709,20 @@ export function ExperienceBlock({
   const padPx = st.pad_pt * PT_TO_PX;
   const gapPx = st.entry_gap_pt * PT_TO_PX;
 
-  const bodyStyle: CSSProperties = { color: c.text, lineHeight: t.line_spacing, fontSize: base };
-  const mutedStyle: CSSProperties = { color: c.muted, fontSize: base * 0.92 };
+  const bodyStyle: CSSProperties = {
+    color: c.text,
+    lineHeight: t.line_spacing,
+    fontSize: base,
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    maxWidth: '100%',
+  };
+  const mutedStyle: CSSProperties = {
+    color: c.muted,
+    fontSize: base * 0.92,
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  };
 
   const companyColor = st.accent_target === 'company' ? c.accent : c.heading;
   const roleColor = st.accent_target === 'role' ? c.accent : c.text;
@@ -690,21 +791,25 @@ export function ExperienceBlock({
     let header: ReactNode;
     if (st.header_layout === 'two_column') {
       header = (
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-          <div>
-            {companyEl}
-            {roleEl ? <span style={{ color: c.text }}>{'  -  '}{roleEl}</span> : null}
-          </div>
-          {dateEl ? <div style={{ flex: '0 0 auto', textAlign: 'right' }}>{dateEl}</div> : null}
-        </div>
+        <TitleDateRow
+          right
+          title={
+            <>
+              {companyEl}
+              {roleEl ? <span style={{ color: c.text }}>{'  -  '}{roleEl}</span> : null}
+            </>
+          }
+          date={dateEl}
+        />
       );
     } else if (st.header_layout === 'stacked') {
       header = (
         <>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: st.date_position === 'right' ? 'space-between' : 'flex-start', gap: 10 }}>
-            <div style={{ color: companyColor, fontWeight: 700 }}>{e.company}</div>
-            {st.date_position === 'right' && dateEl ? <div style={{ flex: '0 0 auto' }}>{dateEl}</div> : null}
-          </div>
+          <TitleDateRow
+            right={st.date_position === 'right'}
+            title={<div style={{ color: companyColor, fontWeight: 700 }}>{e.company}</div>}
+            date={st.date_position === 'right' ? dateEl : null}
+          />
           {roleEl ? <div style={{ marginTop: 0 }}>{roleEl}</div> : null}
           {st.date_position !== 'right' && dateEl ? <div style={{ marginTop: 1 }}>{dateEl}</div> : null}
         </>
@@ -713,17 +818,20 @@ export function ExperienceBlock({
       // inline header
       if (st.date_position === 'right') {
         header = (
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-            <div>
-              {companyEl}
-              {roleEl ? <span style={{ color: c.text }}>{'  -  '}{roleEl}</span> : null}
-            </div>
-            {dateEl ? <div style={{ flex: '0 0 auto' }}>{dateEl}</div> : null}
-          </div>
+          <TitleDateRow
+            right
+            title={
+              <>
+                {companyEl}
+                {roleEl ? <span style={{ color: c.text }}>{'  -  '}{roleEl}</span> : null}
+              </>
+            }
+            date={dateEl}
+          />
         );
       } else if (st.date_position === 'inline') {
         header = (
-          <div>
+          <div style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
             {companyEl}
             {roleEl ? <span style={{ color: c.text }}>{'  -  '}{roleEl}</span> : null}
             {dateEl ? <span style={{ ...mutedStyle, color: dateColor }}>{'  \u00b7  '}{dateText}</span> : null}
@@ -733,7 +841,7 @@ export function ExperienceBlock({
         // below
         header = (
           <>
-            <div>
+            <div style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
               {companyEl}
               {roleEl ? <span style={{ color: c.text }}>{'  -  '}{roleEl}</span> : null}
             </div>
@@ -789,7 +897,7 @@ export function ExperienceBlock({
           data-gap-role="exp-label"
           style={{
             ...bodyStyle,
-            margin: '3px 0 1px',
+            margin: '2px 0 0',
             fontWeight: st.label_style === 'bold' || st.label_style === 'accent' ? 700 : 400,
             color: st.label_style === 'accent' ? c.accent : c.text,
             textTransform: upper ? 'uppercase' : 'none',
@@ -805,38 +913,63 @@ export function ExperienceBlock({
     // ---- Contributions ----
     const contributionEls = e.contributions.map((b, bi) => {
       const marker = st.marker === 'numbered' ? `${bi + 1}.` : MARKER_GLYPH[st.marker] ?? '';
+      const textStyle: CSSProperties = {
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
+        minWidth: 0,
+        maxWidth: '100%',
+      };
+      // Uniform margin-top (not bottom) so consecutive body lines share the same gap —
+      // matches the PDF fill engine's space_before rhythm and avoids uneven measure noise.
+      const bodyLineGap = { margin: '2px 0 0', ...textStyle };
       if (!marker) {
         return (
-          <p key={bi} data-block data-gap-role="exp-bull" style={{ ...bodyStyle, margin: '0 0 1px' }}>
+          <p key={bi} data-block data-gap-role="exp-bull" style={{ ...bodyStyle, ...bodyLineGap }}>
             {renderRich(b)}
           </p>
         );
       }
-      // Flex row keeps the marker tight to the text and makes wrapped lines align
-      // under the text column (the text span is its own flex item).
+      // Flex row keeps the marker tight to the text; minWidth:0 + overflowWrap keeps
+      // long unbroken tokens inside the page margins (PDF-editor style wrapping).
       return (
-        <div key={bi} data-block data-gap-role="exp-bull" style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
+        <div
+          key={bi}
+          data-block
+          data-gap-role="exp-bull"
+          style={{
+            ...bodyStyle,
+            ...bodyLineGap,
+            display: 'flex',
+            gap: 5,
+            alignItems: 'baseline',
+            maxWidth: '100%',
+            minWidth: 0,
+          }}
+        >
           <span style={{ flex: '0 0 auto', color: st.accent_target === 'none' ? c.text : c.accent, fontWeight: 700 }}>
             {marker}
           </span>
-          <span style={{ flex: '1 1 auto', minWidth: 0 }}>{renderRich(b)}</span>
+          <span style={{ flex: '1 1 auto', ...textStyle }}>{renderRich(b)}</span>
         </div>
       );
     });
 
     // ---- Used skills ----
+    // Must carry data-block: the paginator only keeps whole [data-block] units
+    // across page edges. Without it, Technologies is hard-clipped mid-line
+    // (top half on page N, bottom half on page N+1).
     let usedSkillsEl: ReactNode = null;
     if (st.show_used_skills && st.used_skills_style !== 'hidden' && e.usedSkills) {
       if (st.used_skills_style === 'inline') {
         usedSkillsEl = (
-          <p data-gap-role="exp-used" style={{ ...mutedStyle, margin: '3px 0 0' }}>
+          <p data-block data-gap-role="exp-used" style={{ ...mutedStyle, margin: '3px 0 0' }}>
             <span style={{ fontWeight: 700, color: c.heading }}>Technologies: </span>
             {renderRich(e.usedSkills)}
           </p>
         );
       } else if (st.used_skills_style === 'label') {
         usedSkillsEl = (
-          <p data-gap-role="exp-used" style={{ ...bodyStyle, margin: '3px 0 0', fontSize: base * 0.9 }}>
+          <p data-block data-gap-role="exp-used" style={{ ...bodyStyle, margin: '3px 0 0', fontSize: base * 0.9 }}>
             <span style={{ fontWeight: 700, color: c.accent }}>Tech &middot; </span>
             {renderRich(e.usedSkills)}
           </p>
@@ -844,7 +977,7 @@ export function ExperienceBlock({
       } else {
         const accent = st.used_skills_style === 'pill';
         usedSkillsEl = (
-          <div data-gap-role="exp-used" style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
+          <div data-block data-gap-role="exp-used" style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
             {splitSkills(e.usedSkills).map((s, si) => skillChip(s, si, accent))}
           </div>
         );
@@ -919,8 +1052,20 @@ export function EducationBlock({
   const padPx = st.pad_pt * PT_TO_PX;
   const gapPx = st.entry_gap_pt * PT_TO_PX;
 
-  const bodyStyle: CSSProperties = { color: c.text, lineHeight: t.line_spacing, fontSize: base };
-  const mutedStyle: CSSProperties = { color: c.muted, fontSize: base * 0.92 };
+  const bodyStyle: CSSProperties = {
+    color: c.text,
+    lineHeight: t.line_spacing,
+    fontSize: base,
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    maxWidth: '100%',
+  };
+  const mutedStyle: CSSProperties = {
+    color: c.muted,
+    fontSize: base * 0.92,
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  };
 
   const uniColor = st.accent_target === 'university' ? c.accent : c.heading;
   const degreeColor = st.accent_target === 'degree' ? c.accent : c.text;
@@ -945,34 +1090,27 @@ export function EducationBlock({
     if (st.header_layout === 'stacked') {
       header = (
         <>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'baseline',
-              justifyContent: st.date_position === 'right' ? 'space-between' : 'flex-start',
-              gap: 10,
-            }}
-          >
-            <div>{uniEl}</div>
-            {st.date_position === 'right' && dateEl ? <div style={{ flex: '0 0 auto' }}>{dateEl}</div> : null}
-          </div>
+          <TitleDateRow right={st.date_position === 'right'} title={<div>{uniEl}</div>} date={st.date_position === 'right' ? dateEl : null} />
           {degreeEl ? <div style={{ marginTop: 0 }}>{degreeEl}</div> : null}
           {st.date_position !== 'right' && dateEl ? <div style={{ marginTop: 1 }}>{dateEl}</div> : null}
         </>
       );
     } else if (st.date_position === 'right') {
       header = (
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-          <div>
-            {uniEl}
-            {degreeEl ? <span style={{ color: c.text }}>{'  -  '}{degreeEl}</span> : null}
-          </div>
-          {dateEl ? <div style={{ flex: '0 0 auto' }}>{dateEl}</div> : null}
-        </div>
+        <TitleDateRow
+          right
+          title={
+            <>
+              {uniEl}
+              {degreeEl ? <span style={{ color: c.text }}>{'  -  '}{degreeEl}</span> : null}
+            </>
+          }
+          date={dateEl}
+        />
       );
     } else if (st.date_position === 'inline') {
       header = (
-        <div>
+        <div style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
           {uniEl}
           {degreeEl ? <span style={{ color: c.text }}>{'  -  '}{degreeEl}</span> : null}
           {dateEl ? <span style={{ ...mutedStyle }}>{'  \u00b7  '}{dateText}</span> : null}
@@ -981,7 +1119,7 @@ export function EducationBlock({
     } else {
       header = (
         <>
-          <div>
+          <div style={{ minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
             {uniEl}
             {degreeEl ? <span style={{ color: c.text }}>{'  -  '}{degreeEl}</span> : null}
           </div>
@@ -995,7 +1133,7 @@ export function EducationBlock({
         <p style={{ ...bodyStyle, margin: '2px 0 0' }}>{renderRich((e.description || '').trim())}</p>
       ) : null;
 
-    const wrap: CSSProperties = { marginBottom: gapPx };
+    const wrap: CSSProperties = { marginBottom: gapPx, minWidth: 0, maxWidth: '100%' };
     if (st.surface === 'card') {
       wrap.border = `1px solid ${tint(c.accent, 0.22)}`;
       wrap.borderRadius = st.radius_pt * PT_TO_PX;
@@ -1043,13 +1181,48 @@ export function CertificatesBlock({
   const st = style ?? DEFAULT_CERTIFICATES_STYLE;
   const padPx = st.pad_pt * PT_TO_PX;
 
-  const bodyStyle: CSSProperties = { color: c.text, lineHeight: t.line_spacing, fontSize: base };
-  const mutedStyle: CSSProperties = { color: c.muted, fontSize: base * 0.92 };
-  const names = certificates.map((e) => (e.name || '').trim()).filter(Boolean);
+  const bodyStyle: CSSProperties = {
+    color: c.text,
+    lineHeight: t.line_spacing,
+    fontSize: base,
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+    maxWidth: '100%',
+  };
+  const mutedStyle: CSSProperties = {
+    color: c.muted,
+    fontSize: base * 0.92,
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  };
+  const items = certificates.filter((e) => (e.name || '').trim());
 
-  if (names.length === 0) {
+  if (items.length === 0) {
     return <p style={{ ...mutedStyle, fontStyle: 'italic' }}>Add certifications in your profile to populate this section.</p>;
   }
+
+  const ensureHttp = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u.replace(/^\/+/, '')}`);
+
+  const certNameNode = (cert: CertificateBlock, color: string): ReactNode => {
+    const name = (cert.name || '').trim();
+    const href = (cert.url || '').trim();
+    if (!href) return name;
+    return (
+      <a href={ensureHttp(href)} target="_blank" rel="noopener noreferrer" style={{ color, textDecoration: 'none' }}>
+        {name}
+      </a>
+    );
+  };
+
+  const certLabel = (cert: CertificateBlock, color: string = c.text): ReactNode => {
+    const issued = formatFlexibleDate(cert.issued_at);
+    return (
+      <>
+        {certNameNode(cert, color)}
+        {issued ? <span style={{ color: c.muted }}> ({issued})</span> : null}
+      </>
+    );
+  };
 
   const surface: CSSProperties = {};
   if (st.surface === 'card') {
@@ -1063,49 +1236,70 @@ export function CertificatesBlock({
     surface.padding = padPx || 12;
   }
 
-  const chip = (name: string, i: number): ReactNode => (
-    <span
-      key={i}
-      style={{
-        display: 'inline-block',
-        fontSize: base * 0.9,
-        lineHeight: 1.4,
-        padding: '1px 9px',
-        borderRadius: st.accent_chips ? 999 : 5,
-        background: st.accent_chips ? tint(c.accent, 0.14) : '#f1f5f9',
-        color: st.accent_chips ? c.accent : c.text,
-        border: `1px solid ${st.accent_chips ? tint(c.accent, 0.4) : '#e2e8f0'}`,
-      }}
-    >
-      {name}
-    </span>
-  );
+  const chip = (cert: CertificateBlock, i: number): ReactNode => {
+    const chipColor = st.accent_chips ? c.accent : c.text;
+    return (
+      <span
+        key={i}
+        style={{
+          display: 'inline-block',
+          fontSize: base * 0.9,
+          lineHeight: 1.4,
+          padding: '1px 9px',
+          borderRadius: st.accent_chips ? 999 : 5,
+          background: st.accent_chips ? tint(c.accent, 0.14) : '#f1f5f9',
+          color: chipColor,
+          border: `1px solid ${st.accent_chips ? tint(c.accent, 0.4) : '#e2e8f0'}`,
+        }}
+      >
+        {certLabel(cert, chipColor)}
+      </span>
+    );
+  };
 
   let content: ReactNode;
   if (st.layout === 'inline') {
-    content = <p style={{ ...bodyStyle, margin: 0 }}>{names.join(', ')}</p>;
+    content = (
+      <p style={{ ...bodyStyle, margin: 0 }}>
+        {items.map((cert, i) => (
+          <span key={i}>
+            {i > 0 ? ', ' : ''}
+            {certLabel(cert)}
+          </span>
+        ))}
+      </p>
+    );
   } else if (st.layout === 'pipe') {
-    content = <p style={{ ...bodyStyle, margin: 0 }}>{names.join('  |  ')}</p>;
+    content = (
+      <p style={{ ...bodyStyle, margin: 0 }}>
+        {items.map((cert, i) => (
+          <span key={i}>
+            {i > 0 ? '  |  ' : ''}
+            {certLabel(cert)}
+          </span>
+        ))}
+      </p>
+    );
   } else if (st.layout === 'chips') {
     content = (
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{names.map((n, i) => chip(n, i))}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{items.map((cert, i) => chip(cert, i))}</div>
     );
   } else if (st.layout === 'grid') {
     content = (
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${st.columns}, minmax(0, 1fr))`, columnGap: 16, rowGap: 2 }}>
-        {names.map((n, i) => {
+        {items.map((cert, i) => {
           const marker = CERT_MARKER_GLYPH[st.marker] ?? '';
           if (!marker) {
             return (
               <p key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px' }}>
-                {n}
+                {certLabel(cert)}
               </p>
             );
           }
           return (
             <div key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
               <span style={{ flex: '0 0 auto', color: c.accent, fontWeight: 700 }}>{marker}</span>
-              <span style={{ flex: '1 1 auto', minWidth: 0 }}>{n}</span>
+              <span style={{ flex: '1 1 auto', minWidth: 0 }}>{certLabel(cert)}</span>
             </div>
           );
         })}
@@ -1113,27 +1307,27 @@ export function CertificatesBlock({
     );
   } else {
     // list
-    const items = names.map((n, i) => {
+    const rows = items.map((cert, i) => {
       const marker = CERT_MARKER_GLYPH[st.marker] ?? '';
       if (!marker) {
         return (
           <p key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px' }}>
-            {n}
+            {certLabel(cert)}
           </p>
         );
       }
       return (
         <div key={i} data-block data-gap-role="cert" style={{ ...bodyStyle, margin: '0 0 1px', display: 'flex', gap: 5, alignItems: 'baseline' }}>
           <span style={{ flex: '0 0 auto', color: c.accent, fontWeight: 700 }}>{marker}</span>
-          <span style={{ flex: '1 1 auto', minWidth: 0 }}>{n}</span>
+          <span style={{ flex: '1 1 auto', minWidth: 0 }}>{certLabel(cert)}</span>
         </div>
       );
     });
     content =
       st.columns === 2 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 16, rowGap: 2 }}>{items}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 16, rowGap: 2 }}>{rows}</div>
       ) : (
-        <>{items}</>
+        <>{rows}</>
       );
   }
 
@@ -1269,12 +1463,22 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
       : c.accent;
   const contactColor = headerImage
     ? headerImage.text === 'light'
-      ? '#e2e8f0'
+      ? '#ffffff'
       : '#334155'
     : onDark
-      ? '#dbe4f0'
+      ? '#ffffff'
       : c.muted;
-  const contactStyle: CSSProperties = { color: contactColor, fontSize: base * 0.92 };
+  const contactStyle: CSSProperties = {
+    color: contactColor,
+    fontSize: base * 0.92,
+    // Soft shadow keeps contacts readable over bright spots in photo headers.
+    textShadow:
+      headerImage && headerImage.text === 'light'
+        ? '0 1px 2px rgba(0,0,0,0.55), 0 0 8px rgba(0,0,0,0.35)'
+        : onDark
+          ? '0 1px 2px rgba(0,0,0,0.45)'
+          : undefined,
+  };
 
   const header = (
     <div
@@ -1284,9 +1488,13 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
         textAlign: l.header_align,
         marginBottom: bandBg ? 0 : hpSides.bottom * PT_TO_PX,
         background: bandBg,
+        // Stretch to fill — matches the .docx band picture (exact width × band height).
+        // `cover` + center was cropping a differently-aspect baked image than the PDF
+        // stretch, so the live preview and Accurate PDF showed different header scenes.
         backgroundImage: headerImage ? `url(${headerImage.data_url})` : undefined,
-        backgroundSize: headerImage ? 'cover' : undefined,
-        backgroundPosition: headerImage ? 'center' : undefined,
+        backgroundSize: headerImage ? '100% 100%' : undefined,
+        backgroundRepeat: headerImage ? 'no-repeat' : undefined,
+        backgroundPosition: headerImage ? 'left top' : undefined,
         padding: bandBg
           ? `${hpSides.top * PT_TO_PX}px ${hpSides.right * PT_TO_PX}px ${hpSides.bottom * PT_TO_PX}px ${hpSides.left * PT_TO_PX}px`
           : 0,
@@ -1295,21 +1503,35 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
       <div style={{ fontSize: base * t.name_scale, color: nameColor, fontWeight: 700, lineHeight: 1.1 }}>
         {fullName(profile)}
       </div>
-      {profile?.title && <div style={{ fontSize: base * 1.1, color: titleColor, marginTop: 2 }}>{profile.title}</div>}
+      {profile?.title && (
+        <div style={{ fontSize: base * 1.1, color: titleColor, marginTop: 2, lineHeight: 1.2 }}>{profile.title}</div>
+      )}
       {(() => {
         const items = contactItems(profile);
-        const iconSize = base * 0.95;
+        // Match .docx icon height (cap-height ≈ 0.66em) so contacts don't look larger
+        // in the live preview than in the Accurate PDF.
+        const iconSize = base * 0.66;
         const justify = l.header_align === 'center' ? 'center' : 'flex-start';
-        const iconStyle = l.contact_icons ?? 'brand';
+        const iconStyle = l.contact_icons === 'none' || l.contact_icons === 'outline' ? l.contact_icons : 'brand';
         const showIcon = iconStyle !== 'none';
         const variant: 'brand' | 'outline' = iconStyle === 'outline' ? 'outline' : 'brand';
+        const offX = (l.contact_icon_offset_x_pt ?? 0) * PT_TO_PX;
+        const offY = (l.contact_icon_offset_y_pt ?? 0) * PT_TO_PX;
+        const iconWrap: CSSProperties =
+          offX || offY
+            ? { display: 'block', transform: `translate(${offX}px, ${offY}px)`, flex: '0 0 auto' }
+            : { display: 'block', flex: '0 0 auto' };
         if (l.contact_layout === 'stacked') {
           return (
             <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
               {items.map((it, i) => (
                 <div key={i} style={{ ...contactStyle, display: 'flex', alignItems: 'center', gap: 6, justifyContent: justify }}>
-                  {showIcon && <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />}
-                  <span>{it.text}</span>
+                  {showIcon && (
+                    <span style={iconWrap}>
+                      <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />
+                    </span>
+                  )}
+                  <ContactText item={it} />
                 </div>
               ))}
             </div>
@@ -1325,12 +1547,29 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
               alignItems: 'center',
               gap: showIcon ? '3px 16px' : '3px 12px',
               justifyContent: justify,
+              width: '100%',
+              maxWidth: '100%',
+              boxSizing: 'border-box',
             }}
           >
             {items.map((it, i) => (
-              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {showIcon && <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />}
-                <span>{it.text}</span>
+              <span
+                key={i}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  flex: '0 1 auto',
+                  minWidth: 0,
+                  maxWidth: '100%',
+                }}
+              >
+                {showIcon && (
+                  <span style={iconWrap}>
+                    <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />
+                  </span>
+                )}
+                <ContactText item={it} />
                 {!showIcon && i < items.length - 1 && <span style={{ opacity: 0.5 }}>&nbsp;|</span>}
               </span>
             ))}
@@ -1344,12 +1583,17 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
 
   const body =
     l.columns === 2 ? (
-      <div style={{ display: 'flex', gap: 18 }}>
-        <div style={{ flex: '0 0 34%' }}>{visible.filter((s) => sidebarSet.includes(s)).map(renderSection)}</div>
-        <div style={{ flex: '1 1 66%' }}>{visible.filter((s) => !sidebarSet.includes(s)).map(renderSection)}</div>
+      <div style={{ display: 'flex', gap: 18, minWidth: 0, maxWidth: '100%' }}>
+        {/* minWidth:0 is required so flex children can shrink below content intrinsic width */}
+        <div style={{ flex: '0 0 34%', minWidth: 0, maxWidth: '34%' }}>
+          {visible.filter((s) => sidebarSet.includes(s)).map(renderSection)}
+        </div>
+        <div style={{ flex: '1 1 66%', minWidth: 0 }}>
+          {visible.filter((s) => !sidebarSet.includes(s)).map(renderSection)}
+        </div>
       </div>
     ) : (
-      <div>{visible.map(renderSection)}</div>
+      <div style={{ minWidth: 0, maxWidth: '100%' }}>{visible.map(renderSection)}</div>
     );
 
   if (bandBg) {
@@ -1362,6 +1606,8 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
           background: '#ffffff',
           width: '100%',
           boxSizing: 'border-box',
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
         }}
       >
         {header}
@@ -1380,6 +1626,8 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
         padding: paged ? `0 ${mRightPx}px 0 ${mLeftPx}px` : `${mTopPx}px ${mRightPx}px ${mBottomPx}px ${mLeftPx}px`,
         width: '100%',
         boxSizing: 'border-box',
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
       }}
     >
       {header}

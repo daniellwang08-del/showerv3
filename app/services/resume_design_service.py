@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 from app.core.logging import get_logger
 from app.models.database import User
-from app.models.resume_design_schemas import ResumeDesign, ResumeDesignResponse
+from app.models.resume_design_schemas import (
+    ContentSkill,
+    ContentWork,
+    ResumeContent,
+    ResumeDesign,
+    ResumeDesignResponse,
+)
 from app.services.resume_blueprint_renderer import fill_user_resume_template
 from app.services.resume_context_builder import build_preview_tailored, build_render_context
 from app.services.resume_design_compiler import compile_design
@@ -22,6 +31,77 @@ from app.services.resume_themes import default_design
 from app.storage.database import get_session
 
 logger = get_logger(__name__)
+
+# Accurate PDF blob cache (per process). Keyed by user + design hash so rapid style
+# tweaks that bounce back to a prior design skip compile → dxpdf. Entries expire by
+# age and count. Stores raw PDF bytes for the native PDF viewer embed.
+_PREVIEW_PDF_CACHE: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
+# Short-lived tokens so the iframe can load a real URL ending in ``Name_resume.pdf``
+# (Chrome's PDF chrome shows blob: UUIDs for anonymous object URLs).
+_PREVIEW_TOKEN_CACHE: OrderedDict[str, tuple[float, str, str, str]] = OrderedDict()
+_PREVIEW_PDF_CACHE_MAX = 12
+_PREVIEW_PDF_CACHE_TTL_S = 180.0
+
+
+# Bump when compiler layout math changes so in-process PDF cache cannot serve a
+# pre-fix blob for an unchanged design JSON (e.g. contact column width).
+_PREVIEW_LAYOUT_REV = "contact-icons-brand-fill-v13"
+
+
+def _design_cache_key(user_id: str, design: ResumeDesign) -> str:
+    raw = design.model_dump_json()
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return f"{user_id}:{_PREVIEW_LAYOUT_REV}:{digest}"
+
+
+def _preview_pdf_cache_get(key: str) -> bytes | None:
+    hit = _PREVIEW_PDF_CACHE.get(key)
+    if not hit:
+        return None
+    ts, payload = hit
+    if time.monotonic() - ts > _PREVIEW_PDF_CACHE_TTL_S:
+        _PREVIEW_PDF_CACHE.pop(key, None)
+        return None
+    _PREVIEW_PDF_CACHE.move_to_end(key)
+    return payload
+
+
+def _preview_pdf_cache_put(key: str, payload: bytes) -> None:
+    _PREVIEW_PDF_CACHE[key] = (time.monotonic(), payload)
+    _PREVIEW_PDF_CACHE.move_to_end(key)
+    while len(_PREVIEW_PDF_CACHE) > _PREVIEW_PDF_CACHE_MAX:
+        _PREVIEW_PDF_CACHE.popitem(last=False)
+
+
+def register_preview_pdf_token(user_id: str, cache_key: str, filename: str) -> str:
+    """Mint a short-lived token for the named preview-doc GET endpoint."""
+    import secrets
+
+    token = secrets.token_urlsafe(18)
+    _PREVIEW_TOKEN_CACHE[token] = (time.monotonic(), user_id, cache_key, filename)
+    _PREVIEW_TOKEN_CACHE.move_to_end(token)
+    while len(_PREVIEW_TOKEN_CACHE) > _PREVIEW_PDF_CACHE_MAX * 2:
+        _PREVIEW_TOKEN_CACHE.popitem(last=False)
+    return token
+
+
+def get_preview_pdf_by_token(token: str, user_id: str) -> tuple[bytes, str] | None:
+    """Return ``(pdf_bytes, filename)`` when the token is valid for *user_id*."""
+    hit = _PREVIEW_TOKEN_CACHE.get(token)
+    if not hit:
+        return None
+    ts, owner_id, cache_key, filename = hit
+    if time.monotonic() - ts > _PREVIEW_PDF_CACHE_TTL_S:
+        _PREVIEW_TOKEN_CACHE.pop(token, None)
+        return None
+    if owner_id != user_id:
+        return None
+    payload = _preview_pdf_cache_get(cache_key)
+    if payload is None:
+        _PREVIEW_TOKEN_CACHE.pop(token, None)
+        return None
+    _PREVIEW_TOKEN_CACHE.move_to_end(token)
+    return payload, filename
 
 
 def _load_design(user: User | None) -> tuple[ResumeDesign, bool]:
@@ -79,6 +159,22 @@ def design_response_payload(user: User | None) -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
+def _sync_cover_letter_from_design(user_id: str, user: User, design: ResumeDesign) -> None:
+    """Keep the cover-letter template matched to the active resume design.
+
+    Called whenever the resume working template is recompiled so job builds never
+    need a separate "generate cover letter theme" step.
+    """
+    from app.services.cover_letter_design_compiler import compile_cover_letter_design
+    from app.services.cover_letter_template_service import user_cover_letter_template_dir
+
+    working_path = user_cover_letter_template_dir(user_id) / "working.docx"
+    compile_cover_letter_design(design, user, working_path)
+    user.cover_letter_template_working_path = str(working_path)
+    user.cover_letter_template_status = "ready"
+    user.cover_letter_template_error = None
+
+
 def _compile_design_into_user(user_id: str, user: User, design: ResumeDesign) -> list:
     """Compile a design into the user's working template + mirror columns. Used both by
     the builder auto-save and when switching/activating a library resume, so the
@@ -93,6 +189,16 @@ def _compile_design_into_user(user_id: str, user: User, design: ResumeDesign) ->
     user.resume_template_blueprint = _blueprint_for_storage(blueprint)
     user.resume_template_status = "ready"
     user.resume_template_error = None
+    try:
+        _sync_cover_letter_from_design(user_id, user, design)
+    except Exception as exc:
+        # Resume save must still succeed; cover letter can be retried on the next edit.
+        logger.exception(
+            "cover_letter_sync_failed",
+            user_id=user_id,
+            error=str(exc),
+        )
+        user.cover_letter_template_error = str(exc)[:500]
     return tags
 
 
@@ -187,6 +293,261 @@ async def list_resumes(user_id: str) -> dict[str, Any]:
             await session.commit()
 
         return await _list_payload(session, user_id)
+
+
+def _serialize_search_library(doc, active_id: str | None) -> dict[str, Any]:
+    """Lightweight library hit for search (no design blob)."""
+    return {
+        "kind": "library",
+        "id": doc.id,
+        "build_id": None,
+        "job_id": None,
+        "name": doc.name,
+        "status": doc.status,
+        "source": doc.source,
+        "job_title": doc.job_title,
+        "company": doc.company,
+        "is_active": doc.id == active_id,
+        "content_ready": True,
+        "created_at": doc.created_at.isoformat() if getattr(doc, "created_at", None) else None,
+        "updated_at": doc.updated_at.isoformat() if getattr(doc, "updated_at", None) else None,
+    }
+
+
+def _serialize_search_job_build(build, job, active_id: str | None) -> dict[str, Any]:
+    company = (getattr(job, "company", None) or "").strip() or None
+    title = (getattr(job, "title", None) or "").strip() or None
+    name_parts = [p for p in (title, company) if p]
+    return {
+        "kind": "job_build",
+        "id": build.id,  # build id — open via from-job-build endpoint
+        "build_id": build.id,
+        "job_id": job.id,
+        "name": " - ".join(name_parts) if name_parts else "Job resume",
+        "status": getattr(build, "content_generation_status", None) or "completed",
+        "source": "job_workflow",
+        "job_title": title,
+        "company": company,
+        "is_active": False,
+        "content_ready": True,
+        "created_at": build.created_at.isoformat() if getattr(build, "created_at", None) else None,
+        "updated_at": build.updated_at.isoformat() if getattr(build, "updated_at", None) else None,
+    }
+
+
+def _norm_key(company: str | None, title: str | None) -> str:
+    return f"{(company or '').strip().lower()}::{(title or '').strip().lower()}"
+
+
+def _tailored_work_to_content(entry: dict) -> ContentWork:
+    bullets = entry.get("bullets") or entry.get("contributions") or []
+    contribs = [str(b).strip() for b in bullets if isinstance(b, str) and b.strip()]
+    project_title = str(entry.get("project_name") or entry.get("project_title") or "").strip()
+    project_intro = str(entry.get("project_description") or entry.get("project_intro") or "").strip()
+    return ContentWork(
+        company_name=str(entry.get("company_name") or "").strip(),
+        job_title=str(entry.get("job_title") or "").strip(),
+        period_start=str(entry.get("period_start") or "").strip(),
+        period_end=str(entry.get("period_end") or "").strip(),
+        location=str(entry.get("location") or "").strip(),
+        job_type=str(entry.get("job_type") or "").strip(),
+        employment_type=str(entry.get("employment_type") or "").strip(),
+        project_title=project_title,
+        project_intro=project_intro,
+        contributions=contribs or [""],
+        used_skills=str(entry.get("used_skills") or "").strip(),
+        description="",
+    )
+
+
+def _merge_tailored_into_design(base: ResumeDesign, tailored: dict) -> ResumeDesign:
+    """Merge Phase-B tailored sections onto a base design (keeps theme/header/edu/certs)."""
+    base_content = base.content.model_copy(deep=True) if base.content else ResumeContent()
+    summary = str(tailored.get("profile_summary") or "").strip()
+    skills_raw = tailored.get("technical_skills") or []
+    skills: list[ContentSkill] = []
+    if isinstance(skills_raw, list):
+        for item in skills_raw:
+            if not isinstance(item, dict):
+                continue
+            cat = str(item.get("category") or "").strip()
+            vals = str(item.get("skills") or "").strip()
+            if cat and vals:
+                skills.append(ContentSkill(category=cat, skills=vals))
+    exp_raw = tailored.get("work_experience") or []
+    experience: list[ContentWork] = []
+    if isinstance(exp_raw, list):
+        for entry in exp_raw:
+            if isinstance(entry, dict):
+                w = _tailored_work_to_content(entry)
+                if w.company_name and w.job_title:
+                    experience.append(w)
+
+    merged = base_content.model_copy(
+        update={
+            "profile_summary": summary or base_content.profile_summary,
+            "technical_skills": skills or base_content.technical_skills,
+            "work_experience": experience or base_content.work_experience,
+        }
+    )
+    return base.model_copy(update={"content": merged})
+
+
+async def search_resumes(
+    user_id: str,
+    *,
+    company: str | None = None,
+    job_title: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Search library resumes AND completed job-workflow builds (company/role AND).
+
+    Job-build hits that already have a matching library resume (same company+title)
+    are suppressed so each tailored job appears once (preferring the library copy).
+    """
+    async with get_session() as session:
+        from app.storage.repository import ResumeBuildRepository
+        from app.storage.resume_document_repository import ResumeDocumentRepository
+        from app.storage.user_repository import UserRepository
+
+        user = await UserRepository(session).get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        company_q = (company or "").strip() or None
+        role_q = (job_title or "").strip() or None
+        active_id = getattr(user, "active_resume_id", None)
+        per_source_limit = max(1, min(limit, 200))
+
+        docs = await ResumeDocumentRepository(session).search_for_user(
+            user_id,
+            company=company_q,
+            job_title=role_q,
+            limit=per_source_limit,
+        )
+        builds = await ResumeBuildRepository(session).search_completed_for_user(
+            user_id,
+            company=company_q,
+            job_title=role_q,
+            limit=per_source_limit,
+        )
+
+        library_keys = {_norm_key(d.company, d.job_title) for d in docs}
+        # Also suppress against ALL library rows for this user (not just search hits),
+        # so opening a build then searching again shows the library copy.
+        all_docs = await ResumeDocumentRepository(session).list_for_user(user_id)
+        all_library_keys = {_norm_key(d.company, d.job_title) for d in all_docs}
+
+        results: list[dict[str, Any]] = [
+            _serialize_search_library(d, active_id) for d in docs
+        ]
+        for build, job in builds:
+            key = _norm_key(getattr(job, "company", None), getattr(job, "title", None))
+            if key in all_library_keys or key in library_keys:
+                continue
+            if key == "::":
+                continue
+            results.append(_serialize_search_job_build(build, job, active_id))
+
+        # Newest first across both sources
+        results.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
+        results = results[:per_source_limit]
+
+        return {
+            "resumes": results,
+            "active_id": active_id,
+            "query": {"company": company_q, "job_title": role_q},
+            "count": len(results),
+        }
+
+
+async def open_job_build_as_library_resume(user_id: str, build_id: str) -> dict[str, Any]:
+    """Materialize a completed job-workflow build into the resume library and activate it.
+
+    Creates a tailored library resume (or updates an existing one with the same
+    company + job title) so the builder can edit it like any other library entry.
+    """
+    async with get_session() as session:
+        from app.storage.repository import ResumeBuildRepository
+        from app.storage.resume_document_repository import ResumeDocumentRepository
+        from app.storage.user_repository import UserRepository
+        from sqlalchemy import select
+        from app.models.database import Job
+
+        repo = UserRepository(session)
+        user = await repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        build = await ResumeBuildRepository(session).get_by_id(build_id, user_id)
+        if not build:
+            raise ValueError("Job resume not found")
+        if (build.content_generation_status or "") != "completed" or not isinstance(
+            build.tailored_resume_data, dict
+        ):
+            raise ValueError("Job resume content is not ready yet")
+
+        job_result = await session.execute(select(Job).where(Job.id == build.job_id))
+        job = job_result.scalar_one_or_none()
+        company = (getattr(job, "company", None) or "").strip() or None if job else None
+        job_title = (getattr(job, "title", None) or "").strip() or None if job else None
+
+        # Base styling from active library resume, else user template, else default.
+        rrepo = ResumeDocumentRepository(session)
+        base_design: ResumeDesign | None = None
+        if user.active_resume_id:
+            active_doc = await rrepo.get_by_id(user.active_resume_id, user_id)
+            if active_doc and isinstance(active_doc.design, dict):
+                try:
+                    base_design = ResumeDesign.model_validate(active_doc.design)
+                except Exception:
+                    base_design = None
+        if base_design is None and isinstance(user.resume_template_design, dict):
+            try:
+                base_design = ResumeDesign.model_validate(user.resume_template_design)
+            except Exception:
+                base_design = None
+        if base_design is None:
+            base_design = default_design()
+
+        design = _merge_tailored_into_design(base_design, build.tailored_resume_data)
+        name = " - ".join([p for p in (job_title, company) if p]) or "Tailored resume"
+
+        # Reuse existing library row with same company+title when possible.
+        existing = None
+        target_key = _norm_key(company, job_title)
+        if target_key != "::":
+            for doc in await rrepo.list_for_user(user_id):
+                if _norm_key(doc.company, doc.job_title) == target_key:
+                    existing = doc
+                    break
+
+        if existing:
+            existing.name = name[:200]
+            existing.source = "tailored"
+            existing.company = company
+            existing.job_title = job_title
+            existing.design = design.model_dump(mode="json")
+            existing.status = "draft"
+            doc = existing
+        else:
+            doc = await rrepo.create(
+                user_id=user_id,
+                name=name[:200],
+                status="draft",
+                source="tailored",
+                job_title=job_title,
+                company=company,
+                design=design.model_dump(mode="json"),
+            )
+
+        user.active_resume_id = doc.id
+        _compile_design_into_user(user_id, user, design)
+        await session.commit()
+
+        payload = await _list_payload(session, user_id)
+        payload["resume"] = next((r for r in payload["resumes"] if r["id"] == doc.id), None)
+        return payload
 
 
 async def create_resume(
@@ -356,11 +717,13 @@ async def delete_resume(user_id: str, resume_id: str) -> dict[str, Any]:
 
 async def generate_cover_letter_from_design(user_id: str) -> dict[str, Any]:
     """Compile a cover letter template from the user's saved resume design (or default)
-    and set it as the active cover letter template."""
-    from app.services.cover_letter_design_compiler import compile_cover_letter_design
+    and set it as the active cover letter template.
+
+    Prefer the automatic sync in ``_compile_design_into_user`` (runs on every resume
+    save). This endpoint remains for explicit/manual regeneration.
+    """
     from app.services.cover_letter_template_service import (
         template_status_payload as cover_letter_status_payload,
-        user_cover_letter_template_dir,
     )
 
     async with get_session() as session:
@@ -372,12 +735,7 @@ async def generate_cover_letter_from_design(user_id: str) -> dict[str, Any]:
             raise ValueError("User not found")
 
         design, _ = _load_design(user)
-        working_path = user_cover_letter_template_dir(user_id) / "working.docx"
-        compile_cover_letter_design(design, user, working_path)
-
-        user.cover_letter_template_working_path = str(working_path)
-        user.cover_letter_template_status = "ready"
-        user.cover_letter_template_error = None
+        _sync_cover_letter_from_design(user_id, user, design)
         await session.commit()
 
         user = await repo.get_by_id(user_id)
@@ -417,6 +775,34 @@ async def generate_design_preview_docx(user_id: str, design: ResumeDesign) -> Pa
     preview_path = preview_dir / "design_preview.docx"
     fill_user_resume_template(template_path, blueprint, context, preview_path)
     return preview_path
+
+
+async def generate_design_preview_pdf_bytes(user_id: str, design: ResumeDesign) -> tuple[bytes, str]:
+    """Compile → dxpdf and return ``(pdf_bytes, cache_key)`` for the native viewer.
+
+    Hits an in-process LRU when the same user+design was rendered recently.
+    """
+    import asyncio
+
+    from app.services.resume_builder_service import convert_docx_to_pdf
+
+    cache_key = _design_cache_key(user_id, design)
+    cached = _preview_pdf_cache_get(cache_key)
+    if cached is not None:
+        return cached, cache_key
+
+    docx_path = await generate_design_preview_docx(user_id, design)
+    pdf_path = docx_path.with_suffix(".pdf")
+
+    def _convert() -> bytes:
+        convert_docx_to_pdf(docx_path, pdf_path)
+        return pdf_path.read_bytes()
+
+    pdf_bytes = await asyncio.to_thread(_convert)
+    if not pdf_bytes.startswith(b"%PDF"):
+        raise RuntimeError("Preview PDF is not a valid PDF document")
+    _preview_pdf_cache_put(cache_key, pdf_bytes)
+    return pdf_bytes, cache_key
 
 
 async def generate_saved_design_docx(user_id: str) -> Path:

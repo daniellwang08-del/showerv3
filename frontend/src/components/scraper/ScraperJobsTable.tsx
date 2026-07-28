@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { flushSync } from 'react-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -22,6 +22,8 @@ import {
   ClipboardX,
   Table2,
   Rocket,
+  MessageSquare,
+  FileText,
 } from 'lucide-react';
 import { Badge } from '../shared/Badge';
 import { ConfirmDialog } from '../extraction/ConfirmDialog';
@@ -31,9 +33,14 @@ import { InstallExtensionModal } from './InstallExtensionModal';
 import { detectExtension, applyViaExtension } from '../../lib/extensionBridge';
 import { useScraperStore } from '../../stores/scraperStore';
 import { fetchSheetsConfig } from '../../api/googleSheetsApi';
+import { fetchPumbleConfig } from '../../api/pumbleApi';
+import { PumbleDestinationModal } from './PumbleDestinationModal';
+import type { PumbleIntegration } from '../../types/pumble';
 import { apiClient } from '../../api/client';
+import { namedDownloadFile } from '../../utils/resumeFileName';
 import type { DashboardJob, ExtractionStatus } from '../../types/scraper';
 import { dashboardJobMarkedApplied, dashboardJobRowSurfaceClass, dashboardJobStickyCellClass } from '../../utils/appliedStatus';
+import { BrandedLoader } from '../layout/BrandedLoader';
 
 interface ScraperJobsTableProps {
   jobs: DashboardJob[];
@@ -42,6 +49,8 @@ interface ScraperJobsTableProps {
   sortOrder: 'asc' | 'desc';
   onSort: (field: string) => void;
   rowOffset?: number;
+  /** When true, empty-state copy can mention Sync All (admins only). */
+  canSync?: boolean;
   /** Instant patch for AI-search rows (not in paginated store). */
   onAppliedStateChange?: (patches: Array<{
     id: string;
@@ -51,6 +60,10 @@ interface ScraperJobsTableProps {
   onSheetPostedStateChange?: (patches: Array<{
     id: string;
     sheet_posted_at: string | null;
+  }>) => void;
+  onPumblePostedStateChange?: (patches: Array<{
+    id: string;
+    pumble_posted_at: string | null;
   }>) => void;
 }
 
@@ -112,6 +125,7 @@ const columns = [
   { key: 'created_at',     label: 'Added',      sortable: true  },
   { key: '__processing__', label: 'Match',      sortable: true, sortKey: 'match_score' },
   { key: '__docs__',       label: 'Docs',       sortable: false },
+  { key: '__status__',     label: 'Status',     sortable: false },
   { key: '__actions__',    label: 'Actions',    sortable: false },
 ] as const;
 
@@ -128,10 +142,14 @@ const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
   source: '108px',
   posted_date: '68px',
   created_at: '68px',
-  __processing__: '118px',
-  __docs__: '148px',
+  __processing__: '108px',
+  __docs__: '120px',
+  __status__: '112px',
   __actions__: '300px',
 };
+
+/** Shared height with MatchScoreBadge so status squares align visually. */
+const MATCH_BADGE_H = 28;
 
 const ROW_H = 'h-[52px] max-h-[52px]';
 const CELL = 'px-3 py-0 align-middle overflow-hidden';
@@ -178,11 +196,16 @@ function DocButton({
         `/jobs/valid/${jobId}/resume-build/download/${fileType}`,
         { responseType: 'blob' },
       );
-      const blob = new Blob([res.data]);
-      const url = URL.createObjectURL(blob);
+      const file = namedDownloadFile(
+        res.data,
+        res.headers?.['content-disposition'] as string | undefined,
+        `${fileType}.pdf`,
+        'application/pdf',
+      );
+      const url = URL.createObjectURL(file);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${fileType}.pdf`;
+      a.download = file.name;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -238,7 +261,16 @@ function DocsCell({ job }: { job: DashboardJob }) {
   const [preview, setPreview] = useState<DocPreviewTarget | null>(null);
   const resumeReady = job.resume_pdf_status === 'completed';
   const clReady = job.cover_letter_pdf_status === 'completed';
+  const resumeBuilding =
+    job.content_generation_status === 'pending' ||
+    job.content_generation_status === 'processing' ||
+    job.resume_build_status === 'pending' ||
+    job.resume_build_status === 'processing';
   const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
+
+  if (resumeBuilding && !resumeReady && !clReady) {
+    return <DocsProcessingRing />;
+  }
 
   if (!resumeReady && !clReady) {
     return <span className="text-slate-300 text-xs">-</span>;
@@ -246,27 +278,30 @@ function DocsCell({ job }: { job: DashboardJob }) {
 
   return (
     <>
-      <div className="flex flex-col gap-0 leading-none">
-        {resumeReady && (
-          <DocButton
-            label="R"
-            jobId={job.id}
-            filePath={job.resume_pdf_path}
-            fileType="resume_pdf"
-            docTitle={`Resume - ${jobLabel}`}
-            onOpen={setPreview}
-          />
-        )}
-        {clReady && (
-          <DocButton
-            label="CL"
-            jobId={job.id}
-            filePath={job.cover_letter_pdf_path}
-            fileType="cover_letter_pdf"
-            docTitle={`Cover letter - ${jobLabel}`}
-            onOpen={setPreview}
-          />
-        )}
+      <div className="flex items-center gap-1.5">
+        {resumeBuilding && <DocsProcessingRing compact />}
+        <div className="flex min-w-0 flex-col gap-0 leading-none">
+          {resumeReady && (
+            <DocButton
+              label="R"
+              jobId={job.id}
+              filePath={job.resume_pdf_path}
+              fileType="resume_pdf"
+              docTitle={`Resume - ${jobLabel}`}
+              onOpen={setPreview}
+            />
+          )}
+          {clReady && (
+            <DocButton
+              label="CL"
+              jobId={job.id}
+              filePath={job.cover_letter_pdf_path}
+              fileType="cover_letter_pdf"
+              docTitle={`Cover letter - ${jobLabel}`}
+              onOpen={setPreview}
+            />
+          )}
+        </div>
       </div>
       {preview && (
         <DocumentPreviewModal
@@ -280,6 +315,48 @@ function DocsCell({ job }: { job: DashboardJob }) {
     </>
   );
 }
+
+/** Circular progress shown in the Docs column while resume/cover letter are building. */
+const DocsProcessingRing = memo(function DocsProcessingRing({ compact = false }: { compact?: boolean }) {
+  return (
+    <div
+      className="inline-flex items-center gap-1.5 text-emerald-600"
+      title="Building resume & cover letter…"
+      aria-label="Building resume and cover letter"
+    >
+      <span className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center">
+        <svg className="absolute inset-0 h-7 w-7 animate-spin" viewBox="0 0 28 28" aria-hidden>
+          <circle
+            cx="14"
+            cy="14"
+            r="11"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            className="text-emerald-200/80"
+          />
+          <circle
+            cx="14"
+            cy="14"
+            r="11"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeDasharray="42 70"
+            strokeLinecap="round"
+            className="text-emerald-500"
+          />
+        </svg>
+        <FileText size={11} className="relative text-emerald-600" />
+      </span>
+      {!compact && (
+        <span className="text-[10px] font-semibold leading-tight text-emerald-700">
+          Building
+        </span>
+      )}
+    </div>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Context menu positioning
@@ -353,16 +430,20 @@ function scoreLabel(score: number): string {
   if (score >= 30) return 'Fair';
   return 'Weak';
 }
-function MatchScoreBadge({ score }: { score: number }) {
+
+/** Match score pill — fixed height so Status squares can match it exactly. */
+const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number }) {
   return (
-    <div title={`Match score: ${score}/100 - ${scoreLabel(score)}`}
-      className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 shadow-sm ${scoreColors(score)}`}>
+    <div
+      title={`Match score: ${score}/100 - ${scoreLabel(score)}`}
+      className={`inline-flex h-[28px] items-center gap-1.5 rounded-lg border px-2.5 shadow-sm ${scoreColors(score)}`}
+    >
       <Sparkles size={11} className="shrink-0 opacity-75" />
       <span className="text-sm font-bold tabular-nums leading-none">{score}</span>
       <span className="text-[10px] font-medium leading-none opacity-70">{scoreLabel(score)}</span>
     </div>
   );
-}
+});
 
 function WorkModeBadge({ mode, isRemoteFallback }: { mode: string | null | undefined; isRemoteFallback?: boolean }) {
   const raw = (mode || '').trim().toLowerCase();
@@ -386,47 +467,19 @@ function WorkModeBadge({ mode, isRemoteFallback }: { mode: string | null | undef
   return <span className="text-slate-300 text-xs">-</span>;
 }
 
-function SheetPostedBadge({ postedAt }: { postedAt: string }) {
-  return (
-    <span
-      title={`Posted to Google Sheet${postedAt ? ` · ${relativeTime(postedAt)}` : ''}`}
-      className="inline-flex items-center gap-0.5 rounded border border-emerald-200 bg-emerald-50 px-1 py-0.5 text-[9px] font-semibold leading-none text-emerald-700"
-    >
-      <Table2 size={9} className="shrink-0" />
-      Sheet
-    </span>
-  );
-}
-
-function StatusCell({ job }: { job: DashboardJob }) {
-  const sheetBadge = job.sheet_posted_at ? <SheetPostedBadge postedAt={job.sheet_posted_at} /> : null;
-  const contentGenActive =
-    job.content_generation_status === 'pending' || job.content_generation_status === 'processing';
-  const resumeBuildActive =
-    job.resume_build_status === 'pending' || job.resume_build_status === 'processing';
-
+/** Match column: score only (or pipeline dots). Integration badges live in Status. */
+const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
   if (job.match_overall_score != null) {
-    return (
-      <div className="flex h-[40px] flex-col items-start justify-center">
-        <div className="flex flex-wrap items-center gap-1">
-          <MatchScoreBadge score={job.match_overall_score} />
-          {sheetBadge}
-        </div>
-        {(contentGenActive || resumeBuildActive) && (
-          <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-600 animate-pulse mt-0.5">
-            <Sparkles size={9} />Resume…
-          </span>
-        )}
-      </div>
-    );
+    return <MatchScoreBadge score={job.match_overall_score} />;
   }
 
   const dots = processingDots(job);
   return (
-    <div className="flex h-[40px] flex-col justify-center gap-1">
-      {sheetBadge && <div>{sheetBadge}</div>}
+    <div className="flex h-[28px] flex-col justify-center gap-0.5">
       <div className="flex h-[10px] items-center gap-2">
-        {dots.map((dot) => <StatusDot key={dot.label} {...dot} />)}
+        {dots.map((dot) => (
+          <StatusDot key={dot.label} {...dot} />
+        ))}
       </div>
       {job.match_in_progress ? (
         <span className="flex items-center gap-1 text-[10px] font-medium text-blue-500 animate-pulse">
@@ -437,7 +490,100 @@ function StatusCell({ job }: { job: DashboardJob }) {
       ) : null}
     </div>
   );
-}
+});
+
+// ---------------------------------------------------------------------------
+// Status squares — Applied / Google Sheets / Pumble
+// ---------------------------------------------------------------------------
+
+type StatusSquareTone = 'sky' | 'emerald' | 'violet';
+
+const STATUS_SQUARE_TONES: Record<StatusSquareTone, { filled: string; empty: string; icon: string }> = {
+  sky: {
+    filled: 'border-sky-500 bg-sky-500 text-white shadow-sm shadow-sky-500/40 dark:border-sky-400 dark:bg-sky-400',
+    empty: 'border-sky-400/55 bg-sky-500/[0.06] text-sky-400/70 dark:border-sky-500/50 dark:bg-sky-400/10 dark:text-sky-400/55',
+    icon: 'text-inherit',
+  },
+  emerald: {
+    filled: 'border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/40 dark:border-emerald-400 dark:bg-emerald-400',
+    empty: 'border-emerald-400/55 bg-emerald-500/[0.06] text-emerald-400/70 dark:border-emerald-500/50 dark:bg-emerald-400/10 dark:text-emerald-400/55',
+    icon: 'text-inherit',
+  },
+  violet: {
+    filled: 'border-violet-500 bg-violet-500 text-white shadow-sm shadow-violet-500/40 dark:border-violet-400 dark:bg-violet-400',
+    empty: 'border-violet-400/55 bg-violet-500/[0.06] text-violet-400/70 dark:border-violet-500/50 dark:bg-violet-400/10 dark:text-violet-400/55',
+    icon: 'text-inherit',
+  },
+};
+
+const StatusSquare = memo(function StatusSquare({
+  filled,
+  tone,
+  title,
+  icon: Icon,
+}: {
+  filled: boolean;
+  tone: StatusSquareTone;
+  title: string;
+  icon: typeof ClipboardCheck;
+}) {
+  const palette = STATUS_SQUARE_TONES[tone];
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      className={[
+        'inline-flex shrink-0 items-center justify-center rounded-md border-2 transition-colors',
+        filled ? palette.filled : palette.empty,
+      ].join(' ')}
+      style={{ width: MATCH_BADGE_H, height: MATCH_BADGE_H }}
+    >
+      <Icon size={14} strokeWidth={filled ? 2.6 : 2} className={palette.icon} />
+    </span>
+  );
+});
+
+/** Three filled/empty squares for Applied → Sheets → Pumble. */
+const StatusSquaresCell = memo(function StatusSquaresCell({ job }: { job: DashboardJob }) {
+  const applied = dashboardJobMarkedApplied(job);
+  const sheetPosted = Boolean(job.sheet_posted_at);
+  const pumblePosted = Boolean(job.pumble_posted_at);
+
+  return (
+    <div className="inline-flex items-center gap-1.5" role="group" aria-label="Posting status">
+      <StatusSquare
+        filled={applied}
+        tone="sky"
+        icon={ClipboardCheck}
+        title={
+          applied
+            ? `Applied${job.applied_at ? ` · ${relativeTime(job.applied_at)}` : ''}${job.applied_by_name ? ` · ${job.applied_by_name}` : ''}`
+            : 'Not applied'
+        }
+      />
+      <StatusSquare
+        filled={sheetPosted}
+        tone="emerald"
+        icon={Table2}
+        title={
+          sheetPosted
+            ? `Posted to Google Sheets · ${relativeTime(job.sheet_posted_at!)}`
+            : 'Not posted to Google Sheets'
+        }
+      />
+      <StatusSquare
+        filled={pumblePosted}
+        tone="violet"
+        icon={MessageSquare}
+        title={
+          pumblePosted
+            ? `Posted to Pumble · ${relativeTime(job.pumble_posted_at!)}`
+            : 'Not posted to Pumble'
+        }
+      />
+    </div>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Context menu component (portal)
@@ -455,9 +601,12 @@ interface ContextMenuProps {
   onMarkApplied: (jobs: DashboardJob[]) => void;
   onMarkUnapplied: (jobs: DashboardJob[]) => void;
   onPostToSheet: (jobs: DashboardJob[]) => void;
+  onPostToPumble: (jobs: DashboardJob[]) => void;
   onDelete: (jobs: DashboardJob[]) => void;
   sheetsConfigured: boolean;
   postingToSheet: boolean;
+  pumbleConfigured: boolean;
+  postingToPumble: boolean;
 }
 
 function ContextMenu({
@@ -472,9 +621,12 @@ function ContextMenu({
   onMarkApplied,
   onMarkUnapplied,
   onPostToSheet,
+  onPostToPumble,
   onDelete,
   sheetsConfigured,
   postingToSheet,
+  pumbleConfigured,
+  postingToPumble,
 }: ContextMenuProps) {
   const multi = targets.length > 1;
   const label = multi ? `${targets.length} jobs` : (job.title ? `"${job.title.slice(0, 28)}${job.title.length > 28 ? '…' : ''}"` : 'this job');
@@ -557,6 +709,14 @@ function ContextMenu({
       disabled: !sheetsConfigured || postingToSheet,
       onClick: () => { onPostToSheet(targets); onClose(); },
     },
+    {
+      icon: postingToPumble ? <Loader2 size={13} className="animate-spin" /> : <MessageSquare size={13} />,
+      label: multi
+        ? `Post ${targets.length} jobs to Pumble`
+        : 'Post to Pumble',
+      disabled: !pumbleConfigured || postingToPumble,
+      onClick: () => { onPostToPumble(targets); onClose(); },
+    },
     'divider' as const,
     {
       icon: isRunning ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />,
@@ -577,7 +737,7 @@ function ContextMenu({
     <div
       data-scraper-menu="true"
       style={{ left: x, top: y, position: 'fixed', zIndex: 200 }}
-      className="glass-card w-[212px] rounded-xl py-1.5 shadow-2xl ring-1 ring-slate-200/60 animate-[modal-in_0.12s_ease-out_both]"
+      className="w-[212px] rounded-xl border border-slate-200 bg-white py-1.5 shadow-2xl animate-[modal-in_0.12s_ease-out_both]"
     >
       {/* Header */}
       <div className="px-3 pb-1.5 pt-1">
@@ -597,7 +757,9 @@ function ContextMenu({
             title={
               item.disabled && item.label.includes('Google Sheet') && !sheetsConfigured
                 ? 'Configure Google Sheets in Settings first'
-                : undefined
+                : item.disabled && item.label.includes('Pumble') && !pumbleConfigured
+                  ? 'Configure Pumble in Settings first'
+                  : undefined
             }
             onClick={item.onClick}
             className={[
@@ -629,12 +791,35 @@ interface BulkBarProps {
   onClearAll: () => void;
   onRerun: () => void;
   onOpenUrls: () => void;
+  onPostToSheet: () => void;
+  onPostToPumble: () => void;
   onDelete: () => void;
   rerunning: boolean;
   deleting: boolean;
+  sheetsConfigured: boolean;
+  pumbleConfigured: boolean;
+  postingToSheet: boolean;
+  postingToPumble: boolean;
 }
 
-function BulkBar({ count, totalVisible, onSelectAll, onClearAll, onRerun, onOpenUrls, onDelete, rerunning, deleting }: BulkBarProps) {
+function BulkBar({
+  count,
+  totalVisible,
+  onSelectAll,
+  onClearAll,
+  onRerun,
+  onOpenUrls,
+  onPostToSheet,
+  onPostToPumble,
+  onDelete,
+  rerunning,
+  deleting,
+  sheetsConfigured,
+  pumbleConfigured,
+  postingToSheet,
+  postingToPumble,
+}: BulkBarProps) {
+  const busy = rerunning || deleting || postingToSheet || postingToPumble;
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 shadow-sm">
       <SquareCheck size={15} className="text-blue-600 shrink-0" />
@@ -644,19 +829,41 @@ function BulkBar({ count, totalVisible, onSelectAll, onClearAll, onRerun, onOpen
 
       <div className="h-4 w-px bg-blue-200 mx-1" />
 
-      <button type="button" onClick={onRerun} disabled={rerunning || deleting}
+      <button type="button" onClick={onRerun} disabled={busy}
         className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:opacity-50">
         {rerunning ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
         Rerun selected
       </button>
 
-      <button type="button" onClick={onOpenUrls} disabled={rerunning || deleting}
+      <button type="button" onClick={onOpenUrls} disabled={busy}
         className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:opacity-50">
         <OpenUrl size={12} />
         Open URLs
       </button>
 
-      <button type="button" onClick={onDelete} disabled={rerunning || deleting}
+      <button
+        type="button"
+        onClick={onPostToSheet}
+        disabled={busy || !sheetsConfigured}
+        title={!sheetsConfigured ? 'Configure Google Sheets in Settings first' : undefined}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
+      >
+        {postingToSheet ? <Loader2 size={12} className="animate-spin" /> : <Table2 size={12} />}
+        Post to Sheet
+      </button>
+
+      <button
+        type="button"
+        onClick={onPostToPumble}
+        disabled={busy || !pumbleConfigured}
+        title={!pumbleConfigured ? 'Configure Pumble in Settings first' : undefined}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-800 shadow-sm transition hover:bg-violet-50 disabled:opacity-50"
+      >
+        {postingToPumble ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={12} />}
+        Post to Pumble
+      </button>
+
+      <button type="button" onClick={onDelete} disabled={busy}
         className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 shadow-sm transition hover:bg-red-50 disabled:opacity-50">
         {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
         Delete selected
@@ -690,8 +897,10 @@ export function ScraperJobsTable({
   sortOrder,
   onSort,
   rowOffset = 0,
+  canSync = false,
   onAppliedStateChange,
   onSheetPostedStateChange,
+  onPumblePostedStateChange,
 }: ScraperJobsTableProps) {
   const rerunJob         = useScraperStore((s) => s.rerunJob);
   const deleteJob        = useScraperStore((s) => s.deleteJob);
@@ -700,7 +909,9 @@ export function ScraperJobsTable({
   const markJobsApplied  = useScraperStore((s) => s.markJobsApplied);
   const markJobsUnapplied = useScraperStore((s) => s.markJobsUnapplied);
   const postJobsToSheet  = useScraperStore((s) => s.postJobsToSheet);
+  const postJobsToPumble = useScraperStore((s) => s.postJobsToPumble);
   const optimisticMarkJobsSheetPosted = useScraperStore((s) => s.optimisticMarkJobsSheetPosted);
+  const optimisticMarkJobsPumblePosted = useScraperStore((s) => s.optimisticMarkJobsPumblePosted);
   const optimisticMarkJobsApplied = useScraperStore((s) => s.optimisticMarkJobsApplied);
 
   // Instant applied UI - local state avoids unstable Zustand selectors (infinite re-render loop).
@@ -757,6 +968,11 @@ export function ScraperJobsTable({
   const [toast,            setToast]            = useState<{ kind: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [sheetsConfigured, setSheetsConfigured] = useState(false);
   const [postingToSheet,   setPostingToSheet]   = useState(false);
+  const [pumbleConfigured, setPumbleConfigured] = useState(false);
+  const [pumbleIntegrations, setPumbleIntegrations] = useState<PumbleIntegration[]>([]);
+  const [postingToPumble,  setPostingToPumble]  = useState(false);
+  const [pumbleDestModalOpen, setPumbleDestModalOpen] = useState(false);
+  const [pendingPumbleTargets, setPendingPumbleTargets] = useState<DashboardJob[]>([]);
   const [installFor,       setInstallFor]       = useState<DashboardJob | null>(null);
   const [applyChecking,    setApplyChecking]    = useState<string | null>(null);
 
@@ -831,6 +1047,19 @@ export function ScraperJobsTable({
       })
       .catch(() => {
         if (!cancelled) setSheetsConfigured(false);
+      });
+    void fetchPumbleConfig()
+      .then((config) => {
+        if (cancelled) return;
+        const integrations = (config.integrations ?? []).filter((i) => i.is_enabled !== false);
+        setPumbleIntegrations(integrations);
+        setPumbleConfigured(integrations.length > 0 || Boolean(config.configured));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPumbleConfigured(false);
+          setPumbleIntegrations([]);
+        }
       });
     return () => { cancelled = true; };
   }, []);
@@ -1039,6 +1268,53 @@ export function ScraperJobsTable({
     showToast,
   ]);
 
+  const executePostToPumble = useCallback((targets: DashboardJob[], integrationIds?: string[]) => {
+    const ids = targets.map((t) => t.id);
+    if (ids.length === 0) return;
+
+    flushSync(() => {
+      optimisticMarkJobsPumblePosted(ids);
+      setSelectedIds(new Set());
+      setIsSelectingMode(false);
+      onPumblePostedStateChange?.(
+        ids.map((id) => ({ id, pumble_posted_at: new Date().toISOString() })),
+      );
+    });
+
+    setPostingToPumble(true);
+    void postJobsToPumble(ids, integrationIds).then((res) => {
+      setPostingToPumble(false);
+      showToast(res.ok ? 'success' : 'error', res.message);
+      if (!res.ok) {
+        void useScraperStore.getState().bgRefreshJobs();
+      }
+    });
+  }, [
+    optimisticMarkJobsPumblePosted,
+    onPumblePostedStateChange,
+    postJobsToPumble,
+    showToast,
+  ]);
+
+  const handlePostToPumble = useCallback((targets: DashboardJob[]) => {
+    if (targets.length === 0) return;
+    const enabled = pumbleIntegrations.filter((i) => i.is_enabled !== false);
+    if (enabled.length > 1) {
+      setPendingPumbleTargets(targets);
+      setPumbleDestModalOpen(true);
+      return;
+    }
+    executePostToPumble(targets, enabled.length === 1 ? [enabled[0].id] : undefined);
+  }, [executePostToPumble, pumbleIntegrations]);
+
+  const handlePumbleDestConfirm = useCallback((integrationIds: string[]) => {
+    const targets = pendingPumbleTargets;
+    setPumbleDestModalOpen(false);
+    setPendingPumbleTargets([]);
+    if (targets.length === 0 || integrationIds.length === 0) return;
+    executePostToPumble(targets, integrationIds);
+  }, [executePostToPumble, pendingPumbleTargets]);
+
   const handleDeleteConfirm = async () => {
     if (!deleting) return;
     setDeleteSubmitting(true);
@@ -1081,11 +1357,19 @@ export function ScraperJobsTable({
     setDeleting(selectedJobs);
   }, [selectedJobs]);
 
+  const handleBulkPostToSheet = useCallback(() => {
+    void handlePostToSheet(selectedJobs);
+  }, [handlePostToSheet, selectedJobs]);
+
+  const handleBulkPostToPumble = useCallback(() => {
+    void handlePostToPumble(selectedJobs);
+  }, [handlePostToPumble, selectedJobs]);
+
   /* ── Loading / empty states ─────────────────────────────────────────── */
   if (loading) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="p-8 text-center text-slate-400">Loading jobs…</div>
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <BrandedLoader compact label="Loading jobs…" />
       </div>
     );
   }
@@ -1095,7 +1379,11 @@ export function ScraperJobsTable({
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
         <div className="p-12 text-center">
           <p className="text-slate-500 text-sm">No scraped jobs found.</p>
-          <p className="text-slate-400 text-xs mt-1">Hit "Sync All" to start scraping.</p>
+          <p className="text-slate-400 text-xs mt-1">
+            {canSync
+              ? 'Hit "Sync All" to start scraping.'
+              : 'Jobs will appear here once an admin runs a sync.'}
+          </p>
         </div>
       </div>
     );
@@ -1113,23 +1401,29 @@ export function ScraperJobsTable({
           onClearAll={() => setSelectedIds(new Set())}
           onRerun={handleBulkRerun}
           onOpenUrls={handleBulkOpenUrls}
+          onPostToSheet={handleBulkPostToSheet}
+          onPostToPumble={handleBulkPostToPumble}
           onDelete={handleBulkDelete}
           rerunning={bulkRerunning}
           deleting={bulkDeleting}
+          sheetsConfigured={sheetsConfigured}
+          pumbleConfigured={pumbleConfigured}
+          postingToSheet={postingToSheet}
+          postingToPumble={postingToPumble}
         />
       )}
 
       {/* ── Hint when nothing selected ──────────────────────────────────── */}
       {selectedIds.size === 0 && (
-        <p className="flex items-center gap-1.5 text-[11px] text-slate-400 px-1">
+        <p className="hidden items-center gap-1.5 px-1 text-[11px] text-slate-400 md:flex">
           <MousePointer2 size={11} />
           Long-press a row to start drag-selecting · Right-click for actions · Ctrl+Click to toggle
         </p>
       )}
 
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1360px] table-fixed text-sm border-collapse">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="-mx-0 overflow-x-auto overscroll-x-contain">
+          <table className="w-full min-w-[1100px] table-fixed border-collapse text-sm md:min-w-[1450px]">
             <colgroup>
               {columns.map((col) => (
                 <col key={col.key} style={{ width: COLUMN_WIDTHS[col.key] }} />
@@ -1170,6 +1464,15 @@ export function ScraperJobsTable({
                             ? <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
                             : null}
                       </button>
+                    ) : col.key === '__status__' ? (
+                      <span className="inline-flex items-center gap-1.5" title="Applied · Google Sheets · Pumble">
+                        <span>Status</span>
+                        <span className="inline-flex items-center gap-0.5" aria-hidden>
+                          <span className="h-2 w-2 rounded-[2px] bg-sky-500" />
+                          <span className="h-2 w-2 rounded-[2px] bg-emerald-500" />
+                          <span className="h-2 w-2 rounded-[2px] bg-violet-500" />
+                        </span>
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1">
                         {col.label}
@@ -1194,7 +1497,6 @@ export function ScraperJobsTable({
             <tbody className="divide-y divide-slate-100">
               {displayJobs.map((job, idx) => {
                 const isSelected      = selectedIds.has(job.id);
-                const isApplied       = dashboardJobMarkedApplied(job);
                 const isApiCallInFlight = rerunningId === job.id;
                 const pipelineStatus  = job.extraction_status;
                 const isPipelineRunning = pipelineStatus === 'pending' || pipelineStatus === 'processing' || pipelineStatus === 'extracted';
@@ -1250,15 +1552,6 @@ export function ScraperJobsTable({
                           <span className="truncate">{job.title || 'Untitled'}</span>
                           <ExternalLink size={11} className="shrink-0 opacity-60" />
                         </a>
-                        {isApplied && (
-                          <span
-                            className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
-                            title="Marked as applied"
-                          >
-                            <ClipboardCheck size={10} />
-                            Applied
-                          </span>
-                        )}
                       </div>
                     </td>
 
@@ -1304,14 +1597,19 @@ export function ScraperJobsTable({
                       {relativeTime(job.created_at)}
                     </td>
 
-                    {/* Status */}
+                    {/* Match (score only) */}
                     <td className={CELL}>
-                      <StatusCell job={job} />
+                      <MatchCell job={job} />
                     </td>
 
-                    {/* Docs (Resume / Cover Letter) */}
+                    {/* Docs (Resume / Cover Letter / build progress) */}
                     <td className={CELL} onClick={(e) => e.stopPropagation()}>
                       <DocsCell job={job} />
+                    </td>
+
+                    {/* Status squares: Applied · Sheets · Pumble */}
+                    <td className={CELL}>
+                      <StatusSquaresCell job={job} />
                     </td>
 
                     {/* Actions (sticky) */}
@@ -1413,9 +1711,12 @@ export function ScraperJobsTable({
           onMarkApplied={(targets) => void handleMarkApplied(targets)}
           onMarkUnapplied={(targets) => void handleMarkUnapplied(targets)}
           onPostToSheet={(targets) => void handlePostToSheet(targets)}
+          onPostToPumble={(targets) => void handlePostToPumble(targets)}
           onDelete={(targets) => handleDeleteMany(targets)}
           sheetsConfigured={sheetsConfigured}
           postingToSheet={postingToSheet}
+          pumbleConfigured={pumbleConfigured}
+          postingToPumble={postingToPumble}
         />
       )}
 
@@ -1457,6 +1758,19 @@ export function ScraperJobsTable({
           setInstallFor(null);
           if (job) void handleApply(job);
         }}
+      />
+
+      <PumbleDestinationModal
+        open={pumbleDestModalOpen}
+        integrations={pumbleIntegrations}
+        jobCount={pendingPumbleTargets.length}
+        posting={postingToPumble}
+        onClose={() => {
+          if (postingToPumble) return;
+          setPumbleDestModalOpen(false);
+          setPendingPumbleTargets([]);
+        }}
+        onConfirm={handlePumbleDestConfirm}
       />
 
       {/* ── Toast ────────────────────────────────────────────────────────── */}

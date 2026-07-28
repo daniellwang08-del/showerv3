@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.llm_client import get_llm_client_for_user
 from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
+from app.services.system_settings_service import get_effective_value_sync
 from app.prompts.job_match_phase_a_prompt import (
     JOB_MATCH_PHASE_A_SYSTEM_PROMPT,
     JOB_MATCH_PHASE_A_USER_TEMPLATE,
@@ -389,6 +390,35 @@ def _parse_cover_letter(parsed: dict | None) -> dict | None:
     return {"body": body}
 
 
+def _response_message_meta(response: object) -> tuple[str, str | None, dict[str, int | None]]:
+    """Extract content, finish_reason, and usage from an OpenAI-shaped response."""
+    content = ""
+    finish_reason: str | None = None
+    usage: dict[str, int | None] = {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "reasoning_tokens": None,
+    }
+    try:
+        choice0 = response.choices[0]  # type: ignore[attr-defined]
+        message = getattr(choice0, "message", None)
+        raw = getattr(message, "content", None) if message is not None else None
+        content = str(raw or "").strip()
+        finish_reason = getattr(choice0, "finish_reason", None)
+    except (AttributeError, IndexError, TypeError):
+        content = ""
+    usage_obj = getattr(response, "usage", None)
+    if usage_obj is not None:
+        usage["prompt_tokens"] = getattr(usage_obj, "prompt_tokens", None)
+        usage["completion_tokens"] = getattr(usage_obj, "completion_tokens", None)
+        usage["total_tokens"] = getattr(usage_obj, "total_tokens", None)
+        details = getattr(usage_obj, "completion_tokens_details", None)
+        if details is not None:
+            usage["reasoning_tokens"] = getattr(details, "reasoning_tokens", None)
+    return content, finish_reason, usage
+
+
 async def _call_openai_json(
     *,
     system_prompt: str,
@@ -396,23 +426,60 @@ async def _call_openai_json(
     max_tokens: int,
     observe_name: str,
     user_id: str | None = None,
+    job_type: str | None = None,
 ) -> dict:
-    client = await get_llm_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id, job_type=job_type)
     settings = get_settings()
-    try:
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    async def _once(**extra: object) -> tuple[str, str | None, dict[str, int | None], object]:
         response = await client.chat.completions.create(
             model=settings.openai_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
+            messages=messages,
             temperature=0.2,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
+            **extra,
         )
-        result_text = response.choices[0].message.content
+        text, finish_reason, usage = _response_message_meta(response)
+        return text, finish_reason, usage, response
+
+    try:
+        result_text, finish_reason, usage, _response = await _once()
         if not result_text:
-            raise AIParsingError("Empty response from AI model")
+            # Reasoning models often spend the whole completion budget on
+            # reasoning and return empty content. Retry once at low effort.
+            logger.warning(
+                "llm_empty_content_retrying",
+                observe=observe_name,
+                job_type=job_type,
+                finish_reason=finish_reason,
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                reasoning_tokens=usage.get("reasoning_tokens"),
+                model=getattr(_response, "model", None),
+            )
+            result_text, finish_reason, usage, _response = await _once(
+                reasoning_effort="low",
+            )
+        if not result_text:
+            logger.error(
+                "llm_empty_content",
+                observe=observe_name,
+                job_type=job_type,
+                finish_reason=finish_reason,
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                reasoning_tokens=usage.get("reasoning_tokens"),
+                model=getattr(_response, "model", None),
+            )
+            detail = finish_reason or "unknown"
+            raise AIParsingError(
+                f"Empty response from AI model (finish_reason={detail})"
+            )
         return json.loads(result_text)
     except json.JSONDecodeError as e:
         logger.error("job_match_json_error", observe=observe_name, error=str(e))
@@ -456,7 +523,7 @@ async def analyze_job_match_phase_a(
         profile_text=profile_truncated,
         job_preferences=preferences_text,
     )
-    phase_a_max = max(settings.openai_max_tokens, settings.phase_a_max_tokens)
+    phase_a_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_a_max_tokens")))
     phase_a_max = min(phase_a_max, 16384)
 
     parsed = await _call_openai_json(
@@ -465,6 +532,7 @@ async def analyze_job_match_phase_a(
         max_tokens=phase_a_max,
         observe_name="phase_a",
         user_id=user_id,
+        job_type="job_analysis",
     )
 
     requires_security_clearance = bool(parsed.get("requires_security_clearance", False))
@@ -524,7 +592,7 @@ async def generate_tailored_content_phase_b(
         match_summary=match_summary or "No match summary available.",
         project_evidence_context=evidence_truncated,
     )
-    phase_b_max = max(settings.openai_max_tokens, settings.phase_b_max_tokens)
+    phase_b_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_b_max_tokens")))
     phase_b_max = min(phase_b_max, 32768)
 
     if user_id:
@@ -540,6 +608,7 @@ async def generate_tailored_content_phase_b(
         max_tokens=phase_b_max,
         observe_name="phase_b",
         user_id=user_id,
+        job_type="resume_tailoring",
     )
 
     tailored_resume = _parse_tailored_resume(parsed.get("tailored_resume"))

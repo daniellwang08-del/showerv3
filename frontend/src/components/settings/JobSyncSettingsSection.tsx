@@ -13,6 +13,7 @@ import {
 } from '../../api/scraperApi';
 import type { SyncCheckpoint, SyncPlatform } from '../../types/scraper';
 import { useScraperStore } from '../../stores/scraperStore';
+import { BrandedLoader } from '../layout/BrandedLoader';
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
@@ -196,7 +197,7 @@ export function JobSyncSettingsSection() {
           </p>
 
           {loading ? (
-            <p className="mt-4 text-sm text-slate-500">Loading sync settings…</p>
+            <BrandedLoader compact label="Loading sync settings…" className="mt-2" />
           ) : loadError ? (
             <p className="mt-4 text-sm text-rose-700">{loadError}</p>
           ) : (

@@ -239,7 +239,7 @@ async def _call_evidence_extraction(
     company_names: list[str],
     user_id: str | None,
 ) -> list[dict[str, Any]]:
-    client = await get_llm_client_for_user(user_id)
+    client = await get_llm_client_for_user(user_id, job_type="profile_evidence")
     settings = get_settings()
     user_msg = (
         f"Target job:\n{job_context}\n\n"

@@ -36,6 +36,9 @@ let state = {
   pageByTab: { progress: 1, today: 1, ready: 1, applied: 1 }, // 1-based page per Home tab
   pageSize: 25, // rows per page, user-selectable
   queueLoading: false, // true while the Home job lists are being fetched
+  pumbleConfigured: false,
+  pumbleDestinationCount: 0,
+  postingToPumble: false,
   modal: null, // { title, message, confirmLabel, tone, onConfirm, busy }
   minScore: store.DEFAULT_MIN_SCORE,
   autoAdvance: false, // Workday: fill + advance each step until Review (user submits)
@@ -588,7 +591,7 @@ async function loadQueue() {
   try {
     const minScore = state.minScore;
     const today = startOfToday();
-    const [sessions, todayItems, mineItems, suggestedItems, allItems] = await Promise.all([
+    const [sessions, todayItems, mineItems, suggestedItems, allItems, pumbleCfg] = await Promise.all([
       api.listSessions("in_progress").catch(() => []),
       // Same server filter as the web dashboard "Today's new jobs" tab.
       fetchDashboardPages({ view: "today", sort: "created_at", order: "desc" }),
@@ -603,6 +606,7 @@ async function loadQueue() {
       }),
       // Broader pool for "applied today" (applied jobs may fall outside today/suggested).
       fetchDashboardPages({ view: "all", sort: "created_at", order: "desc", maxPages: 10 }),
+      api.getPumbleConfig().catch(() => ({ configured: false })),
     ]);
 
     const mineIds = new Set((mineItems || []).map((j) => j.id));
@@ -626,6 +630,16 @@ async function loadQueue() {
       appliedQueue: appliedToday,
       pageByTab: { progress: 1, today: 1, ready: 1, applied: 1 },
       queueLoading: false,
+      pumbleConfigured: Boolean(
+        pumbleCfg &&
+          ((Array.isArray(pumbleCfg.integrations) && pumbleCfg.integrations.length > 0) ||
+            pumbleCfg.configured),
+      ),
+      pumbleDestinationCount: Array.isArray(pumbleCfg?.integrations)
+        ? pumbleCfg.integrations.filter((i) => i.is_enabled !== false).length
+        : pumbleCfg?.configured
+          ? 1
+          : 0,
     });
   } catch (err) {
     setState({ error: err.message, queueLoading: false });
@@ -686,6 +700,7 @@ async function openJob(jobId, { redirect = false, keepReportNotice = false } = {
         ready: !!snap.ready,
         applied: !!detail.applied_at,
         appliedAt: detail.applied_at || null,
+        pumblePosted: jobHasPumblePosted(jobId),
         messages: detail.messages || [],
         // Engine preview from the snapshot URL; re-resolved against the live tab
         // URL when autofill actually starts.
@@ -704,6 +719,21 @@ async function redirectActiveTab(url) {
   } catch (err) {
     console.warn("redirectActiveTab failed", err);
   }
+}
+
+function jobHasPumblePosted(jobId) {
+  const pools = [
+    state.todayQueue,
+    state.todayMineQueue,
+    state.todayPlatformQueue,
+    state.queue,
+    state.appliedQueue,
+  ];
+  for (const pool of pools) {
+    const match = (pool || []).find((j) => j.id === jobId);
+    if (match && match.pumble_posted_at) return true;
+  }
+  return false;
 }
 
 async function runAnalysis() {
@@ -784,6 +814,41 @@ async function askQuestion(message) {
 function stopStreaming() {
   if (state.abort) state.abort.abort();
   setState({ streaming: false, abort: null });
+}
+
+async function postJobsToPumble(jobIds) {
+  const ids = [...new Set((jobIds || []).map((id) => String(id)).filter(Boolean))];
+  if (!ids.length) return;
+  if (!state.pumbleConfigured) {
+    toast("Configure Pumble in Atomspace Settings first.");
+    return;
+  }
+  setState({ postingToPumble: true, error: null });
+  try {
+    const data = await api.postJobsToPumble(ids);
+    const posted = data.posted_count || 0;
+    const failed = data.failed_count || 0;
+    const skipped = data.skipped_already_in_thread || 0;
+    const destCount = data.destination_count || 0;
+    const parts = [];
+    if (posted > 0) {
+      const destSuffix = destCount > 1 ? ` across ${destCount} destinations` : "";
+      parts.push(`Posted ${posted} job${posted === 1 ? "" : "s"} to Pumble${destSuffix}`);
+    }
+    if (skipped > 0) parts.push(`${skipped} already in today's thread`);
+    if (failed > 0) parts.push(`${failed} failed`);
+    toast(parts.length ? `${parts.join("; ")}.` : "No jobs were posted to Pumble.");
+    if (posted > 0) {
+      if (state.job && ids.includes(state.job.job_id)) {
+        setState({ job: { ...state.job, pumblePosted: true } });
+      }
+      await loadQueue();
+    }
+  } catch (err) {
+    setState({ error: err.message || "Failed to post to Pumble." });
+  } finally {
+    setState({ postingToPumble: false });
+  }
 }
 
 async function completeJob({ next }) {
@@ -2348,6 +2413,7 @@ function todayEmptyMessage() {
 
 function jobToCard(j, onClick) {
   return {
+    jobId: j.id,
     title: j.title || "(untitled job)",
     company: j.company,
     location: j.location,
@@ -2520,6 +2586,7 @@ function dashboardChips(j) {
   if (j.match_in_progress) chips.push({ label: "Matching…", tone: "warn", dot: true });
   if (j.resume_pdf_status === "completed") chips.push({ label: "Resume", tone: "ok", dot: true });
   if (j.cover_letter_pdf_status === "completed") chips.push({ label: "Cover letter", tone: "ok", dot: true });
+  if (j.pumble_posted_at) chips.push({ label: "Pumble", tone: "ok" });
   return chips;
 }
 
@@ -2596,6 +2663,9 @@ function jobListSection(tabId, cards, emptyMsg) {
 
   const wrap = el("div", { class: "tab-panel" });
   wrap.appendChild(renderPager(tabId, page, totalPages, cards.length, start, pageCards.length));
+  const pageJobIds = pageCards.map((c) => c.jobId).filter(Boolean);
+  const bulkActions = renderListBulkActions(tabId, pageJobIds);
+  if (bulkActions) wrap.appendChild(bulkActions);
   const list = el("div", { class: "list" });
   pageCards.forEach((c) => list.appendChild(jobCard(c)));
   wrap.appendChild(list);
@@ -2604,6 +2674,26 @@ function jobListSection(tabId, cards, emptyMsg) {
 
 function setTabPage(tabId, page) {
   setState({ pageByTab: { ...state.pageByTab, [tabId]: page } });
+}
+
+function renderListBulkActions(tabId, jobIds) {
+  if (!state.pumbleConfigured || !jobIds.length) return null;
+  if (tabId !== "today" && tabId !== "ready") return null;
+  return el("div", { class: "list-bulk-actions" }, [
+    el(
+      "button",
+      {
+        class: "btn small pumble-post-btn",
+        disabled: state.postingToPumble,
+        title:
+          (state.pumbleDestinationCount || 0) > 1
+            ? "Post every job on this page to all configured Pumble destinations"
+            : "Post every job on this page to your configured Pumble channel thread",
+        onclick: () => postJobsToPumble(jobIds),
+      },
+      state.postingToPumble ? "Posting to Pumble…" : `Post ${jobIds.length} on this page to Pumble`
+    ),
+  ]);
 }
 
 function applyPageSize(size) {
@@ -3398,7 +3488,29 @@ async function rerunWorkday() {
   }
 }
 
+const ICON_MSG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+
 function renderJobFooter() {
+  const pumbleBtn =
+    state.pumbleConfigured && state.job
+      ? el(
+          "button",
+          {
+            class: "btn footer-btn pumble-post-btn",
+            disabled: state.postingToPumble || state.job.pumblePosted,
+            title: state.job.pumblePosted
+              ? "Already posted to Pumble"
+              : "Post this job URL to your Pumble channel thread",
+            onclick: () => postJobsToPumble([state.job.job_id]),
+          },
+          [
+            icon(ICON_MSG),
+            el("span", {}, state.job.pumblePosted ? "Posted to Pumble" : "Post to Pumble"),
+          ]
+        )
+      : null;
+
   return el("div", { class: "footer" }, [
     el("button", { class: "btn footer-btn", onclick: () => completeJob({ next: false }) }, [
       icon(ICON_CHECK),
@@ -3413,6 +3525,7 @@ function renderJobFooter() {
       },
       [icon(ICON_FLAG), el("span", {}, "Report")]
     ),
+    pumbleBtn,
     el("button", { class: "btn primary footer-btn", onclick: () => completeJob({ next: true }) }, [
       el("span", {}, "Complete & Next"),
       icon(ICON_NEXT),

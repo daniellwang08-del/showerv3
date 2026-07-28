@@ -11,6 +11,9 @@ const INLINE_BULLET_RE = /[•▪‣◦∙·●]/;
 const LINE_BULLET_RE = /^\s*(?:[-*▪‣◦∙·●]|\d+[.)])\s+(.*)$/;
 const PROJECT_LINE_RE = /^\s*project\s*[:\-\u2013\u2014]\s*/i;
 
+/** A line that starts a markdown-style bullet (`-`, `*`, `•`, or `1.`). */
+export const EDITOR_BULLET_LINE_RE = /^\s*(?:[-*▪‣◦∙·●•]|\d+[.)])\s*(.*)$/;
+
 export function splitProjectLead(lead: string): { projectTitle: string | null; description: string } {
   const segments = lead.split('\n').map((s) => s.trim()).filter(Boolean);
   if (segments.length === 0) return { projectTitle: null, description: '' };
@@ -67,10 +70,98 @@ export function deriveWorkContent(w: {
   const desc = (w.description || '').trim();
   const parsed = splitDescription(desc);
   const parsedProject = splitProjectLead(parsed.lead);
-  const structuredContribs = (w.contributions || []).map((c) => (c || '').trim()).filter(Boolean);
+  const structuredContribs = resumeBulletsFromContributions(w.contributions);
   return {
     projectTitle: (w.project_title || '').trim() || parsedProject.projectTitle || '',
     intro: (w.project_intro || '').trim() || parsedProject.description || '',
     contributions: structuredContribs.length ? structuredContribs : parsed.bullets,
   };
+}
+
+export type ContributionsEditorLine =
+  | { kind: 'bullet'; text: string; raw: string }
+  | { kind: 'prose'; text: string; raw: string }
+  | { kind: 'blank'; raw: string };
+
+/** Parse one editor line. Only `-` / `*` / `•` / numbered prefixes count as bullets. */
+export function parseContributionsEditorLine(raw: string): ContributionsEditorLine {
+  if (raw === '') return { kind: 'blank', raw };
+  const m = raw.match(EDITOR_BULLET_LINE_RE);
+  if (m) {
+    return { kind: 'bullet', text: (m[1] ?? '').trimEnd(), raw };
+  }
+  return { kind: 'prose', text: raw, raw };
+}
+
+export function parseContributionsEditorText(text: string): ContributionsEditorLine[] {
+  return String(text ?? '').split('\n').map(parseContributionsEditorLine);
+}
+
+export function ensureBulletLines(text: string): string {
+  const raw = String(text ?? '');
+  if (!raw.trim()) return '- ';
+  return raw
+    .split('\n')
+    .map((ln) => {
+      if (!ln.trim()) return '- ';
+      if (lineIsBullet(ln)) {
+        const body = ln.replace(/^\s*(?:[-*▪‣◦∙·●•]|\d+[.)])\s*/, '');
+        return `- ${body}`;
+      }
+      return `- ${ln.replace(/^\s+/, '')}`;
+    })
+    .join('\n');
+}
+
+/** Always show stored contributions as `- ` bullet lines in the editor. */
+export function contributionsToEditorText(contributions: string[] | null | undefined): string {
+  const list = contributions ?? [];
+  if (!list.length) return '- ';
+  return ensureBulletLines(
+    list
+      .map((c) => {
+        const t = (c ?? '').trimEnd();
+        if (!t.trim()) return '- ';
+        if (lineIsBullet(t)) return t;
+        return `- ${t}`;
+      })
+      .join('\n'),
+  );
+}
+
+/**
+ * Persist editor text → contribution lines (keeps `- ` markers for round-trip).
+ * Empty editor becomes a single empty bullet placeholder that resume rendering skips.
+ */
+export function editorTextToContributions(text: string): string[] {
+  return ensureBulletLines(text).split('\n');
+}
+
+/**
+ * Bullets that belong on the résumé.
+ * - If any line is dash-marked, only those lines are bullets (plain sentences are not).
+ * - Legacy arrays with no markers: every non-empty line is a bullet.
+ */
+export function resumeBulletsFromContributions(contributions: string[] | null | undefined): string[] {
+  const list = contributions ?? [];
+  const marked = list
+    .map((ln) => parseContributionsEditorLine(ln))
+    .filter((ln): ln is Extract<ContributionsEditorLine, { kind: 'bullet' }> => ln.kind === 'bullet')
+    .map((ln) => ln.text.trim())
+    .filter(Boolean);
+  if (marked.length) return marked;
+  const anyMarkedPrefix = list.some((ln) => EDITOR_BULLET_LINE_RE.test(ln));
+  if (anyMarkedPrefix) return marked;
+  return list.map((c) => (c || '').trim()).filter(Boolean);
+}
+
+/** True when the caret's line is a bullet (possibly empty after `- `). */
+export function lineIsBullet(line: string): boolean {
+  return EDITOR_BULLET_LINE_RE.test(line);
+}
+
+/** Empty bullet like `-` or `- ` (ready to exit list on Enter). */
+export function lineIsEmptyBullet(line: string): boolean {
+  const m = line.match(EDITOR_BULLET_LINE_RE);
+  return Boolean(m && !(m[1] ?? '').trim());
 }

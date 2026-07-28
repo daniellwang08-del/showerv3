@@ -969,6 +969,23 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
   background: var(--warn);
   border-color: var(--warn);
 }
+.list-bulk-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px 8px;
+}
+.btn.pumble-post-btn {
+  border-color: rgba(139, 92, 246, 0.35);
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.08);
+}
+.btn.pumble-post-btn:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.16);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+.btn.pumble-post-btn:disabled {
+  opacity: 0.65;
+}
 .btn-ico { display: inline-flex; align-items: center; }
 .btn-ico svg { width: 15px; height: 15px; display: block; }
 

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { SubmittedUrlItem } from '../../types/ui';
+import { BrandedLoader } from '../layout/BrandedLoader';
 import type { ExclusionType } from '../../types/index';
 import { useJobsStore } from '../../stores/jobsStore';
 import { useModalStore } from '../../stores/modalStore';
@@ -230,7 +231,7 @@ function DuplicateActionsMenuPortal({
 
   return createPortal(
     <div
-      className="glass-card fixed w-56 overflow-hidden rounded-xl border border-blue-200/70 bg-white/95 shadow-xl backdrop-blur-sm"
+      className="fixed w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
       style={{ top: pos.top, left: pos.left, zIndex: Z_INDEX.duplicateContextMenu }}
       data-job-menu-root="true"
       role="menu"
@@ -586,9 +587,7 @@ export function DuplicateJobsPanel({
         {/* List */}
         <div ref={dupScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 px-4 py-4">
           {loadingLists ? (
-            <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin text-slate-400" /> Loading…
-            </div>
+            <BrandedLoader compact label="Loading…" className="py-16" />
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-300 shadow-sm ring-1 ring-slate-200">

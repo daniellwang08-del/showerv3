@@ -866,10 +866,11 @@ class LLMFallbackClient:
     def __init__(self, adapters: list[_Adapter]) -> None:
         self._adapters = adapters
         self.chat = _ChatNamespace(self)
-        settings = get_settings()
+        from app.services.system_settings_service import get_effective_value_sync
+
         self._cb = _CircuitBreaker(
-            threshold=settings.llm_circuit_breaker_threshold,
-            cooldown=settings.llm_circuit_breaker_cooldown_seconds,
+            threshold=int(get_effective_value_sync("llm_circuit_breaker_threshold")),
+            cooldown=float(get_effective_value_sync("llm_circuit_breaker_cooldown_seconds")),
         )
 
     @property
@@ -1057,24 +1058,45 @@ def _cache_key(
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
+def _normalize_openai_compatible_base_url(raw: str) -> str | None:
+    """Return a usable OpenAI SDK ``base_url``, or None for the default API host.
+
+    Accepts ``https://host``, ``https://host/``, or ``https://host/v1``.
+    """
+    base = (raw or "").strip().rstrip("/")
+    if not base:
+        return None
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return base
+
+
 def _build_openai_client(api_key: str) -> AsyncOpenAI | None:
     if not api_key:
         return None
+    from app.services.system_settings_service import get_effective_value_sync
+
     settings = get_settings()
-    t = settings.openai_timeout_seconds
+    t = float(get_effective_value_sync("openai_timeout_seconds"))
     async_openai_cls = _get_async_openai_cls()
-    return async_openai_cls(
-        api_key=api_key,
-        max_retries=0,
-        timeout=httpx.Timeout(t, connect=min(30.0, t)),
-    )
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "max_retries": 0,
+        "timeout": httpx.Timeout(t, connect=min(30.0, t)),
+    }
+    base_url = _normalize_openai_compatible_base_url(settings.openai_api_base)
+    if base_url:
+        kwargs["base_url"] = base_url
+    return async_openai_cls(**kwargs)
 
 
 def _build_gemini_client(api_key: str) -> AsyncOpenAI | None:
     if not api_key:
         return None
+    from app.services.system_settings_service import get_effective_value_sync
+
     settings = get_settings()
-    t = settings.gemini_timeout_seconds
+    t = float(get_effective_value_sync("gemini_timeout_seconds"))
     # Plain OpenAI SDK pointed at Google's OpenAI-compatible endpoint. We use the
     # base ``openai.AsyncOpenAI`` (not the Langfuse wrapper) to avoid attributing
     # Gemini calls to OpenAI in traces.
@@ -1091,8 +1113,9 @@ def _build_gemini_client(api_key: str) -> AsyncOpenAI | None:
 def _build_anthropic_client(api_key: str) -> AsyncAnthropic | None:
     if not api_key:
         return None
-    settings = get_settings()
-    t = settings.anthropic_timeout_seconds
+    from app.services.system_settings_service import get_effective_value_sync
+
+    t = float(get_effective_value_sync("anthropic_timeout_seconds"))
     async_anthropic_cls = _get_async_anthropic_cls()
     return async_anthropic_cls(
         api_key=api_key,
@@ -1101,20 +1124,34 @@ def _build_anthropic_client(api_key: str) -> AsyncAnthropic | None:
     )
 
 
-def _build_adapter(provider: str, api_key: str) -> _Adapter | None:
+def _build_adapter(
+    provider: str,
+    api_key: str,
+    *,
+    model: str | None = None,
+) -> _Adapter | None:
     if not api_key:
         return None
+    from app.services.system_settings_service import get_effective_value_sync
+
     settings = get_settings()
     if provider == "openai":
         client = _build_openai_client(api_key)
-        return _OpenAIAdapter(client, settings.openai_model) if client else None
+        resolved = (model or "").strip() or str(get_effective_value_sync("openai_model"))
+        return _OpenAIAdapter(client, resolved) if client else None
     if provider == "gemini":
         client = _build_gemini_client(api_key)
-        return _GeminiAdapter(client, settings.gemini_model) if client else None
+        resolved = (model or "").strip() or str(get_effective_value_sync("gemini_model"))
+        return _GeminiAdapter(client, resolved) if client else None
     if provider == "anthropic":
         client = _build_anthropic_client(api_key)
+        resolved = (model or "").strip() or str(get_effective_value_sync("anthropic_model"))
         return (
-            _AnthropicAdapter(client, settings.anthropic_model, settings.anthropic_max_tokens)
+            _AnthropicAdapter(
+                client,
+                resolved,
+                settings.anthropic_max_tokens,
+            )
             if client
             else None
         )
@@ -1122,10 +1159,12 @@ def _build_adapter(provider: str, api_key: str) -> _Adapter | None:
 
 
 def _normalize_provider(provider: str | None) -> str:
+    from app.services.system_settings_service import get_effective_value_sync
+
     p = (provider or "").strip().lower()
     if p in LLM_PROVIDERS:
         return p
-    return get_settings().default_llm_provider
+    return str(get_effective_value_sync("default_llm_provider"))
 
 
 def get_llm_client(
@@ -1134,6 +1173,9 @@ def get_llm_client(
     openai_api_key: str | None = None,
     anthropic_api_key: str | None = None,
     gemini_api_key: str | None = None,
+    openai_model: str | None = None,
+    anthropic_model: str | None = None,
+    gemini_model: str | None = None,
 ) -> LLMFallbackClient:
     """Return a cached multi-provider client.
 
@@ -1143,9 +1185,24 @@ def get_llm_client(
 
     For each key argument: ``None`` → fall back to the server env value;
     ``""`` → explicit disable for that provider.
+
+    Optional ``*_model`` overrides replace the system/default model for that
+    provider (used by admin job→model bindings on OpenAI-compatible gateways).
     """
+    from app.services.system_settings_service import get_effective_value_sync
+
     settings = get_settings()
     provider = _normalize_provider(provider)
+    resolved_openai_model = (openai_model or "").strip() or str(
+        get_effective_value_sync("openai_model")
+    )
+    resolved_anthropic_model = (anthropic_model or "").strip() or str(
+        get_effective_value_sync("anthropic_model")
+    )
+    resolved_gemini_model = (gemini_model or "").strip() or str(
+        get_effective_value_sync("gemini_model")
+    )
+    llm_fallback_enabled = bool(get_effective_value_sync("llm_fallback_enabled"))
 
     def _resolve(arg: str | None, env_default: str) -> str:
         return (arg if arg is not None else (env_default or "")).strip()
@@ -1155,11 +1212,16 @@ def get_llm_client(
         "anthropic": _resolve(anthropic_api_key, settings.anthropic_api_key),
         "gemini": _resolve(gemini_api_key, settings.gemini_api_key),
     }
+    models = {
+        "openai": resolved_openai_model,
+        "anthropic": resolved_anthropic_model,
+        "gemini": resolved_gemini_model,
+    }
 
     # Primary first, then the remaining providers in a stable order. When
     # fallback is disabled, only the selected provider is used.
     order = [provider] + [p for p in LLM_PROVIDERS if p != provider]
-    if not settings.llm_fallback_enabled:
+    if not llm_fallback_enabled:
         order = [provider]
 
     if not any(keys[p] for p in order):
@@ -1172,16 +1234,16 @@ def get_llm_client(
         keys["openai"],
         keys["anthropic"],
         keys["gemini"],
-        openai_model=settings.openai_model,
-        anthropic_model=settings.anthropic_model,
-        gemini_model=settings.gemini_model,
+        openai_model=resolved_openai_model,
+        anthropic_model=resolved_anthropic_model,
+        gemini_model=resolved_gemini_model,
     )
     if ck in _clients:
         return _clients[ck]
 
     adapters: list[_Adapter] = []
     for p in order:
-        adapter = _build_adapter(p, keys[p])
+        adapter = _build_adapter(p, keys[p], model=models[p])
         if adapter is not None:
             adapters.append(adapter)
 
@@ -1194,36 +1256,47 @@ def get_llm_client(
         "llm_client_initialized",
         primary_provider=client.primary_provider,
         providers=[a.name for a in adapters],
-        fallback_enabled=settings.llm_fallback_enabled,
+        models={a.name: getattr(a, "_model", None) for a in adapters},
+        fallback_enabled=llm_fallback_enabled,
         langfuse_tracing=_langfuse_available() and settings.langfuse_enabled,
     )
     return client
 
 
-async def get_llm_client_for_user(user_id: str | None) -> LLMFallbackClient:
-    """Resolve the LLM client for a user.
+async def get_llm_client_for_user(
+    user_id: str | None,
+    *,
+    job_type: str | None = None,
+) -> LLMFallbackClient:
+    """Resolve the LLM client for a user (and optional platform job type).
 
-    The user's selected provider becomes the primary. Each provider's key
-    follows per-user resolution (a custom encrypted key when opted in, else the
-    server env key). The other configured providers remain available as
-    ordered fallbacks when ``llm_fallback_enabled``.
+    When ``job_type`` is set, admin job→key bindings can override the primary
+    provider, inject a registered pool key, and select a gateway model id.
+    Otherwise resolution is: user custom key → server .env key, with
+    multi-provider fallback when enabled.
     """
-    if not user_id:
-        return get_llm_client()
-
     from app.storage.database import get_session
-    from app.storage.user_repository import UserRepository
+    from app.services.llm_provider_keys_service import resolve_job_llm_credentials
 
     async with get_session() as session:
-        repo = UserRepository(session)
-        provider = await repo.resolve_llm_provider(user_id)
-        openai_key = await repo.resolve_provider_api_key(user_id, "openai")
-        anthropic_key = await repo.resolve_provider_api_key(user_id, "anthropic")
-        gemini_key = await repo.resolve_provider_api_key(user_id, "gemini")
+        creds = await resolve_job_llm_credentials(
+            session, job_type=job_type, user_id=user_id
+        )
 
-    return get_llm_client(
-        provider=provider,
-        openai_api_key=openai_key,
-        anthropic_api_key=anthropic_key,
-        gemini_api_key=gemini_key,
-    )
+    kwargs: dict[str, Any] = {
+        "provider": creds["provider"],
+        "openai_api_key": creds["openai_api_key"],
+        "anthropic_api_key": creds["anthropic_api_key"],
+        "gemini_api_key": creds["gemini_api_key"],
+    }
+    bound_model = (creds.get("bound_model") or "").strip()
+    if bound_model:
+        primary = _normalize_provider(creds.get("provider"))
+        if primary == "openai":
+            kwargs["openai_model"] = bound_model
+        elif primary == "anthropic":
+            kwargs["anthropic_model"] = bound_model
+        elif primary == "gemini":
+            kwargs["gemini_model"] = bound_model
+
+    return get_llm_client(**kwargs)

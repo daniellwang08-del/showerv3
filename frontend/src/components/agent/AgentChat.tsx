@@ -6,10 +6,8 @@ import {
   type KeyboardEvent,
 } from 'react';
 import {
-  Bot,
   Send,
   X,
-  Sparkles,
   Trash2,
   Loader2,
   Check,
@@ -20,13 +18,16 @@ import {
 } from 'lucide-react';
 import { useAgentStore, type TimelineItem } from '../../stores/agentStore';
 import type { AgentJobCard } from '../../api/agentApi';
+import { BrandMark } from '../shared/BrandMark';
+import { AI_PRODUCT } from '../shared/aiProductCopy';
 
-const SUGGESTIONS = [
+const BASE_SUGGESTIONS = [
   'Display all remote jobs',
   "Show today's new jobs",
   'Sort jobs by match score',
-  'Sync all platforms',
 ];
+
+const ADMIN_SUGGESTIONS = ['Sync all platforms'];
 
 function ScorePill({ score }: { score: number }) {
   const tone =
@@ -44,7 +45,7 @@ function ScorePill({ score }: { score: number }) {
 
 function JobCard({ job }: { job: AgentJobCard }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+    <div className="brand-fade-in flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-semibold text-slate-800">{job.title || 'Untitled role'}</p>
         <p className="truncate text-[11px] text-slate-500">
@@ -96,7 +97,7 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
       <AlertCircle className="h-3.5 w-3.5 text-rose-500" />
     );
   return (
-    <div className="space-y-1.5">
+    <div className="brand-fade-in space-y-1.5">
       <div className="flex items-center gap-2 text-[11px] font-medium text-slate-500">
         {icon}
         <span>{item.title}</span>
@@ -137,7 +138,7 @@ function ConfirmRow({ item }: { item: Extract<TimelineItem, { kind: 'confirm' }>
   const sending = useAgentStore((s) => s.sending);
 
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+    <div className="brand-fade-in rounded-xl border border-amber-200 bg-amber-50/70 p-3">
       <p className="text-xs font-medium text-amber-900 whitespace-pre-line">{item.summary}</p>
       {!item.resolved ? (
         <div className="mt-2.5 flex gap-2">
@@ -170,16 +171,19 @@ function ConfirmRow({ item }: { item: Extract<TimelineItem, { kind: 'confirm' }>
 
 function Bubble({ item }: { item: Extract<TimelineItem, { kind: 'user' | 'assistant' }> }) {
   const isUser = item.kind === 'user';
+  if (isUser) {
+    return (
+      <div className="brand-fade-in flex justify-end">
+        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-blue-600 px-3.5 py-2 text-sm leading-relaxed whitespace-pre-line text-white">
+          {item.text}
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className={isUser ? 'flex justify-end' : 'flex justify-start'}>
-      <div
-        className={[
-          'max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed whitespace-pre-line',
-          isUser
-            ? 'rounded-br-sm bg-blue-600 text-white'
-            : 'rounded-bl-sm bg-white text-slate-700 ring-1 ring-slate-200',
-        ].join(' ')}
-      >
+    <div className="brand-fade-in flex items-start gap-2">
+      <BrandMark mood="idle" size="sm" />
+      <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-white px-3.5 py-2 text-sm leading-relaxed whitespace-pre-line text-slate-700 shadow-sm ring-1 ring-violet-100">
         {item.text}
       </div>
     </div>
@@ -188,12 +192,13 @@ function Bubble({ item }: { item: Extract<TimelineItem, { kind: 'user' | 'assist
 
 function TypingDots() {
   return (
-    <div className="flex justify-start">
-      <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm bg-white px-3.5 py-3 ring-1 ring-slate-200">
+    <div className="brand-fade-in flex items-start gap-2">
+      <BrandMark mood="thinking" size="sm" />
+      <div className="flex items-center gap-1 rounded-2xl rounded-tl-md bg-white px-3.5 py-3 ring-1 ring-violet-100">
         {[0, 150, 300].map((d) => (
           <span
             key={d}
-            className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+            className="brand-type-dot h-2 w-2 rounded-full bg-fuchsia-400"
             style={{ animationDelay: `${d}ms` }}
           />
         ))}
@@ -202,11 +207,16 @@ function TypingDots() {
   );
 }
 
-export function AgentChat() {
+export function AgentChat({ isAdmin = false }: { isAdmin?: boolean }) {
   const { open, sending, timeline, openChat, closeChat, clear, send } = useAgentStore();
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const suggestions = useMemo(
+    () => (isAdmin ? [...BASE_SUGGESTIONS, ...ADMIN_SUGGESTIONS] : BASE_SUGGESTIONS),
+    [isAdmin],
+  );
 
   const lastIsEmptyAssistant = useMemo(() => {
     const last = timeline[timeline.length - 1];
@@ -240,34 +250,44 @@ export function AgentChat() {
         type="button"
         onClick={openChat}
         aria-label="Open AI assistant"
-        className="group fixed bottom-5 right-5 z-[60] flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-blue-600 to-blue-700 text-white shadow-xl shadow-blue-600/30 transition hover:scale-105 hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-blue-300"
+        className="agent-launcher oneclick-launcher-glow group flex h-14 w-14 items-center justify-center overflow-visible rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-500 shadow-xl shadow-fuchsia-600/40 ring-2 ring-white/50 focus:outline-none focus-visible:ring-4 focus-visible:ring-fuchsia-300"
       >
-        <Bot className="h-6 w-6" />
-        <span className="absolute -right-1 -top-1 h-3 w-3 animate-pulse rounded-full bg-emerald-400 ring-2 ring-white" />
+        <BrandMark mood="idle" size="md" />
       </button>
     );
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-[60] flex h-[min(640px,calc(100vh-2.5rem))] w-[min(420px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-2xl shadow-slate-900/20">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-indigo-600 to-blue-600 px-4 py-3 text-white">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20">
-            <Sparkles className="h-4 w-4" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold leading-none">AI Assistant</p>
-            <p className="mt-0.5 text-[11px] text-blue-100">Search & act across your jobs</p>
+    <div className="brand-fade-in fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-[max(0.75rem,env(safe-area-inset-right))] z-[60] flex h-[min(640px,calc(100dvh-5.5rem))] w-[min(420px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border-2 border-violet-200 bg-slate-50 shadow-2xl shadow-violet-900/20 sm:bottom-[max(1.25rem,env(safe-area-inset-bottom))] sm:right-[max(1.25rem,env(safe-area-inset-right))] sm:h-[min(640px,calc(100dvh-2.5rem))] sm:w-[min(420px,calc(100vw-2.5rem))]">
+      {/* Product header - Atomspace brand chrome */}
+      <div className="flex items-center justify-between gap-2 border-b border-violet-200/80 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 px-3.5 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <BrandMark mood={sending ? 'thinking' : 'idle'} size="sm" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-sm font-extrabold leading-none text-white">AI Assistant</p>
+              <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white ring-1 ring-white/30">
+                Jobs
+              </span>
+              {sending && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-300/95 px-1.5 py-0.5 text-[9px] font-bold text-amber-950 ring-1 ring-amber-200">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  In progress
+                </span>
+              )}
+            </div>
+            <p className="mt-1 truncate text-[11px] font-medium leading-snug text-white/90">
+              {sending ? 'Working through your request - hang tight…' : AI_PRODUCT.assistantHeader}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {timeline.length > 0 && (
             <button
               type="button"
               onClick={clear}
               title="Clear conversation"
-              className="rounded-lg p-1.5 text-blue-100 transition hover:bg-white/15 hover:text-white"
+              className="rounded-lg p-1.5 text-white/80 transition hover:bg-white/15 hover:text-white"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -276,9 +296,10 @@ export function AgentChat() {
             type="button"
             onClick={closeChat}
             title="Close"
-            className="rounded-lg p-1.5 text-blue-100 transition hover:bg-white/15 hover:text-white"
+            aria-label="Close"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white ring-1 ring-white/40 transition hover:bg-white/25"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" strokeWidth={2.5} />
           </button>
         </div>
       </div>
@@ -286,24 +307,23 @@ export function AgentChat() {
       {/* Timeline */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3.5 py-4">
         {timeline.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-100 to-blue-100">
-              <Bot className="h-7 w-7 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-700">How can I help?</p>
+          <div className="brand-fade-in flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
+            <BrandMark mood="idle" size="lg" />
+            <div className="brand-fade-in brand-fade-in-delay-1">
+              <p className="text-sm font-bold text-slate-800">How can I help?</p>
               <p className="mt-1 text-xs text-slate-500">
-                Ask me to display or filter jobs in your dashboard, check stats, submit a URL,
-                mark jobs applied, or sync platforms.
+                {isAdmin
+                  ? 'Ask me to display or filter jobs, check stats, submit a URL, mark jobs applied, or sync platforms.'
+                  : 'Ask me to display or filter jobs, check stats, submit a URL, or mark jobs applied.'}
               </p>
             </div>
-            <div className="flex flex-wrap justify-center gap-1.5">
-              {SUGGESTIONS.map((s) => (
+            <div className="brand-fade-in brand-fade-in-delay-2 flex flex-wrap justify-center gap-1.5">
+              {suggestions.map((s) => (
                 <button
                   key={s}
                   type="button"
                   onClick={() => void send(s)}
-                  className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-medium text-blue-700 transition hover:bg-blue-100"
+                  className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-fuchsia-50 hover:text-fuchsia-700"
                 >
                   {s}
                 </button>
@@ -324,7 +344,7 @@ export function AgentChat() {
               return <ConfirmRow key={item.id} item={item} />;
             case 'error':
               return (
-                <div key={item.id} className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200">
+                <div key={item.id} className="brand-fade-in flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span>{item.text}</span>
                 </div>
@@ -339,25 +359,25 @@ export function AgentChat() {
 
       {/* Composer */}
       <div className="border-t border-slate-200 bg-white px-3 py-3">
-        <div className="flex items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100">
+        <div className="relative">
           <textarea
             ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
-            rows={1}
+            rows={2}
             placeholder="Ask anything about your jobs…"
             disabled={sending}
-            className="max-h-28 min-h-[1.5rem] flex-1 resize-none border-0 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400 disabled:opacity-60"
+            className="max-h-28 min-h-[52px] w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 pr-12 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
           />
           <button
             type="button"
             onClick={submit}
             disabled={sending || !draft.trim()}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="absolute bottom-2.5 right-2.5 inline-flex h-9 w-9 -rotate-6 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/25 transition hover:-rotate-12 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:rotate-[-6deg] disabled:hover:scale-100"
             aria-label="Send"
           >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 -translate-x-px translate-y-px" />}
           </button>
         </div>
       </div>

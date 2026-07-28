@@ -1,10 +1,13 @@
 import { create } from 'zustand';
 import { apiClient } from '../api/client';
 import {
+  deleteCustomResumeTheme,
   fetchResumeDesign,
   fetchResumeThemeCatalog,
   invalidateResumeDesignPreviewCache,
+  saveCustomResumeTheme,
   saveResumeDesign,
+  toggleResumeThemeLove,
 } from '../api/resumeDesignApi';
 import {
   activateResume,
@@ -12,6 +15,7 @@ import {
   deleteResume as apiDeleteResume,
   duplicateResume,
   fetchResumeLibrary,
+  openJobBuildResume,
   updateResume,
 } from '../api/resumeLibraryApi';
 import type { ResumeLibraryItem, ResumeSource, ResumeStatus } from '../types/resumeLibrary';
@@ -41,6 +45,7 @@ import {
 } from '../types/resumeDesign';
 import type { UserProfile } from '../types/profile';
 import { requestOnce } from '../utils/requestOnce';
+import { normalizeResumeContent } from '../utils/resumeContent';
 
 const ALL_SECTIONS: SectionId[] = ['summary', 'skills', 'experience', 'education', 'certificates'];
 
@@ -62,13 +67,29 @@ function normalizeOrder(order: SectionId[] | undefined): SectionId[] {
 /** Fill in defaults on a raw stored design so older / partial designs render cleanly.
  *  Shared by initial load and every library switch/create/delete. */
 function hydrateDesign(raw: ResumeDesign): ResumeDesign {
+  // Two-column page body (Technical theme) is retired — always coerce to single column.
+  const themeId = raw.theme_id === 'technical' ? 'classic' : raw.theme_id;
   return {
     ...raw,
+    theme_id: themeId,
     layout: {
       ...raw.layout,
+      columns: 1,
       header_background: raw.layout.header_background ?? 'none',
       header_padding_pt: raw.layout.header_padding_pt ?? 16,
-      contact_icons: raw.layout.contact_icons ?? 'brand',
+      // Product default is brand. One-time migrate: older saves often stuck on
+      // `outline` before icon-offset fields existed — flip those to brand. After
+      // offsets are present, an explicit Outline choice is preserved.
+      contact_icons: (() => {
+        const rawIcons = raw.layout.contact_icons;
+        if (rawIcons === 'none') return 'none';
+        const legacyNoOffsets =
+          raw.layout.contact_icon_offset_x_pt == null && raw.layout.contact_icon_offset_y_pt == null;
+        if (legacyNoOffsets && rawIcons === 'outline') return 'brand';
+        return rawIcons === 'outline' ? 'outline' : 'brand';
+      })(),
+      contact_icon_offset_x_pt: raw.layout.contact_icon_offset_x_pt ?? 0,
+      contact_icon_offset_y_pt: raw.layout.contact_icon_offset_y_pt ?? 0,
       section_order: normalizeOrder(raw.layout.section_order),
       hidden_sections: raw.layout.hidden_sections ?? [],
     },
@@ -86,6 +107,9 @@ function hydrateDesign(raw: ResumeDesign): ResumeDesign {
         ? { ...DEFAULT_CERTIFICATES_STYLE, ...raw.sections.certificates_style }
         : { ...DEFAULT_CERTIFICATES_STYLE },
     },
+    // Expand legacy description blobs into structured contribution fields so the
+    // Content editor matches what the live preview already derives.
+    content: raw.content ? normalizeResumeContent(raw.content) : raw.content,
   };
 }
 
@@ -96,6 +120,8 @@ interface ResumeBuilderState {
   resumes: ResumeLibraryItem[];
   activeResumeId: string | null;
   switchingResume: boolean;
+  /** Resume id currently being activated (drives the rail loading bar). */
+  switchingResumeId: string | null;
   baseline: string;
   profile: UserProfile | null;
   profileWorkCount: number;
@@ -136,12 +162,14 @@ interface ResumeBuilderState {
 
   /** Which left-panel tab is active. Lifted into the store so the OneClick AI center can
    *  jump the user to the Content tab after applying a tailored result. */
-  panelTab: 'style' | 'content' | 'resumes';
-  setPanelTab: (tab: 'style' | 'content' | 'resumes') => void;
+  panelTab: 'style' | 'content';
+  setPanelTab: (tab: 'style' | 'content') => void;
 
   /** Resume library actions. */
   loadResumes: () => Promise<void>;
   switchResume: (id: string) => Promise<void>;
+  /** Open a completed job-workflow build into the library and activate it. */
+  openJobBuild: (buildId: string) => Promise<void>;
   createResumeEntry: (args: {
     name: string;
     design: ResumeDesign;
@@ -155,6 +183,14 @@ interface ResumeBuilderState {
   setResumeStatus: (id: string, status: ResumeStatus) => Promise<void>;
   duplicateResumeEntry: (id: string) => Promise<void>;
   removeResume: (id: string) => Promise<void>;
+
+  /** Custom theme library. */
+  savingTheme: boolean;
+  themeError: string | null;
+  saveCurrentAsTheme: (name: string) => Promise<boolean>;
+  toggleThemeLove: (themeId: string) => Promise<void>;
+  deleteCustomTheme: (themeId: string) => Promise<void>;
+  setCatalogThemes: (themes: ThemePreset[]) => void;
 }
 
 const AUTOSAVE_MS = 900;
@@ -200,6 +236,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   resumes: [],
   activeResumeId: null,
   switchingResume: false,
+  switchingResumeId: null,
   baseline: '',
   profile: null,
   profileWorkCount: 0,
@@ -212,8 +249,56 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   saveError: null,
   lastSavedAt: null,
   panelTab: 'style',
+  savingTheme: false,
+  themeError: null,
 
   setPanelTab: (tab) => set({ panelTab: tab }),
+
+  setCatalogThemes: (themes) => {
+    const catalog = get().catalog;
+    if (!catalog) return;
+    set({ catalog: { ...catalog, themes } });
+  },
+
+  saveCurrentAsTheme: async (name) => {
+    const design = get().design;
+    if (!design) return false;
+    set({ savingTheme: true, themeError: null });
+    try {
+      const res = await saveCustomResumeTheme(name, design);
+      const catalog = get().catalog;
+      if (catalog) set({ catalog: { ...catalog, themes: res.themes }, panelTab: 'style' });
+      set({ savingTheme: false });
+      return true;
+    } catch (err) {
+      const e = err as { response?: { data?: { detail?: string } } };
+      set({
+        savingTheme: false,
+        themeError: e?.response?.data?.detail || 'Could not save theme.',
+      });
+      return false;
+    }
+  },
+
+  toggleThemeLove: async (themeId) => {
+    try {
+      const res = await toggleResumeThemeLove(themeId);
+      const catalog = get().catalog;
+      if (catalog) set({ catalog: { ...catalog, themes: res.themes } });
+    } catch {
+      /* keep prior order on failure */
+    }
+  },
+
+  deleteCustomTheme: async (themeId) => {
+    try {
+      const res = await deleteCustomResumeTheme(themeId);
+      const catalog = get().catalog;
+      if (catalog) set({ catalog: { ...catalog, themes: res.themes } });
+    } catch {
+      /* ignore */
+    }
+  },
 
   load: async () => {
     set({ loading: true, error: null });
@@ -259,7 +344,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     if (id === s.activeResumeId || s.switchingResume) return;
     // Persist any pending edit to the current resume before switching away.
     s.flushAutoSave();
-    set({ switchingResume: true, saveError: null });
+    set({ switchingResume: true, switchingResumeId: id, saveError: null });
     try {
       const lib = await activateResume(id);
       const active = lib.resume ?? lib.resumes.find((r) => r.id === lib.active_id) ?? null;
@@ -272,9 +357,43 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
         baseline: nextDesign ? JSON.stringify(nextDesign) : get().baseline,
         hasDesign: true,
         switchingResume: false,
+        switchingResumeId: null,
       });
     } catch {
-      set({ switchingResume: false, saveError: 'Could not switch resume. Please retry.' });
+      set({
+        switchingResume: false,
+        switchingResumeId: null,
+        saveError: 'Could not switch resume. Please retry.',
+      });
+    }
+  },
+
+  openJobBuild: async (buildId) => {
+    const s = get();
+    if (!buildId || s.switchingResume) return;
+    s.flushAutoSave();
+    set({ switchingResume: true, switchingResumeId: buildId, saveError: null });
+    try {
+      const lib = await openJobBuildResume(buildId);
+      const active = lib.resume ?? lib.resumes.find((r) => r.id === lib.active_id) ?? null;
+      const nextDesign = active ? hydrateDesign(active.design) : get().design;
+      invalidateResumeDesignPreviewCache();
+      set({
+        resumes: lib.resumes,
+        activeResumeId: lib.active_id,
+        design: nextDesign,
+        baseline: nextDesign ? JSON.stringify(nextDesign) : get().baseline,
+        hasDesign: true,
+        switchingResume: false,
+        switchingResumeId: null,
+        panelTab: 'content',
+      });
+    } catch {
+      set({
+        switchingResume: false,
+        switchingResumeId: null,
+        saveError: 'Could not open job resume. Please retry.',
+      });
     }
   },
 
@@ -364,22 +483,26 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   applyTheme: (theme) => {
     const current = get().design;
     if (!current) return;
-    // A theme changes typography/colors/section styling - it must NOT throw away the
-    // user's own content/derived layout state: their header image, and the measured
-    // spacing manifests (header_metrics / layout_metrics) that keep the PDF in sync with
-    // the preview. Carry those across, and keep the image background selected if an image
-    // is present so it doesn't silently disappear when switching themes.
+    // Keep user content, section visibility/order, and header image. Drop browser
+    // header/layout metrics whenever the theme changes columns or header chrome —
+    // Always drop browser metrics on theme apply so measure-only preview re-reports.
     const keepImage = current.layout.header_image ?? null;
     const next: ResumeDesign = {
       ...theme.design,
+      content: current.content ?? theme.design.content ?? null,
       layout: {
         ...theme.design.layout,
+        columns: 1,
+        // Themes always ship brand icons; keep the user's manual icon offsets.
+        contact_icons: 'brand',
+        contact_icon_offset_x_pt: current.layout.contact_icon_offset_x_pt ?? 0,
+        contact_icon_offset_y_pt: current.layout.contact_icon_offset_y_pt ?? 0,
         section_order: current.layout.section_order,
         hidden_sections: current.layout.hidden_sections,
         header_image: keepImage,
         header_background: keepImage ? 'image' : theme.design.layout.header_background,
-        header_metrics: current.layout.header_metrics,
-        layout_metrics: current.layout.layout_metrics,
+        header_metrics: null,
+        layout_metrics: null,
       },
       sections: { ...current.sections },
     };
@@ -407,7 +530,16 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   updateLayout: (patch) => {
     const d = get().design;
     if (!d) return;
-    applyDesign(set, get, { ...d, layout: { ...d.layout, ...patch } });
+    // Contact layout changes band height. Drop stale browser metrics so measure-only
+    // preview re-reports; otherwise the PDF can pin a wrong band/gap.
+    const layoutPatch = { ...patch } as Partial<ResumeDesign['layout']>;
+    // Two-column page body is retired.
+    if (layoutPatch.columns != null) layoutPatch.columns = 1;
+    if (patch.contact_layout != null && patch.contact_layout !== d.layout.contact_layout) {
+      layoutPatch.header_metrics = null;
+      layoutPatch.layout_metrics = null;
+    }
+    applyDesign(set, get, { ...d, layout: { ...d.layout, ...layoutPatch } });
   },
 
   setHeaderImage: (image) => {
@@ -470,7 +602,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   setContent: (content) => {
     const d = get().design;
     if (!d) return;
-    applyDesign(set, get, { ...d, content });
+    applyDesign(set, get, { ...d, content: normalizeResumeContent(content) });
   },
 
   applySummaryStyle: (style) => {
@@ -580,6 +712,10 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   },
 
   save: async () => {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+    }
     const d = get().design;
     if (!d) return false;
     set({ saving: true, saveError: null });
