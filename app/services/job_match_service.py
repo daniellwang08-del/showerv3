@@ -34,12 +34,19 @@ from app.services.job_field_utils import (
 )
 from app.storage.database import get_session
 from app.storage.user_repository import UserRepository
+from app.utils.resume_keyword_emphasis import (
+    apply_keyword_emphasis_to_resume,
+    is_tech_like_keyword,
+)
 
 logger = get_logger(__name__)
 
 MAX_JOB_LENGTH = 15000
 MAX_PROFILE_LENGTH = 16000
 MAX_EVIDENCE_LENGTH = 15000
+MAX_SOURCE_DOCS_SCORING_LENGTH = 12000
+MAX_CUSTOM_GUIDANCE_LENGTH = 4000
+MAX_SOURCE_DOCS_FOR_SCORING = 12
 
 _MATCH_DIMENSION_KEYS = tuple(MATCH_DIMENSION_WEIGHTS.keys())
 
@@ -95,9 +102,55 @@ def _format_job_preferences_text(preferences: str | None) -> str:
     if not text:
         return (
             "No specific preferences provided. Score the user_preferences dimension at 50 (neutral) "
-            "and mention in the summary that preferences were not configured."
+            "and mention in the summary that preferences were not configured. "
+            "Ignore any remote/hybrid/onsite preference even if mentioned elsewhere."
         )
     return text
+
+
+def _format_custom_guidance_text(
+    *,
+    prompt_mode: str | None,
+    prompt_custom: str | None,
+) -> str:
+    """Only user-authored custom guidance counts for scoring (not the default Phase B template)."""
+    mode = (prompt_mode or "default").strip().lower()
+    custom = (prompt_custom or "").strip()
+    if mode == "custom" and custom:
+        return _truncate(custom, MAX_CUSTOM_GUIDANCE_LENGTH)
+    return (
+        "No custom guidance provided. Do not invent preference constraints beyond "
+        "Candidate Job Preferences and the profile/documents."
+    )
+
+
+def _format_source_documents_for_scoring(docs: list) -> str:
+    """Compact attached-document evidence for Phase A (no extra LLM call)."""
+    if not docs:
+        return (
+            "No attached source documents available. Score using Candidate Profile and "
+            "preferences only; do not invent project evidence."
+        )
+
+    from app.services.profile_evidence_service import structured_doc_to_text
+
+    sections: list[str] = []
+    per_doc_budget = max(800, MAX_SOURCE_DOCS_SCORING_LENGTH // min(len(docs), MAX_SOURCE_DOCS_FOR_SCORING))
+    for doc in docs[:MAX_SOURCE_DOCS_FOR_SCORING]:
+        company = (getattr(doc, "company_name", None) or "").strip()
+        filename = (getattr(doc, "filename", None) or "document").strip()
+        body = structured_doc_to_text(doc).strip()
+        if not body:
+            continue
+        header = f"### {company or 'Unknown company'} - {filename}"
+        sections.append(f"{header}\n{_truncate(body, per_doc_budget)}")
+
+    if not sections:
+        return (
+            "No usable structured content in attached source documents. "
+            "Score using Candidate Profile and preferences only."
+        )
+    return _truncate("\n\n".join(sections), MAX_SOURCE_DOCS_SCORING_LENGTH)
 
 
 def _build_job_text(
@@ -341,7 +394,12 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
                 location = _clean_factual(entry.get("location"))
                 employment_type = _clean_factual(entry.get("employment_type"))
                 role_index = len(experience)
-                min_bullets = 7 if role_index < 3 else 4
+                if role_index < 2:
+                    min_bullets = 8
+                elif role_index == 2:
+                    min_bullets = 7
+                else:
+                    min_bullets = 4
                 if len(bullets) < min_bullets:
                     logger.warning(
                         "tailored_resume_bullet_count_below_minimum",
@@ -373,10 +431,53 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
         return None
 
 
-def _job_anchor_terms(*text_blobs: str, limit: int = 24) -> list[str]:
+_SOFT_SKILL_TERMS = frozenset(
+    {
+        "leadership",
+        "communication",
+        "teamwork",
+        "collaboration",
+        "collaborative",
+        "problem-solving",
+        "problem solving",
+        "ownership",
+        "mentorship",
+        "mentoring",
+        "stakeholder management",
+        "agile",
+        "scrum",
+        "kanban",
+        "cross-functional",
+        "best practices",
+        "soft skills",
+    }
+)
+
+_GENERIC_SKILL_CATEGORIES = frozenset(
+    {
+        "skills",
+        "technical skills",
+        "other",
+        "miscellaneous",
+        "general",
+        "soft skills",
+        "core skills",
+    }
+)
+
+
+def _min_bullets_for_role(role_index: int) -> int:
+    if role_index < 2:
+        return 8
+    if role_index == 2:
+        return 7
+    return 4
+
+
+def _job_anchor_terms(*text_blobs: str, limit: int = 32) -> list[str]:
     """Extract distinctive job terms used to verify the tailored resume is job-specific.
 
-    Prefers hyphenated/tech tokens and multi-word requirement fragments over stopwords.
+    Prefers tech-like tokens and short requirement fragments over soft stopwords.
     """
     stop = {
         "and", "the", "for", "with", "you", "your", "our", "are", "will", "this", "that",
@@ -384,16 +485,21 @@ def _job_anchor_terms(*text_blobs: str, limit: int = 24) -> list[str]:
         "years", "year", "team", "work", "working", "role", "job", "including", "etc",
         "strong", "good", "preferred", "required", "requirements", "responsibilities",
         "knowledge", "skills", "plus", "must", "able", "across", "into", "about",
+        "leadership", "communication", "collaboration", "agile", "scrum",
     }
     found: list[str] = []
     seen: set[str] = set()
 
     def _add(term: str) -> None:
         t = term.strip(" .,;:/\\|\"'`()[]{}").strip()
-        if len(t) < 3:
+        if len(t) < 2:
             return
         key = t.lower()
         if key in seen or key in stop:
+            return
+        if not is_tech_like_keyword(t) and " " not in t:
+            return
+        if not is_tech_like_keyword(t):
             return
         seen.add(key)
         found.append(t)
@@ -402,7 +508,6 @@ def _job_anchor_terms(*text_blobs: str, limit: int = 24) -> list[str]:
         text = str(blob or "")
         if not text:
             continue
-        # Bullet-like requirement lines often carry the highest-signal phrases.
         for line in text.splitlines():
             s = line.strip()
             if s.startswith(("-", "*", "•")):
@@ -410,17 +515,118 @@ def _job_anchor_terms(*text_blobs: str, limit: int = 24) -> list[str]:
                 phrase = re.sub(r"\s+", " ", phrase).strip()
                 if 3 <= len(phrase) <= 48:
                     _add(phrase)
-        for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9.+#/-]{2,}\b", text):
+        for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9.+#/-]{1,}\b", text):
             _add(m.group(0))
         if len(found) >= limit:
             break
     return found[:limit]
 
 
+def build_must_cover_requirements(
+    structured_context: str = "",
+    job_text: str = "",
+    *,
+    limit: int = 18,
+) -> str:
+    """Human-readable must-cover list for the Phase B user prompt."""
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    def _push(raw: str) -> None:
+        s = re.sub(r"\s+", " ", str(raw or "").strip())
+        if not s or len(s) < 3:
+            return
+        key = s.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        lines.append(f"- {s}")
+
+    for blob in (structured_context, job_text):
+        text = str(blob or "")
+        in_reqs = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            lower = stripped.lower()
+            if lower.startswith("key requirements") or lower.startswith("requirements"):
+                in_reqs = True
+                continue
+            if lower.startswith("key responsibilities") or lower.startswith("responsibilities"):
+                in_reqs = True
+                continue
+            if stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("• "):
+                _push(re.sub(r"^[\-\*•]\s*", "", stripped))
+                if len(lines) >= limit:
+                    return "\n".join(lines)
+            elif in_reqs and stripped and not stripped.endswith(":"):
+                # End of list section when a new heading appears.
+                if stripped[0].isalpha() and stripped.endswith(":") and len(stripped) < 40:
+                    in_reqs = False
+        if len(lines) >= limit:
+            break
+
+    if not lines:
+        for term in _job_anchor_terms(structured_context, job_text, limit=limit):
+            _push(term)
+            if len(lines) >= limit:
+                break
+    return "\n".join(lines) if lines else "- (Derive must-cover items from the Job Description above.)"
+
+
+def build_company_domain_cues(structured_context: str = "", job_text: str = "") -> str:
+    """Short company/domain cue block for Phase B."""
+    cues: list[str] = []
+    text = f"{structured_context or ''}\n{job_text or ''}"
+    for label in ("Title:", "Company:", "Industry:", "Experience level:", "Location:"):
+        for line in text.splitlines():
+            if line.strip().startswith(label):
+                cues.append(line.strip())
+                break
+    # Domain-ish tokens from title/industry lines.
+    anchors = _job_anchor_terms(structured_context, limit=8)
+    if anchors:
+        cues.append("Stack / domain signals: " + ", ".join(anchors[:8]))
+    return "\n".join(cues) if cues else "Infer company and domain cues from the Job Description."
+
+
+def _resume_text_blob(resume: dict) -> str:
+    parts: list[str] = [str(resume.get("profile_summary") or "")]
+    for sk in resume.get("technical_skills") or []:
+        if isinstance(sk, dict):
+            parts.append(str(sk.get("category") or ""))
+            parts.append(str(sk.get("skills") or ""))
+    for entry in resume.get("work_experience") or []:
+        if not isinstance(entry, dict):
+            continue
+        parts.append(str(entry.get("project_description") or ""))
+        parts.append(str(entry.get("used_skills") or ""))
+        for b in entry.get("bullets") or []:
+            if isinstance(b, str):
+                parts.append(b)
+    return " ".join(parts).lower()
+
+
+def tailored_resume_coverage_score(
+    resume: dict | None,
+    *,
+    job_anchor_terms: list[str] | None = None,
+) -> float:
+    """0–1 score of how many JD tech anchors appear in the tailored resume."""
+    if not resume or not isinstance(resume, dict):
+        return 0.0
+    anchors = [a for a in (job_anchor_terms or []) if isinstance(a, str) and a.strip()]
+    if not anchors:
+        return 0.0
+    blob = _resume_text_blob(resume)
+    hits = sum(1 for term in anchors if term.lower() in blob)
+    return hits / max(len(anchors), 1)
+
+
 def tailored_resume_quality_issues(
     resume: dict | None,
     *,
     job_anchor_terms: list[str] | None = None,
+    role_domain_cues: list[str] | None = None,
 ) -> list[str]:
     """Return soft quality problems that warrant one Phase B regeneration retry.
 
@@ -430,15 +636,36 @@ def tailored_resume_quality_issues(
         return ["missing_tailored_resume"]
     issues: list[str] = []
     summary = str(resume.get("profile_summary") or "").strip()
-    if len(summary) < 40:
+    if len(summary) < 80:
         issues.append("profile_summary_too_short")
     skills = resume.get("technical_skills") or []
     if not isinstance(skills, list) or len(skills) < 1:
         issues.append("technical_skills_missing")
+    else:
+        soft_hits = 0
+        generic_cats = 0
+        for item in skills:
+            if not isinstance(item, dict):
+                continue
+            cat = str(item.get("category") or "").strip().lower()
+            vals = str(item.get("skills") or "").strip().lower()
+            if cat in _GENERIC_SKILL_CATEGORIES:
+                generic_cats += 1
+            blob = f"{cat} {vals}"
+            for soft in _SOFT_SKILL_TERMS:
+                if soft in blob:
+                    soft_hits += 1
+                    break
+        if soft_hits >= 2:
+            issues.append("technical_skills_contain_soft_jargon")
+        if generic_cats >= 2:
+            issues.append("technical_skills_categories_too_generic")
+
     experience = resume.get("work_experience") or []
     if not isinstance(experience, list) or len(experience) < 1:
         issues.append("work_experience_missing")
         return issues
+
     recent_blob_parts = [summary.lower()]
     for idx, entry in enumerate(experience):
         if not isinstance(entry, dict):
@@ -448,11 +675,15 @@ def tailored_resume_quality_issues(
         if not isinstance(bullets, list):
             bullets = []
         clean = [b for b in bullets if isinstance(b, str) and b.strip()]
-        minimum = 7 if idx < 3 else 4
+        minimum = _min_bullets_for_role(idx)
         if len(clean) < minimum:
             issues.append(f"work_experience[{idx}]_bullets_below_{minimum}")
-        # Soft invent/keyword signal: almost no markdown emphasis across many bullets.
-        if idx < 3 and len(clean) >= minimum:
+        if idx < 2 and len(clean) >= max(4, minimum - 2):
+            emphasized = sum(1 for b in clean if "**" in b)
+            # Require bold on a majority of recent-role bullets.
+            if emphasized < max(3, (len(clean) + 1) // 2):
+                issues.append(f"work_experience[{idx}]_weak_keyword_emphasis")
+        elif idx == 2 and len(clean) >= minimum:
             emphasized = sum(1 for b in clean if "**" in b)
             if emphasized == 0:
                 issues.append(f"work_experience[{idx}]_no_keyword_emphasis")
@@ -464,15 +695,79 @@ def tailored_resume_quality_issues(
                     recent_blob_parts.append(str(sk.get("skills") or "").lower())
                     recent_blob_parts.append(str(sk.get("category") or "").lower())
 
+    cues = [c for c in (role_domain_cues or []) if isinstance(c, str) and c.strip()]
+    if cues and summary:
+        summary_l = summary.lower()
+        if not any(c.lower() in summary_l for c in cues):
+            issues.append("profile_summary_missing_role_domain_cues")
+
     anchors = [a for a in (job_anchor_terms or []) if isinstance(a, str) and a.strip()]
     if anchors:
         blob = " ".join(recent_blob_parts)
         hits = sum(1 for term in anchors if term.lower() in blob)
-        # Require real overlap with this posting; otherwise the model reused a generic draft.
-        need = 3 if len(anchors) >= 6 else max(1, min(2, len(anchors)))
-        if hits < need:
+        # Target ~ high coverage of tech anchors in summary + recent roles + skills.
+        coverage = hits / max(len(anchors), 1)
+        need = max(4, int(0.55 * len(anchors) + 0.999))
+        if hits < need or coverage < 0.55:
             issues.append("insufficient_job_keyword_alignment")
     return issues
+
+
+def _pick_better_tailored_resume(
+    first: dict | None,
+    second: dict | None,
+    *,
+    job_anchor_terms: list[str] | None = None,
+    role_domain_cues: list[str] | None = None,
+) -> dict | None:
+    """Prefer the draft with fewer quality issues, then higher coverage."""
+    if first and not second:
+        return first
+    if second and not first:
+        return second
+    if not first and not second:
+        return None
+    issues_a = tailored_resume_quality_issues(
+        first, job_anchor_terms=job_anchor_terms, role_domain_cues=role_domain_cues
+    )
+    issues_b = tailored_resume_quality_issues(
+        second, job_anchor_terms=job_anchor_terms, role_domain_cues=role_domain_cues
+    )
+    if len(issues_b) < len(issues_a):
+        return second
+    if len(issues_a) < len(issues_b):
+        return first
+    score_a = tailored_resume_coverage_score(first, job_anchor_terms=job_anchor_terms)
+    score_b = tailored_resume_coverage_score(second, job_anchor_terms=job_anchor_terms)
+    return second if score_b > score_a else first
+
+
+def _role_domain_cues_from_context(structured_context: str, job_text: str) -> list[str]:
+    cues: list[str] = []
+    for blob in (structured_context, job_text):
+        for line in str(blob or "").splitlines():
+            s = line.strip()
+            if s.lower().startswith("title:"):
+                title = s.split(":", 1)[-1].strip()
+                if title and title.lower() != "unknown":
+                    cues.append(title)
+                    for tok in re.findall(r"[A-Za-z][A-Za-z0-9/+#.-]{2,}", title):
+                        if is_tech_like_keyword(tok) or tok[0].isupper():
+                            cues.append(tok)
+            if s.lower().startswith("industry:"):
+                industry = s.split(":", 1)[-1].strip()
+                if industry and industry.lower() != "unknown":
+                    cues.append(industry)
+    # Dedupe preserve order
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in cues:
+        key = c.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out[:12]
 
 
 def _parse_cover_letter(parsed: dict | None) -> dict | None:
@@ -534,10 +829,15 @@ async def analyze_job_match_phase_a(
     *,
     user_id: str | None = None,
     job_preferences: str | None = None,
+    custom_guidance: str | None = None,
+    source_documents_context: str | None = None,
 ) -> tuple[dict, JobDescriptionSchema | None, bool]:
     """
     Phase A: validation, structured job extraction, and match scoring.
     Returns (match_result_dict, structured_job_or_None, is_job_posting).
+
+    Scores using profile + attached source documents + job preferences + custom guidance.
+    Work mode (remote/hybrid/onsite) must not affect scores (enforced via prompt rules).
     """
     settings = get_settings()
     job_truncated = _truncate_job_text_preserve_layout(job_text, MAX_JOB_LENGTH)
@@ -546,18 +846,54 @@ async def analyze_job_match_phase_a(
     if not profile_truncated.strip():
         return dict(EMPTY_MATCH_RESULT), None, False
 
-    if job_preferences is None and user_id:
+    prompt_mode: str | None = None
+    prompt_custom: str | None = None
+    source_docs: list = []
+
+    needs_user_load = user_id and (
+        job_preferences is None
+        or custom_guidance is None
+        or source_documents_context is None
+    )
+    if needs_user_load:
+        from app.storage.profile_source_document_repository import ProfileSourceDocumentRepository
+
         async with get_session() as session:
             user = await UserRepository(session).get_by_id(user_id)
             if user:
-                job_preferences = getattr(user, "job_match_preferences", None)
+                if job_preferences is None:
+                    job_preferences = getattr(user, "job_match_preferences", None)
+                if custom_guidance is None:
+                    prompt_mode = getattr(user, "resume_tailoring_prompt_mode", None)
+                    prompt_custom = getattr(user, "resume_tailoring_prompt_custom", None)
+            if source_documents_context is None:
+                source_docs = await ProfileSourceDocumentRepository(session).list_completed_for_user(
+                    user_id
+                )
 
     preferences_text = _format_job_preferences_text(job_preferences)
+    if custom_guidance is not None:
+        guidance_text = _format_custom_guidance_text(
+            prompt_mode="custom" if custom_guidance.strip() else "default",
+            prompt_custom=custom_guidance,
+        )
+    else:
+        guidance_text = _format_custom_guidance_text(
+            prompt_mode=prompt_mode,
+            prompt_custom=prompt_custom,
+        )
+    docs_text = (
+        source_documents_context
+        if source_documents_context is not None
+        else _format_source_documents_for_scoring(source_docs)
+    )
 
     user_content = JOB_MATCH_PHASE_A_USER_TEMPLATE.format(
         job_text=job_truncated,
         profile_text=profile_truncated,
+        source_documents_context=docs_text,
         job_preferences=preferences_text,
+        custom_guidance=guidance_text,
     )
     phase_a_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_a_max_tokens")))
     phase_a_max = min(phase_a_max, 16384)
@@ -621,18 +957,23 @@ async def generate_tailored_content_phase_b(
         return None, None
 
     structured_block = structured_context or "No structured job data available."
+    must_cover = build_must_cover_requirements(structured_block, job_truncated)
+    domain_cues = build_company_domain_cues(structured_block, job_truncated)
     user_content = JOB_MATCH_PHASE_B_USER_TEMPLATE.format(
         job_text=job_truncated,
         profile_text=profile_truncated,
         structured_context=structured_block,
+        must_cover_requirements=must_cover,
+        company_domain_cues=domain_cues,
         match_summary=match_summary or "No match summary available.",
         project_evidence_context=evidence_truncated,
     )
-    job_anchors = _job_anchor_terms(structured_block, job_truncated)
+    job_anchors = _job_anchor_terms(structured_block, job_truncated, must_cover)
+    role_cues = _role_domain_cues_from_context(structured_block, job_truncated)
     phase_b_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_b_max_tokens")))
     phase_b_max = min(phase_b_max, 32768)
-    # Slightly higher than Phase A: encourage job-specific wording while staying factual.
-    phase_b_temperature = 0.35
+    # Slightly higher than Phase A: encourage job-specific rewrite while staying factual.
+    phase_b_temperature = 0.4
 
     if user_id:
         async with get_session() as session:
@@ -651,33 +992,42 @@ async def generate_tailored_content_phase_b(
         temperature=phase_b_temperature,
     )
 
-    tailored_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
+    first_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
     cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
+    tailored_resume = first_resume
 
     quality_issues = tailored_resume_quality_issues(
-        tailored_resume, job_anchor_terms=job_anchors
+        tailored_resume,
+        job_anchor_terms=job_anchors,
+        role_domain_cues=role_cues,
     )
     if quality_issues or not cover_letter:
         logger.warning(
             "phase_b_quality_soft_retry",
             issues=quality_issues,
             cover_letter_missing=not bool(cover_letter),
+            coverage=round(
+                tailored_resume_coverage_score(
+                    tailored_resume, job_anchor_terms=job_anchors
+                ),
+                3,
+            ),
         )
         retry_user = (
             user_content
-            + "\n\nQUALITY RETRY: Previous output failed soft checks. "
-            "Ensure profile_summary is substantive and names THIS job's role/domain, "
-            "technical_skills categories reflect THIS posting's stack, "
-            "the first three roles each have at least 7 bullets with **keyword** emphasis "
-            "on terms from THIS job description (grounded in profile/evidence facts), "
-            "later roles have at least 4 bullets, and cover_letter.body is a complete letter "
-            "that names this company/role when available. Never invent employers or dates. "
-            "Do not reuse a generic resume draft that ignores this posting's requirements."
+            + "\n\nQUALITY RETRY: Previous output failed soft checks for near-perfect JD fit. "
+            "REWRITE (do not lightly edit): profile_summary must be substantive and name THIS "
+            "job's role/domain; technical_skills must use JD-driven categories with technologies "
+            "only (no soft-skill jargon); index 0–1 roles need ≥8 bullets each with dense "
+            "**keyword** emphasis on THIS job's tech/domain terms; index 2 ≥7 bullets; older "
+            "roles ≥4; cover_letter.body must be a complete letter naming this company/role when "
+            "available. Map Must-cover requirements into the two most recent roles when the "
+            "background supports them. Never invent employers, dates, or technologies."
         )
         if job_anchors:
             retry_user += (
-                "\nPriority job terms to weave in truthfully: "
-                + ", ".join(job_anchors[:12])
+                "\nPriority job technologies/terms to weave in truthfully: "
+                + ", ".join(job_anchors[:16])
                 + "."
             )
         parsed_retry = await _call_openai_json(
@@ -691,15 +1041,35 @@ async def generate_tailored_content_phase_b(
         )
         retry_resume = _parse_tailored_resume(parsed_retry.get("tailored_resume"))
         retry_cover = _parse_cover_letter(parsed_retry.get("cover_letter"))
-        if retry_resume:
-            tailored_resume = retry_resume
         if retry_cover:
             cover_letter = retry_cover
+        chosen = _pick_better_tailored_resume(
+            first_resume,
+            retry_resume,
+            job_anchor_terms=job_anchors,
+            role_domain_cues=role_cues,
+        )
+        if chosen is not None:
+            tailored_resume = chosen
         remaining = tailored_resume_quality_issues(
-            tailored_resume, job_anchor_terms=job_anchors
+            tailored_resume,
+            job_anchor_terms=job_anchors,
+            role_domain_cues=role_cues,
         )
         if remaining:
-            logger.warning("phase_b_quality_issues_after_retry", issues=remaining)
+            logger.warning(
+                "phase_b_quality_issues_after_retry",
+                issues=remaining,
+                coverage=round(
+                    tailored_resume_coverage_score(
+                        tailored_resume, job_anchor_terms=job_anchors
+                    ),
+                    3,
+                ),
+            )
+
+    if tailored_resume:
+        tailored_resume = apply_keyword_emphasis_to_resume(tailored_resume, job_anchors)
 
     if not tailored_resume:
         logger.warning("tailored_resume_section_missing_or_invalid")

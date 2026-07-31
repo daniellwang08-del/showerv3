@@ -19,108 +19,147 @@ Do NOT re-score the job match. Do NOT re-extract structured job fields.
 ---
 """
 
-RESUME_TAILORING_INSTRUCTIONS = """Your goal is to produce a **strong, job-winning tailored resume** - rich in concrete impact, aligned to the posting,
-and truthful to the candidate's background.
+RESUME_TAILORING_INSTRUCTIONS = """Your goal is a **job-first, near-perfect ATS fit resume** for THIS posting
+(target ~90–98% content alignment; ideal ~95%): a recruiter/ATS scanning the tailored resume should see
+the candidate as an outstanding match for the listed requirements, while remaining truthful to their
+real background.
 
-## Overall strategy
+## Priority order (non-negotiable)
 
-1. **Read the job first** - identify must-have skills, domain, seniority signals, and repeated keywords.
-2. **Differentiate for THIS posting** - the summary, skill categories, and bullet emphasis must change
-   meaningfully with the job. A side-by-side compare against a resume written for a different role
-   must NOT look like a copy-paste with a few synonyms swapped. Name the target role/domain from
-   **this** Job Description in the profile summary.
-3. **Use Project Evidence as the primary source of depth** - metrics, architecture, scope, tools, outcomes.
-   Fall back to the profile résumé text only when evidence is absent for that company.
-   Evidence supplies facts; the Job Description decides which facts to emphasize.
-4. **Mirror the job's language** - use the posting's terminology (stack, domain, role verbs) where it honestly applies.
-5. **Never invent** - no fabricated employers, titles, projects, metrics, or technologies.
-6. **Bullet volume (mandatory)** - profile work history order is **most recent first**:
-   - **First 3 companies** (most recent roles): **at least 7 bullets each** - dense, ATS-optimized, job-keyword rich.
-   - **All remaining companies**: **at least 4 bullets each**.
-   - Never pad with fluff; split distinct accomplishments into separate bullets until minimums are met.
+1. **Job requirements and responsibilities** - top priority for what to emphasize and how to phrase content.
+2. **Company / domain cues from the posting** - product type, industry, scale, team context.
+3. **Candidate background** - hard constraint. You may reframe and reorder emphasis, but you must not
+   invent employers, titles, dates, education, career industry switches, projects, metrics, or technologies
+   the candidate never used.
+
+Evidence and profile supply **facts**. The Job Description decides **which facts to rewrite around**.
+
+## Rewrite mandate (not light editing)
+
+- Do **NOT** lightly edit the profile résumé. Do **NOT** swap a few synonyms and call it tailored.
+- Produce **new** summary, skill categories, and bullets that map directly to THIS job's must-haves.
+- A side-by-side compare against a resume written for a different role must look substantially different
+  in summary, skill taxonomy, and recent-role bullet framing.
+- When Project Evidence exists for a company, prefer it for depth (metrics, architecture, tools, outcomes).
+  When evidence is thin or missing, still rewrite from profile facts - never invent numbers or tools.
+
+## Role intensity tiers (profile work_experience order = most recent first)
+
+- **Index 0 (most recent) and index 1 (second most recent):** MAX rewrite. These two roles must carry the
+  bulk of THIS job's must-have requirements. **Minimum 8 bullets each** (prefer 8–10). Dense, ATS-rich,
+  responsibility-mapped.
+- **Index 2:** Strong rewrite. **Minimum 7 bullets.** Cover remaining JD themes not fully covered above.
+- **All older companies:** Supporting rewrite. **Minimum 4 bullets each.** Still job-aligned secondary themes;
+  do not paste generic old bullets unchanged.
+
+Never pad with fluff. Split distinct accomplishments into separate bullets until minima are met.
 
 ---
 
-## ATS optimization (especially the 3 most recent roles)
+## Must-cover coverage matrix
 
-For the **first 3 companies** in profile order, optimize for Applicant Tracking Systems and recruiter scans:
-- Mirror **exact phrases** from the job posting (skills, tools, domain terms) where truthfully supported by evidence.
-- Include **standard role keywords** (e.g. architecture, scalability, cross-functional, CI/CD, microservices) when backed by facts.
+From the Job Description / Structured Job / Must-cover list in the user message:
+1. Extract every must-have skill, tool, responsibility theme, and domain expectation.
+2. For each item the candidate can truthfully support, place it in **index 0 and/or index 1** bullets
+   (and summary/skills). Use index 2+ only for overflow themes.
+3. Aim for near-complete coverage of tech must-haves the background can support (~90–98% of those items
+   appear in summary + recent roles + technical_skills).
+4. If the candidate truly lacks a tool, do **not** invent it. Cover the closest truthful adjacent capability
+   or omit it - never fabricate.
+
+---
+
+## ATS optimization
+
+- Mirror **exact JD phrases** for tools/stack/domain when truthfully supported.
 - Use **recognizable technology names** (AWS, Kubernetes, Python, PostgreSQL) - not vague substitutes.
 - Lead bullets with **strong action verbs** (Architected, Led, Delivered, Optimized, Scaled, Migrated, Automated).
-- Include **metrics** when available (%, $, latency, throughput, users, uptime, cost reduction, team size).
-- Spell out acronyms once if uncommon, then use the acronym (e.g. "Amazon Web Services (AWS)").
+- Include **metrics** when available in evidence/profile (%, $, latency, throughput, users, uptime, cost, team size).
+- Spell out uncommon acronyms once, then use the acronym (e.g. "Amazon Web Services (AWS)").
 - Avoid tables, graphics references, or special characters that break parsing.
-- Never use em dashes anywhere in the output. Use a comma, a period, or a hyphen instead.
+- Never use em dashes. Use a comma, period, or hyphen instead.
+
+**Do NOT** treat soft/process jargon as skill inventory (see Technical skills). Soft themes may appear in
+bullets only when describing real work (e.g. led a cross-functional delivery) - never as skill-category filler.
 
 ---
 
 ## Keyword highlighting (renders as bold in the Word résumé)
 
-The document builder converts ``**text**`` into **bold** formatting. Use this for ATS-critical and job-specific terms.
+The document builder converts ``**text**`` into **bold** formatting.
 
-**Where to apply:** `profile_summary`, each `project_description`, every bullet, and job-critical skill names inside `technical_skills` skill strings (not category names).
+**Where to apply:** `profile_summary`, each `project_description`, every bullet, and job-critical technology
+names inside `technical_skills` skill strings (not category names).
 
 **Rules:**
-- Wrap **important job keywords** in double asterisks: e.g. ``**Python**``, ``**Kubernetes**``, ``**microservices**``, ``**CI/CD**``.
-- Choose terms from the job posting / structured requirements that are **truthfully** used in that sentence.
-- **3 most recent companies:** bold **3–8** high-value terms per bullet (tools, domains, methodologies, metrics labels).
+- Wrap **important JD technologies and domain terms** in double asterisks: e.g. ``**Python**``, ``**Kubernetes**``,
+  ``**Kafka**``, ``**payments**``.
+- Choose terms from THIS posting that are **truthfully** used in that sentence.
+- **Index 0–1:** bold **4–8** high-value tech/domain terms per bullet.
+- **Index 2:** bold **3–6** terms per bullet.
 - **Older companies:** bold **2–5** terms per bullet.
-- Bold **specific technologies, frameworks, and domain phrases** - not whole sentences or generic words ("team", "project").
-- Do not bold `company_name`, `job_title`, or `project_name` fields themselves - only in summary/description/bullets/skills text.
-- Example bullet: "Architected **event-driven** pipeline on **Kafka** processing **2M events/day**, reducing latency **40%**."
+- Bold **technologies, frameworks, platforms, and specific domain phrases** - not whole sentences or generic
+  words ("team", "project", "experience").
+- Do not bold `company_name`, `job_title`, or `project_name` fields themselves.
+- Example: "Architected **event-driven** pipeline on **Kafka** processing **2M events/day**, reducing latency **40%**."
 
 ---
 
 ## Task 1 - Tailored Resume Content
 
 ### Profile summary (5–7 sentences)
-Write a compelling executive summary that a recruiter would skim in 10 seconds:
-- Open with **years of experience + core identity** aligned to this role (e.g. "Senior backend engineer with 12+ years…").
-- Explicitly reflect **this job's title / domain** (from Job Description / Structured Job) - not a generic identity reused across postings.
-- Name the **target domain or product type** from the job when the profile supports it.
-- Highlight **3–4 top alignments** with explicit requirements from **this** posting (technologies, scale, leadership, domain).
-- End with **value proposition** - what you bring to this specific team/company.
-- Weave in keywords from the job naturally; avoid buzzword stuffing or generic filler ("hard-working team player").
-- Do **not** produce a generic summary that could be pasted onto unrelated jobs unchanged.
+Write a compelling executive summary a recruiter skims in 10 seconds:
+- Open with **years of experience + core identity** aligned to THIS role title/seniority.
+- Explicitly name **this job's title / domain / product type** from the posting when the profile supports it.
+- Highlight **4–6 top alignments** with explicit must-haves from THIS posting (stack, scale, domain, ownership).
+- End with a **value proposition for this specific team/company**.
+- Must NOT be a generic summary reusable across unrelated jobs.
 
-### Technical skills (typically 5–8 categories)
-- Create **dynamic category names** that reflect what **this** job cares about (e.g. "Backend & APIs", "Cloud & DevOps", not generic "Skills").
-- **Reorder** skills so job-critical technologies appear first in each category; the top skills must track this posting's stack.
-- Include only skills the candidate **actually has** (from profile or project evidence).
-- Prefer **specific tools/frameworks** over vague labels when supported by evidence.
-- Omit or deprioritize skills irrelevant to this posting unless they are differentiators.
+### Technical skills (typically 5–8 categories) - technologies only
+- Rebuild categories from **THIS job's technology stack** (e.g. "Languages", "Backend & APIs", "Cloud & DevOps",
+  "Data & Messaging", "Frontend", "ML / AI Platforms") - not generic "Skills".
+- List **concrete technologies and tools** the candidate actually has (languages, frameworks, cloud services,
+  datastores, messaging, CI/CD platforms, observability tools, etc.).
+- **Reorder** so JD-critical technologies appear first within each category.
+- **Banned in technical_skills (categories AND skill strings):** soft skills and process jargon such as
+  leadership, communication, teamwork, collaboration, problem-solving, agile, scrum, kanban, stakeholder
+  management, ownership, mentorship, "best practices", "cross-functional" as a skill label, or similar
+  non-technology terms. Those are not technical skills.
+- Omit technologies irrelevant to this posting unless they are rare differentiators still listed in the profile.
 
 ### Work experience - one entry per profile company, same order
 
-**Immutable fields:** `company_name`, `job_title`, `project_name` (the profile's project / engagement title, exactly as in profile, or null), `employment_type` (e.g. full-time, internship, contract - copied verbatim from profile, or empty), and the factual `period_start`, `period_end`, `location` (copied VERBATIM from the matching profile work_experience entry - never alter, invent, or reorder these; an empty `period_end` means the role is current).
+**Immutable fields:** `company_name`, `job_title`, `project_name` (profile project/engagement title or null),
+`employment_type` (copied verbatim from profile or empty), and factual `period_start`, `period_end`, `location`
+(copied VERBATIM from the matching profile work_experience entry - never alter, invent, or reorder; empty
+`period_end` means current).
 
-**used_skills** (optional, comma-separated string): the concrete technologies, tools, and methods used in that role. Pull from the profile's used skills, Project Evidence, and the bullets you write. Prioritize tools that overlap with the job requirements. Leave empty only when there is no factual basis.
+**used_skills** (optional, comma-separated): concrete technologies/tools used in that role. Prioritize overlap
+with JD requirements. Technologies only - no soft jargon. Empty only when no factual basis.
 
-**project_description** (2–4 sentences per role):
-- Describe the **business context**, **system/product scope**, and **your ownership** for that role.
-- Emphasize aspects that map to this job (architecture, scale, domain, team size, constraints).
-- Use Project Evidence for this company when available; otherwise use profile text.
-- For highly relevant roles, be **specific and dense**; for less relevant roles, keep 1–2 focused sentences.
+**project_description** (2–4 sentences for index 0–1; 1–3 for others):
+- Business context, system/product scope, ownership - framed toward THIS job's domain and expectations.
+- Use Project Evidence for that company when available; else profile text.
 
-**bullets** - quality bar and **mandatory minimums** (this is the most important section):
+**bullets** - rewrite quality + mandatory minima:
 
-**Count rules** (profile `work_experience` order = most recent first):
-- Companies at **index 0, 1, 2** (three most recent): **minimum 7 bullets each** - no exceptions.
-- **Every other company**: **minimum 4 bullets each** - no exceptions.
-- If source material is thin for an older role, still reach 4 bullets by covering scope, ownership, tech stack, and outcomes from profile text - never invent facts.
+**Count rules:**
+- Index **0 and 1**: minimum **8** bullets each.
+- Index **2**: minimum **7** bullets.
+- Every older company: minimum **4** bullets.
+- Thin older roles: still reach 4 from profile scope/ownership/stack/outcomes - never invent facts.
 
-**Quality rules (all companies; strictest for the 3 most recent):**
+**Quality rules:**
 - Each bullet: **Strong action verb** + **what you built/did** + **how (tech/method)** + **outcome/impact**.
-- **Lead with impact** when metrics exist in Project Evidence or profile (%, $, latency, throughput, users, cost, time saved).
-- Weave **job requirement keywords** into bullets naturally - especially in the 3 most recent roles for ATS matching.
-- Prefer **concrete nouns** (Kafka, Kubernetes, payment ledger) over vague claims ("various technologies").
+- Map bullets to JD responsibilities/requirements - especially in index 0–1.
+- Prefer concrete nouns (Kafka, Kubernetes, payment ledger) over vague claims.
 - Avoid weak openers: "Responsible for", "Worked on", "Helped with", "Involved in".
 - Do not duplicate the same accomplishment across bullets or companies.
-- When Project Evidence lists technologies_to_emphasize for a company, reflect them in that company's bullets.
-- Each bullet should be **substantive** (often 1–2 sentences) - not one-line placeholders.
+- When Project Evidence lists technologies_to_emphasize, reflect them in that company's bullets.
+- Each bullet should be substantive (often 1–2 sentences).
 
-**Truthfulness:** Every metric, tool, and outcome must appear in the profile or Project Evidence. If no metric exists, describe scope and outcome qualitatively - do not invent numbers."""
+**Truthfulness:** Every metric, tool, and outcome must appear in the profile or Project Evidence.
+If no metric exists, describe scope/outcome qualitatively - do not invent numbers."""
 
 JOB_MATCH_PHASE_B_INSTRUCTIONS = (
     f"{_PHASE_B_SHARED_HEADER}{RESUME_TAILORING_INSTRUCTIONS.strip()}\n\n---\n\n{COVER_LETTER_INSTRUCTIONS.strip()}"
@@ -136,7 +175,7 @@ Return ONLY valid JSON:
   "tailored_resume": {
     "profile_summary": "<string>",
     "technical_skills": [
-      {"category": "<string>", "skills": "<comma-separated string>"}
+      {"category": "<string>", "skills": "<comma-separated technologies only>"}
     ],
     "work_experience": [
       {
@@ -149,7 +188,7 @@ Return ONLY valid JSON:
         "project_name": "<string or null>",
         "project_description": "<string>",
         "used_skills": "<comma-separated technologies used in this role, or empty>",
-        "bullets": ["<string - min 7 for 3 most recent companies, min 4 for all others>", ...]
+        "bullets": ["<string - min 8 for two most recent, min 7 for third, min 4 for others>", ...]
       }
     ]
   },
@@ -186,6 +225,16 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
 
 ---
 
+## Must-cover requirements (map into recent roles when background supports)
+{must_cover_requirements}
+
+---
+
+## Company / domain cues
+{company_domain_cues}
+
+---
+
 ## Match Summary (from prior analysis)
 {match_summary}
 
@@ -197,13 +246,13 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
 ---
 
 ## Execution checklist
-1. Extract the job's top requirements and responsibilities from the sections above - these drive emphasis.
-2. For each profile company, pull facts from Project Evidence first; supplement from profile only as needed.
-3. Rewrite summary + skill order + bullet emphasis so they are specific to THIS job (not a reusable generic draft).
-4. Profile work order is most recent first: **first 3 companies → ≥7 ATS-strong bullets each**; **all others → ≥4 bullets each**.
-5. Ensure every bullet has concrete tools, scope, and outcomes - not thin one-liners.
-6. Wrap important job keywords in ``**double asterisks**`` so they render bold in the DOCX (summary, descriptions, bullets, skill lists).
-7. Cover letter must name this hiring company and role when present in the job sections above.
+1. Job requirements are top priority. Build a coverage matrix from Must-cover + JD responsibilities.
+2. For each must-cover item the candidate can truthfully support, place it in **most recent and/or second-most-recent** roles (and summary/skills).
+3. **Rewrite** (do not lightly edit) summary, skill taxonomy, and bullets so THIS job's stack and responsibilities dominate.
+4. Profile work order is most recent first: **index 0–1 → ≥8 bullets each**; **index 2 → ≥7**; **older → ≥4**.
+5. Technical skills: JD-driven categories; **technologies/tools only** - no soft-skill or process jargon.
+6. Wrap important JD tech/domain keywords in ``**double asterisks**`` (summary, descriptions, bullets, skill lists).
+7. Cover letter must name this hiring company and role when present above.
 8. Return tailored resume JSON and cover letter body as specified.
 
 Include exactly one work_experience entry for EVERY company in the profile - do not skip any."""

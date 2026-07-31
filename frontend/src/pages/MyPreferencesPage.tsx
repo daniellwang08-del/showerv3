@@ -804,12 +804,12 @@ export function MyPreferencesPage() {
               icon={Target}
               iconClass="bg-gradient-to-br from-violet-500 to-fuchsia-600"
               title="Job match preferences"
-              description="Tell the AI what kinds of roles you want. This feeds the User Preferences dimension (15% of match score) during analysis."
+              description="Tell the AI what kinds of roles you want. This feeds the User Preferences dimension (12% of match score) during analysis. Work mode (remote/onsite) is ignored for scoring."
             >
               <div className="space-y-2.5">
                 <p className="text-xs text-slate-600">
-                  Examples: preferred work mode (remote only), target titles, industries, salary range,
-                  company size, tech stack, locations, or roles to avoid.
+                  Examples: target titles (Senior/Staff IC), industries, salary range, company size,
+                  tech stack, locations/regions, or roles to avoid. Remote vs onsite is not used in the score.
                 </p>
                 <div className="flex items-center justify-between">
                   <span
@@ -864,7 +864,7 @@ export function MyPreferencesPage() {
                 icon={FileText}
                 iconClass="bg-gradient-to-br from-blue-500 to-indigo-600"
                 title="Resume tailoring prompt"
-                description="How AI writes tailored resume content."
+                description="How AI writes tailored resume content. In Custom mode, your notes also guide match scoring (target roles, industries, constraints)."
                 actions={<ModeToggle value={promptMode} onChange={handlePromptModeChange} disabled={promptSaving} />}
               >
                 {promptMode === 'default' ? (
