@@ -21,5 +21,3 @@ export function DataAnalysisManagementPage() {
   );
 }
 
-/** @deprecated Use DataAnalysisManagementPage */
-export const DataManagementPage = DataAnalysisManagementPage;

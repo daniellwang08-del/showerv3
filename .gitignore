@@ -70,7 +70,8 @@ user_templates/
 # Local debug dumps and scratch scripts
 ashby_response.html
 debug_*.py
-
+importtime_*.log
+DEPLOY.md
 # Accidental pip/version artifact files
 /42.0.0
 
