@@ -1,6 +1,7 @@
 import type { ProfileFormData } from '../types/profile';
 import { isValidJobArrangement } from '../types/profile';
 import { isFlexibleDateAfter, parseFlexibleDate } from './flexibleDate';
+import { phoneValidationMessage, validatePhoneNumber } from './phoneValidation';
 
 function validateEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -15,10 +16,6 @@ function validateGitHub(s: string): boolean {
   return /github\.com\//i.test(s);
 }
 
-function validatePhone(s: string): boolean {
-  return /^[\d\s\-+()]{7,25}$/.test(s.trim());
-}
-
 /** Client-side checks aligned with profile save / server validation. */
 export function validateProfileForSave(form: ProfileFormData): Record<string, string> {
   const err: Record<string, string> = {};
@@ -29,8 +26,9 @@ export function validateProfileForSave(form: ProfileFormData): Record<string, st
   else if (!validateEmail(form.email)) err.email = 'Invalid email format';
   if (!form.phone_country_code.trim()) err.phone_country_code = 'Phone country code is required';
   if (!form.phone_number.trim()) err.phone_number = 'Phone number is required';
-  else if (!validatePhone(form.phone_number)) err.phone_number = 'Use 7–25 digits/spaces/+-()';
-  if (!form.linkedin_url.trim()) err.linkedin_url = 'LinkedIn URL is required';
+  else if (!validatePhoneNumber(form.phone_number, form.phone_country_code)) {
+    err.phone_number = phoneValidationMessage(form.phone_number, form.phone_country_code);
+  }  if (!form.linkedin_url.trim()) err.linkedin_url = 'LinkedIn URL is required';
   else if (!validateLinkedIn(form.linkedin_url)) err.linkedin_url = 'Use a profile URL (linkedin.com/in/…)';
   if (form.github_url.trim() && !validateGitHub(form.github_url)) err.github_url = 'Use a GitHub URL (github.com/…)';
   if (!form.profile_summary.trim()) err.profile_summary = 'Profile summary is required';

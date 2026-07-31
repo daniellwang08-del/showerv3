@@ -11,7 +11,7 @@ from app.storage.database import get_session
 
 logger = get_logger(__name__)
 
-# Phase B job_timeout is 360s; allow a buffer before declaring orphans.
+# Phase B (tailoring) job_timeout is 480s; allow a buffer before declaring orphans.
 DEFAULT_PROCESSING_MAX_AGE_SECONDS = 900
 # Match progress should clear when Phase A finishes; anything older is stale.
 DEFAULT_PROGRESS_MAX_AGE_SECONDS = 1800

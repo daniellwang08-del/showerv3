@@ -402,6 +402,7 @@ async def search_resumes(
 ) -> dict[str, Any]:
     """Search library resumes AND completed job-workflow builds (company/role AND).
 
+    Empty company+title returns recent resumes from both sources (browse mode).
     Job-build hits that already have a matching library resume (same company+title)
     are suppressed so each tailored job appears once (preferring the library copy).
     """
@@ -435,7 +436,7 @@ async def search_resumes(
         library_keys = {_norm_key(d.company, d.job_title) for d in docs}
         # Also suppress against ALL library rows for this user (not just search hits),
         # so opening a build then searching again shows the library copy.
-        all_docs = await ResumeDocumentRepository(session).list_for_user(user_id)
+        all_docs = await ResumeDocumentRepository(session).list_metadata_for_user(user_id)
         all_library_keys = {_norm_key(d.company, d.job_title) for d in all_docs}
 
         results: list[dict[str, Any]] = [
@@ -469,7 +470,6 @@ async def open_job_build_as_library_resume(user_id: str, build_id: str) -> dict[
     """
     async with get_session() as session:
         from app.storage.repository import ResumeBuildRepository
-        from app.storage.resume_document_repository import ResumeDocumentRepository
         from app.storage.user_repository import UserRepository
         from sqlalchemy import select
         from app.models.database import Job
@@ -492,59 +492,131 @@ async def open_job_build_as_library_resume(user_id: str, build_id: str) -> dict[
         company = (getattr(job, "company", None) or "").strip() or None if job else None
         job_title = (getattr(job, "title", None) or "").strip() or None if job else None
 
-        # Base styling from active library resume, else user template, else default.
-        rrepo = ResumeDocumentRepository(session)
-        base_design: ResumeDesign | None = None
-        if user.active_resume_id:
-            active_doc = await rrepo.get_by_id(user.active_resume_id, user_id)
-            if active_doc and isinstance(active_doc.design, dict):
-                try:
-                    base_design = ResumeDesign.model_validate(active_doc.design)
-                except Exception:
-                    base_design = None
-        if base_design is None and isinstance(user.resume_template_design, dict):
-            try:
-                base_design = ResumeDesign.model_validate(user.resume_template_design)
-            except Exception:
-                base_design = None
-        if base_design is None:
-            base_design = default_design()
-
+        base_design = await _resolve_base_design(session, user)
         design = _merge_tailored_into_design(base_design, build.tailored_resume_data)
         name = " - ".join([p for p in (job_title, company) if p]) or "Tailored resume"
 
-        # Reuse existing library row with same company+title when possible.
-        existing = None
-        target_key = _norm_key(company, job_title)
-        if target_key != "::":
-            for doc in await rrepo.list_for_user(user_id):
-                if _norm_key(doc.company, doc.job_title) == target_key:
-                    existing = doc
-                    break
-
-        if existing:
-            existing.name = name[:200]
-            existing.source = "tailored"
-            existing.company = company
-            existing.job_title = job_title
-            existing.design = design.model_dump(mode="json")
-            existing.status = "draft"
-            doc = existing
-        else:
-            doc = await rrepo.create(
-                user_id=user_id,
-                name=name[:200],
-                status="draft",
-                source="tailored",
-                job_title=job_title,
-                company=company,
-                design=design.model_dump(mode="json"),
-            )
+        doc = await _upsert_tailored_library_doc(
+            session,
+            user_id=user_id,
+            name=name,
+            company=company,
+            job_title=job_title,
+            design=design,
+        )
 
         user.active_resume_id = doc.id
         _compile_design_into_user(user_id, user, design)
         await session.commit()
+        payload = await _list_payload(session, user_id)
+        payload["resume"] = next((r for r in payload["resumes"] if r["id"] == doc.id), None)
+        return payload
 
+
+async def _resolve_base_design(session, user) -> ResumeDesign:
+    """Active library design → user template → default."""
+    from app.storage.resume_document_repository import ResumeDocumentRepository
+
+    rrepo = ResumeDocumentRepository(session)
+    base_design: ResumeDesign | None = None
+    if user.active_resume_id:
+        active_doc = await rrepo.get_by_id(user.active_resume_id, user.id)
+        if active_doc and isinstance(active_doc.design, dict):
+            try:
+                base_design = ResumeDesign.model_validate(active_doc.design)
+            except Exception:
+                base_design = None
+    if base_design is None and isinstance(user.resume_template_design, dict):
+        try:
+            base_design = ResumeDesign.model_validate(user.resume_template_design)
+        except Exception:
+            base_design = None
+    if base_design is None:
+        base_design = default_design()
+    return base_design
+
+
+async def _upsert_tailored_library_doc(
+    session,
+    *,
+    user_id: str,
+    name: str,
+    company: str | None,
+    job_title: str | None,
+    design: ResumeDesign,
+):
+    from app.storage.resume_document_repository import ResumeDocumentRepository
+
+    rrepo = ResumeDocumentRepository(session)
+    existing = None
+    target_key = _norm_key(company, job_title)
+    if target_key != "::":
+        for doc in await rrepo.list_for_user(user_id):
+            if _norm_key(doc.company, doc.job_title) == target_key:
+                existing = doc
+                break
+
+    if existing:
+        existing.name = name[:200]
+        existing.source = "tailored"
+        existing.company = company
+        existing.job_title = job_title
+        existing.design = design.model_dump(mode="json")
+        existing.status = "draft"
+        return existing
+
+    return await rrepo.create(
+        user_id=user_id,
+        name=name[:200],
+        status="draft",
+        source="tailored",
+        job_title=job_title,
+        company=company,
+        design=design.model_dump(mode="json"),
+    )
+
+
+async def save_ai_tailored_as_library_resume(
+    user_id: str,
+    *,
+    content: dict,
+    job_title: str | None = None,
+    company: str | None = None,
+    activate: bool = True,
+) -> dict[str, Any]:
+    """Persist OneClick / extension AI-tailored sections into the resume library.
+
+    Same merge rules as job-workflow opens: theme/header/edu/certs from the active
+    (or template) design; summary/skills/experience from the AI payload.
+    """
+    if not isinstance(content, dict) or not content:
+        raise ValueError("Tailored content is required")
+
+    company_n = (company or "").strip() or None
+    title_n = (job_title or "").strip() or None
+    name = " - ".join([p for p in (title_n, company_n) if p]) or "Tailored resume"
+
+    async with get_session() as session:
+        from app.storage.user_repository import UserRepository
+
+        user = await UserRepository(session).get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        base_design = await _resolve_base_design(session, user)
+        design = _merge_tailored_into_design(base_design, content)
+        doc = await _upsert_tailored_library_doc(
+            session,
+            user_id=user_id,
+            name=name,
+            company=company_n,
+            job_title=title_n,
+            design=design,
+        )
+        if activate:
+            user.active_resume_id = doc.id
+            _compile_design_into_user(user_id, user, design)
+        await session.commit()
         payload = await _list_payload(session, user_id)
         payload["resume"] = next((r for r in payload["resumes"] if r["id"] == doc.id), None)
         return payload

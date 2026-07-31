@@ -5,7 +5,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import (
     JobExtraction,
-    APIPatternRegistry,
     Job,
     JobMatchResult,
     JobMatchInProgress,
@@ -95,13 +94,10 @@ class JobExtractionRepository:
             "responsibilities": [],
             "requirements": [],
             "benefits": [],
-            "posted_date": None,
-            "application_deadline": None,
             "remote_policy": None,
             "experience_level": None,
             "industry": None,
             "raw_metadata": {},
-            "raw_html": None,
             "is_job_posting": None,
             "error_message": None,
             "completed_at": None,
@@ -114,8 +110,12 @@ class JobExtractionRepository:
         logger.debug("repository_reset_for_refresh", job_id=job_id)
 
     async def get_by_id(self, job_id: str) -> JobExtraction | None:
+        from sqlalchemy.orm import undefer
+
         result = await self._session.execute(
-            select(JobExtraction).where(JobExtraction.id == job_id)
+            select(JobExtraction)
+            .options(undefer(JobExtraction.raw_plain_text))
+            .where(JobExtraction.id == job_id)
         )
         return result.scalar_one_or_none()
 
@@ -183,15 +183,12 @@ class JobExtractionRepository:
             "responsibilities": job_data.responsibilities,
             "requirements": job_data.requirements,
             "benefits": job_data.benefits,
-            "posted_date": job_data.posted_date,
-            "application_deadline": job_data.application_deadline,
             "remote_policy": _truncate_for_db(job_data.remote_policy, limits["remote_policy"]),
             "work_mode": _truncate_for_db(job_data.work_mode, limits["work_mode"]),
             "experience_level": _truncate_for_db(job_data.experience_level, limits["experience_level"]),
             "industry": _truncate_for_db(job_data.industry, limits["industry"]),
             "raw_metadata": metadata,
             "is_job_posting": is_job_posting,
-            "raw_html": None,
             "completed_at": now,
             "updated_at": now,
         }
@@ -259,7 +256,6 @@ class JobExtractionRepository:
         extraction.remote_policy = _truncate_for_db(job_data.remote_policy, limits["remote_policy"])
         extraction.experience_level = _truncate_for_db(job_data.experience_level, limits["experience_level"])
         extraction.industry = _truncate_for_db(job_data.industry, limits["industry"])
-        extraction.raw_html = None
         extraction.updated_at = _utcnow()
 
         metadata = dict(extraction.raw_metadata or {})
@@ -281,20 +277,30 @@ class JobRepository:
         )
 
     async def get_by_extraction_id(self, extraction_id: str) -> Job | None:
+        from sqlalchemy.orm import undefer
+
         result = await self._session.execute(
-            select(Job).where(Job.extraction_id == extraction_id).limit(1)
+            select(Job)
+            .options(undefer(Job.description))
+            .where(Job.extraction_id == extraction_id)
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
     async def get_by_id(self, job_id: str) -> Job | None:
+        from sqlalchemy.orm import undefer
+
         result = await self._session.execute(
-            select(Job).where(Job.id == job_id)
+            select(Job).options(undefer(Job.description)).where(Job.id == job_id)
         )
         return result.scalar_one_or_none()
 
     async def get_by_normalized_url(self, normalized_url: str) -> Job | None:
+        from sqlalchemy.orm import undefer
+
         result = await self._session.execute(
             select(Job)
+            .options(undefer(Job.description))
             .where(Job.normalized_url == normalized_url, Job.status == "active")
             .limit(1)
         )
@@ -305,7 +311,11 @@ class JobRepository:
         job_id: str,
         job_data: JobDescriptionSchema,
     ) -> None:
-        result = await self._session.execute(select(Job).where(Job.id == job_id))
+        from sqlalchemy.orm import undefer
+
+        result = await self._session.execute(
+            select(Job).options(undefer(Job.description)).where(Job.id == job_id)
+        )
         job = result.scalar_one_or_none()
         if not job:
             return
@@ -506,11 +516,11 @@ class ResumeBuildRepository:
 
         Only returns rows with ``content_generation_status='completed'`` and
         non-null ``tailored_resume_data`` (ready to open in the builder).
+        Empty company+title returns the most recent completed builds (browse mode).
         """
         company_q = (company or "").strip()
         role_q = (job_title or "").strip()
-        if not company_q and not role_q:
-            return []
+        capped = max(1, min(limit, 200))
 
         def _pat(raw: str) -> str:
             escaped = raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -522,17 +532,20 @@ class ResumeBuildRepository:
         if role_q:
             clauses.append(Job.title.ilike(_pat(role_q), escape="\\"))
 
+        where = [
+            ResumeBuildResult.user_id == user_id,
+            ResumeBuildResult.content_generation_status == "completed",
+            ResumeBuildResult.tailored_resume_data.isnot(None),
+        ]
+        if clauses:
+            where.append(and_(*clauses))
+
         stmt = (
             select(ResumeBuildResult, Job)
             .join(Job, Job.id == ResumeBuildResult.job_id)
-            .where(
-                ResumeBuildResult.user_id == user_id,
-                ResumeBuildResult.content_generation_status == "completed",
-                ResumeBuildResult.tailored_resume_data.isnot(None),
-                and_(*clauses),
-            )
+            .where(*where)
             .order_by(ResumeBuildResult.updated_at.desc())
-            .limit(max(1, min(limit, 200)))
+            .limit(capped)
         )
         result = await self._session.execute(stmt)
         return [(row[0], row[1]) for row in result.all()]
@@ -630,6 +643,20 @@ class ResumeBuildRepository:
         )
         return row
 
+    @staticmethod
+    def _clear_unbuilt_file_statuses(row: ResumeBuildResult, *, status: str = "skipped") -> None:
+        """Stop leftover file `pending` from looking in-flight after content fails/skips."""
+        for file_type in (
+            "resume_docx",
+            "resume_pdf",
+            "cover_letter_docx",
+            "cover_letter_pdf",
+        ):
+            status_col = f"{file_type}_status"
+            current = getattr(row, status_col, None)
+            if current in (None, "pending", "processing"):
+                setattr(row, status_col, status)
+
     async def fail_content_generation(
         self,
         job_id: str,
@@ -641,11 +668,15 @@ class ResumeBuildRepository:
             row = await self.ensure_content_placeholder(job_id, user_id, status="failed")
         row.content_generation_status = "failed"
         row.content_generation_error = _truncate_for_db(error, 1500)
+        self._clear_unbuilt_file_statuses(row, status="skipped")
         row.updated_at = _utcnow()
         await self._session.flush()
 
     async def mark_content_skipped(self, job_id: str, user_id: str) -> None:
-        await self.ensure_content_placeholder(job_id, user_id, status="skipped")
+        row = await self.ensure_content_placeholder(job_id, user_id, status="skipped")
+        self._clear_unbuilt_file_statuses(row, status="skipped")
+        row.updated_at = _utcnow()
+        await self._session.flush()
 
     async def update_file_status(
         self,
@@ -770,42 +801,3 @@ class UserJobStatusRepository:
         )
         return result.scalar_one_or_none() is not None
 
-
-class APIPatternRepository:
-    def __init__(self, session: AsyncSession):
-        self._session = session
-
-    async def get_pattern_for_domain(self, domain: str) -> APIPatternRegistry | None:
-        result = await self._session.execute(
-            select(APIPatternRegistry)
-            .where(
-                and_(
-                    APIPatternRegistry.domain_pattern == domain,
-                    APIPatternRegistry.is_active == True,
-                )
-            )
-            .order_by(APIPatternRegistry.priority.desc())
-        )
-        return result.scalar_one_or_none()
-
-    async def get_all_active_patterns(self) -> Sequence[APIPatternRegistry]:
-        result = await self._session.execute(
-            select(APIPatternRegistry)
-            .where(APIPatternRegistry.is_active == True)
-            .order_by(APIPatternRegistry.priority.desc())
-        )
-        return result.scalars().all()
-
-    async def update_success_rate(
-        self,
-        pattern_id: str,
-        success: bool,
-    ) -> None:
-        pattern = await self._session.get(APIPatternRegistry, pattern_id)
-        if pattern:
-            if success:
-                pattern.success_rate = min(1.0, pattern.success_rate + 0.01)
-                pattern.last_success_at = _utcnow()
-            else:
-                pattern.success_rate = max(0.0, pattern.success_rate - 0.05)
-            await self._session.flush()

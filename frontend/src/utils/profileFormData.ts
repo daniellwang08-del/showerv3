@@ -38,6 +38,7 @@ export const emptyCert = (): CertificateBlock => ({ name: '', issued_at: '', url
 export const emptyEEO = (): EEOPreferences => ({
   gender: '',
   race: '',
+  sexual_orientation: '',
   hispanic_latino: null,
   veteran_status: null,
   disability_status: null,
@@ -80,6 +81,7 @@ function eeoToForm(raw: UserProfile['eeo_preferences']): EEOPreferences {
   return {
     gender: typeof e.gender === 'string' ? e.gender : '',
     race: typeof e.race === 'string' ? e.race : '',
+    sexual_orientation: typeof e.sexual_orientation === 'string' ? e.sexual_orientation : '',
     hispanic_latino: toTriState(e.hispanic_latino),
     veteran_status: toTriState(e.veteran_status),
     disability_status: toTriState(e.disability_status),

@@ -103,8 +103,26 @@ class Settings(BaseSettings):
 
         return v
 
+    # Broker for arq job queues (logical DB /0 locally). Managed Redis that only
+    # exposes DB 0: leave cache/pubsub URLs unset so they reuse this URL.
     redis_url: str = Field(default="redis://localhost:6379/0")
-    redis_pool_size: int = 10
+    # Optional role-specific URLs (extraction cache, WS pub/sub). Empty = redis_url.
+    redis_cache_url: str | None = Field(default=None)
+    redis_pubsub_url: str | None = Field(default=None)
+    # Connection pool sizes per role (redis.asyncio clients).
+    redis_pool_size: int = 10  # extraction cache
+    redis_broker_pool_size: int = 10  # admin queue depth / health
+    redis_pubsub_pool_size: int = 5
+    # When True, API refuses in-process BackgroundTasks job fallback.
+    # None = auto (True for APP_ENV=production|prod, False otherwise).
+    redis_require_for_jobs: bool | None = Field(default=None)
+    # arq: seconds to retain job results (0 = do not keep; frees _job_id for re-runs).
+    arq_keep_result_seconds: int = Field(default=0, ge=0)
+    # arq max_tries: extraction/analysis/tailoring retry transient failures;
+    # save/resume/scraper stay at 1 (idempotency / side effects).
+    extraction_worker_max_tries: int = Field(default=3, ge=1, le=10)
+    analysis_worker_max_tries: int = Field(default=3, ge=1, le=10)
+    tailoring_worker_max_tries: int = Field(default=3, ge=1, le=10)
 
     openai_api_key: str = Field(default="")
     # OpenAI-compatible base URL (Azure, LiteLLM, private gateway, …).
@@ -130,6 +148,8 @@ class Settings(BaseSettings):
     save_worker_max_jobs: int = 10
     resume_worker_max_jobs: int = 10
     scraper_worker_max_jobs: int = 2
+    # Sheets/Pumble auto-post (low priority; must not hold save slots).
+    autopost_worker_max_jobs: int = 4
     # Max parallel OpenAI calls when attachment text is split into chunks.
     openai_attachment_max_concurrent: int = 4
     phase_a_max_tokens: int = 8192
@@ -169,7 +189,9 @@ class Settings(BaseSettings):
     langfuse_base_url: str = Field(default="https://cloud.langfuse.com")
     langfuse_enabled: bool = Field(default=True)
 
-    browser_pool_size: int = 5
+    # Match extraction_worker_max_jobs so concurrent extract jobs are not
+    # serialized on a smaller Playwright semaphore.
+    browser_pool_size: int = 10
     browser_timeout_ms: int = 30000
     browser_headless: bool = True
 
@@ -177,8 +199,9 @@ class Settings(BaseSettings):
     http_max_retries: int = 3
     http_retry_delay_seconds: float = 1.0
 
-    rate_limit_requests_per_second: float = 2.0
-    rate_limit_burst: int = 5
+    # Align with extraction concurrency (token bucket + burst semaphore).
+    rate_limit_requests_per_second: float = 10.0
+    rate_limit_burst: int = 10
 
     extraction_cache_ttl_seconds: int = 3600
     default_dedup_recycle_days: int = Field(default=60, ge=1, le=3650)
@@ -223,6 +246,8 @@ class Settings(BaseSettings):
     # Scraper module settings (scrapy joblinks integration)
     adzuna_app_id: str = Field(default="")
     adzuna_app_key: str = Field(default="")
+    # Kept for optional manual scrapy crawl ziprecruiter (not in sync platform list).
+    ziprecruiter_api_key: str = Field(default="")
     scraper_proxy_list_path: str = Field(default="")
 
 

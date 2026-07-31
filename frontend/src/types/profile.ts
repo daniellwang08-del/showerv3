@@ -45,6 +45,7 @@ export type AddressInfo = {
 export type EEOPreferences = {
   gender?: string | null;
   race?: string | null;
+  sexual_orientation?: string | null;
   hispanic_latino?: boolean | null;
   veteran_status?: boolean | null;
   disability_status?: boolean | null;
@@ -110,6 +111,14 @@ export const RACE_OPTIONS = [
   'Native American or Alaska Native',
   'Native Hawaiian or Other Pacific Islander',
   'Two or More Races',
+  'Decline to self-identify',
+] as const;
+/** Canonical values; autofill fuzzy-matches these to each ATS's option wording. */
+export const SEXUAL_ORIENTATION_OPTIONS = [
+  'Heterosexual',
+  'Gay and/or lesbian',
+  'Bisexual, pansexual and/or queer',
+  'Asexual',
   'Decline to self-identify',
 ] as const;
 

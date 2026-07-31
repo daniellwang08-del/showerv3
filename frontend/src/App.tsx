@@ -94,10 +94,17 @@ function App() {
       'resume_build_started',
       'resume_build_completed',
       'resume_build_failed',
+      'resume_file_processing',
+      'resume_file_ready',
+      'resume_file_failed',
     ];
     if (pipelineEvents.includes(event.type)) {
       useScraperStore.getState().bgRefreshJobs();
       void useScraperStore.getState().loadStats({ silent: true });
+      const detailJobId = event.valid_job_id || event.job_id;
+      if (detailJobId) {
+        useScraperStore.getState().bumpAnalysisPanelRefresh(detailJobId);
+      }
     }
 
     if (event.type === 'company_policy_reconcile_completed') {

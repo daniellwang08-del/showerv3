@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import undefer
 from app.models.database import User
 from app.services.auth_service import AuthService
 from app.core.config import get_settings
@@ -46,14 +47,18 @@ class UserRepository:
         self.session = session
 
     async def get_by_email(self, email: str) -> User | None:
-        """Get user by email"""
-        stmt = select(User).where(User.email == email.lower().strip())
+        """Get user by email (full row — deferred profile/secret columns included)."""
+        stmt = (
+            select(User)
+            .options(undefer("*"))
+            .where(User.email == email.lower().strip())
+        )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_by_id(self, user_id: str) -> User | None:
-        """Get user by ID"""
-        stmt = select(User).where(User.id == user_id)
+        """Get user by ID (full row — deferred profile/secret columns included)."""
+        stmt = select(User).options(undefer("*")).where(User.id == user_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 

@@ -11,16 +11,25 @@ from app.services.scraper_sync_service import (
 
 
 def test_list_sync_platforms_includes_known_spiders():
-    names = {row["name"] for row in list_sync_platforms()}
-    assert "adzuna" in names
-    assert "jobright" in names
-    assert "remoterocketship" in names
+    rows = list_sync_platforms()
+    names = [row["name"] for row in rows]
+    assert names == [
+        "remoterocketship",
+        "jobright",
+        "welcometothejungle",
+        "adzuna",
+    ]
+    assert rows[1]["label"] == "Jobright.ai"
 
 
 def test_resolve_spider_names_all():
     names = resolve_spider_names("all", None)
-    assert "adzuna" in names
-    assert len(names) >= 7
+    assert names == [
+        "remoterocketship",
+        "jobright",
+        "welcometothejungle",
+        "adzuna",
+    ]
 
 
 def test_resolve_spider_names_subset():

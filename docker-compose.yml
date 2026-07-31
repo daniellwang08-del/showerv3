@@ -1,0 +1,74 @@
+# Local Redis (+ optional Postgres). Start with: docker compose up -d
+# App defaults: REDIS_URL=/0  REDIS_CACHE_URL=/1  REDIS_PUBSUB_URL=/2
+#
+# Postgres: prefer a local install (Windows service / Homebrew / apt).
+# Optional Docker Postgres (profile docker-db) — only when nothing else owns :5432:
+#   docker compose --profile docker-db up -d postgres
+# POSTGRES_* in .env must match DATABASE_URL.
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: showerv3-redis
+    ports:
+      - "6379:6379"
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+      - --save
+      - "60"
+      - "1000"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: showerv3-postgres
+    profiles:
+      - docker-db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-job_scraper}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # Optional UI for inspecting queues / keys (http://localhost:5540)
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: showerv3-redis-insight
+    ports:
+      - "5540:5540"
+    volumes:
+      - redis_insight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - tools
+
+volumes:
+  redis_data:
+  postgres_data:
+  redis_insight_data:

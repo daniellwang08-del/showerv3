@@ -11,10 +11,15 @@ SyncMode = Literal["incremental", "date_backfill"]
 
 
 def list_sync_platforms() -> list[dict]:
-    """Platforms available for sync (matches SPIDER_META keys)."""
+    """Platforms available for sync, in ALL_SPIDERS display/run order."""
     return [
-        {"name": name, "label": meta["label"], "requires_auth": meta["requires_auth"]}
-        for name, meta in SPIDER_META.items()
+        {
+            "name": name,
+            "label": SPIDER_META[name]["label"],
+            "requires_auth": SPIDER_META[name]["requires_auth"],
+        }
+        for name, _ in ALL_SPIDERS
+        if name in SPIDER_META
     ]
 
 

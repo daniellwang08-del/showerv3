@@ -162,26 +162,40 @@ async def lifespan(app: FastAPI):
         err_msg = str(e) or f"{type(e).__name__}"
         logger.warning("browser_pool_warmup_start_failed", error=err_msg)
 
-    redis_ok = False
     try:
         from app.tasks.worker import get_extraction_pool
+        from app.core.redis_support import (
+            init_broker_redis_pool,
+            init_pubsub_redis_pool,
+            redis_health,
+        )
+
+        await init_broker_redis_pool()
+        await init_pubsub_redis_pool()
         pool = await get_extraction_pool()
         await pool.ping()
-        redis_ok = True
+        health = await redis_health()
+        redis_ok = bool(health.get("ok"))
     except Exception:
-        pass
+        redis_ok = False
     if redis_ok:
         await ws_manager.start_redis_subscriber()
         logger.info(
             "application_started",
             redis_connected=True,
-            worker_required="Run 'python run_worker.py extraction' and 'python run_worker.py analysis' in separate terminals",
+            worker_required=(
+                "Run all six workers: python run_worker.py "
+                "{extraction|analysis|tailoring|save|resume|scraper}"
+            ),
         )
     else:
         logger.info(
             "application_started",
             redis_connected=False,
-            worker_required="Jobs use in-process fallback. For async queues: start Memurai/Redis and run both workers",
+            worker_required=(
+                "Jobs use in-process fallback outside production. "
+                "For async queues: docker compose up -d redis and start.cmd"
+            ),
         )
 
     yield
@@ -211,6 +225,14 @@ async def lifespan(app: FastAPI):
 
     try:
         await close_shared_pools()
+    except Exception:
+        pass
+
+    try:
+        from app.core.redis_support import close_broker_redis_pool, close_pubsub_redis_pool
+
+        await close_pubsub_redis_pool()
+        await close_broker_redis_pool()
     except Exception:
         pass
 

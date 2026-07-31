@@ -57,6 +57,7 @@ export function profileFormToPayload(data: ProfileFormData) {
     eeo_preferences: {
       gender: emptyToNull(data.eeo_preferences.gender ?? undefined),
       race: emptyToNull(data.eeo_preferences.race ?? undefined),
+      sexual_orientation: emptyToNull(data.eeo_preferences.sexual_orientation ?? undefined),
       hispanic_latino: data.eeo_preferences.hispanic_latino ?? null,
       veteran_status: data.eeo_preferences.veteran_status ?? null,
       disability_status: data.eeo_preferences.disability_status ?? null,

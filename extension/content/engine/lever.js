@@ -99,32 +99,112 @@
     );
   }
 
+  function locationDropdownBox(input) {
+    const field = input && input.closest && input.closest(".application-field");
+    return (field && field.querySelector(".dropdown-results")) || document.querySelector(".dropdown-results");
+  }
+
+  function locationDropdownItems(box) {
+    if (!box) return [];
+    return [...box.querySelectorAll("li, .dropdown-result, [class*='dropdown-result'], [class*='result-item']")].filter(
+      (n) => clean(n.textContent)
+    );
+  }
+
+  function pressKey(el, key, code, keyCode) {
+    if (!el) return;
+    try {
+      el.focus && el.focus();
+    } catch {}
+    const opts = { bubbles: true, cancelable: true, key, code, keyCode, which: keyCode };
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      el.dispatchEvent(new KeyboardEvent(type, opts));
+    }
+  }
+
+  function isUsCountryToken(s) {
+    return /^(united states( of america)?|u\.?s\.?a?\.?)$/i.test(clean(s || ""));
+  }
+
+  // Lever's Current location geocoder expects "City, State, Country"
+  // (e.g. "Newark, CA, USA") and only commits when a dropdown result is chosen.
+  function normalizeLeverLocation(value) {
+    const text = clean(value);
+    if (!text) return "";
+    const parts = text.split(",").map((x) => clean(x)).filter(Boolean);
+    if (!parts.length) return text;
+    if (parts.length >= 3) {
+      if (isUsCountryToken(parts[parts.length - 1])) parts[parts.length - 1] = "USA";
+      return parts.slice(0, 3).join(", ");
+    }
+    if (parts.length === 2) {
+      const second = parts[1];
+      if (isUsCountryToken(second)) return `${parts[0]}, USA`;
+      // US state code / common 2-letter region → append USA for the geocoder.
+      if (/^[A-Za-z]{2}$/.test(second)) return `${parts[0]}, ${second.toUpperCase()}, USA`;
+      return `${parts[0]}, ${second}`;
+    }
+    return parts[0];
+  }
+
+  // Ordered geocoder queries: full City/State/Country first, then shorter fallbacks.
+  function leverLocationQueries(value) {
+    const normalized = normalizeLeverLocation(value);
+    const parts = normalized.split(",").map((x) => clean(x)).filter(Boolean);
+    const out = [];
+    if (parts.length >= 3) {
+      out.push(parts.join(", "));
+      if (/^usa$/i.test(parts[2])) out.push(`${parts[0]}, ${parts[1]}, US`);
+      out.push(`${parts[0]}, ${parts[1]}`);
+      out.push(parts[0]);
+    } else if (parts.length === 2) {
+      out.push(normalized);
+      out.push(parts[0]);
+    } else if (parts.length === 1) {
+      out.push(parts[0]);
+    }
+    return [...new Set(out)].filter(Boolean);
+  }
+
+  function locationIsCommitted(input) {
+    const hidden = hiddenLocationField(input);
+    return !!(hidden && clean(hidden.value));
+  }
+
+  async function waitLocationCommitted(input, timeout = 1400) {
+    return !!(await waitUntil(() => (locationIsCommitted(input) ? true : null), timeout, 60));
+  }
+
+  async function waitForLocationDropdown(input, timeout = 2800) {
+    return waitUntil(() => {
+      const items = locationDropdownItems(locationDropdownBox(input));
+      return items.length ? items : null;
+    }, timeout, 80);
+  }
+
   async function pickAutocompleteOption(input, value) {
     const want = normText(value);
-    if (!want) return false;
-    const field = input.closest && input.closest(".application-field");
-    const box = (field && field.querySelector(".dropdown-results")) || document.querySelector(".dropdown-results");
+    const box = locationDropdownBox(input);
     if (!box) return false;
-    const items = [...box.querySelectorAll("li, .dropdown-result, [class*='dropdown-result'], [class*='result-item']")].filter(
-      (n) => clean(n.textContent)
-    );
-    if (!items.length) {
+    let opts = locationDropdownItems(box);
+    if (!opts.length) {
       await waitUntil(() => {
-        const fresh = box.querySelectorAll("li, .dropdown-result, [class*='dropdown-result'], [class*='result-item']");
+        const fresh = locationDropdownItems(box);
         return fresh.length ? fresh : null;
       }, 2500, 80);
+      opts = locationDropdownItems(box);
     }
-    const opts = [...box.querySelectorAll("li, .dropdown-result, [class*='dropdown-result'], [class*='result-item']")].filter(
-      (n) => clean(n.textContent)
-    );
     let pick = null;
-    for (const o of opts) {
-      const t = normText(o.textContent);
-      if (t === want || (t && (t.includes(want) || want.includes(t)))) {
-        pick = o;
-        break;
+    if (want) {
+      for (const o of opts) {
+        const t = normText(o.textContent);
+        if (t === want || (t && (t.includes(want) || want.includes(t)))) {
+          pick = o;
+          break;
+        }
       }
     }
+    // Lever requires selecting a suggestion; top result is the intended pick.
     if (!pick && opts.length) pick = opts[0];
     if (!pick) return false;
     pick.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -132,27 +212,72 @@
     try {
       pick.click();
     } catch {}
-    await delay(120);
+    await delay(150);
     return true;
   }
 
-  async function writeLocationInput(input, value) {
-    const text = clean(value);
-    if (!input || !text) return false;
-    input.focus && input.focus();
-    setNativeValue(input, text);
-    fireInput(input);
-    input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
-    await delay(350);
-    const picked = await pickAutocompleteOption(input, text);
-    const hidden = hiddenLocationField(input);
-    if (hidden && !clean(hidden.value)) {
-      hidden.value = text;
-      hidden.dispatchEvent(new Event("input", { bubbles: true }));
-      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+  async function typeLocationQuery(input, text) {
+    try {
+      input.focus({ preventScroll: true });
+    } catch {
+      try {
+        input.focus();
+      } catch {}
     }
+    setNativeValue(input, "");
+    fireInput(input);
+    await delay(60);
+    // Progressive updates so Lever's async geocoder debounce sees typing like a
+    // human (bulk setNativeValue alone often never opens .dropdown-results).
+    let built = "";
+    for (const ch of String(text)) {
+      built += ch;
+      setNativeValue(input, built);
+      fireInput(input);
+      await delay(20);
+    }
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  async function writeLocationInput(input, value) {
+    const queries = leverLocationQueries(value);
+    if (!input || !queries.length) return false;
+
+    for (const text of queries) {
+      await typeLocationQuery(input, text);
+
+      const items = await waitForLocationDropdown(input, 3000);
+      if (!items || !items.length) continue;
+
+      // Primary commit: Enter selects the top/highlighted geocoder result.
+      pressKey(input, "Enter", "Enter", 13);
+      if (await waitLocationCommitted(input, 1400)) {
+        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+        return true;
+      }
+
+      // Some Lever builds need ArrowDown to highlight before Enter commits.
+      pressKey(input, "ArrowDown", "ArrowDown", 40);
+      await delay(80);
+      pressKey(input, "Enter", "Enter", 13);
+      if (await waitLocationCommitted(input, 1200)) {
+        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+        return true;
+      }
+
+      // Click fallback on the matching / top dropdown row.
+      if (await pickAutocompleteOption(input, text)) {
+        if (await waitLocationCommitted(input, 1200)) {
+          input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+          return true;
+        }
+      }
+    }
+
     input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-    return picked || clean(input.value) !== "";
+    // Only succeed when Lever actually committed selectedLocation — faking the
+    // hidden field fails server-side validation on submit.
+    return locationIsCommitted(input);
   }
 
   async function writeUniversityInput(input, value) {
@@ -233,9 +358,9 @@
       };
     },
     isFilled(root) {
-      const hidden = hiddenLocationField(root);
-      if (hidden && clean(hidden.value)) return true;
-      return clean(root.value) !== "";
+      // Visible text alone is not enough — Lever only accepts a dropdown pick
+      // that populates hidden selectedLocation.
+      return locationIsCommitted(root);
     },
     async write(root, answer) {
       return writeLocationInput(root, answer.value || answer.option || "");

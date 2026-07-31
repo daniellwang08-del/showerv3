@@ -490,10 +490,20 @@ async def match_rerun_data_management_jobs(
     ids_for_in_process = list(enqueued_ids)
     pool = await try_get_analysis_pool()
     if pool:
+        from app.core.redis_support import pipeline_job_id
+        import uuid
+
         redis_failed: list[str] = []
         for jid in enqueued_ids:
             try:
-                await pool.enqueue_job("analyze_job_match", jid, user_id)
+                await pool.enqueue_job(
+                    "analyze_job_match",
+                    jid,
+                    user_id,
+                    _job_id=pipeline_job_id(
+                        "analyze", jid, user_id, uuid.uuid4().hex[:10]
+                    ),
+                )
             except Exception as e:
                 logger.warning("data_mgmt_match_rerun_enqueue_failed", job_id=jid, error=str(e))
                 redis_failed.append(jid)
@@ -508,7 +518,9 @@ async def match_rerun_data_management_jobs(
             }
         ids_for_in_process = redis_failed
 
-    if background_tasks:
+    from app.core.redis_support import allow_in_process_job_fallback
+
+    if allow_in_process_job_fallback() and background_tasks:
         background_tasks.add_task(_fallback_match_batch_parallel, user_id, ids_for_in_process)
         return {
             "status": "queued",

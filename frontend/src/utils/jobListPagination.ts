@@ -15,7 +15,6 @@ export type JobApiRow = {
   is_job_posting?: boolean | null;
   match_overall_score: number | null;
   match_status: string | null;
-  click_count?: number;
   applied_at?: string | null;
   applied_by_name?: string | null;
   appliedAt?: string | null;
@@ -62,7 +61,6 @@ export function mapJobRow(j: JobApiRow): SubmittedUrlItem {
     is_job_posting: j.is_job_posting ?? undefined,
     match_overall_score: j.match_overall_score ?? undefined,
     match_status: j.match_status ?? undefined,
-    click_count: j.click_count ?? 0,
     posted_date_ms: postedDateMs,
     appliedAt: appliedAtParsed,
     appliedBy: nameRaw?.trim() ? nameRaw.trim() : undefined,

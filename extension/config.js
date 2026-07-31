@@ -7,4 +7,4 @@
  *
  * No trailing slash, no /api/v1 suffix.
  */
-export const DEFAULT_BACKEND_URL = "http://172.20.1.140:5173";
+export const DEFAULT_BACKEND_URL = "http://localhost:8000";

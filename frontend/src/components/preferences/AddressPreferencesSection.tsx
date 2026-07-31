@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, MapPin } from 'lucide-react';
 import { SettingsCard } from '../settings/SettingsCard';
+import { prefsSaveBtnClass } from '../settings/prefsSaveButtonClass';
 import { BrandedLoader } from '../layout/BrandedLoader';
 import { fetchProfileForm, saveUserProfile } from '../../api/profileApi';
 import type { AddressInfo, ProfileFormData } from '../../types/profile';
@@ -121,7 +122,7 @@ export function AddressPreferencesSection() {
           type="button"
           disabled={!dirty || saving || loading}
           onClick={() => void handleSave()}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+          className={prefsSaveBtnClass(dirty && !loading)}
         >
           {saving ? <Loader2 size={12} className="animate-spin" /> : null}
           {saving ? 'Saving…' : 'Save'}

@@ -30,6 +30,29 @@ def test_normalize_us_phone_digits_only():
     assert num == "(610) 234-7936"
 
 
+def test_reject_incomplete_us_phone_fragment():
+    """Regression: truncated fragments like +1 313-3369 must not be kept as valid."""
+    assert _normalize_phone_fields("+1", "313-3369") == (None, None)
+    assert _normalize_phone_fields(None, "+1 313-3369") == (None, None)
+    assert _normalize_phone_fields("+1", "3133369") == (None, None)
+    assert _normalize_phone_fields(None, "313-3369") == (None, None)
+
+
+def test_reject_partial_area_code_only():
+    assert _normalize_phone_fields("+1", "610") == (None, None)
+    assert _normalize_phone_fields("+1", "(610) 234") == (None, None)
+
+
+def test_normalize_international_complete():
+    cc, num = _normalize_phone_fields("+44", "7911 123456")
+    assert cc == "+44"
+    assert num == "7911 123456"
+
+
+def test_reject_international_too_short():
+    assert _normalize_phone_fields("+44", "1234567") == (None, None)
+
+
 def test_infer_job_type_defaults_to_onsite_with_location():
     assert _infer_job_type("Menlo Park, CA", None, None) == "onsite"
     assert _infer_job_type("Remote", None, None) == "remote"

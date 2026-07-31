@@ -30,19 +30,43 @@ let state = {
   todayPlatformQueue: [], // today's scraped/platform jobs (not user-submitted)
   todayMineQueue: [], // today's user-submitted jobs
   todayCounts: { all: 0, platform: 0, mine: 0 },
+  // Authoritative server totals (same as dashboard view switcher badges).
+  dashboardCounts: { all: 0, today: 0, mine: 0, suggested: 0, applied_today: 0 },
+  weeklyProgress: null, // { series, totals, min_match_score } from /jobs/dashboard/weekly-progress
+  statsPeriod: "week", // "day" | "week" | "month"
+  statsProgress: null, // period-scoped series for Statistics page
+  statsLoading: false,
+  scraperStats: null, // from /scraper/stats
   appliedQueue: [], // jobs applied to today (most recent first)
-  homeTab: "progress", // active Home tab: "progress" | "today" | "ready" | "applied"
+  homeTab: "hub", // "hub" | "progress" | "today" | "ready" | "tailor" | "stats" | "settings"
   todaySubTab: "all", // "all" | "platform" | "mine" — narrows the New today list
-  pageByTab: { progress: 1, today: 1, ready: 1, applied: 1 }, // 1-based page per Home tab
+  tailorSubTab: "making", // "making" | "ready" — in-progress vs generated resumes
+  tailorHits: [], // unified resume search hits (library + job builds)
+  tailorHitsLoading: false,
+  tailorRuns: [], // [{ id, kind, jobId?, title, company, stage, label, status, error?, resumeId? }]
+  pageByTab: { progress: 1, today: 1, ready: 1, tailor: 1 }, // 1-based page per list section
   pageSize: 25, // rows per page, user-selectable
+  listFilters: {
+    title: "",
+    company: "",
+    workMode: "", // "" | remote | hybrid | onsite
+    source: "", // "" | greenhouse | workday | ...  (or tailored|job_workflow on Tailor)
+    sort: "created_at", // match_score | posted_date | created_at | source | title | company
+    order: "desc",
+  },
   queueLoading: false, // true while the Home job lists are being fetched
   pumbleConfigured: false,
   pumbleDestinationCount: 0,
   postingToPumble: false,
   modal: null, // { title, message, confirmLabel, tone, onConfirm, busy }
   minScore: store.DEFAULT_MIN_SCORE,
-  autoAdvance: false, // Workday: fill + advance each step until Review (user submits)
+  autoAdvance: true, // Workday: fill + advance each step until Review (user submits)
+  resumeSource: store.DEFAULT_RESUME_SOURCE, // "tailored" | "original"
+  answerStrategy: "", // optional free-text for autofill LLM
+  askHotkey: store.DEFAULT_ASK_HOTKEY, // page selection → assistant chat
+  askHotkeyRecording: false,
   job: null, // { job_id, url, title, company, score, snapshot, messages, ready }
+  jdOpen: true, // Job description <details>; collapses when chat starts
   style: "standard",
   fieldType: "",
   streaming: false,
@@ -56,6 +80,8 @@ let state = {
 
 // Login form draft (kept outside render state so typing does not re-render on each key).
 let loginDraft = { email: "", password: "", remember: false, showPassword: false };
+// Tailor page JD paste (same reason — avoid remounting the textarea every keystroke).
+let tailorJdDraft = "";
 
 function emptyAutofill() {
   return {
@@ -85,9 +111,64 @@ function emptyAutofill() {
 // Jobs can be massive, so every Home list is paginated client-side.
 const JOBS_PAGE_SIZES = [25, 50, 100];
 
-function setState(patch) {
+/** Snapshot scroll offsets before a full DOM rebuild (`.screen` is the main scroller). */
+function captureScrollPositions() {
+  const positions = {};
+  const screen = root.querySelector(".screen");
+  if (screen) positions.screen = screen.scrollTop;
+  root.querySelectorAll("[data-scroll-preserve]").forEach((node) => {
+    const key = node.getAttribute("data-scroll-preserve");
+    if (key) positions[key] = node.scrollTop;
+  });
+  return positions;
+}
+
+function restoreScrollPositions(positions) {
+  if (!positions) return;
+  const apply = () => {
+    const screen = root.querySelector(".screen");
+    if (screen && positions.screen != null) screen.scrollTop = positions.screen;
+    root.querySelectorAll("[data-scroll-preserve]").forEach((node) => {
+      const key = node.getAttribute("data-scroll-preserve");
+      if (!key || positions[key] == null) return;
+      // Streaming chat sticks to the bottom; don't fight that.
+      if (key === "messages" && state.streaming) return;
+      node.scrollTop = positions[key];
+    });
+  };
+  apply();
+  // Layout can settle a frame later after replacing the tree; re-apply once.
+  requestAnimationFrame(apply);
+}
+
+/**
+ * @param {object} patch
+ * @param {{ resetScroll?: boolean }} [opts]
+ *   resetScroll — jump to top (view / section / page changes). Soft data refreshes
+ *   preserve scroll so the 6s home poll and toast-adjacent updates don't yank the list.
+ */
+function setState(patch, opts = {}) {
+  const beforeView = state.view;
+  const beforeTab = state.homeTab;
+  const beforePage = (state.pageByTab && state.pageByTab[state.homeTab]) || 1;
+  const snap = opts.resetScroll ? null : captureScrollPositions();
+
   state = { ...state, ...patch };
+
+  const navigated = state.view !== beforeView || state.homeTab !== beforeTab;
+  const pageNow = (state.pageByTab && state.pageByTab[state.homeTab]) || 1;
+  const pageChanged = !navigated && pageNow !== beforePage;
+
   render();
+
+  if (opts.resetScroll || navigated || pageChanged) {
+    requestAnimationFrame(() => {
+      const screen = root.querySelector(".screen");
+      if (screen) screen.scrollTop = 0;
+    });
+  } else if (snap) {
+    restoreScrollPositions(snap);
+  }
 }
 
 function setAutofill(patch) {
@@ -102,6 +183,9 @@ let writeWaiter = null;
 let writePassSeq = 0;
 // Resolves the auto-advance loop's per-step wait when the page reports WD_DONE.
 let wdStepWaiter = null;
+// Monotonic seq for Workday WD_RUN / WD_ABORT so Stop invalidates in-flight work
+// (including a WD_RUN already queued when Stop was clicked).
+let wdRunSeq = 0;
 
 // Messages from the injected picker/writer content script arrive here.
 function scoreAutofillField(field) {
@@ -114,8 +198,19 @@ function scoreAutofillField(field) {
   return score;
 }
 
+// Debounce multi-frame / double-delivery of the ask-selection hotkey.
+let lastAskSelectionAt = 0;
+
 function onContentMessage(msg, sender) {
   if (!msg || !msg.type) return;
+  if (msg.type === "ASK_SELECTION") {
+    void handleAskSelectionMessage(msg);
+    return;
+  }
+  if (msg.type === "APP_SUBMITTED") {
+    void handleApplicationSubmitted(msg);
+    return;
+  }
   if (msg.type === "WEBAPP_OPEN_PENDING_JOB" && msg.jobId) {
     // Panel is already open: the dashboard just handed us a job to apply to.
     if (state.user) {
@@ -190,7 +285,20 @@ function onContentMessage(msg, sender) {
     // keep `running` true (the loop, not this message, decides when we're done).
     // The per-step report was already appended via WD_PROGRESS, so don't re-add it.
     if (wdStepWaiter) {
-      wdStepWaiter({ reports: msg.reports || [] });
+      wdStepWaiter({ reports: msg.reports || [], aborted: !!msg.aborted });
+      return;
+    }
+    // Late DONE after Stop already finished the loop — do not clobber the outcome.
+    if (state.autofill.done && state.autofill.loopFinished) return;
+    if (msg.aborted) {
+      setAutofill({
+        running: false,
+        done: true,
+        loopFinished: "stopped",
+        loopMessage: "Autofill stopped.",
+        loopStatus: null,
+        reports: msg.reports || state.autofill.reports,
+      });
       return;
     }
     setAutofill({ running: false, done: true, reports: msg.reports || state.autofill.reports });
@@ -200,8 +308,19 @@ function onContentMessage(msg, sender) {
       wdStepWaiter({ error: msg.error || "Autofill failed" });
       return;
     }
+    if (state.autofill.done && state.autofill.loopFinished) return;
     setAutofill({ running: false, done: true, error: msg.error || "Autofill failed", reports: msg.reports || state.autofill.reports });
   } else if (msg.type === "WD_RESOLVE") {
+    // Ignore LLM resolve replies after Stop — page waiters were already cleared.
+    if (state.autofill.loopStop || !state.autofill.running) {
+      const tabId = state.autofill.tabId;
+      if (tabId != null && msg.requestId) {
+        try {
+          chrome.tabs.sendMessage(tabId, { type: "WD_RESOLVE_RESULT", requestId: msg.requestId, values: {} });
+        } catch {}
+      }
+      return;
+    }
     handleWorkdayResolve(msg);
   }
 }
@@ -411,11 +530,31 @@ function mdToPlain(text) {
   return s.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+// Imperative toast — avoid a full re-render (and scroll jump) just to show a tip.
+let toastTimer = null;
+let toastText = null;
 function toast(msg) {
-  setState({ toast: msg });
-  setTimeout(() => {
-    if (state.toast === msg) setState({ toast: null });
+  toastText = String(msg || "");
+  if (!toastText) return;
+  paintToast();
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastTimer = null;
+    toastText = null;
+    const node = root.querySelector(".toast");
+    if (node) node.remove();
   }, 3500);
+}
+
+function paintToast() {
+  if (!toastText) return;
+  let node = root.querySelector(".toast");
+  if (!node) {
+    node = el("div", { class: "toast" }, toastText);
+    root.appendChild(node);
+  } else {
+    node.textContent = toastText;
+  }
 }
 
 async function copyText(text) {
@@ -427,23 +566,56 @@ async function copyText(text) {
   }
 }
 
+async function copyAnswer(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text || "");
+    if (btn) {
+      btn.classList.add("is-copied");
+      const label = btn.querySelector(".copy-btn-label");
+      const ico = btn.querySelector(".copy-btn-ico");
+      if (label) label.textContent = "Copied";
+      if (ico) ico.innerHTML = ICON_CHECK;
+      window.setTimeout(() => {
+        btn.classList.remove("is-copied");
+        if (label) label.textContent = "Copy";
+        if (ico) ico.innerHTML = ICON_COPY;
+      }, 1600);
+    } else {
+      toast("Copied");
+    }
+  } catch {
+    toast("Copy failed");
+  }
+}
+
 // ── init ────────────────────────────────────────────────────────────────────
 
 async function init() {
   await store.syncBackendFromOpenTabs();
-  const [user, token, minScore, autoAdvance] = await Promise.all([
-    store.getCurrentUser(),
-    store.getToken(),
-    store.getMinScore(),
-    store.getAutoAdvance(),
-  ]);
+  const [user, token, minScore, autoAdvance, resumeSource, answerStrategy, pageSize, askHotkey] =
+    await Promise.all([
+      store.getCurrentUser(),
+      store.getToken(),
+      store.getMinScore(),
+      store.getAutoAdvance(),
+      store.getResumeSource(),
+      store.getAnswerStrategy(),
+      store.getPageSize(),
+      store.getAskHotkey(),
+    ]);
   state.minScore = minScore;
-  state.autoAdvance = autoAdvance;
+  state.autoAdvance = autoAdvance !== false;
+  state.resumeSource = resumeSource === "original" ? "original" : "tailored";
+  state.answerStrategy = answerStrategy || "";
+  state.pageSize = pageSize;
+  state.askHotkey = askHotkey;
   if (user && token) {
     state.user = user;
     state.cache = await store.getCache(user.user_id);
     await goHome();
     await consumePendingWebappJob();
+    await consumePendingAskSelection();
+    await consumePendingAppSubmitted();
   } else {
     const remembered = await store.getRememberedEmail();
     loginDraft = { email: remembered, password: "", remember: Boolean(remembered), showPassword: false };
@@ -477,6 +649,7 @@ async function doLogin(email, password) {
 }
 
 async function doLogout() {
+  stopHomePolling();
   await api.logout();
   await store.clearCurrentUser();
   const remembered = await store.getRememberedEmail();
@@ -521,14 +694,137 @@ async function checkSync() {
 
 async function goHome() {
   await teardownAutofill();
-  setState({ view: "home", job: null, reportNotice: null });
+  try {
+    await chrome.runtime.sendMessage({ type: "ASK_HOTKEY_DISARM" });
+  } catch {
+    /* ignore */
+  }
+  setState({ view: "home", job: null, reportNotice: null, homeTab: "hub" });
   await Promise.all([loadQueue(), checkSync()]);
+  startHomePolling();
 }
 
-function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+async function ensureAskHotkeyOnActiveTab({ requestPermission = false, jobUrl = null } = {}) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const pageUrl = (tab && tab.url) || jobUrl || "";
+    const engine = resolveEngine({
+      snapshot: state.job && state.job.snapshot,
+      pageUrl,
+    });
+    // Include ATS iframe hosts (e.g. Greenhouse embeds) so selection hotkeys work there.
+    let origins = autofillPermissionOrigins(pageUrl || jobUrl, engine && engine.platform);
+    if (!origins.length && jobUrl) {
+      try {
+        origins = [`${new URL(jobUrl).origin}/*`];
+      } catch {
+        origins = [];
+      }
+    }
+    if (!origins.length) return;
+    const has = await chrome.permissions.contains({ origins });
+    if (!has) {
+      if (!requestPermission) return;
+      const granted = await chrome.permissions.request({ origins });
+      if (!granted) {
+        toast("Allow page access in the prompt so the ask hotkey can read your selection.");
+        return;
+      }
+    }
+    await chrome.storage.session.set({ askHotkeyArmed: true });
+    if (tab && tab.id != null && /^https?:/i.test(tab.url || "")) {
+      await chrome.runtime.sendMessage({ type: "ASK_HOTKEY_INJECT", tabId: tab.id });
+    }
+  } catch (err) {
+    console.warn("ensureAskHotkeyOnActiveTab failed", err);
+  }
+}
+
+async function handleAskSelectionMessage(msg) {
+  const now = Date.now();
+  if (now - lastAskSelectionAt < 400) return;
+  lastAskSelectionAt = now;
+  try {
+    await chrome.storage.session.remove("pendingAskSelection");
+  } catch {
+    /* ignore */
+  }
+
+  const text = String((msg && msg.text) || "").trim();
+  if (!text || (msg && msg.empty)) {
+    toast("Select question text on the application page, then press the hotkey.");
+    return;
+  }
+  if (!state.user) {
+    toast("Sign in to ask the assistant.");
+    return;
+  }
+  if (state.view !== "job" || !state.job) {
+    toast("Open an application in the assistant first, then use the hotkey.");
+    return;
+  }
+  if (state.streaming) {
+    toast("Wait for the current answer to finish.");
+    return;
+  }
+  toast("Asking about your selection…");
+  await askQuestion(text);
+}
+
+async function consumePendingAskSelection() {
+  try {
+    const data = await chrome.storage.session.get("pendingAskSelection");
+    const pending = data && data.pendingAskSelection;
+    if (!pending || !pending.at) return;
+    // Ignore stale stashes (e.g. from a previous browser session).
+    if (Date.now() - Number(pending.at) > 30_000) {
+      await chrome.storage.session.remove("pendingAskSelection");
+      return;
+    }
+    await handleAskSelectionMessage(pending);
+  } catch (err) {
+    console.warn("consumePendingAskSelection failed", err);
+  }
+}
+
+function openHomeSection(id) {
+  const pageByTab = { ...state.pageByTab };
+  if (pageByTab[id] != null) pageByTab[id] = 1;
+  const patch = { homeTab: id, pageByTab };
+  if (id === "tailor") {
+    // Job list work-mode filter must not hide resumes (they have no work mode).
+    patch.listFilters = { ...getListFilters(), workMode: "" };
+  }
+  setState(patch, { resetScroll: true });
+  if (id === "tailor") void loadTailorResumes();
+  if (id === "stats") void loadStatsPeriod(state.statsPeriod || "week");
+}
+
+function backToHub() {
+  stopAskHotkeyRecording();
+  setState({ homeTab: "hub" }, { resetScroll: true });
+}
+
+// Soft-refresh home lists while the panel stays open (dashboard polls ~6s while
+// pipelines run). Keep it quiet — no skeleton flash on background refresh.
+let homePollTimer = null;
+function stopHomePolling() {
+  if (homePollTimer != null) {
+    clearInterval(homePollTimer);
+    homePollTimer = null;
+  }
+}
+function startHomePolling() {
+  stopHomePolling();
+  homePollTimer = setInterval(() => {
+    if (state.view !== "home" || state.queueLoading) return;
+    void loadQueueSilent();
+  }, 6000);
+}
+
+async function loadQueueSilent() {
+  if (state.queueLoading) return;
+  await loadQueue({ silent: true });
 }
 
 function localTimezone() {
@@ -539,20 +835,27 @@ function localTimezone() {
   }
 }
 
-// The dashboard caps per_page at 200. Page through a view (newest first) so the
-// extension mirrors the web dashboard tabs instead of client-filtering view=all.
+/** Optional min-score query param — omit when 0 so we match the dashboard. */
+function minScoreParam() {
+  const n = Number(state.minScore);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+// The dashboard caps per_page at 200. Page through a view so the extension
+// mirrors the web dashboard tabs (same server filters + same totals).
 async function fetchDashboardPages({
   view = "all",
   sort = "created_at",
   order = "desc",
   min_match_score,
-  maxPages = 25,
+  maxPages = 50,
 } = {}) {
   const timezone = localTimezone();
   const first = await api
     .getDashboard({ view, per_page: 200, page: 1, sort, order, timezone, min_match_score })
-    .catch(() => ({ items: [], pages: 1 }));
+    .catch(() => ({ items: [], pages: 1, total: 0 }));
   let items = first.items || [];
+  const total = first.total != null ? first.total : items.length;
   const pages = Math.min(first.pages || 1, maxPages);
   if (pages > 1) {
     const rest = await Promise.all(
@@ -572,89 +875,200 @@ async function fetchDashboardPages({
     );
     for (const r of rest) items = items.concat(r.items || []);
   }
-  return items;
+  // If the server reported more rows than we fetched (cap hit), keep the
+  // authoritative total so tile badges still match the dashboard.
+  return { items, total: Math.max(total, items.length) };
 }
 
-function pipelineComplete(j) {
-  return (
-    !j.applied_at &&
-    j.match_overall_score != null &&
-    j.content_generation_status === "completed" &&
-    j.resume_build_status === "completed" &&
-    j.resume_pdf_status === "completed"
-  );
+function isFromMe(j) {
+  return !!(j && j.from_me);
 }
 
-async function loadQueue() {
-  // Show skeletons while we page through the (potentially large) dashboard.
-  setState({ queueLoading: true });
+/** Compact signature so silent polls can skip a no-op re-render. */
+function jobsListSig(items) {
+  return (items || [])
+    .map((j) =>
+      [
+        j.id,
+        j.match_overall_score,
+        j.applied_at || "",
+        j.resume_pdf_status || "",
+        j.resume_build_status || "",
+        j.content_generation_status || "",
+        j.resume_build_id || "",
+        j.cover_letter_pdf_status || "",
+        j.title || "",
+        j.company || "",
+        j.work_mode || "",
+        j.source || "",
+        j.posted_date || j.created_at || "",
+      ].join("\x1f")
+    )
+    .join("\x1e");
+}
+
+function sessionsListSig(items) {
+  return (items || [])
+    .map((s) =>
+      [
+        s.id,
+        s.status || "",
+        s.updated_at || s.created_at || "",
+        s.job_title || "",
+        s.company || "",
+        s.job_id || "",
+      ].join("\x1f")
+    )
+    .join("\x1e");
+}
+
+function homeDataUnchanged(prev, next) {
+  if (prev.pumbleConfigured !== next.pumbleConfigured) return false;
+  if (prev.pumbleDestinationCount !== next.pumbleDestinationCount) return false;
+  if (JSON.stringify(prev.dashboardCounts || {}) !== JSON.stringify(next.dashboardCounts || {})) {
+    return false;
+  }
+  if (JSON.stringify(prev.weeklyProgress || null) !== JSON.stringify(next.weeklyProgress || null)) {
+    return false;
+  }
+  if (JSON.stringify(prev.scraperStats || null) !== JSON.stringify(next.scraperStats || null)) {
+    return false;
+  }
+  if (sessionsListSig(prev.sessions) !== sessionsListSig(next.sessions)) return false;
+  if (jobsListSig(prev.queue) !== jobsListSig(next.queue)) return false;
+  if (jobsListSig(prev.todayQueue) !== jobsListSig(next.todayQueue)) return false;
+  if (jobsListSig(prev.appliedQueue) !== jobsListSig(next.appliedQueue)) return false;
+  return true;
+}
+
+async function loadQueue({ silent = false } = {}) {
+  // Show skeletons while we page through the (potentially large) dashboard —
+  // skip the flash on background polls.
+  if (!silent) setState({ queueLoading: true });
   try {
-    const minScore = state.minScore;
-    const today = startOfToday();
-    const [sessions, todayItems, mineItems, suggestedItems, allItems, pumbleCfg] = await Promise.all([
+    const score = minScoreParam();
+    const timezone = localTimezone();
+    const [sessions, todayPage, allPage, appliedPage, counts, weekly, scraperStats, pumbleCfg] =
+      await Promise.all([
       api.listSessions("in_progress").catch(() => []),
       // Same server filter as the web dashboard "Today's new jobs" tab.
-      fetchDashboardPages({ view: "today", sort: "created_at", order: "desc" }),
-      // Jobs the user submitted — used to split today's list into platform vs me.
-      fetchDashboardPages({ view: "mine", sort: "created_at", order: "desc" }),
-      // Same server filter as the web dashboard "Suggested jobs" tab.
+      fetchDashboardPages({ view: "today", sort: "created_at", order: "desc", min_match_score: score }),
+      // Same server filter as the web dashboard "All jobs in system" tab.
+      fetchDashboardPages({ view: "all", sort: "created_at", order: "desc", min_match_score: score }),
+      // Applied today — server timezone day bounds (not a client-side scan of view=all).
       fetchDashboardPages({
-        view: "suggested",
-        sort: "match_score",
+        view: "applied_today",
+        sort: "applied_at",
         order: "desc",
-        min_match_score: minScore,
+        min_match_score: score,
       }),
-      // Broader pool for "applied today" (applied jobs may fall outside today/suggested).
-      fetchDashboardPages({ view: "all", sort: "created_at", order: "desc", maxPages: 10 }),
+      api.getDashboardCounts({ timezone, min_match_score: score }).catch(() => null),
+      api.getWeeklyProgress({ timezone, days: 7 }).catch(() => null),
+      api.getScraperStats({ timezone }).catch(() => null),
       api.getPumbleConfig().catch(() => ({ configured: false })),
     ]);
 
-    const mineIds = new Set((mineItems || []).map((j) => j.id));
-    const todayAll = todayItems || [];
-    const todayMine = todayAll.filter((j) => mineIds.has(j.id));
-    const todayPlatform = todayAll.filter((j) => !mineIds.has(j.id));
+    const todayAll = todayPage.items || [];
+    const todayMine = todayAll.filter((j) => isFromMe(j));
+    const todayPlatform = todayAll.filter((j) => !isFromMe(j));
 
-    // Ready to apply: suggested matches whose tailoring pipeline finished.
-    const ready = (suggestedItems || []).filter((j) => pipelineComplete(j));
+    const dashboardCounts = {
+      all: counts && counts.all != null ? counts.all : allPage.total,
+      today: counts && counts.today != null ? counts.today : todayPage.total,
+      mine: counts && counts.mine != null ? counts.mine : todayMine.length,
+      suggested: counts && counts.suggested != null ? counts.suggested : 0,
+      applied_today:
+        counts && counts.applied_today != null ? counts.applied_today : appliedPage.total,
+    };
 
-    const appliedToday = (allItems || []).filter((j) => j.applied_at && new Date(j.applied_at) >= today);
-    appliedToday.sort((a, b) => new Date(b.applied_at || 0) - new Date(a.applied_at || 0));
+    const pumbleConfigured = Boolean(
+      pumbleCfg &&
+        ((Array.isArray(pumbleCfg.integrations) && pumbleCfg.integrations.length > 0) ||
+          pumbleCfg.configured)
+    );
+    const pumbleDestinationCount = Array.isArray(pumbleCfg?.integrations)
+      ? pumbleCfg.integrations.filter((i) => i.is_enabled !== false).length
+      : pumbleCfg?.configured
+        ? 1
+        : 0;
 
-    setState({
+    const nextHome = {
       sessions: sessions || [],
-      queue: ready,
+      queue: allPage.items || [],
       todayQueue: todayAll,
       todayPlatformQueue: todayPlatform,
       todayMineQueue: todayMine,
-      todayCounts: { all: todayAll.length, platform: todayPlatform.length, mine: todayMine.length },
-      appliedQueue: appliedToday,
-      pageByTab: { progress: 1, today: 1, ready: 1, applied: 1 },
+      todayCounts: {
+        all: dashboardCounts.today,
+        platform: todayPlatform.length,
+        mine: todayMine.length,
+      },
+      dashboardCounts,
+      weeklyProgress: weekly || state.weeklyProgress,
+      scraperStats: scraperStats || state.scraperStats,
+      appliedQueue: appliedPage.items || [],
+      pumbleConfigured,
+      pumbleDestinationCount,
+    };
+
+    // Silent poll with identical data: skip the DOM rebuild (main scroll-jump cause).
+    if (silent && !state.queueLoading && homeDataUnchanged(state, nextHome)) {
+      return;
+    }
+
+    const syncedRuns = syncTailorRunsFromJobs([
+      ...(nextHome.queue || []),
+      ...(nextHome.todayQueue || []),
+    ]);
+
+    setState({
+      ...nextHome,
+      ...(syncedRuns ? { tailorRuns: syncedRuns } : {}),
+      ...(silent ? {} : { pageByTab: { progress: 1, today: 1, ready: 1, tailor: 1 } }),
       queueLoading: false,
-      pumbleConfigured: Boolean(
-        pumbleCfg &&
-          ((Array.isArray(pumbleCfg.integrations) && pumbleCfg.integrations.length > 0) ||
-            pumbleCfg.configured),
-      ),
-      pumbleDestinationCount: Array.isArray(pumbleCfg?.integrations)
-        ? pumbleCfg.integrations.filter((i) => i.is_enabled !== false).length
-        : pumbleCfg?.configured
-          ? 1
-          : 0,
     });
   } catch (err) {
-    setState({ error: err.message, queueLoading: false });
+    setState({ error: silent ? state.error : err.message, queueLoading: false });
   }
+}
+
+function syncTailorRunsFromJobs(jobs) {
+  const runs = state.tailorRuns || [];
+  if (!runs.length) return null;
+  const byId = new Map((jobs || []).filter((j) => j && j.id).map((j) => [j.id, j]));
+  let changed = false;
+  const next = runs.map((r) => {
+    if (r.kind !== "job" || r.status !== "running" || !r.jobId) return r;
+    const j = byId.get(r.jobId);
+    if (!j) return r;
+    if (jobResumeReady(j)) {
+      changed = true;
+      return { ...r, status: "done", stage: "done", label: "Content ready" };
+    }
+    if (jobResumeFailed(j)) {
+      changed = true;
+      return {
+        ...r,
+        status: "error",
+        stage: "error",
+        label: resumeProgressLabel(j),
+        error: resumeProgressLabel(j),
+      };
+    }
+    const label = resumeProgressLabel(j);
+    if (label && label !== r.label) {
+      changed = true;
+      return { ...r, label, stage: "processing" };
+    }
+    return r;
+  });
+  return changed ? next : null;
 }
 
 async function applyMinScore(value) {
   const n = await store.setMinScore(value);
   setState({ minScore: n });
   await loadQueue();
-}
-
-async function applyAutoAdvance(value) {
-  const v = await store.setAutoAdvance(value);
-  setState({ autoAdvance: v });
 }
 
 // ── job / chat actions ───────────────────────────────────────────────────────
@@ -676,20 +1090,28 @@ async function consumePendingWebappJob() {
 }
 
 async function openJob(jobId, { redirect = false, keepReportNotice = false } = {}) {
+  stopHomePolling();
+  if (state.streaming) stopStreaming();
   setState({
     view: "job",
     job: null,
+    jdOpen: true,
     error: null,
     ...(keepReportNotice ? {} : { reportNotice: null }),
   });
   try {
     await api.createSession(jobId);
+    // Fresh chat per application open — prior turns for this job must not linger.
+    await api.clearSessionMessages(jobId).catch(() => {});
     const detail = await api.getSessionDetail(jobId);
     const snap = detail.job_snapshot || {};
     if (redirect && (snap.url || detail.job_url)) {
       await redirectActiveTab(snap.url || detail.job_url);
     }
+    const docs = await loadJobDocsAvailability(jobId);
     setState({
+      // Fresh application → JD expanded again; chat collapse happens in askQuestion.
+      jdOpen: true,
       job: {
         job_id: jobId,
         url: snap.url || detail.job_url,
@@ -701,15 +1123,147 @@ async function openJob(jobId, { redirect = false, keepReportNotice = false } = {
         applied: !!detail.applied_at,
         appliedAt: detail.applied_at || null,
         pumblePosted: jobHasPumblePosted(jobId),
-        messages: detail.messages || [],
+        messages: [],
+        docs,
         // Engine preview from the snapshot URL; re-resolved against the live tab
         // URL when autofill actually starts.
         engine: resolveEngine({ snapshot: snap }),
       },
     });
+    // Arm selection→chat hotkey on the application tab (and future navigations).
+    const applyUrl = snap.url || detail.job_url;
+    void ensureAskHotkeyOnActiveTab({ requestPermission: true, jobUrl: applyUrl });
+    if (redirect) {
+      // Navigation is async — reinject after the application page settles.
+      setTimeout(() => {
+        void ensureAskHotkeyOnActiveTab({ requestPermission: false, jobUrl: applyUrl });
+      }, 1800);
+    }
+    void consumePendingAskSelection();
+    // Never re-consume a submit event after Complete & Next redirects — a stale
+    // pendingAppSubmitted (rewritten by background after we cleared it) would
+    // auto-complete the *next* job and skip its URL.
+    if (!redirect) {
+      void consumePendingAppSubmitted();
+    }
+    try {
+      await chrome.storage.session.set({ activeApplyJobId: String(jobId) });
+    } catch {
+      /* ignore */
+    }
+    // Enable download buttons when tailored files finish after the panel opened.
+    void pollJobDocs(jobId, 0);
   } catch (err) {
     setState({ error: err.message });
   }
+}
+
+function emptyJobDocs() {
+  return {
+    resumePdf: false,
+    resumeDocx: false,
+    coverPdf: false,
+    coverDocx: false,
+    loading: false,
+  };
+}
+
+function docsSignature(docs) {
+  const d = docs || emptyJobDocs();
+  return [!!d.resumePdf, !!d.resumeDocx, !!d.coverPdf, !!d.coverDocx].join("|");
+}
+
+function docsBothReady(docs) {
+  const d = docs || emptyJobDocs();
+  return !!(d.resumePdf || d.resumeDocx) && !!(d.coverPdf || d.coverDocx);
+}
+
+function docsFromDashboardJob(j) {
+  if (!j) return null;
+  return {
+    resumePdf: String(j.resume_pdf_status || "").toLowerCase() === "completed",
+    resumeDocx: String(j.resume_build_status || j.resume_docx_status || "").toLowerCase() === "completed",
+    coverPdf: String(j.cover_letter_pdf_status || "").toLowerCase() === "completed",
+    coverDocx: String(j.cover_letter_docx_status || "").toLowerCase() === "completed",
+    loading: false,
+  };
+}
+
+async function loadJobDocsAvailability(jobId) {
+  // Prefer live build status; fall back to dashboard queue fields already in memory.
+  try {
+    const st = await api.getResumeBuildStatus(jobId);
+    return {
+      resumePdf: String(st.resume_pdf_status || "").toLowerCase() === "completed",
+      resumeDocx: String(st.resume_docx_status || "").toLowerCase() === "completed",
+      coverPdf: String(st.cover_letter_pdf_status || "").toLowerCase() === "completed",
+      coverDocx: String(st.cover_letter_docx_status || "").toLowerCase() === "completed",
+      loading: false,
+    };
+  } catch {
+    /* 404 = no build yet */
+  }
+  const pools = [
+    state.todayQueue,
+    state.todayMineQueue,
+    state.todayPlatformQueue,
+    state.queue,
+    state.appliedQueue,
+  ];
+  for (const pool of pools) {
+    const match = (pool || []).find((j) => j && j.id === jobId);
+    const docs = docsFromDashboardJob(match);
+    if (docs && (docs.resumePdf || docs.resumeDocx || docs.coverPdf || docs.coverDocx)) {
+      return docs;
+    }
+  }
+  return emptyJobDocs();
+}
+
+async function pollJobDocs(jobId, attempt) {
+  if (!state.job || state.job.job_id !== jobId || attempt > 36) return;
+  if (docsBothReady(state.job.docs)) return;
+  try {
+    const docs = await loadJobDocsAvailability(jobId);
+    if (!state.job || state.job.job_id !== jobId) return;
+    if (docsSignature(docs) !== docsSignature(state.job.docs)) {
+      setState({ job: { ...state.job, docs } });
+    }
+    if (docsBothReady(docs)) return;
+  } catch {
+    /* keep polling */
+  }
+  setTimeout(() => pollJobDocs(jobId, attempt + 1), 5000);
+}
+
+async function downloadJobDoc(jobId, fileTypes, label) {
+  if (!jobId) return;
+  const types = [].concat(fileTypes).filter(Boolean);
+  if (!types.length) return;
+  toast(`Preparing ${label}…`);
+  let lastErr = null;
+  for (const fileType of types) {
+    try {
+      const file = await api.downloadResumeFile(jobId, fileType);
+      const binary = atob(file.base64 || "");
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: file.mime || "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.filename || `${label.replace(/\s+/g, "_")}.${fileType.endsWith("docx") ? "docx" : "pdf"}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast(`${label} downloaded`);
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  toast((lastErr && lastErr.message) || `Could not download ${label}.`);
 }
 
 async function redirectActiveTab(url) {
@@ -758,6 +1312,7 @@ async function pollReady(jobId, attempt) {
       setState({
         job: { ...state.job, snapshot: snap, ready: true, score: snap.match_score, title: snap.title || state.job.title },
       });
+      void pollJobDocs(jobId, 0);
       return;
     }
   } catch {
@@ -773,7 +1328,9 @@ async function askQuestion(message) {
   const assistantMsg = { role: "assistant", content: "", _streaming: true };
   job.messages = [...job.messages, userMsg, assistantMsg];
   const abort = new AbortController();
-  setState({ streaming: true, abort, job: { ...job } });
+  // Free vertical space for the thread: collapse JD when chat starts. User can
+  // still re-expand via the summary; that preference is kept in state.jdOpen.
+  setState({ streaming: true, abort, jdOpen: false, job: { ...job } });
 
   await api.chatStream(
     {
@@ -851,33 +1408,128 @@ async function postJobsToPumble(jobIds) {
   }
 }
 
+let autoCompleteFromSubmit = false;
+let lastAutoCompleteJobId = null;
+let lastAutoCompleteAt = 0;
+// Global advance mutex — outlives a single completeJob so Workday detect +
+// submit-watch + pendingAppSubmitted cannot Complete & Next job B immediately
+// after advancing A→B (which marks B applied and jumps to C).
+let completeInFlight = false;
+let completingJobId = null;
+let lastAdvanceCompletedAt = 0;
+const ADVANCE_COOLDOWN_MS = 12_000;
+
 async function completeJob({ next }) {
   if (!state.job) return;
   const jobId = state.job.job_id;
-  await teardownAutofill();
+  if (completeInFlight) return;
+  if (completingJobId === jobId) return;
+  completeInFlight = true;
+  completingJobId = jobId;
+  let advancedOk = false;
   try {
-    await api.markApplied([jobId]);
-    await api.updateSession(jobId, "completed").catch(() => {});
-  } catch (err) {
-    setState({ error: err.message });
-    return;
-  }
-  if (next) {
     try {
-      const nx = await api.nextJob(jobId);
-      if (nx && nx.job_id) {
-        await openJob(nx.job_id, { redirect: true });
-        toast(`Loaded next job (${nx.remaining} ready remaining).`);
-        return;
-      }
-      toast("No more ready-to-apply jobs.");
-      await goHome();
+      await chrome.storage.session.remove("pendingAppSubmitted");
+    } catch {
+      /* ignore */
+    }
+    await teardownAutofill();
+    try {
+      await api.markApplied([jobId]);
+      await api.updateSession(jobId, "completed").catch(() => {});
     } catch (err) {
       setState({ error: err.message });
+      return;
     }
-  } else {
-    // Complete & Exit closes the side panel.
-    window.close();
+    if (next) {
+      try {
+        const nx = await api.nextJob(jobId);
+        if (nx && nx.job_id) {
+          await openJob(nx.job_id, { redirect: true });
+          toast(`Loaded next job (${nx.remaining} ready remaining).`);
+          advancedOk = true;
+          return;
+        }
+        toast("No more ready-to-apply jobs.");
+        await goHome();
+        advancedOk = true;
+      } catch (err) {
+        setState({ error: err.message });
+      }
+    } else {
+      // Complete & Exit closes the side panel.
+      window.close();
+    }
+  } finally {
+    if (next && advancedOk) {
+      lastAdvanceCompletedAt = Date.now();
+      lastAutoCompleteJobId = jobId;
+      lastAutoCompleteAt = lastAdvanceCompletedAt;
+      // Hold the lock across the next-job load so late APP_SUBMITTED / pending
+      // cannot auto-complete the freshly opened job.
+      setTimeout(() => {
+        if (completingJobId === jobId) {
+          completeInFlight = false;
+          completingJobId = null;
+        }
+      }, ADVANCE_COOLDOWN_MS);
+    } else {
+      completeInFlight = false;
+      completingJobId = null;
+    }
+  }
+}
+
+/** Page submit detected → same path as Complete & Next. */
+async function handleApplicationSubmitted(msg) {
+  try {
+    await chrome.storage.session.remove("pendingAppSubmitted");
+  } catch {
+    /* ignore */
+  }
+  if (completeInFlight || autoCompleteFromSubmit) return;
+  const now = Date.now();
+  // After A→B, ignore submit signals for a cooldown regardless of job id.
+  if (lastAdvanceCompletedAt && now - lastAdvanceCompletedAt < ADVANCE_COOLDOWN_MS) return;
+  if (state.view !== "job" || !state.job || !state.job.job_id) return;
+  if (state.job.applied) return;
+  const jobId = state.job.job_id;
+  const msgJobId = msg && msg.jobId != null ? String(msg.jobId) : "";
+  // Stale submit for a previous job must never complete the current one.
+  if (msgJobId && msgJobId !== String(jobId)) return;
+  if (lastAutoCompleteJobId === jobId && now - lastAutoCompleteAt < 8000) return;
+  lastAutoCompleteJobId = jobId;
+  lastAutoCompleteAt = now;
+  autoCompleteFromSubmit = true;
+  try {
+    toast("Application submitted — completing & loading next…");
+    await completeJob({ next: true });
+  } finally {
+    autoCompleteFromSubmit = false;
+  }
+}
+
+async function consumePendingAppSubmitted() {
+  try {
+    const data = await chrome.storage.session.get("pendingAppSubmitted");
+    const pending = data && data.pendingAppSubmitted;
+    if (!pending || !pending.at) return;
+    if (Date.now() - Number(pending.at) > 45_000) {
+      await chrome.storage.session.remove("pendingAppSubmitted");
+      return;
+    }
+    // Pending written during Complete & Next for job A must not fire on job B.
+    if (completeInFlight) {
+      await chrome.storage.session.remove("pendingAppSubmitted");
+      return;
+    }
+    if (lastAdvanceCompletedAt && Date.now() - lastAdvanceCompletedAt < ADVANCE_COOLDOWN_MS) {
+      await chrome.storage.session.remove("pendingAppSubmitted");
+      return;
+    }
+    await handleApplicationSubmitted(pending);
+  } catch (err) {
+    console.warn("consumePendingAppSubmitted failed", err);
   }
 }
 
@@ -1052,10 +1704,12 @@ async function startWorkdayAutofill(tab, engine) {
   }
 
   try {
+    const runSeq = ++wdRunSeq;
     await chrome.tabs.sendMessage(tab.id, {
       type: "WD_RUN",
       profile,
-      options: { autoAdvance: false, resumeFile },
+      options: { autoAdvance: false, resumeFile, newAttempt: true },
+      runSeq,
     });
     armWorkdayWatchdog();
   } catch (err) {
@@ -1070,9 +1724,12 @@ async function startWorkdayAutofill(tab, engine) {
 // (LLM recover + re-flush if needed) → Save & Continue. Stops at Review, when
 // stuck, when errors persist after recovery, or when the user hits Stop.
 const WD_MAX_STEPS = 9;
-// Per step: how many Save attempts (each preceded by an LLM recovery pass when
-// Workday reports errors before or after the Save click).
-const WD_MAX_RECOVERIES = 3;
+// Per step: hard cap on WD_RUN fill passes (initial + recoveries). Default 3 so a
+// stuck My Information page cannot pile up 7 identical reports (old loop ran up
+// to 1 initial + 3 attempts × 2 recoveries).
+const WD_MAX_STEP_FILLS = 3;
+// Per step: how many Save attempts after the initial fill.
+const WD_MAX_SAVE_ATTEMPTS = 3;
 
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -1138,76 +1795,126 @@ async function focusPageAndFlush(tabId) {
 }
 
 async function fillCurrentStep(tabId, profile, resumeFile, extraOptions) {
+  if (state.autofill.loopStop || !state.autofill.active) return { aborted: true };
+  const runSeq = ++wdRunSeq;
   const wait = waitWorkdayFill();
   const options = { autoAdvance: false, resumeFile, ...(extraOptions || {}) };
-  await tabSend(tabId, { type: "WD_RUN", profile, options }, 0);
+  try {
+    await tabSend(tabId, { type: "WD_RUN", profile, options, runSeq }, 0);
+  } catch (err) {
+    if (wdStepWaiter) wdStepWaiter({ error: (err && err.message) || String(err) });
+  }
+  // Stop may have resolved the waiter while tabSend was in flight.
+  if (state.autofill.loopStop) {
+    void tabBroadcast(tabId, { type: "WD_ABORT", minRunSeq: wdRunSeq });
+  }
   return wait;
+}
+
+function workdayReallyAdvanced(fromStep, next) {
+  if (!next || !next.advanced || (next && next.aborted)) return false;
+  const after = next.after;
+  if (!after || after === fromStep || after === "generic") return false;
+  return true;
 }
 
 async function autoAdvanceWorkday(tabId, profile, resumeFile) {
   const loopStopped = () => state.autofill.loopStop || !state.autofill.active;
+  // First WD_RUN of this session clears the failed-field skip set; recoveries keep it.
+  let sessionFresh = true;
   try {
     for (let i = 0; i < WD_MAX_STEPS; i++) {
       if (loopStopped()) return finishLoop("stopped");
 
       const det = await tabSend(tabId, { type: "WD_DETECT" }, 0);
       const step = det && det.step;
+      if (step === "submitted") {
+        finishLoop("submitted");
+        await handleApplicationSubmitted({
+          reason: "wd-detect-submitted",
+          jobId: state.job && state.job.job_id,
+        });
+        return;
+      }
       if (!step) return finishLoop(state.autofill.reports.length ? "done" : "none");
       if (step === "review") return finishLoop("review");
 
       const label = WD_STEP_LABELS[step] || step;
+      let fillsUsed = 0;
+      const runFill = async (extraOptions) => {
+        if (loopStopped()) return { aborted: true };
+        if (fillsUsed >= WD_MAX_STEP_FILLS) return { skipped: true };
+        fillsUsed += 1;
+        const opts = { ...(extraOptions || {}), newAttempt: sessionFresh };
+        sessionFresh = false;
+        return fillCurrentStep(tabId, profile, resumeFile, opts);
+      };
 
       // Initial fill of the step.
       setAutofill({ loopStatus: `Filling ${label}…` });
-      const fill = await fillCurrentStep(tabId, profile, resumeFile);
+      const fill = await runFill();
+      if (fill.aborted || loopStopped()) return finishLoop("stopped");
       if (fill.error) return finishLoop("error", fill.error);
 
       // Clear validation and advance. CRITICAL: Workday surfaces most required-
       // field errors only AFTER clicking "Save and Continue", so a clean pre-save
-      // check is not enough. Each attempt: flush → fix visible errors via LLM →
-      // Save → if it didn't move, re-validate (errors now show), LLM-recover, and
-      // retry. Only give up after exhausting attempts (naming the stuck fields).
+      // check is not enough. Cap fills at WD_MAX_STEP_FILLS (default 3) so recovery
+      // cannot re-drive the same prompts indefinitely.
       let advanced = false;
       let lastNames = [];
-      for (let attempt = 0; attempt < WD_MAX_RECOVERIES && !advanced; attempt++) {
+      for (let attempt = 0; attempt < WD_MAX_SAVE_ATTEMPTS && !advanced; attempt++) {
         if (loopStopped()) return finishLoop("stopped");
         setAutofill({ loopStatus: `Committing ${label}…` });
         await focusPageAndFlush(tabId);
+        if (loopStopped()) return finishLoop("stopped");
 
-        // Fix anything already flagged before saving.
+        // Fix anything already flagged before saving (if we still have fill budget).
         let v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
-        if (v && !v.clean) {
+        if (v && !v.clean && fillsUsed < WD_MAX_STEP_FILLS) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
           console.debug(`[workday] auto-advance: ${label} pre-save errors`, v.invalidFields);
           setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
-          const rec = await fillCurrentStep(tabId, profile, resumeFile, { onlyInvalid: v.invalidFields });
+          const rec = await runFill({ onlyInvalid: v.invalidFields });
+          if (rec.aborted || loopStopped()) return finishLoop("stopped");
           if (rec.error) return finishLoop("error", rec.error);
           await focusPageAndFlush(tabId);
+          if (loopStopped()) return finishLoop("stopped");
         }
 
         // Try to advance.
         setAutofill({ loopStatus: `Advancing from ${label}…` });
         const next = await tabSend(tabId, { type: "WD_NEXT" }, 0);
-        if (next && next.advanced) {
-          advanced = true;
-          break;
+        if (loopStopped() || (next && next.aborted)) return finishLoop("stopped");
+        if (workdayReallyAdvanced(step, next)) {
+          // Re-detect: reject false positives from transient detectStep flips.
+          const confirm = await tabSend(tabId, { type: "WD_DETECT" }, 0);
+          if (confirm && confirm.step && confirm.step !== step && confirm.step !== "generic") {
+            advanced = true;
+            break;
+          }
+          console.debug(`[workday] auto-advance: ${label} false advance ignored`, next, confirm);
         }
 
         // Didn't advance - re-validate; Workday likely just revealed errors on Save.
         await focusPageAndFlush(tabId);
+        if (loopStopped()) return finishLoop("stopped");
         v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
           console.debug(`[workday] auto-advance: ${label} post-save errors`, v.invalidFields);
-          setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
-          const rec = await fillCurrentStep(tabId, profile, resumeFile, { onlyInvalid: v.invalidFields });
-          if (rec.error) return finishLoop("error", rec.error);
-          // loop retries the Save with the freshly LLM-filled values
+          if (fillsUsed < WD_MAX_STEP_FILLS) {
+            setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
+            const rec = await runFill({ onlyInvalid: v.invalidFields });
+            if (rec.aborted || loopStopped()) return finishLoop("stopped");
+            if (rec.error) return finishLoop("error", rec.error);
+            // next save attempt uses the freshly filled values
+          }
         } else {
           // No detectable error but it didn't move - maybe a slow navigation.
           await delay(1600);
+          if (loopStopped()) return finishLoop("stopped");
           const d2 = await tabSend(tabId, { type: "WD_DETECT" }, 0);
-          if (d2 && d2.step && d2.step !== step) {
+          if (d2 && d2.step && d2.step !== step && d2.step !== "generic") {
             advanced = true;
             break;
           }
@@ -1217,17 +1924,37 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
 
       if (loopStopped()) return finishLoop("stopped");
       if (!advanced) {
+        // Post-submit confirmation can look like a dead-end step; Complete & Next.
+        const recheck = await tabSend(tabId, { type: "WD_DETECT" }, 0);
+        if (recheck && recheck.step === "submitted") {
+          finishLoop("submitted");
+          await handleApplicationSubmitted({
+            reason: "wd-stuck-submitted",
+            jobId: state.job && state.job.job_id,
+          });
+          return;
+        }
+        if (recheck && recheck.step === "review") return finishLoop("review");
         return finishLoop(
           "needs_user",
           lastNames.length ? `Couldn't resolve on ${label}: ${lastNames.join(", ")}` : `Couldn't advance past ${label} (no fixable errors detected).`
         );
       }
       const afterStep = await tabSend(tabId, { type: "WD_DETECT" }, 0);
+      if (afterStep && afterStep.step === "submitted") {
+        finishLoop("submitted");
+        await handleApplicationSubmitted({
+          reason: "wd-after-advance-submitted",
+          jobId: state.job && state.job.job_id,
+        });
+        return;
+      }
       if (afterStep && afterStep.step === "review") return finishLoop("review");
       await delay(600);
     }
     return finishLoop("guard");
   } catch (err) {
+    if (loopStopped()) return finishLoop("stopped");
     return finishLoop("error", (err && err.message) || String(err));
   }
 }
@@ -1235,6 +1962,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
 function finishLoop(reason, error) {
   const messages = {
     review: "Reached the Review step - review and submit when you're ready.",
+    submitted: "Application submitted — loading next job…",
     done: "Finished the available steps.",
     none: "No Workday application step was detected on this page.",
     stopped: "Auto-advance stopped.",
@@ -1254,8 +1982,39 @@ function finishLoop(reason, error) {
   });
 }
 
-function stopAutoAdvance() {
+/** Immediate stop: invalidate runSeq, abort the page engine, unblock the waiter. */
+function stopWorkdayAutofill() {
+  wdRunSeq += 1;
   setAutofill({ loopStop: true, loopStatus: "Stopping…" });
+  const tabId = state.autofill && state.autofill.tabId;
+  if (tabId != null) {
+    try {
+      void tabBroadcast(tabId, { type: "WD_ABORT", minRunSeq: wdRunSeq });
+    } catch {
+      /* tab may be gone */
+    }
+  }
+  if (wdStepWaiter) {
+    try {
+      wdStepWaiter({ aborted: true });
+    } catch {
+      /* ignore */
+    }
+  }
+  // Single-step (non-loop) runs have no autoAdvanceWorkday to call finishLoop.
+  if (state.autofill && state.autofill.running && !state.autofill.autoLoop) {
+    setAutofill({
+      running: false,
+      done: true,
+      loopFinished: "stopped",
+      loopMessage: "Autofill stopped.",
+      loopStatus: null,
+    });
+  }
+}
+
+function stopAutoAdvance() {
+  stopWorkdayAutofill();
 }
 
 // If no frame contains a Workday step, none reply - surface that after a wait.
@@ -1272,9 +2031,22 @@ async function teardownAutofill() {
   const af = state.autofill;
   if (af && af.tabId != null) {
     try {
+      wdRunSeq += 1;
+      await tabBroadcast(af.tabId, { type: "WD_ABORT", minRunSeq: wdRunSeq });
+    } catch {
+      /* tab may be gone */
+    }
+    try {
       await tabBroadcast(af.tabId, { type: "AF_CLEAR" });
     } catch {
       /* tab may be gone */
+    }
+  }
+  if (wdStepWaiter) {
+    try {
+      wdStepWaiter({ aborted: true });
+    } catch {
+      /* ignore */
     }
   }
   state.autofill = emptyAutofill();
@@ -1569,9 +2341,15 @@ function maybeAutoRun() {
 function buildPreferences() {
   const s = (state.cache && state.cache.settings) || {};
   const prefs = {};
-  const strat = s.application_answer_strategy || s.autofill_answer_strategy || s.answer_strategy;
+  const localStrat = (state.answerStrategy || "").trim();
+  const strat =
+    localStrat ||
+    s.application_answer_strategy ||
+    s.autofill_answer_strategy ||
+    s.answer_strategy;
   if (strat) prefs.answer_strategy = String(strat);
-  const src = s.application_resume_source || s.resume_source;
+  const localSrc = state.resumeSource === "original" ? "original" : "tailored";
+  const src = localSrc || s.application_resume_source || s.resume_source;
   if (src) prefs.resume_source = String(src);
   return Object.keys(prefs).length ? prefs : undefined;
 }
@@ -1611,6 +2389,42 @@ function extractSpecs(tabId, handles) {
     }
     setTimeout(finish, timeoutMs);
   });
+}
+
+function looksLikeResumeOrCoverLabel(label) {
+  const t = String(label || "").toLowerCase();
+  if (!t) return false;
+  if (/\bcover\s*letter\b/.test(t)) return true;
+  return /\b(resume|cv|curriculum\s*vitae)\b/.test(t);
+}
+
+function inferFileRoleFromLabel(label) {
+  const t = String(label || "").toLowerCase();
+  if (/\bcover\s*letter\b/.test(t)) return "cover_letter";
+  if (/\b(resume|cv|curriculum\s*vitae)\b/.test(t)) return "resume";
+  return null;
+}
+
+/** Ensure file controls get resume/cover_letter roles from their labels when the model omits them. */
+function normalizeFileRolesInResults(results, specs) {
+  const labelByCid = {};
+  const fileCids = new Set();
+  for (const f of specs || []) {
+    for (const c of f.controls || []) {
+      if (!c || !c.is_file) continue;
+      fileCids.add(c.cid);
+      labelByCid[c.cid] = c.label || f.label || "";
+    }
+  }
+  for (const r of results || []) {
+    for (const c of r.controls || []) {
+      if (!fileCids.has(c.cid)) continue;
+      const role = String(c.file_role || "").toLowerCase();
+      if (role === "resume" || role === "cover_letter") continue;
+      const inferred = inferFileRoleFromLabel(labelByCid[c.cid]);
+      if (inferred) c.file_role = inferred;
+    }
+  }
 }
 
 // Fetch a generated file for a role, preferring PDF (or whatever the field
@@ -1902,11 +2716,31 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       console.groupEnd();
     } catch {}
 
+    // Normalize file roles from labels when the model leaves them as "other"/empty,
+    // then decide file needs_user from whether we can actually download the file —
+    // never from the LLM's guess (it has no visibility into generated PDFs).
+    normalizeFileRolesInResults(results, apiSpecs);
+
     for (const r of results) {
       for (const c of r.controls || []) {
-        if (c.needs_user) {
-          ctx.needsUser.push({ cid: c.cid, label: ctx.labelByCid[c.cid] || "Field", reason: c.reason || "Needs your input" });
+        if (!c.needs_user) continue;
+        // File controls are handled below via fetchFilesForResults.
+        if (c.file_role === "resume" || c.file_role === "cover_letter") {
+          c.needs_user = false;
+          c.reason = null;
+          continue;
         }
+        const label = ctx.labelByCid[c.cid] || "Field";
+        if (looksLikeResumeOrCoverLabel(label)) {
+          c.needs_user = false;
+          c.reason = null;
+          continue;
+        }
+        ctx.needsUser.push({
+          cid: c.cid,
+          label,
+          reason: c.reason || "Needs your input",
+        });
       }
     }
 
@@ -1917,7 +2751,14 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
         m.role === "cover_letter"
           ? "no cover letter file was generated for this job (set up a cover letter template and build it)"
           : "no resume file was generated for this job yet";
-      ctx.needsUser.push({ cid: m.cid, label: roleLabel, reason: `Upload manually - ${why}` });
+      // Avoid duplicate rows if a prior pass already reported this cid.
+      if (!ctx.needsUser.some((x) => x.cid === m.cid)) {
+        ctx.needsUser.push({
+          cid: m.cid,
+          label: ctx.labelByCid[m.cid] || roleLabel,
+          reason: `Upload manually - ${why}`,
+        });
+      }
     }
 
     const writeCount = results.reduce((n, r) => n + (r.controls || []).length, 0);
@@ -1943,6 +2784,15 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       if (split.pending) breezyResumePending = split.pending;
     }
     await writeAndWait(tabId, writeResults, writeFiles);
+
+    // Drop false "needs you" rows for controls that actually filled/attached.
+    if (ctx.needsUser.length) {
+      const st = state.autofill.statuses || {};
+      ctx.needsUser = ctx.needsUser.filter((item) => {
+        const s = st[item.cid];
+        return s !== "filled" && s !== "attached";
+      });
+    }
 
     // Remember stable identity answers (EEO/work-auth/consent) that actually
     // committed, so future jobs replay them without harvesting menus or
@@ -2008,6 +2858,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       const ok = await uploadLeverResumeLast(tabId, leverResumePending);
       if (ok) {
         console.log("[autofill] Lever resume uploaded last");
+        markFileControlAttached(ctx, leverResumePending.cid);
         await delay(1200);
         await commitPrefilled(tabId);
       }
@@ -2019,6 +2870,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       const ok = await uploadWorkableResumeLast(tabId, workableResumePending);
       if (ok) {
         console.log("[autofill] Workable resume uploaded last");
+        markFileControlAttached(ctx, workableResumePending.cid);
         await delay(1200);
         await commitPrefilled(tabId);
       }
@@ -2029,6 +2881,18 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   }
 
   return lastSpecs;
+}
+
+function markFileControlAttached(ctx, cid) {
+  if (!cid) return;
+  const statuses = { ...(state.autofill.statuses || {}), [cid]: "attached" };
+  if (ctx && Array.isArray(ctx.needsUser)) {
+    ctx.needsUser = ctx.needsUser.filter((item) => item.cid !== cid);
+  }
+  setAutofill({
+    statuses,
+    needsUser: ctx && Array.isArray(ctx.needsUser) ? ctx.needsUser : state.autofill.needsUser,
+  });
 }
 
 async function runAutofill() {
@@ -2128,10 +2992,18 @@ async function runAutofill() {
       const ok = await uploadBreezyResumeLast(tabId, ctx.breezyResumePending);
       if (ok) {
         console.log("[autofill] Breezy resume uploaded last");
+        markFileControlAttached(ctx, ctx.breezyResumePending.cid);
         await delay(1200);
         await commitPrefilled(tabId);
       }
     }
+
+    // Final sweep: never show a manual-review row for controls that attached/filled.
+    const finalStatuses = state.autofill.statuses || {};
+    ctx.needsUser = (ctx.needsUser || []).filter((item) => {
+      const s = finalStatuses[item.cid];
+      return s !== "filled" && s !== "attached";
+    });
 
     setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: ctx.needsUser });
   } catch (err) {
@@ -2152,7 +3024,7 @@ function render() {
 
   const modal = renderModal();
   if (modal) root.appendChild(modal);
-  if (state.toast) root.appendChild(el("div", { class: "toast" }, state.toast));
+  paintToast();
 }
 
 function renderModal() {
@@ -2319,48 +3191,200 @@ function field(label, input) {
 function renderHome() {
   const wrap = el("div", { class: "screen" });
   wrap.appendChild(renderHeader());
-  wrap.appendChild(renderPreferencesBar());
 
   if (state.sync) wrap.appendChild(renderSyncBanner());
   if (state.error) wrap.appendChild(el("div", { class: "error", onclick: () => setState({ error: null }) }, state.error));
 
-  wrap.appendChild(renderProviderBadge());
-  wrap.appendChild(renderJobTabs());
-  wrap.appendChild(renderActiveTab());
+  if (state.homeTab === "hub") {
+    wrap.appendChild(renderWeeklyProgress());
+    wrap.appendChild(renderHomeTiles());
+  } else {
+    wrap.appendChild(renderHomeSection());
+  }
   return wrap;
 }
 
-// Topic tabs across the top of Home: In progress / New today / Ready to apply.
-function renderJobTabs() {
-  const tabs = [
-    { id: "progress", label: "In progress", count: state.sessions.length },
-    { id: "today", label: "New today", count: state.todayCounts.all || state.todayQueue.length },
-    { id: "ready", label: "Ready to apply", count: state.queue.length },
-    { id: "applied", label: "Applied", count: state.appliedQueue.length },
-  ];
-  return el(
-    "div",
-    { class: "tabs" },
-    tabs.map((t) =>
-      el(
-        "button",
-        {
-          class: "tab" + (t.id === state.homeTab ? " active" : ""),
-          onclick: () =>
-            setState({
-              homeTab: t.id,
-              pageByTab: { ...state.pageByTab, [t.id]: 1 },
-            }),
-        },
-        [
-          el("span", {}, t.label),
-          state.queueLoading
-            ? el("span", { class: "tab-count loading" }, el("span", { class: "spinner-sm" }))
-            : el("span", { class: "tab-count" }, String(t.count)),
-        ]
-      )
-    )
+const HOME_SECTION_META = {
+  progress: { title: "In progress", empty: "No applications in progress yet." },
+  today: { title: "Today new jobs", empty: "No jobs were added today." },
+  ready: { title: "All jobs", empty: null },
+  tailor: { title: "Tailor resume", empty: null },
+  stats: { title: "Statistics", empty: null },
+  settings: { title: "Settings", empty: null },
+};
+
+function renderHomeSection() {
+  const meta = HOME_SECTION_META[state.homeTab] || { title: "Home" };
+  const section = el("div", { class: "home-section" });
+  section.appendChild(
+    el("div", { class: "home-section-head" }, [
+      el("button", { class: "btn link home-back", onclick: () => backToHub() }, [
+        icon(ICON_BACK, "btn-ico"),
+        el("span", {}, "Home"),
+      ]),
+      el("h2", { class: "home-section-title" }, meta.title),
+    ])
   );
+  section.appendChild(renderActiveTab());
+  return section;
+}
+
+// Hub tile grid (matches the sketched layout).
+function renderWeeklyProgress() {
+  const wp = state.weeklyProgress;
+  const series = (wp && wp.series) || [];
+  const totals = (wp && wp.totals) || { posted: 0, recommended: 0, applied: 0 };
+  const minScore = wp && wp.min_match_score != null ? wp.min_match_score : null;
+
+  const wrap = el("div", { class: "weekly-progress" });
+  wrap.appendChild(
+    el("div", { class: "weekly-progress-head" }, [
+      el("div", { class: "weekly-progress-title" }, "Weekly progress"),
+      el(
+        "div",
+        { class: "weekly-progress-sub muted small" },
+        minScore != null
+          ? `Recommended = match ≥ ${minScore} (Preferences)`
+          : "Posted · Recommended · Applied"
+      ),
+    ])
+  );
+
+  wrap.appendChild(
+    el("div", { class: "weekly-legend" }, [
+      legendSwatch("posted", "Posted", totals.posted),
+      legendSwatch("recommended", "Recommended", totals.recommended),
+      legendSwatch("applied", "Applied", totals.applied),
+    ])
+  );
+
+  if (!series.length) {
+    wrap.appendChild(
+      el(
+        "div",
+        { class: "weekly-chart-empty muted small" },
+        state.queueLoading ? "Loading chart…" : "No activity this week yet."
+      )
+    );
+    return wrap;
+  }
+
+  wrap.appendChild(buildWeeklyChartSvg(series));
+  return wrap;
+}
+
+function legendSwatch(key, label, total) {
+  return el("div", { class: "weekly-legend-item" }, [
+    el("span", { class: `weekly-swatch weekly-swatch-${key}` }),
+    el("span", { class: "weekly-legend-label" }, label),
+    el("span", { class: "weekly-legend-total" }, String(total)),
+  ]);
+}
+
+function buildWeeklyChartSvg(series, opts = {}) {
+  const dense = !!opts.dense || (series && series.length > 10);
+  const W = 320;
+  const H = opts.tall ? 176 : 148;
+  const pad = { t: 12, r: 8, b: dense ? 26 : 28, l: 28 };
+  const innerW = W - pad.l - pad.r;
+  const innerH = H - pad.t - pad.b;
+  const keys = ["posted", "recommended", "applied"];
+  const maxVal = Math.max(1, ...series.flatMap((d) => keys.map((k) => Number(d[k]) || 0)));
+  const n = Math.max(1, series.length);
+  const groupW = innerW / n;
+  const gap = dense ? 2 : 8;
+  const barW = Math.max(dense ? 2 : 4, (groupW - gap) / keys.length);
+  const labelStep = dense ? Math.max(1, Math.ceil(n / 6)) : 1;
+
+  const yScale = (v) => pad.t + innerH - (v / maxVal) * innerH;
+  const gridSteps = 3;
+  let grid = "";
+  for (let i = 0; i <= gridSteps; i++) {
+    const v = Math.round((maxVal * i) / gridSteps);
+    const y = yScale(v);
+    grid += `<line x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" class="weekly-grid"/>`;
+    grid += `<text x="${pad.l - 4}" y="${y + 3}" text-anchor="end" class="weekly-axis">${v}</text>`;
+  }
+
+  let bars = "";
+  let labels = "";
+  series.forEach((d, i) => {
+    const gx = pad.l + i * groupW + (dense ? 1 : 4);
+    keys.forEach((k, ki) => {
+      const val = Number(d[k]) || 0;
+      const h = (val / maxVal) * innerH;
+      const x = gx + ki * barW;
+      const y = pad.t + innerH - h;
+      const tipDate = d.date || d.label || "";
+      bars += `<rect x="${x}" y="${y}" width="${Math.max(barW - (dense ? 0.5 : 1), 1.5)}" height="${Math.max(h, val > 0 ? 2 : 0)}" rx="${dense ? 1 : 2}" class="weekly-bar weekly-bar-${k}"><title>${escapeHtml(String(tipDate))} · ${k} ${val}</title></rect>`;
+    });
+    if (i === 0 || i === n - 1 || i % labelStep === 0) {
+      labels += `<text x="${gx + groupW / 2 - (dense ? 0 : 4)}" y="${H - 8}" text-anchor="middle" class="weekly-axis">${escapeHtml(d.label || "")}</text>`;
+    }
+  });
+
+  const svg = `<svg viewBox="0 0 ${W} ${H}" class="weekly-chart-svg" role="img" aria-label="Activity chart">${grid}${bars}${labels}</svg>`;
+  return el("div", { class: "weekly-chart", html: svg });
+}
+
+function renderHomeTiles() {
+  const loading = !!state.queueLoading;
+  const count = (n) =>
+    loading
+      ? el("span", { class: "home-tile-count loading" }, el("span", { class: "spinner-sm" }))
+      : el("span", { class: "home-tile-count" }, String(n));
+
+  const tile = ({ id, label, countNode, variant, iconSvg }) =>
+    el(
+      "button",
+      {
+        type: "button",
+        class: `home-tile home-tile-${variant || id}`,
+        onclick: () => openHomeSection(id),
+      },
+      [
+        iconSvg ? el("span", { class: "home-tile-ico", html: iconSvg }) : null,
+        el("span", { class: "home-tile-label" }, label),
+        countNode || null,
+      ]
+    );
+
+  return el("div", { class: "home-tiles", "aria-label": "Home" }, [
+    tile({
+      id: "progress",
+      label: "In progress",
+      countNode: count(state.sessions.length),
+      iconSvg: ICON_LIST,
+    }),
+    tile({
+      id: "today",
+      label: "Today new jobs",
+      countNode: count(state.dashboardCounts.today || state.todayCounts.all || state.todayQueue.length),
+      iconSvg: ICON_STAR,
+    }),
+    tile({
+      id: "ready",
+      label: "All jobs",
+      countNode: count(state.dashboardCounts.all || state.queue.length),
+      iconSvg: ICON_BRIEFCASE,
+    }),
+    tile({
+      id: "tailor",
+      label: "Tailor resume",
+      countNode: count(tailorInProgressJobs().length),
+      iconSvg: ICON_DOC,
+    }),
+    tile({
+      id: "stats",
+      label: "Statistics",
+      iconSvg: ICON_CHART,
+    }),
+    tile({
+      id: "settings",
+      label: "Settings",
+      iconSvg: ICON_GEAR,
+    }),
+  ]);
 }
 
 function renderTodaySubTabs() {
@@ -2412,65 +3436,1718 @@ function todayEmptyMessage() {
 }
 
 function jobToCard(j, onClick) {
+  const rawMode = j.work_mode || (j.is_remote ? "remote" : null);
   return {
     jobId: j.id,
     title: j.title || "(untitled job)",
     company: j.company,
     location: j.location,
-    workMode: j.work_mode,
+    workMode: normalizeCardWorkMode(rawMode),
     score: j.match_overall_score,
-    source: j.source || sourceFromUrl(j.normalized_url || j.source_url),
+    source: String(j.source || sourceFromUrl(j.normalized_url || j.source_url) || "")
+      .toLowerCase()
+      .trim() || null,
+    postedAt: j.posted_date || j.created_at || null,
+    createdAt: j.created_at || null,
     chips: dashboardChips(j),
     onClick: onClick || (() => openJob(j.id, { redirect: true })),
   };
 }
 
+/** Map free-text work mode → remote | hybrid | onsite | null. */
+function normalizeCardWorkMode(value) {
+  if (value == null || value === "") return null;
+  const mode = String(value).trim().toLowerCase();
+  if (mode === "remote" || mode === "hybrid" || mode === "onsite") return mode;
+  if (mode.includes("hybrid") || mode.includes("flexible")) return "hybrid";
+  if (
+    mode.includes("remote") ||
+    mode.includes("wfh") ||
+    mode.includes("work from home") ||
+    mode.includes("work-from-home")
+  ) {
+    return "remote";
+  }
+  if (
+    mode.includes("onsite") ||
+    mode.includes("on-site") ||
+    mode.includes("on site") ||
+    mode.includes("in-office") ||
+    mode.includes("in office") ||
+    mode.includes("in-person")
+  ) {
+    return "onsite";
+  }
+  return null;
+}
+
+const DEFAULT_LIST_FILTERS = {
+  title: "",
+  company: "",
+  workMode: "",
+  source: "",
+  sort: "created_at",
+  order: "desc",
+};
+
+// Draft kept outside render state so typing does not remount inputs every keystroke.
+let listFilterDraft = null;
+let listFilterDebounce = null;
+
+function getListFilters() {
+  return {
+    ...DEFAULT_LIST_FILTERS,
+    ...(state.listFilters || {}),
+    ...(listFilterDraft || {}),
+  };
+}
+
+function resetListPages() {
+  return { progress: 1, today: 1, ready: 1, tailor: 1 };
+}
+
+function commitListFilters(patch) {
+  const next = { ...getListFilters(), ...(patch || {}) };
+  listFilterDraft = null;
+  if (listFilterDebounce) {
+    clearTimeout(listFilterDebounce);
+    listFilterDebounce = null;
+  }
+  setState({ listFilters: next, pageByTab: resetListPages() });
+  if (state.homeTab === "tailor" && state.tailorSubTab === "ready") {
+    void loadTailorResumes({ filters: next });
+  }
+}
+
+function patchListFilterText(key, value) {
+  if (!listFilterDraft) listFilterDraft = { ...getListFilters() };
+  listFilterDraft[key] = value;
+  if (listFilterDebounce) clearTimeout(listFilterDebounce);
+  listFilterDebounce = setTimeout(() => {
+    const active = document.activeElement;
+    const restoreKey =
+      (active && active.getAttribute && active.getAttribute("data-filter-key")) || null;
+    const selStart = active && active.selectionStart;
+    const selEnd = active && active.selectionEnd;
+    const next = { ...getListFilters() };
+    listFilterDraft = null;
+    listFilterDebounce = null;
+    setState({ listFilters: next, pageByTab: resetListPages() });
+    if (state.homeTab === "tailor" && state.tailorSubTab === "ready") {
+      void loadTailorResumes({ filters: next });
+    }
+    if (!restoreKey) return;
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`.list-filter-input[data-filter-key="${restoreKey}"]`);
+      if (!input) return;
+      input.focus();
+      if (typeof selStart === "number" && typeof selEnd === "number") {
+        try {
+          input.setSelectionRange(selStart, selEnd);
+        } catch (_e) {
+          /* ignore */
+        }
+      }
+    });
+  }, 220);
+}
+
+function flushListFilterText() {
+  if (listFilterDebounce) {
+    clearTimeout(listFilterDebounce);
+    listFilterDebounce = null;
+  }
+  if (!listFilterDraft) return;
+  const next = { ...getListFilters() };
+  listFilterDraft = null;
+  setState({ listFilters: next, pageByTab: resetListPages() });
+  if (state.homeTab === "tailor" && state.tailorSubTab === "ready") {
+    void loadTailorResumes({ filters: next });
+  }
+}
+
+function clearListFilters() {
+  listFilterDraft = null;
+  if (listFilterDebounce) {
+    clearTimeout(listFilterDebounce);
+    listFilterDebounce = null;
+  }
+  setState({ listFilters: { ...DEFAULT_LIST_FILTERS }, pageByTab: resetListPages() });
+  if (state.homeTab === "tailor" && state.tailorSubTab === "ready") {
+    void loadTailorResumes({ filters: { ...DEFAULT_LIST_FILTERS } });
+  }
+}
+
+function listFiltersAreActive(f = getListFilters()) {
+  return !!(
+    (f.title && f.title.trim()) ||
+    (f.company && f.company.trim()) ||
+    f.workMode ||
+    f.source ||
+    (f.sort && f.sort !== "created_at") ||
+    (f.order && f.order !== "desc")
+  );
+}
+
+function compareJobCards(a, b, key) {
+  if (key === "match_score") {
+    const as = a.score == null ? -1 : Number(a.score);
+    const bs = b.score == null ? -1 : Number(b.score);
+    return as - bs;
+  }
+  if (key === "posted_date" || key === "created_at") {
+    const at = Date.parse(a.postedAt || a.createdAt || 0) || 0;
+    const bt = Date.parse(b.postedAt || b.createdAt || 0) || 0;
+    return at - bt;
+  }
+  if (key === "source") return String(a.source || "").localeCompare(String(b.source || ""));
+  if (key === "company") return String(a.company || "").localeCompare(String(b.company || ""));
+  if (key === "title") return String(a.title || "").localeCompare(String(b.title || ""));
+  return 0;
+}
+
+function filterAndRankCards(cards) {
+  const f = getListFilters();
+  const titleQ = (f.title || "").trim().toLowerCase();
+  const companyQ = (f.company || "").trim().toLowerCase();
+  const wantMode = (f.workMode || "").trim().toLowerCase();
+  const wantSource = (f.source || "").trim().toLowerCase();
+  let out = (cards || []).filter((c) => {
+    if (titleQ && !String(c.title || "").toLowerCase().includes(titleQ)) return false;
+    if (companyQ && !String(c.company || "").toLowerCase().includes(companyQ)) return false;
+    if (wantMode && normalizeCardWorkMode(c.workMode) !== wantMode) return false;
+    if (wantSource && String(c.source || "").toLowerCase() !== wantSource) return false;
+    return true;
+  });
+  const dir = f.order === "asc" ? 1 : -1;
+  const sortKey = f.sort || "created_at";
+  out = out.slice().sort((a, b) => {
+    const primary = compareJobCards(a, b, sortKey) * dir;
+    if (primary !== 0) return primary;
+    // Stable tie-break: newer first, then title.
+    const tie = compareJobCards(a, b, "created_at") * -1;
+    if (tie !== 0) return tie;
+    return compareJobCards(a, b, "title");
+  });
+  return out;
+}
+
+function renderSelect(opts) {
+  const { value, options, onChange, className, title } = opts;
+  return el(
+    "select",
+    {
+      class: className || "list-filter-select",
+      title: title || "",
+      onchange: (e) => onChange(e.target.value),
+    },
+    options.map((o) =>
+      el(
+        "option",
+        o.value === value ? { value: o.value, selected: "selected" } : { value: o.value },
+        o.label
+      )
+    )
+  );
+}
+
+function renderListFilterBar(totalBefore, totalAfter, { resumeMode = false } = {}) {
+  const f = getListFilters();
+  const active = listFiltersAreActive(f);
+  const platformOpts = resumeMode
+    ? [
+        { value: "", label: "All sources" },
+        { value: "tailored", label: "AI / manual JD" },
+        { value: "job_workflow", label: "Platform job" },
+        { value: "manual", label: "Library" },
+      ]
+    : [
+        { value: "", label: "All platforms" },
+        ...Object.keys(SOURCE_META).map((k) => ({ value: k, label: SOURCE_META[k].label })),
+      ];
+  const workOpts = [
+    { value: "", label: "Any work mode" },
+    { value: "remote", label: "Remote" },
+    { value: "hybrid", label: "Hybrid" },
+    { value: "onsite", label: "On-site" },
+  ];
+  const sortOpts = resumeMode
+    ? [
+        { value: "created_at", label: "Date updated" },
+        { value: "posted_date", label: "Date created" },
+        { value: "title", label: "Title" },
+        { value: "company", label: "Company" },
+        { value: "source", label: "Source" },
+      ]
+    : [
+        { value: "created_at", label: "Date added" },
+        { value: "posted_date", label: "Posted date" },
+        { value: "match_score", label: "Match score" },
+        { value: "source", label: "Platform" },
+        { value: "title", label: "Title" },
+        { value: "company", label: "Company" },
+      ];
+
+  const titleInput = el("input", {
+    type: "search",
+    class: "list-filter-input",
+    "data-filter-key": "title",
+    placeholder: resumeMode ? "Search role / title…" : "Search title…",
+    value: f.title || "",
+    autocomplete: "off",
+    spellcheck: "false",
+  });
+  titleInput.addEventListener("input", (e) => patchListFilterText("title", e.target.value));
+  titleInput.addEventListener("change", () => flushListFilterText());
+  titleInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      flushListFilterText();
+    }
+  });
+
+  const companyInput = el("input", {
+    type: "search",
+    class: "list-filter-input",
+    "data-filter-key": "company",
+    placeholder: "Company…",
+    value: f.company || "",
+    autocomplete: "off",
+    spellcheck: "false",
+  });
+  companyInput.addEventListener("input", (e) => patchListFilterText("company", e.target.value));
+  companyInput.addEventListener("change", () => flushListFilterText());
+  companyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      flushListFilterText();
+    }
+  });
+
+  const fields = [
+    el("div", { class: "list-filter-field list-filter-search" }, [
+      el("label", { class: "list-filter-label" }, resumeMode ? "Role" : "Title"),
+      titleInput,
+    ]),
+    el("div", { class: "list-filter-field list-filter-search" }, [
+      el("label", { class: "list-filter-label" }, "Company"),
+      companyInput,
+    ]),
+  ];
+  if (!resumeMode) {
+    fields.push(
+      el("div", { class: "list-filter-field" }, [
+        el("label", { class: "list-filter-label" }, "Work mode"),
+        renderSelect({
+          value: f.workMode || "",
+          options: workOpts,
+          title: "Filter by remote / hybrid / on-site",
+          onChange: (v) => commitListFilters({ workMode: v }),
+        }),
+      ])
+    );
+  }
+  fields.push(
+    el("div", { class: "list-filter-field" }, [
+      el("label", { class: "list-filter-label" }, resumeMode ? "Source" : "Platform"),
+      renderSelect({
+        value: f.source || "",
+        options: platformOpts,
+        title: resumeMode ? "Filter by resume source" : "Filter by ATS / job board",
+        onChange: (v) => commitListFilters({ source: v }),
+      }),
+    ]),
+    el("div", { class: "list-filter-field" }, [
+      el("label", { class: "list-filter-label" }, "Rank by"),
+      renderSelect({
+        value: f.sort || "created_at",
+        options: sortOpts,
+        title: resumeMode ? "Sort resumes" : "Sort by posted date, platform, score…",
+        onChange: (v) => commitListFilters({ sort: v }),
+      }),
+    ]),
+    el("div", { class: "list-filter-field list-filter-order" }, [
+      el("label", { class: "list-filter-label" }, "Order"),
+      el(
+        "button",
+        {
+          type: "button",
+          class: "list-filter-order-btn" + (f.order === "asc" ? " is-asc" : ""),
+          title:
+            f.order === "asc"
+              ? "Ascending — click for descending"
+              : "Descending — click for ascending",
+          onclick: () => commitListFilters({ order: f.order === "asc" ? "desc" : "asc" }),
+        },
+        f.order === "asc" ? "↑ Asc" : "↓ Desc"
+      ),
+    ])
+  );
+
+  return el("div", { class: "list-filters" + (active ? " is-active" : "") }, [
+    el("div", { class: "list-filters-head" }, [
+      el("div", { class: "list-filters-title" }, resumeMode ? "Search & rank resumes" : "Filter & rank"),
+      el(
+        "div",
+        { class: "list-filters-meta muted small" },
+        totalBefore === totalAfter
+          ? `${totalAfter} ${resumeMode ? "resume" : "job"}${totalAfter === 1 ? "" : "s"}`
+          : `${totalAfter} of ${totalBefore}`
+      ),
+      active
+        ? el(
+            "button",
+            {
+              type: "button",
+              class: "btn link list-filters-clear",
+              onclick: () => clearListFilters(),
+            },
+            "Clear"
+          )
+        : null,
+    ]),
+    el("div", { class: "list-filters-grid" + (resumeMode ? " resume-mode" : "") }, fields),
+  ]);
+}
+
+/** Filter bar + paginated list for every job list page. */
+function renderFilteredJobList(tabId, cards, emptyMsg, { prepend } = {}) {
+  const all = cards || [];
+  const filtered = filterAndRankCards(all);
+  const empty =
+    all.length && !filtered.length ? "No jobs match these filters." : emptyMsg;
+  const section = el("div", { class: "filtered-job-list tab-panel" });
+  if (prepend) {
+    for (const node of [].concat(prepend)) {
+      if (node) section.appendChild(node);
+    }
+  }
+  section.appendChild(renderListFilterBar(all.length, filtered.length));
+  section.appendChild(jobListSection(tabId, filtered, empty));
+  return section;
+}
+
 function renderActiveTab() {
   switch (state.homeTab) {
     case "progress":
-      return jobListSection(
+      return renderFilteredJobList(
         "progress",
         state.sessions.map((s) => {
           const snap = s.job_snapshot || {};
           return {
+            jobId: s.job_id,
             title: s.job_title || snap.title || "(untitled job)",
             company: s.company || snap.company,
             score: snap.match_score,
-            source: sourceFromUrl(s.job_url || snap.url),
+            source:
+              String(snap.source || sourceFromUrl(s.job_url || snap.url) || "")
+                .toLowerCase()
+                .trim() || null,
+            workMode: normalizeCardWorkMode(snap.work_mode || snap.remote_policy || null),
+            postedAt: snap.posted_date || s.created_at || null,
+            createdAt: s.created_at || null,
             chips: sessionChips(s, snap),
             onClick: () => openJob(s.job_id, { redirect: true }),
           };
         }),
         "No applications in progress yet."
       );
-    case "today": {
-      const section = el("div", { class: "tab-panel" });
-      section.appendChild(renderTodaySubTabs());
-      section.appendChild(
-        jobListSection("today", todayJobsForSubTab().map((j) => jobToCard(j)), todayEmptyMessage())
+    case "today":
+      return renderFilteredJobList(
+        "today",
+        todayJobsForSubTab().map((j) => jobToCard(j)),
+        todayEmptyMessage(),
+        { prepend: renderTodaySubTabs() }
       );
-      return section;
-    }
     case "applied":
-      return jobListSection(
-        "applied",
-        state.appliedQueue.map((j) => ({ ...jobToCard(j), chips: appliedChips(j) })),
-        "No jobs applied yet today."
-      );
+    case "tailor":
+      return renderTailorResume();
+    case "stats":
+      return renderStatistics();
+    case "settings":
+      return renderSettings();
     case "ready":
-    default: {
-      const section = el("div", { class: "tab-panel" });
-      section.appendChild(renderMinScoreControl());
-      section.appendChild(
-        jobListSection(
-          "ready",
-          state.queue.map((j) => jobToCard(j)),
-          `No jobs with a finished tailored resume and score of at least ${state.minScore}.`
-        )
+    default:
+      return renderFilteredJobList(
+        "ready",
+        state.queue.map((j) => jobToCard(j)),
+        state.minScore > 0
+          ? `No jobs at or above match score ${state.minScore}.`
+          : "No jobs in the system yet.",
+        { prepend: renderMinScoreControl() }
       );
-      return section;
-    }
   }
+}
+
+/** All dashboard jobs the Tailor page considers (today + all, deduped). */
+function tailorJobPool() {
+  const seen = new Set();
+  const out = [];
+  for (const j of [...(state.todayQueue || []), ...(state.queue || [])]) {
+    if (!j || !j.id || seen.has(j.id)) continue;
+    seen.add(j.id);
+    out.push(j);
+  }
+  return out;
+}
+
+function _cg(j) {
+  return String((j && j.content_generation_status) || "").toLowerCase();
+}
+
+function _docx(j) {
+  return String((j && (j.resume_build_status || j.resume_docx_status)) || "").toLowerCase();
+}
+
+function _pdf(j) {
+  return String((j && j.resume_pdf_status) || "").toLowerCase();
+}
+
+/**
+ * Job has a tailored resume (Phase-B content done, or DOCX/PDF already built).
+ * This drives the Tailor → Generated tab.
+ */
+function jobHasTailoredResume(j) {
+  if (!j) return false;
+  if (_cg(j) === "completed") return true;
+  return _pdf(j) === "completed" || _docx(j) === "completed";
+}
+
+/** Alias used elsewhere for "resume pipeline finished enough to treat as ready". */
+function jobResumeReady(j) {
+  return jobHasTailoredResume(j);
+}
+
+/**
+ * True mid-pipeline (queued/processing) — leftover pending files after
+ * failed/skipped content do NOT count as in-flight.
+ */
+function jobResumeInProgress(j) {
+  if (!j || jobHasTailoredResume(j)) return false;
+  const cg = _cg(j);
+  if (cg === "failed" || cg === "skipped") return false;
+  if (cg === "pending" || cg === "processing") return true;
+  return _docx(j) === "processing" || _pdf(j) === "processing";
+}
+
+/** Failed / skipped tailor attempts that need a retry. */
+function jobResumeFailed(j) {
+  if (!j || jobHasTailoredResume(j) || jobResumeInProgress(j)) return false;
+  const cg = _cg(j);
+  if (cg === "failed" || cg === "skipped") return true;
+  const docx = _docx(j);
+  const pdf = _pdf(j);
+  return docx === "failed" || pdf === "failed";
+}
+
+/**
+ * Tailor → In progress: every job that does NOT yet have a tailored resume
+ * (never started, queued, generating, or failed — excluding applied).
+ */
+function tailorInProgressJobs() {
+  return tailorJobPool().filter((j) => !j.applied_at && !jobHasTailoredResume(j));
+}
+
+/** Tailor → Generated: every job that already has a tailored resume. */
+function tailorGeneratedJobs() {
+  return tailorJobPool().filter((j) => jobHasTailoredResume(j));
+}
+
+/** Jobs that still need a tailor kickoff (idle — not running, not failed). */
+function tailorCandidateJobs() {
+  return tailorInProgressJobs().filter(
+    (j) => !jobResumeInProgress(j) && !jobResumeFailed(j)
+  );
+}
+
+function tailorMakingJobs() {
+  return tailorJobPool().filter((j) => !j.applied_at && jobResumeInProgress(j));
+}
+
+function tailorFailedJobs() {
+  return tailorJobPool().filter((j) => !j.applied_at && jobResumeFailed(j));
+}
+
+function tailorReadyJobs() {
+  return tailorGeneratedJobs();
+}
+
+function resumeProgressLabel(j) {
+  const cg = _cg(j);
+  const docx = _docx(j);
+  const pdf = _pdf(j);
+  if (cg === "failed") return "Content failed — tap to retry";
+  if (cg === "skipped") return "Tailoring skipped — tap to retry";
+  if (cg === "processing") return "Generating tailored content…";
+  if (cg === "pending") return "Queued for tailoring…";
+  if (cg === "completed") {
+    if (docx === "processing" || pdf === "processing") return "Building DOCX / PDF…";
+    if (docx === "pending" || pdf === "pending") return "Queued for file build…";
+    if (docx === "failed" || pdf === "failed") return "File build failed — tap to retry";
+    return "Tailored resume ready";
+  }
+  if (docx === "processing" || pdf === "processing") return "Building DOCX / PDF…";
+  if (docx === "failed" || pdf === "failed") return "File build failed — tap to retry";
+  if (!cg) return "Tap to tailor";
+  return "Needs tailored resume";
+}
+
+function tailorJobStatusChip(j) {
+  if (jobResumeFailed(j)) {
+    return { label: resumeProgressLabel(j), tone: "danger", dot: true };
+  }
+  if (jobResumeInProgress(j)) {
+    return { label: resumeProgressLabel(j), tone: "warn", dot: true };
+  }
+  if (jobHasTailoredResume(j)) {
+    const chips = [{ label: "Tailored", tone: "ok", dot: true }];
+    if (_pdf(j) === "completed") chips.push({ label: "Resume", tone: "ok", dot: true });
+    if (String(j.cover_letter_pdf_status || "").toLowerCase() === "completed") {
+      chips.push({ label: "Cover letter", tone: "ok", dot: true });
+    } else if (_docx(j) === "processing" || _pdf(j) === "processing" || _pdf(j) === "pending") {
+      chips.push({ label: "Building files…", tone: "warn", dot: true });
+    }
+    return chips;
+  }
+  return { label: "Tap to tailor", tone: "primary", dot: true };
+}
+
+function tailorInProgressCard(j) {
+  const onClick = jobResumeInProgress(j)
+    ? () => openJob(j.id, { redirect: true })
+    : () => void startJobTailor(j);
+  const card = jobToCard(j, onClick);
+  const status = tailorJobStatusChip(j);
+  const statusChips = Array.isArray(status) ? status : [status];
+  return {
+    ...card,
+    chips: [
+      ...(card.chips || []).filter((c) => c && c.label !== "Resume" && c.label !== "Cover letter"),
+      ...statusChips,
+    ],
+  };
+}
+
+function tailorDocDownloadsFromJob(j) {
+  if (!j || !j.id) return null;
+  return {
+    jobId: j.id,
+    resumePdf: _pdf(j) === "completed",
+    resumeDocx: _docx(j) === "completed",
+    coverPdf: String(j.cover_letter_pdf_status || "").toLowerCase() === "completed",
+    coverDocx: String(j.cover_letter_docx_status || "").toLowerCase() === "completed",
+  };
+}
+
+function tailorDocDownloadsFromHit(hit) {
+  if (!hit || !hit.job_id) return null;
+  // Library search hits only expose PDF availability flags.
+  if (!hit.has_resume_pdf && !hit.has_cover_letter) return null;
+  return {
+    jobId: hit.job_id,
+    resumePdf: !!hit.has_resume_pdf,
+    resumeDocx: false,
+    coverPdf: !!hit.has_cover_letter,
+    coverDocx: false,
+  };
+}
+
+function tailorGeneratedCard(j) {
+  const card = jobToCard(j, () => void openTailoredJob(j));
+  const status = tailorJobStatusChip(j);
+  const statusChips = Array.isArray(status) ? status : [status];
+  return {
+    ...card,
+    chips: [
+      ...(card.chips || []).filter((c) => c && c.label !== "Resume" && c.label !== "Cover letter"),
+      ...statusChips,
+    ],
+    docDownloads: tailorDocDownloadsFromJob(j),
+  };
+}
+
+async function openTailoredJob(j) {
+  if (!j) return;
+  try {
+    if (j.resume_build_id) {
+      await api.openJobBuildResume(j.resume_build_id);
+      toast("Opened tailored resume in library.");
+      await openResumeBuilderTab();
+      return;
+    }
+    await openJob(j.id, { redirect: true });
+  } catch (err) {
+    toast((err && err.message) || "Could not open tailored resume.");
+  }
+}
+
+function resumeHitToCard(hit) {
+  const title = hit.job_title || hit.name || "(untitled resume)";
+  const sourceLabel =
+    hit.source === "job_workflow"
+      ? "Platform"
+      : hit.source === "tailored"
+        ? "AI"
+        : hit.source === "manual"
+          ? "Library"
+          : hit.source || "Resume";
+  const tone =
+    hit.source === "job_workflow" ? "info" : hit.source === "tailored" ? "primary" : "ok";
+  return {
+    jobId: hit.job_id || hit.id,
+    title,
+    company: hit.company,
+    score: hit.match_score != null ? hit.match_score : null,
+    source: hit.source || null,
+    workMode: null,
+    postedAt: hit.created_at || null,
+    createdAt: hit.updated_at || hit.created_at || null,
+    chips: [
+      { label: sourceLabel, tone, dot: true },
+      hit.is_active ? { label: "Active", tone: "ok" } : null,
+      hit.has_resume_pdf ? { label: "Resume", tone: "ok", dot: true } : null,
+      hit.has_cover_letter ? { label: "Cover letter", tone: "ok", dot: true } : null,
+      hit.content_ready === false ? { label: "Not ready", tone: "warn" } : null,
+    ].filter(Boolean),
+    docDownloads: tailorDocDownloadsFromHit(hit),
+    onClick: () => openTailorHit(hit),
+  };
+}
+
+/** Convert a dashboard job with a tailored resume into a Generated hit (for API merge). */
+function dashboardJobToResumeHit(j) {
+  return {
+    kind: "job_build",
+    id: j.resume_build_id || j.id,
+    build_id: j.resume_build_id || null,
+    job_id: j.id,
+    name: [j.title, j.company].filter(Boolean).join(" - ") || "Job resume",
+    status: "completed",
+    source: "job_workflow",
+    job_title: j.title || null,
+    company: j.company || null,
+    is_active: false,
+    content_ready: true,
+    has_resume_pdf: j.resume_pdf_status === "completed",
+    has_cover_letter: j.cover_letter_pdf_status === "completed",
+    match_score: j.match_overall_score,
+    created_at: j.created_at || null,
+    updated_at: j.updated_at || j.created_at || null,
+  };
+}
+
+function resumeHitDedupeKey(hit) {
+  const company = String(hit.company || "")
+    .trim()
+    .toLowerCase();
+  const title = String(hit.job_title || hit.name || "")
+    .trim()
+    .toLowerCase();
+  if (hit.job_id) return `job:${hit.job_id}`;
+  if (company || title) return `meta:${company}::${title}`;
+  return `id:${hit.id}`;
+}
+
+/**
+ * Generated tab is job-first: every dashboard job with a tailored resume.
+ * Library search only fills gaps (builds missing from the loaded queue pages)
+ * plus manual/AI library resumes that aren't tied to a platform job.
+ */
+async function loadTailorResumes({ filters } = {}) {
+  if (!state.user) return;
+  const f = filters || getListFilters();
+  setState({ tailorHitsLoading: true });
+  try {
+    const companyQ = (f.company || "").trim();
+    const titleQ = (f.title || "").trim();
+
+    // Primary source: dashboard jobs that already have a tailored resume.
+    let jobs = tailorGeneratedJobs();
+    if (companyQ) {
+      const q = companyQ.toLowerCase();
+      jobs = jobs.filter((j) => String(j.company || "").toLowerCase().includes(q));
+    }
+    if (titleQ) {
+      const q = titleQ.toLowerCase();
+      jobs = jobs.filter((j) => String(j.title || "").toLowerCase().includes(q));
+    }
+
+    const jobHits = jobs.map(dashboardJobToResumeHit);
+    const seen = new Set(jobHits.map(resumeHitDedupeKey));
+
+    // Secondary: library/search so we don't miss builds outside the current queue pages.
+    let searchHits = [];
+    try {
+      const res = await api.searchResumeLibrary({
+        company: companyQ || undefined,
+        job_title: titleQ || undefined,
+        limit: 200,
+      });
+      searchHits = (res && res.resumes) || [];
+    } catch (_e) {
+      /* dashboard jobs still render */
+    }
+
+    for (const hit of searchHits) {
+      const key = resumeHitDedupeKey(hit);
+      if (seen.has(key)) continue;
+      // Prefer job_workflow / tailored; skip empty junk.
+      if (hit.kind === "job_build" || hit.source === "job_workflow") {
+        // Only keep search job builds that actually look content-ready.
+        if (hit.content_ready === false) continue;
+        seen.add(key);
+        jobHits.push(hit);
+      } else if (hit.source === "tailored" || hit.source === "manual") {
+        seen.add(key);
+        jobHits.push(hit);
+      }
+    }
+
+    let hits = jobHits;
+    if (f.source) {
+      hits = hits.filter((h) => String(h.source || "").toLowerCase() === f.source);
+    }
+    const dir = f.order === "asc" ? 1 : -1;
+    const sortKey = f.sort || "created_at";
+    hits = hits.slice().sort((a, b) => {
+      const cardA = resumeHitToCard(a);
+      const cardB = resumeHitToCard(b);
+      const primary = compareJobCards(cardA, cardB, sortKey) * dir;
+      if (primary !== 0) return primary;
+      return compareJobCards(cardA, cardB, "created_at") * -1;
+    });
+    setState({ tailorHits: hits, tailorHitsLoading: false });
+  } catch (err) {
+    setState({
+      tailorHitsLoading: false,
+      error: (err && err.message) || "Failed to load tailored resumes.",
+    });
+  }
+}
+
+function patchTailorRun(id, patch) {
+  const runs = (state.tailorRuns || []).map((r) => (r.id === id ? { ...r, ...patch } : r));
+  setState({ tailorRuns: runs });
+}
+
+async function startManualTailor() {
+  const jd = (tailorJdDraft || "").trim();
+  if (jd.length < 80) {
+    toast("Paste a fuller job description (at least a short posting).");
+    return;
+  }
+  if ((state.tailorRuns || []).some((r) => r.kind === "manual" && r.status === "running")) {
+    toast("A manual tailor is already running.");
+    return;
+  }
+  const runId = `manual-${Date.now()}`;
+  const run = {
+    id: runId,
+    kind: "manual",
+    title: "Manual job description",
+    company: null,
+    stage: "routing",
+    label: "Starting…",
+    status: "running",
+    error: null,
+    resumeId: null,
+  };
+  setState({
+    tailorRuns: [run, ...(state.tailorRuns || [])],
+    tailorSubTab: "making",
+  });
+  try {
+    const result = await api.streamResumeAiChat(
+      [{ role: "user", content: jd }],
+      null,
+      {
+        onStage: (ev) => {
+          patchTailorRun(runId, {
+            stage: ev.stage,
+            label: ev.label || ev.stage,
+          });
+        },
+      }
+    );
+    if (result.action !== "tailored" || !result.content) {
+      patchTailorRun(runId, {
+        status: "error",
+        error: result.reply || "AI did not return tailored content. Try again.",
+        label: "No tailored content",
+      });
+      return;
+    }
+    patchTailorRun(runId, {
+      label: "Saving to library…",
+      title: result.job_title || "Tailored resume",
+      company: result.company || null,
+    });
+    const saved = await api.saveAiTailoredResume({
+      content: result.content,
+      job_title: result.job_title || null,
+      company: result.company || null,
+      activate: true,
+    });
+    const resume = saved && saved.resume;
+    patchTailorRun(runId, {
+      status: "done",
+      label: "Saved to library",
+      stage: "done",
+      title: (resume && resume.job_title) || result.job_title || "Tailored resume",
+      company: (resume && resume.company) || result.company || null,
+      resumeId: resume && resume.id,
+    });
+    tailorJdDraft = "";
+    toast("Tailored resume saved.");
+    setState({ tailorSubTab: "ready" });
+    await loadTailorResumes();
+  } catch (err) {
+    if (err && err.name === "AbortError") return;
+    patchTailorRun(runId, {
+      status: "error",
+      error: (err && err.message) || "Tailor failed.",
+      label: "Failed",
+    });
+    toast((err && err.message) || "Tailor failed.");
+  }
+}
+
+async function startJobTailor(job) {
+  if (!job || !job.id) return;
+  if (jobResumeInProgress(job)) {
+    toast("Tailoring already in progress for this job.");
+    setState({ tailorSubTab: "making" });
+    return;
+  }
+  const runId = `job-${job.id}`;
+  const existing = (state.tailorRuns || []).find((r) => r.id === runId && r.status === "running");
+  if (existing) {
+    setState({ tailorSubTab: "making" });
+    return;
+  }
+  setState({
+    tailorSubTab: "making",
+    tailorRuns: [
+      {
+        id: runId,
+        kind: "job",
+        jobId: job.id,
+        title: job.title || "(untitled job)",
+        company: job.company || null,
+        stage: "queue",
+        label: "Queuing…",
+        status: "running",
+        error: null,
+      },
+      ...(state.tailorRuns || []).filter((r) => r.id !== runId),
+    ],
+  });
+  try {
+    await api.triggerResumeBuild(job.id);
+    patchTailorRun(runId, {
+      label: "Queued — generating tailored content…",
+      stage: "queued",
+    });
+    toast("Tailored resume started for this job.");
+    void loadQueue({ silent: true });
+  } catch (err) {
+    patchTailorRun(runId, {
+      status: "error",
+      error: (err && err.message) || "Could not start resume build.",
+      label: "Failed to queue",
+    });
+    toast((err && err.message) || "Could not start resume build.");
+  }
+}
+
+async function openTailorHit(hit) {
+  if (!hit) return;
+  try {
+    if (hit.kind === "job_build" || hit.source === "job_workflow") {
+      const buildId = hit.build_id || (hit.kind === "job_build" ? hit.id : null);
+      if (buildId) {
+        await api.openJobBuildResume(buildId);
+        toast("Opened job resume in library.");
+      } else if (hit.job_id) {
+        await openJob(hit.job_id, { redirect: true });
+        return;
+      } else {
+        throw new Error("Missing resume build id.");
+      }
+    } else {
+      await api.activateResume(hit.id);
+      toast("Activated resume in library.");
+    }
+    await openResumeBuilderTab();
+    await loadTailorResumes();
+  } catch (err) {
+    toast((err && err.message) || "Could not open resume.");
+  }
+}
+
+async function openResumeBuilderTab() {
+  try {
+    const base = await store.getBackendUrl();
+    const origin = String(base || "").replace(/\/$/, "");
+    if (!origin) return;
+    const url = `${origin}/resume-builder`;
+    await chrome.tabs.create({ url, active: true });
+  } catch (_e) {
+    /* best-effort */
+  }
+}
+
+function renderTailorJdComposer() {
+  const running = (state.tailorRuns || []).some((r) => r.kind === "manual" && r.status === "running");
+  const area = el("textarea", {
+    class: "tailor-jd-input",
+    rows: "6",
+    placeholder:
+      "Paste a job description here…\n\nSame OneClick AI flow as the Resume Builder — we analyze, tailor, and save to your library.",
+    value: tailorJdDraft || "",
+  });
+  area.addEventListener("input", (e) => {
+    tailorJdDraft = e.target.value;
+  });
+  return el("div", { class: "tailor-composer" }, [
+    el("div", { class: "tailor-composer-head" }, [
+      el("div", { class: "tailor-composer-title" }, "Paste job description"),
+      el(
+        "p",
+        { class: "muted small tailor-composer-sub" },
+        "Manual JD → AI tailor → saved with company & title, searchable like the builder."
+      ),
+    ]),
+    area,
+    el("div", { class: "tailor-composer-actions" }, [
+      el(
+        "button",
+        {
+          type: "button",
+          class: "btn primary",
+          disabled: running,
+          onclick: () => void startManualTailor(),
+        },
+        running ? "Tailoring…" : "Tailor with AI"
+      ),
+    ]),
+  ]);
+}
+
+function renderTailorSubTabs(makingCount, readyCount) {
+  const tab = (id, label, count) =>
+    el(
+      "button",
+      {
+        type: "button",
+        class: "sub-tab" + (state.tailorSubTab === id ? " active" : ""),
+        onclick: () => {
+          setState({ tailorSubTab: id, pageByTab: { ...state.pageByTab, tailor: 1 } });
+          if (id === "ready") void loadTailorResumes();
+        },
+      },
+      [
+        el("span", {}, label),
+        el("span", { class: "sub-tab-count" }, String(count)),
+      ]
+    );
+  return el("div", { class: "sub-tabs tailor-sub-tabs" }, [
+    tab("making", "In progress", makingCount),
+    tab("ready", "Generated", readyCount),
+  ]);
+}
+
+function renderTailorProgressCard(run) {
+  const tone =
+    run.status === "done" ? "ok" : run.status === "error" ? "danger" : "primary";
+  return el("div", { class: "tailor-progress-card tone-" + tone }, [
+    el("div", { class: "tailor-progress-top" }, [
+      el("div", { class: "tailor-progress-title" }, run.title || "Tailoring…"),
+      el(
+        "span",
+        { class: "tailor-progress-badge" },
+        run.kind === "manual" ? "Manual JD" : "Platform"
+      ),
+    ]),
+    run.company
+      ? el("div", { class: "muted small tailor-progress-company" }, run.company)
+      : null,
+    el("div", { class: "tailor-progress-status" }, [
+      run.status === "running" ? el("span", { class: "spinner tiny" }) : null,
+      el("span", {}, run.label || run.stage || run.status),
+    ]),
+    run.error ? el("div", { class: "tailor-progress-error" }, run.error) : null,
+    run.status === "done" && run.resumeId
+      ? el(
+          "button",
+          {
+            type: "button",
+            class: "btn link small",
+            onclick: () =>
+              openTailorHit({
+                kind: "library",
+                id: run.resumeId,
+                content_ready: true,
+              }),
+          },
+          "Open in Resume Builder"
+        )
+      : null,
+  ]);
+}
+
+function renderTailorMakingPanel() {
+  const runs = state.tailorRuns || [];
+  const jobs = tailorInProgressJobs();
+  // Active pipeline first, then failed (retry), then idle (tap to start).
+  const sorted = jobs.slice().sort((a, b) => {
+    const rank = (j) => {
+      if (jobResumeInProgress(j)) return 0;
+      if (jobResumeFailed(j)) return 1;
+      return 2;
+    };
+    const d = rank(a) - rank(b);
+    if (d !== 0) return d;
+    return (Number(b.match_overall_score) || 0) - (Number(a.match_overall_score) || 0);
+  });
+  const cards = sorted.map(tailorInProgressCard);
+  const filtered = filterAndRankCards(cards);
+
+  const section = el("div", { class: "tab-panel tailor-making" });
+
+  const activeRuns = runs.filter((r) => r.status === "running");
+  const otherRuns = runs.filter((r) => r.status !== "running").slice(0, 8);
+  if (activeRuns.length || otherRuns.length) {
+    section.appendChild(el("div", { class: "tailor-section-label" }, "Your requests"));
+    const list = el("div", { class: "tailor-progress-list" });
+    [...activeRuns, ...otherRuns]
+      .slice(0, 12)
+      .forEach((r) => list.appendChild(renderTailorProgressCard(r)));
+    section.appendChild(list);
+  }
+
+  section.appendChild(
+    el("div", { class: "tailor-section-label" }, "Jobs without a tailored resume")
+  );
+  section.appendChild(
+    el(
+      "p",
+      { class: "muted small tailor-section-hint" },
+      "These jobs are not ready yet — tailoring has not finished (or has not started)."
+    )
+  );
+  section.appendChild(renderListFilterBar(cards.length, filtered.length));
+  section.appendChild(
+    jobListSection(
+      "tailor",
+      filtered,
+      cards.length
+        ? "No jobs match these filters."
+        : "Every loaded job already has a tailored resume. Paste a JD above for a manual tailor."
+    )
+  );
+  return section;
+}
+
+function renderTailorReadyPanel() {
+  // Primary: dashboard jobs that already have tailored content / files.
+  const jobs = tailorGeneratedJobs();
+  const jobIds = new Set(jobs.map((j) => j.id));
+  const jobCards = jobs.map(tailorGeneratedCard);
+
+  // Extras from library search (manual/AI resumes, or builds missing from queue pages).
+  const extraHits = (state.tailorHits || []).filter((h) => {
+    if (h.job_id && jobIds.has(h.job_id)) return false;
+    if (h.kind === "job_build" || h.source === "job_workflow") return true;
+    return h.source === "tailored" || h.source === "manual";
+  });
+  const extraCards = extraHits.map(resumeHitToCard);
+  const allCards = [...jobCards, ...extraCards];
+  const filtered = filterAndRankCards(allCards);
+
+  const section = el("div", { class: "tab-panel" });
+  section.appendChild(
+    el("div", { class: "tailor-section-label" }, "Jobs with a tailored resume")
+  );
+  section.appendChild(renderListFilterBar(allCards.length, filtered.length, { resumeMode: true }));
+  if (state.tailorHitsLoading && !allCards.length) {
+    section.appendChild(renderSkeletonList(4));
+    return section;
+  }
+  section.appendChild(
+    jobListSection(
+      "tailor",
+      filtered,
+      allCards.length
+        ? "No resumes match these filters."
+        : "No tailored resumes yet. Start one from In progress, or paste a JD above."
+    )
+  );
+  return section;
+}
+
+function renderTailorResume() {
+  const inProgressJobs = tailorInProgressJobs();
+  const generatedJobs = tailorGeneratedJobs();
+  const activeRuns = (state.tailorRuns || []).filter((r) => r.status === "running").length;
+  const makingCount = inProgressJobs.length + activeRuns;
+  const readyCount = generatedJobs.length + (state.tailorHits || []).filter((h) => {
+    if (h.job_id && generatedJobs.some((j) => j.id === h.job_id)) return false;
+    return (
+      h.kind === "job_build" ||
+      h.source === "job_workflow" ||
+      h.source === "tailored" ||
+      h.source === "manual"
+    );
+  }).length;
+
+  const wrap = el("div", { class: "tab-panel tailor-page" });
+  wrap.appendChild(renderTailorJdComposer());
+  wrap.appendChild(renderTailorSubTabs(makingCount, readyCount));
+
+  if (state.tailorSubTab === "ready") {
+    wrap.appendChild(renderTailorReadyPanel());
+  } else {
+    wrap.appendChild(renderTailorMakingPanel());
+  }
+  return wrap;
+}
+
+function renderStatistics() {
+  const period = state.statsPeriod || "week";
+  const progress = state.statsProgress || (period === "week" ? state.weeklyProgress : null);
+  const series = (progress && progress.series) || [];
+  const totals = (progress && progress.totals) || { posted: 0, recommended: 0, applied: 0 };
+  const minScore = progress && progress.min_match_score != null ? progress.min_match_score : null;
+  const ss = state.scraperStats || {};
+  const c = state.dashboardCounts || {};
+  const loading = !!(state.statsLoading || state.queueLoading);
+
+  const posted = totals.posted || 0;
+  const recommended = totals.recommended || 0;
+  const applied = totals.applied || 0;
+  const applyRate = posted > 0 ? Math.round((applied / posted) * 100) : 0;
+  const recRate = posted > 0 ? Math.round((recommended / posted) * 100) : 0;
+  const closeRate = recommended > 0 ? Math.round((applied / recommended) * 100) : 0;
+
+  const totalJobs = ss.total_jobs != null ? ss.total_jobs : c.all || state.queue.length || 0;
+  const remote = ss.total_remote || 0;
+  const remotePct = totalJobs > 0 ? Math.round((remote / totalJobs) * 100) : 0;
+  const ready = ss.ready_jobs || 0;
+  const extracted = ss.extracted_jobs || 0;
+  const sources = (ss.sources || []).slice(0, 5);
+  const maxSource = Math.max(1, ...sources.map((s) => Number(s.count) || 0));
+
+  const bestDay = series.reduce(
+    (best, d) => {
+      const score = (Number(d.applied) || 0) * 3 + (Number(d.recommended) || 0);
+      if (!best || score > best.score) return { ...d, score };
+      return best;
+    },
+    null
+  );
+
+  const periodMeta = {
+    day: { title: "Today", sub: "Last 24 hours in your timezone", days: 1 },
+    week: { title: "This week", sub: "Last 7 days", days: 7 },
+    month: { title: "This month", sub: "Last 30 days", days: 30 },
+  }[period];
+
+  const wrap = el("div", { class: "stats-page" });
+
+  // Period switcher
+  wrap.appendChild(
+    el("div", { class: "stats-period-bar" }, [
+      el("div", { class: "stats-period-copy" }, [
+        el("div", { class: "stats-period-title" }, periodMeta.title),
+        el("div", { class: "muted small" }, periodMeta.sub),
+      ]),
+      el(
+        "div",
+        { class: "stats-period-tabs", role: "tablist", "aria-label": "Stats period" },
+        ["day", "week", "month"].map((id) =>
+          el(
+            "button",
+            {
+              type: "button",
+              role: "tab",
+              "aria-selected": period === id ? "true" : "false",
+              class: "stats-period-tab" + (period === id ? " is-active" : ""),
+              onclick: () => {
+                setState({ statsPeriod: id });
+                void loadStatsPeriod(id);
+              },
+            },
+            id === "day" ? "Day" : id === "week" ? "Week" : "Month"
+          )
+        )
+      ),
+    ])
+  );
+
+  // Hero KPIs
+  wrap.appendChild(
+    el("div", { class: "stats-hero" }, [
+      statsHeroCard("Posted", posted, "Jobs added", "posted", loading),
+      statsHeroCard("Recommended", recommended, minScore != null ? `Match ≥ ${minScore}` : "Qualified", "recommended", loading),
+      statsHeroCard("Applied", applied, "Marked applied", "applied", loading),
+    ])
+  );
+
+  // Conversion strip
+  wrap.appendChild(
+    el("div", { class: "stats-rates" }, [
+      statsRateCard("Recommend rate", recRate, `${recommended} of ${posted} posted`),
+      statsRateCard("Apply rate", applyRate, `${applied} of ${posted} posted`),
+      statsRateCard("Close rate", closeRate, `${applied} of ${recommended} recommended`),
+    ])
+  );
+
+  // Chart
+  const chartCard = el("div", { class: "stats-card-block" });
+  chartCard.appendChild(
+    el("div", { class: "stats-card-block-head" }, [
+      el("div", { class: "stats-card-block-title" }, "Activity"),
+      el(
+        "div",
+        { class: "muted small" },
+        loading ? "Loading…" : `${series.length} day${series.length === 1 ? "" : "s"}`
+      ),
+    ])
+  );
+  chartCard.appendChild(
+    el("div", { class: "weekly-legend" }, [
+      legendSwatch("posted", "Posted", posted),
+      legendSwatch("recommended", "Recommended", recommended),
+      legendSwatch("applied", "Applied", applied),
+    ])
+  );
+  if (!series.length) {
+    chartCard.appendChild(
+      el(
+        "div",
+        { class: "weekly-chart-empty muted small" },
+        loading ? "Loading chart…" : "No activity in this period yet."
+      )
+    );
+  } else {
+    chartCard.appendChild(buildWeeklyChartSvg(series, { tall: true, dense: series.length > 10 }));
+  }
+  if (bestDay && (bestDay.applied > 0 || bestDay.recommended > 0)) {
+    chartCard.appendChild(
+      el(
+        "div",
+        { class: "stats-insight muted small" },
+        `Peak day: ${bestDay.date || bestDay.label} · ${bestDay.applied || 0} applied · ${bestDay.recommended || 0} recommended`
+      )
+    );
+  }
+  wrap.appendChild(chartCard);
+
+  // Pipeline snapshot
+  wrap.appendChild(
+    el("div", { class: "stats-card-block" }, [
+      el("div", { class: "stats-card-block-head" }, [
+        el("div", { class: "stats-card-block-title" }, "Pipeline snapshot"),
+        el("div", { class: "muted small" }, "Right now"),
+      ]),
+      el("div", { class: "stats-snap-grid" }, [
+        statsSnapTile("All jobs", totalJobs, "ok"),
+        statsSnapTile("Suggested", c.suggested || 0, "primary"),
+        statsSnapTile("In progress", state.sessions.length, "info"),
+        statsSnapTile("Applied today", c.applied_today || state.appliedQueue.length || 0, "warn"),
+        statsSnapTile("Ready resumes", ready, "ok"),
+        statsSnapTile("Extracted", extracted),
+        statsSnapTile("Remote", `${remotePct}%`, "info"),
+        statsSnapTile("From me", c.mine || state.todayCounts.mine || 0),
+      ]),
+    ])
+  );
+
+  // Sources
+  if (sources.length) {
+    const srcBlock = el("div", { class: "stats-card-block" });
+    srcBlock.appendChild(
+      el("div", { class: "stats-card-block-head" }, [
+        el("div", { class: "stats-card-block-title" }, "Top sources"),
+        el("div", { class: "muted small" }, "Inventory mix"),
+      ])
+    );
+    const list = el("div", { class: "stats-source-list" });
+    sources.forEach((s) => {
+      const name = prettySource(s.source) || s.source || "Unknown";
+      const count = Number(s.count) || 0;
+      const pct = Math.round((count / maxSource) * 100);
+      list.appendChild(
+        el("div", { class: "stats-source-row" }, [
+          el("div", { class: "stats-source-meta" }, [
+            el("span", { class: "stats-source-name" }, name),
+            el("span", { class: "stats-source-count" }, String(count)),
+          ]),
+          el("div", { class: "stats-source-track" }, [
+            el("div", { class: "stats-source-fill", style: `width:${pct}%` }),
+          ]),
+        ])
+      );
+    });
+    srcBlock.appendChild(list);
+    wrap.appendChild(srcBlock);
+  }
+
+  return wrap;
+}
+
+function statsHeroCard(label, value, hint, tone, loading) {
+  return el("div", { class: `stats-hero-card tone-${tone || "info"}` }, [
+    el("div", { class: "stats-hero-label" }, label),
+    el("div", { class: "stats-hero-value" }, loading ? "…" : String(value)),
+    el("div", { class: "stats-hero-hint muted small" }, hint),
+  ]);
+}
+
+function statsRateCard(label, pct, detail) {
+  return el("div", { class: "stats-rate-card" }, [
+    el("div", { class: "stats-rate-label" }, label),
+    el("div", { class: "stats-rate-value" }, `${pct}%`),
+    el("div", { class: "stats-rate-detail muted small" }, detail),
+  ]);
+}
+
+function statsSnapTile(label, value, tone) {
+  return el("div", { class: "stats-snap-tile" + (tone ? ` tone-${tone}` : "") }, [
+    el("div", { class: "stats-snap-value" }, String(value)),
+    el("div", { class: "stats-snap-label" }, label),
+  ]);
+}
+
+const STATS_PERIOD_DAYS = { day: 1, week: 7, month: 30 };
+
+async function loadStatsPeriod(period) {
+  const key = STATS_PERIOD_DAYS[period] ? period : "week";
+  const days = STATS_PERIOD_DAYS[key];
+  setState({ statsPeriod: key, statsLoading: true });
+  try {
+    const timezone = localTimezone();
+    const [progress, scraperStats] = await Promise.all([
+      api.getWeeklyProgress({ timezone, days }).catch(() => null),
+      state.scraperStats
+        ? Promise.resolve(state.scraperStats)
+        : api.getScraperStats({ timezone }).catch(() => null),
+    ]);
+    setState({
+      statsProgress: progress,
+      scraperStats: scraperStats || state.scraperStats,
+      statsLoading: false,
+      // Keep hub chart in sync when viewing week
+      ...(key === "week" && progress ? { weeklyProgress: progress } : {}),
+    });
+  } catch (err) {
+    setState({
+      statsLoading: false,
+      error: (err && err.message) || "Failed to load statistics.",
+    });
+  }
+}
+
+function renderSettings() {
+  const backendHint = el("div", { class: "settings-row" }, [
+    el("span", { class: "muted small" }, "Backend"),
+    el("span", { class: "settings-value muted small", id: "settings-backend" }, "…"),
+  ]);
+  void store.getBackendUrl().then((url) => {
+    const node = document.getElementById("settings-backend");
+    if (node) node.textContent = url || "—";
+  });
+
+  return el("div", { class: "settings-panel" }, [
+    el("div", { class: "settings-block" }, [
+      el("div", { class: "settings-block-title" }, "Account"),
+      el("div", { class: "settings-row" }, [
+        el("span", { class: "muted small" }, "Signed in as"),
+        el("span", { class: "settings-value" }, state.user ? state.user.email : "—"),
+      ]),
+      backendHint,
+      el("div", { class: "settings-actions" }, [
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn small",
+            onclick: async () => {
+              await syncNow();
+              await loadQueue();
+              toast("Synced profile & settings.");
+            },
+          },
+          "Sync now"
+        ),
+        el(
+          "button",
+          { type: "button", class: "btn small danger", onclick: () => doLogout() },
+          "Sign out"
+        ),
+      ]),
+    ]),
+
+    el("div", { class: "settings-block" }, [
+      el("div", { class: "settings-block-title" }, "Job matching"),
+      el(
+        "p",
+        { class: "muted small settings-hint" },
+        "Filters jobs while the extension polls the dashboard. 0 shows everything (same as the web app)."
+      ),
+      renderMinScoreControl({ compact: false }),
+      el("div", { class: "settings-presets" }, [
+        settingsPreset(0, "All"),
+        settingsPreset(50, "50+"),
+        settingsPreset(70, "70+"),
+        settingsPreset(80, "80+"),
+        settingsPreset(90, "90+"),
+      ]),
+    ]),
+
+    el("div", { class: "settings-block" }, [
+      el("div", { class: "settings-block-title" }, "Autofill"),
+      settingsToggleRow({
+        title: "Auto-advance until submit",
+        hint: "Workday: fill each step, fix validation, and continue to Review. You submit.",
+        on: !!state.autoAdvance,
+        onToggle: async () => {
+          const next = !state.autoAdvance;
+          await store.setAutoAdvance(next);
+          setState({ autoAdvance: next });
+          toast(next ? "Auto-advance on." : "Auto-advance off.");
+        },
+      }),
+      el("div", { class: "settings-field" }, [
+        el("label", { class: "settings-field-label" }, "Resume for autofill"),
+        el(
+          "p",
+          { class: "muted small settings-hint" },
+          "Use tailored content when available, or stick to your original profile."
+        ),
+        renderSelect({
+          value: state.resumeSource === "original" ? "original" : "tailored",
+          className: "settings-select",
+          options: [
+            { value: "tailored", label: "Tailored resume (recommended)" },
+            { value: "original", label: "Original profile resume" },
+          ],
+          onChange: async (v) => {
+            const next = await store.setResumeSource(v);
+            setState({ resumeSource: next });
+            toast(next === "original" ? "Using original resume." : "Using tailored resume.");
+          },
+        }),
+      ]),
+      el("div", { class: "settings-field" }, [
+        el("label", { class: "settings-field-label" }, "Answer strategy"),
+        el(
+          "p",
+          { class: "muted small settings-hint" },
+          "Optional guidance for the assistant when filling open-ended questions."
+        ),
+        (() => {
+          const area = el("textarea", {
+            class: "settings-textarea",
+            rows: "3",
+            placeholder: "e.g. Keep answers concise, emphasize React and distributed systems…",
+            value: state.answerStrategy || "",
+          });
+          area.addEventListener("change", async (e) => {
+            const next = await store.setAnswerStrategy(e.target.value);
+            setState({ answerStrategy: next });
+            toast("Answer strategy saved.");
+          });
+          return area;
+        })(),
+      ]),
+    ]),
+
+    el("div", { class: "settings-block" }, [
+      el("div", { class: "settings-block-title" }, "Lists"),
+      el("div", { class: "settings-field" }, [
+        el("label", { class: "settings-field-label" }, "Jobs per page"),
+        renderSelect({
+          value: String(state.pageSize || 25),
+          className: "settings-select",
+          options: JOBS_PAGE_SIZES.map((n) => ({ value: String(n), label: `${n} per page` })),
+          onChange: (v) => {
+            applyPageSize(parseInt(v, 10) || 25);
+            toast("Page size updated.");
+          },
+        }),
+      ]),
+    ]),
+
+    el("div", { class: "settings-block" }, [
+      el("div", { class: "settings-block-title" }, "Assistant"),
+      el(
+        "p",
+        { class: "muted small settings-hint" },
+        "AI provider, models, and API keys are managed in Atomspace System Settings on the dashboard — not here."
+      ),
+      el("div", { class: "settings-field" }, [
+        el("label", { class: "settings-field-label" }, "Default chat tone"),
+        renderSelect({
+          value: state.style || "standard",
+          className: "settings-select",
+          options: STYLES.map(([v, label]) => ({ value: v, label })),
+          onChange: (v) => setState({ style: v }),
+        }),
+      ]),
+      el("div", { class: "settings-field" }, [
+        el("label", { class: "settings-field-label" }, "Default answer type"),
+        renderSelect({
+          value: state.fieldType || "",
+          className: "settings-select",
+          options: FIELD_TYPES.map(([v, label]) => ({ value: v, label })),
+          onChange: (v) => setState({ fieldType: v }),
+        }),
+      ]),
+    ]),
+
+    renderAskHotkeySettings(),
+  ]);
+}
+
+function renderAskHotkeySettings() {
+  const label = store.formatAskHotkey(state.askHotkey);
+  const recording = !!state.askHotkeyRecording;
+  const block = el("div", { class: "settings-block" }, [
+    el("div", { class: "settings-block-title" }, "Ask hotkey"),
+    el(
+      "p",
+      { class: "muted small settings-hint" },
+      "On an application page, select a question (or any text), then press your hotkey. Atomspace pastes it into chat and asks the assistant automatically. Chat history clears each time you open an application."
+    ),
+    el("div", { class: "settings-hotkey-row" }, [
+      el("div", { class: "settings-hotkey-current" }, [
+        el("span", { class: "muted small" }, "Current shortcut"),
+        el(
+          "kbd",
+          { class: "settings-hotkey-kbd" + (recording ? " is-recording" : "") },
+          recording ? "Press keys…" : label
+        ),
+      ]),
+      el("div", { class: "settings-hotkey-actions" }, [
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn" + (recording ? " primary" : ""),
+            onclick: () => {
+              if (recording) stopAskHotkeyRecording();
+              else startAskHotkeyRecording();
+            },
+          },
+          recording ? "Cancel" : "Change"
+        ),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn link small",
+            onclick: () => {
+              if (!recording) void resetAskHotkey();
+            },
+          },
+          "Reset"
+        ),
+      ]),
+    ]),
+    recording
+      ? el(
+          "p",
+          { class: "muted small settings-hint" },
+          "Hold Ctrl, Alt/Option, or ⌘/Win, then press a key. Esc cancels."
+        )
+      : null,
+  ]);
+  return block;
+}
+
+let askHotkeyRecordHandler = null;
+
+function stopAskHotkeyRecording() {
+  if (askHotkeyRecordHandler) {
+    window.removeEventListener("keydown", askHotkeyRecordHandler, true);
+    askHotkeyRecordHandler = null;
+  }
+  if (state.askHotkeyRecording) setState({ askHotkeyRecording: false });
+}
+
+function startAskHotkeyRecording() {
+  stopAskHotkeyRecording();
+  setState({ askHotkeyRecording: true });
+  askHotkeyRecordHandler = (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      stopAskHotkeyRecording();
+      toast("Hotkey change cancelled.");
+      return;
+    }
+    const combo = store.askHotkeyFromKeyboardEvent(e);
+    if (!combo) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void (async () => {
+      const saved = await store.setAskHotkey(combo);
+      stopAskHotkeyRecording();
+      setState({ askHotkey: saved });
+      toast(`Ask hotkey set to ${store.formatAskHotkey(saved)}.`);
+      // Refresh listeners on the active application tab if open.
+      if (state.view === "job") {
+        void ensureAskHotkeyOnActiveTab({
+          requestPermission: false,
+          jobUrl: state.job && state.job.url,
+        });
+      }
+    })();
+  };
+  window.addEventListener("keydown", askHotkeyRecordHandler, true);
+}
+
+async function resetAskHotkey() {
+  stopAskHotkeyRecording();
+  const saved = await store.setAskHotkey(store.DEFAULT_ASK_HOTKEY);
+  setState({ askHotkey: saved });
+  toast(`Ask hotkey reset to ${store.formatAskHotkey(saved)}.`);
+}
+
+function settingsPreset(score, label) {
+  const active = Number(state.minScore) === score;
+  return el(
+    "button",
+    {
+      type: "button",
+      class: "settings-preset" + (active ? " is-active" : ""),
+      onclick: () => void applyMinScore(score),
+    },
+    label
+  );
+}
+
+function settingsToggleRow({ title, hint, on, onToggle }) {
+  return el("div", { class: "settings-toggle-row" }, [
+    el("div", { class: "settings-toggle-copy" }, [
+      el("div", { class: "settings-toggle-title" }, title),
+      hint ? el("p", { class: "muted small settings-hint" }, hint) : null,
+    ]),
+    el(
+      "button",
+      {
+        type: "button",
+        class: "switch" + (on ? " on" : ""),
+        role: "switch",
+        "aria-checked": on ? "true" : "false",
+        title: on ? "On" : "Off",
+        onclick: () => onToggle && onToggle(),
+      },
+      el("span", { class: "switch-knob" })
+    ),
+  ]);
 }
 
 // ── job-card metadata helpers ────────────────────────────────────────────────
@@ -2480,17 +5157,14 @@ function renderActiveTab() {
 // source is recognizable at a glance.
 const SOURCE_META = {
   linkedin: { label: "LinkedIn", color: "#0A66C2", short: "in" },
-  indeed: { label: "Indeed", color: "#2557A7", short: "ID" },
   greenhouse: { label: "Greenhouse", color: "#1F9F6E", short: "GH" },
   applytojob: { label: "ApplyToJob", color: "#13A6A6", short: "AT" },
   recruiterflow: { label: "RecruiterFlow", color: "#7C3AED", short: "RF" },
   workday: { label: "Workday", color: "#0875E1", short: "WD" },
   lever: { label: "Lever", color: "#6D6AE0", short: "LV" },
   workable: { label: "Workable", color: "#00756A", short: "WB" },
-  ziprecruiter: { label: "ZipRecruiter", color: "#1C9CD8", short: "ZR" },
-  glassdoor: { label: "Glassdoor", color: "#0CAA41", short: "GD" },
   dice: { label: "Dice", color: "#E4002B", short: "DC" },
-  jobright: { label: "Jobright", color: "#6C5CE7", short: "JR" },
+  jobright: { label: "Jobright.ai", color: "#6C5CE7", short: "JR" },
   wellfound: { label: "Wellfound", color: "#475569", short: "WF" },
   monster: { label: "Monster", color: "#6E46AE", short: "MO" },
   ashby: { label: "Ashby", color: "#4F46E5", short: "AB" },
@@ -2517,9 +5191,6 @@ function sourceFromUrl(url) {
   if (u.includes("smartrecruiters")) return "smartrecruiters";
   if (/^https?:\/\/careers\./.test(u) && /\/postings\/.+\/applications/.test(u)) return "pinpoint";
   if (u.includes("linkedin.")) return "linkedin";
-  if (u.includes("indeed.")) return "indeed";
-  if (u.includes("ziprecruiter")) return "ziprecruiter";
-  if (u.includes("glassdoor")) return "glassdoor";
   if (u.includes("dice.com")) return "dice";
   if (u.includes("wellfound") || u.includes("angel.co")) return "wellfound";
   if (u.includes("monster.")) return "monster";
@@ -2584,8 +5255,12 @@ function dashboardChips(j) {
   if (j.salary_raw) chips.push({ label: j.salary_raw });
   if (j.job_type) chips.push({ label: j.job_type });
   if (j.match_in_progress) chips.push({ label: "Matching…", tone: "warn", dot: true });
-  if (j.resume_pdf_status === "completed") chips.push({ label: "Resume", tone: "ok", dot: true });
-  if (j.cover_letter_pdf_status === "completed") chips.push({ label: "Cover letter", tone: "ok", dot: true });
+  // Only advertise docs when the tailor pipeline is actually ready (not failed leftover files).
+  const cg = String(j.content_generation_status || "").toLowerCase();
+  if (cg !== "failed" && cg !== "skipped") {
+    if (j.resume_pdf_status === "completed") chips.push({ label: "Resume", tone: "ok", dot: true });
+    if (j.cover_letter_pdf_status === "completed") chips.push({ label: "Cover letter", tone: "ok", dot: true });
+  }
   if (j.pumble_posted_at) chips.push({ label: "Pumble", tone: "ok" });
   return chips;
 }
@@ -2661,14 +5336,14 @@ function jobListSection(tabId, cards, emptyMsg) {
   const start = (page - 1) * size;
   const pageCards = cards.slice(start, start + size);
 
-  const wrap = el("div", { class: "tab-panel" });
-  wrap.appendChild(renderPager(tabId, page, totalPages, cards.length, start, pageCards.length));
+  const wrap = el("div", { class: "tab-panel job-list-section" });
   const pageJobIds = pageCards.map((c) => c.jobId).filter(Boolean);
   const bulkActions = renderListBulkActions(tabId, pageJobIds);
   if (bulkActions) wrap.appendChild(bulkActions);
   const list = el("div", { class: "list" });
   pageCards.forEach((c) => list.appendChild(jobCard(c)));
   wrap.appendChild(list);
+  wrap.appendChild(renderPager(tabId, page, totalPages, cards.length, start, pageCards.length));
   return wrap;
 }
 
@@ -2697,7 +5372,12 @@ function renderListBulkActions(tabId, jobIds) {
 }
 
 function applyPageSize(size) {
-  setState({ pageSize: size, pageByTab: { progress: 1, today: 1, ready: 1, applied: 1 } });
+  const n = size === 50 || size === 100 ? size : 25;
+  void store.setPageSize(n);
+  setState(
+    { pageSize: n, pageByTab: { progress: 1, today: 1, ready: 1, tailor: 1 } },
+    { resetScroll: true }
+  );
 }
 
 // Builds a compact page sequence with ellipses, e.g. [1, "…", 6, 7, 8, "…", 42].
@@ -2725,46 +5405,81 @@ function renderPager(tabId, page, totalPages, total, start, shown) {
     {
       class: "pager-size",
       title: "Results per page",
+      "aria-label": "Results per page",
       onchange: (e) => applyPageSize(parseInt(e.target.value, 10) || JOBS_PAGE_SIZES[0]),
     },
     JOBS_PAGE_SIZES.map((n) =>
-      el("option", n === state.pageSize ? { value: String(n), selected: "selected" } : { value: String(n) }, `${n} / page`)
+      el(
+        "option",
+        n === state.pageSize ? { value: String(n), selected: "selected" } : { value: String(n) },
+        String(n)
+      )
     )
   );
 
-  const top = el("div", { class: "pager-top" }, [
-    el("span", { class: "pager-info muted small" }, `${start + 1}–${start + shown} of ${total}`),
-    sizer,
+  const meta = el("div", { class: "pager-meta" }, [
+    el("div", { class: "pager-range" }, [
+      el("span", { class: "pager-range-nums" }, `${start + 1}–${start + shown}`),
+      el("span", { class: "pager-range-of" }, ` of ${total}`),
+    ]),
+    el("label", { class: "pager-size-wrap" }, [
+      el("span", { class: "pager-size-label" }, "Show"),
+      sizer,
+      el("span", { class: "pager-size-label" }, "per page"),
+    ]),
   ]);
 
-  // Single page: still show the count + size selector, skip the number strip.
-  if (totalPages <= 1) return el("div", { class: "pager" }, [top]);
+  if (totalPages <= 1) {
+    return el("div", { class: "pager" }, [meta]);
+  }
 
-  const navBtn = (label, target, { disabled = false, active = false, title } = {}) =>
+  const stepBtn = (label, target, { disabled = false, title } = {}) =>
     el(
       "button",
       {
-        class: "page-btn" + (active ? " active" : ""),
+        type: "button",
+        class: "pager-step",
         disabled,
-        title: title || `Page ${target}`,
+        title: title || label,
+        "aria-label": title || label,
         onclick: () => setTabPage(tabId, target),
       },
       label
     );
 
-  const nav = el("div", { class: "pager-nav" }, [
-    navBtn("«", 1, { disabled: page <= 1, title: "First page" }),
-    navBtn("‹", page - 1, { disabled: page <= 1, title: "Previous page" }),
-    ...pageSequence(page, totalPages).map((p) =>
-      p === "…"
-        ? el("span", { class: "page-ellipsis" }, "…")
-        : navBtn(String(p), p, { active: p === page })
-    ),
-    navBtn("›", page + 1, { disabled: page >= totalPages, title: "Next page" }),
-    navBtn("»", totalPages, { disabled: page >= totalPages, title: "Last page" }),
+  const pageBtn = (p) =>
+    el(
+      "button",
+      {
+        type: "button",
+        class: "pager-page" + (p === page ? " is-active" : ""),
+        title: `Page ${p}`,
+        "aria-label": `Page ${p}`,
+        "aria-current": p === page ? "page" : null,
+        onclick: () => setTabPage(tabId, p),
+      },
+      String(p)
+    );
+
+  const pages = el(
+    "div",
+    { class: "pager-pages", role: "navigation", "aria-label": "Pagination" },
+    pageSequence(page, totalPages).map((p) =>
+      p === "…" ? el("span", { class: "pager-ellipsis", "aria-hidden": "true" }, "…") : pageBtn(p)
+    )
+  );
+
+  const controls = el("div", { class: "pager-controls" }, [
+    stepBtn("Prev", page - 1, { disabled: page <= 1, title: "Previous page" }),
+    pages,
+    stepBtn("Next", page + 1, { disabled: page >= totalPages, title: "Next page" }),
   ]);
 
-  return el("div", { class: "pager" }, [top, nav]);
+  return el("div", { class: "pager" }, [
+    meta,
+    controls,
+    el("div", { class: "pager-status muted small" }, `Page ${page} of ${totalPages}`),
+  ]);
 }
 
 function renderHeader() {
@@ -2772,7 +5487,6 @@ function renderHeader() {
     el("div", { class: "header-title" }, "Atomspace"),
     el("div", { class: "header-right" }, [
       el("span", { class: "muted small" }, state.user ? state.user.email : ""),
-      el("button", { class: "btn link", onclick: () => doLogout() }, "Sign out"),
     ]),
   ]);
 }
@@ -2784,6 +5498,8 @@ const ICON_SEND =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>';
 const ICON_STOP =
   '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+const ICON_COPY =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_CHECK =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const ICON_MAIL =
@@ -2802,64 +5518,23 @@ const ICON_ALERT =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 const ICON_DOC =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/></svg>';
+const ICON_DOWNLOAD =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>';
 const ICON_LIST =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="M4 6h.01"/><path d="M4 12h.01"/><path d="M4 18h.01"/></svg>';
 const ICON_STAR =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 6.5 7 .9-5 4.7 1.3 7L12 18l-6.3 3.1L7 14.1l-5-4.7 7-.9z"/></svg>';
 const ICON_CHIP =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>';
+const ICON_BACK =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+const ICON_CHART =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16v-5"/><path d="M17 16V6"/></svg>';
+const ICON_GEAR =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>';
 
 function icon(svg, cls = "btn-ico") {
   return el("span", { class: cls, html: svg });
-}
-
-// Top-of-screen preferences. The auto-advance toggle controls whether Workday
-// autofill drives the whole flow to the Review step or fills one step at a time.
-function renderPreferencesBar() {
-  const on = !!state.autoAdvance;
-  const toggle = el(
-    "button",
-    {
-      class: "switch" + (on ? " on" : ""),
-      role: "switch",
-      "aria-checked": on ? "true" : "false",
-      title: "Automatically fill and advance each Workday step until the Review page.",
-      onclick: () => applyAutoAdvance(!state.autoAdvance),
-    },
-    [el("span", { class: "switch-knob" })]
-  );
-  return el("div", { class: "prefs-bar" + (on ? " active" : "") }, [
-    el("div", { class: "prefs-row" }, [
-      el("span", { class: "prefs-icon" + (on ? " on" : ""), html: ICON_BOLT }),
-      el("div", { class: "prefs-text" }, [
-        el("span", { class: "prefs-label" }, "Auto-advance until submit ready"),
-        el(
-          "span",
-          { class: "prefs-sub muted small" },
-          "Fills each step, fixes validation, and clicks Continue. Stops at the Review page."
-        ),
-      ]),
-      toggle,
-    ]),
-  ]);
-}
-
-const PROVIDER_LABELS = { openai: "OpenAI", anthropic: "Anthropic", gemini: "Gemini", google: "Google" };
-
-function renderProviderBadge() {
-  const settings = state.cache && state.cache.settings;
-  if (!settings) return el("div", {});
-  const provider = settings.llm_provider || "openai";
-  const configured = !!settings[`${provider}_key_configured`];
-  const name = PROVIDER_LABELS[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
-  return el("div", { class: "provider-badge", title: configured ? "Using your configured API key" : "No key set, using the server default" }, [
-    el("span", { class: "provider-label muted" }, "AI provider"),
-    el("span", { class: "provider-name" }, name),
-    el("span", { class: "provider-status " + (configured ? "ok" : "warn") }, [
-      el("span", { class: "chip-dot" }),
-      el("span", {}, configured ? "Key configured" : "Server default"),
-    ]),
-  ]);
 }
 
 function renderSyncBanner() {
@@ -2875,7 +5550,7 @@ function renderSyncBanner() {
   ]);
 }
 
-function renderMinScoreControl() {
+function renderMinScoreControl({ compact = true } = {}) {
   const input = el("input", {
     type: "number",
     min: "0",
@@ -2884,9 +5559,18 @@ function renderMinScoreControl() {
     class: "score-input",
     value: String(state.minScore),
   });
+  const range = el("input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    step: "1",
+    class: "score-range",
+    value: String(state.minScore),
+  });
   const reloadBtn = el(
     "button",
     {
+      type: "button",
       class: "btn small primary",
       disabled: true,
       onclick: () => {
@@ -2894,15 +5578,22 @@ function renderMinScoreControl() {
         applyMinScore(Number.isFinite(v) ? v : store.DEFAULT_MIN_SCORE);
       },
     },
-    "Reload"
+    compact ? "Reload" : "Apply"
   );
-  // Reload is enabled only once the entered value differs from the applied one.
-  input.addEventListener("input", () => {
-    const v = parseInt(input.value, 10);
-    reloadBtn.disabled = !(Number.isFinite(v) && v !== state.minScore);
-  });
-  return el("div", { class: "score-control" }, [
-    el("label", { class: "score-label" }, "Min match score"),
+  const syncControls = (raw) => {
+    const v = parseInt(raw, 10);
+    const ok = Number.isFinite(v);
+    if (ok) {
+      input.value = String(v);
+      range.value = String(v);
+    }
+    reloadBtn.disabled = !(ok && v !== state.minScore);
+  };
+  input.addEventListener("input", () => syncControls(input.value));
+  range.addEventListener("input", () => syncControls(range.value));
+  return el("div", { class: "score-control" + (compact ? "" : " score-control-full") }, [
+    el("label", { class: "min-score-label" }, "Min match score"),
+    range,
     input,
     reloadBtn,
   ]);
@@ -2911,7 +5602,7 @@ function renderMinScoreControl() {
 const ICON_BRIEFCASE =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>';
 
-function jobCard({ title, company, location, score, onClick, badge, chips = [], source }) {
+function jobCard({ title, company, location, score, onClick, badge, chips = [], source, docDownloads }) {
   const meta = sourceMeta(source);
   const side = [];
   if (score != null) {
@@ -2923,6 +5614,8 @@ function jobCard({ title, company, location, score, onClick, badge, chips = [], 
     );
   }
   if (badge) side.push(el("span", { class: "badge tiny" }, badge));
+  const docs = renderDocDownloadActions(docDownloads, { compact: true });
+  if (docs) side.push(docs);
 
   const logo = meta.short
     ? el("div", { class: "card-logo", title: meta.label || "" }, meta.short)
@@ -2955,7 +5648,7 @@ function renderChip(c) {
 function renderJob() {
   const wrap = el("div", { class: "screen job" });
   wrap.appendChild(
-    el("div", { class: "header" }, [
+    el("div", { class: "header job-header" }, [
       el("button", { class: "btn link", onclick: () => goHome() }, "Back"),
       el("div", { class: "header-right" }, [
         state.job && state.job.score != null ? el("span", { class: "score" }, `${state.job.score}`) : null,
@@ -2970,9 +5663,13 @@ function renderJob() {
   }
 
   const job = state.job;
-  wrap.appendChild(renderPreferencesBar());
-  wrap.appendChild(el("h1", { class: "job-title" }, job.title || "(untitled job)"));
-  wrap.appendChild(el("div", { class: "muted" }, job.company || ""));
+  wrap.appendChild(
+    el("div", { class: "job-hero" }, [
+      el("h1", { class: "job-title" }, job.title || "(untitled job)"),
+      el("div", { class: "job-company muted" }, job.company || ""),
+    ])
+  );
+
   // Already-applied jobs are read-only here: skip the autofill UI and show an
   // applied confirmation instead.
   if (job.applied) {
@@ -2991,22 +5688,132 @@ function renderJob() {
         el("button", { class: "btn small primary", onclick: () => runAnalysis() }, "Run analysis"),
       ])
     );
-  } else {
-    wrap.appendChild(renderJdDetails(job.snapshot));
   }
+  wrap.appendChild(renderJdDetails(job));
 
   wrap.appendChild(renderChatSection(job));
-  wrap.appendChild(renderJobFooter());
   if (state.error) wrap.appendChild(el("div", { class: "error", onclick: () => setState({ error: null }) }, state.error));
+  // Footer last so it stays flush against the panel bottom edge.
+  wrap.appendChild(renderJobFooter());
   return wrap;
 }
 
-function renderJdDetails(snap) {
-  const details = el("details", { class: "jd", open: "open" });
+/** Shared resume/cover download controls (JD header + Tailor cards). */
+function renderDocDownloadActions(docs, { compact = false } = {}) {
+  if (!docs || !docs.jobId) return null;
+  const resumeReady = !!(docs.resumePdf || docs.resumeDocx);
+  const coverReady = !!(docs.coverPdf || docs.coverDocx);
+  if (compact && !resumeReady && !coverReady) return null;
+
+  const resumeTypes = [
+    docs.resumePdf ? "resume_pdf" : null,
+    docs.resumeDocx ? "resume_docx" : null,
+  ].filter(Boolean);
+  const coverTypes = [
+    docs.coverPdf ? "cover_letter_pdf" : null,
+    docs.coverDocx ? "cover_letter_docx" : null,
+  ].filter(Boolean);
+
+  const stopCard = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const mkBtn = ({ ready, fileTypes, short, title, readyTitle }) =>
+    el(
+      "button",
+      {
+        type: "button",
+        class: (compact ? "card-doc-btn" : "jd-doc-btn") + (ready ? " is-ready" : " is-disabled"),
+        title: ready ? readyTitle : title,
+        disabled: ready ? undefined : true,
+        onclick: (e) => {
+          stopCard(e);
+          if (!ready) return;
+          void downloadJobDoc(docs.jobId, fileTypes, readyTitle);
+        },
+      },
+      [
+        icon(ICON_DOWNLOAD, compact ? "card-doc-btn-ico" : "jd-doc-btn-ico"),
+        el("span", { class: compact ? "card-doc-btn-label" : "jd-doc-btn-label" }, short),
+      ]
+    );
+
+  return el(
+    "div",
+    {
+      class: compact ? "card-doc-actions" : "jd-doc-actions",
+      onclick: stopCard,
+      onmousedown: stopCard,
+    },
+    [
+      mkBtn({
+        ready: resumeReady,
+        fileTypes: resumeTypes,
+        short: compact ? "R" : "Resume",
+        title: "Tailored resume not ready yet",
+        readyTitle: "Download tailored resume",
+      }),
+      mkBtn({
+        ready: coverReady,
+        fileTypes: coverTypes,
+        short: compact ? "CL" : "Cover",
+        title: "Cover letter not ready yet",
+        readyTitle: "Download cover letter",
+      }),
+    ]
+  );
+}
+
+function renderJdDocDownloadActions(job) {
+  const docs = (job && job.docs) || emptyJobDocs();
+  return renderDocDownloadActions({
+    jobId: job && job.job_id,
+    resumePdf: !!docs.resumePdf,
+    resumeDocx: !!docs.resumeDocx,
+    coverPdf: !!docs.coverPdf,
+    coverDocx: !!docs.coverDocx,
+  });
+}
+
+function renderJdDetails(job) {
+  const snap = (job && job.snapshot) || {};
+  // Only auto-expand when ready AND jdOpen. Chat sets jdOpen=false; do not key
+  // off job.ready alone or every setState (stream deltas, autofill) re-opens it.
+  const expanded = !!(state.jdOpen && job && job.ready);
+  const details = el("details", {
+    class: "jd",
+    open: expanded ? "open" : undefined,
+    ontoggle: (e) => {
+      const node = e && e.target;
+      if (!node || node !== details) return;
+      const open = !!node.open;
+      if (open === !!state.jdOpen) return;
+      setState({ jdOpen: open });
+    },
+  });
   details.appendChild(
-    el("summary", { class: "jd-summary" }, [icon(ICON_DOC, "jd-summary-ico"), el("span", {}, "Job description")])
+    el("summary", { class: "jd-summary" }, [
+      el("span", { class: "jd-summary-left" }, [
+        icon(ICON_DOC, "jd-summary-ico"),
+        el("span", {}, "Job description"),
+      ]),
+      renderJdDocDownloadActions(job),
+    ])
   );
   const body = el("div", { class: "jd-body" });
+
+  if (!job || !job.ready) {
+    body.appendChild(
+      el(
+        "p",
+        { class: "muted small" },
+        "Structured details are still preparing. You can download tailored docs above when ready."
+      )
+    );
+    details.appendChild(body);
+    return details;
+  }
 
   // Quick facts grid - only the fields that exist.
   const facts = [];
@@ -3105,12 +5912,18 @@ function renderChatSection(job) {
 
 function renderChat(job) {
   const chat = el("div", { class: "chat" });
-  const msgs = el("div", { class: "messages" });
+  const msgs = el("div", { class: "messages", "data-scroll-preserve": "messages" });
   if (!job.messages.length) {
+    const hotkeyLabel = store.formatAskHotkey(state.askHotkey);
     msgs.appendChild(
       el("div", { class: "chat-empty muted" }, [
         icon(ICON_BOLT, "chat-empty-icon"),
         el("span", {}, "Ask anything about this application."),
+        el(
+          "span",
+          { class: "chat-empty-hotkey" },
+          `Tip: select a question on the page, then press ${hotkeyLabel}.`
+        ),
       ])
     );
   }
@@ -3123,9 +5936,23 @@ function renderChat(job) {
       const row = el("div", { class: "msg-row assistant" }, [bubble]);
       if (!m._streaming) {
         // Copy the plain-text version so formatting marks (**, -, #, …) are dropped.
-        row.appendChild(
-          el("button", { class: "copy-btn", title: "Copy answer", onclick: () => copyText(mdToPlain(m.content)) }, "Copy")
+        const copyBtn = el(
+          "button",
+          {
+            type: "button",
+            class: "copy-btn",
+            title: "Copy answer",
+            onclick: (e) => {
+              e.stopPropagation();
+              void copyAnswer(mdToPlain(m.content), copyBtn);
+            },
+          },
+          [
+            el("span", { class: "copy-btn-ico", html: ICON_COPY }),
+            el("span", { class: "copy-btn-label" }, "Copy"),
+          ]
         );
+        row.appendChild(copyBtn);
       }
       msgs.appendChild(row);
     } else {
@@ -3135,17 +5962,10 @@ function renderChat(job) {
   chat.appendChild(msgs);
   setTimeout(() => (msgs.scrollTop = msgs.scrollHeight), 0);
 
-  // Controls
-  const controls = el("div", { class: "controls" }, [
-    labeledSelect("Tone", STYLES, state.style, (v) => setState({ style: v })),
-    labeledSelect("Answer type", FIELD_TYPES, state.fieldType, (v) => setState({ fieldType: v })),
-  ]);
-  chat.appendChild(controls);
-
   const ta = el("textarea", {
     class: "composer-input",
-    placeholder: "Ask the assistant…  (Enter to send, Shift+Enter for newline)",
-    rows: 2,
+    placeholder: `Ask the assistant…  (Enter to send · or select text on the page + ${store.formatAskHotkey(state.askHotkey)})`,
+    rows: 3,
   });
   const send = () => {
     const v = ta.value;
@@ -3159,9 +5979,29 @@ function renderChat(job) {
     }
   });
   const sendBtn = state.streaming
-    ? el("button", { class: "icon-btn stop", title: "Stop generating", onclick: () => stopStreaming() }, [icon(ICON_STOP), el("span", {}, "Stop")])
-    : el("button", { class: "icon-btn primary", title: "Send (Enter)", onclick: send }, [icon(ICON_SEND), el("span", {}, "Ask")]);
-  chat.appendChild(el("div", { class: "composer" }, [ta, sendBtn]));
+    ? el(
+        "button",
+        { class: "icon-btn stop composer-ask-btn", title: "Stop generating", onclick: () => stopStreaming() },
+        [icon(ICON_STOP), el("span", {}, "Stop")]
+      )
+    : el(
+        "button",
+        { class: "icon-btn primary composer-ask-btn", title: "Send (Enter)", onclick: send },
+        [icon(ICON_SEND), el("span", {}, "Ask")]
+      );
+
+  // Full-width input; Tone / Answer type / Ask sit on one flush toolbar row below
+  // (no vertical gap or divider between input and that group).
+  chat.appendChild(
+    el("div", { class: "composer-block" }, [
+      el("div", { class: "composer" }, [ta]),
+      el("div", { class: "composer-toolbar" }, [
+        labeledSelect("Tone", STYLES, state.style, (v) => setState({ style: v })),
+        labeledSelect("Answer type", FIELD_TYPES, state.fieldType, (v) => setState({ fieldType: v })),
+        sendBtn,
+      ]),
+    ])
+  );
   return chat;
 }
 
@@ -3233,33 +6073,71 @@ function blockStatus(handle) {
   return "skipped";
 }
 
+function renderSquareAutofillBtn({ label, title, onClick, disabled, busy, tone }) {
+  return el(
+    "button",
+    {
+      type: "button",
+      class:
+        "af-square-btn" +
+        (tone === "primary" || !tone ? " primary" : "") +
+        (busy ? " is-busy" : "") +
+        (disabled ? " is-disabled" : ""),
+      title: title || label,
+      disabled: disabled || busy ? true : undefined,
+      onclick: () => {
+        if (!disabled && !busy && onClick) onClick();
+      },
+    },
+    [
+      busy
+        ? el("span", { class: "af-square-spinner", "aria-hidden": "true" })
+        : icon(ICON_BOLT, "af-square-ico"),
+      el("span", { class: "af-square-label" }, label),
+    ]
+  );
+}
+
+function renderAutofillSideStatus(nodes) {
+  return el("div", { class: "af-side" }, nodes.filter(Boolean));
+}
+
 function renderAutofillPanel() {
   const af = state.autofill;
   const wrap = el("div", { class: "autofill" });
 
   if (!af.active) {
     const previewEngine = state.job && state.job.engine;
+    const ok = !previewEngine || previewEngine.available;
     wrap.appendChild(
-      el("button", { class: "btn primary autofill-btn", onclick: () => startAutofill() }, [
-        icon(ICON_BOLT),
-        el("span", {}, "Autofill this page"),
+      el("div", { class: "af-row" }, [
+        renderSquareAutofillBtn({
+          label: "Fill",
+          title: ok ? "Autofill this page" : `${previewEngine.label} engine coming soon`,
+          tone: "primary",
+          disabled: !ok,
+          onClick: () => startAutofill(),
+        }),
+        renderAutofillSideStatus([
+          el("div", { class: "af-side-title" }, "Autofill"),
+          previewEngine
+            ? ok
+              ? el("div", { class: "af-side-line" }, [
+                  el("span", { class: "af-pill info" }, previewEngine.label),
+                  el("span", { class: "af-side-text" }, "Ready — click Fill to run"),
+                ])
+              : el("div", { class: "af-side-line warn" }, [
+                  icon(ICON_ALERT, "af-inline-ico"),
+                  el(
+                    "span",
+                    { class: "af-side-text" },
+                    `${previewEngine.label} dedicated engine coming soon`
+                  ),
+                ])
+            : el("div", { class: "af-side-text muted" }, "Open the application tab, then fill."),
+        ]),
       ])
     );
-    if (previewEngine) {
-      const ok = previewEngine.available;
-      wrap.appendChild(
-        ok
-          ? el("div", { class: "af-engine" }, [
-              icon(ICON_CHIP, "af-engine-ico"),
-              el("span", { class: "af-engine-label" }, "Engine"),
-              el("span", { class: "af-engine-name" }, previewEngine.label),
-            ])
-          : el("div", { class: "af-engine warn" }, [
-              icon(ICON_ALERT, "af-engine-ico"),
-              el("span", {}, `${previewEngine.label} jobs get a dedicated engine (coming soon).`),
-            ])
-      );
-    }
     return wrap;
   }
 
@@ -3269,94 +6147,167 @@ function renderAutofillPanel() {
     return renderWorkdayPanel(af);
   }
 
-  const engineLabel = af.engine ? ` - ${af.engine.label}` : "";
+  const engineName = (af.engine && af.engine.label) || "Assistant";
   const autoDiscover = !!(af.engine && af.engine.autoDiscover);
-  const titleSuffix = af.discovering ? " - scanning" : af.picking ? " - selecting" : "";
-  wrap.appendChild(
-    el("div", { class: "autofill-head" }, [
-      el("span", { class: "autofill-title" }, [
-        icon(ICON_BOLT, "af-title-ico"),
-        el("span", {}, "Autofill mode" + titleSuffix + engineLabel),
+  const fieldCount = (af.fields || []).length;
+  const primaryField = af.fields && af.fields[0];
+  const primaryStatus = primaryField ? blockStatus(primaryField.handle) : null;
+  const needsN = (af.needsUser && af.needsUser.length) || 0;
+
+  let btnLabel = "Fill";
+  let btnTitle = "Run autofill";
+  let btnBusy = !!af.running;
+  let btnDisabled = false;
+  let onClick = () => runAutofill();
+  if (af.discovering) {
+    btnLabel = "Scan";
+    btnTitle = "Scanning the application form…";
+    btnBusy = true;
+    btnDisabled = true;
+    onClick = null;
+  } else if (af.picking) {
+    btnLabel = "Pick";
+    btnTitle = "Selecting fields on the page";
+    btnDisabled = true;
+    onClick = null;
+  } else if (!fieldCount) {
+    btnDisabled = true;
+    btnTitle = "No fields selected yet";
+  } else {
+    btnLabel = String(fieldCount);
+    btnTitle = `Autofill ${fieldCount} field${fieldCount === 1 ? "" : "s"}`;
+  }
+
+  const sideKids = [];
+  sideKids.push(
+    el("div", { class: "af-side-top" }, [
+      el("div", { class: "af-side-title" }, [
+        el("span", {}, "Autofill"),
+        el("span", { class: "af-side-engine" }, engineName),
       ]),
-      el("button", { class: "btn link", onclick: () => cancelAutofill() }, "Cancel"),
+      el("button", { class: "btn link af-side-cancel", onclick: () => cancelAutofill() }, "Cancel"),
     ])
   );
+
   if (af.discovering) {
-    wrap.appendChild(renderSpinner("Scanning the application form..."));
+    sideKids.push(
+      el("div", { class: "af-side-line" }, [
+        el("span", { class: "af-pill warn pulse" }, "Scanning"),
+        el("span", { class: "af-side-text" }, "Looking for the application form…"),
+      ])
+    );
   } else if (af.picking) {
-    wrap.appendChild(
-      el(
-        "p",
-        { class: "muted small" },
-        "Click each field block on the page. Green is one field, amber has several, red has no input. Press Esc to stop picking."
-      )
+    sideKids.push(
+      el("div", { class: "af-side-line" }, [
+        el("span", { class: "af-pill warn" }, "Selecting"),
+        el("span", { class: "af-side-text" }, "Click field blocks on the page · Esc to stop"),
+      ])
     );
-  } else if (!autoDiscover) {
-    // Auto-discovery engines fill the whole form in one pass, so manual
-    // "select more fields" only applies to the generic best-effort flow.
-    wrap.appendChild(
-      el("button", { class: "btn small", onclick: () => resumePicking() }, "Select more fields")
+  } else if (af.running) {
+    sideKids.push(
+      el("div", { class: "af-side-line" }, [
+        el("span", { class: "af-pill info pulse" }, "Running"),
+        el("span", { class: "af-side-text" }, af.runStatus || "Filling the application…"),
+      ])
     );
-  }
-
-  if (af.fields.length) {
-    const list = el("div", { class: "af-list" });
-    af.fields.forEach((f) => {
-      const status = blockStatus(f.handle);
-      list.appendChild(
-        el("div", { class: "af-item" }, [
-          el("span", { class: `af-badge ${f.level}` }, afBadgeLabel(f.level)),
-          el("span", { class: "af-label" }, f.label || "(field)"),
-          status ? el("span", { class: `af-status ${status}` }, afStatusLabel(status)) : null,
-          el("button", { class: "af-remove", title: "Remove", onclick: () => removeAutofillField(f.handle) }, "x"),
-        ])
-      );
-    });
-    wrap.appendChild(list);
-  } else if (!af.discovering) {
-    wrap.appendChild(el("p", { class: "muted small" }, "No fields selected yet."));
-  }
-
-  if (af.running) {
-    wrap.appendChild(renderSpinner(af.runStatus || "Filling the application…"));
-  } else if (!af.discovering) {
-    wrap.appendChild(
-      el(
-        "button",
-        { class: "btn small primary", disabled: !af.fields.length, onclick: () => runAutofill() },
-        af.fields.length ? `Autofill ${af.fields.length} field${af.fields.length === 1 ? "" : "s"}` : "Autofill"
-      )
+  } else if (primaryField) {
+    sideKids.push(
+      el("div", { class: "af-side-line af-side-field" }, [
+        el("span", { class: `af-badge ${primaryField.level}` }, afBadgeLabel(primaryField.level)),
+        el("span", { class: "af-label" }, primaryField.label || "(field)"),
+        primaryStatus
+          ? el("span", { class: `af-status ${primaryStatus}` }, afStatusLabel(primaryStatus))
+          : null,
+        !autoDiscover
+          ? el(
+              "button",
+              {
+                class: "af-remove",
+                title: "Remove",
+                onclick: () => removeAutofillField(primaryField.handle),
+              },
+              "×"
+            )
+          : null,
+      ])
     );
+  } else {
+    sideKids.push(el("div", { class: "af-side-text muted" }, "No fields selected yet."));
   }
 
   if (af.error) {
-    wrap.appendChild(el("div", { class: "error", onclick: () => setAutofill({ error: null }) }, af.error));
+    sideKids.push(
+      el(
+        "div",
+        {
+          class: "af-alert danger",
+          title: af.error,
+          onclick: () => setAutofill({ error: null }),
+        },
+        [icon(ICON_ALERT, "af-inline-ico"), el("span", {}, af.error)]
+      )
+    );
   }
 
-  if (af.needsUser && af.needsUser.length) {
-    const n = af.needsUser.length;
-    wrap.appendChild(
-      el("div", { class: "af-needs" }, [
-        el("div", { class: "af-needs-head" }, [
-          icon(ICON_ALERT, "af-needs-ico"),
-          el("span", { class: "af-needs-title" }, `Review ${n} field${n === 1 ? "" : "s"} manually`),
-          el("span", { class: "af-needs-count" }, String(n)),
-        ]),
-        el("p", { class: "af-needs-sub" }, "We couldn't fill these from your profile - please check them before submitting."),
+  if (needsN > 0 && !af.running && !af.discovering) {
+    const first = af.needsUser[0];
+    const extra = needsN > 1 ? ` +${needsN - 1} more` : "";
+    sideKids.push(
+      el("div", { class: "af-alert warn", title: first.reason || "Needs your input" }, [
+        icon(ICON_ALERT, "af-inline-ico"),
         el(
-          "div",
-          { class: "af-needs-list" },
-          af.needsUser.map((item) =>
-            el("div", { class: "af-needs-item" }, [
-              el("span", { class: "af-needs-label" }, item.label || "Field"),
-              el("span", { class: "af-needs-reason" }, item.reason || "Needs your input"),
-            ])
-          )
+          "span",
+          { class: "af-alert-text" },
+          `${first.label || "Field"}${extra}: ${first.reason || "Needs your input"}`
         ),
       ])
     );
   }
 
+  if (!autoDiscover && !af.discovering && !af.picking && !af.running) {
+    sideKids.push(
+      el(
+        "button",
+        { type: "button", class: "btn link small af-more-fields", onclick: () => resumePicking() },
+        "Select more fields"
+      )
+    );
+  }
+
+  // Extra selected fields (beyond the first) stay compact under the side column.
+  if (af.fields.length > 1 && !af.discovering) {
+    const rest = el("div", { class: "af-list af-list-compact" });
+    af.fields.slice(1).forEach((f) => {
+      const status = blockStatus(f.handle);
+      rest.appendChild(
+        el("div", { class: "af-item" }, [
+          el("span", { class: `af-badge ${f.level}` }, afBadgeLabel(f.level)),
+          el("span", { class: "af-label" }, f.label || "(field)"),
+          status ? el("span", { class: `af-status ${status}` }, afStatusLabel(status)) : null,
+          el(
+            "button",
+            { class: "af-remove", title: "Remove", onclick: () => removeAutofillField(f.handle) },
+            "×"
+          ),
+        ])
+      );
+    });
+    sideKids.push(rest);
+  }
+
+  wrap.appendChild(
+    el("div", { class: "af-row" }, [
+      renderSquareAutofillBtn({
+        label: btnLabel,
+        title: btnTitle,
+        tone: "primary",
+        busy: btnBusy,
+        disabled: btnDisabled,
+        onClick,
+      }),
+      renderAutofillSideStatus(sideKids),
+    ])
+  );
   return wrap;
 }
 
@@ -3373,37 +6324,72 @@ const WD_STEP_LABELS = {
 
 function renderWorkdayPanel(af) {
   const wrap = el("div", { class: "autofill" });
-  wrap.appendChild(
-    el("div", { class: "autofill-head" }, [
-      el("span", { class: "autofill-title" }, [
-        icon(ICON_BOLT, "af-title-ico"),
-        el("span", {}, af.autoLoop ? "Workday auto-advance" : "Workday autofill"),
+  const busy = !!af.running;
+  const sideKids = [
+    el("div", { class: "af-side-top" }, [
+      el("div", { class: "af-side-title" }, [
+        el("span", {}, af.autoLoop ? "Auto-advance" : "Autofill"),
+        el("span", { class: "af-side-engine" }, "Workday"),
       ]),
       el(
         "button",
-        { class: "btn link", onclick: () => (af.running && af.autoLoop ? stopAutoAdvance() : cancelAutofill()) },
+        {
+          class: "btn link af-side-cancel",
+          onclick: () => (af.running ? stopWorkdayAutofill() : cancelAutofill()),
+        },
         af.running ? "Stop" : "Close"
       ),
-    ])
-  );
+    ]),
+  ];
 
   if (af.running && af.autoLoop) {
-    wrap.appendChild(el("p", { class: "muted small" }, af.loopStatus || "Working through the application…"));
+    sideKids.push(
+      el("div", { class: "af-side-line" }, [
+        el("span", { class: "af-pill info pulse" }, "Running"),
+        el("span", { class: "af-side-text" }, af.loopStatus || "Working through the application…"),
+      ])
+    );
   } else if (af.running) {
-    wrap.appendChild(el("p", { class: "muted small" }, "Filling the current step from your profile..."));
+    sideKids.push(
+      el("div", { class: "af-side-line" }, [
+        el("span", { class: "af-pill info pulse" }, "Filling"),
+        el("span", { class: "af-side-text" }, "Filling the current step from your profile…"),
+      ])
+    );
   } else if (af.autoLoop && af.done && af.loopMessage) {
-    const cls = af.loopFinished === "review" ? "banner ok" : af.loopFinished === "error" || af.loopFinished === "needs_user" || af.loopFinished === "stuck" ? "banner warn" : "muted small";
-    wrap.appendChild(el("div", { class: cls }, af.loopMessage));
+    const tone =
+      af.loopFinished === "review"
+        ? "ok"
+        : af.loopFinished === "error" ||
+            af.loopFinished === "needs_user" ||
+            af.loopFinished === "stuck"
+          ? "warn"
+          : "info";
+    sideKids.push(
+      el("div", { class: `af-alert ${tone}` }, [
+        icon(tone === "ok" ? ICON_CHECK : ICON_ALERT, "af-inline-ico"),
+        el("span", { class: "af-alert-text" }, af.loopMessage),
+      ])
+    );
   } else if (af.done && !af.reports.length && !af.error) {
-    wrap.appendChild(
-      el("p", { class: "muted small" }, "No Workday application step was detected on this page. Open the application and try again.")
+    sideKids.push(
+      el("div", { class: "af-side-text muted" }, "No Workday step detected. Open the application and try again.")
     );
   } else if (!af.done) {
-    wrap.appendChild(el("p", { class: "muted small" }, "Starting..."));
+    sideKids.push(el("div", { class: "af-side-text muted" }, "Starting…"));
+  }
+
+  if (af.error) {
+    sideKids.push(
+      el("div", { class: "af-alert danger" }, [
+        icon(ICON_ALERT, "af-inline-ico"),
+        el("span", { class: "af-alert-text" }, af.error),
+      ])
+    );
   }
 
   if (af.reports && af.reports.length) {
-    const list = el("div", { class: "af-list" });
+    const list = el("div", { class: "af-list af-list-compact" });
     af.reports.forEach((r) => {
       const toCheck = [...(r.missed || []), ...((r.unmatched || []).map((u) => u.label || u.key))];
       list.appendChild(
@@ -3416,32 +6402,38 @@ function renderWorkdayPanel(af) {
         ])
       );
     });
-    wrap.appendChild(list);
+    sideKids.push(list);
     if (!af.autoLoop) {
-      wrap.appendChild(
+      sideKids.push(
         el(
           "p",
-          { class: "muted small" },
-          "Review the page, then click Workday's Continue/Save and Continue. Re-run on each step. Submit is left to you."
+          { class: "muted small af-wd-hint" },
+          "Review, click Workday Continue, then re-run — Submit is yours."
         )
       );
     }
   }
 
-  if (af.error) {
-    wrap.appendChild(el("div", { class: "error", onclick: () => setAutofill({ error: null }) }, af.error));
-  }
-
-  if (af.done) {
-    const loopMode = state.autoAdvance;
-    wrap.appendChild(
-      el(
-        "button",
-        { class: "btn small primary", onclick: () => rerunWorkday() },
-        loopMode ? "Run again from this step" : "Fill this step again"
-      )
-    );
-  }
+  const loopMode = state.autoAdvance;
+  wrap.appendChild(
+    el("div", { class: "af-row" }, [
+      renderSquareAutofillBtn({
+        label: busy ? "…" : af.done ? "Again" : "WD",
+        title: af.done
+          ? loopMode
+            ? "Run again from this step"
+            : "Fill this step again"
+          : af.autoLoop
+            ? "Workday auto-advance"
+            : "Workday autofill",
+        tone: "primary",
+        busy,
+        disabled: busy ? true : !af.done,
+        onClick: af.done && !busy ? () => rerunWorkday() : null,
+      }),
+      renderAutofillSideStatus(sideKids),
+    ])
+  );
   return wrap;
 }
 
@@ -3477,10 +6469,12 @@ async function rerunWorkday() {
       await autoAdvanceWorkday(tabId, profile, resumeFile);
       return;
     }
+    const runSeq = ++wdRunSeq;
     await chrome.tabs.sendMessage(tabId, {
       type: "WD_RUN",
       profile,
-      options: { autoAdvance: false, resumeFile },
+      options: { autoAdvance: false, resumeFile, newAttempt: true },
+      runSeq,
     });
     armWorkdayWatchdog();
   } catch (err) {

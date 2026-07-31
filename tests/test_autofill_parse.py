@@ -264,12 +264,18 @@ class TestDeterministicEEOOverride:
         )
         return _parse_autofill_results(text, fields)[0].controls[0]
 
-    def test_gender_forced_male_not_female(self):
+    def test_gender_forced_prefer_not_when_offered(self):
+        # When a decline / prefer-not option exists, pick it over guessing Male/Female.
         c = self._flagged("Gender", ["Male", "Female", "Decline To Self Identify"])
-        assert c.value == "Male"
-        assert c.option == "Male"
+        assert c.value == "Decline To Self Identify"
+        assert c.option == "Decline To Self Identify"
         assert c.needs_user is False
         assert c.reason is None
+
+    def test_gender_forced_male_when_no_decline(self):
+        c = self._flagged("Gender", ["Male", "Female", "Non-binary"])
+        assert c.value == "Male"
+        assert c.needs_user is False
 
     def test_hispanic_forced_no(self):
         c = self._flagged("Are you Hispanic/Latino?", ["Yes", "No", "Decline To Self Identify"])
@@ -310,8 +316,146 @@ class TestDeterministicEEOOverride:
         assert c.value == "I agree"
         assert c.needs_user is False
 
+    def test_clearance_forced_no_when_flagged(self):
+        # Security clearance is safest-only: force No instead of leaving needs_user.
+        c = self._flagged("Do you hold a Top Secret clearance?", ["Yes", "No"], reason="no evidence")
+        assert c.value == "No"
+        assert c.option == "No"
+        assert c.needs_user is False
+
     def test_non_demographic_needs_user_preserved(self):
         # A genuine unknown qualification with a generic label stays needs_user.
-        c = self._flagged("Do you hold a Top Secret clearance?", ["Yes", "No"], reason="no evidence")
+        c = self._flagged("How many years have you used Fortran?", ["0", "1-2", "3+"], reason="no evidence")
         assert c.needs_user is True
         assert c.value == ""
+
+
+class TestSafestOnlyClamp:
+    """SSN / clearance multi-selects must never keep 'select all'."""
+
+    CLEARANCE_OPTS = [
+        "Confidential",
+        "Secret",
+        "Top Secret",
+        "Top Secret/SCI",
+        "None of the above",
+    ]
+    SSN_OPTS = [
+        "I have a Social Security Number",
+        "I have an ITIN",
+        "I am waiting for an SSN",
+        "None of these",
+    ]
+
+    def _multi(self, label, options, option_values):
+        fields = [
+            _field(
+                1,
+                [
+                    AutofillControlIn(
+                        cid="1:0",
+                        kind="custom",
+                        label=label,
+                        multi=True,
+                        options=options,
+                    )
+                ],
+            )
+        ]
+        text = json.dumps(
+            {
+                "results": [
+                    {
+                        "handle": 1,
+                        "controls": [{"cid": "1:0", "option_values": option_values}],
+                    }
+                ]
+            }
+        )
+        return _parse_autofill_results(text, fields)[0].controls[0]
+
+    def test_clearance_select_all_clamped_to_none(self):
+        c = self._multi(
+            "Do you currently hold any of the following security clearances? (select all that apply)",
+            self.CLEARANCE_OPTS,
+            self.CLEARANCE_OPTS,
+        )
+        assert c.option_values == ["None of the above"]
+        assert c.needs_user is False
+
+    def test_ssn_select_all_clamped_to_none(self):
+        c = self._multi(
+            "Social Security / taxpayer identification (select all that apply)",
+            self.SSN_OPTS,
+            self.SSN_OPTS,
+        )
+        assert c.option_values == ["None of these"]
+        assert c.needs_user is False
+
+    def test_clearance_empty_forced_none(self):
+        c = self._multi(
+            "Security clearance level",
+            self.CLEARANCE_OPTS,
+            [],
+        )
+        assert c.option_values == ["None of the above"]
+
+
+class TestSexualOrientationClamp:
+    """Greenhouse-style orientation multi-selects must never keep 'select all'."""
+
+    OPTS = [
+        "Asexual",
+        "Bisexual, pansexual and/or queer",
+        "Gay and/or lesbian",
+        "Heterosexual",
+        "I prefer to self-describe",
+        "I don't wish to answer",
+    ]
+
+    def _multi(self, option_values, eeo=None):
+        fields = [
+            _field(
+                1,
+                [
+                    AutofillControlIn(
+                        cid="1:0",
+                        kind="custom",
+                        label="I identify my sexual orientation as:",
+                        multi=True,
+                        options=self.OPTS,
+                    )
+                ],
+            )
+        ]
+        text = json.dumps(
+            {
+                "results": [
+                    {
+                        "handle": 1,
+                        "controls": [{"cid": "1:0", "option_values": option_values}],
+                    }
+                ]
+            }
+        )
+        return _parse_autofill_results(text, fields, eeo)[0].controls[0]
+
+    def test_select_all_clamped_to_decline(self):
+        c = self._multi(self.OPTS)
+        assert c.option_values == ["I don't wish to answer"]
+        assert c.needs_user is False
+
+    def test_user_preference_heterosexual(self):
+        c = self._multi(self.OPTS, eeo={"sexual_orientation": "Heterosexual"})
+        assert c.option_values == ["Heterosexual"]
+
+    def test_user_preference_decline(self):
+        c = self._multi(
+            ["Asexual", "Heterosexual"],
+            eeo={"sexual_orientation": "Decline to self-identify"},
+        )
+        assert c.option_values == ["I don't wish to answer"]
+
+    def test_forced_default_when_empty(self):
+        c = self._multi([])
+        assert c.option_values == ["I don't wish to answer"]

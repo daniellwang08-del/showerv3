@@ -53,6 +53,12 @@ logger = get_logger(__name__)
 _AGGREGATOR_DOMAINS: frozenset[str] = frozenset({
     "adzuna.com",
     "www.adzuna.com",
+    "ziprecruiter.com",
+    "www.ziprecruiter.com",
+    "indeed.com",
+    "www.indeed.com",
+    "glassdoor.com",
+    "www.glassdoor.com",
 })
 
 

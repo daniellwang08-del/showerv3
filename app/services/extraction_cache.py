@@ -17,6 +17,7 @@ import redis.asyncio as aioredis
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.redis_support import cache_redis_url
 
 logger = get_logger(__name__)
 
@@ -32,11 +33,14 @@ async def init_redis_pool() -> None:
         return
     settings = get_settings()
     _pool = aioredis.from_url(
-        settings.redis_url,
+        cache_redis_url(),
         decode_responses=True,
         max_connections=settings.redis_pool_size,
     )
-    logger.info("extraction_cache_redis_pool_initialized")
+    logger.info(
+        "extraction_cache_redis_pool_initialized",
+        redis_url=cache_redis_url(),
+    )
 
 
 async def close_redis_pool() -> None:
@@ -54,7 +58,11 @@ def _get_redis() -> aioredis.Redis:
     if _pool is not None:
         return _pool
     settings = get_settings()
-    return aioredis.from_url(settings.redis_url, decode_responses=True)
+    return aioredis.from_url(
+        cache_redis_url(),
+        decode_responses=True,
+        max_connections=settings.redis_pool_size,
+    )
 
 
 @dataclass(frozen=True, slots=True)

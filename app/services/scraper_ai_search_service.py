@@ -11,7 +11,7 @@ ScraperJobSearchQuerySpec.  We build parameterised SQL against:
 
 The search is far more comprehensive than the extraction-page search because
 it can filter on scraper-specific dimensions:
-  • source platform  (adzuna, indeed, glassdoor …)
+  • source platform  (adzuna, jobright, welcometothejungle …)
   • pipeline stage   (not-yet-promoted, extraction pending, resume built …)
   • salary range     (raw text OR structured cents)
   • recency          (posted/scraped within N days)
@@ -97,8 +97,8 @@ class ScraperJobSearchQuerySpec(BaseModel):
     industry_any: list[str] = Field(default_factory=list,
         description="e.g. ['fintech', 'healthcare', 'saas', 'e-commerce', 'ai', 'gaming'].")
     source_any: list[str] = Field(default_factory=list,
-        description="Scraper source platforms, e.g. ['adzuna', 'indeed', 'glassdoor', "
-                    "'jobright', 'welcometothejungle', 'ziprecruiter'].")
+        description="Scraper source platforms, e.g. ['remoterocketship', 'jobright', "
+                    "'welcometothejungle', 'adzuna'].")
 
     # ── Remote / location ────────────────────────────────────────────────────
     is_remote: bool | None = Field(default=None,
@@ -152,7 +152,7 @@ class ScraperJobSearchQuerySpec(BaseModel):
 _SYSTEM_PROMPT = """You convert natural language job search requests into a precise JSON filter for a scraped-jobs database.
 
 ## Database overview
-Jobs come from multiple scraping sources (Adzuna, Indeed, Glassdoor, Jobright, etc.) and go through an optional extraction pipeline:
+Jobs come from multiple scraping sources (Adzuna, Jobright, Welcome to the Jungle, etc.) and go through an optional extraction pipeline:
 1. Raw scraped data (always available): title, company_name, location, description, tags, salary_raw, job_type, experience_level, source, is_remote, posted_at
 2. Extracted / AI-structured data (available after extraction): responsibilities, requirements, benefits, employment_type, salary_range, remote_policy, industry
 3. AI match analysis (available after user runs match): overall_score (0-100), recommendation, summary, strengths[], gaps[]
@@ -170,7 +170,7 @@ Jobs come from multiple scraping sources (Adzuna, Indeed, Glassdoor, Jobright, e
 - "Not extracted yet" = has_extraction false; "fully processed" = extraction_completed_only true.
 - "Has score" = has_match_score true; "needs scoring" = has_match_score false AND has_extraction true.
 - Sort by score when user asks for "top", "best", "highest scoring"; sort by posted_at for "newest postings"; scraped_at for "recently added".
-- source_any should match the platform slug exactly: adzuna, indeed, glassdoor, jobright, welcometothejungle, ziprecruiter, remoterocketship.
+- source_any should match the platform slug exactly: remoterocketship, jobright, welcometothejungle, adzuna.
 
 ## JSON output schema (all lists default to [], numbers/bools/strings can be null):
 {

@@ -45,7 +45,7 @@ export function DualLineChart({
   const bColor = dark ? brightenForDark(lineBColor) : lineBColor;
 
   return (
-    <div style={{ width: '100%', height }}>
+    <div className="relative z-10 overflow-hidden" style={{ width: '100%', height }}>
       <ResponsiveContainer>
         <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
@@ -60,9 +60,11 @@ export function DualLineChart({
           <Tooltip
             cursor={{ stroke: dark ? '#64748b' : '#94a3b8', strokeWidth: 1 }}
             content={<ChartTooltipContent />}
+            allowEscapeViewBox={{ x: false, y: false }}
+            wrapperStyle={{ zIndex: 50, outline: 'none', pointerEvents: 'none' }}
           />
           <Legend
-            wrapperStyle={{ fontSize: 12, color: legendColor }}
+            wrapperStyle={{ fontSize: 12, color: legendColor, position: 'relative', zIndex: 1 }}
             formatter={(value, entry) => {
               const color =
                 typeof entry.color === 'string'

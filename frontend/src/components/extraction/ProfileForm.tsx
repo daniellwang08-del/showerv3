@@ -40,6 +40,7 @@ import {
   emptyEducation,
   emptyCert,
 } from '../../utils/profileFormData';
+import { phoneValidationMessage, validatePhoneNumber } from '../../utils/phoneValidation';
 
 export { profileToForm } from '../../utils/profileFormData';
 
@@ -52,9 +53,6 @@ function validateLinkedIn(s: string): boolean {
 function validateGitHub(s: string): boolean {
   if (!s.trim()) return true;
   return /github\.com\//i.test(s);
-}
-function validatePhone(s: string): boolean {
-  return /^[\d\s\-+()]{7,25}$/.test(s.trim());
 }
 
 type SectionId = 'contact' | 'summary' | 'skills' | 'work' | 'education' | 'certificates' | 'extra';
@@ -79,8 +77,9 @@ function collectErrors(form: ProfileFormData): Record<string, string> {
     if (!form.email.trim()) err.email = 'Email is required';
     else if (!validateEmail(form.email)) err.email = 'Invalid email format';
     if (!form.phone_number.trim()) err.phone_number = 'Phone number is required';
-  else if (!validatePhone(form.phone_number)) err.phone_number = 'Use 7–25 digits/spaces/+-()';
-    if (!form.linkedin_url.trim()) err.linkedin_url = 'LinkedIn URL is required';
+  else if (!validatePhoneNumber(form.phone_number, form.phone_country_code)) {
+    err.phone_number = phoneValidationMessage(form.phone_number, form.phone_country_code);
+  }    if (!form.linkedin_url.trim()) err.linkedin_url = 'LinkedIn URL is required';
   else if (!validateLinkedIn(form.linkedin_url)) err.linkedin_url = 'Use a profile URL (linkedin.com/in/…)';
   if (form.github_url.trim() && !validateGitHub(form.github_url)) err.github_url = 'Use a GitHub URL (github.com/…)';
     if (!form.profile_summary.trim()) err.profile_summary = 'Profile summary is required';

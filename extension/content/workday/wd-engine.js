@@ -13,19 +13,116 @@
   const D = WD.dom;
   const S = WD.steps;
 
+  function detectSubmittedPage() {
+    try {
+      const url = String(location.href || "").toLowerCase();
+      if (
+        /thank[-_\s]?you|application[-_\s]?submitted|application[-_\s]?received|confirmation|\/thanks\b|\/applied\b/.test(
+          url
+        )
+      ) {
+        return true;
+      }
+      if (
+        D.exists(S.AID("applicationSubmitted")) ||
+        D.exists(S.AID("submittedPage")) ||
+        D.exists(S.AID("thankYouMessage")) ||
+        D.exists('[data-automation-id="applicationSubmitted"]') ||
+        D.exists('[data-automation-id="submittedPage"]') ||
+        D.exists('[data-automation-id="thankYouMessage"]')
+      ) {
+        return true;
+      }
+      const title = D.pageHeadingHas
+        ? D.pageHeadingHas("Thank You") ||
+          D.pageHeadingHas("Application Submitted") ||
+          D.pageHeadingHas("You've Submitted") ||
+          D.pageHeadingHas("You Have Submitted")
+        : false;
+      if (title) return true;
+      const body = String((document.body && document.body.innerText) || "")
+        .slice(0, 5000)
+        .toLowerCase();
+      if (
+        /thank you for (applying|your application)|application (has been |was )?submitted|we('ve| have) received your application|successfully applied|your application is on its way|you('ve| have) successfully submitted/.test(
+          body
+        )
+      ) {
+        // Avoid matching review copy that mentions submitting later.
+        if (/\breview\b/.test(body) && /\bsubmit\b/.test(body) && /save and continue|application questions|my information/.test(body)) {
+          return false;
+        }
+        return true;
+      }
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
+  function pageHeadingHas(text) {
+    if (D.pageHeadingHas) return D.pageHeadingHas(text);
+    return D.headingHas(text);
+  }
+
+  function isFinalSubmitControl(el) {
+    if (!el) return false;
+    const text = D.norm(el.innerText || el.textContent || el.getAttribute("aria-label") || "");
+    if (!text) return false;
+    // Auto-advance must never click final Submit — that is the user's action
+    // (or submit-watch → Complete & Next). Mis-detecting Review as My Info used
+    // to click this same footer control and then get stuck.
+    if (/^submit$/.test(text)) return true;
+    if (/\bsubmit(\s+my)?\s+application\b/.test(text)) return true;
+    if (/\bsubmit\s+application\b/.test(text)) return true;
+    if (/\bsubmit\b/.test(text) && !/\bsave\b/.test(text) && !/\bcontinue\b/.test(text)) return true;
+    return false;
+  }
+
+  function footerLooksLikeSubmit() {
+    for (const s of [
+      S.AID("pageFooterNextButton"),
+      S.AID("bottom-navigation-next-button"),
+      S.AID("btnNext"),
+      S.AID("wizardNextButton"),
+    ]) {
+      const el = D.q(s);
+      if (el && D.isVisible(el) && isFinalSubmitControl(el)) return true;
+    }
+    return false;
+  }
+
   function detectStep() {
-    if (D.exists(S.AID("applyFlowMyInfoPage")) || D.headingHas("My Information")) return "myInfo";
-    if (D.exists(S.AID("applyFlowMyExpPage")) || D.exists(S.AID("applyFlowMyExperiencePage")) || D.headingHas("My Experience"))
-      return "experience";
+    // Post-submit confirmation must win — leftover progress labels still say
+    // "My Information" and used to send auto-advance into a dead end.
+    if (detectSubmittedPage()) return "submitted";
+
+    // Review before My Information: the progress rail often keeps earlier step
+    // names visible as headings. A footer labeled Submit is also Review.
+    if (
+      D.exists(S.AID("applyFlowReviewPage")) ||
+      pageHeadingHas("Review") ||
+      footerLooksLikeSubmit()
+    ) {
+      return "review";
+    }
+
     // Self Identify (CC-305 disability) is a SEPARATE page from Voluntary
     // Disclosures, but Workday often presents them back-to-back. They MUST have
     // distinct step ids - the auto-advance loop detects "did we move?" by step-id
     // change, so sharing an id makes it think Voluntary→SelfId never happened and
     // skip a dedicated fill pass on Self Identify (leaving Name/Date/box empty).
-    if (D.headingHas("Self Identify") || D.headingHas("Self-Identify")) return "selfid";
-    if (D.headingHas("Voluntary Disclosure")) return "voluntary";
-    if (D.headingHas("Application Question")) return "questions";
-    if (D.headingHas("Review") || D.exists(S.AID("applyFlowReviewPage"))) return "review";
+    if (pageHeadingHas("Self Identify") || pageHeadingHas("Self-Identify")) return "selfid";
+    if (pageHeadingHas("Voluntary Disclosure")) return "voluntary";
+    if (pageHeadingHas("Application Question")) return "questions";
+    if (
+      D.exists(S.AID("applyFlowMyExpPage")) ||
+      D.exists(S.AID("applyFlowMyExperiencePage")) ||
+      pageHeadingHas("My Experience")
+    ) {
+      return "experience";
+    }
+    if (D.exists(S.AID("applyFlowMyInfoPage")) || pageHeadingHas("My Information")) return "myInfo";
     // Fallback: any page that exposes Workday formField wrappers is fillable.
     if (D.exists('[data-automation-id^="formField-"]')) return "generic";
     return null;
@@ -73,12 +170,22 @@
     return { clean, invalidFields, errorCount: invalidFields.length || alerts.length };
   }
 
+  function aborted() {
+    return !!(WD.isAborted && WD.isAborted());
+  }
+
   async function fillCurrent(profile, options) {
+    if (aborted()) {
+      const err = new Error("WD_ABORTED");
+      err.name = "WDAborted";
+      throw err;
+    }
     const step = detectStep();
     const rep = { step: step || "unknown", filled: [], missed: [], unmatched: [] };
     // The generic formField pass handles My Information, Voluntary Disclosures,
     // Application Questions, and any other flat Workday step.
     await S.fillStep(profile, options || {}, rep);
+    if (aborted()) return rep;
     if (step === "experience" && !(options && options.onlyInvalid && options.onlyInvalid.length)) {
       await S.fillExperienceExtras(profile, options || {}, rep);
     }
@@ -86,6 +193,7 @@
   }
 
   async function clickNext() {
+    if (aborted()) return false;
     const cands = [
       S.AID("pageFooterNextButton"),
       S.AID("bottom-navigation-next-button"),
@@ -93,20 +201,27 @@
       S.AID("wizardNextButton"),
     ];
     for (const s of cands) {
-      if (D.exists(s) && (await D.click(s))) return true;
+      const el = D.q(s);
+      if (!el || !D.isVisible(el) || isFinalSubmitControl(el)) continue;
+      D.clickEl(el);
+      return true;
     }
-    return await D.click("//button[contains(.,'Save and Continue') or normalize-space()='Next' or normalize-space()='Continue']");
+    return await D.click(
+      "//button[contains(.,'Save and Continue') or normalize-space()='Next' or normalize-space()='Continue']"
+    );
   }
 
   async function runAll(profile, options, onReport) {
     options = options || {};
     let guard = 0;
     for (;;) {
+      if (aborted()) break;
       const step = detectStep();
-      if (!step || step === "review") break;
+      if (!step || step === "review" || step === "submitted") break;
       const rep = await fillCurrent(profile, options);
       if (onReport) onReport(rep);
       if (!options.autoAdvance) break;
+      if (aborted()) break;
       const ok = await clickNext();
       if (!ok) break;
       await D.delay(1500);
@@ -115,5 +230,13 @@
     }
   }
 
-  WD.engine = { detectStep, detectValidation, fillCurrent, clickNext, runAll };
+  WD.engine = {
+    detectStep,
+    detectSubmittedPage,
+    detectValidation,
+    fillCurrent,
+    clickNext,
+    runAll,
+  };
 })();
+

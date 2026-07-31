@@ -53,6 +53,8 @@ export interface DashboardCounts {
   today: number;
   mine: number;
   suggested: number;
+  /** Jobs marked applied today (user timezone). Optional for older backends. */
+  applied_today?: number;
 }
 
 export async function fetchDashboardCounts(params: {

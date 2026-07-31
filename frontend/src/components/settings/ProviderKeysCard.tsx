@@ -7,6 +7,7 @@ import {
   testProviderKey,
 } from '../../api/settingsApi';
 import type { SettingsMode, UserSettings } from '../../types/settings';
+import { prefsSaveBtnClass } from './prefsSaveButtonClass';
 
 type ProviderId = 'openai' | 'anthropic' | 'gemini';
 
@@ -282,7 +283,7 @@ function ProviderPanel({ meta, settings, onSaved }: PanelProps) {
           type="button"
           onClick={() => void handleSave()}
           disabled={!saveEnabled || saving}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className={prefsSaveBtnClass(saveEnabled)}
         >
           {saving ? 'Saving…' : `Save ${meta.label} key`}
         </button>

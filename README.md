@@ -1,6 +1,24 @@
 # Atomspace / Job Scraper — Setup Guide
 
-This guide gets the app installed and running end to end. It does not cover architecture.
+## Prerequisites
+
+Install these before setup:
+
+| Tool | Version | Notes |
+|------|---------|--------|
+| Python | 3.12+ | Backend, workers, Scrapy |
+| Node.js | 18+ | Frontend (`frontend/`) |
+| PostgreSQL | 14+ | Main database (Docker Compose recommended) |
+| Docker | recent | Local Redis + Postgres via `docker compose` (recommended) |
+
+Optional but recommended:
+
+- **Playwright browsers** - SPA extraction and Scrapy Playwright spiders  
+  `playwright install chromium`
+- **Redis Insight** - queue/key UI at http://localhost:5540  
+  `docker compose --profile tools up -d`
+
+PDF export uses the pure-Python **`dxpdf`** package (`pip install` via `requirements.txt`). No LibreOffice / MS Office install is required.
 
 ---
 
@@ -29,7 +47,34 @@ git clone <your-repo-url>
 cd job_scraper
 ```
 
-> **Windows tip:** Prefer a path **without** renaming/moving the folder after creating the venv. If you already moved it, see [Troubleshooting](#troubleshooting).
+### 2. Redis + Postgres
+
+```bash
+docker compose up -d redis
+```
+
+Redis 7 listens on `6379` (AOF + `maxmemory-policy noeviction` for arq).
+
+**Postgres** — use a local install by default (Windows service / Homebrew / apt) on `5432`. Your `DATABASE_URL` must match that instance.
+
+If you have no local Postgres, use the optional Docker profile (do **not** run this while another Postgres already owns `:5432`):
+
+```bash
+docker compose --profile docker-db up -d postgres
+```
+
+`POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` in `.env` must match `DATABASE_URL`.
+
+Optional Redis UI:
+
+```bash
+docker compose --profile tools up -d
+# open http://localhost:5540 — add Redis at host.docker.internal:6379 (Windows/Mac)
+```
+
+`start.cmd` starts Redis, ensures Windows PostgreSQL is running when present, and only falls back to Docker Postgres if `:5432` is still closed.
+
+### 3. Backend (Python)
 
 ---
 
@@ -63,7 +108,7 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-Confirm the venv is active:
+### 4. Environment file
 
 ```bash
 python -c "import sys; print(sys.executable)"
@@ -115,36 +160,25 @@ cp env.example .env
 
 Edit `.env` and set at least:
 
-| Variable | What to put |
-|----------|-------------|
-| `DATABASE_URL` | Your Postgres URL (asyncpg form above) |
-| `REDIS_URL` | `redis://localhost:6379/0` |
-| `AUTH_SECRET_KEY` | Long random string (JWT signing) |
-| `OPENAI_API_KEY` | Your key (can be a placeholder until you use AI features) |
+| Variable | Example |
+|----------|---------|
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Compose Postgres (`postgres` / `postgres` / `job_scraper`) |
+| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/job_scraper` (must match `POSTGRES_*`) |
+| `REDIS_URL` | `redis://localhost:6379/0` (arq broker) |
+| `REDIS_CACHE_URL` | `redis://localhost:6379/1` (extraction cache; local Docker) |
+| `REDIS_PUBSUB_URL` | `redis://localhost:6379/2` (WebSocket events; local Docker) |
+| `OPENAI_API_KEY` | Your OpenAI key |
+| `AUTH_SECRET_KEY` | Long random string for JWT signing |
 
-Optional:
+On managed Redis that only exposes DB `0` (e.g. Render Key Value), leave `REDIS_CACHE_URL` / `REDIS_PUBSUB_URL` unset so they reuse `REDIS_URL`.
 
-- `OPENAI_API_BASE` — custom OpenAI-compatible gateway
-- `GOOGLE_SHEETS_CREDENTIALS_PATH` — path to service-account JSON
-- `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` — only if you scrape Adzuna
-
-Keep `APP_ENV=local` for development.
-
----
-
-## 6. Database migrations
-
-With the venv active and Postgres running:
+Create the PostgreSQL database if it does not exist, then run migrations:
 
 ```bash
 alembic upgrade head
 ```
 
-This creates all tables. Run it again after pulling new migrations.
-
----
-
-## 7. Frontend packages
+### 5. Frontend
 
 ```bash
 cd frontend
@@ -156,7 +190,7 @@ cd ..
 
 ## 8. Start everything
 
-### Windows (recommended)
+The app needs **one API server**, **six workers**, and **one frontend dev server**.
 
 From the **project root**, with `venv` already created and `.env` filled:
 
@@ -186,7 +220,11 @@ start-prod.cmd
 Use **one terminal per process**. Activate the venv in each Python terminal first.
 
 ```bash
-# Terminal 1 — API
+# 0. Redis (+ Postgres if you use the docker-db profile)
+docker compose up -d redis
+# optional: docker compose --profile docker-db up -d postgres
+
+# 1. API (http://localhost:8000)
 python start_server.py
 
 # Terminal 2 — Extraction
@@ -198,16 +236,19 @@ python run_worker.py analysis
 # Terminal 4 — Tailoring
 python run_worker.py tailoring
 
-# Terminal 5 — Save
+# 5. Save worker (post-analysis persistence + Phase B enqueue)
 python run_worker.py save
 
-# Terminal 6 — Resume builds
+# 6. Autopost worker (Sheets/Pumble — off the save critical path)
+python run_worker.py autopost
+
+# 7. Resume build worker (DOCX/PDF generation)
 python run_worker.py resume
 
-# Terminal 7 — Scraper / Sync
+# 8. Scraper worker (platform sync / Scrapy)
 python run_worker.py scraper
 
-# Terminal 8 — Frontend
+# 9. Frontend (http://localhost:5173)
 cd frontend && npm run dev
 ```
 
@@ -222,114 +263,12 @@ On Windows without activation, prefix Python commands with `.\venv\Scripts\pytho
 | Frontend | http://localhost:5173 |
 | API | http://localhost:8000 |
 | API docs | http://localhost:8000/docs |
+| Redis Insight (optional) | http://localhost:5540 |
 
-1. Open the frontend.
-2. **Sign up** with email + password.  
-   The **first account** is created as an **admin** automatically.
-3. Sign in if needed.
-4. Fill **Profile**, then use **Jobs** / **Resume Builder** / **Integrations** as needed.
-5. Admins: open **System Settings** to bind LLM keys/models and worker concurrency.
+Ensure PostgreSQL and Redis are running before starting the backend.
 
-PostgreSQL and Redis must stay running while you use the app.
+### Production notes
 
----
-
-## Optional: scraper platform login
-
-Some Sync platforms need a saved browser session (cookies on disk):
-
-```bash
-# RemoteRocketship
-python -m app.scraper.auth setup rrs
-
-# Jobright
-python -m app.scraper.auth setup jobright
-```
-
-A headed browser opens — log in once, then close when prompted. If Sync returns auth/403 errors later, run the same command again to refresh the session.
-
----
-
-## Optional: browser extension
-
-See [`extension/README.md`](extension/README.md) to load the unpacked Chrome/Edge extension after the API is running.
-
----
-
-## Optional: LAN access (other devices on Wi‑Fi)
-
-1. Start with `start.cmd` (it prints a LAN frontend URL).
-2. On the host PC (Admin PowerShell), allow port 5173 once:
-
-```powershell
-.\scripts\open_lan_firewall.ps1
-```
-
-3. On other devices, open only the **frontend** LAN URL (port **5173**), not `:8000`.
-
----
-
-## Troubleshooting
-
-### `Python was not found` (Windows Store message)
-
-Your shell is hitting the Store stub, or the venv points at an **old folder path**.
-
-- Prefer: `.\venv\Scripts\python.exe ...`
-- Or re-create the venv in the current folder:
-
-```cmd
-rmdir /s /q venv
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### Port 8000 already in use
-
-Close old API windows, or run `start.cmd` again (it tries to stop prior `start_server.py` / `run_worker.py` processes).
-
-### `alembic` / DB connection errors
-
-- Postgres is running.
-- Database `job_scraper` exists.
-- `DATABASE_URL` user/password/host match your install.
-- URL uses `postgresql+asyncpg://...` (not `postgresql://` alone for the app).
-
-### Workers idle / jobs stuck in Queued
-
-All **seven** worker modes must be running (extraction, analysis, tailoring, save, resume, scraper) plus the API. Redis must be up.
-
-### RemoteRocketship Sync fails with 403
-
-Session expired. Re-run:
-
-```bash
-python -m app.scraper.auth setup rrs
-```
-
-Then restart the scraper worker (or run `start.cmd` again).
-
-### AI features fail / empty model responses
-
-In **System Settings**, set a valid provider API key and job→model bindings. Restart workers after changing concurrency settings.
-
-### Frontend can’t reach API
-
-- API window is running on `:8000`.
-- Open http://localhost:5173 (Vite proxies `/api`).
-- Check `VITE_API_PROXY_TARGET` only if you changed the API host/port.
-
----
-
-## Quick checklist
-
-- [ ] Python 3.12+, Node 18+, Postgres, Redis installed  
-- [ ] `venv` created + `pip install -r requirements.txt`  
-- [ ] `playwright install chromium`  
-- [ ] `.env` copied from `env.example` and filled in  
-- [ ] `CREATE DATABASE job_scraper;`  
-- [ ] `alembic upgrade head`  
-- [ ] `cd frontend && npm install`  
-- [ ] `start.cmd` (or 8 manual terminals)  
-- [ ] Sign up at http://localhost:5173 (first user = admin)  
+- `APP_ENV=production` (or `REDIS_REQUIRE_FOR_JOBS=true`) disables in-process FastAPI `BackgroundTasks` fallback — enqueue failures return HTTP 503.
+- Render blueprint (`render.yaml`) runs all six workers + Redis Key Value with `noeviction`.
+- Health: `GET /api/v1/health` reports `degraded` when Redis broker/cache/pubsub cannot be pinged.

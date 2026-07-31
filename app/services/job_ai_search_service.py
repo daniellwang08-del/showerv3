@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy import select, or_, and_, func, cast, String, literal
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
@@ -401,7 +402,7 @@ async def apply_job_search_spec(
 
     data_stmt = _build_search_query(
         user_id, spec, select_columns=select_columns, limit=limit, offset=offset,
-    )
+    ).options(undefer(Job.description))
 
     count_stmt = _build_search_query(
         user_id, spec, select_columns=[func.count(Job.id)], limit=None,
@@ -427,14 +428,12 @@ async def apply_job_search_spec(
             "posted_date": job.posted_date.isoformat() if job.posted_date else None,
             "experience_level": job.experience_level,
             "industry": job.industry,
-            "similarity_hash": job.similarity_hash,
             "scraped_at": job.scraped_at.isoformat() if job.scraped_at else None,
             "extraction_id": job.extraction_id,
             "extraction_status": ext_status.value if ext_status else None,
             "is_job_posting": is_job_posting,
             "match_overall_score": match_score,
             "match_status": "processing" if (match_progress_id and match_score is None) else None,
-            "click_count": getattr(job, "click_count", 0) or 0,
             "applied_at": applied_at.isoformat() if applied_at else None,
             "applied_by_name": applied_by_name,
             "sheet_posted_at": job.sheet_posted_at.isoformat() if job.sheet_posted_at else None,

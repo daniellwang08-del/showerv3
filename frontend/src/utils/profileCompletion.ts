@@ -2,6 +2,7 @@ import type { ProfileFormData } from '../types/profile';
 import type { UserProfile } from '../types/profile';
 import { isValidJobArrangement } from '../types/profile';
 import { profileToForm } from './profileFormData';
+import { validatePhoneNumber } from './phoneValidation';
 
 function validateEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -10,8 +11,8 @@ function validateLinkedIn(s: string): boolean {
   return s.trim().length > 0 && /linkedin\.com\/in\//i.test(s);
 }
 
-function validatePhone(s: string): boolean {
-  return /^[\d\s\-+()]{7,25}$/.test(s.trim());
+function validatePhone(s: string, countryCode: string): boolean {
+  return validatePhoneNumber(s, countryCode);
 }
 
 function hasCompleteSkillGroup(form: ProfileFormData): boolean {
@@ -61,7 +62,7 @@ export function computeProfileCompletion(profile: UserProfile | null): ProfileCo
     {
       id: 'phone',
       label: 'Phone number',
-      ok: !!form.phone_number.trim() && validatePhone(form.phone_number),
+      ok: !!form.phone_number.trim() && validatePhone(form.phone_number, form.phone_country_code),
     },
     {
       id: 'linkedin',

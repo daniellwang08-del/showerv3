@@ -18,6 +18,8 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { SettingsCard } from '../components/settings/SettingsCard';
+import { LlmBenchmarkSection } from '../components/settings/LlmBenchmarkSection';
+import type { BenchmarkCatalogModel } from '../components/settings/LlmBenchmarkSection';
 import { ConfirmDialog } from '../components/extraction/ConfirmDialog';
 import { MenuSelect } from '../components/shared/MenuSelect';
 import { SettingsToggle } from '../components/shared/SettingsToggle';
@@ -72,6 +74,7 @@ const NUMBER_KEYS = new Set([
   'analysis_worker_max_jobs',
   'tailoring_worker_max_jobs',
   'save_worker_max_jobs',
+  'autopost_worker_max_jobs',
   'resume_worker_max_jobs',
   'scraper_worker_max_jobs',
   'llm_circuit_breaker_threshold',
@@ -373,6 +376,7 @@ export function SystemSettingsPage() {
       const byId = new Map<string, LlmDiscoveredModel>();
       const accept = (m: LlmDiscoveredModel) => {
         if (isSkippedGatewayModel(m.id)) return;
+        if (!m.usable_for_chat) return;
         if (llmModelFamily(m.id) !== family) return;
         byId.set(m.id, m);
       };
@@ -406,6 +410,18 @@ export function SystemSettingsPage() {
     },
     [keys, modelBusy],
   );
+
+  const benchmarkCatalog = useMemo(() => {
+    const byId = new Map<string, BenchmarkCatalogModel>();
+    for (const p of PROVIDERS) {
+      for (const m of mergedModelsForProvider(p.id)) {
+        byId.set(`${p.id}::${m.id}`, { ...m, provider: p.id });
+      }
+    }
+    return [...byId.values()];
+  }, [mergedModelsForProvider]);
+
+  const benchmarkCatalogLoading = PROVIDERS.some((p) => providerModelsLoading(p.id));
 
   const persistSetting = useCallback(
     async (key: string, raw: string) => {
@@ -705,6 +721,7 @@ export function SystemSettingsPage() {
             {renderAutoField('analysis_worker_max_jobs', { label: 'Analysis (Phase A)' })}
             {renderAutoField('tailoring_worker_max_jobs', { label: 'Tailoring (Phase B)' })}
             {renderAutoField('save_worker_max_jobs', { label: 'Save' })}
+            {renderAutoField('autopost_worker_max_jobs', { label: 'Autopost (Sheets/Pumble)' })}
             {renderAutoField('resume_worker_max_jobs', { label: 'Resume build' })}
             {renderAutoField('scraper_worker_max_jobs', { label: 'Scraper' })}
           </div>
@@ -1080,7 +1097,9 @@ export function SystemSettingsPage() {
               const gatewayModels = modelOptions['env:openai'] || [];
               const byId = new Map<string, LlmDiscoveredModel>();
               for (const m of [...gatewayModels, ...boundModels]) {
-                if (!isSkippedGatewayModel(m.id)) byId.set(m.id, m);
+                if (isSkippedGatewayModel(m.id)) continue;
+                if (!m.usable_for_chat) continue;
+                byId.set(m.id, m);
               }
               const models = [...byId.values()].sort((a, b2) => a.id.localeCompare(b2.id));
               const modelsLoading = !!modelBusy[cacheKey] || !!modelBusy['env:openai'];
@@ -1159,10 +1178,20 @@ export function SystemSettingsPage() {
           </div>
         </SettingsCard>
 
+        <LlmBenchmarkSection
+          catalog={benchmarkCatalog}
+          loading={benchmarkCatalogLoading}
+          defaultModelIds={[
+            drafts.openai_model,
+            drafts.anthropic_model,
+            drafts.gemini_model,
+          ].filter(Boolean)}
+        />
+
         {/* Platform defaults */}
         <SettingsCard
-          icon={Server}
-          iconClass="bg-gradient-to-br from-slate-600 to-slate-800"
+          icon={ShieldCheck}
+          iconClass="bg-gradient-to-br from-amber-500 to-orange-600"
           title="Platform defaults"
           description="Match score, dedup, and auth. Auto-saves on change."
         >

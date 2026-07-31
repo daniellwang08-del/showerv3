@@ -224,6 +224,7 @@ async def _queue_depths() -> list[dict[str, Any]]:
     """Best-effort Redis queue depth for each arq queue."""
     from app.tasks.worker import (
         ANALYSIS_QUEUE,
+        AUTOPOST_QUEUE,
         EXTRACTION_QUEUE,
         RESUME_BUILD_QUEUE,
         SAVE_QUEUE,
@@ -235,15 +236,17 @@ async def _queue_depths() -> list[dict[str, Any]]:
         {"id": "extraction", "name": EXTRACTION_QUEUE, "label": "Extraction", "description": "HTTP + browser job extraction"},
         {"id": "analysis", "name": ANALYSIS_QUEUE, "label": "Analysis", "description": "Phase A LLM match scoring"},
         {"id": "tailoring", "name": TAILORING_QUEUE, "label": "Tailoring", "description": "Phase B resume tailoring"},
-        {"id": "save", "name": SAVE_QUEUE, "label": "Save", "description": "Per-user analyzed job persistence + auto-post"},
+        {"id": "save", "name": SAVE_QUEUE, "label": "Save", "description": "Per-user analyzed job persistence + Phase B enqueue"},
+        {"id": "autopost", "name": AUTOPOST_QUEUE, "label": "Autopost", "description": "Sheets/Pumble auto-post"},
         {"id": "resume_build", "name": RESUME_BUILD_QUEUE, "label": "Resume build", "description": "DOCX/PDF document generation"},
         {"id": "scraper", "name": SCRAPER_QUEUE, "label": "Scraper", "description": "Spider crawl runs"},
     ]
     depths: list[dict[str, Any]] = []
     try:
-        from app.services.extraction_cache import _get_redis
+        from app.core.redis_support import get_broker_redis, init_broker_redis_pool
 
-        r = _get_redis()
+        await init_broker_redis_pool()
+        r = get_broker_redis()
         for q in queue_defs:
             try:
                 pending = await _arq_queue_pending(r, q["name"])
@@ -365,6 +368,7 @@ async def clear_queue(
     """Clear pending jobs from a named arq queue (destructive)."""
     from app.tasks.worker import (
         ANALYSIS_QUEUE,
+        AUTOPOST_QUEUE,
         EXTRACTION_QUEUE,
         RESUME_BUILD_QUEUE,
         SAVE_QUEUE,
@@ -377,6 +381,7 @@ async def clear_queue(
         "analysis": ANALYSIS_QUEUE,
         "tailoring": TAILORING_QUEUE,
         "save": SAVE_QUEUE,
+        "autopost": AUTOPOST_QUEUE,
         "resume_build": RESUME_BUILD_QUEUE,
         "scraper": SCRAPER_QUEUE,
     }
@@ -389,9 +394,10 @@ async def clear_queue(
 
     queue_name = allowed[queue_id]
     try:
-        from app.services.extraction_cache import _get_redis
+        from app.core.redis_support import get_broker_redis, init_broker_redis_pool
 
-        r = _get_redis()
+        await init_broker_redis_pool()
+        r = get_broker_redis()
         deleted = int(await r.delete(queue_name) or 0)
         logger.info(
             "admin_queue_cleared",
@@ -582,6 +588,68 @@ async def list_models_for_env_provider(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class LlmBenchmarkModelTarget(BaseModel):
+    provider: str = Field(..., min_length=1, max_length=32)
+    model: str = Field(..., min_length=1, max_length=200)
+    provider_key_id: str | None = Field(default=None, max_length=36)
+
+
+class LlmBenchmarkRequest(BaseModel):
+    models: list[LlmBenchmarkModelTarget] = Field(..., min_length=1, max_length=40)
+    runs: int = Field(default=1, ge=1, le=10)
+    concurrency: int = Field(default=1, ge=1, le=4)
+    prompt: str = Field(default="Reply with exactly: ok", min_length=1, max_length=500)
+
+
+@router.post("/llm-benchmark")
+async def run_llm_benchmark(
+    body: LlmBenchmarkRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """Time a tiny completion for each selected model (admin model picker aid)."""
+    from app.services.llm_benchmark import BenchmarkTarget, benchmark_models
+
+    targets = [
+        BenchmarkTarget(
+            provider=m.provider,
+            model=m.model,
+            provider_key_id=m.provider_key_id,
+        )
+        for m in body.models
+    ]
+    async with get_session() as session:
+        try:
+            results = await benchmark_models(
+                session,
+                targets,
+                prompt=body.prompt,
+                runs=body.runs,
+                concurrency=body.concurrency,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    payload = [r.to_dict() for r in results]
+    ok_count = sum(1 for r in payload if r["ok"])
+    logger.info(
+        "llm_benchmark_batch",
+        admin_user_id=current_user.get("user_id"),
+        models=len(targets),
+        runs=body.runs,
+        ok=ok_count,
+        failed=len(payload) - ok_count,
+    )
+    return {
+        "results": payload,
+        "summary": {
+            "total": len(payload),
+            "ok": ok_count,
+            "failed": len(payload) - ok_count,
+            "runs": body.runs,
+        },
+    }
 
 
 # ── Blocked domains ────────────────────────────────────────────────────────

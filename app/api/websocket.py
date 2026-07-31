@@ -2,7 +2,7 @@
 WebSocket endpoint for real-time progress reporting.
 
 Architecture:
-  - Worker publishes events to Redis pub/sub channel "ws:events"
+  - Worker publishes events to Redis pub/sub (REDIS_PUBSUB_URL, else REDIS_URL)
   - API server subscribes and forwards events to connected WebSocket clients
   - Each client authenticates via JWT and receives only their own user's events
 """
@@ -14,8 +14,13 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.redis_support import (
+    dumps_ws_payload,
+    get_pubsub_redis,
+    init_pubsub_redis_pool,
+    pubsub_redis_url,
+)
 from app.services.auth_service import AuthService
 
 logger = get_logger(__name__)
@@ -50,7 +55,7 @@ class ConnectionManager:
         conns = self._connections.get(user_id)
         if not conns:
             return
-        message = json.dumps(data)
+        message = dumps_ws_payload(data)
         dead: list[WebSocket] = []
         for ws in conns:
             try:
@@ -63,7 +68,7 @@ class ConnectionManager:
             self._connections.pop(user_id, None)
 
     async def broadcast(self, data: dict[str, Any]) -> None:
-        message = json.dumps(data)
+        message = dumps_ws_payload(data)
         for user_id, conns in list(self._connections.items()):
             dead: list[WebSocket] = []
             for ws in conns:
@@ -80,6 +85,7 @@ class ConnectionManager:
     async def start_redis_subscriber(self) -> None:
         if self._subscriber_task is not None:
             return
+        await init_pubsub_redis_pool()
         self._subscriber_task = asyncio.create_task(self._redis_subscriber_loop())
 
     async def stop_redis_subscriber(self) -> None:
@@ -95,13 +101,19 @@ class ConnectionManager:
         """Subscribe to Redis pub/sub and forward events to WebSocket clients."""
         import redis.asyncio as aioredis
 
-        settings = get_settings()
         while True:
             try:
-                r = aioredis.from_url(settings.redis_url, decode_responses=True)
+                r = aioredis.from_url(
+                    pubsub_redis_url(),
+                    decode_responses=True,
+                )
                 pubsub = r.pubsub()
                 await pubsub.subscribe(WS_CHANNEL, WS_RESUME_CHANNEL)
-                logger.info("ws_redis_subscriber_started", channels=[WS_CHANNEL, WS_RESUME_CHANNEL])
+                logger.info(
+                    "ws_redis_subscriber_started",
+                    channels=[WS_CHANNEL, WS_RESUME_CHANNEL],
+                    redis_url=pubsub_redis_url(),
+                )
                 async for message in pubsub.listen():
                     if message["type"] != "message":
                         continue
@@ -135,28 +147,20 @@ async def publish_ws_event(event: dict[str, Any]) -> None:
 
     Safe to call from the worker process (only needs redis, no FastAPI runtime).
     """
-    import redis.asyncio as aioredis
-
-    settings = get_settings()
     try:
-        r = aioredis.from_url(settings.redis_url, decode_responses=True)
-        receivers = await r.publish(WS_CHANNEL, json.dumps(event))
+        r = get_pubsub_redis()
+        receivers = await r.publish(WS_CHANNEL, dumps_ws_payload(event))
         logger.info("ws_event_published", event_type=event.get("type"), receivers=receivers)
-        await r.aclose()
     except Exception as e:
         logger.warning("ws_publish_failed", error=str(e), event_type=event.get("type"))
 
 
 async def publish_resume_event(event: dict[str, Any]) -> None:
     """Publish a resume-build event to the dedicated resume Redis pub/sub channel."""
-    import redis.asyncio as aioredis
-
-    settings = get_settings()
     try:
-        r = aioredis.from_url(settings.redis_url, decode_responses=True)
-        receivers = await r.publish(WS_RESUME_CHANNEL, json.dumps(event))
+        r = get_pubsub_redis()
+        receivers = await r.publish(WS_RESUME_CHANNEL, dumps_ws_payload(event))
         logger.info("resume_event_published", event_type=event.get("type"), receivers=receivers)
-        await r.aclose()
     except Exception as e:
         logger.warning("resume_publish_failed", error=str(e), event_type=event.get("type"))
 

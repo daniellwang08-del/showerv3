@@ -5,6 +5,7 @@ import type {
   SpiderInfo,
   SyncStatus,
   SyncProgress,
+  SyncTriggerOptions,
 } from '../types/scraper';
 import {
   fetchDashboardJobs,
@@ -226,6 +227,10 @@ interface ScraperState {
   /** Per-tab job counts for the view switcher badges. */
   counts: DashboardCounts;
 
+  /** Bumped on pipeline WS events so open job detail panels refetch analysis. */
+  analysisPanelRefresh: { jobId: string; nonce: number } | null;
+  bumpAnalysisPanelRefresh: (jobId: string) => void;
+
   loadJobs: () => Promise<void>;
   /** Refresh per-tab counts for the view switcher. */
   loadCounts: () => Promise<void>;
@@ -257,7 +262,7 @@ interface ScraperState {
     success?: boolean;
     error?: string;
   }) => void;
-  startSync: (spiderName?: string) => Promise<void>;
+  startSync: (options?: string | SyncTriggerOptions) => Promise<void>;
 
   rerunJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
   deleteJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
@@ -340,6 +345,18 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
 
   view: 'today',
   counts: { all: 0, today: 0, mine: 0, suggested: 0 },
+
+  analysisPanelRefresh: null,
+  bumpAnalysisPanelRefresh: (jobId) => {
+    const id = (jobId || '').trim();
+    if (!id) return;
+    set((s) => ({
+      analysisPanelRefresh: {
+        jobId: id,
+        nonce: (s.analysisPanelRefresh?.jobId === id ? s.analysisPanelRefresh.nonce : 0) + 1,
+      },
+    }));
+  },
 
   loadJobs: async () => {
     const s = get();
@@ -589,10 +606,36 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     }
   },
 
-  startSync: async (spiderName = 'all') => {
-    set({ syncing: true, syncProgress: { spiderName: spiderName, current: 0, total: 0, itemsScraped: 0, itemsNew: 0, elapsedSeconds: 0, message: 'Queueing sync…' } });
+  startSync: async (options: string | SyncTriggerOptions = 'all') => {
+    const opts: SyncTriggerOptions =
+      typeof options === 'string'
+        ? { spider_name: options, sync_mode: 'incremental' }
+        : {
+            spider_name: options.spider_name ?? 'all',
+            sync_mode: options.sync_mode ?? 'incremental',
+            spider_names: options.spider_names,
+            posted_since: options.posted_since,
+            posted_until: options.posted_until,
+          };
+    const spiderName = opts.spider_name || 'all';
+    const dated =
+      opts.sync_mode === 'date_backfill' && Boolean(opts.posted_since?.trim());
+    set({
+      syncing: true,
+      syncProgress: {
+        spiderName,
+        current: 0,
+        total: 0,
+        itemsScraped: 0,
+        itemsNew: 0,
+        elapsedSeconds: 0,
+        message: dated
+          ? `Queueing dated sync (${opts.posted_since}${opts.posted_until ? ` → ${opts.posted_until}` : ''})…`
+          : 'Queueing sync…',
+      },
+    });
     try {
-      const status = await triggerSync(spiderName);
+      const status = await triggerSync(opts);
       set({ syncStatus: status });
     } catch {
       set({ syncing: false, syncProgress: null });

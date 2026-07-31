@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, delete as sa_delete, nullslast, or_, select
+from sqlalchemy.orm import undefer
 
 from app.api.routes import get_current_user
 from app.core.config import get_settings
@@ -94,7 +95,11 @@ async def _load_job_snapshot(session, job_id: str, user_id: str) -> tuple[Job | 
     """Build a structured job-description snapshot for a job, or (job, None) if
     the structured description is not ready yet. Returns (None, None) if the job
     does not exist."""
-    job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+    job = (
+        await session.execute(
+            select(Job).options(undefer(Job.description)).where(Job.id == job_id)
+        )
+    ).scalar_one_or_none()
     if not job:
         return None, None
 
@@ -130,7 +135,7 @@ async def _load_job_snapshot(session, job_id: str, user_id: str) -> tuple[Job | 
         "remote_policy": getattr(extraction, "remote_policy", None),
         "experience_level": getattr(extraction, "experience_level", None) or job.experience_level,
         "industry": getattr(extraction, "industry", None) or job.industry,
-        "posted_date": _iso(getattr(extraction, "posted_date", None) or job.posted_date),
+        "posted_date": _iso(job.posted_date),
         "extraction_status": ext_status.value if hasattr(ext_status, "value") else ext_status,
         "match_score": score,
         "ready": ready,
@@ -284,7 +289,8 @@ def _build_autofill_prompt(
         "negative option) rather than flagging it. These are NOT needs_user.\n"
         "- For file controls (is_file=true) do NOT produce a text value. Set 'file_role' to "
         "'resume' if the label is about a resume/CV, 'cover_letter' if it is about a cover "
-        "letter, otherwise 'other'. Leave 'value' empty.\n"
+        "letter, otherwise 'other'. Leave 'value' empty. Do NOT set needs_user for resume or "
+        "cover-letter file controls — the client attaches generated files automatically.\n"
         "- Sensible defaults when the profile is silent (do NOT flag these):\n"
         "  * Phone numbers: look across ALL the field blocks in this request, not just one "
         "block. If there is a separate country / country-code / dial-code control anywhere "
@@ -311,19 +317,28 @@ def _build_autofill_prompt(
         "it to match the field (single number for a number field, a range for free text). Do "
         "not leave it blank.\n"
         "  * EEO / demographic / self-identification questions: ALWAYS answer them (never flag). "
-        "If the profile states the value, use it; otherwise pick the option whose MEANING matches "
-        "these defaults: gender -> Male; race / ethnicity / nationality -> Asian; Hispanic or "
-        "Latino -> No; veteran status -> the 'not a protected veteran' option; disability -> the "
-        "'No, I do not have a disability' option. Do NOT choose 'decline to identify' / 'prefer "
-        "not to answer' unless the profile explicitly asks to decline.\n"
+        "If the profile's EEO / demographics section states a value, use that EXACT meaning. "
+        "Otherwise pick the option whose MEANING matches these defaults: gender -> Male; race / "
+        "ethnicity / nationality -> Asian; Hispanic or Latino -> No; veteran status -> the 'not a "
+        "protected veteran' option; disability -> the 'No, I do not have a disability' option; "
+        "sexual orientation / LGBTQ -> the 'I don't wish to answer' / 'prefer not to say' / "
+        "'decline' option. For sexual orientation / gender / veteran / disability / Hispanic, "
+        "NEVER select more than one option — even when the control is multi=true. Never dump "
+        "every option into option_values.\n"
+        "  * Security / clearance / social-security / criminal / export-control / sanctions "
+        "questions: ALWAYS choose the safest / least-committing option — typically 'None', "
+        "'None of the above', 'N/A', 'No', 'I do not hold a clearance', 'No clearance', or "
+        "'I prefer not to answer'. NEVER select multiple clearance levels or every social-"
+        "security / identity option. Positive bias does NOT apply to these questions.\n"
         "  * Consent / agreement / acknowledgement controls (e.g. an option like 'I agree', "
         "joining a talent community, agreeing to terms): choose the affirmative / agree option.\n"
         "  * Residence state / location: use the candidate's profile location; if it is unknown "
         "and the field is required, use the job's state/region, else a common US state.\n"
-        "  * A single 'Location' / 'Where are you based' field (especially a city autocomplete / "
-        "combobox): output ONLY 'City, State' (e.g. 'Newark, CA'); outside the US use "
-        "'City, Country'. Do NOT include the street address, ZIP / postal code, or the full "
-        "mailing address even when the profile has them.\n"
+        "  * A single 'Location' / 'Where are you based' / 'Current location' field (especially a "
+        "city autocomplete / combobox, e.g. Lever): output ONLY 'City, State, Country' "
+        "(e.g. 'Newark, CA, USA'). Outside the US use 'City, Region, Country' or "
+        "'City, Country' when there is no region. Do NOT include the street address, ZIP / "
+        "postal code, or the full mailing address even when the profile has them.\n"
         "  * Work arrangement / location preference: the candidate PREFERS REMOTE work. For an "
         "'ideal office setting' / remote-vs-hybrid-vs-onsite / work-arrangement question, choose "
         "the Remote option (or the most-remote option available, e.g. Remote over Hybrid over "
@@ -339,9 +354,15 @@ def _build_autofill_prompt(
         "closest available).\n"
         "- Answer with a POSITIVE bias: for eligibility, availability, willingness, and "
         "qualification questions, choose the affirmative / eligible option unless the profile "
-        "clearly contradicts it.\n"
-        "- Multi-select controls (multi=true): return the affirmative / eligible subset of "
-        "options in 'option_values'. Never leave a required multi-select empty.\n"
+        "clearly contradicts it. Do NOT apply positive bias to security clearance, social "
+        "security / SSN / ITIN, criminal history, export control, sanctions, or EEO "
+        "self-identification multi-selects — use the safest / none / decline defaults above.\n"
+        "- Multi-select controls (multi=true): put ONLY the options that truly apply in "
+        "'option_values' (usually one, or a small non-contradictory set). Never dump every "
+        "option into option_values. For sexual orientation / LGBTQ, security clearance, "
+        "social security, criminal, export-control, and other exclusive / 'none is safest' "
+        "multi-selects, return EXACTLY ONE option (the safest / none / decline choice). "
+        "Never leave a required multi-select empty.\n"
         "- Conditional follow-ups (e.g. 'If yes, please describe ...') when the related answer is "
         "negative or not applicable: leave 'value' empty; only if the control is required, set "
         "'value' to 'N/A'. These are NOT needs_user.\n"
@@ -529,7 +550,7 @@ async def get_data_version(current_user: dict = Depends(get_current_user)) -> Da
     changes to the user's data and offer a 'sync' action."""
     user_id = _require_user_id(current_user)
     async with get_session() as session:
-        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        user = (await session.execute(select(User).options(undefer("*")).where(User.id == user_id))).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -582,7 +603,7 @@ async def assistant_chat(req: AssistantChatRequest, current_user: dict = Depends
 
     # Load all context up-front (profile, JD snapshot, prior turns).
     async with get_session() as session:
-        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        user = (await session.execute(select(User).options(undefer("*")).where(User.id == user_id))).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         profile_text = user.profile_openai_cache or ""
@@ -788,6 +809,12 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
         if pnts:
             return pnts
 
+    # Sexual orientation (avoid matching "sexual" via a bare \bsex\b gender rule).
+    # Greenhouse uses "I don't wish to answer", which the generic prefer-not
+    # includes above do not match.
+    if "sexual orientation" in low or "lgbtq" in low:
+        return _decline_orientation_option(opts)
+
     if "gender" in low or re.search(r"\bsex\b", low):
         return _pick_option(opts, equals=["male", "man"], includes=["male"], excludes=["female", "woman"])
     if "hispanic" in low or "latino" in low or "latina" in low or "latinx" in low:
@@ -817,6 +844,10 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
             opts, includes=["u.s. citizen", "us citizen", "u.s citizen", "citizen"], excludes=["not", "non-"]
         ) or _pick_option(opts, equals=["yes"], includes=["yes"])
 
+    # Security / SSN / clearance / criminal / export — safest / none / no.
+    if _is_safest_only_label(label):
+        return _safest_none_option(opts, label=label)
+
     # Consent / agreement / acknowledgement among multiple options.
     if any(k in low for k in ("agree", "consent", "acknowledge", "talent community", "terms", "privacy policy")):
         return _pick_option(
@@ -825,11 +856,233 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
     return None
 
 
-def _parse_autofill_results(text: str, fields: list[AutofillFieldIn]) -> list[AutofillFieldResult]:
+def _is_sexual_orientation_label(label: str) -> bool:
+    low = (label or "").lower()
+    return "sexual orientation" in low or "lgbtq" in low
+
+
+def _is_safest_only_label(label: str) -> bool:
+    """Questions where selecting multiple / affirmative options is unsafe.
+
+    Social security, clearance, criminal, export-control, sanctions — always
+    prefer None / No / N/A over dumping every option.
+    """
+    low = (label or "").lower()
+    if _is_sexual_orientation_label(label):
+        return False
+    keys = (
+        "social security",
+        "social-security",
+        "ssn",
+        "itin",
+        "taxpayer identification",
+        "security clearance",
+        "clearance level",
+        "hold a clearance",
+        "hold any clearance",
+        "export control",
+        "export-controlled",
+        "itar",
+        "ear ",
+        "sanction",
+        "denied party",
+        "criminal",
+        "conviction",
+        "felony",
+        "misdemeanor",
+        "background check disclosure",
+    )
+    if any(k in low for k in keys):
+        return True
+    # Bare "clearance" (avoid matching "security clearance questionnaire" already covered).
+    if re.search(r"\bclearance\b", low) and not re.search(r"\bsecurity question", low):
+        return True
+    return False
+
+
+def _is_eeo_exclusive_label(label: str) -> bool:
+    """EEO controls that are mutually exclusive — multi dumps must collapse."""
+    low = (label or "").lower()
+    if _is_sexual_orientation_label(label):
+        return True
+    return any(
+        k in low
+        for k in (
+            "gender",
+            "veteran",
+            "disab",
+            "hispanic",
+            "latino",
+            "latina",
+            "latinx",
+        )
+    ) or bool(re.search(r"\bsex\b", low))
+
+
+def _looks_like_option_dump(option_values: list[str], options: list[str]) -> bool:
+    if not option_values or len(option_values) <= 1:
+        return False
+    opts = [o for o in (options or []) if str(o).strip()]
+    if not opts:
+        return len(option_values) > 1
+    # Nearly every option selected, or more than two on a small exclusive list.
+    if len(option_values) >= max(2, len(opts) - 1):
+        return True
+    if len(opts) <= 6 and len(option_values) >= 3:
+        return True
+    return False
+
+
+def _decline_orientation_option(options: list[str]) -> str | None:
+    return _pick_option(
+        options,
+        includes=[
+            "don't wish to answer",
+            "do not wish to answer",
+            "prefer not to say",
+            "prefer not to answer",
+            "prefer not",
+            "decline to",
+            "decline to self",
+            "do not want to answer",
+            "don't want to answer",
+        ],
+    )
+
+
+def _safest_none_option(options: list[str], label: str = "") -> str | None:
+    """Pick None / N/A / No clearance / No — never an affirmative multi-dump."""
+    opts = [o for o in (options or []) if str(o).strip()]
+    if not opts:
+        return None
+    picked = _pick_option(
+        opts,
+        includes=[
+            "none of the above",
+            "none of these",
+            "none of the following",
+            "does not apply",
+            "not applicable",
+            "no clearance",
+            "do not hold",
+            "don't hold",
+            "i do not hold",
+            "i don't hold",
+            "i do not have a",
+            "i don't have a",
+            "not currently hold",
+            "no security clearance",
+            "i have never",
+            "have never been",
+            "prefer not to say",
+            "prefer not to answer",
+            "prefer not",
+            "decline to",
+            "don't wish to answer",
+            "do not wish to answer",
+            "n/a",
+        ],
+    )
+    if picked:
+        return picked
+    picked = _pick_option(opts, equals=["none", "n/a", "na", "no"], includes=["none"])
+    if picked:
+        return picked
+    low = (label or "").lower()
+    # "Do you have an SSN?" Yes/No — Yes is required for US employment; only
+    # collapse to None when a none-of-these option exists (handled above).
+    if any(k in low for k in ("social security", "ssn", "itin", "taxpayer")) and re.search(
+        r"\b(have|has|possess|provide|issued)\b", low
+    ):
+        yes = _pick_option(opts, equals=["yes"], includes=["yes"], excludes=["no"])
+        if yes:
+            return yes
+    return _pick_option(opts, equals=["no"], includes=["no"], excludes=["yes", "not no"])
+
+
+def _clamp_sexual_orientation_values(
+    option_values: list[str],
+    options: list[str],
+    preferred: str | None,
+) -> list[str]:
+    """Sexual-orientation multi-selects must stay a single answer. Prefer the
+    user's saved preference; otherwise keep one model value or force decline."""
+    opts = [o for o in (options or []) if str(o).strip()]
+    pref = (preferred or "").strip()
+    if pref:
+        # "Decline to self-identify" (prefs UI) → ATS decline / don't-wish wording.
+        if re.search(r"decline|prefer not|don't wish|do not wish|not to answer", pref, re.I):
+            forced = _decline_orientation_option(opts)
+            if forced:
+                return [forced]
+        matched = _match_option(pref, opts)
+        if matched:
+            return [matched]
+    if len(option_values) == 1:
+        return option_values
+    if len(option_values) > 1:
+        # Model dumped every option — never keep a contradictory multi-answer.
+        forced = _decline_orientation_option(opts)
+        if forced:
+            return [forced]
+        return option_values[:1]
+    forced = _decline_orientation_option(opts) or _forced_default_option(
+        "sexual orientation", opts
+    )
+    return [forced] if forced else []
+
+
+def _clamp_safest_only_values(
+    label: str,
+    option_values: list[str],
+    options: list[str],
+) -> list[str]:
+    """Security / SSN / clearance multi-selects: exactly one safest option.
+
+    Always collapse to None/No/N/A when that option exists — never keep a
+    multi-dump or an affirmative clearance/SSN admission from the model.
+    """
+    opts = [o for o in (options or []) if str(o).strip()]
+    safest = _safest_none_option(opts, label=label) or _forced_default_option(label, opts)
+    if safest:
+        return [safest]
+    if len(option_values) > 1:
+        return option_values[:1]
+    return list(option_values)
+
+
+def _clamp_eeo_exclusive_values(
+    label: str,
+    option_values: list[str],
+    options: list[str],
+) -> list[str]:
+    """Collapse EEO exclusive multi-dumps (gender/veteran/disability/etc.)."""
+    if not _looks_like_option_dump(option_values, options) and len(option_values) <= 1:
+        if option_values:
+            return option_values
+        forced = _forced_default_option(label, options or [])
+        return [forced] if forced else []
+    forced = _forced_default_option(label, options or [])
+    if forced:
+        return [forced]
+    if option_values:
+        return option_values[:1]
+    return []
+
+
+def _parse_autofill_results(
+    text: str,
+    fields: list[AutofillFieldIn],
+    eeo_prefs: dict | None = None,
+) -> list[AutofillFieldResult]:
     """Parse and clamp the model's JSON against the requested field specs. Keys
     by cid, drops unknown handles/cids, snaps option values to the allowed list,
     and clamps file_role, so a drifting model can't break the response."""
     out: list[AutofillFieldResult] = []
+    eeo = eeo_prefs if isinstance(eeo_prefs, dict) else {}
+    orientation_pref = eeo.get("sexual_orientation")
+    if not isinstance(orientation_pref, str):
+        orientation_pref = None
 
     # handle -> cid -> spec
     spec_map: dict[int, dict[str, AutofillControlIn]] = {}
@@ -883,8 +1136,22 @@ def _parse_autofill_results(text: str, fields: list[AutofillFieldIn]) -> list[Au
             if spec.is_file:
                 fr = str(c.get("file_role") or "other").lower()
                 file_role = fr if fr in VALID_FILE_ROLES else "other"
+                # Infer resume/cover letter from the field label when the model
+                # leaves file_role empty/"other" — the extension attaches these
+                # from the job's generated files, not from profile text.
+                if file_role == "other":
+                    lab = (spec.label or "").lower()
+                    if "cover letter" in lab:
+                        file_role = "cover_letter"
+                    elif any(tok in lab for tok in ("resume", "cv", "curriculum vitae")):
+                        file_role = "resume"
                 value = ""  # file controls never carry a text value
                 option = None
+                # Never trust model needs_user for attachable file roles — the
+                # client decides after checking whether the PDF/DOCX exists.
+                if file_role in ("resume", "cover_letter"):
+                    needs_user = False
+                    reason = None
             elif spec.multi:
                 raw_vals = c.get("option_values")
                 if not isinstance(raw_vals, list):
@@ -898,7 +1165,31 @@ def _parse_autofill_results(text: str, fields: list[AutofillFieldIn]) -> list[Au
                     if matched and matched not in seen_vals:
                         seen_vals.add(matched)
                         option_values.append(matched)
-                if not option_values:
+                if _is_sexual_orientation_label(spec.label):
+                    option_values = _clamp_sexual_orientation_values(
+                        option_values, spec.options or [], orientation_pref
+                    )
+                    if option_values:
+                        needs_user = False
+                        reason = None
+                elif _is_safest_only_label(spec.label):
+                    option_values = _clamp_safest_only_values(
+                        spec.label, option_values, spec.options or []
+                    )
+                    if option_values:
+                        needs_user = False
+                        reason = None
+                elif _is_eeo_exclusive_label(spec.label) and (
+                    _looks_like_option_dump(option_values, spec.options or [])
+                    or not option_values
+                ):
+                    option_values = _clamp_eeo_exclusive_values(
+                        spec.label, option_values, spec.options or []
+                    )
+                    if option_values:
+                        needs_user = False
+                        reason = None
+                elif not option_values:
                     forced = _forced_default_option(spec.label, spec.options)
                     if forced is not None:
                         option_values.append(forced)
@@ -908,7 +1199,33 @@ def _parse_autofill_results(text: str, fields: list[AutofillFieldIn]) -> list[Au
                 option = None
             elif spec.options:
                 matched = _match_option(value or option or "", spec.options)
-                if matched is not None and not needs_user:
+                if _is_sexual_orientation_label(spec.label):
+                    clamped = _clamp_sexual_orientation_values(
+                        [matched] if matched and not needs_user else [],
+                        spec.options,
+                        orientation_pref,
+                    )
+                    if clamped:
+                        value = clamped[0]
+                        option = clamped[0]
+                        needs_user = False
+                        reason = None
+                    elif matched is not None and not needs_user:
+                        value = matched
+                        option = matched
+                elif _is_safest_only_label(spec.label):
+                    forced = _safest_none_option(spec.options, label=spec.label) or _forced_default_option(
+                        spec.label, spec.options
+                    )
+                    if forced is not None:
+                        value = forced
+                        option = forced
+                        needs_user = False
+                        reason = None
+                    elif matched is not None and not needs_user:
+                        value = matched
+                        option = matched
+                elif matched is not None and not needs_user:
                     value = matched
                     option = matched
                 else:
@@ -955,7 +1272,7 @@ async def assistant_autofill(
     user_id = _require_user_id(current_user)
 
     async with get_session() as session:
-        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        user = (await session.execute(select(User).options(undefer("*")).where(User.id == user_id))).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         profile_text = user.profile_openai_cache or ""
@@ -964,6 +1281,10 @@ async def assistant_autofill(
         addr_text = _contact_address_text(getattr(user, "address", None))
         if addr_text:
             profile_text = (profile_text + "\n\n" + addr_text).strip()
+        eeo_prefs = getattr(user, "eeo_preferences", None) or {}
+        eeo_text = _eeo_preferences_text(eeo_prefs)
+        if eeo_text:
+            profile_text = (profile_text + "\n\n" + eeo_text).strip()
 
         sess = (
             await session.execute(
@@ -1015,7 +1336,9 @@ async def assistant_autofill(
             detail="Autofill is temporarily unavailable. Please try again.",
         )
 
-    results = _parse_autofill_results(text, req.fields)
+    results = _parse_autofill_results(
+        text, req.fields, eeo_prefs if isinstance(eeo_prefs, dict) else {}
+    )
     return AutofillResponse(results=results)
 
 
@@ -1085,6 +1408,39 @@ def _contact_address_text(addr: Any) -> str:
     return "## Contact Address\n" + "\n".join(lines)
 
 
+def _eeo_preferences_text(prefs: Any) -> str:
+    """Readable EEO / demographics block for the LLM autofill prompt. The resume
+    cache omits these voluntary answers, so inject them explicitly."""
+    p = prefs if isinstance(prefs, dict) else {}
+
+    def _s(key: str) -> str:
+        v = p.get(key)
+        return v.strip() if isinstance(v, str) and v.strip() else ""
+
+    def _yn(key: str) -> str:
+        v = p.get(key)
+        if v is True:
+            return "Yes"
+        if v is False:
+            return "No"
+        return ""
+
+    rows = [
+        ("Gender", _s("gender")),
+        ("Race / ethnicity", _s("race")),
+        ("Sexual orientation", _s("sexual_orientation") or "Decline to self-identify / do not wish to answer"),
+        ("Hispanic or Latino", _yn("hispanic_latino")),
+        ("Veteran status", _yn("veteran_status")),
+        ("Disability status", _yn("disability_status")),
+        ("Authorized to work", _yn("work_authorized")),
+        ("Needs visa sponsorship", _yn("needs_sponsorship")),
+    ]
+    lines = [f"- {label}: {val}" for label, val in rows if val]
+    if not lines:
+        return ""
+    return "## EEO / Demographics (voluntary preferences for application forms)\n" + "\n".join(lines)
+
+
 def _eeo_for_autofill(prefs: Any) -> dict:
     """Map the user's saved EEO preferences to the canonical autofill shape,
     falling back to defaults for any unspecified (blank / None) field."""
@@ -1101,6 +1457,9 @@ def _eeo_for_autofill(prefs: Any) -> dict:
     return {
         "gender": _str("gender", _EEO_DEFAULTS["gender"]),
         "ethnicity": _str("race", _EEO_DEFAULTS["ethnicity"]),
+        # Prefer explicit decline wording when unset so ATS multi-selects never
+        # get a "select all" dump from the model.
+        "sexualOrientation": _str("sexual_orientation", "Decline to self-identify"),
         "hispanicLatino": _bool("hispanic_latino", _EEO_DEFAULTS["hispanicLatino"]),
         "veteran": _bool("veteran_status", _EEO_DEFAULTS["veteran"]),
         "disability": _bool("disability_status", _EEO_DEFAULTS["disability"]),
@@ -1397,7 +1756,7 @@ async def assistant_autofill_profile(
     settings = get_settings()
 
     async with get_session() as session:
-        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        user = (await session.execute(select(User).options(undefer("*")).where(User.id == user_id))).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
@@ -1617,6 +1976,27 @@ async def delete_session(job_id: str, current_user: dict = Depends(get_current_u
             )
         )
         # Conversation history is tied to the application; remove it too.
+        await session.execute(
+            sa_delete(AssistantMessage).where(
+                AssistantMessage.user_id == user_id, AssistantMessage.job_id == job_id
+            )
+        )
+        await session.commit()
+    return None
+
+
+@assistant_router.delete(
+    "/assistant/sessions/{job_id}/messages",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def clear_session_messages(job_id: str, current_user: dict = Depends(get_current_user)):
+    """Clear chat history for one application without deleting the session itself.
+
+    The extension starts each application with an empty conversation so prior
+    visits to the same job do not leak into the new apply flow.
+    """
+    user_id = _require_user_id(current_user)
+    async with get_session() as session:
         await session.execute(
             sa_delete(AssistantMessage).where(
                 AssistantMessage.user_id == user_id, AssistantMessage.job_id == job_id

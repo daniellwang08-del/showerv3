@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 import re
 
@@ -96,13 +96,14 @@ class EEOPreferences(BaseModel):
     are tri-state booleans (None = unspecified, engine uses its default)."""
     gender: str | None = Field(default=None, max_length=50)
     race: str | None = Field(default=None, max_length=100)
+    sexual_orientation: str | None = Field(default=None, max_length=120)
     hispanic_latino: bool | None = None
     veteran_status: bool | None = None
     disability_status: bool | None = None
     work_authorized: bool | None = None
     needs_sponsorship: bool | None = None
 
-    @field_validator("gender", "race", mode="before")
+    @field_validator("gender", "race", "sexual_orientation", mode="before")
     @classmethod
     def empty_to_none(cls, v):
         return _empty_to_none(v)
@@ -153,8 +154,11 @@ def _phone_valid(v: str) -> str:
     v = (v or "").strip()
     if not v:
         raise ValueError("Phone number is required")
-    if not re.match(r"^[\d\s\-+()]{7,25}$", v):
+    if not re.match(r"^[\d\s\-+()]{7,30}$", v):
         raise ValueError("Invalid phone number format")
+    digits = re.sub(r"\D", "", v)
+    if len(digits) < 8 or len(digits) > 15:
+        raise ValueError("Phone number must include 8–15 digits (US/Canada: 10 digits)")
     return v
 
 
@@ -268,6 +272,17 @@ class ProfileCreateRequest(BaseModel):
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _phone_valid(v)
+
+    @model_validator(mode="after")
+    def validate_phone_with_country(self):
+        cc_digits = re.sub(r"\D", "", self.phone_country_code or "")
+        num_digits = re.sub(r"\D", "", self.phone_number or "")
+        if cc_digits == "1" and len(num_digits) != 10:
+            raise ValueError(
+                "US/Canada phone numbers must be 10 digits (area code + number), "
+                "e.g. (610) 234-7936 — incomplete values like 313-3369 are not allowed"
+            )
+        return self
 
 
 # Alias: single profile uses same schema for create/update

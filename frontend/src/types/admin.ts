@@ -123,3 +123,30 @@ export interface LlmKeysResponse {
   bindings: LlmJobBinding[];
   job_types: Record<string, { label: string; description: string }>;
 }
+
+export interface LlmBenchmarkTarget {
+  provider: LlmProvider | string;
+  model: string;
+  provider_key_id?: string | null;
+}
+
+export interface LlmBenchmarkResult {
+  provider: string;
+  model: string;
+  provider_key_id?: string | null;
+  ok: boolean;
+  latency_ms: number | null;
+  error: string | null;
+  ran_at: string;
+  response_preview?: string | null;
+}
+
+export interface LlmBenchmarkResponse {
+  results: LlmBenchmarkResult[];
+  summary: {
+    total: number;
+    ok: number;
+    failed: number;
+    runs: number;
+  };
+}

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
 import { SettingsCard } from '../settings/SettingsCard';
+import { prefsSaveBtnClass } from '../settings/prefsSaveButtonClass';
 import { BrandedLoader } from '../layout/BrandedLoader';
 import { fetchProfileForm, saveUserProfile } from '../../api/profileApi';
 import type { EEOPreferences, ProfileFormData } from '../../types/profile';
-import { GENDER_OPTIONS, RACE_OPTIONS } from '../../types/profile';
+import { GENDER_OPTIONS, RACE_OPTIONS, SEXUAL_ORIENTATION_OPTIONS } from '../../types/profile';
 import { emptyEEO } from '../../utils/profileFormData';
 
 const EEO_YESNO_FIELDS: Array<{
@@ -136,7 +137,7 @@ export function EeoPreferencesSection() {
           type="button"
           disabled={!dirty || saving || loading}
           onClick={() => void handleSave()}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+          className={prefsSaveBtnClass(dirty && !loading)}
         >
           {saving ? <Loader2 size={12} className="animate-spin" /> : null}
           {saving ? 'Saving…' : 'Save'}
@@ -182,6 +183,28 @@ export function EeoPreferencesSection() {
                   </option>
                 ))}
               </select>
+            </label>
+
+            <label className="flex w-full min-w-0 flex-col gap-1 sm:col-span-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Sexual orientation
+              </span>
+              <select
+                value={eeo.sexual_orientation ?? ''}
+                onChange={(e) => setEeo((s) => ({ ...s, sexual_orientation: e.target.value }))}
+                className="h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#0f172a]"
+              >
+                <option value="">Unspecified (decline on forms)</option>
+                {SEXUAL_ORIENTATION_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] leading-snug text-slate-500 dark:text-slate-400">
+                Used for application autofill. Multi-select forms get only this one answer — never every
+                option. Unspecified maps to “I don&apos;t wish to answer” / decline when available.
+              </span>
             </label>
           </div>
 

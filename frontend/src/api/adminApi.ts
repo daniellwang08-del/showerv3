@@ -3,6 +3,7 @@ import type {
   AdminUser,
   BlockedDomain,
   JobCleanupResult,
+  LlmBenchmarkResponse,
   LlmJobBinding,
   LlmKeysResponse,
   LlmModelsResponse,
@@ -158,6 +159,19 @@ export async function fetchLlmModelsForEnv(
 ): Promise<LlmModelsResponse> {
   const { data } = await apiClient.get<LlmModelsResponse>('/admin/llm-models', {
     params: { provider },
+  });
+  return data;
+}
+
+export async function runLlmBenchmark(body: {
+  models: Array<{ provider: string; model: string; provider_key_id?: string | null }>;
+  runs?: number;
+  concurrency?: number;
+  prompt?: string;
+}): Promise<LlmBenchmarkResponse> {
+  const { data } = await apiClient.post<LlmBenchmarkResponse>('/admin/llm-benchmark', body, {
+    // Benchmarks can take a while when many models × runs are selected.
+    timeout: 300_000,
   });
   return data;
 }

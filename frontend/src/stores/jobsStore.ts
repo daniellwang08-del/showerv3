@@ -161,8 +161,6 @@ type JobsState = {
   markApplied: (items: SubmittedUrlItem[]) => Promise<void>;
   markUnapplied: (items: SubmittedUrlItem[]) => Promise<void>;
   rescrapeJob: (item: SubmittedUrlItem) => Promise<void>;
-  recordJobClick: (item: SubmittedUrlItem) => Promise<void>;
-  openSelectedUrls: (items: SubmittedUrlItem[]) => Promise<void>;
 
   /** Remove entries from invalid panels immediately (optimistic UI). */
   removeDuplicateUrlsByIds: (ids: string[]) => void;
@@ -683,58 +681,6 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     } catch (error: any) {
       set({ submitError: extractErrorMessage(error, 'Failed to rescrape job') });
     }
-  },
-
-  recordJobClick: async (item: SubmittedUrlItem) => {
-    if (item.table !== 'active') return;
-    const jobId = item.id;
-    const prevCount = item.click_count ?? 0;
-    set((state) => ({
-      uniqueUrls: state.uniqueUrls.map((u) => (u.id === jobId ? { ...u, click_count: prevCount + 1 } : u)),
-    }));
-    try {
-      const res = await apiClient.post<{ click_count: number }>(`/jobs/valid/${jobId}/click`);
-      const serverCount = res.data?.click_count ?? prevCount + 1;
-      set((state) => ({
-        uniqueUrls: state.uniqueUrls.map((u) => (u.id === jobId ? { ...u, click_count: serverCount } : u)),
-      }));
-    } catch {
-      // keep optimistic
-    }
-  },
-
-  openSelectedUrls: async (items: SubmittedUrlItem[]) => {
-    if (!items.length) return;
-    const uniqueItems = items.filter(
-      (item, index, arr) => arr.findIndex((x) => x.url === item.url) === index,
-    );
-    uniqueItems.forEach((item) => {
-      window.open(item.url, '_blank', 'noopener,noreferrer');
-    });
-
-    set((state) => ({
-      uniqueUrls: state.uniqueUrls.map((job) => {
-        const opened = uniqueItems.find((item) => item.id === job.id);
-        if (!opened) return job;
-        return { ...job, click_count: (job.click_count ?? 0) + 1 };
-      }),
-    }));
-
-    await Promise.all(
-      uniqueItems.map(async (item) => {
-        if (item.table !== 'active') return;
-        try {
-          const res = await apiClient.post<{ click_count: number }>(`/jobs/valid/${item.id}/click`);
-          const serverCount = res.data?.click_count;
-          if (typeof serverCount !== 'number') return;
-          set((state) => ({
-            uniqueUrls: state.uniqueUrls.map((job) => (job.id === item.id ? { ...job, click_count: serverCount } : job)),
-          }));
-        } catch {
-          // keep optimistic
-        }
-      }),
-    );
   },
 
   removeDuplicateUrlsByIds: (ids: string[]) => {

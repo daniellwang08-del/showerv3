@@ -381,6 +381,43 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
         return None
 
 
+def tailored_resume_quality_issues(resume: dict | None) -> list[str]:
+    """Return soft quality problems that warrant one Phase B regeneration retry.
+
+    Does not reject the payload forever — callers may still accept after retry.
+    """
+    if not resume or not isinstance(resume, dict):
+        return ["missing_tailored_resume"]
+    issues: list[str] = []
+    summary = str(resume.get("profile_summary") or "").strip()
+    if len(summary) < 40:
+        issues.append("profile_summary_too_short")
+    skills = resume.get("technical_skills") or []
+    if not isinstance(skills, list) or len(skills) < 1:
+        issues.append("technical_skills_missing")
+    experience = resume.get("work_experience") or []
+    if not isinstance(experience, list) or len(experience) < 1:
+        issues.append("work_experience_missing")
+        return issues
+    for idx, entry in enumerate(experience):
+        if not isinstance(entry, dict):
+            issues.append(f"work_experience[{idx}]_invalid")
+            continue
+        bullets = entry.get("bullets") or []
+        if not isinstance(bullets, list):
+            bullets = []
+        clean = [b for b in bullets if isinstance(b, str) and b.strip()]
+        minimum = 7 if idx < 3 else 4
+        if len(clean) < minimum:
+            issues.append(f"work_experience[{idx}]_bullets_below_{minimum}")
+        # Soft invent/keyword signal: almost no markdown emphasis across many bullets.
+        if idx < 3 and len(clean) >= minimum:
+            emphasized = sum(1 for b in clean if "**" in b)
+            if emphasized == 0:
+                issues.append(f"work_experience[{idx}]_no_keyword_emphasis")
+    return issues
+
+
 def _parse_cover_letter(parsed: dict | None) -> dict | None:
     if not parsed or not isinstance(parsed, dict):
         return None
@@ -613,6 +650,40 @@ async def generate_tailored_content_phase_b(
 
     tailored_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
     cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
+
+    quality_issues = tailored_resume_quality_issues(tailored_resume)
+    if quality_issues or not cover_letter:
+        logger.warning(
+            "phase_b_quality_soft_retry",
+            issues=quality_issues,
+            cover_letter_missing=not bool(cover_letter),
+        )
+        retry_user = (
+            user_content
+            + "\n\nQUALITY RETRY: Previous output failed soft checks. "
+            "Ensure profile_summary is substantive, technical_skills has categories, "
+            "the first three roles each have at least 7 bullets with **keyword** emphasis "
+            "on job-relevant terms grounded in the profile, later roles have at least 4 bullets, "
+            "and cover_letter.body is a complete letter. Never invent employers or dates."
+        )
+        parsed_retry = await _call_openai_json(
+            system_prompt=system_prompt,
+            user_content=retry_user,
+            max_tokens=phase_b_max,
+            observe_name="phase_b_quality_retry",
+            user_id=user_id,
+            job_type="resume_tailoring",
+        )
+        retry_resume = _parse_tailored_resume(parsed_retry.get("tailored_resume"))
+        retry_cover = _parse_cover_letter(parsed_retry.get("cover_letter"))
+        if retry_resume:
+            tailored_resume = retry_resume
+        if retry_cover:
+            cover_letter = retry_cover
+        remaining = tailored_resume_quality_issues(tailored_resume)
+        if remaining:
+            logger.warning("phase_b_quality_issues_after_retry", issues=remaining)
+
     if not tailored_resume:
         logger.warning("tailored_resume_section_missing_or_invalid")
     if not cover_letter:

@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Text, Date, DateTime, Float, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, deferred
 from sqlalchemy.sql import func
 from app.models.schemas import ExtractionMethod, ExtractionStatus
 import uuid
@@ -32,26 +32,28 @@ class User(Base):
     phone_number = Column(String(30), nullable=True)
     linkedin_url = Column(String(500), nullable=True)
     github_url = Column(String(500), nullable=True)
-    profile_summary = Column(Text, nullable=True)
-    technical_skills = Column(JSON, default=list)
-    work_experience = Column(JSON, default=list)
-    education = Column(JSON, default=list)
-    certificates = Column(JSON, default=list)
-    extra = Column(JSON, default=list)
+    # Heavy profile payloads — deferred so auth/admin list queries stay light.
+    # Accessing any of these columns loads that column on demand.
+    profile_summary = deferred(Column(Text, nullable=True))
+    technical_skills = deferred(Column(JSON, default=list))
+    work_experience = deferred(Column(JSON, default=list))
+    education = deferred(Column(JSON, default=list))
+    certificates = deferred(Column(JSON, default=list))
+    extra = deferred(Column(JSON, default=list))
 
     # Voluntary EEO / demographic answers used to auto-fill application forms
-    # (Workday etc.). Object of: gender, race, hispanic_latino, veteran_status,
-    # disability_status, work_authorized, needs_sponsorship. Null/blank fields
-    # fall back to the engine's defaults.
-    eeo_preferences = Column(JSON, default=dict)
+    # (Workday etc.). Object of: gender, race, sexual_orientation,
+    # hispanic_latino, veteran_status, disability_status, work_authorized,
+    # needs_sponsorship. Null/blank fields fall back to the engine's defaults.
+    eeo_preferences = deferred(Column(JSON, default=dict))
 
     # Mailing address used to auto-fill application forms (Workday requires
     # Address/City/State/Postal). Object of: line1, line2, city, state,
     # postal_code, country.
-    address = Column(JSON, default=dict)
+    address = deferred(Column(JSON, default=dict))
 
     # Cached OpenAI-ready text (updated on profile save)
-    profile_openai_cache = Column(Text, nullable=True)
+    profile_openai_cache = deferred(Column(Text, nullable=True))
 
     # Deduplication recycle window: jobs older than this many days are treated
     # as "fresh" at their company - a new posting won't be auto-excluded even
@@ -61,7 +63,7 @@ class User(Base):
 
     # OpenAI: "default" uses server OPENAI_API_KEY; "custom" uses encrypted user key.
     openai_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
-    openai_api_key_encrypted = Column(Text, nullable=True)
+    openai_api_key_encrypted = deferred(Column(Text, nullable=True))
 
     # Active LLM provider powering this user's AI work ("openai" | "anthropic" | "gemini").
     llm_provider = Column(String(20), default="openai", nullable=False, server_default="openai")
@@ -72,9 +74,9 @@ class User(Base):
     # Anthropic / Gemini bring-your-own keys (mode "default" uses the server key;
     # "custom" uses the encrypted user-provided key). Mirrors the OpenAI pattern.
     anthropic_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
-    anthropic_api_key_encrypted = Column(Text, nullable=True)
+    anthropic_api_key_encrypted = deferred(Column(Text, nullable=True))
     gemini_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
-    gemini_api_key_encrypted = Column(Text, nullable=True)
+    gemini_api_key_encrypted = deferred(Column(Text, nullable=True))
 
     # Minimum match score: jobs below threshold are hidden (below_min_score exclusion).
     min_match_score_mode = Column(String(20), default="default", nullable=False, server_default="default")
@@ -82,14 +84,14 @@ class User(Base):
 
     # Resume tailoring (Phase B): default uses built-in instructions; custom stores editable instructions.
     resume_tailoring_prompt_mode = Column(String(20), default="default", nullable=False, server_default="default")
-    resume_tailoring_prompt_custom = Column(Text, nullable=True)
+    resume_tailoring_prompt_custom = deferred(Column(Text, nullable=True))
 
     # Cover letter generation (Phase B, Task 2): separate editable instructions from resume tailoring.
     cover_letter_prompt_mode = Column(String(20), default="default", nullable=False, server_default="default")
-    cover_letter_prompt_custom = Column(Text, nullable=True)
+    cover_letter_prompt_custom = deferred(Column(Text, nullable=True))
 
     # Free-text job preferences used by the match analysis engine (Phase A).
-    job_match_preferences = Column(Text, nullable=True)
+    job_match_preferences = deferred(Column(Text, nullable=True))
 
     # Visual resume builder design (theme/typography/colors/layout). Every résumé is
     # compiled from this design; the working template + blueprint are derived from it.
@@ -97,24 +99,23 @@ class User(Base):
     # active_resume_id / ResumeDocument) so the extension, downloads and job-tailoring
     # keep reading one "current" working template.
     resume_template_status = Column(String(30), default="missing", nullable=False, server_default="missing")
-    resume_template_working_path = Column(Text, nullable=True)
-    resume_template_blueprint = Column(JSON, nullable=True)
+    resume_template_working_path = deferred(Column(Text, nullable=True))
+    resume_template_blueprint = deferred(Column(JSON, nullable=True))
     resume_template_error = Column(Text, nullable=True)
-    resume_template_design = Column(JSON, nullable=True)
+    resume_template_design = deferred(Column(JSON, nullable=True))
 
     # Multi-resume library: the resume currently loaded/edited in the builder. Points at
     # a resume_documents row; that row's design is mirrored into the columns above.
-    active_resume_id = Column(String(36), nullable=True)
+    active_resume_id = Column(
+        String(36),
+        ForeignKey("resume_documents.id", ondelete="SET NULL", name="fk_users_active_resume_id", use_alter=True),
+        nullable=True,
+    )
 
     # Per-user cover letter template, compiled from the resume builder design.
     cover_letter_template_status = Column(String(30), default="missing", nullable=False, server_default="missing")
-    cover_letter_template_working_path = Column(Text, nullable=True)
+    cover_letter_template_working_path = deferred(Column(Text, nullable=True))
     cover_letter_template_error = Column(Text, nullable=True)
-
-    __table_args__ = (
-        Index("ix_users_email", "email"),
-        Index("ix_users_is_active", "is_active"),
-    )
 
 
 class ResumeCustomTheme(Base):
@@ -136,7 +137,6 @@ class ResumeCustomTheme(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_resume_custom_themes_user_id", "user_id"),)
 
 
 class ResumeThemeLove(Base):
@@ -177,16 +177,14 @@ class ResumeDocument(Base):
     status = Column(String(20), nullable=False, default="draft", server_default="draft")
     # "manual" | "tailored" - how the resume was created.
     source = Column(String(20), nullable=False, default="manual", server_default="manual")
-    design = Column(JSON, nullable=True)
+    # Full design JSON — deferred; search/metadata lists should not load it.
+    design = deferred(Column(JSON, nullable=True))
     # For tailored resumes: the role this was tailored to (used for naming/labels).
     job_title = Column(String(300), nullable=True)
     company = Column(String(300), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    __table_args__ = (
-        Index("ix_resume_documents_user_id", "user_id"),
-    )
 
 
 class ProfileSourceDocument(Base):
@@ -203,8 +201,9 @@ class ProfileSourceDocument(Base):
     filename = Column(String(500), nullable=False)
     source_kind = Column(String(20), nullable=False)
     company_name = Column(String(200), nullable=True)
-    extracted_text = Column(Text, nullable=True)
-    structured_data = Column(JSON, nullable=True)
+    # Large blobs — deferred for metadata list endpoints.
+    extracted_text = deferred(Column(Text, nullable=True))
+    structured_data = deferred(Column(JSON, nullable=True))
     char_count = Column(Integer, default=0, nullable=False, server_default="0")
     project_count = Column(Integer, default=0, nullable=False, server_default="0")
     parse_status = Column(String(20), default="pending", nullable=False, server_default="pending")
@@ -235,16 +234,14 @@ class JobExtraction(Base):
     responsibilities = Column(JSON, default=list)
     requirements = Column(JSON, default=list)
     benefits = Column(JSON, default=list)
-    posted_date = Column(DateTime, nullable=True)
-    application_deadline = Column(DateTime, nullable=True)
     remote_policy = Column(String(500), nullable=True)
     work_mode = Column(String(20), nullable=True)
     experience_level = Column(String(500), nullable=True)
     industry = Column(String(200), nullable=True)
     raw_metadata = Column(JSON, default=dict)
-    raw_html = Column(Text, nullable=True)
     is_job_posting = Column(Boolean, nullable=True)
-    raw_plain_text = Column(Text, nullable=True)
+    # Large scrape text — only needed for Phase A/B job_text fallback.
+    raw_plain_text = deferred(Column(Text, nullable=True))
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -269,15 +266,14 @@ class Job(Base):
     company = Column(String(500), nullable=False)
     location = Column(String(500), nullable=True)
     work_mode = Column(String(20), nullable=True)
-    description = Column(Text, nullable=True)
+    # Large JD body — deferred so dashboard/list queries stay light.
+    description = deferred(Column(Text, nullable=True))
     posted_date = Column(DateTime, nullable=True)
     experience_level = Column(String(100), nullable=True)
     industry = Column(String(200), nullable=True)
     raw_metadata = Column(JSON, default=dict)
-    similarity_hash = Column(String(64), nullable=True, index=True)
     extraction_id = Column(String(36), nullable=True, index=True)
     scraped_at = Column(DateTime, nullable=True)
-    click_count = Column(Integer, default=0, nullable=False)
     sheet_posted_at = Column(DateTime, nullable=True)
     pumble_posted_at = Column(DateTime, nullable=True)
     status = Column(String(30), default="active", nullable=False, index=True)
@@ -288,6 +284,7 @@ class Job(Base):
         Index("ix_jobs_company", "company"),
         Index("ix_jobs_domain_company", "domain", "company"),
         Index("ix_jobs_created_at", "created_at"),
+        Index("ix_jobs_work_mode", "work_mode"),
     )
 
 
@@ -516,22 +513,6 @@ class AssistantMessage(Base):
     __table_args__ = (
         Index("ix_assistant_messages_user_job", "user_id", "job_id", "created_at"),
     )
-
-
-class APIPatternRegistry(Base):
-    __tablename__ = "api_pattern_registry"
-
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    domain_pattern = Column(String(255), nullable=False, unique=True)
-    api_endpoint_template = Column(Text, nullable=True)
-    json_ld_selector = Column(String(255), nullable=True)
-    extraction_hints = Column(JSON, default=dict)
-    priority = Column(Float, default=0)
-    is_active = Column(Boolean, default=True)
-    success_rate = Column(Float, default=0.0)
-    last_success_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class SystemSetting(Base):

@@ -350,19 +350,26 @@ async def run_post_analysis_dedup(
         if not same_company_jobs:
             return await _save_active(session, job_id, user_id, match_data, overall_score)
 
+        pool_ids = [j.id for j in same_company_jobs]
+
+        # Batch peer match scores once (avoids N+1 under the per-user save lock).
+        peer_match_rows = await session.execute(
+            select(JobMatchResult).where(
+                JobMatchResult.user_id == user_id,
+                JobMatchResult.job_id.in_(pool_ids),
+            )
+        )
+        peer_matches_by_job_id = {
+            m.job_id: m for m in peer_match_rows.scalars().all()
+        }
+
         current_title_norm = _normalize_title(current_job.title)
         for existing_job in same_company_jobs:
             existing_title_norm = _normalize_title(existing_job.title)
             if not (current_title_norm and existing_title_norm and current_title_norm == existing_title_norm):
                 continue
 
-            match_row = await session.execute(
-                select(JobMatchResult).where(
-                    JobMatchResult.job_id == existing_job.id,
-                    JobMatchResult.user_id == user_id,
-                )
-            )
-            existing_match = match_row.scalar_one_or_none()
+            existing_match = peer_matches_by_job_id.get(existing_job.id)
             existing_score_str = str(existing_match.overall_score) if existing_match else "n/a"
             logger.info(
                 "post_analysis_dedup_strict_similarity",
@@ -381,8 +388,6 @@ async def run_post_analysis_dedup(
                 exclusion_type=STRICT_SIMILARITY_EXCLUSION,
                 reason="Same title and company as an existing active posting.",
             )
-
-        pool_ids = [j.id for j in same_company_jobs]
 
         if bool(get_effective_value_sync("dedup_rule_applied_company_enabled")):
             applied_result = await session.execute(
@@ -411,13 +416,8 @@ async def run_post_analysis_dedup(
         if not bool(get_effective_value_sync("dedup_rule_score_comparison_enabled")):
             return await _save_active(session, job_id, user_id, match_data, overall_score)
 
-        match_rows_result = await session.execute(
-            select(JobMatchResult).where(
-                JobMatchResult.user_id == user_id,
-                JobMatchResult.job_id.in_(pool_ids),
-            )
-        )
-        existing_matches = list(match_rows_result.scalars().all())
+        # Reuse the peer match batch loaded before the strict-similarity scan.
+        existing_matches = list(peer_matches_by_job_id.values())
         if not existing_matches:
             return await _save_active(session, job_id, user_id, match_data, overall_score)
 

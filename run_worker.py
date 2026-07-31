@@ -6,7 +6,8 @@ Usage:
     python run_worker.py extraction   # HTTP/browser scraping
     python run_worker.py analysis     # Phase A match scoring
     python run_worker.py tailoring    # Phase B resume tailoring
-    python run_worker.py save         # post-analysis persistence + auto-post
+    python run_worker.py save         # post-analysis persistence (+ Phase B enqueue)
+    python run_worker.py autopost     # Sheets/Pumble auto-post
     python run_worker.py resume       # DOCX/PDF generation
     python run_worker.py scraper      # Scrapy crawl runs
 
@@ -27,7 +28,9 @@ from app.core.logging import setup_logging
 
 setup_logging()
 
-if sys.platform == "win32":
+# Proactor is already the default on modern Windows/Python; setting the
+# deprecated WindowsProactorEventLoopPolicy warns on 3.14+.
+if sys.platform == "win32" and sys.version_info < (3, 14):
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except Exception:
@@ -40,6 +43,7 @@ from app.tasks.worker import (
     AnalysisWorkerSettings,
     TailoringWorkerSettings,
     SaveWorkerSettings,
+    AutoPostWorkerSettings,
     ResumeBuildWorkerSettings,
     ScraperWorkerSettings,
     extract_job,
@@ -47,6 +51,7 @@ from app.tasks.worker import (
     generate_tailored_content,
     _forward_phase_b_to_tailoring_queue,
     save_analyzed_job,
+    run_match_auto_posts_task,
     build_resume_task,
     run_scraper_task,
 )
@@ -66,6 +71,7 @@ MODE_MAX_JOBS_SETTING = {
     "analysis": "analysis_worker_max_jobs",
     "tailoring": "tailoring_worker_max_jobs",
     "save": "save_worker_max_jobs",
+    "autopost": "autopost_worker_max_jobs",
     "resume": "resume_worker_max_jobs",
     "scraper": "scraper_worker_max_jobs",
 }
@@ -78,6 +84,13 @@ async def extraction_startup(ctx):
     await init_database()
     await init_http_client()
     await init_browser_pool()
+    from app.services.extraction_cache import init_redis_pool
+    from app.core.redis_support import init_pubsub_redis_pool
+    from app.services.extraction_service import ExtractionService
+
+    await init_redis_pool()
+    await init_pubsub_redis_pool()
+    ctx["extraction_service"] = ExtractionService()
     logger.info("extraction_worker_startup_complete")
 
 
@@ -85,6 +98,11 @@ async def extraction_shutdown(ctx):
     logger.info("extraction_worker_shutdown_begin")
     await close_browser_pool()
     await close_http_client()
+    from app.services.extraction_cache import close_redis_pool
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
+    await close_redis_pool()
     await close_database()
     logger.info("extraction_worker_shutdown_complete")
 
@@ -94,13 +112,23 @@ async def extraction_shutdown(ctx):
 async def analysis_startup(ctx):
     logger.info("analysis_worker_startup_begin")
     await init_database()
+    from app.services.extraction_cache import init_redis_pool
+    from app.core.redis_support import init_pubsub_redis_pool
     from app.services.pipeline_health import heal_stale_pipeline_state
+
+    await init_redis_pool()
+    await init_pubsub_redis_pool()
     await heal_stale_pipeline_state()
     logger.info("analysis_worker_startup_complete")
 
 
 async def analysis_shutdown(ctx):
     logger.info("analysis_worker_shutdown_begin")
+    from app.services.extraction_cache import close_redis_pool
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
+    await close_redis_pool()
     await close_database()
     logger.info("analysis_worker_shutdown_complete")
 
@@ -108,13 +136,23 @@ async def analysis_shutdown(ctx):
 async def tailoring_startup(ctx):
     logger.info("tailoring_worker_startup_begin")
     await init_database()
+    from app.services.extraction_cache import init_redis_pool
+    from app.core.redis_support import init_pubsub_redis_pool
     from app.services.pipeline_health import heal_stale_pipeline_state
+
+    await init_redis_pool()
+    await init_pubsub_redis_pool()
     await heal_stale_pipeline_state()
     logger.info("tailoring_worker_startup_complete")
 
 
 async def tailoring_shutdown(ctx):
     logger.info("tailoring_worker_shutdown_begin")
+    from app.services.extraction_cache import close_redis_pool
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
+    await close_redis_pool()
     await close_database()
     logger.info("tailoring_worker_shutdown_complete")
 
@@ -131,6 +169,7 @@ class ExtractionWorkerConfig(ExtractionWorkerSettings):
     job_timeout = ExtractionWorkerSettings.job_timeout
     max_jobs = ExtractionWorkerSettings.max_jobs
     max_tries = ExtractionWorkerSettings.max_tries
+    keep_result = ExtractionWorkerSettings.keep_result
     redis_settings = ExtractionWorkerSettings.redis_settings()
 
 
@@ -145,6 +184,7 @@ class AnalysisWorkerConfig(AnalysisWorkerSettings):
     job_timeout = AnalysisWorkerSettings.job_timeout
     max_jobs = AnalysisWorkerSettings.max_jobs
     max_tries = AnalysisWorkerSettings.max_tries
+    keep_result = AnalysisWorkerSettings.keep_result
     redis_settings = AnalysisWorkerSettings.redis_settings()
 
 
@@ -156,17 +196,24 @@ class TailoringWorkerConfig(TailoringWorkerSettings):
     job_timeout = TailoringWorkerSettings.job_timeout
     max_jobs = TailoringWorkerSettings.max_jobs
     max_tries = TailoringWorkerSettings.max_tries
+    keep_result = TailoringWorkerSettings.keep_result
     redis_settings = TailoringWorkerSettings.redis_settings()
 
 
 async def save_startup(ctx):
     logger.info("save_worker_startup_begin")
     await init_database()
+    from app.core.redis_support import init_pubsub_redis_pool
+
+    await init_pubsub_redis_pool()
     logger.info("save_worker_startup_complete")
 
 
 async def save_shutdown(ctx):
     logger.info("save_worker_shutdown_begin")
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
     await close_database()
     logger.info("save_worker_shutdown_complete")
 
@@ -179,7 +226,38 @@ class SaveWorkerConfig(SaveWorkerSettings):
     job_timeout = SaveWorkerSettings.job_timeout
     max_jobs = SaveWorkerSettings.max_jobs
     max_tries = SaveWorkerSettings.max_tries
+    keep_result = SaveWorkerSettings.keep_result
     redis_settings = SaveWorkerSettings.redis_settings()
+
+
+async def autopost_startup(ctx):
+    logger.info("autopost_worker_startup_begin")
+    await init_database()
+    from app.core.redis_support import init_pubsub_redis_pool
+
+    await init_pubsub_redis_pool()
+    logger.info("autopost_worker_startup_complete")
+
+
+async def autopost_shutdown(ctx):
+    logger.info("autopost_worker_shutdown_begin")
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
+    await close_database()
+    logger.info("autopost_worker_shutdown_complete")
+
+
+class AutoPostWorkerConfig(AutoPostWorkerSettings):
+    on_startup = autopost_startup
+    on_shutdown = autopost_shutdown
+    functions = [run_match_auto_posts_task]
+    queue_name = AutoPostWorkerSettings.queue_name
+    job_timeout = AutoPostWorkerSettings.job_timeout
+    max_jobs = AutoPostWorkerSettings.max_jobs
+    max_tries = AutoPostWorkerSettings.max_tries
+    keep_result = AutoPostWorkerSettings.keep_result
+    redis_settings = AutoPostWorkerSettings.redis_settings()
 
 
 # ── Resume build worker lifecycle (DB only, no browser/HTTP) ───────────────
@@ -187,11 +265,17 @@ class SaveWorkerConfig(SaveWorkerSettings):
 async def resume_build_startup(ctx):
     logger.info("resume_build_worker_startup_begin")
     await init_database()
+    from app.core.redis_support import init_pubsub_redis_pool
+
+    await init_pubsub_redis_pool()
     logger.info("resume_build_worker_startup_complete")
 
 
 async def resume_build_shutdown(ctx):
     logger.info("resume_build_worker_shutdown_begin")
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
     await close_database()
     logger.info("resume_build_worker_shutdown_complete")
 
@@ -204,6 +288,7 @@ class ResumeBuildWorkerConfig(ResumeBuildWorkerSettings):
     job_timeout = ResumeBuildWorkerSettings.job_timeout
     max_jobs = ResumeBuildWorkerSettings.max_jobs
     max_tries = ResumeBuildWorkerSettings.max_tries
+    keep_result = ResumeBuildWorkerSettings.keep_result
     redis_settings = ResumeBuildWorkerSettings.redis_settings()
 
 
@@ -212,11 +297,17 @@ class ResumeBuildWorkerConfig(ResumeBuildWorkerSettings):
 async def scraper_startup(ctx):
     logger.info("scraper_worker_startup_begin")
     await init_database()
+    from app.core.redis_support import init_pubsub_redis_pool
+
+    await init_pubsub_redis_pool()
     logger.info("scraper_worker_startup_complete")
 
 
 async def scraper_shutdown(ctx):
     logger.info("scraper_worker_shutdown_begin")
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
     await close_database()
     logger.info("scraper_worker_shutdown_complete")
 
@@ -229,6 +320,7 @@ class ScraperWorkerConfig(ScraperWorkerSettings):
     job_timeout = ScraperWorkerSettings.job_timeout
     max_jobs = ScraperWorkerSettings.max_jobs
     max_tries = ScraperWorkerSettings.max_tries
+    keep_result = ScraperWorkerSettings.keep_result
     redis_settings = ScraperWorkerSettings.redis_settings()
 
 
@@ -237,6 +329,7 @@ WORKER_CONFIGS = {
     "analysis": AnalysisWorkerConfig,
     "tailoring": TailoringWorkerConfig,
     "save": SaveWorkerConfig,
+    "autopost": AutoPostWorkerConfig,
     "resume": ResumeBuildWorkerConfig,
     "scraper": ScraperWorkerConfig,
 }
@@ -354,7 +447,7 @@ if __name__ == "__main__":
         choices=list(WORKER_CONFIGS.keys()),
         help=(
             "Which pipeline to run: extraction | analysis | tailoring | "
-            "save | resume | scraper."
+            "save | autopost | resume | scraper."
         ),
     )
     args = parser.parse_args()

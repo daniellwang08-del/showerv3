@@ -25,6 +25,28 @@ def day_bounds_for_timezone(tz_name: str | None) -> tuple[datetime, datetime]:
     return start_utc, end_utc
 
 
+def recent_week_bounds_for_timezone(
+    tz_name: str | None,
+    *,
+    days: int = 7,
+) -> tuple[datetime, datetime, list[date]]:
+    """Return naive UTC [start, end) and local dates for the last *days* calendar days.
+
+    The range is inclusive of today in *tz_name* and covers ``days`` days ending today
+    (e.g. days=7 → today and the previous 6 local days).
+    """
+    if days < 1 or days > 31:
+        raise ValueError("days must be 1-31")
+    tz = _resolve_tz(tz_name)
+    now = datetime.now(tz)
+    end_local = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    start_local = end_local - timedelta(days=days)
+    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+    day_list = [(start_local + timedelta(days=i)).date() for i in range(days)]
+    return start_utc, end_utc, day_list
+
+
 def month_bounds_for_timezone(
     year: int,
     month: int,

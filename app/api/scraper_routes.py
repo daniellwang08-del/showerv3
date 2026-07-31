@@ -501,8 +501,32 @@ async def list_scraped_jobs(
             ") "
         )
 
+        # Explicit columns — never SELECT sj.* (description TEXT is unused in list UI).
+        sj_cols = (
+            "sj.id, sj.source, sj.source_job_id, sj.url, sj.origin_url, sj.title, "
+            "sj.company_name, sj.location, sj.is_remote, sj.salary_raw, "
+            "sj.salary_min_cents, sj.salary_max_cents, sj.salary_currency, sj.salary_period, "
+            "sj.job_type, sj.experience_level, sj.tags, sj.posted_at, sj.scraped_at, "
+            "sj.updated_at, sj.promoted_extraction_id, sj.promoted_at"
+        )
+        # Prefer indexed joins over correlated COALESCE subqueries.
+        jobs_join = (
+            "LEFT JOIN LATERAL ("
+            "  SELECT v2.id FROM jobs v2 "
+            "  WHERE sj.promoted_extraction_id IS NOT NULL "
+            "    AND v2.extraction_id = sj.promoted_extraction_id "
+            "  LIMIT 1"
+            ") v_by_ext ON TRUE "
+            "LEFT JOIN LATERAL ("
+            "  SELECT v2.id FROM jobs v2 "
+            "  WHERE v2.normalized_url = COALESCE(sj.origin_url, sj.url) "
+            "    AND v2.status = 'active' "
+            "  ORDER BY v2.updated_at DESC LIMIT 1"
+            ") v_by_url ON TRUE "
+            "LEFT JOIN jobs vj ON vj.id = COALESCE(v_by_ext.id, v_by_url.id) "
+        )
         base = (
-            "SELECT sj.*, "
+            f"SELECT {sj_cols}, "
             "LOWER(je.status::text) AS extraction_status, "
             "vj.id AS job_id, "
             "rb.resume_docx_status AS resume_build_status, "
@@ -512,14 +536,8 @@ async def list_scraped_jobs(
             "CASE WHEN ujs.id IS NOT NULL AND ujs.status != 'active' THEN TRUE ELSE FALSE END AS is_excluded_for_user "
             "FROM scraped_jobs sj "
             "LEFT JOIN job_extractions je ON je.id = sj.promoted_extraction_id "
-            "LEFT JOIN jobs vj ON vj.id = COALESCE( "
-            "  (SELECT v2.id FROM jobs v2 "
-            "   WHERE v2.extraction_id = sj.promoted_extraction_id LIMIT 1), "
-            "  (SELECT v2.id FROM jobs v2 "
-            "   WHERE v2.normalized_url = COALESCE(sj.origin_url, sj.url) "
-            "   AND v2.status = 'active' ORDER BY v2.updated_at DESC LIMIT 1) "
-            ") "
-            "LEFT JOIN resume_build_results rb "
+            + jobs_join
+            + "LEFT JOIN resume_build_results rb "
             "  ON rb.job_id = vj.id AND rb.user_id = :rb_uid "
             "LEFT JOIN job_match_results jmr "
             "  ON jmr.job_id = vj.id AND jmr.user_id = :jmr_uid "
@@ -532,14 +550,8 @@ async def list_scraped_jobs(
         )
         count_base = (
             "SELECT COUNT(*) FROM scraped_jobs sj "
-            "LEFT JOIN jobs vj ON vj.id = COALESCE( "
-            "  (SELECT v2.id FROM jobs v2 "
-            "   WHERE v2.extraction_id = sj.promoted_extraction_id LIMIT 1), "
-            "  (SELECT v2.id FROM jobs v2 "
-            "   WHERE v2.normalized_url = COALESCE(sj.origin_url, sj.url) "
-            "   AND v2.status = 'active' ORDER BY v2.updated_at DESC LIMIT 1) "
-            ") "
-            "LEFT JOIN user_job_status ujs "
+            + jobs_join
+            + "LEFT JOIN user_job_status ujs "
             "  ON ujs.job_id = vj.id AND ujs.user_id = :ujs_uid "
             "WHERE (vj.id IS NULL OR ujs.id IS NULL OR ujs.status = 'active') "
             + dedup_filter
@@ -878,6 +890,9 @@ async def trigger_sync(body: SyncRequest, user=Depends(_get_current_user)):
 
     try:
         pool = await get_scraper_pool()
+        from app.core.redis_support import pipeline_job_id
+        import uuid
+
         await pool.enqueue_job(
             "run_scraper_task",
             spider,
@@ -886,6 +901,9 @@ async def trigger_sync(body: SyncRequest, user=Depends(_get_current_user)):
             posted_since=body.posted_since.isoformat() if body.posted_since else None,
             posted_until=body.posted_until.isoformat() if body.posted_until else None,
             spider_names=body.spider_names,
+            _job_id=pipeline_job_id(
+                "scrape", spider, str(user_id), uuid.uuid4().hex[:10]
+            ),
         )
 
         mode_label = "date-range" if body.sync_mode == "date_backfill" else "incremental"
