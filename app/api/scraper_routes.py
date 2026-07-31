@@ -154,8 +154,14 @@ class ScraperStatsResponse(BaseModel):
     extracted_jobs: int = 0   # fully extracted (pipeline completed)
     ready_jobs: int = 0       # tailored resume/cover letter ready
     best_jobs: int = 0        # match score >= 75 (Strong)
+    good_jobs: int = 0        # match score 50-74 (Good)
+    scored_jobs: int = 0      # jobs with any match score
+    avg_match_score: int = 0  # average match score across scored jobs
     available_jobs: int = 0   # not yet marked applied
     applied_jobs: int = 0     # marked applied
+    applied_today: int = 0    # marked applied today
+    sheet_posted_jobs: int = 0
+    pumble_posted_jobs: int = 0
     sources: list[SourceStats]
     recent_runs: list[dict] = Field(default_factory=list)
 
@@ -810,8 +816,14 @@ async def get_scraper_stats(
             extracted_jobs=data["extracted_jobs"],
             ready_jobs=data["ready_jobs"],
             best_jobs=data["best_jobs"],
+            good_jobs=data["good_jobs"],
+            scored_jobs=data["scored_jobs"],
+            avg_match_score=data["avg_match_score"],
             available_jobs=data["available_jobs"],
             applied_jobs=data["applied_jobs"],
+            applied_today=data["applied_today"],
+            sheet_posted_jobs=data["sheet_posted_jobs"],
+            pumble_posted_jobs=data["pumble_posted_jobs"],
             sources=[
                 SourceStats(
                     source=row["source"],

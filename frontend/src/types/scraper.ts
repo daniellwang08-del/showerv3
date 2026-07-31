@@ -143,10 +143,22 @@ export interface ScraperStats {
   ready_jobs: number;
   /** Match score >= 75 (Strong). Optional for older backends. */
   best_jobs?: number;
+  /** Match score 50-74 (Good). Optional for older backends. */
+  good_jobs?: number;
+  /** Jobs with any match score. Optional for older backends. */
+  scored_jobs?: number;
+  /** Average match score across scored jobs. Optional for older backends. */
+  avg_match_score?: number;
   /** Visible jobs not yet marked applied. Optional for older backends. */
   available_jobs?: number;
   /** Visible jobs marked applied. Optional for older backends. */
   applied_jobs?: number;
+  /** Marked applied today. Optional for older backends. */
+  applied_today?: number;
+  /** Posted to Google Sheets. Optional for older backends. */
+  sheet_posted_jobs?: number;
+  /** Posted to Pumble. Optional for older backends. */
+  pumble_posted_jobs?: number;
   sources: SourceStats[];
   recent_runs: ScrapeRun[];
 }

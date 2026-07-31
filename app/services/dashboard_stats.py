@@ -18,6 +18,7 @@ from app.models.database import (
 from app.models.schemas import ExtractionStatus
 
 BEST_MATCH_SCORE = 75
+GOOD_MATCH_SCORE = 50
 
 
 def _visible_job_clause(user_id: str):
@@ -50,9 +51,6 @@ def _is_remote_expr():
 
 
 def _job_source_expr():
-    # Manual submissions/attachments carry raw_metadata.submitted_data but no
-    # platform source, so label them "manual" instead of falling through to
-    # "unknown".
     return func.coalesce(
         Job.raw_metadata["source"].as_string(),
         Job.raw_metadata["scraped_source"].as_string(),
@@ -129,11 +127,34 @@ async def fetch_dashboard_stats(
                     JobMatchResult.overall_score >= BEST_MATCH_SCORE
                 ).label("best_jobs"),
                 func.count().filter(
+                    and_(
+                        JobMatchResult.overall_score >= GOOD_MATCH_SCORE,
+                        JobMatchResult.overall_score < BEST_MATCH_SCORE,
+                    )
+                ).label("good_jobs"),
+                func.count().filter(
+                    JobMatchResult.overall_score.is_not(None)
+                ).label("scored_jobs"),
+                func.coalesce(func.avg(JobMatchResult.overall_score), 0).label("avg_match_score"),
+                func.count().filter(
                     ValidJobUserApplication.id.is_(None)
                 ).label("available_jobs"),
                 func.count().filter(
                     ValidJobUserApplication.id.is_not(None)
                 ).label("applied_jobs"),
+                func.count().filter(
+                    and_(
+                        ValidJobUserApplication.applied_at.is_not(None),
+                        ValidJobUserApplication.applied_at >= day_start,
+                        ValidJobUserApplication.applied_at < day_end,
+                    )
+                ).label("applied_today"),
+                func.count().filter(
+                    Job.sheet_posted_at.is_not(None)
+                ).label("sheet_posted_jobs"),
+                func.count().filter(
+                    Job.pumble_posted_at.is_not(None)
+                ).label("pumble_posted_jobs"),
             )
             .select_from(app_join)
             .where(visible)
@@ -183,8 +204,14 @@ async def fetch_dashboard_stats(
         "extracted_jobs": stats_row.extracted_jobs or 0,
         "ready_jobs": stats_row.ready_jobs or 0,
         "best_jobs": stats_row.best_jobs or 0,
+        "good_jobs": stats_row.good_jobs or 0,
+        "scored_jobs": stats_row.scored_jobs or 0,
+        "avg_match_score": int(round(float(stats_row.avg_match_score or 0))),
         "available_jobs": stats_row.available_jobs or 0,
         "applied_jobs": stats_row.applied_jobs or 0,
+        "applied_today": stats_row.applied_today or 0,
+        "sheet_posted_jobs": stats_row.sheet_posted_jobs or 0,
+        "pumble_posted_jobs": stats_row.pumble_posted_jobs or 0,
         "sources": sources,
         "recent_runs": recent_runs,
     }

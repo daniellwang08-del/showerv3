@@ -182,8 +182,11 @@ export function ScraperDashboard() {
           onSelectToday={() => applyAgentDashboard({ view: 'today', remote_only: false, min_match_score: 0 })}
           onSelectReady={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
           onSelectBest={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 75 })}
+          onSelectGood={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 50 })}
           onSelectRemote={() => applyAgentDashboard({ view: 'all', remote_only: true })}
           onSelectAvailable={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
+          onSelectMine={() => applyAgentDashboard({ view: 'mine', remote_only: false, min_match_score: 0 })}
+          onSelectAll={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
         />
       </div>
 

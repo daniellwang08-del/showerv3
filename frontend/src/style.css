@@ -609,6 +609,10 @@ html.dark { color-scheme: dark; }
 .stats-side-tile {
   animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+.stats-strip-stat {
+  animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.12s;
+}
 .stats-side-tile::after {
   content: "";
   position: absolute;
@@ -659,6 +663,7 @@ html.dark { color-scheme: dark; }
   .stats-board-shell,
   .stats-side-tile,
   .stats-side-tile::after,
+  .stats-strip-stat,
   .stats-hero-tile,
   .stats-hero-glow,
   .stats-hero-pulse,

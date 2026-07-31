@@ -198,9 +198,12 @@ async def _get_stats(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         f"{d.get('total_jobs', 0)} total jobs, "
         f"{d.get('today_scraped', 0)} added today, "
         f"{d.get('ready_jobs', 0)} ready to apply, "
-        f"{d.get('best_jobs', 0)} best matches, "
-        f"{d.get('total_remote', 0)} remote, "
-        f"{d.get('available_jobs', 0)} still open to apply."
+        f"{d.get('best_jobs', 0)} strong / {d.get('good_jobs', 0)} good matches, "
+        f"avg score {d.get('avg_match_score', 0)}, "
+        f"{d.get('applied_jobs', 0)} applied ({d.get('applied_today', 0)} today), "
+        f"{d.get('sheet_posted_jobs', 0)} in Sheets, "
+        f"{d.get('pumble_posted_jobs', 0)} in Pumble, "
+        f"{d.get('available_jobs', 0)} still open."
     )
     return ToolResult(ok=True, summary=summary, data=d)
 
