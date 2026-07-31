@@ -224,6 +224,11 @@ class Settings(BaseSettings):
     # (e.g. the browser extension) when they request `long_lived` at login.
     extension_token_expire_days: int = Field(default=30, ge=1, le=365)
 
+    # Production CORS. FRONTEND_URL is the public SPA origin; CORS_EXTRA_ORIGINS
+    # is a comma-separated list (chrome-extension://…, https://www.…, etc.).
+    frontend_url: str = Field(default="")
+    cors_extra_origins: str = Field(default="")
+
     google_sheets_credentials_path: str = Field(default="google_credentials.json")
 
     # Default GPA written to optional "Overall Result (GPA)" application fields when

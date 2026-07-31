@@ -91,27 +91,17 @@
   // Proactively announce presence for listeners that attach before their PING.
   reply("READY", {}, "*");
 
-  // Sync backend URL from the dashboard origin (localhost or LAN IP + Vite port).
-  // Dev API calls go through the same origin (/api/v1 is proxied by Vite).
-  function isDashboardHost(hostname) {
-    if (!hostname) return false;
-    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") return true;
-    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-    if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
-    return false;
-  }
-
-  if (isDashboardHost(location.hostname)) {
-    try {
-      chrome.runtime.sendMessage(
-        { type: "SYNC_BACKEND_URL", backendUrl: location.origin },
-        function () {
-          void chrome.runtime.lastError;
-        },
-      );
-    } catch (_e) {
-      /* extension context invalidated */
-    }
+  // Sync backend URL from the dashboard origin. This script only runs on
+  // dashboard match patterns (prod + localhost) and via background inject for
+  // private-LAN Vite URLs. Same-origin /api/v1 (nginx or Vite proxy).
+  try {
+    chrome.runtime.sendMessage(
+      { type: "SYNC_BACKEND_URL", backendUrl: location.origin },
+      function () {
+        void chrome.runtime.lastError;
+      },
+    );
+  } catch (_e) {
+    /* extension context invalidated */
   }
 })();

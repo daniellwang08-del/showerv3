@@ -194,7 +194,8 @@ async def lifespan(app: FastAPI):
             redis_connected=False,
             worker_required=(
                 "Jobs use in-process fallback outside production. "
-                "For async queues: docker compose up -d redis and start.cmd"
+                "For async queues: docker compose up -d redis and "
+                "python run_worker.py {extraction|analysis|tailoring|save|resume|scraper}"
             ),
         )
 
@@ -267,13 +268,30 @@ def create_app() -> FastAPI:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
-    extra_origins = os.environ.get("CORS_EXTRA_ORIGINS", "")
+    extra_origins = (settings.cors_extra_origins or os.environ.get("CORS_EXTRA_ORIGINS", "")).strip()
     if extra_origins:
         origins.extend(o.strip().rstrip("/") for o in extra_origins.split(",") if o.strip())
 
-    frontend_url = os.environ.get("FRONTEND_URL")
+    frontend_url = (settings.frontend_url or os.environ.get("FRONTEND_URL", "")).strip()
     if frontend_url:
-        origins.append(frontend_url.rstrip("/"))
+        origin = frontend_url.rstrip("/")
+        origins.append(origin)
+        # Also allow the www twin when FRONTEND_URL is the apex (or vice versa).
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(origin)
+            host = parsed.hostname or ""
+            if host.startswith("www."):
+                twin = f"{parsed.scheme}://{host[4:]}"
+            elif host:
+                twin = f"{parsed.scheme}://www.{host}"
+            else:
+                twin = ""
+            if twin and twin not in origins:
+                origins.append(twin)
+        except Exception:
+            pass
 
     # Local dev: allow any private-LAN origin (e.g. http://172.20.1.140:5173) and
     # browser-extension origins (chrome-extension://, moz-extension://) so the

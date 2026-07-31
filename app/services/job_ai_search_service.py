@@ -16,7 +16,7 @@ from sqlalchemy.orm import undefer
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 
 try:
     from langfuse import observe
@@ -138,7 +138,10 @@ async def interpret_job_search_prompt(prompt: str, *, user_id: str | None = None
 
     user_msg = f'User search request:\n"""{prompt.strip()}"""\n\nRespond with the JSON object only.'
 
-    response = await client.chat.completions.create(
+    raw, _response = await chat_completion_with_empty_retry(
+        client,
+        observe="interpret_job_search_prompt",
+        job_type="job_ai_search",
         model=settings.openai_model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -147,9 +150,6 @@ async def interpret_job_search_prompt(prompt: str, *, user_id: str | None = None
         temperature=min(settings.openai_temperature, 0.3),
         max_tokens=1200,
     )
-    raw = response.choices[0].message.content
-    if not raw:
-        raise AIParsingError("Empty AI response for job search")
     try:
         data = _parse_json_object(raw)
         spec = JobSearchQuerySpec.model_validate(data)

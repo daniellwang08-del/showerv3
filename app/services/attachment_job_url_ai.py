@@ -10,7 +10,7 @@ import re
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.services.url_manager import URLManager
 
 try:
@@ -98,7 +98,11 @@ async def extract_job_urls_from_text_combined(text: str, *, user_id: str | None 
         )
         async with sem:
             try:
-                resp = await client.chat.completions.create(
+                choice, _resp = await chat_completion_with_empty_retry(
+                    client,
+                    observe="attachment_url_ai",
+                    job_type="attachment_url_ai",
+                    raise_on_empty=False,
                     model=settings.openai_model,
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
@@ -111,7 +115,6 @@ async def extract_job_urls_from_text_combined(text: str, *, user_id: str | None 
                 logger.exception("attachment_url_ai_openai_failed", part=idx + 1)
                 raise AIParsingError(f"OpenAI request failed: {e}") from e
 
-        choice = resp.choices[0].message.content
         if not choice:
             return []
         try:

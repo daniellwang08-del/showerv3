@@ -31,7 +31,7 @@ from sqlalchemy.orm import undefer
 
 from app.api.routes import get_current_user
 from app.core.config import get_settings
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.core.logging import get_logger
 from app.models.database import (
     ApplicationSession,
@@ -1318,7 +1318,11 @@ async def assistant_autofill(
     settings = get_settings()
     try:
         client = await get_llm_client_for_user(user_id, job_type="extension_autofill")
-        resp = await client.chat.completions.create(
+        text, _resp = await chat_completion_with_empty_retry(
+            client,
+            observe="assistant_autofill",
+            job_type="extension_autofill",
+            raise_on_empty=False,
             model=settings.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -1328,7 +1332,7 @@ async def assistant_autofill(
             max_tokens=AUTOFILL_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
-        text = resp.choices[0].message.content or "{}"
+        text = text or "{}"
     except Exception as exc:  # noqa: BLE001 - surface a clean error
         logger.warning("assistant_autofill_failed", user_id=user_id, job_id=req.job_id, error=str(exc)[:300])
         raise HTTPException(
@@ -1641,7 +1645,11 @@ async def _llm_company_locations(companies: list[str], home: str, user_id: str) 
     )
     try:
         client = await get_llm_client_for_user(user_id, job_type="extension_autofill")
-        resp = await client.chat.completions.create(
+        content, _resp = await chat_completion_with_empty_retry(
+            client,
+            observe="autofill_location_enrich",
+            job_type="extension_autofill",
+            raise_on_empty=False,
             model=settings.openai_model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -1651,7 +1659,7 @@ async def _llm_company_locations(companies: list[str], home: str, user_id: str) 
             max_tokens=1024,
             response_format={"type": "json_object"},
         )
-        raw = json.loads(resp.choices[0].message.content or "{}")
+        raw = json.loads(content or "{}")
     except Exception as exc:  # noqa: BLE001 - enrichment is best-effort
         logger.warning("autofill_location_enrich_failed", user_id=user_id, error=str(exc)[:200])
         return {}

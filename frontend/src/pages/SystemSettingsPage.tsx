@@ -157,6 +157,13 @@ const PHASE_B_TOKEN_OPTIONS: { value: string; label: string; description: string
   { value: '32768', label: '32,768', description: 'Maximum (Phase B cap)' },
 ];
 
+/** GPT-5 / o-series reasoning depth. High latency on production when set to high. */
+const REASONING_EFFORT_OPTIONS: { value: string; label: string; description: string }[] = [
+  { value: 'low', label: 'Low', description: 'Fastest — recommended for production' },
+  { value: 'medium', label: 'Medium', description: 'Balanced quality / latency' },
+  { value: 'high', label: 'High', description: 'Slow; can empty completions on long JSON' },
+];
+
 /**
  * Circuit breaker consecutive-failure threshold before skipping a provider.
  * Keep this small so the system fails over quickly without thrashing.
@@ -455,6 +462,7 @@ export function SystemSettingsPage() {
         immediate ||
         BOOL_KEYS.has(key) ||
         key === 'default_llm_provider' ||
+        key === 'openai_reasoning_effort' ||
         key === 'phase_a_max_tokens' ||
         key === 'phase_b_max_tokens' ||
         key === 'llm_circuit_breaker_threshold'
@@ -594,6 +602,36 @@ export function SystemSettingsPage() {
       );
     }
 
+    if (key === 'openai_reasoning_effort') {
+      const known = REASONING_EFFORT_OPTIONS.some((o) => o.value === String(rawValue));
+      const selectOptions = [
+        ...(known
+          ? []
+          : rawValue
+            ? [
+                {
+                  value: String(rawValue),
+                  label: String(rawValue),
+                  description: 'Custom saved value',
+                },
+              ]
+            : []),
+        ...REASONING_EFFORT_OPTIONS,
+      ];
+      return (
+        <div key={key} className={`group relative flex min-w-0 flex-col gap-1 ${opts?.className ?? ''}`}>
+          {renderFieldChrome(key, label, item)}
+          <MenuSelect
+            aria-label={label}
+            value={String(rawValue || 'low')}
+            minMenuWidth={280}
+            options={selectOptions}
+            onChange={(next) => scheduleSave(key, next, true)}
+          />
+        </div>
+      );
+    }
+
     if (key === 'llm_circuit_breaker_threshold') {
       const known = BREAKER_THRESHOLD_OPTIONS.some((o) => o.value === String(rawValue));
       const selectOptions = [
@@ -703,6 +741,7 @@ export function SystemSettingsPage() {
             {renderAutoField('default_llm_provider', { label: 'Default provider' })}
             {renderAutoField('llm_fallback_enabled', { label: 'Fallback' })}
             {renderAutoField('auto_generate_tailored_content', { label: 'Auto tailor' })}
+            {renderAutoField('openai_reasoning_effort', { label: 'Reasoning effort' })}
             {renderAutoField('phase_a_max_tokens', { label: 'Phase A tokens' })}
             {renderAutoField('phase_b_max_tokens', { label: 'Phase B tokens' })}
             {renderAutoField('llm_circuit_breaker_threshold', { label: 'Breaker threshold' })}

@@ -20,7 +20,7 @@ def worker_reload_enabled() -> bool:
 
     ``WORKER_RELOAD`` is independent of ``RELOAD``. Workers default to **off**
     so five parallel watchers do not enter a restart storm when the API or an
-    IDE touches many files under ``app/``. ``start.cmd`` sets ``WORKER_RELOAD=0``
+    IDE touches many files under ``app/``. Production systemd sets ``WORKER_RELOAD=0``
     explicitly; set ``WORKER_RELOAD=1`` when actively editing worker code.
     """
     if os.environ.get("WORKER_RELOAD") is not None:

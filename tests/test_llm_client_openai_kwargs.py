@@ -1,4 +1,10 @@
-from app.core.llm_client import _is_openai_reasoning_model, _normalize_openai_chat_kwargs
+from types import SimpleNamespace
+
+from app.core.llm_client import (
+    _effective_openai_reasoning_effort,
+    _is_openai_reasoning_model,
+    _normalize_openai_chat_kwargs,
+)
 
 
 def test_is_openai_reasoning_model_detects_gpt5_and_o_series():
@@ -70,3 +76,23 @@ def test_normalize_reasoning_model_does_not_override_explicit_reasoning_effort()
     kwargs = {"max_tokens": 4096, "temperature": 0.2, "top_p": 0.9}
     out = _normalize_openai_chat_kwargs(kwargs, model="gpt-4.1")
     assert out == kwargs
+
+
+def test_effective_openai_reasoning_effort_uses_system_settings(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.system_settings_service.get_effective_value_sync",
+        lambda key: "medium" if key == "openai_reasoning_effort" else None,
+    )
+    assert _effective_openai_reasoning_effort() == "medium"
+
+
+def test_effective_openai_reasoning_effort_falls_back_on_invalid(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.system_settings_service.get_effective_value_sync",
+        lambda key: "bogus",
+    )
+    monkeypatch.setattr(
+        "app.core.llm_client.get_settings",
+        lambda: SimpleNamespace(openai_reasoning_effort="low"),
+    )
+    assert _effective_openai_reasoning_effort() == "low"

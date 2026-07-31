@@ -673,6 +673,106 @@ def _normalize_openai_chat_kwargs(
     return out
 
 
+def _effective_openai_reasoning_effort() -> str:
+    """Return Admin/env reasoning effort (allowlisted System Settings when warm)."""
+    try:
+        from app.services.system_settings_service import get_effective_value_sync
+
+        value = str(get_effective_value_sync("openai_reasoning_effort") or "").strip().lower()
+        if value in ("low", "medium", "high"):
+            return value
+    except Exception:
+        pass
+    settings = get_settings()
+    return settings.openai_reasoning_effort
+
+
+def response_message_meta(
+    response: object,
+) -> tuple[str, str | None, dict[str, int | None]]:
+    """Extract content, finish_reason, and usage from an OpenAI-shaped response."""
+    content = ""
+    finish_reason: str | None = None
+    usage: dict[str, int | None] = {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "reasoning_tokens": None,
+    }
+    try:
+        choice0 = response.choices[0]  # type: ignore[attr-defined]
+        message = getattr(choice0, "message", None)
+        raw = getattr(message, "content", None) if message is not None else None
+        content = str(raw or "").strip()
+        finish_reason = getattr(choice0, "finish_reason", None)
+    except (AttributeError, IndexError, TypeError):
+        content = ""
+    usage_obj = getattr(response, "usage", None)
+    if usage_obj is not None:
+        usage["prompt_tokens"] = getattr(usage_obj, "prompt_tokens", None)
+        usage["completion_tokens"] = getattr(usage_obj, "completion_tokens", None)
+        usage["total_tokens"] = getattr(usage_obj, "total_tokens", None)
+        details = getattr(usage_obj, "completion_tokens_details", None)
+        if details is not None:
+            usage["reasoning_tokens"] = getattr(details, "reasoning_tokens", None)
+    return content, finish_reason, usage
+
+
+async def chat_completion_with_empty_retry(
+    client: Any,
+    *,
+    observe: str | None = None,
+    job_type: str | None = None,
+    raise_on_empty: bool = True,
+    **create_kwargs: Any,
+) -> tuple[str, Any]:
+    """Create a chat completion; retry once at ``reasoning_effort=low`` if content is empty.
+
+    GPT-5 / o-series models often spend the entire ``max_completion_tokens`` budget
+    on reasoning (especially when ``OPENAI_REASONING_EFFORT=high``) and return
+    ``message.content == ""`` with ``finish_reason=length``. Job match already
+    retried this; resume parse and other JSON callers did not — causing multi-minute
+    503s in production. Empty content is not a raised API error, so provider
+    fallback also does not fire unless we retry here.
+    """
+    response = await client.chat.completions.create(**create_kwargs)
+    text, finish_reason, usage = response_message_meta(response)
+    if text:
+        return text, response
+
+    logger.warning(
+        "llm_empty_content_retrying",
+        observe=observe,
+        job_type=job_type,
+        finish_reason=finish_reason,
+        prompt_tokens=usage.get("prompt_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
+        reasoning_tokens=usage.get("reasoning_tokens"),
+        model=getattr(response, "model", None),
+    )
+    retry_kwargs = dict(create_kwargs)
+    retry_kwargs["reasoning_effort"] = "low"
+    response = await client.chat.completions.create(**retry_kwargs)
+    text, finish_reason, usage = response_message_meta(response)
+    if text:
+        return text, response
+
+    logger.error(
+        "llm_empty_content",
+        observe=observe,
+        job_type=job_type,
+        finish_reason=finish_reason,
+        prompt_tokens=usage.get("prompt_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
+        reasoning_tokens=usage.get("reasoning_tokens"),
+        model=getattr(response, "model", None),
+    )
+    if raise_on_empty:
+        detail = finish_reason or "unknown"
+        raise AIParsingError(f"Empty response from AI model (finish_reason={detail})")
+    return "", response
+
+
 # ── Provider adapters ─────────────────────────────────────────────────────
 #
 # Each adapter exposes ``async create(**openai_shape_kwargs) -> response`` and a
@@ -706,11 +806,10 @@ class _OpenAIAdapter:
     async def create(self, **kwargs: Any) -> Any:
         kwargs = dict(kwargs)
         kwargs["model"] = self._model
-        settings = get_settings()
         kwargs = _normalize_openai_chat_kwargs(
             kwargs,
             model=self._model,
-            reasoning_effort=settings.openai_reasoning_effort,
+            reasoning_effort=_effective_openai_reasoning_effort(),
         )
         return await self._client.chat.completions.create(**kwargs)
 
@@ -812,11 +911,10 @@ def _stream_openai_compatible(
         call_kwargs["stream"] = True
         # JSON mode is incompatible with the free-text streaming path.
         call_kwargs.pop("response_format", None)
-        settings = get_settings()
         call_kwargs = _normalize_openai_chat_kwargs(
             call_kwargs,
             model=model,
-            reasoning_effort=settings.openai_reasoning_effort,
+            reasoning_effort=_effective_openai_reasoning_effort(),
         )
         stream = await client.chat.completions.create(**call_kwargs)
         async for chunk in stream:
@@ -1277,8 +1375,12 @@ async def get_llm_client_for_user(
     """
     from app.storage.database import get_session
     from app.services.llm_provider_keys_service import resolve_job_llm_credentials
+    from app.services.system_settings_service import get_overrides_map
 
     async with get_session() as session:
+        # Warm allowlisted DB overrides before sync effective-value reads inside
+        # get_llm_client / adapters (cold cache otherwise falls back to .env).
+        await get_overrides_map(session)
         creds = await resolve_job_llm_credentials(
             session, job_type=job_type, user_id=user_id
         )

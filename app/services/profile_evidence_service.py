@@ -14,7 +14,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.models.database import ProfileSourceDocument, User
 from app.models.schemas import JobDescriptionSchema
 from app.utils.company_name_utils import company_names_match, normalize_company_name
@@ -248,7 +248,11 @@ async def _call_evidence_extraction(
         "Extract job-relevant evidence for each company listed."
     )
     try:
-        resp = await client.chat.completions.create(
+        raw, _resp = await chat_completion_with_empty_retry(
+            client,
+            observe="extract_evidence_single_batch",
+            job_type="profile_evidence",
+            raise_on_empty=False,
             model=settings.openai_model,
             messages=[
                 {"role": "system", "content": EVIDENCE_SYSTEM_PROMPT},
@@ -262,7 +266,6 @@ async def _call_evidence_extraction(
         logger.exception("evidence_extraction_openai_failed")
         raise AIParsingError(f"Evidence extraction failed: {e}") from e
 
-    raw = resp.choices[0].message.content
     if not raw:
         return []
     try:

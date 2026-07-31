@@ -355,7 +355,12 @@ async def login(request: LoginRequest, response: Response) -> AuthResponse:
 
 @router.post("/auth/logout")
 async def logout(response: Response):
-    response.delete_cookie(key="access_token")
+    settings = get_settings()
+    response.delete_cookie(
+        key="access_token",
+        samesite="lax",
+        secure=settings.app_env == "production",
+    )
     logger.info("user_logout")
     return {"message": "Logged out successfully"}
 
@@ -716,7 +721,7 @@ async def _try_pool(pool_factory, label: str):
             error=str(e),
             hint=(
                 "Start Redis (docker compose up -d redis) and run workers via "
-                "start.cmd / run_worker.py."
+                "run_worker.py (systemd on the VPS)."
             ),
         )
         return None

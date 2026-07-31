@@ -12,7 +12,7 @@ import json
 from typing import Awaitable, Callable
 
 from app.core.config import get_settings
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.core.logging import get_logger
 from app.models.resume_ai_schemas import (
     ResumeAiChatMessage,
@@ -78,7 +78,11 @@ async def _route(user_id: str, messages: list[ResumeAiChatMessage], latest: str)
     try:
         client = await get_llm_client_for_user(user_id, job_type="resume_ai_chat")
         settings = get_settings()
-        resp = await client.chat.completions.create(
+        raw, _resp = await chat_completion_with_empty_retry(
+            client,
+            observe="resume_ai_router",
+            job_type="resume_ai_chat",
+            raise_on_empty=False,
             model=settings.openai_model,
             messages=[
                 {"role": "system", "content": RESUME_AI_ROUTER_SYSTEM_PROMPT},
@@ -88,7 +92,7 @@ async def _route(user_id: str, messages: list[ResumeAiChatMessage], latest: str)
             max_tokens=400,
             response_format={"type": "json_object"},
         )
-        parsed = json.loads(resp.choices[0].message.content or "{}")
+        parsed = json.loads(raw or "{}")
         intent = str(parsed.get("intent", "chat")).strip().lower()
         if intent not in {"tailor", "analyze", "refine", "chat"}:
             intent = "chat"

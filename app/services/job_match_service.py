@@ -9,7 +9,11 @@ import json
 import re
 
 from app.core.config import get_settings
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import (
+    chat_completion_with_empty_retry,
+    get_llm_client_for_user,
+    response_message_meta,
+)
 from app.core.logging import get_logger
 from app.core.exceptions import AIParsingError
 from app.services.system_settings_service import get_effective_value_sync
@@ -493,32 +497,8 @@ def _parse_cover_letter(parsed: dict | None) -> dict | None:
 
 
 def _response_message_meta(response: object) -> tuple[str, str | None, dict[str, int | None]]:
-    """Extract content, finish_reason, and usage from an OpenAI-shaped response."""
-    content = ""
-    finish_reason: str | None = None
-    usage: dict[str, int | None] = {
-        "prompt_tokens": None,
-        "completion_tokens": None,
-        "total_tokens": None,
-        "reasoning_tokens": None,
-    }
-    try:
-        choice0 = response.choices[0]  # type: ignore[attr-defined]
-        message = getattr(choice0, "message", None)
-        raw = getattr(message, "content", None) if message is not None else None
-        content = str(raw or "").strip()
-        finish_reason = getattr(choice0, "finish_reason", None)
-    except (AttributeError, IndexError, TypeError):
-        content = ""
-    usage_obj = getattr(response, "usage", None)
-    if usage_obj is not None:
-        usage["prompt_tokens"] = getattr(usage_obj, "prompt_tokens", None)
-        usage["completion_tokens"] = getattr(usage_obj, "completion_tokens", None)
-        usage["total_tokens"] = getattr(usage_obj, "total_tokens", None)
-        details = getattr(usage_obj, "completion_tokens_details", None)
-        if details is not None:
-            usage["reasoning_tokens"] = getattr(details, "reasoning_tokens", None)
-    return content, finish_reason, usage
+    """Backward-compatible alias for shared ``response_message_meta``."""
+    return response_message_meta(response)
 
 
 async def _call_openai_json(
@@ -538,51 +518,17 @@ async def _call_openai_json(
         {"role": "user", "content": user_content},
     ]
 
-    async def _once(**extra: object) -> tuple[str, str | None, dict[str, int | None], object]:
-        response = await client.chat.completions.create(
+    try:
+        result_text, _response = await chat_completion_with_empty_retry(
+            client,
+            observe=observe_name,
+            job_type=job_type,
             model=settings.openai_model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
-            **extra,
         )
-        text, finish_reason, usage = _response_message_meta(response)
-        return text, finish_reason, usage, response
-
-    try:
-        result_text, finish_reason, usage, _response = await _once()
-        if not result_text:
-            # Reasoning models often spend the whole completion budget on
-            # reasoning and return empty content. Retry once at low effort.
-            logger.warning(
-                "llm_empty_content_retrying",
-                observe=observe_name,
-                job_type=job_type,
-                finish_reason=finish_reason,
-                prompt_tokens=usage.get("prompt_tokens"),
-                completion_tokens=usage.get("completion_tokens"),
-                reasoning_tokens=usage.get("reasoning_tokens"),
-                model=getattr(_response, "model", None),
-            )
-            result_text, finish_reason, usage, _response = await _once(
-                reasoning_effort="low",
-            )
-        if not result_text:
-            logger.error(
-                "llm_empty_content",
-                observe=observe_name,
-                job_type=job_type,
-                finish_reason=finish_reason,
-                prompt_tokens=usage.get("prompt_tokens"),
-                completion_tokens=usage.get("completion_tokens"),
-                reasoning_tokens=usage.get("reasoning_tokens"),
-                model=getattr(_response, "model", None),
-            )
-            detail = finish_reason or "unknown"
-            raise AIParsingError(
-                f"Empty response from AI model (finish_reason={detail})"
-            )
         return json.loads(result_text)
     except json.JSONDecodeError as e:
         logger.error("job_match_json_error", observe=observe_name, error=str(e))

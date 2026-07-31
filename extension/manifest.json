@@ -7,6 +7,8 @@
   "permissions": ["storage", "sidePanel", "tabs", "scripting", "webNavigation"],
   "optional_host_permissions": ["*://*/*", "https://*.greenhouse.io/*"],
   "host_permissions": [
+    "https://robertstaff.com/*",
+    "https://www.robertstaff.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://localhost/*"
@@ -18,6 +20,8 @@
   "content_scripts": [
     {
       "matches": [
+        "https://robertstaff.com/*",
+        "https://www.robertstaff.com/*",
         "http://localhost/*",
         "http://127.0.0.1/*",
         "https://localhost/*"

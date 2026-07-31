@@ -11,15 +11,15 @@ type Props = {
   onInstalled: () => void;
 };
 
-// Path to the unpacked extension inside the project (not published to a store).
-const EXTENSION_PATH = 'job_scraper/extension';
+// Unpacked extension folder name inside the repo (load via chrome://extensions).
+const EXTENSION_PATH = 'extension';
 
 const STEPS: Array<{ title: string; body?: React.ReactNode }> = [
   { title: 'Open your browser\u2019s extensions page', body: <code className="rounded bg-slate-100 px-1.5 py-0.5 text-[12px] text-slate-700">chrome://extensions</code> },
   { title: 'Turn on \u201CDeveloper mode\u201D', body: 'Use the toggle in the top-right corner of that page.' },
   { title: 'Click \u201CLoad unpacked\u201D' },
-  { title: 'Select the extension folder from this project' },
-  { title: 'Pin \u201CJob Application Assistant\u201D and sign in with your account' },
+  { title: 'Select the project\u2019s extension folder', body: 'Use the extension directory from this Atomspace checkout.' },
+  { title: 'Pin \u201CAtomspace\u201D and sign in with your account' },
 ];
 
 export function InstallExtensionModal({ open, onClose, onInstalled }: Props) {

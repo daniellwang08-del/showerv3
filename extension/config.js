@@ -1,10 +1,8 @@
 /**
- * Fallback backend URL when the dashboard has not synced one yet.
- *
- * - Local dev with Vite (recommended): open http://<lan-ip>:5173 once; the
- *   extension auto-syncs that origin and proxies API calls through Vite.
- * - Direct API only: set to http://localhost:8000 (or http://<lan-ip>:8000).
+ * Production dashboard / API origin (same host; nginx proxies /api → FastAPI).
  *
  * No trailing slash, no /api/v1 suffix.
+ * Local Vite dev: temporarily set to http://localhost:5173 (or your LAN URL)
+ * so the extension syncs from the open dashboard tab.
  */
-export const DEFAULT_BACKEND_URL = "http://localhost:8000";
+export const DEFAULT_BACKEND_URL = "https://robertstaff.com";

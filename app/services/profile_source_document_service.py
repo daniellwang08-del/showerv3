@@ -13,7 +13,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.models.database import ProfileSourceDocument
 from app.models.profile_source_schemas import (
     ProfileSourceDocumentResponse,
@@ -198,7 +198,10 @@ async def parse_source_document_structured(
         "Return JSON only."
     )
 
-    resp = await client.chat.completions.create(
+    raw, _resp = await chat_completion_with_empty_retry(
+        client,
+        observe="parse_source_document_structured",
+        job_type="profile_source_doc",
         model=settings.openai_model,
         messages=[
             {"role": "system", "content": SOURCE_PARSE_INSTRUCTIONS},
@@ -208,9 +211,6 @@ async def parse_source_document_structured(
         max_tokens=min(max(settings.openai_max_tokens, 8192), 16384),
         response_format={"type": "json_object"},
     )
-    raw = resp.choices[0].message.content
-    if not raw:
-        raise AIParsingError("Empty model response during source document parse")
     try:
         data = _parse_json_object(raw)
         return _normalize_structured(data)

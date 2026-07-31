@@ -1,5 +1,5 @@
-// Origins where the Atomspace dashboard runs (localhost, 127.0.0.1, private LAN).
-// Chrome match patterns ignore ports, so these cover any dev port (e.g. :5173).
+// Dashboard origins: production (robertstaff.com), localhost, and private LAN.
+// Chrome match patterns ignore ports, so LAN inject covers any Vite port (e.g. :5173).
 
 import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/store.js";
 import { isDashboardUrl } from "./src/backendOrigin.js";

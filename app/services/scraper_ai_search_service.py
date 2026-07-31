@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 
 try:
     from langfuse import observe
@@ -255,7 +255,10 @@ async def interpret_scraper_search_prompt(
 
     user_msg = f'User search request:\n"""{prompt.strip()}"""\n\nRespond with the JSON object only.'
 
-    response = await client.chat.completions.create(
+    raw, _response = await chat_completion_with_empty_retry(
+        client,
+        observe="interpret_scraper_search_prompt",
+        job_type="scraper_ai_search",
         model=settings.openai_model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -264,9 +267,6 @@ async def interpret_scraper_search_prompt(
         temperature=min(settings.openai_temperature, 0.2),
         max_tokens=1500,
     )
-    raw = response.choices[0].message.content
-    if not raw:
-        raise AIParsingError("Empty AI response for scraper job search")
     try:
         data = _parse_json_object(raw)
         spec = ScraperJobSearchQuerySpec.model_validate(data)

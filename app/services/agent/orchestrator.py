@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.config import get_settings
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.core.logging import get_logger
 from app.services.agent.base import ToolContext, catalog_prompt, get_tool
 
@@ -195,14 +195,17 @@ async def run_agent_turn(
     # ── Planning loop ──────────────────────────────────────────────────────
     for _ in range(MAX_ITERATIONS):
         try:
-            resp = await client.chat.completions.create(
+            content, _resp = await chat_completion_with_empty_retry(
+                client,
+                observe="agent_planner",
+                job_type="agent",
+                raise_on_empty=False,
                 model=settings.openai_model,
                 messages=messages,
                 temperature=0.1,
                 max_tokens=PLANNER_MAX_TOKENS,
                 response_format={"type": "json_object"},
             )
-            content = resp.choices[0].message.content or ""
         except Exception as exc:  # noqa: BLE001
             logger.warning("agent_planner_failed", user_id=user_id, error=str(exc)[:300])
             yield {"type": "error", "message": "The assistant is temporarily unavailable. Please try again."}

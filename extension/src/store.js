@@ -5,7 +5,7 @@
 import { DEFAULT_BACKEND_URL } from "../config.js";
 import {
   configuredBackendHostname,
-  isConfiguredLanBackend,
+  isPinnedBackendHost,
   isDashboardUrl,
   resolvedDefaultBackendUrl,
   shouldAcceptBackendOrigin,
@@ -32,23 +32,24 @@ export async function getBackendUrl() {
   const fallback = resolvedDefaultBackendUrl();
 
   let resolved;
-  if (isConfiguredLanBackend()) {
+  if (isPinnedBackendHost()) {
+    // Prod / pinned LAN: ignore stale localhost or wrong-host storage.
     resolved = stored && shouldAcceptBackendOrigin(stored) ? stored : fallback;
   } else {
     resolved = stored || fallback;
   }
 
-  // Self-heal stale storage (e.g. old tab synced 172.20.1.1 instead of config IP).
+  // Self-heal stale storage (e.g. old localhost after switching to production).
   if (resolved && stored !== resolved) {
     await LOCAL.set({ backendUrl: resolved });
   }
   return resolved;
 }
 
-/** Pick up backend URL from an open dashboard tab (localhost or LAN IP). */
+/** Pick up backend URL from an open dashboard tab (prod, localhost, or LAN). */
 export async function syncBackendFromOpenTabs() {
   const fallback = resolvedDefaultBackendUrl();
-  const preferredHost = isConfiguredLanBackend() ? configuredBackendHostname() : null;
+  const preferredHost = isPinnedBackendHost() ? configuredBackendHostname() : null;
 
   try {
     const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });

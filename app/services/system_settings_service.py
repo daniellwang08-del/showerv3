@@ -23,6 +23,7 @@ ALLOWLISTED_KEYS: frozenset[str] = frozenset(
         "openai_model",
         "anthropic_model",
         "gemini_model",
+        "openai_reasoning_effort",
         "openai_timeout_seconds",
         "anthropic_timeout_seconds",
         "gemini_timeout_seconds",
@@ -264,6 +265,8 @@ async def upsert_settings(
             raise ValueError("extension_token_expire_days must be 1-365")
         if key == "default_llm_provider" and parsed not in ("openai", "anthropic", "gemini"):
             raise ValueError("default_llm_provider must be openai, anthropic, or gemini")
+        if key == "openai_reasoning_effort" and parsed not in ("low", "medium", "high"):
+            raise ValueError("openai_reasoning_effort must be low, medium, or high")
 
         # Skip write if equal to env default (optional cleanup) — still store override
         # so admin intent is explicit.

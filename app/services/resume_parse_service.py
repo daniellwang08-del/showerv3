@@ -14,7 +14,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
-from app.core.llm_client import get_llm_client_for_user
+from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 
 try:
     from langfuse import observe
@@ -933,16 +933,16 @@ async def _call_openai_resume(
     # Many chat models cap completion below 32k; 16k is widely supported for long JSON.
     resume_max_out = min(resume_max_out, 16384)
 
-    response = await client.chat.completions.create(
+    raw, _response = await chat_completion_with_empty_retry(
+        client,
+        observe="resume_parse",
+        job_type="resume_parse",
         model=settings.openai_model,
         messages=[{"role": "system", "content": sys_msg}, user_msg],
         temperature=0.0,
         max_tokens=resume_max_out,
         response_format={"type": "json_object"},
     )
-    raw = response.choices[0].message.content
-    if not raw:
-        raise AIParsingError("Empty model response")
     try:
         data = _parse_json_object(raw)
         draft = _normalize_draft(data)
