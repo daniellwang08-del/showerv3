@@ -1,0 +1,65 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+
+          script: |
+            set -e
+
+            cd /opt/showerv3
+
+            echo "Pulling latest code..."
+            git fetch origin
+            git reset --hard origin/main
+
+            echo "Activating virtual environment..."
+            source venv/bin/activate
+
+            echo "Installing Python dependencies..."
+            pip install -r requirements.txt
+
+            echo "Running database migrations..."
+            alembic upgrade head
+
+            echo "Building frontend..."
+            cd frontend
+            npm install
+            npm run build
+            cd ..
+
+            echo "Restarting API..."
+            systemctl restart showerv3-api
+
+            echo "Restarting workers..."
+            systemctl restart showerv3-worker@extraction
+            systemctl restart showerv3-worker@analysis
+            systemctl restart showerv3-worker@tailoring
+            systemctl restart showerv3-worker@save
+            systemctl restart showerv3-worker@resume
+            systemctl restart showerv3-worker@scraper
+
+            echo "Waiting for startup..."
+            sleep 10
+
+            echo "Health check..."
+            curl --fail https://robertstaff.com/api/v1/health
+
+            echo "Deployment successful."
