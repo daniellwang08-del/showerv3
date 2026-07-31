@@ -15,18 +15,6 @@ from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
 from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
-
-try:
-    from langfuse import observe
-except ImportError:
-    from functools import wraps
-    def observe(**_kw):  # noqa: E303
-        def _decorator(fn):
-            @wraps(fn)
-            async def _wrapper(*a, **k):
-                return await fn(*a, **k)
-            return _wrapper
-        return _decorator
 from app.models.profile_schemas import (
     ResumeCertBlock,
     ResumeEducationBlock,
@@ -869,7 +857,6 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     return draft
 
 
-@observe(name="call_openai_resume")
 async def _call_openai_resume(
     *,
     user_text: str | None,
@@ -954,7 +941,6 @@ async def _call_openai_resume(
         raise AIParsingError("Failed to parse extracted profile JSON") from e
 
 
-@observe(name="parse_resume_bytes")
 async def parse_resume_bytes(*, raw: bytes, filename: str, user_id: str | None = None) -> ResumeParseResponse:
     if len(raw) > MAX_RESUME_BYTES:
         raise ValueError(f"File too large (max {MAX_RESUME_BYTES // (1024 * 1024)} MB).")

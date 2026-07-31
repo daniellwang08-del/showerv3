@@ -17,18 +17,6 @@ from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
 from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
-
-try:
-    from langfuse import observe
-except ImportError:
-    from functools import wraps
-    def observe(**_kw):  # noqa: E303
-        def _decorator(fn):
-            @wraps(fn)
-            async def _wrapper(*a, **k):
-                return await fn(*a, **k)
-            return _wrapper
-        return _decorator
 from app.models.database import (
     JobExtraction,
     JobMatchResult,
@@ -131,7 +119,6 @@ def _spec_has_constraints(spec: JobSearchQuerySpec) -> bool:
     return False
 
 
-@observe(name="interpret_job_search_prompt")
 async def interpret_job_search_prompt(prompt: str, *, user_id: str | None = None) -> JobSearchQuerySpec:
     client = await get_llm_client_for_user(user_id, job_type="job_ai_search")
     settings = get_settings()

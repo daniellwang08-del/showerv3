@@ -19,8 +19,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Load .env into os.environ BEFORE any app imports.  Third-party SDKs like
-# Langfuse read credentials from os.environ at import time.
+# Load .env into os.environ BEFORE any app imports.
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 

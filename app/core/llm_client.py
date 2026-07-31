@@ -33,8 +33,6 @@ trips OPEN and subsequent requests skip OpenAI entirely for
 straight to Anthropic without wasting a round-trip on a known-bad endpoint.
 After the cooldown, one probe request tests whether OpenAI has recovered.
 
-The wrapper preserves Langfuse OpenAI tracing when available - only the
-fallback branch bypasses Langfuse (Anthropic is not auto-instrumented here).
 """
 
 from __future__ import annotations
@@ -90,28 +88,10 @@ def _anthropic_module() -> Any:
 
 
 @functools.lru_cache(maxsize=1)
-def _async_openai_and_langfuse() -> tuple[Any, bool]:
-    """Return ``(AsyncOpenAI class, langfuse_available)``.
-
-    Prefer the Langfuse-instrumented client when Langfuse is installed so
-    OpenAI calls are traced; fall back to the plain SDK otherwise.
-    """
-    try:
-        from langfuse.openai import AsyncOpenAI  # type: ignore[import-unresolved]
-
-        return AsyncOpenAI, True
-    except ImportError:
-        from openai import AsyncOpenAI
-
-        return AsyncOpenAI, False
-
-
 def _get_async_openai_cls() -> Any:
-    return _async_openai_and_langfuse()[0]
+    from openai import AsyncOpenAI
 
-
-def _langfuse_available() -> bool:
-    return _async_openai_and_langfuse()[1]
+    return AsyncOpenAI
 
 
 @functools.lru_cache(maxsize=1)
@@ -787,11 +767,7 @@ LLM_PROVIDERS: tuple[str, ...] = ("openai", "anthropic", "gemini")
 
 
 class _OpenAIAdapter:
-    """OpenAI (or any OpenAI-compatible endpoint) returning the native response.
-
-    Used for the ``openai`` provider so Langfuse tracing on the underlying
-    client is preserved.
-    """
+    """OpenAI (or any OpenAI-compatible endpoint) returning the native response."""
 
     name = "openai"
 
@@ -1195,9 +1171,7 @@ def _build_gemini_client(api_key: str) -> AsyncOpenAI | None:
 
     settings = get_settings()
     t = float(get_effective_value_sync("gemini_timeout_seconds"))
-    # Plain OpenAI SDK pointed at Google's OpenAI-compatible endpoint. We use the
-    # base ``openai.AsyncOpenAI`` (not the Langfuse wrapper) to avoid attributing
-    # Gemini calls to OpenAI in traces.
+    # Plain OpenAI SDK pointed at Google's OpenAI-compatible endpoint.
     from openai import AsyncOpenAI as _BaseAsyncOpenAI
 
     return _BaseAsyncOpenAI(
@@ -1356,7 +1330,6 @@ def get_llm_client(
         providers=[a.name for a in adapters],
         models={a.name: getattr(a, "_model", None) for a in adapters},
         fallback_enabled=llm_fallback_enabled,
-        langfuse_tracing=_langfuse_available() and settings.langfuse_enabled,
     )
     return client
 

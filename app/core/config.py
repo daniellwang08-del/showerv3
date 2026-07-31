@@ -184,11 +184,6 @@ class Settings(BaseSettings):
     llm_circuit_breaker_threshold: int = Field(default=3, ge=1, le=100)
     llm_circuit_breaker_cooldown_seconds: float = Field(default=300.0, ge=10.0)
 
-    langfuse_secret_key: str = Field(default="")
-    langfuse_public_key: str = Field(default="")
-    langfuse_base_url: str = Field(default="https://cloud.langfuse.com")
-    langfuse_enabled: bool = Field(default=True)
-
     # Match extraction_worker_max_jobs so concurrent extract jobs are not
     # serialized on a smaller Playwright semaphore.
     browser_pool_size: int = 10

@@ -19,21 +19,6 @@ from app.models.database import ProfileSourceDocument, User
 from app.models.schemas import JobDescriptionSchema
 from app.utils.company_name_utils import company_names_match, normalize_company_name
 
-try:
-    from langfuse import observe
-except ImportError:
-    from functools import wraps
-
-    def observe(**_kw):
-        def _decorator(fn):
-            @wraps(fn)
-            async def _wrapper(*a, **k):
-                return await fn(*a, **k)
-
-            return _wrapper
-
-        return _decorator
-
 logger = get_logger(__name__)
 
 MAX_EVIDENCE_CONTEXT_CHARS = 15_000
@@ -231,7 +216,6 @@ def format_evidence_pack(companies_data: list[dict[str, Any]]) -> str:
     return _truncate("\n\n".join(sections), MAX_EVIDENCE_CONTEXT_CHARS)
 
 
-@observe(name="extract_evidence_single_batch")
 async def _call_evidence_extraction(
     *,
     job_context: str,
@@ -280,7 +264,6 @@ async def _call_evidence_extraction(
     return [c for c in companies if isinstance(c, dict)]
 
 
-@observe(name="extract_job_evidence_pack")
 async def extract_job_evidence_pack(
     *,
     job_text: str,

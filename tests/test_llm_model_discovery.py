@@ -214,10 +214,8 @@ def test_get_llm_client_honors_openai_model_override() -> None:
                 openai_api_key="sk-env",
                 anthropic_api_key="",
                 gemini_api_key="",
-                langfuse_enabled=False,
             ),
         ),
-        patch.object(lc, "_langfuse_available", return_value=False),
     ):
         client = lc.get_llm_client(
             provider="openai",

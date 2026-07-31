@@ -30,21 +30,6 @@ from app.storage.database import get_session
 from app.storage.profile_source_document_repository import ProfileSourceDocumentRepository
 from app.utils.company_name_utils import company_names_match
 
-try:
-    from langfuse import observe
-except ImportError:
-    from functools import wraps
-
-    def observe(**_kw):
-        def _decorator(fn):
-            @wraps(fn)
-            async def _wrapper(*a, **k):
-                return await fn(*a, **k)
-
-            return _wrapper
-
-        return _decorator
-
 logger = get_logger(__name__)
 
 MAX_SOURCE_BYTES = 10 * 1024 * 1024
@@ -175,7 +160,6 @@ def _normalize_structured(data: dict[str, Any]) -> SourceDocumentStructured:
     return SourceDocumentStructured(company_name=company, projects=projects)
 
 
-@observe(name="parse_source_document_structured")
 async def parse_source_document_structured(
     *,
     text: str,
@@ -243,7 +227,6 @@ def profile_companies_from_user(user) -> list[str]:
     return names
 
 
-@observe(name="upload_profile_source_document")
 async def upload_and_parse_source_document(
     *,
     user_id: str,

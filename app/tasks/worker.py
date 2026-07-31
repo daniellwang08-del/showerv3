@@ -866,15 +866,6 @@ def _keep_result() -> int:
     return int(get_settings().arq_keep_result_seconds)
 
 
-async def _flush_langfuse(ctx: dict) -> None:
-    """Flush pending Langfuse traces before the worker shuts down."""
-    try:
-        from langfuse import get_client
-        get_client().flush()
-    except Exception:
-        pass
-
-
 async def _extraction_worker_startup(ctx: dict) -> None:
     """Pre-create a singleton ExtractionService for reuse across jobs."""
     ctx["extraction_service"] = ExtractionService()
@@ -895,7 +886,6 @@ class ExtractionWorkerSettings:
     max_tries = get_settings().extraction_worker_max_tries
     keep_result = _keep_result()
     on_startup = _extraction_worker_startup
-    on_shutdown = _flush_langfuse
 
 
 async def _analysis_worker_startup(ctx: dict) -> None:
@@ -922,7 +912,6 @@ class AnalysisWorkerSettings:
     max_tries = get_settings().analysis_worker_max_tries
     keep_result = _keep_result()
     on_startup = _analysis_worker_startup
-    on_shutdown = _flush_langfuse
 
 
 async def _tailoring_worker_startup(ctx: dict) -> None:
@@ -946,7 +935,6 @@ class TailoringWorkerSettings:
     max_tries = get_settings().tailoring_worker_max_tries
     keep_result = _keep_result()
     on_startup = _tailoring_worker_startup
-    on_shutdown = _flush_langfuse
 
 
 class SaveWorkerSettings:
@@ -958,7 +946,6 @@ class SaveWorkerSettings:
     max_jobs = get_settings().save_worker_max_jobs
     max_tries = 1
     keep_result = _keep_result()
-    on_shutdown = _flush_langfuse
 
 
 async def _autopost_worker_startup(ctx: dict) -> None:
@@ -977,7 +964,6 @@ class AutoPostWorkerSettings:
     max_tries = 3
     keep_result = _keep_result()
     on_startup = _autopost_worker_startup
-    on_shutdown = _flush_langfuse
 
 
 class ResumeBuildWorkerSettings:
@@ -989,7 +975,6 @@ class ResumeBuildWorkerSettings:
     max_jobs = get_settings().resume_worker_max_jobs
     max_tries = 1
     keep_result = _keep_result()
-    on_shutdown = _flush_langfuse
 
 
 # ── Shared long-lived arq pools (one per queue, lazily created) ──────────────

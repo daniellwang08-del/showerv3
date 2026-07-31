@@ -21,7 +21,6 @@ anthropic>=0.39.0
 # quotes/newlines inside long string fields, trailing commas, etc.) before
 # the calling service runs strict json.loads().
 json-repair>=0.30.0
-langfuse>=4.5.0
 arq==0.26.1
 redis==5.2.1
 sqlalchemy[asyncio]==2.0.36

@@ -13,18 +13,6 @@ from app.core.logging import get_logger
 from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.services.url_manager import URLManager
 
-try:
-    from langfuse import observe
-except ImportError:
-    from functools import wraps
-    def observe(**_kw):  # noqa: E303
-        def _decorator(fn):
-            @wraps(fn)
-            async def _wrapper(*a, **k):
-                return await fn(*a, **k)
-            return _wrapper
-        return _decorator
-
 logger = get_logger(__name__)
 
 # Stay under typical context limits; chunk long documents.
@@ -71,7 +59,6 @@ def _validate_and_normalize_url(url: str) -> str | None:
     return url.strip()
 
 
-@observe(name="extract_job_urls_from_text")
 async def extract_job_urls_from_text_combined(text: str, *, user_id: str | None = None) -> list[str]:
     """
     Run OpenAI on one or more chunks in parallel (bounded), merge and dedupe by normalized URL.

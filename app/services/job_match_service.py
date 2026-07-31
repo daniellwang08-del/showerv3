@@ -35,18 +35,6 @@ from app.services.job_field_utils import (
 from app.storage.database import get_session
 from app.storage.user_repository import UserRepository
 
-try:
-    from langfuse import observe  # type: ignore[import-unresolved]
-except ImportError:
-    from functools import wraps
-    def observe(**_kw):  # noqa: E303
-        def _decorator(fn):
-            @wraps(fn)
-            async def _wrapper(*a, **k):
-                return await fn(*a, **k)
-            return _wrapper
-        return _decorator
-
 logger = get_logger(__name__)
 
 MAX_JOB_LENGTH = 15000
@@ -540,7 +528,6 @@ async def _call_openai_json(
         raise AIParsingError(str(e))
 
 
-@observe(name="analyze_job_match_phase_a")
 async def analyze_job_match_phase_a(
     job_text: str,
     profile_text: str,
@@ -609,7 +596,6 @@ async def analyze_job_match_phase_a(
     return match_result, structured_job, is_job_posting
 
 
-@observe(name="generate_tailored_content_phase_b")
 async def generate_tailored_content_phase_b(
     job_text: str,
     profile_text: str,

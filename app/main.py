@@ -19,9 +19,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# Load .env into os.environ BEFORE any app imports.  Third-party SDKs like
-# Langfuse read credentials from os.environ at import time; pydantic-settings
-# only populates its own model and never writes to os.environ.
+# Load .env into os.environ BEFORE any app imports. pydantic-settings also
+# reads the file into its model, but some code paths still read os.environ.
 from pathlib import Path as _Path
 from dotenv import load_dotenv as _load_dotenv
 _load_dotenv(_Path(__file__).resolve().parent.parent / ".env")
@@ -202,12 +201,6 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("application_stopping")
-
-    try:
-        from langfuse import get_client  # type: ignore[import-unresolved]
-        get_client().flush()
-    except Exception:
-        pass
 
     try:
         await ws_manager.stop_redis_subscriber()
