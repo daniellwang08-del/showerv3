@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,7 @@ from app.services.job_match_service import (
     generate_tailored_content_phase_b,
     tailored_resume_quality_issues,
 )
+from app.services.resume_builder_service import build_output_directory
 from app.services.resume_context_builder import _merge_tailored_work_experience
 
 
@@ -55,6 +57,40 @@ def test_tailored_resume_quality_issues_flags_thin_bullets():
     assert "profile_summary_too_short" in issues
     assert "technical_skills_missing" in issues
     assert any("bullets_below" in i for i in issues)
+
+
+def test_tailored_resume_quality_issues_flags_missing_job_alignment():
+    bullets = [f"Generic accomplishment line {i}" for i in range(7)]
+    resume = {
+        "profile_summary": "Experienced engineer with deep backend and platform ownership across products.",
+        "technical_skills": [{"category": "Languages", "skills": "Python, Go"}],
+        "work_experience": [
+            {"company_name": "Acme", "job_title": "Eng", "bullets": bullets},
+        ],
+    }
+    issues = tailored_resume_quality_issues(
+        resume,
+        job_anchor_terms=["Kubernetes", "Kafka", "payments ledger", "Terraform", "gRPC", "Postgres"],
+    )
+    assert "insufficient_job_keyword_alignment" in issues
+
+
+def test_build_output_directory_is_unique_per_job(tmp_path, monkeypatch):
+    from app.core import config as config_mod
+
+    settings = config_mod.get_settings()
+    monkeypatch.setattr(settings, "resume_output_root", str(tmp_path))
+
+    a = build_output_directory("Acme Corp", "job-aaaa-1111")
+    b = build_output_directory("Acme Corp", "job-bbbb-2222")
+    c = build_output_directory("", "job-cccc-3333")
+    d = build_output_directory("", "job-dddd-4444")
+
+    assert a != b
+    assert c != d
+    assert a.name == "job-aaaa-1111"
+    assert b.name == "job-bbbb-2222"
+    assert Path(a).is_dir() and Path(b).is_dir()
 
 
 def _good_resume() -> dict:

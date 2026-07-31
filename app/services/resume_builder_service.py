@@ -1314,14 +1314,21 @@ def person_resume_stem(first_name: str, last_name: str) -> str:
     return person_document_stem(first_name, last_name, "resume")
 
 
-def build_output_directory(company_name: str) -> Path:
-    """Create ``{RESUME_OUTPUT_ROOT}/{Company}/`` for resume artifacts.
+def build_output_directory(company_name: str, job_id: str | None = None) -> Path:
+    """Create ``{RESUME_OUTPUT_ROOT}/{Company}/{job_id}/`` for resume artifacts.
 
-    Files inside use ``{First_Last}_resume.pdf`` (see :func:`person_document_stem`).
+    ``job_id`` is required for per-job uniqueness: without it, every job at the
+    same company (or every job with a missing company → ``Unknown``) would
+    overwrite ``{First_Last}_resume.pdf`` and downloads for earlier jobs would
+    silently serve the latest build.
     """
     settings = get_settings()
     root = Path(settings.resume_output_root)
     company_clean = safe_path_segment(company_name or "Unknown", fallback="Unknown", max_len=80)
-    full_path = root / company_clean
+    if job_id and str(job_id).strip():
+        job_clean = safe_path_segment(str(job_id).strip(), fallback="job", max_len=36)
+        full_path = root / company_clean / job_clean
+    else:
+        full_path = root / company_clean
     full_path.mkdir(parents=True, exist_ok=True)
     return full_path

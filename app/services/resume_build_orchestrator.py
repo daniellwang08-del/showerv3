@@ -31,12 +31,10 @@ from app.services.resume_builder_service import (
     person_document_stem,
 )
 from app.services.cover_letter_design_compiler import compile_cover_letter_design
-from app.services.cover_letter_template_service import user_cover_letter_template_dir
 from app.services.resume_blueprint_renderer import fill_user_resume_template
 from app.services.resume_context_builder import build_render_context
 from app.services.resume_design_compiler import compile_design
 from app.services.resume_design_service import load_design_for_render
-from app.services.resume_template_service import user_template_dir
 from app.api.websocket import publish_resume_event
 
 logger = get_logger(__name__)
@@ -72,15 +70,25 @@ def _sync_build_resume_docx(
     user_id: str,
     render_context: dict,
     out_path: Path,
+    scratch_template: Path,
 ) -> Path:
-    resume_template = user_template_dir(user_id) / "working_template.docx"
-    _tags, blueprint = compile_design(design, user, resume_template)
-    return fill_user_resume_template(
-        resume_template,
-        blueprint,
-        render_context,
-        out_path,
-    )
+    # Compile into a per-job scratch file — never the shared working_template.docx.
+    # Concurrent builds for the same user previously raced on that shared path and
+    # could fill one job's content into another's half-written template.
+    scratch_template.parent.mkdir(parents=True, exist_ok=True)
+    _tags, blueprint = compile_design(design, user, scratch_template)
+    try:
+        return fill_user_resume_template(
+            scratch_template,
+            blueprint,
+            render_context,
+            out_path,
+        )
+    finally:
+        try:
+            scratch_template.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _sync_build_cover_letter_docx(
@@ -90,10 +98,17 @@ def _sync_build_cover_letter_docx(
     user_id: str,
     body: str,
     out_path: Path,
+    scratch_template: Path,
 ) -> Path:
-    cl_template = user_cover_letter_template_dir(user_id) / "working.docx"
-    compile_cover_letter_design(design, user, cl_template)
-    return fill_cover_letter_template(cl_template, out_path, body)
+    scratch_template.parent.mkdir(parents=True, exist_ok=True)
+    compile_cover_letter_design(design, user, scratch_template)
+    try:
+        return fill_cover_letter_template(scratch_template, out_path, body)
+    finally:
+        try:
+            scratch_template.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 async def _mark_processing(
@@ -193,14 +208,17 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
             job = r.scalar_one_or_none()
             company = (job.company if job else None) or "Unknown"
 
-            # Disk layout: resume_output/{Company}/{First_Last}_resume.pdf
-            out_dir = build_output_directory(company)
+            # Disk layout: resume_output/{Company}/{job_id}/{First_Last}_resume.pdf
+            # job_id directory is mandatory so builds never overwrite each other.
+            out_dir = build_output_directory(company, job_id)
             await repo.set_output_directory(build.id, str(out_dir))
 
             resume_docx_name = f"{resume_stem}.docx"
             resume_pdf_name = f"{resume_stem}.pdf"
             cl_docx_name = f"{cover_stem}.docx"
             cl_pdf_name = f"{cover_stem}.pdf"
+            resume_scratch = out_dir / f"_scratch_{resume_stem}.docx"
+            cover_scratch = out_dir / f"_scratch_{cover_stem}.docx"
 
             results: dict[str, str | None] = {}
             render_context = build_render_context(user, tailored, job)
@@ -238,6 +256,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                         user_id=user_id,
                         render_context=render_context,
                         out_path=out_dir / resume_docx_name,
+                        scratch_template=resume_scratch,
                     )
                     return ("resume_docx", path, None)
                 except Exception as e:
@@ -252,6 +271,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                         user_id=user_id,
                         body=cover_body,
                         out_path=out_dir / cl_docx_name,
+                        scratch_template=cover_scratch,
                     )
                     return ("cover_letter_docx", path, None)
                 except Exception as e:

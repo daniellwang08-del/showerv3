@@ -25,11 +25,16 @@ and truthful to the candidate's background.
 ## Overall strategy
 
 1. **Read the job first** - identify must-have skills, domain, seniority signals, and repeated keywords.
-2. **Use Project Evidence as the primary source of depth** - metrics, architecture, scope, tools, outcomes.
+2. **Differentiate for THIS posting** - the summary, skill categories, and bullet emphasis must change
+   meaningfully with the job. A side-by-side compare against a resume written for a different role
+   must NOT look like a copy-paste with a few synonyms swapped. Name the target role/domain from
+   **this** Job Description in the profile summary.
+3. **Use Project Evidence as the primary source of depth** - metrics, architecture, scope, tools, outcomes.
    Fall back to the profile résumé text only when evidence is absent for that company.
-3. **Mirror the job's language** - use the posting's terminology (stack, domain, role verbs) where it honestly applies.
-4. **Never invent** - no fabricated employers, titles, projects, metrics, or technologies.
-5. **Bullet volume (mandatory)** - profile work history order is **most recent first**:
+   Evidence supplies facts; the Job Description decides which facts to emphasize.
+4. **Mirror the job's language** - use the posting's terminology (stack, domain, role verbs) where it honestly applies.
+5. **Never invent** - no fabricated employers, titles, projects, metrics, or technologies.
+6. **Bullet volume (mandatory)** - profile work history order is **most recent first**:
    - **First 3 companies** (most recent roles): **at least 7 bullets each** - dense, ATS-optimized, job-keyword rich.
    - **All remaining companies**: **at least 4 bullets each**.
    - Never pad with fluff; split distinct accomplishments into separate bullets until minimums are met.
@@ -72,14 +77,16 @@ The document builder converts ``**text**`` into **bold** formatting. Use this fo
 ### Profile summary (5–7 sentences)
 Write a compelling executive summary that a recruiter would skim in 10 seconds:
 - Open with **years of experience + core identity** aligned to this role (e.g. "Senior backend engineer with 12+ years…").
+- Explicitly reflect **this job's title / domain** (from Job Description / Structured Job) - not a generic identity reused across postings.
 - Name the **target domain or product type** from the job when the profile supports it.
-- Highlight **3–4 top alignments** with explicit requirements from the posting (technologies, scale, leadership, domain).
+- Highlight **3–4 top alignments** with explicit requirements from **this** posting (technologies, scale, leadership, domain).
 - End with **value proposition** - what you bring to this specific team/company.
 - Weave in keywords from the job naturally; avoid buzzword stuffing or generic filler ("hard-working team player").
+- Do **not** produce a generic summary that could be pasted onto unrelated jobs unchanged.
 
 ### Technical skills (typically 5–8 categories)
-- Create **dynamic category names** that reflect what this job cares about (e.g. "Backend & APIs", "Cloud & DevOps", not generic "Skills").
-- **Reorder** skills so job-critical technologies appear first in each category.
+- Create **dynamic category names** that reflect what **this** job cares about (e.g. "Backend & APIs", "Cloud & DevOps", not generic "Skills").
+- **Reorder** skills so job-critical technologies appear first in each category; the top skills must track this posting's stack.
 - Include only skills the candidate **actually has** (from profile or project evidence).
 - Prefer **specific tools/frameworks** over vague labels when supported by evidence.
 - Omit or deprioritize skills irrelevant to this posting unless they are differentiators.
@@ -190,11 +197,13 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
 ---
 
 ## Execution checklist
-1. Extract the job's top requirements and responsibilities from the sections above.
+1. Extract the job's top requirements and responsibilities from the sections above - these drive emphasis.
 2. For each profile company, pull facts from Project Evidence first; supplement from profile only as needed.
-3. Profile work order is most recent first: **first 3 companies → ≥7 ATS-strong bullets each**; **all others → ≥4 bullets each**.
-4. Ensure every bullet has concrete tools, scope, and outcomes - not thin one-liners.
-5. Wrap important job keywords in ``**double asterisks**`` so they render bold in the DOCX (summary, descriptions, bullets, skill lists).
-6. Return tailored resume JSON and cover letter body as specified.
+3. Rewrite summary + skill order + bullet emphasis so they are specific to THIS job (not a reusable generic draft).
+4. Profile work order is most recent first: **first 3 companies → ≥7 ATS-strong bullets each**; **all others → ≥4 bullets each**.
+5. Ensure every bullet has concrete tools, scope, and outcomes - not thin one-liners.
+6. Wrap important job keywords in ``**double asterisks**`` so they render bold in the DOCX (summary, descriptions, bullets, skill lists).
+7. Cover letter must name this hiring company and role when present in the job sections above.
+8. Return tailored resume JSON and cover letter body as specified.
 
 Include exactly one work_experience entry for EVERY company in the profile - do not skip any."""

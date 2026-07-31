@@ -366,7 +366,24 @@ async def run_tailored_content_generation(
                 )
 
             match_row = await match_repo.get(job_id, user_id)
-            match_summary = (match_row.summary if match_row else None) or ""
+            match_parts: list[str] = []
+            if match_row and (match_row.summary or "").strip():
+                match_parts.append(str(match_row.summary).strip())
+            strengths = list(getattr(match_row, "strengths", None) or []) if match_row else []
+            strength_lines = [
+                f"- {str(s).strip()}" for s in strengths if isinstance(s, str) and str(s).strip()
+            ][:8]
+            if strength_lines:
+                match_parts.append("Match strengths to emphasize:\n" + "\n".join(strength_lines))
+            gaps = list(getattr(match_row, "gaps", None) or []) if match_row else []
+            gap_lines = [
+                f"- {str(g).strip()}" for g in gaps if isinstance(g, str) and str(g).strip()
+            ][:6]
+            if gap_lines:
+                match_parts.append(
+                    "Gaps to avoid inventing or overstating:\n" + "\n".join(gap_lines)
+                )
+            match_summary = "\n\n".join(match_parts)
 
             user = await UserRepository(session).get_by_id(user_id)
             source_docs = await ProfileSourceDocumentRepository(session).list_completed_for_user(user_id)

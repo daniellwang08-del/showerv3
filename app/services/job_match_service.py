@@ -381,7 +381,55 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
         return None
 
 
-def tailored_resume_quality_issues(resume: dict | None) -> list[str]:
+def _job_anchor_terms(*text_blobs: str, limit: int = 24) -> list[str]:
+    """Extract distinctive job terms used to verify the tailored resume is job-specific.
+
+    Prefers hyphenated/tech tokens and multi-word requirement fragments over stopwords.
+    """
+    stop = {
+        "and", "the", "for", "with", "you", "your", "our", "are", "will", "this", "that",
+        "from", "have", "has", "been", "using", "use", "used", "ability", "experience",
+        "years", "year", "team", "work", "working", "role", "job", "including", "etc",
+        "strong", "good", "preferred", "required", "requirements", "responsibilities",
+        "knowledge", "skills", "plus", "must", "able", "across", "into", "about",
+    }
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(term: str) -> None:
+        t = term.strip(" .,;:/\\|\"'`()[]{}").strip()
+        if len(t) < 3:
+            return
+        key = t.lower()
+        if key in seen or key in stop:
+            return
+        seen.add(key)
+        found.append(t)
+
+    for blob in text_blobs:
+        text = str(blob or "")
+        if not text:
+            continue
+        # Bullet-like requirement lines often carry the highest-signal phrases.
+        for line in text.splitlines():
+            s = line.strip()
+            if s.startswith(("-", "*", "•")):
+                phrase = re.sub(r"^[\-\*•]\s*", "", s)
+                phrase = re.sub(r"\s+", " ", phrase).strip()
+                if 3 <= len(phrase) <= 48:
+                    _add(phrase)
+        for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9.+#/-]{2,}\b", text):
+            _add(m.group(0))
+        if len(found) >= limit:
+            break
+    return found[:limit]
+
+
+def tailored_resume_quality_issues(
+    resume: dict | None,
+    *,
+    job_anchor_terms: list[str] | None = None,
+) -> list[str]:
     """Return soft quality problems that warrant one Phase B regeneration retry.
 
     Does not reject the payload forever — callers may still accept after retry.
@@ -399,6 +447,7 @@ def tailored_resume_quality_issues(resume: dict | None) -> list[str]:
     if not isinstance(experience, list) or len(experience) < 1:
         issues.append("work_experience_missing")
         return issues
+    recent_blob_parts = [summary.lower()]
     for idx, entry in enumerate(experience):
         if not isinstance(entry, dict):
             issues.append(f"work_experience[{idx}]_invalid")
@@ -415,6 +464,22 @@ def tailored_resume_quality_issues(resume: dict | None) -> list[str]:
             emphasized = sum(1 for b in clean if "**" in b)
             if emphasized == 0:
                 issues.append(f"work_experience[{idx}]_no_keyword_emphasis")
+        if idx < 3:
+            recent_blob_parts.append(str(entry.get("project_description") or "").lower())
+            recent_blob_parts.extend(b.lower() for b in clean)
+            for sk in skills:
+                if isinstance(sk, dict):
+                    recent_blob_parts.append(str(sk.get("skills") or "").lower())
+                    recent_blob_parts.append(str(sk.get("category") or "").lower())
+
+    anchors = [a for a in (job_anchor_terms or []) if isinstance(a, str) and a.strip()]
+    if anchors:
+        blob = " ".join(recent_blob_parts)
+        hits = sum(1 for term in anchors if term.lower() in blob)
+        # Require real overlap with this posting; otherwise the model reused a generic draft.
+        need = 3 if len(anchors) >= 6 else max(1, min(2, len(anchors)))
+        if hits < need:
+            issues.append("insufficient_job_keyword_alignment")
     return issues
 
 
@@ -464,6 +529,7 @@ async def _call_openai_json(
     observe_name: str,
     user_id: str | None = None,
     job_type: str | None = None,
+    temperature: float = 0.2,
 ) -> dict:
     client = await get_llm_client_for_user(user_id, job_type=job_type)
     settings = get_settings()
@@ -476,7 +542,7 @@ async def _call_openai_json(
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=messages,
-            temperature=0.2,
+            temperature=temperature,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
             **extra,
@@ -622,15 +688,19 @@ async def generate_tailored_content_phase_b(
     if not profile_truncated.strip():
         return None, None
 
+    structured_block = structured_context or "No structured job data available."
     user_content = JOB_MATCH_PHASE_B_USER_TEMPLATE.format(
         job_text=job_truncated,
         profile_text=profile_truncated,
-        structured_context=structured_context or "No structured job data available.",
+        structured_context=structured_block,
         match_summary=match_summary or "No match summary available.",
         project_evidence_context=evidence_truncated,
     )
+    job_anchors = _job_anchor_terms(structured_block, job_truncated)
     phase_b_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_b_max_tokens")))
     phase_b_max = min(phase_b_max, 32768)
+    # Slightly higher than Phase A: encourage job-specific wording while staying factual.
+    phase_b_temperature = 0.35
 
     if user_id:
         async with get_session() as session:
@@ -646,12 +716,15 @@ async def generate_tailored_content_phase_b(
         observe_name="phase_b",
         user_id=user_id,
         job_type="resume_tailoring",
+        temperature=phase_b_temperature,
     )
 
     tailored_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
     cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
 
-    quality_issues = tailored_resume_quality_issues(tailored_resume)
+    quality_issues = tailored_resume_quality_issues(
+        tailored_resume, job_anchor_terms=job_anchors
+    )
     if quality_issues or not cover_letter:
         logger.warning(
             "phase_b_quality_soft_retry",
@@ -661,11 +734,20 @@ async def generate_tailored_content_phase_b(
         retry_user = (
             user_content
             + "\n\nQUALITY RETRY: Previous output failed soft checks. "
-            "Ensure profile_summary is substantive, technical_skills has categories, "
+            "Ensure profile_summary is substantive and names THIS job's role/domain, "
+            "technical_skills categories reflect THIS posting's stack, "
             "the first three roles each have at least 7 bullets with **keyword** emphasis "
-            "on job-relevant terms grounded in the profile, later roles have at least 4 bullets, "
-            "and cover_letter.body is a complete letter. Never invent employers or dates."
+            "on terms from THIS job description (grounded in profile/evidence facts), "
+            "later roles have at least 4 bullets, and cover_letter.body is a complete letter "
+            "that names this company/role when available. Never invent employers or dates. "
+            "Do not reuse a generic resume draft that ignores this posting's requirements."
         )
+        if job_anchors:
+            retry_user += (
+                "\nPriority job terms to weave in truthfully: "
+                + ", ".join(job_anchors[:12])
+                + "."
+            )
         parsed_retry = await _call_openai_json(
             system_prompt=system_prompt,
             user_content=retry_user,
@@ -673,6 +755,7 @@ async def generate_tailored_content_phase_b(
             observe_name="phase_b_quality_retry",
             user_id=user_id,
             job_type="resume_tailoring",
+            temperature=phase_b_temperature,
         )
         retry_resume = _parse_tailored_resume(parsed_retry.get("tailored_resume"))
         retry_cover = _parse_cover_letter(parsed_retry.get("cover_letter"))
@@ -680,7 +763,9 @@ async def generate_tailored_content_phase_b(
             tailored_resume = retry_resume
         if retry_cover:
             cover_letter = retry_cover
-        remaining = tailored_resume_quality_issues(tailored_resume)
+        remaining = tailored_resume_quality_issues(
+            tailored_resume, job_anchor_terms=job_anchors
+        )
         if remaining:
             logger.warning("phase_b_quality_issues_after_retry", issues=remaining)
 
