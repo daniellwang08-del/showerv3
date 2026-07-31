@@ -20,6 +20,7 @@ class ScraperSettings(BaseSettings):
 
     ADZUNA_APP_ID: str = ""
     ADZUNA_APP_KEY: str = ""
+    ZIPRECRUITER_API_KEY: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
@@ -50,6 +51,7 @@ def get_scraper_settings() -> ScraperSettings:
             DATABASE_URL=sync_url,
             ADZUNA_APP_ID=getattr(main_settings, "adzuna_app_id", ""),
             ADZUNA_APP_KEY=getattr(main_settings, "adzuna_app_key", ""),
+            ZIPRECRUITER_API_KEY=getattr(main_settings, "ziprecruiter_api_key", ""),
             PROXY_LIST_PATH=getattr(main_settings, "scraper_proxy_list_path", ""),
         )
     except Exception:

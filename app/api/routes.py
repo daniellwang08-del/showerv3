@@ -293,14 +293,27 @@ async def login(request: LoginRequest, response: Response) -> AuthResponse:
     
     async with get_session() as session:
         user_repo = UserRepository(session)
-        
-        # Verify credentials
-        user = await user_repo.verify_credentials(normalized_email, request.password)
-        if not user:
-            logger.warning("user_login_failed", email=normalized_email, reason="invalid_credentials")
+
+        existing = await user_repo.get_by_email(normalized_email)
+        if not existing:
+            logger.warning("user_login_failed", email=normalized_email, reason="not_registered")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password"
+                detail="You are not registered in this system. Please sign up first.",
+            )
+
+        user = await user_repo.verify_credentials(normalized_email, request.password)
+        if not user:
+            reason = "inactive" if not existing.is_active else "invalid_password"
+            logger.warning("user_login_failed", email=normalized_email, reason=reason)
+            if not existing.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="This account is inactive. Contact an administrator.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password",
             )
         
         # Long-lived token for non-cookie clients (extension); default 24h otherwise.
@@ -701,7 +714,10 @@ async def _try_pool(pool_factory, label: str):
             "redis_pool_unavailable",
             queue=label,
             error=str(e),
-            hint="Jobs will use background_tasks fallback. For async processing, ensure Memurai/Redis is running and workers are started.",
+            hint=(
+                "Start Redis (docker compose up -d redis) and run workers via "
+                "start.cmd / run_worker.py."
+            ),
         )
         return None
 
@@ -716,6 +732,19 @@ async def try_get_analysis_pool():
     return await _try_pool(get_analysis_pool, ANALYSIS_QUEUE)
 
 
+def _raise_queue_unavailable(operation: str) -> None:
+    from app.core.redis_support import require_redis_for_jobs
+
+    if require_redis_for_jobs():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Job queue unavailable (Redis). Cannot {operation}. "
+                "Retry after Redis and workers are healthy."
+            ),
+        )
+
+
 async def enqueue_extraction(
     extraction_id: str,
     url: str,
@@ -725,37 +754,54 @@ async def enqueue_extraction(
 ) -> None:
     """
     Prefer Redis/arq whenever Redis is reachable (jobs wait in queue until a worker runs).
-    Fall back in-process only when Redis is down or enqueue fails.
+    Fall back in-process only when Redis is down and APP_ENV is not production.
     """
+    from app.core.redis_support import allow_in_process_job_fallback, pipeline_job_id
     from app.tasks.worker import EXTRACTION_QUEUE
 
     pool = await try_get_extraction_pool()
     bind_logging_context(extraction_id=extraction_id, target_url=url, user_id=user_id)
     if pool:
         try:
+            job_id = pipeline_job_id("extract", extraction_id)
             if user_id:
-                await pool.enqueue_job("extract_job", extraction_id, url, user_id)
+                job = await pool.enqueue_job(
+                    "extract_job",
+                    extraction_id,
+                    url,
+                    user_id,
+                    _job_id=job_id,
+                )
             else:
-                await pool.enqueue_job("extract_job", extraction_id, url)
+                job = await pool.enqueue_job(
+                    "extract_job",
+                    extraction_id,
+                    url,
+                    _job_id=job_id,
+                )
             logger.info(
                 "extraction_enqueued_redis",
                 extraction_id=extraction_id,
                 url=url,
                 queue=EXTRACTION_QUEUE,
+                arq_job_id=job_id,
+                already_queued=job is None,
             )
             return
         except Exception as e:
             logger.warning("extraction_redis_enqueue_failed", extraction_id=extraction_id, error=str(e))
 
-    if background_tasks:
+    if allow_in_process_job_fallback() and background_tasks:
         background_tasks.add_task(process_extraction_sync, extraction_id, url, user_id)
         logger.info("extraction_enqueued_in_process", extraction_id=extraction_id, url=url)
-    else:
-        logger.error(
-            "extraction_not_enqueued",
-            extraction_id=extraction_id,
-            reason="No Redis and no background_tasks available",
-        )
+        return
+
+    _raise_queue_unavailable("enqueue extraction")
+    logger.error(
+        "extraction_not_enqueued",
+        extraction_id=extraction_id,
+        reason="No Redis and no in-process fallback available",
+    )
 
 
 async def enqueue_job_match_analysis(
@@ -765,38 +811,49 @@ async def enqueue_job_match_analysis(
     background_tasks: BackgroundTasks | None = None,
 ) -> None:
     """
-    Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks.
-    Uses the dedicated analysis queue, independent from extraction.
+    Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks
+    only outside production. Uses the dedicated analysis queue.
     """
+    from app.core.redis_support import allow_in_process_job_fallback, pipeline_job_id
     from app.tasks.worker import ANALYSIS_QUEUE
 
     pool = await try_get_analysis_pool()
     bind_logging_context(job_id=job_id, user_id=user_id)
     if pool:
         try:
-            await pool.enqueue_job("analyze_job_match", job_id, user_id)
+            arq_id = pipeline_job_id("analyze", job_id, user_id)
+            job = await pool.enqueue_job(
+                "analyze_job_match",
+                job_id,
+                user_id,
+                _job_id=arq_id,
+            )
             logger.info(
                 "job_match_enqueued_redis",
                 job_id=job_id,
                 user_id=user_id,
                 queue=ANALYSIS_QUEUE,
+                arq_job_id=arq_id,
+                already_queued=job is None,
             )
             return
         except Exception as e:
             logger.warning("job_match_redis_enqueue_failed", job_id=job_id, error=str(e))
 
-    if background_tasks:
+    if allow_in_process_job_fallback() and background_tasks:
         from app.services.job_match_orchestrator import run_job_match_analysis
 
         background_tasks.add_task(run_job_match_analysis, job_id, user_id)
         logger.info("job_match_enqueued_in_process", job_id=job_id, user_id=user_id)
-    else:
-        logger.error(
-            "job_match_not_enqueued",
-            job_id=job_id,
-            user_id=user_id,
-            reason="No Redis and no background_tasks available",
-        )
+        return
+
+    _raise_queue_unavailable("enqueue match analysis")
+    logger.error(
+        "job_match_not_enqueued",
+        job_id=job_id,
+        user_id=user_id,
+        reason="No Redis and no in-process fallback available",
+    )
 
 
 async def _fallback_job_match_after_extraction(job_id: str, user_id: str) -> None:
@@ -841,12 +898,12 @@ async def health_check() -> HealthResponse:
 
     redis_connected = False
     try:
-        pool = await try_get_extraction_pool()
-        if pool:
-            redis_connected = True
-            await pool.ping()
+        from app.core.redis_support import redis_health
+
+        health = await redis_health()
+        redis_connected = bool(health.get("ok"))
     except Exception:
-        pass
+        redis_connected = False
 
     browser_available = 0
     try:
@@ -1029,8 +1086,6 @@ def _build_response(extraction) -> ExtractionResponse:
             responsibilities=extraction.responsibilities or [],
             requirements=extraction.requirements or [],
             benefits=extraction.benefits or [],
-            posted_date=extraction.posted_date,
-            application_deadline=extraction.application_deadline,
             remote_policy=extraction.remote_policy,
             work_mode=extraction.work_mode,
             experience_level=extraction.experience_level,
@@ -1344,7 +1399,7 @@ async def extract_job_urls_from_attachments(
     return AttachmentExtractUrlsResponse(urls=urls, files_processed=len(parts), warnings=warnings)
 
 
-DASHBOARD_VIEWS = {"all", "today", "mine", "suggested"}
+DASHBOARD_VIEWS = {"all", "today", "mine", "suggested", "applied_today"}
 
 
 def _dashboard_view_clauses(
@@ -1360,10 +1415,11 @@ def _dashboard_view_clauses(
     the ``JobMatchResult`` outer-join must be present for the clauses to resolve.
 
     Views:
-      * ``all``        - every visible job (scraped, others', and mine).
-      * ``today``      - jobs created during the current calendar day (user tz).
-      * ``mine``       - jobs I added via submission/attachment (manual, in my pool).
-      * ``suggested``  - analysed jobs scoring at/above my effective minimum.
+      * ``all``           - every visible job (scraped, others', and mine).
+      * ``today``         - jobs created during the current calendar day (user tz).
+      * ``mine``          - jobs I added via submission/attachment (manual, in my pool).
+      * ``suggested``     - analysed jobs scoring at/above my effective minimum.
+      * ``applied_today`` - jobs I marked applied during the current calendar day.
     """
     clauses: list = []
     needs_match_join = False
@@ -1386,6 +1442,11 @@ def _dashboard_view_clauses(
         needs_match_join = True
         clauses.append(JobMatchResult.overall_score.isnot(None))
         clauses.append(JobMatchResult.overall_score >= min_score)
+    elif view == "applied_today":
+        if day_start is not None and day_end is not None:
+            clauses.append(ValidJobUserApplication.applied_at.isnot(None))
+            clauses.append(ValidJobUserApplication.applied_at >= day_start)
+            clauses.append(ValidJobUserApplication.applied_at < day_end)
 
     return clauses, needs_match_join
 
@@ -1462,8 +1523,9 @@ async def get_dashboard_jobs(
     """Paginated list of processed jobs from the jobs table, with per-user status.
 
     The ``view`` tab narrows the result set: ``all`` (default), ``today`` (added
-    today in the caller's ``timezone``), ``mine`` (jobs I submitted), or
-    ``suggested`` (jobs analysed at/above my effective minimum match score).
+    today in the caller's ``timezone``), ``mine`` (jobs I submitted),
+    ``suggested`` (jobs analysed at/above my effective minimum match score), or
+    ``applied_today`` (jobs I marked applied today in the caller's ``timezone``).
     """
     user_id = current_user.get("user_id")
     if not user_id:
@@ -1473,7 +1535,7 @@ async def get_dashboard_jobs(
         view = "all"
 
     day_start = day_end = None
-    if view == "today":
+    if view in ("today", "applied_today"):
         day_start, day_end = day_bounds_for_timezone(timezone)
 
     SORT_COLUMNS = {
@@ -1483,6 +1545,7 @@ async def get_dashboard_jobs(
         "posted_date": Job.posted_date,
         "updated_at": Job.updated_at,
         "match_score": JobMatchResult.overall_score,
+        "applied_at": ValidJobUserApplication.applied_at,
     }
     sort_col = SORT_COLUMNS.get(sort, Job.created_at)
     if order == "asc":
@@ -1532,6 +1595,12 @@ async def get_dashboard_jobs(
                 JobMatchResult,
                 (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
             )
+        if view == "applied_today":
+            count_stmt = count_stmt.outerjoin(
+                ValidJobUserApplication,
+                (ValidJobUserApplication.job_id == Job.id)
+                & (ValidJobUserApplication.user_id == user_id),
+            )
         count_stmt = count_stmt.where(*base_filter)
         total = (await session.execute(count_stmt)).scalar() or 0
 
@@ -1548,6 +1617,7 @@ async def get_dashboard_jobs(
                 JobExtraction.remote_policy,
                 JobMatchResult.overall_score,
                 JobMatchInProgress.id.label("match_progress_id"),
+                ResumeBuildResult.id.label("rb_id"),
                 ResumeBuildResult.resume_docx_status,
                 ResumeBuildResult.content_generation_status,
                 ResumeBuildResult.resume_pdf_status,
@@ -1591,7 +1661,7 @@ async def get_dashboard_jobs(
         items = []
         for (
             job, ext_status, is_job_posting, ext_salary_range, ext_work_mode, ext_remote_policy, match_score,
-            match_progress_id, rb_docx_status, cg_status,
+            match_progress_id, rb_id, rb_docx_status, cg_status,
             rb_pdf_status, rb_pdf_path, cl_pdf_status, cl_pdf_path,
             applied_at, applied_by_name, ujs_status,
         ) in rows:
@@ -1624,6 +1694,7 @@ async def get_dashboard_jobs(
                     match_in_progress=bool(match_progress_id and match_score is None),
                     resume_build_status=rb_docx_status,
                     content_generation_status=cg_status,
+                    resume_build_id=rb_id,
                     resume_pdf_status=rb_pdf_status,
                     resume_pdf_path=rb_pdf_path,
                     cover_letter_pdf_status=cl_pdf_status,
@@ -1638,6 +1709,7 @@ async def get_dashboard_jobs(
                     work_mode=work_mode,
                     salary_raw=ext_salary_range or meta.get("salary_raw"),
                     job_type=meta.get("job_type"),
+                    from_me=bool(meta.get("submitted_data")),
                 )
             )
 
@@ -1656,6 +1728,7 @@ class DashboardCountsResponse(BaseModel):
     today: int
     mine: int
     suggested: int
+    applied_today: int = 0
 
 
 @router.get(
@@ -1713,6 +1786,12 @@ async def get_dashboard_counts(
                     JobMatchResult,
                     (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
                 )
+            if view == "applied_today":
+                stmt = stmt.outerjoin(
+                    ValidJobUserApplication,
+                    (ValidJobUserApplication.job_id == Job.id)
+                    & (ValidJobUserApplication.user_id == user_id),
+                )
             stmt = stmt.where(*shared_filter, *view_clauses, *score_clauses)
             return (await session.execute(stmt)).scalar() or 0
 
@@ -1721,7 +1800,60 @@ async def get_dashboard_counts(
             today=await _count("today"),
             mine=await _count("mine"),
             suggested=await _count("suggested"),
+            applied_today=await _count("applied_today"),
         )
+
+
+class WeeklyProgressDay(BaseModel):
+    date: str
+    label: str
+    posted: int
+    recommended: int
+    applied: int
+
+
+class WeeklyProgressTotals(BaseModel):
+    posted: int
+    recommended: int
+    applied: int
+
+
+class WeeklyProgressResponse(BaseModel):
+    timezone: str
+    days: int
+    min_match_score: int
+    series: list[WeeklyProgressDay]
+    totals: WeeklyProgressTotals
+
+
+@router.get(
+    "/jobs/dashboard/weekly-progress",
+    response_model=WeeklyProgressResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_weekly_progress(
+    timezone: str | None = Query(None),
+    days: int = Query(7, ge=1, le=31),
+    current_user: dict = Depends(get_current_user),
+) -> WeeklyProgressResponse:
+    """Last-N-days chart: posted / recommended (Preferences min score) / applied.
+
+    Supports day (1), week (7), and month (~30) windows for the extension stats page.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    from app.services.weekly_progress import fetch_weekly_progress_series
+
+    try:
+        async with get_session() as session:
+            payload = await fetch_weekly_progress_series(
+                session, user_id, tz_name=timezone, days=days
+            )
+        return WeeklyProgressResponse(**payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/jobs/valid", response_model=list[JobResponse], dependencies=[Depends(get_current_user)])
@@ -1786,14 +1918,12 @@ async def get_valid_jobs(
                 posted_date=job.posted_date,
                 experience_level=job.experience_level,
                 industry=job.industry,
-                similarity_hash=job.similarity_hash,
                 scraped_at=job.scraped_at,
                 extraction_id=job.extraction_id,
                 extraction_status=ext_status.value if ext_status else None,
                 is_job_posting=is_job_posting,
                 match_overall_score=match_score,
                 match_status="processing" if (match_progress_id and match_score is None) else None,
-                click_count=getattr(job, "click_count", 0) or 0,
                 applied_at=applied_at,
                 applied_by_name=applied_by_name,
                 sheet_posted_at=job.sheet_posted_at,
@@ -1837,6 +1967,8 @@ async def ai_search_valid_jobs(
 
 @router.get("/jobs/valid/{job_id}", response_model=JobResponse, dependencies=[Depends(get_current_user)])
 async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_user)) -> JobResponse:
+    from sqlalchemy.orm import undefer
+
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -1849,6 +1981,7 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
                 ValidJobUserApplication.applied_at,
                 ValidJobUserApplication.applied_by_name,
             )
+            .options(undefer(Job.description))
             .select_from(Job)
             .join(
                 UserJobStatus,
@@ -1882,12 +2015,10 @@ async def get_valid_job(job_id: str, current_user: dict = Depends(get_current_us
             posted_date=job.posted_date,
             experience_level=job.experience_level,
             industry=job.industry,
-            similarity_hash=job.similarity_hash,
             scraped_at=job.scraped_at,
             extraction_id=job.extraction_id,
             extraction_status=ext_status.value if ext_status else None,
             is_job_posting=is_job_posting,
-            click_count=getattr(job, "click_count", 0) or 0,
             applied_at=applied_at,
             applied_by_name=applied_by_name,
             sheet_posted_at=job.sheet_posted_at,
@@ -1941,27 +2072,6 @@ async def mark_valid_jobs_unapplied_batch(
         n = await app_repo.delete_batch(user_id, body.job_ids)
         await session.commit()
     return {"cleared": n}
-
-
-@router.post("/jobs/valid/{job_id}/click", response_model=dict)
-async def record_job_click(
-    job_id: str,
-    current_user: dict = Depends(get_current_user),
-):
-    """Record a click on a job URL. Returns updated click_count."""
-    async with get_session() as session:
-        r = await session.execute(
-            select(Job).where(Job.id == job_id, Job.status == "active")
-        )
-        job = r.scalar_one_or_none()
-        if not job:
-            raise HTTPException(status_code=404, detail="Valid job not found")
-        new_count = (getattr(job, "click_count", 0) or 0) + 1
-        await session.execute(
-            sa_update(Job).where(Job.id == job_id).values(click_count=new_count)
-        )
-        await session.commit()
-    return {"click_count": new_count}
 
 
 @router.get("/jobs/valid/{job_id}/match", response_model=JobMatchResponse, dependencies=[Depends(get_current_user)])
@@ -2049,8 +2159,7 @@ async def get_job_analysis_panel(
                         responsibilities=extraction.responsibilities or [],
                         requirements=extraction.requirements or [],
                         benefits=extraction.benefits or [],
-                        posted_date=extraction.posted_date,
-                        application_deadline=extraction.application_deadline,
+                        posted_date=job.posted_date,
                         remote_policy=extraction.remote_policy,
                         work_mode=extraction.work_mode,
                         experience_level=extraction.experience_level,
@@ -2279,18 +2388,47 @@ async def rerun_job_match_batch(
     enqueued_ids: list[str] = []
     skipped: list[dict[str, str]] = []
 
-    for job_id in unique_ids:
-        async with get_session() as session:
-            progress_repo = JobMatchInProgressRepository(session)
-            match_repo = JobMatchRepository(session)
-            in_prog = await session.execute(
-                select(JobMatchInProgress).where(
-                    JobMatchInProgress.job_id == job_id,
-                    JobMatchInProgress.user_id == user_id,
-                )
+    async with get_session() as session:
+        progress_repo = JobMatchInProgressRepository(session)
+        match_repo = JobMatchRepository(session)
+        extraction_repo = JobExtractionRepository(session)
+
+        in_prog_rows = await session.execute(
+            select(JobMatchInProgress.job_id).where(
+                JobMatchInProgress.user_id == user_id,
+                JobMatchInProgress.job_id.in_(unique_ids),
             )
-            if in_prog.scalar_one_or_none():
+        )
+        already_in_progress = {row[0] for row in in_prog_rows.all()}
+
+        job_rows = await session.execute(
+            select(Job).where(Job.id.in_(unique_ids), Job.status == "active")
+        )
+        jobs_by_id = {j.id: j for j in job_rows.scalars().all()}
+
+        extraction_ids = [
+            j.extraction_id for j in jobs_by_id.values() if j.extraction_id
+        ]
+        extractions_by_id: dict[str, JobExtraction] = {}
+        if extraction_ids:
+            ext_rows = await session.execute(
+                select(JobExtraction).where(JobExtraction.id.in_(extraction_ids))
+            )
+            extractions_by_id = {e.id: e for e in ext_rows.scalars().all()}
+
+        for job_id in unique_ids:
+            if job_id in already_in_progress:
                 skipped.append({"id": job_id, "reason": "already_in_progress"})
+                continue
+
+            job = jobs_by_id.get(job_id)
+            if not job or not job.extraction_id:
+                skipped.append({"id": job_id, "reason": "no_extraction"})
+                continue
+
+            extraction = extractions_by_id.get(job.extraction_id)
+            if not extraction or extraction.status != ExtractionStatus.COMPLETED:
+                skipped.append({"id": job_id, "reason": "extraction_not_ready"})
                 continue
 
             await match_repo.delete(job_id, user_id)
@@ -2301,22 +2439,10 @@ async def rerun_job_match_batch(
                 ),
                 {"job_id": job_id, "uid": user_id},
             )
-
-            r = await session.execute(select(Job).where(Job.id == job_id, Job.status == "active"))
-            job = r.scalar_one_or_none()
-            if not job or not job.extraction_id:
-                skipped.append({"id": job_id, "reason": "no_extraction"})
-                continue
-
-            extraction_repo = JobExtractionRepository(session)
-            extraction = await extraction_repo.get_by_id(job.extraction_id)
-            if not extraction or extraction.status != ExtractionStatus.COMPLETED:
-                skipped.append({"id": job_id, "reason": "extraction_not_ready"})
-                continue
-
             await progress_repo.add(job_id, user_id)
-            await session.commit()
             enqueued_ids.append(job_id)
+
+        await session.commit()
 
     if not enqueued_ids:
         return {
@@ -2330,10 +2456,20 @@ async def rerun_job_match_batch(
     ids_for_in_process: list[str] = list(enqueued_ids)
     pool = await try_get_analysis_pool()
     if pool:
+        from app.core.redis_support import pipeline_job_id
+        import uuid
+
         redis_failed: list[str] = []
         for jid in enqueued_ids:
             try:
-                await pool.enqueue_job("analyze_job_match", jid, user_id)
+                await pool.enqueue_job(
+                    "analyze_job_match",
+                    jid,
+                    user_id,
+                    _job_id=pipeline_job_id(
+                        "analyze", jid, user_id, uuid.uuid4().hex[:10]
+                    ),
+                )
             except Exception as e:
                 logger.warning(
                     "job_match_rerun_redis_enqueue_failed",
@@ -2356,7 +2492,9 @@ async def rerun_job_match_batch(
         )
         ids_for_in_process = redis_failed
 
-    if background_tasks:
+    from app.core.redis_support import allow_in_process_job_fallback
+
+    if allow_in_process_job_fallback() and background_tasks:
         background_tasks.add_task(_fallback_match_batch_parallel, user_id, ids_for_in_process)
         logger.info(
             "job_match_rerun_batch_in_process",
@@ -2484,9 +2622,12 @@ async def get_duplicated_jobs(
 
     from app.services.job_exclusion_types import sql_filter_for_invalid_category
 
+    from sqlalchemy.orm import undefer
+
     async with get_session() as session:
         stmt = (
             select(UserJobStatus, Job, JobExtraction)
+            .options(undefer(Job.description))
             .join(Job, UserJobStatus.job_id == Job.id)
             .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
             .where(UserJobStatus.user_id == user_id)
@@ -2602,9 +2743,12 @@ async def get_invalid_job(
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from sqlalchemy.orm import undefer
+
     async with get_session() as session:
         stmt = (
             select(UserJobStatus, Job, JobExtraction)
+            .options(undefer(Job.description))
             .join(Job, UserJobStatus.job_id == Job.id)
             .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
             .where(UserJobStatus.id == job_id)
@@ -3412,6 +3556,15 @@ class ResumeLibraryCreateRequest(BaseModel):
     activate: bool = True
 
 
+class ResumeFromAiContentRequest(BaseModel):
+    """Persist OneClick / extension AI-tailored sections into the library."""
+
+    content: dict
+    job_title: str | None = None
+    company: str | None = None
+    activate: bool = True
+
+
 class ResumeLibraryUpdateRequest(BaseModel):
     name: str | None = None
     status: str | None = None  # draft | completed
@@ -3486,6 +3639,33 @@ async def open_job_build_resume(
     except Exception as e:
         logger.exception("resume_from_job_build_failed", user_id=user_id, build_id=build_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to open job resume.")
+
+
+@router.post(
+    "/resume-builder/resumes/from-ai-content",
+    dependencies=[Depends(get_current_user)],
+)
+async def save_ai_tailored_resume(
+    body: ResumeFromAiContentRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Save OneClick / extension AI-tailored content into the resume library."""
+    from app.services.resume_design_service import save_ai_tailored_as_library_resume
+
+    user_id = _require_user_id(current_user)
+    try:
+        return await save_ai_tailored_as_library_resume(
+            user_id,
+            content=body.content,
+            job_title=body.job_title,
+            company=body.company,
+            activate=body.activate,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("resume_from_ai_content_failed", user_id=user_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to save tailored resume.")
 
 
 @router.post("/resume-builder/resumes", dependencies=[Depends(get_current_user)])
@@ -4261,7 +4441,7 @@ async def trigger_resume_build(
     if not enqueued:
         raise HTTPException(
             status_code=503,
-            detail="Could not queue tailored content generation. Ensure Redis and analysis worker are running.",
+            detail="Could not queue tailored content generation. Ensure Redis and the tailoring worker are running.",
         )
     return {"success": True, "message": "Tailored content generation enqueued"}
 

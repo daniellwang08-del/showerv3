@@ -1,5 +1,6 @@
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from app.models.database import ResumeDocument
 
@@ -17,6 +18,18 @@ class ResumeDocumentRepository:
         self.session = session
 
     async def list_for_user(self, user_id: str) -> list[ResumeDocument]:
+        """Full library rows including design (builder list)."""
+        stmt = (
+            select(ResumeDocument)
+            .options(undefer(ResumeDocument.design))
+            .where(ResumeDocument.user_id == user_id)
+            .order_by(ResumeDocument.updated_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_metadata_for_user(self, user_id: str) -> list[ResumeDocument]:
+        """Metadata only — design stays deferred (search / key collection)."""
         stmt = (
             select(ResumeDocument)
             .where(ResumeDocument.user_id == user_id)
@@ -37,12 +50,12 @@ class ResumeDocumentRepository:
 
         Matching is case-insensitive substring (ILIKE). When both terms are
         provided, rows must match **both** (AND). Empty terms are ignored; if
-        both are empty, returns an empty list.
+        both are empty, returns the most recently updated resumes (browse mode).
+        Design JSON is not loaded.
         """
         company_q = (company or "").strip()
         role_q = (job_title or "").strip()
-        if not company_q and not role_q:
-            return []
+        capped = max(1, min(limit, 200))
 
         groups = []
         if company_q:
@@ -63,23 +76,36 @@ class ResumeDocumentRepository:
                 )
             )
 
+        where = [ResumeDocument.user_id == user_id]
+        if groups:
+            where.append(and_(*groups))
+
         stmt = (
             select(ResumeDocument)
-            .where(ResumeDocument.user_id == user_id, and_(*groups))
+            .where(*where)
             .order_by(ResumeDocument.updated_at.desc())
-            .limit(max(1, min(limit, 200)))
+            .limit(capped)
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def count_for_user(self, user_id: str) -> int:
-        rows = await self.list_for_user(user_id)
-        return len(rows)
+        from sqlalchemy import func
+
+        stmt = select(func.count()).select_from(ResumeDocument).where(
+            ResumeDocument.user_id == user_id
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one() or 0)
 
     async def get_by_id(self, resume_id: str, user_id: str) -> ResumeDocument | None:
-        stmt = select(ResumeDocument).where(
-            ResumeDocument.id == resume_id,
-            ResumeDocument.user_id == user_id,
+        stmt = (
+            select(ResumeDocument)
+            .options(undefer(ResumeDocument.design))
+            .where(
+                ResumeDocument.id == resume_id,
+                ResumeDocument.user_id == user_id,
+            )
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()

@@ -118,12 +118,55 @@ def _profile_work_rows(user: User) -> list[dict[str, Any]]:
     return rows
 
 
+def _norm_company(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _match_tailored_work_row(
+    tailored_rows: list[dict],
+    *,
+    company: str,
+    title: str,
+    used: set[int],
+) -> dict:
+    """Prefer company+title, then company-only, then first unused row (order fallback)."""
+    company_l = _norm_company(company)
+    title_l = str(title or "").strip().lower()
+    if company_l:
+        for i, row in enumerate(tailored_rows):
+            if i in used or not isinstance(row, dict):
+                continue
+            if _norm_company(row.get("company_name")) != company_l:
+                continue
+            if title_l and str(row.get("job_title") or "").strip().lower() == title_l:
+                used.add(i)
+                return row
+        for i, row in enumerate(tailored_rows):
+            if i in used or not isinstance(row, dict):
+                continue
+            if _norm_company(row.get("company_name")) == company_l:
+                used.add(i)
+                return row
+    for i, row in enumerate(tailored_rows):
+        if i in used or not isinstance(row, dict):
+            continue
+        used.add(i)
+        return row
+    return {}
+
+
 def _merge_tailored_work_experience(profile_rows: list[dict], tailored_rows: list[dict]) -> list[dict[str, Any]]:
+    """Merge profile factual fields with tailored narrative, matching by company (not index)."""
+    safe_tailored = [r for r in (tailored_rows or []) if isinstance(r, dict)]
+    used: set[int] = set()
     merged: list[dict[str, Any]] = []
-    for idx, profile_row in enumerate(profile_rows):
-        tailored = tailored_rows[idx] if idx < len(tailored_rows) else {}
-        if not isinstance(tailored, dict):
-            tailored = {}
+    for profile_row in profile_rows:
+        tailored = _match_tailored_work_row(
+            safe_tailored,
+            company=str(profile_row.get("company_name") or ""),
+            title=str(profile_row.get("job_title") or ""),
+            used=used,
+        )
         bullets = []
         for b in tailored.get("bullets") or []:
             if isinstance(b, str) and b.strip():

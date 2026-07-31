@@ -6,10 +6,16 @@ tailored_resume_data and cover_letter_data on a ResumeBuildResult row.
 Every résumé and cover letter is rendered from the user's Resume Builder design
 (``ResumeDesign``); users who never opened the builder fall back to the default theme.
 There is no uploaded-.docx-template path anymore.
+
+DOCX fills run in parallel (resume + cover letter), then PDF conversions
+``asyncio.gather`` — both are CPU/IO bound and independent once inputs are loaded.
 """
+
+from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 
@@ -49,6 +55,93 @@ async def _fail_file(
     file_type: str,
     error: str,
 ) -> None:
+    await repo.update_file_status(build_id, file_type, "failed", error=error)
+    await publish_resume_event({
+        "type": "resume_file_failed",
+        "user_id": user_id,
+        "job_id": job_id,
+        "file_type": file_type,
+        "error": error,
+    })
+
+
+def _sync_build_resume_docx(
+    *,
+    design: Any,
+    user: Any,
+    user_id: str,
+    render_context: dict,
+    out_path: Path,
+) -> Path:
+    resume_template = user_template_dir(user_id) / "working_template.docx"
+    _tags, blueprint = compile_design(design, user, resume_template)
+    return fill_user_resume_template(
+        resume_template,
+        blueprint,
+        render_context,
+        out_path,
+    )
+
+
+def _sync_build_cover_letter_docx(
+    *,
+    design: Any,
+    user: Any,
+    user_id: str,
+    body: str,
+    out_path: Path,
+) -> Path:
+    cl_template = user_cover_letter_template_dir(user_id) / "working.docx"
+    compile_cover_letter_design(design, user, cl_template)
+    return fill_cover_letter_template(cl_template, out_path, body)
+
+
+async def _mark_processing(
+    repo: ResumeBuildRepository,
+    build_id: str,
+    *,
+    user_id: str,
+    job_id: str,
+    file_type: str,
+) -> None:
+    await repo.update_file_status(build_id, file_type, "processing")
+    await publish_resume_event({
+        "type": "resume_file_processing",
+        "user_id": user_id,
+        "job_id": job_id,
+        "file_type": file_type,
+    })
+
+
+async def _mark_completed(
+    repo: ResumeBuildRepository,
+    build_id: str,
+    *,
+    user_id: str,
+    job_id: str,
+    file_type: str,
+    path: str,
+) -> None:
+    await repo.update_file_status(build_id, file_type, "completed", path=path)
+    await publish_resume_event({
+        "type": "resume_file_ready",
+        "user_id": user_id,
+        "job_id": job_id,
+        "file_type": file_type,
+    })
+
+
+async def _mark_failed(
+    repo: ResumeBuildRepository,
+    build_id: str,
+    *,
+    user_id: str,
+    job_id: str,
+    file_type: str,
+    error: str,
+    log_event: str,
+) -> None:
+    logger.error(log_event, error=error)
     await repo.update_file_status(build_id, file_type, "failed", error=error)
     await publish_resume_event({
         "type": "resume_file_failed",
@@ -111,161 +204,144 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
 
             results: dict[str, str | None] = {}
             render_context = build_render_context(user, tailored, job)
+            build_id = build.id
+            has_cover_body = bool(cover_data and cover_data.get("body"))
 
-            # --- Resume DOCX ---
-            try:
-                await repo.update_file_status(build.id, "resume_docx", "processing")
-                await publish_resume_event({
-                    "type": "resume_file_processing",
-                    "user_id": user_id,
-                    "job_id": job_id,
-                    "file_type": "resume_docx",
-                })
-
-                # Compile the working template from the design on every build so the
-                # rendered résumé always reflects the current design AND compiler logic.
-                resume_template = user_template_dir(user_id) / "working_template.docx"
-                _tags, blueprint = compile_design(design, user, resume_template)
-
-                docx_path = fill_user_resume_template(
-                    resume_template,
-                    blueprint,
-                    render_context,
-                    out_dir / resume_docx_name,
+            # --- Parallel DOCX fills (independent template dirs) ---
+            await _mark_processing(
+                repo, build_id, user_id=user_id, job_id=job_id, file_type="resume_docx",
+            )
+            if has_cover_body:
+                await _mark_processing(
+                    repo, build_id, user_id=user_id, job_id=job_id, file_type="cover_letter_docx",
                 )
-                await repo.update_file_status(build.id, "resume_docx", "completed", path=str(docx_path))
-                results["resume_docx"] = str(docx_path)
-                await publish_resume_event({
-                    "type": "resume_file_ready",
-                    "user_id": user_id,
-                    "job_id": job_id,
-                    "file_type": "resume_docx",
-                })
-            except Exception as e:
-                logger.error("resume_docx_build_failed", error=str(e))
-                await repo.update_file_status(build.id, "resume_docx", "failed", error=str(e))
-                await publish_resume_event({
-                    "type": "resume_file_failed",
-                    "user_id": user_id,
-                    "job_id": job_id,
-                    "file_type": "resume_docx",
-                    "error": str(e),
-                })
-
-            # --- Resume PDF ---
-            if results.get("resume_docx"):
-                try:
-                    await repo.update_file_status(build.id, "resume_pdf", "processing")
-                    await publish_resume_event({
-                        "type": "resume_file_processing",
-                        "user_id": user_id,
-                        "job_id": job_id,
-                        "file_type": "resume_pdf",
-                    })
-
-                    pdf_path = await asyncio.to_thread(
-                        convert_docx_to_pdf, Path(results["resume_docx"]), out_dir / resume_pdf_name
-                    )
-                    await repo.update_file_status(build.id, "resume_pdf", "completed", path=str(pdf_path))
-                    results["resume_pdf"] = str(pdf_path)
-                    await publish_resume_event({
-                        "type": "resume_file_ready",
-                        "user_id": user_id,
-                        "job_id": job_id,
-                        "file_type": "resume_pdf",
-                    })
-                except Exception as e:
-                    logger.error("resume_pdf_conversion_failed", error=str(e))
-                    await repo.update_file_status(build.id, "resume_pdf", "failed", error=str(e))
-                    await publish_resume_event({
-                        "type": "resume_file_failed",
-                        "user_id": user_id,
-                        "job_id": job_id,
-                        "file_type": "resume_pdf",
-                        "error": str(e),
-                    })
-
-            # --- Cover Letter DOCX ---
-            if not cover_data or not cover_data.get("body"):
+            else:
                 logger.warning("cover_letter_build_no_content", user_id=user_id, job_id=job_id)
                 for ft in ("cover_letter_docx", "cover_letter_pdf"):
                     await _fail_file(
                         repo,
-                        build.id,
+                        build_id,
                         user_id=user_id,
                         job_id=job_id,
                         file_type=ft,
                         error=COVER_LETTER_CONTENT_MISSING_MSG,
                     )
-            else:
+
+            cover_body = cover_data["body"] if has_cover_body else ""
+
+            async def _resume_docx_task() -> tuple[str, Path | None, str | None]:
                 try:
-                    await repo.update_file_status(build.id, "cover_letter_docx", "processing")
-                    await publish_resume_event({
-                        "type": "resume_file_processing",
-                        "user_id": user_id,
-                        "job_id": job_id,
-                        "file_type": "cover_letter_docx",
-                    })
-
-                    # Compile the cover letter template from the same design on every build.
-                    cl_template = user_cover_letter_template_dir(user_id) / "working.docx"
-                    compile_cover_letter_design(design, user, cl_template)
-
-                    cl_docx = fill_cover_letter_template(
-                        cl_template,
-                        out_dir / cl_docx_name,
-                        cover_data["body"],
+                    path = await asyncio.to_thread(
+                        _sync_build_resume_docx,
+                        design=design,
+                        user=user,
+                        user_id=user_id,
+                        render_context=render_context,
+                        out_path=out_dir / resume_docx_name,
                     )
-                    await repo.update_file_status(build.id, "cover_letter_docx", "completed", path=str(cl_docx))
-                    results["cover_letter_docx"] = str(cl_docx)
-                    await publish_resume_event({
-                        "type": "resume_file_ready",
-                        "user_id": user_id,
-                        "job_id": job_id,
-                        "file_type": "cover_letter_docx",
-                    })
+                    return ("resume_docx", path, None)
                 except Exception as e:
-                    logger.error("cover_letter_docx_build_failed", error=str(e))
-                    await repo.update_file_status(build.id, "cover_letter_docx", "failed", error=str(e))
-                    await publish_resume_event({
-                        "type": "resume_file_failed",
-                        "user_id": user_id,
-                        "job_id": job_id,
-                        "file_type": "cover_letter_docx",
-                        "error": str(e),
-                    })
+                    return ("resume_docx", None, str(e))
 
-                if results.get("cover_letter_docx"):
+            async def _cover_docx_task() -> tuple[str, Path | None, str | None]:
+                try:
+                    path = await asyncio.to_thread(
+                        _sync_build_cover_letter_docx,
+                        design=design,
+                        user=user,
+                        user_id=user_id,
+                        body=cover_body,
+                        out_path=out_dir / cl_docx_name,
+                    )
+                    return ("cover_letter_docx", path, None)
+                except Exception as e:
+                    return ("cover_letter_docx", None, str(e))
+
+            docx_tasks = [_resume_docx_task()]
+            if has_cover_body:
+                docx_tasks.append(_cover_docx_task())
+
+            for file_type, path, err in await asyncio.gather(*docx_tasks):
+                if path is not None:
+                    results[file_type] = str(path)
+                    await _mark_completed(
+                        repo,
+                        build_id,
+                        user_id=user_id,
+                        job_id=job_id,
+                        file_type=file_type,
+                        path=str(path),
+                    )
+                else:
+                    await _mark_failed(
+                        repo,
+                        build_id,
+                        user_id=user_id,
+                        job_id=job_id,
+                        file_type=file_type,
+                        error=err or "unknown error",
+                        log_event=f"{file_type}_build_failed",
+                    )
+
+            # --- Parallel PDF conversions (dxpdf is process-safe / no shared binary) ---
+            pdf_jobs: list[tuple[str, Path, Path]] = []
+            if results.get("resume_docx"):
+                await _mark_processing(
+                    repo, build_id, user_id=user_id, job_id=job_id, file_type="resume_pdf",
+                )
+                pdf_jobs.append((
+                    "resume_pdf",
+                    Path(results["resume_docx"]),
+                    out_dir / resume_pdf_name,
+                ))
+            if results.get("cover_letter_docx"):
+                await _mark_processing(
+                    repo, build_id, user_id=user_id, job_id=job_id, file_type="cover_letter_pdf",
+                )
+                pdf_jobs.append((
+                    "cover_letter_pdf",
+                    Path(results["cover_letter_docx"]),
+                    out_dir / cl_pdf_name,
+                ))
+
+            if pdf_jobs:
+                async def _pdf_task(
+                    file_type: str, docx_path: Path, pdf_path: Path,
+                ) -> tuple[str, Path | None, str | None]:
                     try:
-                        await repo.update_file_status(build.id, "cover_letter_pdf", "processing")
-                        await publish_resume_event({
-                            "type": "resume_file_processing",
-                            "user_id": user_id,
-                            "job_id": job_id,
-                            "file_type": "cover_letter_pdf",
-                        })
-
-                        cl_pdf = await asyncio.to_thread(
-                            convert_docx_to_pdf, Path(results["cover_letter_docx"]), out_dir / cl_pdf_name
-                        )
-                        await repo.update_file_status(build.id, "cover_letter_pdf", "completed", path=str(cl_pdf))
-                        results["cover_letter_pdf"] = str(cl_pdf)
-                        await publish_resume_event({
-                            "type": "resume_file_ready",
-                            "user_id": user_id,
-                            "job_id": job_id,
-                            "file_type": "cover_letter_pdf",
-                        })
+                        out = await asyncio.to_thread(convert_docx_to_pdf, docx_path, pdf_path)
+                        return (file_type, out, None)
                     except Exception as e:
-                        logger.error("cover_letter_pdf_conversion_failed", error=str(e))
-                        await repo.update_file_status(build.id, "cover_letter_pdf", "failed", error=str(e))
-                        await publish_resume_event({
-                            "type": "resume_file_failed",
-                            "user_id": user_id,
-                            "job_id": job_id,
-                            "file_type": "cover_letter_pdf",
-                            "error": str(e),
-                        })
+                        return (file_type, None, str(e))
+
+                for file_type, path, err in await asyncio.gather(
+                    *[_pdf_task(ft, src, dst) for ft, src, dst in pdf_jobs]
+                ):
+                    if path is not None:
+                        results[file_type] = str(path)
+                        await _mark_completed(
+                            repo,
+                            build_id,
+                            user_id=user_id,
+                            job_id=job_id,
+                            file_type=file_type,
+                            path=str(path),
+                        )
+                    else:
+                        log_event = (
+                            "resume_pdf_conversion_failed"
+                            if file_type == "resume_pdf"
+                            else "cover_letter_pdf_conversion_failed"
+                        )
+                        await _mark_failed(
+                            repo,
+                            build_id,
+                            user_id=user_id,
+                            job_id=job_id,
+                            file_type=file_type,
+                            error=err or "unknown error",
+                            log_event=log_event,
+                        )
 
             await session.commit()
             logger.info("resume_build_completed", job_id=job_id, files=list(results.keys()))

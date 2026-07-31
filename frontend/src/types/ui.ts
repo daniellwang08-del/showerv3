@@ -22,7 +22,6 @@ export type SubmittedUrlItem = {
   is_job_posting?: boolean | null;
   match_overall_score?: number | null;
   match_status?: string | null;
-  click_count?: number;
   appliedAt?: number;
   /** Full name stored when marked applied (server: profile name → account name → email). */
   appliedBy?: string;

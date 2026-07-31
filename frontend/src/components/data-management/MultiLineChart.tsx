@@ -21,6 +21,10 @@ interface MultiLineChartProps {
   xKey: string;
   series: MultiLineSeriesDef[];
   height?: number;
+  /** Optional X tick formatter. Defaults to M/D for ISO dates. */
+  formatXTick?: (value: string) => string;
+  /** Y-axis unit suffix shown in empty state only; axis stays numeric. */
+  yAllowDecimals?: boolean;
 }
 
 const PALETTE = [
@@ -53,6 +57,8 @@ export function MultiLineChart({
   xKey,
   series,
   height = 300,
+  formatXTick = formatDayLabel,
+  yAllowDecimals = false,
 }: MultiLineChartProps) {
   const { dark, gridStroke, tickFill, legendColor } = useChartTooltipStyles();
 
@@ -68,24 +74,24 @@ export function MultiLineChart({
   }
 
   return (
-    <div style={{ width: '100%', height }}>
+    <div className="relative z-10 overflow-hidden" style={{ width: '100%', height }}>
       <ResponsiveContainer>
         <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
           <XAxis
             dataKey={xKey}
-            tickFormatter={formatDayLabel}
+            tickFormatter={formatXTick}
             tick={{ fontSize: 11, fill: tickFill }}
             interval="preserveStartEnd"
             minTickGap={24}
           />
-          <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: tickFill }} width={36} />
-          <Tooltip
-            cursor={{ stroke: dark ? '#64748b' : '#94a3b8', strokeWidth: 1 }}
-            content={<ChartTooltipContent />}
+          <YAxis
+            allowDecimals={yAllowDecimals}
+            tick={{ fontSize: 11, fill: tickFill }}
+            width={48}
           />
           <Legend
-            wrapperStyle={{ fontSize: 12, color: legendColor }}
+            wrapperStyle={{ fontSize: 12, color: legendColor, position: 'relative', zIndex: 1 }}
             formatter={(value, entry) => {
               const color =
                 typeof entry.color === 'string'
@@ -96,6 +102,15 @@ export function MultiLineChart({
               return <span style={{ color, fontWeight: 600 }}>{value}</span>;
             }}
           />
+          <Tooltip
+            cursor={{ stroke: dark ? '#64748b' : '#94a3b8', strokeWidth: 1 }}
+            content={<ChartTooltipContent />}
+            // Keep tooltip inside the chart layer (no document.body portal).
+            // Portaling to body was expanding the page and showing a native scrollbar
+            // on top of the custom .page-scroll-y bar.
+            allowEscapeViewBox={{ x: false, y: false }}
+            wrapperStyle={{ zIndex: 50, outline: 'none', pointerEvents: 'none' }}
+          />
           {series.map((s) => (
             <Line
               key={s.key}
@@ -104,8 +119,9 @@ export function MultiLineChart({
               name={s.label}
               stroke={dark ? brightenForDark(s.color) : s.color}
               strokeWidth={2.25}
-              dot={false}
+              dot={{ r: 3 }}
               activeDot={{ r: 4, stroke: dark ? '#0b1220' : '#fff', strokeWidth: 2 }}
+              connectNulls
             />
           ))}
         </LineChart>

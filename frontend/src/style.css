@@ -40,6 +40,9 @@ html,
 body,
 #root {
   height: 100%;
+  /* App scrolls only inside .page-scroll-y (custom bar). Never show a native
+     document scrollbar — chart tooltips / portals must not grow the page. */
+  overflow: hidden;
 }
 
 body {

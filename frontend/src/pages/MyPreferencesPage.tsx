@@ -32,6 +32,7 @@ import { MarkdownPromptEditor } from '../components/settings/MarkdownPromptEdito
 import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { ProviderKeysCard } from '../components/settings/ProviderKeysCard';
 import { SettingsCard } from '../components/settings/SettingsCard';
+import { prefsSaveBtnClass } from '../components/settings/prefsSaveButtonClass';
 import { EeoPreferencesSection } from '../components/preferences/EeoPreferencesSection';
 import { AddressPreferencesSection } from '../components/preferences/AddressPreferencesSection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
@@ -789,7 +790,7 @@ export function MyPreferencesPage() {
                     type="button"
                     onClick={() => void handleSaveDedup()}
                     disabled={!dedupSaveEnabled || dedupSaving}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`ml-auto ${prefsSaveBtnClass(dedupSaveEnabled)}`}
                   >
                     {dedupSaving ? 'Saving…' : 'Save'}
                   </button>
@@ -844,7 +845,10 @@ export function MyPreferencesPage() {
                     matchPreferencesSaving ||
                     matchPreferences.trim().length > matchPreferencesMaxLength
                   }
-                  className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={`ml-auto ${prefsSaveBtnClass(
+                    matchPreferencesChanged &&
+                      matchPreferences.trim().length <= matchPreferencesMaxLength
+                  )}`}
                 >
                   {matchPreferencesSaving ? 'Saving…' : 'Save preferences'}
                 </button>
@@ -905,7 +909,7 @@ export function MyPreferencesPage() {
                     type="button"
                     onClick={() => void handleSavePrompt()}
                     disabled={!promptSaveEnabled || promptSaving}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`ml-auto ${prefsSaveBtnClass(promptSaveEnabled)}`}
                   >
                     {promptSaving ? 'Saving…' : 'Save'}
                   </button>
@@ -964,7 +968,7 @@ export function MyPreferencesPage() {
                     type="button"
                     onClick={() => void handleSaveCoverPrompt()}
                     disabled={!coverPromptSaveEnabled || coverPromptSaving}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`ml-auto ${prefsSaveBtnClass(coverPromptSaveEnabled)}`}
                   >
                     {coverPromptSaving ? 'Saving…' : 'Save'}
                   </button>

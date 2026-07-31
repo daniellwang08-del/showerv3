@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# Sync / extraction platform list (display + run order).
+# ZipRecruiter spider code remains under spiders/ziprecruiter.py but is
+# intentionally omitted from this list for now.
 ALL_SPIDERS: list[tuple[str, dict[str, str]]] = [
     ("remoterocketship", {
         "pages": "100",
@@ -31,22 +34,22 @@ ALL_SPIDERS: list[tuple[str, dict[str, str]]] = [
         "min_salary": "140000",
         "sort": "DateAdded",
     }),
-    ("welcometothejungle", {"pages": "5"}),
-    ("ziprecruiter", {"query": "software engineer", "pages": "3"}),
-    ("indeed", {"query": "software engineer", "pages": "3"}),
-    ("glassdoor", {"query": "software engineer", "pages": "3"}),
-    ("adzuna", {"pages": "3"}),
     ("jobright", {"pages": "5"}),
+    ("welcometothejungle", {
+        "mode": "remote_us",
+        "pages": "20",
+        "enrich_apply": "true",
+        "lookback_days": "180",
+    }),
+    ("adzuna", {"pages": "3"}),
 ]
 
+# Insertion order must match ALL_SPIDERS (preferences + Sync dropdown).
 SPIDER_META: dict[str, dict] = {
-    "adzuna": {"label": "Adzuna", "requires_auth": False, "auth_platform": None},
     "remoterocketship": {"label": "RemoteRocketship", "requires_auth": True, "auth_platform": "rrs"},
-    "jobright": {"label": "Jobright", "requires_auth": True, "auth_platform": "jobright"},
+    "jobright": {"label": "Jobright.ai", "requires_auth": True, "auth_platform": "jobright"},
     "welcometothejungle": {"label": "Welcome to the Jungle", "requires_auth": False, "auth_platform": None},
-    "ziprecruiter": {"label": "ZipRecruiter", "requires_auth": False, "auth_platform": None},
-    "indeed": {"label": "Indeed", "requires_auth": False, "auth_platform": None},
-    "glassdoor": {"label": "Glassdoor", "requires_auth": False, "auth_platform": None},
+    "adzuna": {"label": "Adzuna", "requires_auth": False, "auth_platform": None},
 }
 
 
@@ -85,7 +88,10 @@ def check_spider_auth(spider_name: str) -> dict:
 def get_available_spiders() -> list[dict]:
     """Return metadata about every registered spider, including live auth status."""
     result = []
-    for name, meta in SPIDER_META.items():
+    for name, _ in ALL_SPIDERS:
+        meta = SPIDER_META.get(name)
+        if not meta:
+            continue
         entry = {"name": name, "label": meta["label"], "requires_auth": meta["requires_auth"]}
         auth = check_spider_auth(name)
         entry["auth_configured"] = auth["auth_configured"]

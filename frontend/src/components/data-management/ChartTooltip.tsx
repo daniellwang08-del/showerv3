@@ -80,7 +80,7 @@ export function ChartTooltipContent({
     labelFormatter != null ? labelFormatter(String(label ?? '')) : String(label ?? '');
 
   return (
-    <div style={contentStyle}>
+    <div style={{ ...contentStyle, position: 'relative', zIndex: 1000 }}>
       <div
         style={{
           color: dark ? '#ffffff' : '#0f172a',

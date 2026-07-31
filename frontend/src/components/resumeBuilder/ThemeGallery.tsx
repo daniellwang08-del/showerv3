@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Heart, Palette, Trash2 } from 'lucide-react';
 import type { ResumeDesign, ThemePreset } from '../../types/resumeDesign';
 import type { UserProfile } from '../../types/profile';
@@ -8,8 +8,6 @@ import { RESUME_REF_WIDTH } from './PagedResumePreview';
 import { effectiveProfile } from '../../utils/resumeContent';
 import { useResumeBuilderStore } from '../../stores/resumeBuilderStore';
 
-const LETTER_RATIO = 11 / 8.5;
-const THUMB_W = 112;
 const PAGE_SIZE = 6;
 
 /** Theme chrome + current resume content for a realistic tile preview. */
@@ -38,22 +36,44 @@ function ThemeThumb({
   design: ResumeDesign;
   profile: UserProfile | null;
 }) {
-  const scale = THUMB_W / RESUME_REF_WIDTH;
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [hostW, setHostW] = useState(0);
+
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const sync = () => {
+      const w = el.clientWidth;
+      if (w > 0) setHostW(w);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Scale the full letter-size preview into the fluid tile width so 2-col
+  // grids never force a fixed 112px min-content wider than the Style sidebar.
+  const scale = hostW > 0 ? hostW / RESUME_REF_WIDTH : 0;
+
   return (
     <div
-      className="relative mx-auto overflow-hidden rounded-md bg-white shadow-sm ring-1 ring-slate-900/10"
-      style={{ width: THUMB_W, height: THUMB_W * LETTER_RATIO }}
+      ref={hostRef}
+      className="relative w-full overflow-hidden rounded-md bg-white shadow-sm ring-1 ring-slate-900/10"
+      style={{ aspectRatio: 8.5 / 11 }}
       aria-hidden
     >
-      <div
-        className="pointer-events-none origin-top-left"
-        style={{
-          width: RESUME_REF_WIDTH,
-          transform: `scale(${scale})`,
-        }}
-      >
-        <ResumePreview design={design} profile={profile} />
-      </div>
+      {scale > 0 && (
+        <div
+          className="pointer-events-none absolute left-0 top-0 origin-top-left"
+          style={{
+            width: RESUME_REF_WIDTH,
+            transform: `scale(${scale})`,
+          }}
+        >
+          <ResumePreview design={design} profile={profile} />
+        </div>
+      )}
     </div>
   );
 }
@@ -86,8 +106,8 @@ export function ThemeGallery({
 
   return (
     <ControlCard icon={Palette} title="Theme">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs text-slate-500">
+      <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-xs text-slate-500">
           {themes.length} theme{themes.length === 1 ? '' : 's'} · Loved first · {PAGE_SIZE}/page
         </p>
         <div className="flex shrink-0 items-center gap-1">
@@ -115,7 +135,7 @@ export function ThemeGallery({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2.5">
+      <div className="grid min-w-0 grid-cols-2 gap-2 sm:gap-2.5">
         {pageThemes.map((theme) => {
           const active = theme.id === design.theme_id;
           const loved = Boolean(theme.is_loved);
@@ -125,7 +145,7 @@ export function ThemeGallery({
           return (
             <div
               key={theme.id}
-              className={`group relative flex flex-col items-stretch gap-2 rounded-xl border p-2 text-left transition ${
+              className={`group relative flex min-w-0 flex-col items-stretch gap-1.5 overflow-hidden rounded-xl border p-1.5 text-left transition sm:gap-2 sm:p-2 ${
                 active
                   ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-400/70'
                   : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 hover:shadow-sm'
@@ -135,22 +155,22 @@ export function ThemeGallery({
                 type="button"
                 onClick={() => onApply(theme)}
                 title={theme.description}
-                className="relative text-left"
+                className="relative min-w-0 text-left"
               >
                 <ThemeThumb design={thumbDesign} profile={thumbProfile} />
                 <span
-                  className="absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white"
+                  className="absolute left-1 top-1 h-2.5 w-2.5 rounded-full ring-2 ring-white"
                   style={{ backgroundColor: theme.accent_swatch }}
                   aria-hidden
                 />
                 {active && (
-                  <span className="absolute bottom-1.5 right-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm ring-2 ring-white">
+                  <span className="absolute bottom-1 right-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm ring-2 ring-white">
                     <Check size={12} strokeWidth={3} />
                   </span>
                 )}
               </button>
 
-              <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5">
+              <div className="absolute right-1 top-1 z-10 flex max-w-[calc(100%-1.75rem)] items-center justify-end gap-0.5">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -159,13 +179,13 @@ export function ThemeGallery({
                   }}
                   title={loved ? 'Unlove theme' : 'Love theme'}
                   aria-label={loved ? 'Unlove theme' : 'Love theme'}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/95 shadow-sm ring-1 transition ${
+                  className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/95 shadow-sm ring-1 transition sm:h-7 sm:w-7 ${
                     loved
                       ? 'text-rose-500 ring-rose-200 hover:bg-rose-50'
                       : 'text-slate-400 ring-slate-200 hover:text-rose-500'
                   }`}
                 >
-                  <Heart size={13} className={loved ? 'fill-current' : ''} />
+                  <Heart size={12} className={loved ? 'fill-current' : ''} />
                 </button>
                 {theme.is_custom && (
                   <button
@@ -176,24 +196,28 @@ export function ThemeGallery({
                     }}
                     title="Delete custom theme"
                     aria-label="Delete custom theme"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-slate-400 shadow-sm ring-1 ring-slate-200 transition hover:bg-red-50 hover:text-red-600"
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/95 text-slate-400 shadow-sm ring-1 ring-slate-200 transition hover:bg-red-50 hover:text-red-600 sm:h-7 sm:w-7"
                   >
-                    <Trash2 size={12} />
+                    <Trash2 size={11} />
                   </button>
                 )}
               </div>
 
-              <button type="button" onClick={() => onApply(theme)} className="min-w-0 px-0.5 text-left">
-                <span className="flex items-center gap-1">
-                  <span className="block truncate text-[12px] font-bold text-slate-900">{theme.label}</span>
+              <button
+                type="button"
+                onClick={() => onApply(theme)}
+                title={theme.description || theme.label}
+                className="min-w-0 px-0.5 text-left"
+              >
+                <span className="flex min-w-0 items-center gap-1">
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-bold text-slate-900">
+                    {theme.label}
+                  </span>
                   {theme.is_custom && (
                     <span className="shrink-0 rounded bg-violet-100 px-1 py-px text-[8px] font-bold uppercase tracking-wide text-violet-700">
                       Custom
                     </span>
                   )}
-                </span>
-                <span className="mt-0.5 line-clamp-2 block text-[10px] leading-snug text-slate-500">
-                  {theme.description}
                 </span>
               </button>
             </div>

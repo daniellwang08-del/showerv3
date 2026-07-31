@@ -68,13 +68,10 @@ interface ScraperJobsTableProps {
 }
 
 const SOURCE_BADGE_VARIANT: Record<string, 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
-  adzuna: 'info',
   remoterocketship: 'default',
   jobright: 'info',
   welcometothejungle: 'success',
-  ziprecruiter: 'warning',
-  indeed: 'info',
-  glassdoor: 'default',
+  adzuna: 'info',
 };
 
 type AppliedUiOverride = 'applied' | 'unapplied';
@@ -261,11 +258,15 @@ function DocsCell({ job }: { job: DashboardJob }) {
   const [preview, setPreview] = useState<DocPreviewTarget | null>(null);
   const resumeReady = job.resume_pdf_status === 'completed';
   const clReady = job.cover_letter_pdf_status === 'completed';
+  const cg = job.content_generation_status;
+  // When content gen failed/skipped, leftover file `pending` must not look in-flight.
   const resumeBuilding =
-    job.content_generation_status === 'pending' ||
-    job.content_generation_status === 'processing' ||
-    job.resume_build_status === 'pending' ||
-    job.resume_build_status === 'processing';
+    cg !== 'failed' &&
+    cg !== 'skipped' &&
+    (cg === 'pending' ||
+      cg === 'processing' ||
+      ((cg === 'completed' || !cg) &&
+        (job.resume_build_status === 'pending' || job.resume_build_status === 'processing')));
   const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
 
   if (resumeBuilding && !resumeReady && !clReady) {
@@ -405,11 +406,15 @@ function processingDots(job: DashboardJob): [DotConfig, DotConfig, DotConfig] {
   let dot3: DotState = 'idle';
   const cg = job.content_generation_status;
   const rs = job.resume_build_status;
-  if (rs === 'completed') dot3 = 'done';
+  if (rs === 'completed' || job.resume_pdf_status === 'completed') dot3 = 'done';
+  else if (cg === 'failed' || cg === 'skipped') dot3 = 'idle';
   else if (
-    cg === 'pending' || cg === 'processing' ||
-    rs === 'pending' || rs === 'processing'
-  ) dot3 = 'active';
+    cg === 'pending' ||
+    cg === 'processing' ||
+    ((cg === 'completed' || !cg) && (rs === 'pending' || rs === 'processing'))
+  ) {
+    dot3 = 'active';
+  }
 
   return [
     { state: dot1, color: 'bg-yellow-400',  label: 'Scraping job description' },

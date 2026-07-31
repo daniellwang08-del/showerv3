@@ -32,6 +32,7 @@ ALLOWLISTED_KEYS: frozenset[str] = frozenset(
         "analysis_worker_max_jobs",
         "tailoring_worker_max_jobs",
         "save_worker_max_jobs",
+        "autopost_worker_max_jobs",
         "resume_worker_max_jobs",
         "scraper_worker_max_jobs",
         "llm_fallback_enabled",
@@ -59,6 +60,8 @@ MASKED_PRESENCE_KEYS: tuple[str, ...] = (
     "auth_secret_key",
     "database_url",
     "redis_url",
+    "redis_cache_url",
+    "redis_pubsub_url",
 )
 
 _BOOL_KEYS = frozenset(
@@ -78,6 +81,7 @@ _INT_KEYS = frozenset(
         "analysis_worker_max_jobs",
         "tailoring_worker_max_jobs",
         "save_worker_max_jobs",
+        "autopost_worker_max_jobs",
         "resume_worker_max_jobs",
         "scraper_worker_max_jobs",
         "llm_circuit_breaker_threshold",

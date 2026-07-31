@@ -153,9 +153,9 @@ export async function clearCache(userId) {
   await LOCAL.remove(cacheKey(userId));
 }
 
-// Minimum match score used to filter the default job board. Defaults to 70 for
-// all new users, then persists whatever value the user sets until they change it.
-export const DEFAULT_MIN_SCORE = 70;
+// Minimum match score filter. Defaults to 0 (same as the web dashboard) so the
+// extension shows the same job set unless the user raises the threshold.
+export const DEFAULT_MIN_SCORE = 0;
 
 export async function getMinScore() {
   const { minScore } = await LOCAL.get("minScore");
@@ -173,16 +173,140 @@ export async function setMinScore(value) {
 
 // When enabled, the Workday autofill keeps filling each step, recovers any
 // validation errors via the LLM, clicks "Save and Continue", and advances until
-// the Review page - where it stops so the user can submit. Off by default.
+// the Review page - where it stops so the user can submit. On by default.
 export async function getAutoAdvance() {
   const { autoAdvance } = await LOCAL.get("autoAdvance");
-  return autoAdvance === true;
+  return autoAdvance !== false;
 }
 
 export async function setAutoAdvance(value) {
   const v = value === true;
   await LOCAL.set({ autoAdvance: v });
   return v;
+}
+
+// Which resume narrative to use when autofilling: tailored (default) or original profile.
+export const DEFAULT_RESUME_SOURCE = "tailored";
+
+export async function getResumeSource() {
+  const { resumeSource } = await LOCAL.get("resumeSource");
+  return resumeSource === "original" ? "original" : DEFAULT_RESUME_SOURCE;
+}
+
+export async function setResumeSource(value) {
+  const v = value === "original" ? "original" : "tailored";
+  await LOCAL.set({ resumeSource: v });
+  return v;
+}
+
+// Optional free-text answering strategy passed to the assistant autofill LLM.
+export async function getAnswerStrategy() {
+  const { answerStrategy } = await LOCAL.get("answerStrategy");
+  return typeof answerStrategy === "string" ? answerStrategy : "";
+}
+
+export async function setAnswerStrategy(value) {
+  const v = String(value || "").trim().slice(0, 2000);
+  if (v) await LOCAL.set({ answerStrategy: v });
+  else await LOCAL.remove("answerStrategy");
+  return v;
+}
+
+// Default page size for job / resume lists in the side panel.
+export async function getPageSize() {
+  const { pageSize } = await LOCAL.get("pageSize");
+  const n = Number(pageSize);
+  if (n === 25 || n === 50 || n === 100) return n;
+  return 25;
+}
+
+export async function setPageSize(value) {
+  let n = Number(value);
+  if (n !== 25 && n !== 50 && n !== 100) n = 25;
+  await LOCAL.set({ pageSize: n });
+  return n;
+}
+
+// ── Ask-selection hotkey (application page → assistant chat) ─────────────────
+// Stored as a combo object. Requires Ctrl/Alt/Meta so normal typing is never stolen.
+
+export const DEFAULT_ASK_HOTKEY = {
+  ctrl: false,
+  alt: true,
+  shift: false,
+  meta: false,
+  key: "a",
+};
+
+export function normalizeAskHotkey(raw) {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_ASK_HOTKEY };
+  const key = String(raw.key || "")
+    .trim()
+    .toLowerCase();
+  if (!key) return { ...DEFAULT_ASK_HOTKEY };
+  const ctrl = !!raw.ctrl;
+  const alt = !!raw.alt;
+  const shift = !!raw.shift;
+  const meta = !!raw.meta;
+  if (!ctrl && !alt && !meta) return { ...DEFAULT_ASK_HOTKEY };
+  return { ctrl, alt, shift, meta, key };
+}
+
+export function formatAskHotkey(raw) {
+  const c = normalizeAskHotkey(raw);
+  const isMac =
+    typeof navigator !== "undefined" && /mac|iphone|ipad|ipod/i.test(navigator.platform || "");
+  const parts = [];
+  if (c.ctrl) parts.push("Ctrl");
+  if (c.alt) parts.push(isMac ? "Option" : "Alt");
+  if (c.shift) parts.push("Shift");
+  if (c.meta) parts.push(isMac ? "⌘" : "Win");
+  const keyLabel =
+    c.key === " " || c.key === "space"
+      ? "Space"
+      : c.key === "escape"
+        ? "Esc"
+        : c.key.length === 1
+          ? c.key.toUpperCase()
+          : c.key.charAt(0).toUpperCase() + c.key.slice(1);
+  parts.push(keyLabel);
+  return parts.join("+");
+}
+
+export function askHotkeyFromKeyboardEvent(e) {
+  if (!e) return null;
+  const key = e.key === " " ? "space" : String(e.key || "").toLowerCase();
+  if (!key || key === "control" || key === "alt" || key === "shift" || key === "meta") return null;
+  if (!e.ctrlKey && !e.altKey && !e.metaKey) return null;
+  return normalizeAskHotkey({
+    ctrl: !!e.ctrlKey,
+    alt: !!e.altKey,
+    shift: !!e.shiftKey,
+    meta: !!e.metaKey,
+    key,
+  });
+}
+
+export function eventMatchesAskHotkey(e, raw) {
+  const c = normalizeAskHotkey(raw);
+  if (!e || !c.key) return false;
+  if (!!e.ctrlKey !== c.ctrl) return false;
+  if (!!e.altKey !== c.alt) return false;
+  if (!!e.shiftKey !== c.shift) return false;
+  if (!!e.metaKey !== c.meta) return false;
+  const pressed = e.key === " " ? "space" : String(e.key || "").toLowerCase();
+  return pressed === c.key;
+}
+
+export async function getAskHotkey() {
+  const { askHotkey } = await LOCAL.get("askHotkey");
+  return normalizeAskHotkey(askHotkey);
+}
+
+export async function setAskHotkey(value) {
+  const next = normalizeAskHotkey(value);
+  await LOCAL.set({ askHotkey: next });
+  return next;
 }
 
 // Remembered answers for stable identity / EEO / work-authorization / consent

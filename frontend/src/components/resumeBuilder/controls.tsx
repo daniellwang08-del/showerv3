@@ -13,12 +13,12 @@ export function ControlCard({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-4">
-      <div className="mb-3 flex items-center gap-2">
+    <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-4">
+      <div className="mb-3 flex min-w-0 items-center gap-2">
         <Icon size={16} className="shrink-0 text-slate-500" />
-        <h3 className="text-sm font-bold text-slate-900">{title}</h3>
+        <h3 className="min-w-0 truncate text-sm font-bold text-slate-900">{title}</h3>
       </div>
-      <div className="space-y-3">{children}</div>
+      <div className="min-w-0 space-y-3">{children}</div>
     </section>
   );
 }
@@ -127,20 +127,29 @@ export function Segmented<T extends string | number>({
   options: { value: T; label: string }[];
   onChange: (v: T) => void;
 }) {
+  // Root cause of prior overflow: `inline-flex` + default `min-width: auto` on
+  // buttons made 4–5 option rows refuse to shrink below label width, so the
+  // last chip ("Card", "Pipe") clipped past the card edge in the narrow Style
+  // sidebar. Wrap + min-w-0 + flexible basis keeps every option usable.
   return (
-    <div>
+    <div className="min-w-0">
       <div className="mb-1 text-xs font-medium text-slate-600">{label}</div>
-      <div className="inline-flex w-full rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+      <div
+        role="group"
+        aria-label={label}
+        className="flex w-full min-w-0 flex-wrap gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+      >
         {options.map((opt) => (
           <button
             key={String(opt.value)}
             type="button"
             onClick={() => onChange(opt.value)}
-            className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition ${
+            title={opt.label}
+            className={`min-w-0 flex-1 basis-[3.75rem] rounded-md px-1.5 py-1.5 text-center text-[11px] font-medium leading-tight transition sm:basis-[4.25rem] sm:px-2 sm:text-xs ${
               value === opt.value ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            {opt.label}
+            <span className="block truncate">{opt.label}</span>
           </button>
         ))}
       </div>

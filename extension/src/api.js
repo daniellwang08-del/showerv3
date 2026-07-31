@@ -145,6 +145,22 @@ export const getDashboardCounts = (params = {}) => {
   return apiFetch(`/jobs/dashboard/counts?${q.toString()}`);
 };
 
+export const getWeeklyProgress = (params = {}) => {
+  const q = new URLSearchParams({
+    days: String(params.days || 7),
+    ...(params.timezone ? { timezone: params.timezone } : {}),
+  });
+  return apiFetch(`/jobs/dashboard/weekly-progress?${q.toString()}`);
+};
+
+export const getScraperStats = (params = {}) => {
+  const q = new URLSearchParams({
+    ...(params.timezone ? { timezone: params.timezone } : {}),
+  });
+  const qs = q.toString();
+  return apiFetch(`/scraper/stats${qs ? `?${qs}` : ""}`);
+};
+
 export const getExtraction = (jobId) => apiFetch(`/extract/${jobId}`);
 export const triggerMatch = (jobId) =>
   apiFetch(`/jobs/valid/${jobId}/match`, { method: "POST" });
@@ -160,6 +176,10 @@ export const updateSession = (jobId, status) =>
   apiFetch(`/assistant/sessions/${jobId}`, { method: "PATCH", body: { status } });
 export const deleteSession = (jobId) =>
   apiFetch(`/assistant/sessions/${jobId}`, { method: "DELETE" });
+
+/** Wipe assistant chat turns for one job (session row kept). */
+export const clearSessionMessages = (jobId) =>
+  apiFetch(`/assistant/sessions/${jobId}/messages`, { method: "DELETE" });
 
 export const nextJob = (after) =>
   apiFetch(`/assistant/next-job${after ? `?after=${encodeURIComponent(after)}` : ""}`);
@@ -296,4 +316,106 @@ function handleSseEvent(rawEvent, { onDelta, onDone, onError }) {
   if (obj.delta) onDelta && onDelta(obj.delta);
   if (obj.error) onError && onError(obj.error);
   if (obj.done) onDone && onDone();
+}
+
+// ── resume builder / tailor ─────────────────────────────────────────────────
+
+export const listResumeLibrary = () => apiFetch("/resume-builder/resumes");
+
+export const searchResumeLibrary = (params = {}) => {
+  const q = new URLSearchParams({
+    ...(params.company ? { company: params.company } : {}),
+    ...(params.job_title ? { job_title: params.job_title } : {}),
+    limit: String(params.limit || 100),
+  });
+  return apiFetch(`/resume-builder/resumes/search?${q.toString()}`);
+};
+
+export const saveAiTailoredResume = ({ content, job_title, company, activate = true }) =>
+  apiFetch("/resume-builder/resumes/from-ai-content", {
+    method: "POST",
+    body: { content, job_title, company, activate },
+  });
+
+export const openJobBuildResume = (buildId) =>
+  apiFetch(`/resume-builder/resumes/from-job-build/${buildId}`, { method: "POST" });
+
+export const activateResume = (resumeId) =>
+  apiFetch(`/resume-builder/resumes/${resumeId}/activate`, { method: "POST" });
+
+export const triggerResumeBuild = (jobId) =>
+  apiFetch(`/jobs/valid/${jobId}/resume-build/trigger`, { method: "POST" });
+
+export const getResumeBuildStatus = (jobId) => apiFetch(`/jobs/valid/${jobId}/resume-build`);
+
+/** OneClick AI tailor stream (same SSE contract as the Resume Builder). */
+export async function streamResumeAiChat(messages, lastJobDescription, { onStage, signal } = {}) {
+  const url = await buildUrl("/resume-builder/ai/chat");
+  const h = await authHeaders({
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ messages, last_job_description: lastJobDescription }),
+      signal,
+    });
+  } catch (err) {
+    if (err && err.name === "AbortError") throw err;
+    throw new ApiError("Cannot reach the backend.", 0);
+  }
+  if (res.status === 401) {
+    await clearToken();
+    throw new ApiError("Your session expired. Please sign in again.", 401);
+  }
+  if (!res.ok || !res.body) {
+    throw new ApiError(`Resume AI chat failed (${res.status}).`, res.status);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result = null;
+  let errorMessage = null;
+
+  const handleFrame = (raw) => {
+    const data = raw
+      .split("\n")
+      .filter((l) => l.startsWith("data:"))
+      .map((l) => l.slice(5).trim())
+      .join("\n");
+    if (!data) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (parsed.stage === "done" && parsed.result) {
+      result = parsed.result;
+    } else if (parsed.stage === "error") {
+      errorMessage = parsed.message || "Failed to process request.";
+    } else if (parsed.stage) {
+      onStage && onStage({ stage: parsed.stage, label: parsed.label });
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      handleFrame(buffer.slice(0, idx));
+      buffer = buffer.slice(idx + 2);
+    }
+  }
+  if (buffer.trim()) handleFrame(buffer);
+
+  if (errorMessage) throw new ApiError(errorMessage, 500);
+  if (!result) throw new ApiError("Resume AI chat returned no result.", 500);
+  return result;
 }

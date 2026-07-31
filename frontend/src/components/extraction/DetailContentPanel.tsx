@@ -24,11 +24,13 @@ import {
   ListChecks,
   Link2,
   MapPin,
+  RefreshCw,
   Sparkles,
   Target,
   ThumbsUp,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { useScraperStore } from '../../stores/scraperStore';
 import { namedDownloadFile } from '../../utils/resumeFileName';
 import { BrandedLoader } from '../layout/BrandedLoader';
 
@@ -145,7 +147,17 @@ function statusDotClass(status: string): string {
   return 'bg-slate-300';
 }
 
-function ResumeBuildBadges({ build, validJobId }: { build: ResumeBuildStatus; validJobId: string }) {
+function ResumeBuildBadges({
+  build,
+  validJobId,
+  onRetry,
+  retrying,
+}: {
+  build: ResumeBuildStatus;
+  validJobId: string;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
   const cg = build.content_generation_status;
   if (cg === 'pending' || cg === 'processing') {
     return (
@@ -156,16 +168,36 @@ function ResumeBuildBadges({ build, validJobId }: { build: ResumeBuildStatus; va
   }
   if (cg === 'failed') {
     return (
-      <span
-        className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-medium text-red-700"
-        title={build.content_generation_error || 'Content generation failed'}
-      >
-        Resume generation failed
-      </span>
+      <div className="flex items-center gap-1.5">
+        <span
+          className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-medium text-red-700"
+          title={build.content_generation_error || 'Content generation failed'}
+        >
+          Resume generation failed
+        </span>
+        {onRetry && (
+          <button
+            type="button"
+            disabled={retrying}
+            onClick={onRetry}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3 w-3 ${retrying ? 'animate-spin' : ''}`} />
+            {retrying ? 'Retrying…' : 'Retry'}
+          </button>
+        )}
+      </div>
     );
   }
   if (cg === 'skipped') {
-    return null;
+    return (
+      <span
+        className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-medium text-slate-600"
+        title={build.content_generation_error || 'Tailoring was skipped for this job'}
+      >
+        Tailoring skipped
+      </span>
+    );
   }
 
   const handleDownload = async (downloadType: string) => {
@@ -400,15 +432,26 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
   const onAnalysisUpdatedRef = useRef(onAnalysisUpdated);
   onAnalysisUpdatedRef.current = onAnalysisUpdated;
 
+  const wsRefreshNonce = useScraperStore((s) =>
+    validJobId && s.analysisPanelRefresh?.jobId === validJobId
+      ? s.analysisPanelRefresh.nonce
+      : 0,
+  );
+  const effectiveRefreshKey = (refreshKey ?? 0) + wsRefreshNonce;
+
   const snapshotRef = useRef<JobAnalysisResponse | null>(null);
   const [analysis, setAnalysis] = useState<JobAnalysisResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(false);
+  const [retryingBuild, setRetryingBuild] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   useEffect(() => {
     snapshotRef.current = null;
     setAnalysis(null);
     setLoadError(null);
+    setRetryError(null);
+    setRetryingBuild(false);
   }, [validJobId]);
 
   useEffect(() => {
@@ -467,7 +510,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
     return () => {
       cancelled = true;
     };
-  }, [validJobId, refreshKey]);
+  }, [validJobId, effectiveRefreshKey]);
 
   const contentGenStatus = analysis?.resume_build?.content_generation_status;
   const contentGenActive = contentGenStatus === 'pending' || contentGenStatus === 'processing';
@@ -479,6 +522,36 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
     analysis.resume_build.cover_letter_pdf_status === 'processing'
   );
 
+  const retryResumeBuild = async () => {
+    if (!validJobId || retryingBuild) return;
+    setRetryingBuild(true);
+    setRetryError(null);
+    try {
+      await apiClient.post(`/jobs/valid/${validJobId}/resume-build/trigger`);
+      setAnalysis((prev) => {
+        if (!prev?.resume_build) return prev;
+        return {
+          ...prev,
+          resume_build: {
+            ...prev.resume_build,
+            content_generation_status: 'processing',
+            content_generation_error: null,
+          },
+        };
+      });
+      onAnalysisUpdatedRef.current?.();
+    } catch (e: unknown) {
+      const detail =
+        typeof e === 'object' && e !== null && 'response' in e
+          ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setRetryError(typeof detail === 'string' ? detail : 'Could not retry resume generation');
+    } finally {
+      setRetryingBuild(false);
+    }
+  };
+
+  // Fallback poll while pipeline is active (WS may be briefly disconnected).
   useEffect(() => {
     if (!validJobId || (!matchActive && !contentGenActive && !resumeFilesActive)) return;
 
@@ -499,7 +572,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
           /* ignore background poll errors */
         }
       })();
-    }, 6000);
+    }, 15000);
 
     return () => window.clearInterval(timer);
   }, [validJobId, matchActive, contentGenActive, resumeFilesActive]);
@@ -571,7 +644,14 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
                   <h3 className="text-base font-semibold text-slate-900">Profile match</h3>
                   <p className="text-xs text-slate-500">How well this role fits your profile</p>
                 </div>
-                {analysis.resume_build && <ResumeBuildBadges build={analysis.resume_build} validJobId={analysis.job_id} />}
+                {analysis.resume_build && (
+                  <ResumeBuildBadges
+                    build={analysis.resume_build}
+                    validJobId={analysis.job_id}
+                    onRetry={retryResumeBuild}
+                    retrying={retryingBuild}
+                  />
+                )}
               </div>
 
               {analysis.match_in_progress && !analysis.match && (
@@ -601,11 +681,33 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
               )}
 
               {analysis.match && analysis.resume_build?.content_generation_status === 'failed' && (
-                <p className="flex items-start gap-2 text-sm text-red-600">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <div className="space-y-2">
+                  <p className="flex items-start gap-2 text-sm text-red-600">
+                    <Sparkles className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                    <span>
+                      {analysis.resume_build.content_generation_error ||
+                        'Tailored resume generation failed.'}
+                    </span>
+                  </p>
+                  <button
+                    type="button"
+                    disabled={retryingBuild}
+                    onClick={() => void retryResumeBuild()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${retryingBuild ? 'animate-spin' : ''}`} />
+                    {retryingBuild ? 'Retrying…' : 'Retry resume generation'}
+                  </button>
+                  {retryError && <p className="text-xs text-red-600">{retryError}</p>}
+                </div>
+              )}
+
+              {analysis.match && analysis.resume_build?.content_generation_status === 'skipped' && (
+                <p className="flex items-start gap-2 text-sm text-slate-600">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
                   <span>
                     {analysis.resume_build.content_generation_error ||
-                      'Tailored resume generation failed. Use resume build trigger to retry.'}
+                      'Tailoring was skipped for this job (for example empty profile or non-job posting).'}
                   </span>
                 </p>
               )}

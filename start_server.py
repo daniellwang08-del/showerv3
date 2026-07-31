@@ -33,7 +33,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 
-if sys.platform == "win32":
+# Proactor is already the default on modern Windows/Python; setting the
+# deprecated WindowsProactorEventLoopPolicy warns on 3.14+. Uvicorn still
+# needs loop="none" below so it does not clobber Proactor with Selector.
+if sys.platform == "win32" and sys.version_info < (3, 14):
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except Exception:

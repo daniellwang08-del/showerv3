@@ -99,7 +99,10 @@ Work experience (critical - most errors happen here):
 - period_*: use YYYY-MM when the document shows month+year; use YYYY if only year; use null if unclear-do not guess dates.
 - LinkedIn/GitHub: exact URLs from the document only.
 - certificates: include name; issued_at when a date is shown; url when a credential/verification link is present.
-- phone_country_code: like +1, +44; phone_number: national number without country code.
+- phone_country_code: dialing code only (e.g. "+1", "+44"). phone_number: the **complete** national number without the country code.
+  - For US/Canada (+1): phone_number MUST be the full 10-digit number (area code + local), e.g. "(610) 234-7936" or "6102347936". Never emit a truncated fragment such as "313-3369" or "610-234".
+  - If the résumé phone is incomplete, unreadable, or you cannot recover all digits, set BOTH phone_country_code and phone_number to null — do not invent or keep partial numbers.
+  - Do not put the country code inside phone_number (no leading "+1" in phone_number).
 - job_type: only if explicitly stated or unambiguous (remote/hybrid/onsite); else null.
 - Do not invent employers, degrees, or links. If something is unreadable, use null rather than guessing.
 """
@@ -527,7 +530,7 @@ def _draft_has_content(draft: ResumeExtractedDraft) -> bool:
 
 _US_PHONE_RE = re.compile(
     r"(?:\+?1[\s\-.(]*)?"
-    r"(\d{3})[\s\).\-]*(\d{3})[\s.\-]*(\d{4})"
+    r"(\d{3})[\s\).\-]*(\d{3})[\s.\-]*(\d{4})\b"
 )
 
 # Capture the profile handle; allow optional trailing slash / query / fragment.
@@ -583,29 +586,67 @@ def _normalize_github_url(url: str | None) -> str | None:
     return u
 
 
+def _phone_digit_count(value: str | None) -> int:
+    if not value:
+        return 0
+    return len(re.sub(r"\D", "", str(value)))
+
+
+def _is_us_country_code(country: str | None) -> bool:
+    if not country:
+        return False
+    return re.sub(r"\D", "", str(country)) == "1"
+
+
+def _format_us_national(digits10: str) -> str:
+    return f"({digits10[:3]}) {digits10[3:6]}-{digits10[6:]}"
+
+
 def _normalize_phone_fields(country: str | None, number: str | None) -> tuple[str | None, str | None]:
-    """Split combined / US-formatted numbers so phone_number meets profile save rules."""
+    """Split/format phone fields; reject incomplete numbers (never keep partials).
+
+    US/Canada (+1) requires a full 10-digit national number. Other countries
+    require 8–15 national digits. Truncated fragments like ``313-3369`` under
+    ``+1`` are discarded so the profile is not seeded with invalid contact data.
+    """
     combined = " ".join(x for x in (country, number) if x and str(x).strip()).strip()
     if not combined:
         return None, None
 
     m = _US_PHONE_RE.search(combined)
     if m:
-        return "+1", f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
+        return "+1", _format_us_national(f"{m.group(1)}{m.group(2)}{m.group(3)}")
 
     digits = re.sub(r"\D", "", combined)
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
     if len(digits) == 10:
-        return "+1", f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+        return "+1", _format_us_national(digits)
 
     cc = str(country).strip() if country and str(country).strip() else None
     num = str(number).strip() if number and str(number).strip() else None
-    if num and len(re.sub(r"\D", "", num)) >= 7:
-        return cc or "+1", num
-    if cc and len(re.sub(r"\D", "", cc)) >= 7 and not num:
-        return "+1", cc
-    return cc, num
+    national_digits = _phone_digit_count(num)
+
+    # Whole number landed in the country field only.
+    if not num and cc and not _is_us_country_code(cc):
+        cc_digits = re.sub(r"\D", "", cc)
+        if len(cc_digits) == 11 and cc_digits.startswith("1"):
+            return "+1", _format_us_national(cc_digits[1:])
+        if len(cc_digits) == 10:
+            return "+1", _format_us_national(cc_digits)
+        return None, None
+
+    # +1 / implied US: keep only a complete 10-digit national number.
+    if _is_us_country_code(cc) or cc is None:
+        if national_digits == 10 and num:
+            return "+1", _format_us_national(re.sub(r"\D", "", num))
+        return None, None
+
+    # Non-US country code: require a complete-looking national part.
+    if num and 8 <= national_digits <= 15:
+        return cc, num
+
+    return None, None
 
 
 def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> list[str]:
@@ -750,9 +791,11 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     draft.name_last = _clean(draft.name_last)
     draft.title = _clean(draft.title)
     draft.email = _clean(draft.email)
+    raw_phone_cc = _clean(draft.phone_country_code)
+    raw_phone_num = _clean(draft.phone_number)
     draft.phone_country_code, draft.phone_number = _normalize_phone_fields(
-        _clean(draft.phone_country_code),
-        _clean(draft.phone_number),
+        raw_phone_cc,
+        raw_phone_num,
     )
     draft.linkedin_url = _normalize_linkedin_url(_clean(draft.linkedin_url))
     draft.github_url = _normalize_github_url(_clean(draft.github_url))

@@ -48,7 +48,6 @@ class JobDescriptionSchema(BaseModel):
     requirements: list[str] = Field(default_factory=list)
     benefits: list[str] = Field(default_factory=list)
     posted_date: datetime | None = None
-    application_deadline: datetime | None = None
     remote_policy: str | None = Field(default=None, max_length=500)
     work_mode: str | None = Field(default=None, max_length=20)
     experience_level: str | None = Field(default=None, max_length=500)
@@ -195,14 +194,12 @@ class JobResponse(BaseModel):
     posted_date: datetime | None
     experience_level: str | None
     industry: str | None
-    similarity_hash: str | None
     scraped_at: datetime | None = None
     extraction_id: str | None = None
     extraction_status: str | None = None
     is_job_posting: bool | None = None
     match_overall_score: int | None = None
     match_status: str | None = None
-    click_count: int = 0
     applied_at: datetime | None = None
     applied_by_name: str | None = None
     sheet_posted_at: datetime | None = None
@@ -235,6 +232,7 @@ class DashboardJobResponse(BaseModel):
     match_in_progress: bool = False
     resume_build_status: str | None = None
     content_generation_status: str | None = None
+    resume_build_id: str | None = None
     resume_pdf_status: str | None = None
     resume_pdf_path: str | None = None
     cover_letter_pdf_status: str | None = None
@@ -249,6 +247,8 @@ class DashboardJobResponse(BaseModel):
     work_mode: str | None = None
     salary_raw: str | None = None
     job_type: str | None = None
+    # True when the job was added by this user via URL/attachment (has submitted_data).
+    from_me: bool = False
 
 
 class DashboardJobsPage(BaseModel):

@@ -67,6 +67,7 @@ export interface DashboardJob {
   match_in_progress: boolean;
   resume_build_status: string | null;
   content_generation_status: string | null;
+  resume_build_id: string | null;
   resume_pdf_status: string | null;
   resume_pdf_path: string | null;
   cover_letter_pdf_status: string | null;

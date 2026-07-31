@@ -11,7 +11,29 @@
   // dom is a pure helper namespace (no listeners/state), so overwriting is safe.
   const WD = (window.__WD = window.__WD || {});
 
-  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Cooperative abort: Stop bumps WD.epoch (+ sets WD.aborted). Each delay captures
+  // epoch at call time so in-flight waits exit even if a later WD_RUN clears aborted.
+  function delay(ms) {
+    const epochAtCall = WD.epoch || 0;
+    return new Promise((resolve, reject) => {
+      const start = Date.now();
+      const tick = () => {
+        if (WD.aborted || (WD.epoch || 0) !== epochAtCall) {
+          const err = new Error("WD_ABORTED");
+          err.name = "WDAborted";
+          reject(err);
+          return;
+        }
+        const left = ms - (Date.now() - start);
+        if (left <= 0) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, Math.min(80, left));
+      };
+      tick();
+    });
+  }
 
   function xpath(expr, root) {
     try {
@@ -65,7 +87,13 @@
 
   async function waitFor(selector, timeout = 4000, root) {
     const end = Date.now() + timeout;
+    const epochAtCall = WD.epoch || 0;
     for (;;) {
+      if (WD.aborted || (WD.epoch || 0) !== epochAtCall) {
+        const err = new Error("WD_ABORTED");
+        err.name = "WDAborted";
+        throw err;
+      }
       const el = q(selector, root);
       if (el && isVisible(el)) return el;
       if (Date.now() > end) return null;
@@ -76,9 +104,10 @@
   // React-controlled inputs ignore a plain `el.value = x`; set through the
   // native prototype setter and dispatch input/change so React's onChange fires.
   function nativeSet(el, value) {
+    if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return;
     const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
-    if (desc && desc.set) desc.set.call(el, value);
+    if (desc && typeof desc.set === "function") desc.set.call(el, value);
     else el.value = value;
   }
 
@@ -234,6 +263,35 @@
       (h) => isVisible(h) && norm(h.textContent).includes(t)
     );
   }
+  // Progress-rail / stepper labels often use role="heading" and still say
+  // "My Information" on later pages — that must not win step detection.
+  function pageHeadingHas(text) {
+    const t = norm(text);
+    if (!t) return false;
+    const root =
+      q('[data-automation-id="applyFlowPage"]') ||
+      q("main") ||
+      q('[role="main"]') ||
+      document.body;
+    if (!root) return false;
+    const inChrome = (el) =>
+      !!(
+        el.closest &&
+        el.closest(
+          [
+            '[data-automation-id*="progress" i]',
+            '[data-automation-id*="stepper" i]',
+            '[data-automation-id*="Progress" i]',
+            "nav",
+            '[role="navigation"]',
+            '[aria-label*="progress" i]',
+          ].join(",")
+        )
+      );
+    const match = (h) => isVisible(h) && !inChrome(h) && norm(h.textContent).includes(t);
+    if ([...root.querySelectorAll("h1, h2, h3")].some(match)) return true;
+    return [...root.querySelectorAll('[role="heading"]')].some(match);
+  }
 
   // Informational traces use console.debug so chrome://extensions → Errors stays
   // clean. Reserve console.warn for attach failures and other real problems.
@@ -250,7 +308,8 @@
 
   WD.dom = {
     delay, xpath, xpathAll, q, qa, isVisible, waitFor, nativeSet,
-    setText, click, clickEl, toggle, selectDropdown, selectNative, attachFile, exists, headingHas, norm,
+    setText, click, clickEl, toggle, selectDropdown, selectNative, attachFile,
+    exists, headingHas, pageHeadingHas, norm,
   };
   WD.log = wdLog;
   WD.warn = wdWarn;

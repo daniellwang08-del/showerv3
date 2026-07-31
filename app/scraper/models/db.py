@@ -95,6 +95,7 @@ class ScrapedJob(Base):
     __table_args__ = (
         UniqueConstraint("source", "source_job_id", name="uq_scraped_source_job"),
         Index("ix_scraped_source_posted", "source", "posted_at"),
+        Index("ix_scraped_jobs_scraped_at", "scraped_at"),
     )
 
     def __repr__(self):
@@ -111,7 +112,6 @@ class ScrapeRun(Base):
     items_scraped = Column(Integer, default=0)
     items_new = Column(Integer, default=0)
     items_updated = Column(Integer, default=0)
-    requests_made = Column(Integer, default=0)
     errors = Column(Integer, default=0)
     status = Column(String(32), default="running")
 

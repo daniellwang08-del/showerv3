@@ -37,6 +37,8 @@ services:
         value: "false"
       - key: BROWSER_POOL_SIZE
         value: "0"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
       - key: PYTHON_VERSION
         value: "3.12.3"
 
@@ -73,6 +75,8 @@ services:
         value: "false"
       - key: BROWSER_POOL_SIZE
         value: "0"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
       - key: PYTHON_VERSION
         value: "3.12.3"
 
@@ -107,6 +111,108 @@ services:
         value: production
       - key: DEBUG
         value: "false"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+
+  # --- arq save worker (post-analysis dedup + persistence + Phase B enqueue) ---
+  - type: worker
+    name: job-scraper-save-worker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_worker.py save
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: job-scraper-kv
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_BASE_URL
+        value: "https://cloud.langfuse.com"
+      - key: AUTH_SECRET_KEY
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+
+  # --- arq autopost worker (Sheets/Pumble off the save critical path) ---
+  - type: worker
+    name: job-scraper-autopost-worker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_worker.py autopost
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: job-scraper-kv
+          property: connectionString
+      - key: AUTH_SECRET_KEY
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+
+  # --- arq tailoring worker (Phase B resume tailoring) ---
+  - type: worker
+    name: job-scraper-tailoring-worker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_worker.py tailoring
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: job-scraper-kv
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_BASE_URL
+        value: "https://cloud.langfuse.com"
+      - key: AUTH_SECRET_KEY
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
       - key: PYTHON_VERSION
         value: "3.12.3"
 
@@ -141,6 +247,8 @@ services:
         value: production
       - key: DEBUG
         value: "false"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
       - key: PYTHON_VERSION
         value: "3.12.3"
 
@@ -171,6 +279,8 @@ services:
         value: production
       - key: DEBUG
         value: "false"
+      - key: REDIS_REQUIRE_FOR_JOBS
+        value: "true"
       - key: PYTHON_VERSION
         value: "3.12.3"
 

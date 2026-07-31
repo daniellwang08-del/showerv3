@@ -36,6 +36,59 @@
     mark(rep, label, result === true);
   }
 
+  function throwIfAborted() {
+    if (WD.isAborted && WD.isAborted()) {
+      const err = new Error("WD_ABORTED");
+      err.name = "WDAborted";
+      throw err;
+    }
+  }
+
+  // Fields that failed during this autofill attempt (until newAttempt clears).
+  // Proven retry loop: recovery onlyInvalid re-invoked writeField/LLM on the same
+  // How Did You Hear / State fields after the first failure, which made later
+  // passes worse. Once failed, leave them for the user until Again / new run.
+  function failedFieldSet() {
+    return (WD._failedFields = WD._failedFields || new Set());
+  }
+  function fieldFailKey(key, label) {
+    const k = String(key || "")
+      .toLowerCase()
+      .trim();
+    if (k) return "k:" + k;
+    const l = String(label || "")
+      .toLowerCase()
+      .trim();
+    return l ? "l:" + l : "";
+  }
+  function rememberFailedField(key, label) {
+    const set = failedFieldSet();
+    const primary = fieldFailKey(key, label);
+    if (primary) set.add(primary);
+    const l = String(label || "")
+      .toLowerCase()
+      .trim();
+    if (l) set.add("l:" + l);
+  }
+  function shouldSkipFailedField(key, label) {
+    const set = WD._failedFields;
+    if (!set || !set.size) return false;
+    const primary = fieldFailKey(key, label);
+    if (primary && set.has(primary)) return true;
+    const labelNorm = String(label || "")
+      .toLowerCase()
+      .trim();
+    if (!labelNorm) return false;
+    if (set.has("l:" + labelNorm)) return true;
+    for (const entry of set) {
+      if (!entry.startsWith("l:")) continue;
+      const want = entry.slice(2);
+      if (!want) continue;
+      if (labelNorm === want || labelNorm.includes(want) || want.includes(labelNorm)) return true;
+    }
+    return false;
+  }
+
   // ── label / value helpers ──────────────────────────────────────────────────
   function fieldLabel(container) {
     const clean = (s) => (s || "").replace(/\*/g, "").replace(/\brequired\b/gi, "").replace(/\s+/g, " ").trim();
@@ -76,7 +129,13 @@
 
   // Workday Canvas Select (Application Questions) uses input[role=combobox]
   // aria-haspopup=listbox - NOT button[aria-haspopup=listbox] (My Information era).
+  // Prefer a visible INPUT combobox first so we never drive Canvas Select via a
+  // sibling/ancestor button (which cannot take setReactValue).
   function listboxTrigger(container) {
+    const inputCombo =
+      container.querySelector('input[role="combobox"][aria-haspopup="listbox"]') ||
+      container.querySelector('input[aria-haspopup="listbox"]');
+    if (inputCombo && D.isVisible(inputCombo)) return inputCombo;
     return (
       container.querySelector('button[aria-haspopup="listbox"]') ||
       container.querySelector('[role="combobox"][aria-haspopup="listbox"]') ||
@@ -92,17 +151,67 @@
     return trigger.textContent || "";
   }
 
+  // Canvas Select (Application Questions) often keeps a blank input.value after a
+  // successful option click — the visible choice lives in a sibling / aria state.
+  // Reading only .value made openAndPick report failure on every Yes/No commit.
+  function selectDisplayValue(trigger) {
+    if (!trigger) return "";
+    const raw = triggerCurrentValue(trigger);
+    const cleaned = String(raw || "").replace(/\s+/g, " ").trim();
+    if (cleaned && !/^select(\s+one)?\.?\.?\.?$/i.test(cleaned)) return cleaned;
+    const root =
+      trigger.closest('[data-automation-id^="formField-"]') ||
+      trigger.closest('[data-automation-id*="formField"]') ||
+      trigger.parentElement;
+    if (root) {
+      const nodes = root.querySelectorAll(
+        '[data-automation-id="selectSelectedOption"], [data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"], [aria-selected="true"]',
+      );
+      for (const n of nodes) {
+        if (!D.isVisible(n)) continue;
+        const t = (n.textContent || "").replace(/\s+/g, " ").trim();
+        if (t && !/^select(\s+one)?\.?\.?\.?$/i.test(t)) return t;
+      }
+    }
+    return "";
+  }
+
   function triggerShowsPlaceholder(trigger) {
-    const t = D.norm(triggerCurrentValue(trigger));
+    const t = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
     return !t || /^select(\s+one)?\.?\.?\.?$/.test(t);
   }
 
-  // True when the control already holds a committed, valid-looking value.
-  function fieldIsFilled(container) {
-    if (container.querySelector('[aria-invalid="true"]') && D.isVisible(container.querySelector('[aria-invalid="true"]'))) {
+  function valueMatchesWant(got, want) {
+    const g = D.norm(got);
+    const w = D.norm(want);
+    if (!g || !w) return false;
+    return g === w || g.includes(w) || w.includes(g);
+  }
+
+  // True when a multiselect/prompt already has a committed chip/selection.
+  // MUST be checked before listboxTrigger(): Canvas MultiSelect uses
+  // input[role=combobox][aria-haspopup=listbox] whose .value is the empty search
+  // box even when a chip (e.g. How Did You Hear → LinkedIn) is selected. Treating
+  // that combobox as the listbox trigger made fieldIsFilled always false, so every
+  // full fill / recovery pass re-opened the prompt and broke the prior selection.
+  function multiSelectedText(container) {
+    const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
+    if (!multi) return "";
+    const sel = multi.querySelector(
+      '[data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"], [data-automation-id="pill"]',
+    );
+    return sel ? (sel.textContent || "").replace(/\s+/g, " ").trim() : "";
+  }
+
+  // Committed value present (ignores aria-invalid). Used to avoid re-opening
+  // widgets during onlyInvalid recovery while Workday still shows stale errors.
+  function fieldHasCommittedValue(container) {
+    if (multiSelectedText(container)) return true;
+    const trigger = listboxTrigger(container);
+    if (trigger && container.querySelector('[data-automation-id="multiSelectContainer"]')) {
+      // Combobox inside multiselect already handled via chips above.
       return false;
     }
-    const trigger = listboxTrigger(container);
     if (trigger) return !triggerShowsPlaceholder(trigger);
     const nativeSel = container.querySelector("select");
     if (nativeSel) {
@@ -121,6 +230,14 @@
       return !!(text.value || "").trim();
     }
     return false;
+  }
+
+  // True when the control already holds a committed, valid-looking value.
+  function fieldIsFilled(container) {
+    if (container.querySelector('[aria-invalid="true"]') && D.isVisible(container.querySelector('[aria-invalid="true"]'))) {
+      return false;
+    }
+    return fieldHasCommittedValue(container);
   }
 
   // Harvested options must resemble the question - stale open listboxes attach
@@ -373,13 +490,29 @@
       [/award or administration of any contracts.*defense|department of defense/i, "No"],
       [/projects.*contracts.*procurements.*involved/i, "No"],
       [/agree to receive text messages|receive text messages from/i, "Yes"],
-      [/willing to relocate|\brelocate\b/i, "No"],
-      [/require sponsorship|sponsorship for (a )?work visa|need sponsorship/i, "No"],
-      [/will you now or in the future require|might you in the future require/i, "No"],
+      // "relocating" must match — `\brelocate\b` does NOT (word boundary fails on -ing).
+      [/relocat/i, "No"],
+      // Workday: "Do you now or in the future require any immigration filing or visa sponsorship…"
+      // Old patterns required adjacent "require sponsorship" and missed this wording.
+      [
+        /sponsorship|immigration filing|work visa|visa sponsorship|open work permit|permanent residency/i,
+        e.sponsorship ? "Yes" : "No",
+      ],
+      [/do you now or in the future require|will you now or in the future require|might you in the future require/i, e.sponsorship ? "Yes" : "No"],
+      [/use or work on the workday|work on the workday system|workday system/i, "No"],
+      [/current or former employee of the united states government|u\.?\s*s\.?\s*government employee|employee of the united states government/i, "No"],
+      // Export-control restricted countries/regions question (keep anchored to that topic).
+      [/export control|citizen, national or resident of any of the following countries|iran,\s*cuba,\s*north korea|donetsk|luhansk/i, "No"],
+      [/related to a current .+ employee|related to.*workday employee|related to a current workday/i, "No"],
+      [/related to an employee of a customer|government official.*business interactions|direct business interactions with/i, "No"],
+      // Long acknowledgement Canvas Select — must choose Yes (Workday rejects No).
+      [/please enter ["']?yes["']? if you acknowledge|acknowledge that i have read|answered them truthfully and accurately/i, "Yes"],
+      [/accept these terms|yes i accept/i, "Yes"],
       [/at least 18|18 years of age/i, "Yes"],
       [/non-disclosure|non-compete|non-competitive|restrict your employment/i, "No"],
       [/hispanic or latino/i, e.hispanicLatino ? "Yes" : "No"],
       [/gender/i, e.gender],
+      [/sexual orientation|lgbtq/i, e.sexualOrientation || "I don't wish to answer"],
       [/what is your race|race\/ethnicity|ethnicity|\brace\b/i, e.ethnicity],
       [/veteran/i, e.veteran ? "I am a veteran" : "I am not a protected veteran"],
       [/disab/i, e.disability ? "Yes" : "No, I do not have a disability"],
@@ -401,10 +534,15 @@
   // on fields that already show text (First Name, City, Phone, …). Dropdowns/radios
   // work because they commit via click, not blur.
   function setReactValue(el, value) {
+    // Must only run on real text controls. Calling HTMLInputElement's value
+    // setter on a <button aria-haspopup=listbox> throws "Illegal invocation"
+    // (exactly the error that aborted Application Questions autofill).
+    if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return;
     const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+    const desc = Object.getOwnPropertyDescriptor(proto, "value");
     const prev = el.value;
-    setter.call(el, String(value));
+    if (desc && typeof desc.set === "function") desc.set.call(el, String(value));
+    else el.value = String(value);
     // Rewind React's value tracker so the input event registers as a real change
     // and Workday's onInput updates the model (it binds onInput, not onChange).
     if (el._valueTracker) el._valueTracker.setValue(prev);
@@ -602,10 +740,61 @@
   // input), type into the search box scoped to the popup it opened, then click
   // the matching promptOption. All lookups are confined to that popup.
   async function openAndPick(trigger, value) {
+    try {
+      return await openAndPickInner(trigger, value);
+    } catch (e) {
+      if (e && e.name === "WDAborted") throw e;
+      try {
+        WD.warn("openAndPick failed", (e && e.message) || e);
+      } catch {}
+      try {
+        await closeListbox(trigger);
+      } catch {}
+      return false;
+    }
+  }
+
+  async function openAndPickInner(trigger, value) {
     const want = D.norm(value);
-    const cur = D.norm(triggerCurrentValue(trigger));
-    if (cur && cur === want) return true;
-    if (cur && !triggerShowsPlaceholder(trigger) && (cur.includes(want) || want.includes(cur))) return true;
+    const cur = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
+    if (cur && valueMatchesWant(cur, want)) return true;
+    if (cur && !triggerShowsPlaceholder(trigger) && valueMatchesWant(cur, want)) return true;
+
+    // ONLY real <input> Canvas Select supports typeahead + value setter.
+    // button[aria-haspopup=listbox] also has aria-haspopup=listbox — treating it
+    // as a combobox and calling setReactValue caused "Illegal invocation".
+    const isInputCombo =
+      trigger.tagName === "INPUT" &&
+      (trigger.getAttribute("role") === "combobox" || trigger.getAttribute("aria-haspopup") === "listbox");
+
+    // Canvas Select input: type the option then Enter (WAI select pattern).
+    if (isInputCombo) {
+      D.clickEl(trigger);
+      await D.delay(120);
+      try {
+        trigger.focus();
+      } catch {}
+      const str = String(value);
+      setReactValue(trigger, "");
+      trigger.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+      await D.delay(40);
+      setReactValue(trigger, str);
+      trigger.dispatchEvent(
+        new InputEvent("input", { bubbles: true, data: str, inputType: "insertText" }),
+      );
+      const last = str.slice(-1) || "a";
+      const meta = keyMetaForChar(last);
+      fireKey(trigger, last, meta.code, meta.keyCode);
+      await D.delay(220);
+      pressEnter(trigger);
+      await D.delay(200);
+      const typed = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
+      if (valueMatchesWant(typed, want) || (!triggerShowsPlaceholder(trigger) && D.norm(typed))) {
+        await closeListbox(trigger);
+        return true;
+      }
+    }
+
     D.clickEl(trigger);
     await D.delay(150);
     let popup = openedListbox(trigger);
@@ -613,11 +802,16 @@
       await D.delay(80);
       popup = openedListbox(trigger);
     }
+    // Prefer a dedicated search box inside the popup — never type into the
+    // page-top How Did You Hear multiselect (same class of bug as openedListbox).
     const search = popup
-      ? popup.querySelector('input[data-automation-id="searchBox"], input[type="search"], input[type="text"]')
+      ? [...popup.querySelectorAll('input[data-automation-id="searchBox"], input[type="search"], input[type="text"]')]
+          .filter((el) => el !== trigger && D.isVisible(el))[0] || null
       : null;
-    if (search && D.isVisible(search)) {
-      search.focus();
+    if (search) {
+      try {
+        search.focus();
+      } catch {}
       D.nativeSet(search, value);
       search.dispatchEvent(new Event("input", { bubbles: true }));
       await D.delay(400);
@@ -629,13 +823,32 @@
     await D.delay(120);
     const match = pickOption(value, popup || undefined);
     if (match) {
+      const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
       D.clickEl(match);
-      await D.delay(120);
-      if (!triggerShowsPlaceholder(trigger)) return true;
-      // Combobox may need Enter to commit the highlighted option.
-      if (trigger.getAttribute("role") === "combobox") {
+      await D.delay(150);
+      if (isInputCombo && chosen) {
+        setReactValue(trigger, chosen);
+        trigger.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            data: chosen,
+            inputType: "insertReplacementText",
+          }),
+        );
+        trigger.dispatchEvent(new Event("change", { bubbles: true }));
         pressEnter(trigger);
         await D.delay(120);
+      }
+      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
+      if (valueMatchesWant(got, want) || valueMatchesWant(got, chosen)) {
+        await closeListbox(trigger);
+        return true;
+      }
+      // List closed after option click with no readable display value — for short
+      // Yes/No Application Question selects this still means a successful commit
+      // (Workday Canvas Select often keeps input.value empty).
+      if (!openedListbox(trigger) && (want === "yes" || want === "no" || D.norm(chosen) === want)) {
+        return true;
       }
       return !triggerShowsPlaceholder(trigger);
     }
@@ -766,8 +979,11 @@
         await D.delay(150);
       }
     }
+    // ALWAYS dismiss the prompt - leaving it open (even on failure) lets the
+    // page-top "How Did You Hear About Us?" search steal later field typing
+    // (see openedListbox comment). Proven corruption path for State/etc.
     const ok = isChosen();
-    if (ok) await closePrompt(multi, input);
+    await closePrompt(multi, input);
     return ok;
   }
 
@@ -1145,6 +1361,7 @@
   async function fillStep(profile, options, rep) {
     options = options || {};
     const onlyInvalid = Array.isArray(options.onlyInvalid) ? options.onlyInvalid : null;
+    throwIfAborted();
     // Wait briefly for the step to render its controls. After navigation (e.g.
     // Voluntary Disclosures → Self Identify), filling too early finds nothing -
     // which is exactly how Self Identify ended up blank. Skip the wait the instant
@@ -1162,12 +1379,20 @@
     const containers = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible);
     const llmTargets = [];
     for (const c of containers) {
+      throwIfAborted();
       const aid = c.getAttribute("data-automation-id") || "";
       const key = aid.replace(/^formField-/, "");
       const label = fieldLabel(c);
       if (onlyInvalid) {
         if (!matchesOnlyInvalid(c, key, label, onlyInvalid)) continue;
       } else if (fieldIsFilled(c)) {
+        continue;
+      }
+      // Already failed this attempt — do not re-open widgets on recovery passes.
+      if (shouldSkipFailedField(key, label)) {
+        if (!fieldHasCommittedValue(c)) {
+          rep.unmatched.push({ key, label: label || key });
+        }
         continue;
       }
       // CC-305 disability is handled exclusively by fillDisabilitySelfId (label click).
@@ -1178,6 +1403,14 @@
       // to today - the form expects the current date, never a profile value.
       if ((value === undefined || value === null || value === "") && isDateContainer(c)) {
         value = todayDate();
+      }
+      // Recovery re-entry: Workday often leaves aria-invalid=true until the next
+      // Save even after a successful write. Re-opening How Did You Hear / State
+      // prompts in that window clears the first good selection (first pass OK,
+      // recovery pass fails). Skip rewrite when a committed value is already there.
+      if (onlyInvalid && fieldHasCommittedValue(c)) {
+        record(rep, label || key, true);
+        continue;
       }
       // Required fields MUST reach the LLM even when fieldLabel() is empty
       // (Application Questions often label via combobox aria-label only).
@@ -1196,7 +1429,8 @@
       if (ok === false && interesting) {
         llmTargets.push({ container: c, key, label, required: isRequired(c) });
       } else {
-      record(rep, label || key, ok);
+        record(rep, label || key, ok);
+        if (ok === false) rememberFailedField(key, label);
       }
       await D.delay(60);
     }
@@ -1529,12 +1763,32 @@
     if (fromRules) {
       const m = pick(fromRules);
       if (m) return m;
+      // Rules may return Yes/No while the tenant uses "YES" / "No " — try again
+      // with normalized casing via contains match.
+      const soft = options.find((o) => valueMatchesWant(o, fromRules));
+      if (soft) return soft;
     }
+    const e = (profile && profile.eeo) || {};
     const low = (label || "").toLowerCase();
     if (/legal right to work|authorized to work|legally eligible/.test(low)) return pick("Yes");
-    if (/require sponsorship|might you in the future require/.test(low)) return pick("No");
+    if (/sponsorship|immigration filing|visa sponsorship|open work permit|permanent residency/.test(low)) {
+      return pick(e.sponsorship ? "Yes" : "No");
+    }
+    if (/do you now or in the future require|will you now or in the future require|might you in the future require/.test(low)) {
+      return pick(e.sponsorship ? "Yes" : "No");
+    }
+    if (/relocat/.test(low)) return pick("No");
+    if (/use or work on the workday|workday system/.test(low)) return pick("No");
+    if (/united states government|u\.?\s*s\.?\s*government/.test(low)) return pick("No");
+    if (/export control|citizen, national or resident of any of the following countries|iran,\s*cuba|donetsk|luhansk/.test(low)) {
+      return pick("No");
+    }
+    if (/related to a current|related to.*employee|related to an employee of a customer|government official.*business/.test(low)) {
+      return pick("No");
+    }
+    if (/acknowledge|answered them truthfully|please enter ["']?yes["']?/.test(low)) return pick("Yes");
     if (/relative.*employed|relatives employed/.test(low)) return pick("No");
-    if (/contractual restriction|non-solicitation|outside activities.*competit|in competition with/.test(low)) {
+    if (/contractual restriction|non-solicitation|outside activities.*competit|in competition with|non-compete/.test(low)) {
       return pick("No");
     }
     if (/government entity|department of defense|procurement|projects.*contracts.*involved/.test(low)) {
@@ -1542,7 +1796,6 @@
     }
     if (/years of.*experience|software language|network technologies/.test(low)) return pick("Yes");
     if (/text messages|agree to receive text/.test(low)) return pick("Yes");
-    if (/willing to relocate|\brelocate\b/.test(low)) return pick("No");
     if (/ever applied for employment|applied previously/.test(low)) return pick("No");
     if (/served in the armed forces|reserve component|spouse of someone who has served/.test(low)) {
       return (
@@ -1553,9 +1806,9 @@
       );
     }
     if (/highest degree/.test(low) && profile && Array.isArray(profile.education)) {
-      for (const e of profile.education) {
-        if (e && e.degree) {
-          const m = pick(e.degree);
+      for (const ed of profile.education) {
+        if (ed && ed.degree) {
+          const m = pick(ed.degree);
           if (m) return m;
         }
       }
@@ -1563,6 +1816,16 @@
     if (/salary|compensation expectation|cash compensation/.test(low)) {
       const ranged = options.filter((o) => /\d/.test(String(o)));
       if (ranged.length) return ranged[Math.min(Math.floor(ranged.length * 0.55), ranged.length - 1)];
+    }
+    // Last resort for binary Application Question selects.
+    const yn = options
+      .map((o) => String(o || "").trim())
+      .filter((t) => /^(yes|no)$/i.test(t));
+    if (yn.length === 2 && /\?/.test(label || "")) {
+      // Prefer No for "are you / do you / related / require" screening unless
+      // the label is an acknowledgement / authorization affirmative.
+      if (/acknowledge|authorized|eligible|accept|agree|certify/i.test(low)) return pick("Yes") || yn.find((t) => /^yes$/i.test(t));
+      return pick("No") || yn.find((t) => /^no$/i.test(t));
     }
     return null;
   }
@@ -1643,6 +1906,12 @@
   // pick a real one. Returns null for controls we never send to the LLM (dates -
   // filled from the profile; file uploads - handled separately).
   async function classifyControl(container) {
+    // Match writeField order: multiSelectContainer BEFORE listboxTrigger.
+    // How Did You Hear is a MultiSelect whose search input is also
+    // role=combobox[aria-haspopup=listbox]; harvesting it as a listbox opens the
+    // wrong widget path and leaves the prompt dirty for the next recovery fill.
+    const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
+    if (multi) return { kind: "select", options: await harvestMultiOptions(multi) };
     const btn = listboxTrigger(container);
     if (btn) {
       await closeAllListboxes();
@@ -1658,8 +1927,6 @@
       }
       return { kind: "select", options };
     }
-    const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
-    if (multi) return { kind: "select", options: await harvestMultiOptions(multi) };
     const nativeSel = container.querySelector("select");
     if (nativeSel) {
       const opts = [...nativeSel.options]
@@ -1701,17 +1968,26 @@
   // rep.unmatched so the side panel flags it for manual review.
   async function resolveUnmatchedWithLLM(targets, rep, profile) {
     if (!targets || !targets.length) return;
+    throwIfAborted();
     WD._resolveCache = WD._resolveCache || {};
     const items = [];
     const byCid = new Map();
     let i = 0;
     for (const t of targets) {
+      throwIfAborted();
+      if (shouldSkipFailedField(t.key, t.label)) {
+        rep.unmatched.push({ key: t.key, label: t.label });
+        continue;
+      }
       let info = null;
       try {
         info = await classifyControl(t.container);
-      } catch {}
+      } catch (e) {
+        if (e && e.name === "WDAborted") throw e;
+      }
       if (!info) {
         rep.unmatched.push({ key: t.key, label: t.label });
+        rememberFailedField(t.key, t.label);
         continue;
       }
       const cid = ((t.key || "field").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "f") + "_" + i++;
@@ -1738,11 +2014,14 @@
     try {
       const BATCH = 8;
       for (let b = 0; b < needLlm.length; b += BATCH) {
+        throwIfAborted();
         const chunk = needLlm.slice(b, b + BATCH);
         const part = await requestOptionMatches(chunk);
         Object.assign(values, part || {});
       }
-    } catch {}
+    } catch (e) {
+      if (e && e.name === "WDAborted") throw e;
+    }
 
     for (const item of items) {
       if (values[item.cid]) continue;
@@ -1751,12 +2030,14 @@
     }
 
     for (const [cid, t] of byCid) {
+      throwIfAborted();
       const value = values[cid];
       try {
         WD.log(`LLM fallback apply '${t.label}' <- ${value == null ? "(none)" : JSON.stringify(value)}`);
       } catch {}
       if (value == null || value === "") {
         rep.unmatched.push({ key: t.key, label: t.label });
+        rememberFailedField(t.key, t.label);
         continue;
       }
       const ok = await writeField(t.container, value);
@@ -1764,6 +2045,8 @@
       if (ok) {
         const cacheKey = (t.label || "").toLowerCase().trim().slice(0, 120);
         if (cacheKey) WD._resolveCache[cacheKey] = value;
+      } else {
+        rememberFailedField(t.key, t.label);
       }
       record(rep, t.label || cid, ok);
       await D.delay(60);
@@ -1810,6 +2093,7 @@
   }
 
   async function fillExperienceExtras(profile, options, rep) {
+    throwIfAborted();
     const resumeFile = options && options.resumeFile;
     try {
       const b = resumeFile && resumeFile.base64 ? resumeFile.base64.length : 0;

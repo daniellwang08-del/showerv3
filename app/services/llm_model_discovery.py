@@ -3,9 +3,16 @@
 OpenAI-compatible gateways (LiteLLM, private proxies, etc.) expose many model
 IDs on GET /v1/models for a single key. Native Anthropic keys do not use this
 path; we return an empty list with a clear message for that provider.
+
+Gateways often keep listing **retired** Gemini IDs after Google shuts them
+down for ``generateContent``. Those still appear in /v1/models but return
+404 at call time — we filter them from ``usable_for_chat`` so admins do not
+bind or benchmark dead models.
 """
 
 from __future__ import annotations
+
+import re
 
 import httpx
 
@@ -30,6 +37,25 @@ _NON_CHAT_MARKERS = (
     "titan-embed",
 )
 
+# Google Gemini models shut down for generateContent but often still listed by
+# LiteLLM / Models.list. Patterns match full aliases and dated variants.
+# See: https://ai.google.dev/gemini-api/docs/deprecations
+_RETIRED_GEMINI_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p)
+    for p in (
+        r"^gemini-1\.0($|-)",
+        r"^gemini-1\.5($|-)",
+        r"^gemini-2\.0($|-)",
+        r"^gemini-pro($|-)",
+        r"^gemini-pro-vision($|-)",
+        r"^gemini-ultra($|-)",
+        r"^models/gemini-1\.0",
+        r"^models/gemini-1\.5",
+        r"^models/gemini-2\.0",
+        r"^models/gemini-pro",
+    )
+)
+
 
 def _normalize_openai_compatible_base_url(raw: str) -> str | None:
     base = (raw or "").strip().rstrip("/")
@@ -40,11 +66,26 @@ def _normalize_openai_compatible_base_url(raw: str) -> str | None:
     return base
 
 
+def is_retired_gemini_model(model_id: str) -> bool:
+    """True when Google no longer supports this Gemini id for generateContent."""
+    mid = (model_id or "").strip().lower()
+    if mid.startswith("models/"):
+        mid = mid[len("models/") :]
+    # Strip LiteLLM provider prefixes: gemini/gemini-1.5-pro → gemini-1.5-pro
+    if "/" in mid:
+        mid = mid.rsplit("/", 1)[-1]
+    return any(p.search(mid) for p in _RETIRED_GEMINI_PATTERNS)
+
+
 def model_usable_for_chat(model_id: str) -> bool:
     mid = (model_id or "").strip().lower()
     if not mid:
         return False
-    return not any(marker in mid for marker in _NON_CHAT_MARKERS)
+    if any(marker in mid for marker in _NON_CHAT_MARKERS):
+        return False
+    if is_retired_gemini_model(mid):
+        return False
+    return True
 
 
 def _timeout_seconds(provider: str) -> float:
@@ -132,17 +173,21 @@ async def list_models_for_api_key(
     items = getattr(page, "data", None) or []
     models: list[dict] = []
     seen: set[str] = set()
+    retired_skipped = 0
     for item in items:
         mid = str(getattr(item, "id", "") or "").strip()
         if not mid or mid in seen:
             continue
         seen.add(mid)
         owned = getattr(item, "owned_by", None)
+        usable = model_usable_for_chat(mid)
+        if is_retired_gemini_model(mid):
+            retired_skipped += 1
         models.append(
             {
                 "id": mid,
                 "owned_by": str(owned) if owned is not None else None,
-                "usable_for_chat": model_usable_for_chat(mid),
+                "usable_for_chat": usable,
             }
         )
     models.sort(key=lambda m: m["id"].lower())
@@ -153,6 +198,7 @@ async def list_models_for_api_key(
         base_url=base_url,
         count=len(models),
         chat_count=len(chat_models),
+        retired_gemini_skipped=retired_skipped,
     )
     return {
         "provider": provider,

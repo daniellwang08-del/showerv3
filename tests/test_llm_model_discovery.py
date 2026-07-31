@@ -15,6 +15,7 @@ from app.services.llm_model_discovery import list_models_for_api_key, model_usab
     [
         ("gpt-5.1", True),
         ("gemini-2.5-pro", True),
+        ("gemini-2.5-flash", True),
         ("sonar-pro", True),
         ("text-embedding-3-large", False),
         ("dall-e-3", False),
@@ -24,10 +25,27 @@ from app.services.llm_model_discovery import list_models_for_api_key, model_usab
         ("gpt-4o-transcribe", False),
         ("titan-embed-image-v1", False),
         ("test-text-embedding-3-large", False),
+        # Retired Gemini — still listed by LiteLLM, 404 at call time
+        ("gemini-1.5-pro", False),
+        ("gemini-1.5-flash", False),
+        ("gemini-2.0-flash", False),
+        ("gemini-2.0-flash-exp", False),
+        ("gemini-2.0-flash-lite", False),
+        ("gemini-pro", False),
+        ("gemini/gemini-1.5-pro", False),
     ],
 )
 def test_model_usable_for_chat(model_id: str, expected: bool) -> None:
     assert model_usable_for_chat(model_id) is expected
+
+
+def test_is_retired_gemini_model() -> None:
+    from app.services.llm_model_discovery import is_retired_gemini_model
+
+    assert is_retired_gemini_model("gemini-1.5-pro") is True
+    assert is_retired_gemini_model("gemini-2.0-flash-exp") is True
+    assert is_retired_gemini_model("gemini-2.5-pro") is False
+    assert is_retired_gemini_model("gpt-4o") is False
 
 
 @pytest.mark.asyncio

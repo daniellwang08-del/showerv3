@@ -128,12 +128,15 @@ async def enqueue_tailored_content_generation(
 ) -> bool:
     try:
         from app.tasks.worker import get_tailoring_pool, TAILORING_QUEUE
+        from app.core.redis_support import pipeline_job_id
+
         pool = await get_tailoring_pool()
         await pool.enqueue_job(
             "generate_tailored_content",
             job_id,
             user_id,
             extraction_id,
+            _job_id=pipeline_job_id("tailor", job_id, user_id),
         )
         logger.info(
             "tailored_content_enqueued",
@@ -157,7 +160,7 @@ async def run_match_auto_posts(
     job_id: str,
     overall_score: Any,
 ) -> None:
-    """Pumble/Sheets auto-post (runs on save worker — not analysis slots)."""
+    """Pumble/Sheets auto-post (runs on autopost worker — not save slots)."""
     try:
         from app.services.pumble_service import auto_post_if_eligible
 
@@ -188,8 +191,15 @@ async def run_match_auto_posts(
 async def _enqueue_resume_doc_build(job_id: str, user_id: str) -> None:
     try:
         from app.tasks.worker import get_resume_build_pool
+        from app.core.redis_support import pipeline_job_id
+
         pool = await get_resume_build_pool()
-        await pool.enqueue_job("build_resume_task", job_id, user_id)
+        await pool.enqueue_job(
+            "build_resume_task",
+            job_id,
+            user_id,
+            _job_id=pipeline_job_id("resume", job_id, user_id),
+        )
         logger.info("resume_build_enqueued", job_id=job_id)
     except Exception as enq_err:
         logger.warning("resume_build_enqueue_failed", job_id=job_id, error=str(enq_err))

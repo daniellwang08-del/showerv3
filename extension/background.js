@@ -186,6 +186,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // async sendResponse
 });
 
+const APP_HELPER_FILES = ["content/ask-hotkey.js", "content/submit-watch.js"];
+
+async function injectAppHelpers(tabId) {
+  if (tabId == null) return;
+  await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    files: APP_HELPER_FILES,
+  });
+}
+
+async function isAppAssistArmed() {
+  try {
+    const data = await chrome.storage.session.get("askHotkeyArmed");
+    return data && data.askHotkeyArmed === true;
+  } catch {
+    return false;
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  if (!tab || !tab.url || !/^https?:/i.test(tab.url)) return;
+  void (async () => {
+    if (!(await isAppAssistArmed())) return;
+    try {
+      await injectAppHelpers(tabId);
+    } catch (err) {
+      // Missing host permission is expected until the side panel requests it.
+      console.warn("app helpers inject failed", tabId, err);
+    }
+  })();
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "AUTOFILL_INJECT" && msg.tabId != null) {
     (async () => {
@@ -198,6 +231,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           target: { tabId: msg.tabId, allFrames: true },
           files: scriptsForEngine(msg.engine),
         });
+        // Keep ask-hotkey + submit-watch available alongside autofill engines.
+        try {
+          await injectAppHelpers(msg.tabId);
+        } catch {
+          /* ignore */
+        }
         sendResponse({ ok: true });
       } catch (err) {
         sendResponse({ ok: false, error: String((err && err.message) || err) });
@@ -205,5 +244,68 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true; // async sendResponse
   }
+
+  if (msg && msg.type === "ASK_HOTKEY_INJECT" && msg.tabId != null) {
+    (async () => {
+      try {
+        await chrome.storage.session.set({ askHotkeyArmed: true });
+        await injectAppHelpers(msg.tabId);
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg && msg.type === "ASK_HOTKEY_DISARM") {
+    chrome.storage.session.set({ askHotkeyArmed: false }).catch(() => {});
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  // Content-script hotkey → stash for the side panel if it missed the message.
+  if (msg && msg.type === "ASK_SELECTION") {
+    const text = String((msg && msg.text) || "").trim();
+    chrome.storage.session
+      .set({
+        pendingAskSelection: {
+          text,
+          empty: !text || !!msg.empty,
+          at: Date.now(),
+        },
+      })
+      .catch(() => {});
+    // Side panel also receives this message via its own onMessage listener.
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  // Application submit detected on the page → side panel Complete & Next.
+  // Bind to activeApplyJobId and globally debounce so multi-frame submit-watch
+  // + Workday detect cannot stash a second event that completes the *next* job.
+  if (msg && msg.type === "APP_SUBMITTED") {
+    chrome.storage.session
+      .get(["activeApplyJobId", "lastAppSubmittedAt"])
+      .then((data) => {
+        const now = msg.at || Date.now();
+        const last = Number((data && data.lastAppSubmittedAt) || 0);
+        if (last && now - last < 10_000) return;
+        const jobId = (data && data.activeApplyJobId) || msg.jobId || "";
+        return chrome.storage.session.set({
+          lastAppSubmittedAt: now,
+          pendingAppSubmitted: {
+            reason: msg.reason || "submit",
+            url: msg.url || "",
+            at: now,
+            jobId: jobId ? String(jobId) : "",
+          },
+        });
+      })
+      .catch(() => {});
+    sendResponse({ ok: true });
+    return false;
+  }
+
   return false;
 });

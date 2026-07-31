@@ -20,6 +20,12 @@ TAILORING_QUEUE = "job_tailoring"
 RESUME_BUILD_QUEUE = "resume_build"
 SCRAPER_QUEUE = "job_scraper_crawl"
 SAVE_QUEUE = "job_save"
+AUTOPOST_QUEUE = "job_autopost"
+
+# Per-user save lock: defer instead of sleeping so waiters do not occupy max_jobs.
+SAVE_LOCK_POLL_SECONDS = 1.5
+SAVE_LOCK_MAX_WAIT_SECONDS = 90
+SAVE_LOCK_MAX_ATTEMPTS = int(SAVE_LOCK_MAX_WAIT_SECONDS / SAVE_LOCK_POLL_SECONDS)
 
 
 async def _mark_extraction_failed_cancelled(job_id: str) -> None:
@@ -166,11 +172,14 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                             await session.commit()
                             pending_match_progress = (job.id, user_id)
                             pool = await get_analysis_pool()
+                            from app.core.redis_support import pipeline_job_id
+
                             await pool.enqueue_job(
                                 "analyze_job_match",
                                 job.id,
                                 user_id,
                                 job_id,
+                                _job_id=pipeline_job_id("analyze", job.id, user_id),
                             )
                             logger.info("job_match_enqueued", valid_job_id=job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
                             pending_match_progress = None
@@ -254,7 +263,16 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
         if result:
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
             pool = await get_save_pool()
-            await pool.enqueue_job("save_analyzed_job", valid_job_id, user_id, extraction_id, result)
+            from app.core.redis_support import pipeline_job_id
+
+            await pool.enqueue_job(
+                "save_analyzed_job",
+                valid_job_id,
+                user_id,
+                extraction_id,
+                result,
+                _job_id=pipeline_job_id("save", valid_job_id, user_id),
+            )
         return result
     except asyncio.CancelledError:
         await clear_job_match_progress(valid_job_id, user_id)
@@ -267,56 +285,124 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
         clear_logging_context()
 
 
-async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
-                            extraction_id: str | None, match_data: dict) -> dict | None:
+async def save_analyzed_job(
+    ctx: dict,
+    job_id: str,
+    user_id: str,
+    extraction_id: str | None,
+    match_data: dict,
+    lock_attempt: int = 0,
+) -> dict | None:
     """Save analyzed job match result with per-user dedup lock.
 
-    Uses an in-task wait loop for the Redis lock instead of arq Retry so that
-    lock-contention does NOT consume max_tries (which would permanently drop
-    jobs after 10 lock-busy retries).
+    Lock contention re-enqueues with ``_defer_by`` instead of sleeping so waiters
+    do not occupy a save ``max_jobs`` slot. Dedup runs under the lock; Phase B
+    enqueue, WS events, and auto-post run after the lock is released.
     """
-    from app.services.job_match_orchestrator import run_match_auto_posts
+    from app.core.redis_support import pipeline_job_id
     from app.services.post_analysis_dedup import run_post_analysis_dedup
 
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="save_analyzed_job", job_id=job_id, user_id=user_id)
-    logger.info("worker_save_analyzed_job_started", job_id=job_id, user_id=user_id)
+    logger.info(
+        "worker_save_analyzed_job_started",
+        job_id=job_id,
+        user_id=user_id,
+        lock_attempt=lock_attempt,
+    )
 
     redis = ctx.get("redis")
     lock_key = f"job_save_lock:{user_id}"
     lock_ttl = 120
+    lock_held = False
     dedup_result: dict | None = None
     action: str | None = None
 
     if redis:
-        max_wait = 90
-        poll_interval = 1.5
-        waited = 0.0
-        while waited < max_wait:
-            acquired = await redis.set(lock_key, "1", nx=True, ex=lock_ttl)
-            if acquired:
-                break
-            logger.debug("save_lock_waiting", job_id=job_id, user_id=user_id, waited=round(waited, 1))
-            await asyncio.sleep(poll_interval)
-            waited += poll_interval
-        else:
-            logger.error("save_lock_timeout", job_id=job_id, user_id=user_id, waited=max_wait)
-            await clear_job_match_progress(job_id, user_id)
-            await publish_ws_event({
-                "type": "match_failed",
-                "user_id": user_id,
-                "valid_job_id": job_id,
-                "error": "Timed out waiting for save lock",
-            })
-            return None
+        acquired = await redis.set(lock_key, "1", nx=True, ex=lock_ttl)
+        if not acquired:
+            attempt = max(0, int(lock_attempt or 0))
+            if attempt >= SAVE_LOCK_MAX_ATTEMPTS:
+                logger.error(
+                    "save_lock_timeout",
+                    job_id=job_id,
+                    user_id=user_id,
+                    waited=SAVE_LOCK_MAX_WAIT_SECONDS,
+                    lock_attempt=attempt,
+                )
+                await clear_job_match_progress(job_id, user_id)
+                await publish_ws_event({
+                    "type": "match_failed",
+                    "user_id": user_id,
+                    "valid_job_id": job_id,
+                    "error": "Timed out waiting for save lock",
+                })
+                clear_logging_context()
+                return None
+
+            next_attempt = attempt + 1
+            try:
+                pool = await get_save_pool()
+                await pool.enqueue_job(
+                    "save_analyzed_job",
+                    job_id,
+                    user_id,
+                    extraction_id,
+                    match_data,
+                    next_attempt,
+                    _job_id=pipeline_job_id("save", job_id, user_id, f"lock{next_attempt}"),
+                    _defer_by=SAVE_LOCK_POLL_SECONDS,
+                )
+                logger.info(
+                    "save_lock_deferred",
+                    job_id=job_id,
+                    user_id=user_id,
+                    lock_attempt=next_attempt,
+                    defer_by=SAVE_LOCK_POLL_SECONDS,
+                )
+            except Exception as e:
+                logger.error(
+                    "save_lock_defer_enqueue_failed",
+                    job_id=job_id,
+                    user_id=user_id,
+                    error=str(e),
+                )
+                await clear_job_match_progress(job_id, user_id)
+                await publish_ws_event({
+                    "type": "match_failed",
+                    "user_id": user_id,
+                    "valid_job_id": job_id,
+                    "error": "Failed to requeue while waiting for save lock",
+                })
+                clear_logging_context()
+                return None
+            clear_logging_context()
+            return {"deferred": "lock_busy", "lock_attempt": next_attempt}
+        lock_held = True
 
     try:
         dedup_result = await run_post_analysis_dedup(
             job_id, user_id, match_data, extraction_id,
         )
-
         action = dedup_result.get("action", "saved_active")
+        logger.info("worker_save_analyzed_job_completed", job_id=job_id, action=action)
+    except Exception as e:
+        logger.exception("worker_save_analyzed_job_failed", job_id=job_id, error=str(e))
+        await clear_job_match_progress(job_id, user_id)
+        await publish_ws_event({
+            "type": "match_failed",
+            "user_id": user_id,
+            "valid_job_id": job_id,
+            "error": str(e),
+        })
+        dedup_result = None
+        action = None
+    finally:
+        if redis and lock_held:
+            await redis.delete(lock_key)
 
+    # Outside the per-user lock: WS + Phase B + auto-post (do not serialize peers).
+    if action is not None:
         await clear_job_match_progress(job_id, user_id)
 
         await publish_ws_event({
@@ -332,42 +418,89 @@ async def save_analyzed_job(ctx: dict, job_id: str, user_id: str,
                 "type": "job_excluded_for_user",
                 "user_id": user_id,
                 "valid_job_id": job_id,
-                "exclusion_type": dedup_result.get("exclusion_type"),
-                "reason": dedup_result.get("reason"),
+                "exclusion_type": (dedup_result or {}).get("exclusion_type"),
+                "reason": (dedup_result or {}).get("reason"),
             })
 
         if action == "saved_active" and match_data.get("should_run_phase_b"):
             try:
                 pool = await get_tailoring_pool()
                 await pool.enqueue_job(
-                    "generate_tailored_content", job_id, user_id, extraction_id,
+                    "generate_tailored_content",
+                    job_id,
+                    user_id,
+                    extraction_id,
+                    _job_id=pipeline_job_id("tailor", job_id, user_id),
                 )
             except Exception as e:
-                logger.warning("tailored_content_enqueue_from_save_failed", job_id=job_id, error=str(e))
+                logger.warning(
+                    "tailored_content_enqueue_from_save_failed",
+                    job_id=job_id,
+                    error=str(e),
+                )
 
-        logger.info("worker_save_analyzed_job_completed", job_id=job_id, action=action)
-    except Exception as e:
-        logger.exception("worker_save_analyzed_job_failed", job_id=job_id, error=str(e))
-        await clear_job_match_progress(job_id, user_id)
-        await publish_ws_event({
-            "type": "match_failed",
-            "user_id": user_id,
-            "valid_job_id": job_id,
-            "error": str(e),
-        })
-        dedup_result = None
-        action = None
-    finally:
-        if redis:
-            await redis.delete(lock_key)
-
-    # Auto-post after the per-user lock is released so Sheets/Pumble latency
-    # does not serialize other saves for this user.
-    if action == "saved_active":
-        await run_match_auto_posts(user_id, job_id, match_data.get("overall_score"))
+        if action == "saved_active":
+            await _enqueue_or_run_auto_posts(
+                user_id, job_id, match_data.get("overall_score"),
+            )
 
     clear_logging_context()
     return dedup_result
+
+
+async def _enqueue_or_run_auto_posts(
+    user_id: str,
+    job_id: str,
+    overall_score,
+) -> None:
+    """Enqueue Sheets/Pumble on the autopost queue; inline fallback if enqueue fails."""
+    from app.core.redis_support import pipeline_job_id
+    from app.services.job_match_orchestrator import run_match_auto_posts
+
+    try:
+        pool = await get_autopost_pool()
+        await pool.enqueue_job(
+            "run_match_auto_posts_task",
+            user_id,
+            job_id,
+            overall_score,
+            _job_id=pipeline_job_id("autopost", job_id, user_id),
+        )
+        return
+    except Exception as e:
+        logger.warning(
+            "autopost_enqueue_failed_falling_back_inline",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(e),
+        )
+    await run_match_auto_posts(user_id, job_id, overall_score)
+
+
+async def run_match_auto_posts_task(
+    ctx: dict,
+    user_id: str,
+    job_id: str,
+    overall_score,
+) -> dict | None:
+    """Dedicated worker entry for Sheets/Pumble auto-post (off the save queue)."""
+    from app.services.job_match_orchestrator import run_match_auto_posts
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="run_match_auto_posts_task", job_id=job_id, user_id=user_id)
+    try:
+        await run_match_auto_posts(user_id, job_id, overall_score)
+        return {"ok": True}
+    except Exception as e:
+        logger.exception(
+            "worker_run_match_auto_posts_failed",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(e),
+        )
+        return None
+    finally:
+        clear_logging_context()
 
 
 async def _forward_phase_b_to_tailoring_queue(
@@ -377,8 +510,16 @@ async def _forward_phase_b_to_tailoring_queue(
     extraction_id: str | None = None,
 ) -> dict | None:
     """Compat shim: old Phase B jobs still on job_analysis are re-queued."""
+    from app.core.redis_support import pipeline_job_id
+
     pool = await get_tailoring_pool()
-    await pool.enqueue_job("generate_tailored_content", job_id, user_id, extraction_id)
+    await pool.enqueue_job(
+        "generate_tailored_content",
+        job_id,
+        user_id,
+        extraction_id,
+        _job_id=pipeline_job_id("tailor", job_id, user_id),
+    )
     logger.info(
         "phase_b_redirected_to_tailoring_queue",
         valid_job_id=job_id,
@@ -716,7 +857,13 @@ async def run_scraper_task(
 
 
 def _redis_settings() -> RedisSettings:
-    return RedisSettings.from_dsn(get_settings().redis_url)
+    from app.core.redis_support import arq_redis_settings
+
+    return arq_redis_settings()
+
+
+def _keep_result() -> int:
+    return int(get_settings().arq_keep_result_seconds)
 
 
 async def _flush_langfuse(ctx: dict) -> None:
@@ -732,7 +879,10 @@ async def _extraction_worker_startup(ctx: dict) -> None:
     """Pre-create a singleton ExtractionService for reuse across jobs."""
     ctx["extraction_service"] = ExtractionService()
     from app.services.extraction_cache import init_redis_pool
+    from app.core.redis_support import init_pubsub_redis_pool
+
     await init_redis_pool()
+    await init_pubsub_redis_pool()
 
 
 class ExtractionWorkerSettings:
@@ -742,16 +892,19 @@ class ExtractionWorkerSettings:
     queue_name = EXTRACTION_QUEUE
     job_timeout = 300
     max_jobs = get_settings().extraction_worker_max_jobs
-    max_tries = 1
+    max_tries = get_settings().extraction_worker_max_tries
+    keep_result = _keep_result()
     on_startup = _extraction_worker_startup
     on_shutdown = _flush_langfuse
 
 
 async def _analysis_worker_startup(ctx: dict) -> None:
     from app.services.extraction_cache import init_redis_pool
+    from app.core.redis_support import init_pubsub_redis_pool
     from app.services.pipeline_health import heal_stale_pipeline_state
 
     await init_redis_pool()
+    await init_pubsub_redis_pool()
     await heal_stale_pipeline_state()
 
 
@@ -766,16 +919,19 @@ class AnalysisWorkerSettings:
     queue_name = ANALYSIS_QUEUE
     job_timeout = 360
     max_jobs = get_settings().analysis_worker_max_jobs
-    max_tries = 1
+    max_tries = get_settings().analysis_worker_max_tries
+    keep_result = _keep_result()
     on_startup = _analysis_worker_startup
     on_shutdown = _flush_langfuse
 
 
 async def _tailoring_worker_startup(ctx: dict) -> None:
     from app.services.extraction_cache import init_redis_pool
+    from app.core.redis_support import init_pubsub_redis_pool
     from app.services.pipeline_health import heal_stale_pipeline_state
 
     await init_redis_pool()
+    await init_pubsub_redis_pool()
     await heal_stale_pipeline_state()
 
 
@@ -786,7 +942,9 @@ class TailoringWorkerSettings:
     queue_name = TAILORING_QUEUE
     job_timeout = 480
     max_jobs = get_settings().tailoring_worker_max_jobs
-    max_tries = 1
+    # Transient LLM/network failures — retryable (unlike save/resume file I/O).
+    max_tries = get_settings().tailoring_worker_max_tries
+    keep_result = _keep_result()
     on_startup = _tailoring_worker_startup
     on_shutdown = _flush_langfuse
 
@@ -799,6 +957,26 @@ class SaveWorkerSettings:
     job_timeout = 180
     max_jobs = get_settings().save_worker_max_jobs
     max_tries = 1
+    keep_result = _keep_result()
+    on_shutdown = _flush_langfuse
+
+
+async def _autopost_worker_startup(ctx: dict) -> None:
+    from app.core.redis_support import init_pubsub_redis_pool
+
+    await init_pubsub_redis_pool()
+
+
+class AutoPostWorkerSettings:
+    """arq settings for Sheets/Pumble auto-post (off the save critical path)."""
+    functions = [run_match_auto_posts_task]
+    redis_settings = _redis_settings
+    queue_name = AUTOPOST_QUEUE
+    job_timeout = 180
+    max_jobs = get_settings().autopost_worker_max_jobs
+    max_tries = 3
+    keep_result = _keep_result()
+    on_startup = _autopost_worker_startup
     on_shutdown = _flush_langfuse
 
 
@@ -810,6 +988,7 @@ class ResumeBuildWorkerSettings:
     job_timeout = 180
     max_jobs = get_settings().resume_worker_max_jobs
     max_tries = 1
+    keep_result = _keep_result()
     on_shutdown = _flush_langfuse
 
 
@@ -821,14 +1000,12 @@ async def _get_shared_pool(queue: str) -> ArqRedis:
     """Return a long-lived ArqRedis pool for *queue*, creating it on first use.
 
     Callers must NOT close the returned pool - it is shared across the process.
+    Hot-path enqueue must not ping Redis on every call; recreate only when
+    the cached pool is missing.
     """
     pool = _shared_pools.get(queue)
     if pool is not None:
-        try:
-            await pool.ping()
-            return pool
-        except Exception:
-            _shared_pools.pop(queue, None)
+        return pool
     pool = await create_pool(_redis_settings(), default_queue_name=queue)
     _shared_pools[queue] = pool
     return pool
@@ -860,6 +1037,10 @@ async def get_save_pool() -> ArqRedis:
     return await _get_shared_pool(SAVE_QUEUE)
 
 
+async def get_autopost_pool() -> ArqRedis:
+    return await _get_shared_pool(AUTOPOST_QUEUE)
+
+
 async def get_resume_build_pool() -> ArqRedis:
     return await _get_shared_pool(RESUME_BUILD_QUEUE)
 
@@ -876,3 +1057,4 @@ class ScraperWorkerSettings:
     job_timeout = 3600
     max_jobs = get_settings().scraper_worker_max_jobs
     max_tries = 1
+    keep_result = _keep_result()

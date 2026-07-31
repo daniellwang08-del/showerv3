@@ -134,8 +134,8 @@ export function ScraperDashboard() {
     return () => window.clearInterval(id);
   }, [syncing, checkSyncStatus]);
 
-  const handleSync = useCallback((spiderName?: string) => {
-    startSync(spiderName);
+  const handleSync = useCallback((options: Parameters<typeof startSync>[0]) => {
+    void startSync(options);
   }, [startSync]);
 
   if (!booted) {
