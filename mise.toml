@@ -1,0 +1,7 @@
+# Railway / nixpacks use mise to install the Python from `.python-version`.
+# Older CPython builds (e.g. 3.12.3) from astral-sh/python-build-standalone
+# often have no GitHub artifact attestations, which makes `mise install` fail with:
+#   No GitHub artifact attestations found for cpython@X.Y.Z
+# Disabling verification unblocks the install; the tarball checksum is still checked.
+[settings]
+python.github_attestations = false

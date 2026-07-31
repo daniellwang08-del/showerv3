@@ -40,7 +40,10 @@ services:
       - key: REDIS_REQUIRE_FOR_JOBS
         value: "true"
       - key: PYTHON_VERSION
-        value: "3.12.3"
+        value: "3.12.11"
+      # Railway/mise: older CPython builds may lack GitHub attestations.
+      - key: MISE_PYTHON_GITHUB_ATTESTATIONS
+        value: "false"
 
   # --- arq extraction worker (scrapes job pages) ---
   - type: worker
@@ -78,7 +81,10 @@ services:
       - key: REDIS_REQUIRE_FOR_JOBS
         value: "true"
       - key: PYTHON_VERSION
-        value: "3.12.3"
+        value: "3.12.11"
+      # Railway/mise: older CPython builds may lack GitHub attestations.
+      - key: MISE_PYTHON_GITHUB_ATTESTATIONS
+        value: "false"
 
   # --- arq analysis worker (AI match scoring) ---
   - type: worker
@@ -214,7 +220,10 @@ services:
       - key: REDIS_REQUIRE_FOR_JOBS
         value: "true"
       - key: PYTHON_VERSION
-        value: "3.12.3"
+        value: "3.12.11"
+      # Railway/mise: older CPython builds may lack GitHub attestations.
+      - key: MISE_PYTHON_GITHUB_ATTESTATIONS
+        value: "false"
 
   # --- arq resume build worker (DOCX/PDF document generation) ---
   - type: worker
@@ -250,7 +259,10 @@ services:
       - key: REDIS_REQUIRE_FOR_JOBS
         value: "true"
       - key: PYTHON_VERSION
-        value: "3.12.3"
+        value: "3.12.11"
+      # Railway/mise: older CPython builds may lack GitHub attestations.
+      - key: MISE_PYTHON_GITHUB_ATTESTATIONS
+        value: "false"
 
   # --- arq scraper crawl worker (Scrapy spiders via subprocess) ---
   - type: worker
@@ -282,7 +294,10 @@ services:
       - key: REDIS_REQUIRE_FOR_JOBS
         value: "true"
       - key: PYTHON_VERSION
-        value: "3.12.3"
+        value: "3.12.11"
+      # Railway/mise: older CPython builds may lack GitHub attestations.
+      - key: MISE_PYTHON_GITHUB_ATTESTATIONS
+        value: "false"
 
   # --- React/Vite frontend (static site, free by default) ---
   - type: web

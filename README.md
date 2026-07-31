@@ -1,4 +1,4 @@
-# Job Scraper
+# Atomspace / Job Scraper — Setup Guide
 
 ## Prerequisites
 
@@ -22,9 +22,25 @@ PDF export uses the pure-Python **`dxpdf`** package (`pip install` via `requirem
 
 ---
 
-## Install
+## What you need
 
-### 1. Clone and enter the project
+| Tool | Version | Notes |
+|------|---------|--------|
+| **Python** | 3.12+ (3.13 OK) | Backend, workers, Scrapy |
+| **Node.js** | 18+ | Frontend |
+| **PostgreSQL** | 14+ | Database |
+| **Redis** | 6+ | Job queues — on Windows use [Memurai](https://www.memurai.com/) or Redis in WSL/Docker |
+
+Optional later (not required for first boot):
+
+- OpenAI-compatible API key (analysis, tailoring, assistant)
+- Playwright Chromium (browser extraction / some spiders)
+- Google Sheets credentials / Pumble (integrations)
+- Scraper platform login sessions (RemoteRocketship, Jobright)
+
+---
+
+## 1. Clone the repo
 
 ```bash
 git clone <your-repo-url>
@@ -60,39 +76,89 @@ docker compose --profile tools up -d
 
 ### 3. Backend (Python)
 
-**Windows**
+---
+
+## 2. Python virtualenv + packages
+
+### Windows (Command Prompt)
 
 ```cmd
 python -m venv venv
 venv\Scripts\activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-**macOS / Linux**
+If `python` opens the Microsoft Store or says “Python was not found”, use the full path instead:
+
+```cmd
+C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python313\python.exe -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m playwright install chromium
+```
+
+### macOS / Linux
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 playwright install chromium
 ```
 
 ### 4. Environment file
 
-**Windows**
+```bash
+python -c "import sys; print(sys.executable)"
+```
+
+You should see a path under `...\job_scraper\venv\...`.
+
+---
+
+## 3. PostgreSQL database
+
+Create an empty database (name must match `.env`):
+
+```sql
+CREATE DATABASE job_scraper;
+```
+
+Default connection used in `env.example`:
+
+`postgresql+asyncpg://postgres:postgres@localhost:5432/job_scraper`
+
+Change user/password/host in `.env` if yours differ.
+
+---
+
+## 4. Redis
+
+Start Redis (or Memurai on Windows) and confirm it listens on `localhost:6379`.
+
+Default URL:
+
+`redis://localhost:6379/0`
+
+---
+
+## 5. Environment file
+
+### Windows
 
 ```cmd
 copy env.example .env
 ```
 
-**macOS / Linux**
+### macOS / Linux
 
 ```bash
 cp env.example .env
 ```
 
-Edit `.env` and set at minimum:
+Edit `.env` and set at least:
 
 | Variable | Example |
 |----------|---------|
@@ -122,29 +188,36 @@ cd ..
 
 ---
 
-## Run
+## 8. Start everything
 
 The app needs **one API server**, **six workers**, and **one frontend dev server**.
 
-### Windows (all services)
-
-From the project root, with `venv` already created and `.env` configured:
+From the **project root**, with `venv` already created and `.env` filled:
 
 ```cmd
 start.cmd
 ```
 
-This opens 8 windows: API, extraction, analysis, tailoring, save, resume, scraper workers, and the frontend.
+This opens **8** windows:
 
-Production-style env (uses `.env.production`):
+1. API server (`:8000`)
+2. Extraction worker  
+3. Analysis worker  
+4. Tailoring worker  
+5. Save worker  
+6. Resume build worker  
+7. Scraper worker  
+8. Frontend (`:5173`)
+
+Production overlay (loads `.env.production`):
 
 ```cmd
 start-prod.cmd
 ```
 
-### Manual start (Windows, macOS, Linux)
+### Manual start (any OS)
 
-Run each command in its **own terminal**. Activate the virtualenv first.
+Use **one terminal per process**. Activate the venv in each Python terminal first.
 
 ```bash
 # 0. Redis (+ Postgres if you use the docker-db profile)
@@ -154,13 +227,13 @@ docker compose up -d redis
 # 1. API (http://localhost:8000)
 python start_server.py
 
-# 2. Extraction worker (URL scraping)
+# Terminal 2 — Extraction
 python run_worker.py extraction
 
-# 3. Analysis worker (Phase A match scoring)
+# Terminal 3 — Analysis
 python run_worker.py analysis
 
-# 4. Tailoring worker (Phase B resume tailoring — dedicated queue)
+# Terminal 4 — Tailoring
 python run_worker.py tailoring
 
 # 5. Save worker (post-analysis persistence + Phase B enqueue)
@@ -179,7 +252,11 @@ python run_worker.py scraper
 cd frontend && npm run dev
 ```
 
-### URLs
+On Windows without activation, prefix Python commands with `.\venv\Scripts\python.exe`.
+
+---
+
+## 9. Open the app
 
 | Service | URL |
 |---------|-----|

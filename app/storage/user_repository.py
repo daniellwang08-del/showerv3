@@ -95,20 +95,31 @@ class UserRepository:
         return int(result.scalar_one() or 0)
 
     async def create(self, email: str, password: str) -> User:
-        """Create a new user with hashed password (non-admin by default)."""
+        """Create a new user with hashed password.
+
+        The first active admin slot is granted automatically so a fresh
+        install can open System Settings / User Management without a
+        manual SQL bootstrap.
+        """
         email = email.lower().strip()
         password_hash = AuthService.hash_password(password)
-        
+        is_first_admin = (await self.count_admins()) == 0
+
         user = User(
             email=email,
             password_hash=password_hash,
             is_active=True,
-            is_admin=False,
+            is_admin=is_first_admin,
         )
-        
+
         self.session.add(user)
         await self.session.flush()
-        logger.info("user_created", user_id=user.id, email=email)
+        logger.info(
+            "user_created",
+            user_id=user.id,
+            email=email,
+            is_admin=is_first_admin,
+        )
         return user
 
     async def verify_credentials(self, email: str, password: str) -> User | None:

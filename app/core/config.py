@@ -204,7 +204,6 @@ class Settings(BaseSettings):
     rate_limit_burst: int = 10
 
     extraction_cache_ttl_seconds: int = 3600
-    dedup_window_hours: int = 24
     default_dedup_recycle_days: int = Field(default=60, ge=1, le=3650)
     default_min_match_score: int = Field(default=0, ge=0, le=100)
 
