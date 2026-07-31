@@ -141,6 +141,12 @@ export interface ScraperStats {
   my_jobs: number;
   extracted_jobs: number;
   ready_jobs: number;
+  /** Match score >= 75 (Strong). Optional for older backends. */
+  best_jobs?: number;
+  /** Visible jobs not yet marked applied. Optional for older backends. */
+  available_jobs?: number;
+  /** Visible jobs marked applied. Optional for older backends. */
+  applied_jobs?: number;
   sources: SourceStats[];
   recent_runs: ScrapeRun[];
 }

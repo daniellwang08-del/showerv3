@@ -7,8 +7,17 @@ from datetime import datetime
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.database import Job, JobExtraction, ResumeBuildResult, UserJobStatus
+from app.models.database import (
+    Job,
+    JobExtraction,
+    JobMatchResult,
+    ResumeBuildResult,
+    UserJobStatus,
+    ValidJobUserApplication,
+)
 from app.models.schemas import ExtractionStatus
+
+BEST_MATCH_SCORE = 75
 
 
 def _visible_job_clause(user_id: str):
@@ -63,13 +72,26 @@ async def fetch_dashboard_stats(
     added_at = _job_added_at_expr()
     is_remote = _is_remote_expr()
 
-    # Single query with conditional aggregation instead of 7 separate COUNTs
     ext_join = join.outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
     rb_join = ext_join.outerjoin(
         ResumeBuildResult,
         and_(
             ResumeBuildResult.job_id == Job.id,
             ResumeBuildResult.user_id == user_id,
+        ),
+    )
+    match_join = rb_join.outerjoin(
+        JobMatchResult,
+        and_(
+            JobMatchResult.job_id == Job.id,
+            JobMatchResult.user_id == user_id,
+        ),
+    )
+    app_join = match_join.outerjoin(
+        ValidJobUserApplication,
+        and_(
+            ValidJobUserApplication.job_id == Job.id,
+            ValidJobUserApplication.user_id == user_id,
         ),
     )
 
@@ -103,8 +125,17 @@ async def fetch_dashboard_stats(
                 func.count().filter(
                     ResumeBuildResult.resume_docx_status == "completed"
                 ).label("ready_jobs"),
+                func.count().filter(
+                    JobMatchResult.overall_score >= BEST_MATCH_SCORE
+                ).label("best_jobs"),
+                func.count().filter(
+                    ValidJobUserApplication.id.is_(None)
+                ).label("available_jobs"),
+                func.count().filter(
+                    ValidJobUserApplication.id.is_not(None)
+                ).label("applied_jobs"),
             )
-            .select_from(rb_join)
+            .select_from(app_join)
             .where(visible)
         )
     ).one()
@@ -151,6 +182,9 @@ async def fetch_dashboard_stats(
         "my_jobs": stats_row.my_jobs or 0,
         "extracted_jobs": stats_row.extracted_jobs or 0,
         "ready_jobs": stats_row.ready_jobs or 0,
+        "best_jobs": stats_row.best_jobs or 0,
+        "available_jobs": stats_row.available_jobs or 0,
+        "applied_jobs": stats_row.applied_jobs or 0,
         "sources": sources,
         "recent_runs": recent_runs,
     }

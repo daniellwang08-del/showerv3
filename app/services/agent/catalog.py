@@ -196,11 +196,11 @@ async def _get_stats(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     d.pop("recent_runs", None)
     summary = (
         f"{d.get('total_jobs', 0)} total jobs, "
-        f"{d.get('my_jobs', 0)} posted by you, "
         f"{d.get('today_scraped', 0)} added today, "
+        f"{d.get('ready_jobs', 0)} ready to apply, "
+        f"{d.get('best_jobs', 0)} best matches, "
         f"{d.get('total_remote', 0)} remote, "
-        f"{d.get('extracted_jobs', 0)} extracted, "
-        f"{d.get('ready_jobs', 0)} ready to apply."
+        f"{d.get('available_jobs', 0)} still open to apply."
     )
     return ToolResult(ok=True, summary=summary, data=d)
 

@@ -152,7 +152,10 @@ class ScraperStatsResponse(BaseModel):
     today_posted: int = 0
     my_jobs: int = 0          # jobs I added via submission/attachment
     extracted_jobs: int = 0   # fully extracted (pipeline completed)
-    ready_jobs: int = 0       # have structured output + tailored resume/cover letter
+    ready_jobs: int = 0       # tailored resume/cover letter ready
+    best_jobs: int = 0        # match score >= 75 (Strong)
+    available_jobs: int = 0   # not yet marked applied
+    applied_jobs: int = 0     # marked applied
     sources: list[SourceStats]
     recent_runs: list[dict] = Field(default_factory=list)
 
@@ -806,6 +809,9 @@ async def get_scraper_stats(
             my_jobs=data["my_jobs"],
             extracted_jobs=data["extracted_jobs"],
             ready_jobs=data["ready_jobs"],
+            best_jobs=data["best_jobs"],
+            available_jobs=data["available_jobs"],
+            applied_jobs=data["applied_jobs"],
             sources=[
                 SourceStats(
                     source=row["source"],

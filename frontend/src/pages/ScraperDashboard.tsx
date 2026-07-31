@@ -37,6 +37,7 @@ export function ScraperDashboard() {
     loadJobs, bgRefreshJobs, loadStats, loadSpiders, loadLastSyncRuns, checkSyncStatus, startSync,
     setPage, setPerPage, setSort, setView,
     setTitleFilter, setCompanyFilter, setRemoteOnly, setMinScore,
+    applyAgentDashboard,
   } = useScraperStore();
 
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -175,7 +176,15 @@ export function ScraperDashboard() {
 
       {/* z-0 keeps metric tiles below PageHeader menus (header is z-40). */}
       <div className="relative z-0">
-        <ScraperStatsBar stats={stats} loading={statsLoading} />
+        <ScraperStatsBar
+          stats={stats}
+          loading={statsLoading}
+          onSelectToday={() => applyAgentDashboard({ view: 'today', remote_only: false, min_match_score: 0 })}
+          onSelectReady={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
+          onSelectBest={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 75 })}
+          onSelectRemote={() => applyAgentDashboard({ view: 'all', remote_only: true })}
+          onSelectAvailable={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
+        />
       </div>
 
       <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">

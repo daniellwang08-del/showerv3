@@ -570,41 +570,62 @@ html.dark { color-scheme: dark; }
   }
 }
 
-/* ── Jobs dashboard metric tiles ── */
-@keyframes dashboard-metric-in {
-  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+/* ── Jobs dashboard stats board ── */
+@keyframes stats-tile-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-@keyframes dashboard-shimmer-sweep {
+@keyframes stats-hero-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes stats-num-bump {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+@keyframes stats-hero-pulse {
+  0%   { box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12); }
+  40%  { box-shadow: 0 10px 32px rgba(37, 99, 235, 0.28); }
+  100% { box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12); }
+}
+@keyframes stats-hero-glow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 0.9; transform: scale(1.04); }
+}
+@keyframes stats-board-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.15); }
+}
+@keyframes stats-shimmer-sweep {
   0%   { transform: translateX(-120%) skewX(-12deg); opacity: 0; }
   15%  { opacity: 0.35; }
   100% { transform: translateX(220%) skewX(-12deg); opacity: 0; }
 }
-@keyframes dashboard-icon-pulse {
-  0%, 100% { transform: scale(1); box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25); }
-  50%      { transform: scale(1.04); box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4); }
-}
 
-.dashboard-metric-tile {
-  animation: dashboard-metric-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+.stats-board-shell {
+  animation: stats-hero-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.dashboard-metric-tile::after {
+.stats-side-tile {
+  animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stats-side-tile::after {
   content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(
     105deg,
     transparent 40%,
-    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0.4) 50%,
     transparent 60%
   );
   transform: translateX(-120%) skewX(-12deg);
   pointer-events: none;
 }
-.dashboard-metric-tile:hover::after {
-  animation: dashboard-shimmer-sweep 0.85s ease-out;
+.stats-side-tile:hover::after {
+  animation: stats-shimmer-sweep 0.85s ease-out;
 }
-.dark .dashboard-metric-tile::after {
+.dark .stats-side-tile::after {
   background: linear-gradient(
     105deg,
     transparent 40%,
@@ -612,14 +633,38 @@ html.dark { color-scheme: dark; }
     transparent 60%
   );
 }
-.dashboard-metric-tile:hover .dashboard-metric-icon {
-  animation: dashboard-icon-pulse 1.2s ease-in-out;
+.stats-hero-tile {
+  animation: stats-hero-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stats-hero-glow {
+  animation: stats-hero-glow 3.2s ease-in-out infinite;
+}
+.stats-hero-pulse {
+  animation: stats-hero-pulse 0.7s ease-out;
+}
+.stats-num-bump {
+  display: inline-block;
+  animation: stats-num-bump 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.stats-board-pulse {
+  animation: stats-board-pulse 1.2s ease-in-out infinite;
+}
+
+/* Legacy class names kept for any residual references */
+.dashboard-metric-tile {
+  animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dashboard-metric-tile,
-  .dashboard-metric-tile::after,
-  .dashboard-metric-tile:hover .dashboard-metric-icon {
+  .stats-board-shell,
+  .stats-side-tile,
+  .stats-side-tile::after,
+  .stats-hero-tile,
+  .stats-hero-glow,
+  .stats-hero-pulse,
+  .stats-num-bump,
+  .stats-board-pulse,
+  .dashboard-metric-tile {
     animation: none !important;
   }
 }
