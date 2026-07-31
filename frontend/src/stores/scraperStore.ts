@@ -128,27 +128,29 @@ function mergeJobRowFromRefresh(local: DashboardJob, fresh: DashboardJob, now: n
   return mergeAppliedFromLocal(local, merged, now);
 }
 
-/** Keep the user's current row order during silent refresh (marking applied must not jump rows). */
 function mergeRefreshPreservingOrder(
   localJobs: DashboardJob[],
   freshItems: DashboardJob[],
   now: number,
 ): DashboardJob[] {
+  const localById = new Map(localJobs.map((j) => [j.id, j]));
   const freshById = new Map(freshItems.map((j) => [j.id, j]));
-  const merged: DashboardJob[] = [];
+  const hasNew = freshItems.some((j) => !localById.has(j.id));
 
-  for (const local of localJobs) {
-    const fresh = freshById.get(local.id);
-    if (!fresh) continue;
-    merged.push(mergeJobRowFromRefresh(local, fresh, now));
-    freshById.delete(local.id);
+  if (!hasNew) {
+    const merged: DashboardJob[] = [];
+    for (const local of localJobs) {
+      const fresh = freshById.get(local.id);
+      if (!fresh) continue;
+      merged.push(mergeJobRowFromRefresh(local, fresh, now));
+    }
+    return merged;
   }
 
-  for (const fresh of freshItems) {
-    if (freshById.has(fresh.id)) merged.push(fresh);
-  }
-
-  return merged;
+  return freshItems.map((fresh) => {
+    const local = localById.get(fresh.id);
+    return local ? mergeJobRowFromRefresh(local, fresh, now) : fresh;
+  });
 }
 
 // STATUS_RANK is keyed on lowercase values.  Always call .toLowerCase() before
@@ -238,7 +240,7 @@ interface ScraperState {
   setView: (view: DashboardView) => void;
   /** Refresh job rows silently (no loading spinner) - used for background polling. */
   bgRefreshJobs: () => Promise<void>;
-  /** Reload dashboard from page 1 after manual job submit. */
+  /** Reload page 1 after job submit without the table loading skeleton. */
   refreshAfterJobSubmit: () => Promise<void>;
   /**
    * Refresh dashboard stats.
@@ -445,9 +447,33 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   },
 
   refreshAfterJobSubmit: async () => {
-    set({ page: 1 });
-    await get().loadJobs();
-    void get().loadStats();
+    const s = get();
+    try {
+      const result = await fetchDashboardJobs({
+        page: 1,
+        per_page: s.perPage,
+        source: s.sourceFilter || undefined,
+        q: s.searchQuery || undefined,
+        title: s.titleFilter || undefined,
+        company: s.companyFilter || undefined,
+        remote_only: s.remoteOnly || undefined,
+        min_match_score: s.minScore || undefined,
+        sort: s.sortField,
+        order: s.sortOrder,
+        view: s.view,
+        timezone: localTimezone(),
+      });
+      set({
+        page: 1,
+        jobs: result.items,
+        total: result.total,
+        pages: result.pages,
+      });
+      void get().loadCounts();
+    } catch {
+      set({ page: 1 });
+    }
+    void get().loadStats({ silent: true });
   },
 
   loadStats: async (opts) => {

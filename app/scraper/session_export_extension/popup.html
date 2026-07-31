@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font: 13px/1.4 system-ui, sans-serif;
+        margin: 12px;
+        width: 260px;
+        color: #0f172a;
+      }
+      button {
+        width: 100%;
+        margin: 6px 0;
+        padding: 8px 10px;
+        border: 0;
+        border-radius: 8px;
+        background: #0ea5e9;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #6366f1;
+      }
+      #status {
+        margin-top: 8px;
+        color: #475569;
+        min-height: 2.5em;
+      }
+    </style>
+  </head>
+  <body>
+    <div><strong>Export login cookies</strong></div>
+    <button id="rrs">Export RemoteRocketship</button>
+    <button id="jobright" class="secondary">Export Jobright.ai</button>
+    <div id="status">Keep the site open and signed in, then export.</div>
+    <script src="popup.js"></script>
+  </body>
+</html>

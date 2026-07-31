@@ -59,16 +59,14 @@ function App() {
     if (scraperEvents.includes(event.type)) {
       useScraperStore.getState().handleSyncWsEvent(event);
       if (event.type === 'sync_completed' || event.type === 'sync_failed') {
-        useScraperStore.getState().loadJobs();
-        void useScraperStore.getState().loadStats({ silent: true });
+        void useScraperStore.getState().refreshAfterJobSubmit();
         useScraperStore.getState().checkSyncStatus();
       }
       return;
     }
 
     if (event.type === 'scrape_promoted') {
-      useScraperStore.getState().loadJobs();
-      void useScraperStore.getState().loadStats({ silent: true });
+      void useScraperStore.getState().refreshAfterJobSubmit();
       void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
     }
 

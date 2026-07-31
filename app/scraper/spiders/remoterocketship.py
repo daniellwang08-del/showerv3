@@ -1,8 +1,9 @@
 """RemoteRocketship spider -- authenticated scraping via saved session.
 
-Authentication is handled separately by `python -m app.scraper.auth setup`
-which opens a real browser for the user to log in once. The saved cookies
-are loaded automatically by CloudflareSession on each run.
+Authentication is handled separately by
+`python -m app.scraper.auth capture rrs`
+which opens the site in your current Chrome session and exports live cookies
+via the session-export extension (no Chrome kill).
 
 Uses the internal /api/fetch_job_openings/ JSON API for reliable pagination,
 since the SSR __NEXT_DATA__ always returns page-1 data regardless of the
@@ -230,7 +231,8 @@ class RemoteRocketshipSpider(BaseJobSpider):
         session = self._get_session()
         if not session.is_authenticated:
             self.logger.error(
-                "No saved session found. Run: python -m app.scraper.auth setup rrs"
+                "No saved session found. Run: "
+                "python -m app.scraper.auth capture rrs"
             )
             raise CloseSpider("auth_required")
 

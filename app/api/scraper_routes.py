@@ -1222,7 +1222,7 @@ async def get_auth_status(
             corrupt=status.get("corrupt", False),
             saved_at=status.get("saved_at"),
             cookie_count=status.get("cookie_count", 0),
-            setup_command=f"python -m app.scraper.auth setup {key}",
+            setup_command=f"python -m app.scraper.auth capture {key}",
         ))
 
     return results

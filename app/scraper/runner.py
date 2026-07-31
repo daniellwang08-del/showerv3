@@ -74,7 +74,7 @@ def check_spider_auth(spider_name: str) -> dict:
     status = session_status(platform_key)
     configured = status.get("exists", False) and not status.get("corrupt", False)
     saved_at = status.get("saved_at") if configured else None
-    cmd = f"python -m app.scraper.auth setup {platform_key}"
+    cmd = f"python -m app.scraper.auth capture {platform_key}"
 
     return {
         "ok": configured,

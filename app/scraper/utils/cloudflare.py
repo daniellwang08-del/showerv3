@@ -82,7 +82,7 @@ class CloudflareSession:
         cookies = load_session()
         if not cookies:
             logger.warning(
-                "No saved session found. Run: python -m app.scraper.auth setup"
+                "No saved session found. Run: python -m app.scraper.auth capture rrs"
             )
             return
 
@@ -173,7 +173,7 @@ class CloudflareSession:
                 self._authenticated = False
                 logger.warning(
                     "Got 403 from %s - session may have expired. "
-                    "Re-run: python -m app.scraper.auth setup",
+                    "Re-run: python -m app.scraper.auth capture rrs",
                     url,
                 )
                 return None

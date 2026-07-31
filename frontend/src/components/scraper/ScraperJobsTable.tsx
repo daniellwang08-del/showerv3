@@ -921,11 +921,48 @@ export function ScraperJobsTable({
 
   // Instant applied UI - local state avoids unstable Zustand selectors (infinite re-render loop).
   const [appliedUiOverride, setAppliedUiOverride] = useState<Record<string, AppliedUiOverride>>({});
+  const knownJobIdsRef = useRef<Set<string>>(new Set());
+  const wasLoadingRef = useRef(loading);
+  const jobsPrimedRef = useRef(false);
+  const [enteringJobIds, setEnteringJobIds] = useState<Set<string>>(() => new Set());
 
   const displayJobs = useMemo(
     () => jobs.map((j) => applyAppliedUiOverride(j, appliedUiOverride)),
     [jobs, appliedUiOverride],
   );
+
+  useEffect(() => {
+    const finishedLoading = wasLoadingRef.current && !loading;
+    wasLoadingRef.current = loading;
+
+    const prev = knownJobIdsRef.current;
+    const nextIds = new Set(jobs.map((j) => j.id));
+    const added = jobs.filter((j) => !prev.has(j.id)).map((j) => j.id);
+
+    if (!jobsPrimedRef.current) {
+      if (!loading) {
+        jobsPrimedRef.current = true;
+        knownJobIdsRef.current = nextIds;
+      }
+      return;
+    }
+
+    if (finishedLoading) {
+      knownJobIdsRef.current = nextIds;
+      return;
+    }
+
+    knownJobIdsRef.current = nextIds;
+    if (added.length === 0) return;
+
+    const overlapCount = jobs.length - added.length;
+    if (prev.size > 0 && overlapCount === 0) return;
+    if (added.length > 25) return;
+
+    setEnteringJobIds(new Set(added));
+    const timer = window.setTimeout(() => setEnteringJobIds(new Set()), 550);
+    return () => window.clearTimeout(timer);
+  }, [jobs, loading]);
 
   const clearAppliedUiOverrides = useCallback((ids: string[]) => {
     setAppliedUiOverride((prev) => {
@@ -1508,6 +1545,8 @@ export function ScraperJobsTable({
                 const isRerunning     = isApiCallInFlight || isPipelineRunning;
                 const hasExtraction   = !!job.extraction_id;
 
+                const isEntering = enteringJobIds.has(job.id);
+
                 return (
                   <tr
                     key={job.id}
@@ -1520,6 +1559,7 @@ export function ScraperJobsTable({
                       `group ${ROW_H} select-none`,
                       dashboardJobRowSurfaceClass(job, { isSelected }),
                       isSelectingMode ? 'cursor-crosshair' : 'cursor-pointer',
+                      isEntering ? 'animate-job-row-enter' : '',
                     ].join(' ')}
                   >
                     {/* Checkbox */}

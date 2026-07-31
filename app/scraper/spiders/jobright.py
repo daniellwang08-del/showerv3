@@ -1,8 +1,9 @@
 """Jobright.ai spider -- authenticated scraping via saved session cookies.
 
-Authentication is handled separately by `python setup_jobright.py`
-which opens a real Chrome browser for one-time manual login. Saved cookies
-are loaded automatically by this spider on each run.
+Authentication is handled separately by
+`python -m app.scraper.auth capture jobright`
+which opens the site in your current Chrome session and exports live cookies
+via the session-export extension (no Chrome kill).
 
 Uses the internal /swan/recommend/list/jobs JSON API discovered via
 network interception. Pagination is offset-based: position=0&count=20
@@ -175,12 +176,14 @@ class JobrightSpider(BaseJobSpider):
             )
             if resp.status_code == 401:
                 self.logger.error(
-                    "Session expired (401). Re-run: python setup_jobright.py"
+                    "Session expired (401). Re-run: "
+                    "python -m app.scraper.auth capture jobright"
                 )
                 return None
             if resp.status_code == 403:
                 self.logger.error(
-                    "Access denied (403). Re-run: python setup_jobright.py"
+                    "Access denied (403). Re-run: "
+                    "python -m app.scraper.auth capture jobright"
                 )
                 return None
             if resp.status_code == 429:
@@ -254,7 +257,8 @@ class JobrightSpider(BaseJobSpider):
     async def start(self):
         if not self._create_session():
             self.logger.error(
-                "No saved session. Run: python -m app.scraper.auth setup jobright"
+                "No saved session. Run: "
+                "python -m app.scraper.auth capture jobright"
             )
             raise CloseSpider("auth_required")
 
