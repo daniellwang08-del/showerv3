@@ -44,8 +44,22 @@ def _job_added_at_expr():
 
 
 def _is_remote_expr():
+    """True when the job is remote by the same signals as the dashboard filter/UI.
+
+    Root cause of the board showing 0 remote while the table listed remote jobs:
+    stats previously only checked ``raw_metadata.is_remote``, while the list filter
+    and Work Mode badge also honour ``Job.work_mode`` and location text
+    (e.g. "Remote, US").
+    """
     return case(
-        (Job.raw_metadata["is_remote"].as_boolean() == True, True),  # noqa: E712
+        (
+            or_(
+                Job.work_mode == "remote",
+                Job.raw_metadata["is_remote"].as_boolean() == True,  # noqa: E712
+                Job.location.ilike("%remote%"),
+            ),
+            True,
+        ),
         else_=False,
     )
 

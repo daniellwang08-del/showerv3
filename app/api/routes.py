@@ -1497,13 +1497,12 @@ def _dashboard_search_clauses(
     if source:
         clauses.append(Job.raw_metadata["source"].as_string() == source)
     if remote_only:
+        # Keep in sync with dashboard_stats._is_remote_expr (work_mode, metadata, location).
         clauses.append(
             or_(
                 Job.work_mode == "remote",
-                and_(
-                    Job.work_mode.is_(None),
-                    Job.raw_metadata["is_remote"].as_boolean() == True,  # noqa: E712
-                ),
+                Job.raw_metadata["is_remote"].as_boolean() == True,  # noqa: E712
+                Job.location.ilike("%remote%"),
             )
         )
     return clauses

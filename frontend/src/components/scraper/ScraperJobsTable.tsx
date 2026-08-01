@@ -126,8 +126,10 @@ const columns = [
   { key: '__actions__',    label: 'Actions',    sortable: false },
 ] as const;
 
-/** Fixed column widths - prevents layout shift when rows update during polling. */
-const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
+type ColumnKey = (typeof columns)[number]['key'];
+
+/** Left cluster keeps fixed widths; Source (omitted) absorbs remaining table width. */
+const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   __check__: '32px',
   __no__: '44px',
   title: '220px',
@@ -136,7 +138,6 @@ const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
   work_mode: '74px',
   salary_raw: '100px',
   job_type: '78px',
-  source: '108px',
   posted_date: '68px',
   created_at: '68px',
   __processing__: '108px',
@@ -145,6 +146,21 @@ const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
   __status__: '112px',
   __actions__: '300px',
 };
+
+/** Columns pinned to the right edge of the table. */
+const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
+  'posted_date',
+  'created_at',
+  '__processing__',
+  '__resume__',
+  '__cover__',
+  '__status__',
+  '__actions__',
+]);
+
+/** Hide Source first when the viewport cannot fit every column comfortably. */
+const SOURCE_COL_CLASS = 'hidden min-[1600px]:table-column';
+const SOURCE_CELL_CLASS = 'hidden min-[1600px]:table-cell';
 
 /** Shared height with MatchScoreBadge so status squares align visually. */
 const MATCH_BADGE_H = 28;
@@ -227,8 +243,8 @@ const DocActionPair = memo(function DocActionPair({
 
   const labelTone =
     accent === 'violet'
-      ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200'
-      : 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-200';
+      ? 'text-violet-700 dark:text-violet-300'
+      : 'text-sky-700 dark:text-sky-300';
   const viewTone =
     accent === 'violet'
       ? 'border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200 dark:hover:bg-violet-500/25'
@@ -238,11 +254,14 @@ const DocActionPair = memo(function DocActionPair({
 
   return (
     <>
-      <div className="inline-flex items-center gap-1" style={{ height: MATCH_BADGE_H }}>
+      <div className="inline-flex items-center gap-1.5" style={{ height: MATCH_BADGE_H }}>
+        {/* Plain type label — not a chip/button, so users don't click it by mistake */}
         <span
           title={fullLabel}
-          className={`inline-flex h-full min-w-[28px] items-center justify-center rounded-lg border px-1.5 text-[11px] font-bold shadow-sm ${labelTone}`}
+          aria-hidden
+          className={`pointer-events-none select-none inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide ${labelTone}`}
         >
+          <FileText size={11} strokeWidth={2.2} className="opacity-70" />
           {shortLabel}
         </span>
         <button
@@ -540,66 +559,117 @@ const StatusSquare = memo(function StatusSquare({
   tone,
   title,
   icon: Icon,
+  onClick,
+  disabled = false,
+  busy = false,
 }: {
   filled: boolean;
   tone: StatusSquareTone;
   title: string;
   icon: typeof ClipboardCheck;
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
 }) {
   const palette = STATUS_SQUARE_TONES[tone];
   return (
-    <span
+    <button
+      type="button"
       title={title}
       aria-label={title}
+      aria-pressed={filled}
+      disabled={disabled || busy}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (disabled || busy) return;
+        onClick();
+      }}
       className={[
-        'inline-flex shrink-0 items-center justify-center rounded-md border-2 transition-colors',
+        'inline-flex shrink-0 items-center justify-center rounded-md border-2 transition-all',
         filled ? palette.filled : palette.empty,
+        disabled || busy
+          ? 'cursor-not-allowed opacity-60'
+          : 'cursor-pointer hover:scale-[1.06] hover:brightness-105 active:scale-[0.97]',
       ].join(' ')}
       style={{ width: MATCH_BADGE_H, height: MATCH_BADGE_H }}
     >
-      <Icon size={14} strokeWidth={filled ? 2.6 : 2} className={palette.icon} />
-    </span>
+      {busy
+        ? <Loader2 size={14} strokeWidth={2.4} className={`animate-spin ${palette.icon}`} />
+        : <Icon size={14} strokeWidth={filled ? 2.6 : 2} className={palette.icon} />}
+    </button>
   );
 });
 
-/** Three filled/empty squares for Applied → Sheets → Pumble. */
-const StatusSquaresCell = memo(function StatusSquaresCell({ job }: { job: DashboardJob }) {
+/** Applied always; Sheets / Pumble only when the user has integrated them. */
+const StatusSquaresCell = memo(function StatusSquaresCell({
+  job,
+  sheetsConfigured,
+  pumbleConfigured,
+  postingToSheet,
+  postingToPumble,
+  onToggleApplied,
+  onPostToSheet,
+  onPostToPumble,
+}: {
+  job: DashboardJob;
+  sheetsConfigured: boolean;
+  pumbleConfigured: boolean;
+  postingToSheet: boolean;
+  postingToPumble: boolean;
+  onToggleApplied: (job: DashboardJob) => void;
+  onPostToSheet: (job: DashboardJob) => void;
+  onPostToPumble: (job: DashboardJob) => void;
+}) {
   const applied = dashboardJobMarkedApplied(job);
   const sheetPosted = Boolean(job.sheet_posted_at);
   const pumblePosted = Boolean(job.pumble_posted_at);
 
   return (
-    <div className="inline-flex items-center gap-1.5" role="group" aria-label="Posting status">
+    <div
+      className="inline-flex items-center gap-1.5"
+      role="group"
+      aria-label="Job status actions"
+      onClick={(e) => e.stopPropagation()}
+    >
       <StatusSquare
         filled={applied}
         tone="sky"
         icon={ClipboardCheck}
+        onClick={() => onToggleApplied(job)}
         title={
           applied
-            ? `Applied${job.applied_at ? ` · ${relativeTime(job.applied_at)}` : ''}${job.applied_by_name ? ` · ${job.applied_by_name}` : ''}`
-            : 'Not applied'
+            ? `Applied${job.applied_at ? ` · ${relativeTime(job.applied_at)}` : ''}${job.applied_by_name ? ` · ${job.applied_by_name}` : ''} — click to unmark`
+            : 'Mark as applied'
         }
       />
-      <StatusSquare
-        filled={sheetPosted}
-        tone="emerald"
-        icon={Table2}
-        title={
-          sheetPosted
-            ? `Posted to Google Sheets · ${relativeTime(job.sheet_posted_at!)}`
-            : 'Not posted to Google Sheets'
-        }
-      />
-      <StatusSquare
-        filled={pumblePosted}
-        tone="violet"
-        icon={MessageSquare}
-        title={
-          pumblePosted
-            ? `Posted to Pumble · ${relativeTime(job.pumble_posted_at!)}`
-            : 'Not posted to Pumble'
-        }
-      />
+      {sheetsConfigured && (
+        <StatusSquare
+          filled={sheetPosted}
+          tone="emerald"
+          icon={Table2}
+          busy={postingToSheet}
+          onClick={() => onPostToSheet(job)}
+          title={
+            sheetPosted
+              ? `Posted to Google Sheets · ${relativeTime(job.sheet_posted_at!)} — click to post again`
+              : 'Post to Google Sheets'
+          }
+        />
+      )}
+      {pumbleConfigured && (
+        <StatusSquare
+          filled={pumblePosted}
+          tone="violet"
+          icon={MessageSquare}
+          busy={postingToPumble}
+          onClick={() => onPostToPumble(job)}
+          title={
+            pumblePosted
+              ? `Posted to Pumble · ${relativeTime(job.pumble_posted_at!)} — click to post again`
+              : 'Post to Pumble'
+          }
+        />
+      )}
     </div>
   );
 });
@@ -719,23 +789,27 @@ function ContextMenu({
     }] : []),
     'divider' as const,
     ...appliedMenuItems,
-    'divider' as const,
-    {
-      icon: postingToSheet ? <Loader2 size={13} className="animate-spin" /> : <Table2 size={13} />,
-      label: multi
-        ? `Post ${targets.length} jobs to Google Sheet`
-        : 'Post to Google Sheet',
-      disabled: !sheetsConfigured || postingToSheet,
-      onClick: () => { onPostToSheet(targets); onClose(); },
-    },
-    {
-      icon: postingToPumble ? <Loader2 size={13} className="animate-spin" /> : <MessageSquare size={13} />,
-      label: multi
-        ? `Post ${targets.length} jobs to Pumble`
-        : 'Post to Pumble',
-      disabled: !pumbleConfigured || postingToPumble,
-      onClick: () => { onPostToPumble(targets); onClose(); },
-    },
+    ...(sheetsConfigured || pumbleConfigured ? ['divider' as const] : []),
+    ...(sheetsConfigured
+      ? [{
+          icon: postingToSheet ? <Loader2 size={13} className="animate-spin" /> : <Table2 size={13} />,
+          label: multi
+            ? `Post ${targets.length} jobs to Google Sheet`
+            : 'Post to Google Sheet',
+          disabled: postingToSheet,
+          onClick: () => { onPostToSheet(targets); onClose(); },
+        }]
+      : []),
+    ...(pumbleConfigured
+      ? [{
+          icon: postingToPumble ? <Loader2 size={13} className="animate-spin" /> : <MessageSquare size={13} />,
+          label: multi
+            ? `Post ${targets.length} jobs to Pumble`
+            : 'Post to Pumble',
+          disabled: postingToPumble,
+          onClick: () => { onPostToPumble(targets); onClose(); },
+        }]
+      : []),
     'divider' as const,
     {
       icon: isRunning ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />,
@@ -860,27 +934,29 @@ function BulkBar({
         Open URLs
       </button>
 
-      <button
-        type="button"
-        onClick={onPostToSheet}
-        disabled={busy || !sheetsConfigured}
-        title={!sheetsConfigured ? 'Configure Google Sheets in Settings first' : undefined}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
-      >
-        {postingToSheet ? <Loader2 size={12} className="animate-spin" /> : <Table2 size={12} />}
-        Post to Sheet
-      </button>
+      {sheetsConfigured && (
+        <button
+          type="button"
+          onClick={onPostToSheet}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
+        >
+          {postingToSheet ? <Loader2 size={12} className="animate-spin" /> : <Table2 size={12} />}
+          Post to Sheet
+        </button>
+      )}
 
-      <button
-        type="button"
-        onClick={onPostToPumble}
-        disabled={busy || !pumbleConfigured}
-        title={!pumbleConfigured ? 'Configure Pumble in Settings first' : undefined}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-800 shadow-sm transition hover:bg-violet-50 disabled:opacity-50"
-      >
-        {postingToPumble ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={12} />}
-        Post to Pumble
-      </button>
+      {pumbleConfigured && (
+        <button
+          type="button"
+          onClick={onPostToPumble}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-800 shadow-sm transition hover:bg-violet-50 disabled:opacity-50"
+        >
+          {postingToPumble ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={12} />}
+          Post to Pumble
+        </button>
+      )}
 
       <button type="button" onClick={onDelete} disabled={busy}
         className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 shadow-sm transition hover:bg-red-50 disabled:opacity-50">
@@ -1296,6 +1372,14 @@ export function ScraperJobsTable({
     showToast,
   ]);
 
+  const handleToggleApplied = useCallback((job: DashboardJob) => {
+    if (dashboardJobMarkedApplied(job)) {
+      handleMarkUnapplied([job]);
+    } else {
+      handleMarkApplied([job]);
+    }
+  }, [handleMarkApplied, handleMarkUnapplied]);
+
   const handlePostToSheet = useCallback((targets: DashboardJob[]) => {
     const ids = targets.map((t) => t.id);
     if (ids.length === 0) return;
@@ -1477,18 +1561,22 @@ export function ScraperJobsTable({
         </p>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="-mx-0 overflow-x-auto overscroll-x-contain">
-          <table className="w-full min-w-[1180px] table-fixed border-collapse text-sm md:min-w-[1560px]">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-600 dark:bg-slate-100">
+        <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
+          <table className="w-full table-fixed border-collapse text-sm">
             <colgroup>
               {columns.map((col) => (
-                <col key={col.key} style={{ width: COLUMN_WIDTHS[col.key] }} />
+                <col
+                  key={col.key}
+                  style={COLUMN_WIDTHS[col.key] ? { width: COLUMN_WIDTHS[col.key] } : undefined}
+                  className={col.key === 'source' ? SOURCE_COL_CLASS : undefined}
+                />
               ))}
             </colgroup>
 
             {/* ── Header ── */}
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50/70">
+              <tr className="border-b border-slate-100 bg-slate-50/70 dark:border-slate-600 dark:bg-slate-200/40">
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -1497,10 +1585,12 @@ export function ScraperJobsTable({
                       if (col.sortable) onSort(sortKey);
                     }}
                     className={[
-                      'px-3 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap overflow-hidden',
+                      'px-3 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap overflow-hidden',
+                      RIGHT_ALIGN_KEYS.has(col.key) ? 'text-right' : 'text-left',
                       col.sortable ? 'cursor-pointer select-none hover:text-slate-700 hover:bg-slate-100/60' : '',
-                      col.key === '__actions__' ? `sticky right-0 z-20 bg-slate-50/70 ${STICKY_SHADOW}` : '',
+                      col.key === '__actions__' ? `sticky right-0 z-20 bg-slate-50/70 dark:bg-slate-200/40 ${STICKY_SHADOW}` : '',
                       col.key === '__check__' ? 'px-2' : '',
+                      col.key === 'source' ? SOURCE_CELL_CLASS : '',
                     ].join(' ')}
                   >
                     {col.key === '__check__' ? (
@@ -1521,12 +1611,19 @@ export function ScraperJobsTable({
                             : null}
                       </button>
                     ) : col.key === '__status__' ? (
-                      <span className="inline-flex items-center gap-1.5" title="Applied · Google Sheets · Pumble">
+                      <span
+                        className="inline-flex items-center gap-1.5"
+                        title={[
+                          'Applied',
+                          sheetsConfigured ? 'Google Sheets' : null,
+                          pumbleConfigured ? 'Pumble' : null,
+                        ].filter(Boolean).join(' · ')}
+                      >
                         <span>Status</span>
                         <span className="inline-flex items-center gap-0.5" aria-hidden>
                           <span className="h-2 w-2 rounded-[2px] bg-sky-500" />
-                          <span className="h-2 w-2 rounded-[2px] bg-emerald-500" />
-                          <span className="h-2 w-2 rounded-[2px] bg-violet-500" />
+                          {sheetsConfigured && <span className="h-2 w-2 rounded-[2px] bg-emerald-500" />}
+                          {pumbleConfigured && <span className="h-2 w-2 rounded-[2px] bg-violet-500" />}
                         </span>
                       </span>
                     ) : col.key === '__resume__' ? (
@@ -1643,49 +1740,66 @@ export function ScraperJobsTable({
                       {job.job_type || <span className="text-slate-300">-</span>}
                     </td>
 
-                    {/* Source */}
-                    <td className={CELL}>
+                    {/* Source — flex column; hidden when viewport is too narrow */}
+                    <td className={`${CELL} ${SOURCE_CELL_CLASS}`}>
                       <Badge variant={SOURCE_BADGE_VARIANT[job.source?.toLowerCase() ?? ''] || 'default'}>
                         {job.source || job.domain}
                       </Badge>
                     </td>
 
                     {/* Posted */}
-                    <td className={`${CELL} text-slate-400 whitespace-nowrap text-xs`}>
+                    <td className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs`}>
                       {relativeTime(job.posted_date)}
                     </td>
 
                     {/* Added */}
-                    <td className={`${CELL} text-slate-400 whitespace-nowrap text-xs`}>
+                    <td className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs`}>
                       {relativeTime(job.created_at)}
                     </td>
 
                     {/* Match (score only) */}
-                    <td className={CELL}>
-                      <MatchCell job={job} />
+                    <td className={`${CELL} text-right`}>
+                      <div className="inline-flex justify-end">
+                        <MatchCell job={job} />
+                      </div>
                     </td>
 
                     {/* Resume */}
-                    <td className={CELL} onClick={(e) => e.stopPropagation()}>
-                      <ResumeDocCell job={job} />
+                    <td className={`${CELL} text-right`} onClick={(e) => e.stopPropagation()}>
+                      <div className="inline-flex justify-end">
+                        <ResumeDocCell job={job} />
+                      </div>
                     </td>
 
                     {/* Cover letter */}
-                    <td className={CELL} onClick={(e) => e.stopPropagation()}>
-                      <CoverDocCell job={job} />
+                    <td className={`${CELL} text-right`} onClick={(e) => e.stopPropagation()}>
+                      <div className="inline-flex justify-end">
+                        <CoverDocCell job={job} />
+                      </div>
                     </td>
 
-                    {/* Status squares: Applied · Sheets · Pumble */}
-                    <td className={CELL}>
-                      <StatusSquaresCell job={job} />
+                    {/* Status actions: Applied · Sheets? · Pumble? */}
+                    <td className={`${CELL} text-right`}>
+                      <div className="inline-flex justify-end">
+                        <StatusSquaresCell
+                          job={job}
+                          sheetsConfigured={sheetsConfigured}
+                          pumbleConfigured={pumbleConfigured}
+                          postingToSheet={postingToSheet}
+                          postingToPumble={postingToPumble}
+                          onToggleApplied={handleToggleApplied}
+                          onPostToSheet={(j) => void handlePostToSheet([j])}
+                          onPostToPumble={(j) => void handlePostToPumble([j])}
+                        />
+                      </div>
                     </td>
 
                     {/* Actions (sticky) */}
                     <td
                       onClick={(e) => e.stopPropagation()}
-                      className={`sticky right-0 z-10 px-2 py-0 whitespace-nowrap align-middle ${STICKY_SHADOW} ${dashboardJobStickyCellClass(job, { isSelected })}`}
+                      className={`sticky right-0 z-10 px-2 py-0 whitespace-nowrap align-middle text-right ${STICKY_SHADOW} ${dashboardJobStickyCellClass(job, { isSelected })}`}
                     >
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center justify-end gap-1">
                         {/* Apply with Assistant */}
                         <button
                           type="button"
