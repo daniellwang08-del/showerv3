@@ -110,18 +110,46 @@ class EEOPreferences(BaseModel):
 
 
 class AddressInfo(BaseModel):
-    """Mailing address for application autofill (empty strings -> None)."""
+    """Legal / home address for application autofill, plus job location prefs."""
     line1: str | None = Field(default=None, max_length=200)
     line2: str | None = Field(default=None, max_length=200)
     city: str | None = Field(default=None, max_length=120)
     state: str | None = Field(default=None, max_length=120)
     postal_code: str | None = Field(default=None, max_length=20)
     country: str | None = Field(default=None, max_length=120)
+    # Preferred job locales / regions (e.g. "Bay Area", "Remote US", "Seattle").
+    local_preferences: list[str] = Field(default_factory=list)
 
     @field_validator("line1", "line2", "city", "state", "postal_code", "country", mode="before")
     @classmethod
     def empty_to_none(cls, v):
         return _empty_to_none(v)
+
+    @field_validator("local_preferences", mode="before")
+    @classmethod
+    def normalize_local_preferences(cls, v):
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("local_preferences must be a list of strings")
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in v:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if not text:
+                continue
+            if len(text) > 120:
+                text = text[:120]
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+            if len(cleaned) >= 30:
+                break
+        return cleaned
 
 
 # ---- Validation helpers ----

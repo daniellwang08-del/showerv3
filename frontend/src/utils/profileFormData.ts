@@ -59,12 +59,19 @@ export const emptyAddress = (): AddressInfo => ({
   state: '',
   postal_code: '',
   country: 'United States of America',
+  local_preferences: [],
 });
 
 function addressToForm(raw: UserProfile['address']): AddressInfo {
   const a = (raw ?? {}) as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const hasAny = ['line1', 'line2', 'city', 'state', 'postal_code', 'country'].some((k) => str(a[k]).trim());
+  const prefsRaw = Array.isArray(a.local_preferences) ? a.local_preferences : [];
+  const local_preferences = prefsRaw
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 30);
   return {
     line1: str(a.line1),
     line2: str(a.line2),
@@ -73,6 +80,7 @@ function addressToForm(raw: UserProfile['address']): AddressInfo {
     postal_code: str(a.postal_code),
     // Default country only for a brand-new (empty) address.
     country: str(a.country) || (hasAny ? '' : 'United States of America'),
+    local_preferences,
   };
 }
 

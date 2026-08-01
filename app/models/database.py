@@ -47,9 +47,10 @@ class User(Base):
     # needs_sponsorship. Null/blank fields fall back to the engine's defaults.
     eeo_preferences = deferred(Column(JSON, default=dict))
 
-    # Mailing address used to auto-fill application forms (Workday requires
-    # Address/City/State/Postal). Object of: line1, line2, city, state,
-    # postal_code, country.
+    # Legal / home address for application autofill (Workday requires
+    # Address/City/State/Postal), plus optional local_preferences (list of
+    # preferred job locales). Object of: line1, line2, city, state,
+    # postal_code, country, local_preferences.
     address = deferred(Column(JSON, default=dict))
 
     # Cached OpenAI-ready text (updated on profile save)

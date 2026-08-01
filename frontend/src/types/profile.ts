@@ -30,7 +30,7 @@ export type CertificateBlock = {
   url?: string;
 };
 
-/** Mailing address used to auto-fill application forms (Workday etc.). */
+/** Legal / home address for application autofill, plus preferred job locales. */
 export type AddressInfo = {
   line1?: string | null;
   line2?: string | null;
@@ -38,6 +38,8 @@ export type AddressInfo = {
   state?: string | null;
   postal_code?: string | null;
   country?: string | null;
+  /** Preferred job locations / regions (e.g. "Bay Area", "Remote US"). */
+  local_preferences?: string[];
 };
 
 /** Voluntary EEO / demographic answers. Yes/No fields are tri-state:

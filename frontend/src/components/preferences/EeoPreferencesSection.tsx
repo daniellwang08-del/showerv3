@@ -131,7 +131,7 @@ export function EeoPreferencesSection() {
       iconClass="bg-gradient-to-br from-sky-500 to-blue-600"
       title="EEO / demographics"
       description="Voluntary answers used to auto-fill application forms (e.g. Workday). Leave Unspecified to skip."
-      className="!p-3 sm:!p-3.5"
+      className="!p-3 sm:!p-3.5 h-full"
       actions={
         <button
           type="button"
@@ -147,7 +147,7 @@ export function EeoPreferencesSection() {
       {loading ? (
         <BrandedLoader compact label="Loading…" />
       ) : (
-        <div className="flex w-full flex-col gap-2">
+        <div className="flex w-full flex-1 flex-col gap-2">
           <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
             <label className="flex w-full min-w-0 flex-col gap-1">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">

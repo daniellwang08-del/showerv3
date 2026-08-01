@@ -338,7 +338,7 @@ def _build_autofill_prompt(
         "city autocomplete / combobox, e.g. Lever): output ONLY 'City, State, Country' "
         "(e.g. 'Newark, CA, USA'). Outside the US use 'City, Region, Country' or "
         "'City, Country' when there is no region. Do NOT include the street address, ZIP / "
-        "postal code, or the full mailing address even when the profile has them.\n"
+        "postal code, or the full legal / home address even when the profile has them.\n"
         "  * Work arrangement / location preference: the candidate PREFERS REMOTE work. For an "
         "'ideal office setting' / remote-vs-hybrid-vs-onsite / work-arrangement question, choose "
         "the Remote option (or the most-remote option available, e.g. Remote over Hybrid over "
@@ -1393,7 +1393,7 @@ def _address_for_autofill(addr: Any) -> dict:
 
 
 def _contact_address_text(addr: Any) -> str:
-    """Readable mailing-address block for the LLM autofill prompt. The profile
+    """Readable legal-address block for the LLM autofill prompt. The profile
     text cache (profile_openai_cache) is resume-style and omits the candidate's
     home address, so address/city/state/postal form fields had no source to fill
     from. This injects the structured address so they can be answered."""
@@ -1407,9 +1407,16 @@ def _contact_address_text(addr: Any) -> str:
         ("Country", a.get("country")),
     ]
     lines = [f"- {label}: {val}" for label, val in rows if val]
+    raw = addr if isinstance(addr, dict) else {}
+    prefs = raw.get("local_preferences") if isinstance(raw.get("local_preferences"), list) else []
+    pref_text = ", ".join(
+        p.strip() for p in prefs if isinstance(p, str) and p.strip()
+    )
+    if pref_text:
+        lines.append(f"- Preferred job locations: {pref_text}")
     if not lines:
         return ""
-    return "## Contact Address\n" + "\n".join(lines)
+    return "## Legal / Home Address\n" + "\n".join(lines)
 
 
 def _eeo_preferences_text(prefs: Any) -> str:

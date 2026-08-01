@@ -71,6 +71,10 @@ export function profileFormToPayload(data: ProfileFormData) {
       state: emptyToNull(data.address.state ?? undefined),
       postal_code: emptyToNull(data.address.postal_code ?? undefined),
       country: emptyToNull(data.address.country ?? undefined),
+      local_preferences: (data.address.local_preferences ?? [])
+        .map((x) => (typeof x === 'string' ? x.trim() : ''))
+        .filter(Boolean)
+        .slice(0, 30),
     },
   };
 }

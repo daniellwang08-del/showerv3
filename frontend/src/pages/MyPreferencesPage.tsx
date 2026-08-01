@@ -605,8 +605,8 @@ export function MyPreferencesPage() {
           title="My Preferences"
           description={
             isAdmin
-              ? 'API keys, match scoring, prompts, EEO, address, and job sync - your personal defaults.'
-              : 'API keys, match scoring, prompts, EEO, and address - your personal defaults.'
+              ? 'API keys, match scoring, prompts, EEO, location, and job sync - your personal defaults.'
+              : 'API keys, match scoring, prompts, EEO, and location - your personal defaults.'
           }
         />
 
@@ -616,7 +616,7 @@ export function MyPreferencesPage() {
           <p className="text-sm text-rose-700">{loadError}</p>
         ) : (
           <div className="space-y-3 sm:space-y-4">
-            <div className="grid items-start gap-3 sm:gap-4 xl:grid-cols-2">
+            <div className="grid items-stretch gap-3 sm:gap-4 xl:grid-cols-2">
               <EeoPreferencesSection />
               <AddressPreferencesSection />
             </div>

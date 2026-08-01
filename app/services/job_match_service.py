@@ -858,6 +858,7 @@ async def analyze_job_match_phase_a(
     if needs_user_load:
         from app.storage.profile_source_document_repository import ProfileSourceDocumentRepository
 
+        local_location_prefs: list[str] = []
         async with get_session() as session:
             user = await UserRepository(session).get_by_id(user_id)
             if user:
@@ -866,12 +867,26 @@ async def analyze_job_match_phase_a(
                 if custom_guidance is None:
                     prompt_mode = getattr(user, "resume_tailoring_prompt_mode", None)
                     prompt_custom = getattr(user, "resume_tailoring_prompt_custom", None)
+                addr = getattr(user, "address", None) or {}
+                if isinstance(addr, dict):
+                    raw_prefs = addr.get("local_preferences") or []
+                    if isinstance(raw_prefs, list):
+                        local_location_prefs = [
+                            p.strip() for p in raw_prefs if isinstance(p, str) and p.strip()
+                        ]
             if source_documents_context is None:
                 source_docs = await ProfileSourceDocumentRepository(session).list_completed_for_user(
                     user_id
                 )
+    else:
+        local_location_prefs = []
 
     preferences_text = _format_job_preferences_text(job_preferences)
+    if local_location_prefs:
+        preferences_text = (
+            f"{preferences_text}\n\nPreferred job locations / local preferences:\n"
+            + "\n".join(f"- {p}" for p in local_location_prefs)
+        )
     if custom_guidance is not None:
         guidance_text = _format_custom_guidance_text(
             prompt_mode="custom" if custom_guidance.strip() else "default",
