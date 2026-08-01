@@ -10,6 +10,8 @@ import type {
   SyncPlatform,
   SyncCheckpoint,
   SyncTriggerOptions,
+  JobSyncSchedule,
+  JobSyncScheduleUpdate,
   RerunExtractionResponse,
   DeleteScrapedJobResponse,
   DashboardJobsPage,
@@ -125,6 +127,18 @@ export async function fetchSyncPlatforms(): Promise<SyncPlatform[]> {
 
 export async function fetchSyncCheckpoints(): Promise<SyncCheckpoint[]> {
   const { data } = await apiClient.get('/scraper/sync/checkpoints');
+  return data;
+}
+
+export async function fetchJobSyncSchedule(): Promise<JobSyncSchedule> {
+  const { data } = await apiClient.get('/scraper/sync/schedule');
+  return data;
+}
+
+export async function saveJobSyncSchedule(
+  payload: JobSyncScheduleUpdate,
+): Promise<JobSyncSchedule> {
+  const { data } = await apiClient.put('/scraper/sync/schedule', payload);
   return data;
 }
 

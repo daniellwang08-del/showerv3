@@ -221,6 +221,34 @@ class SyncCheckpointInfo(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class JobSyncScheduleUpdate(BaseModel):
+    enabled: bool = False
+    cadence: Literal["interval", "daily"] = "daily"
+    interval_hours: int = Field(default=4, ge=1, le=168)
+    daily_time: str = "04:30"
+    timezone: str = "America/Los_Angeles"
+    sync_mode: Literal["incremental", "date_backfill"] = "incremental"
+    lookback_days: int = Field(default=2, ge=1, le=90)
+    spider_names: list[str] | None = None
+
+
+class JobSyncScheduleResponse(BaseModel):
+    enabled: bool
+    cadence: Literal["interval", "daily"]
+    interval_hours: int
+    daily_time: str
+    timezone: str
+    sync_mode: Literal["incremental", "date_backfill"]
+    lookback_days: int
+    spider_names: list[str] | None = None
+    run_as_user_id: str | None = None
+    last_run_at: str | None = None
+    last_run_status: str | None = None
+    last_run_message: str | None = None
+    next_run_at: str | None = None
+    allowed_timezones: list[str] = Field(default_factory=list)
+
+
 class SyncStatusResponse(BaseModel):
     status: str
     spider_name: Optional[str] = None
@@ -976,6 +1004,41 @@ async def list_sync_platforms_endpoint(user=Depends(_get_current_user)):
     from app.services.scraper_sync_service import list_sync_platforms
 
     return [SyncPlatformInfo(**row) for row in list_sync_platforms()]
+
+
+@scraper_router.get("/sync/schedule", response_model=JobSyncScheduleResponse)
+async def get_job_sync_schedule(user=Depends(_get_current_user)):
+    """Admin schedule for automatic platform polling (interval or daily)."""
+    from app.services.job_sync_schedule_service import get_schedule, schedule_public_view
+
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    async with get_session() as session:
+        schedule = await get_schedule(session)
+    return JobSyncScheduleResponse(**schedule_public_view(schedule))
+
+
+@scraper_router.put("/sync/schedule", response_model=JobSyncScheduleResponse)
+async def put_job_sync_schedule(body: JobSyncScheduleUpdate, user=Depends(_get_current_user)):
+    """Save automatic job-sync schedule. Admin-only. Evaluated every minute by the scraper worker."""
+    from app.services.job_sync_schedule_service import save_schedule, schedule_public_view
+
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    user_id = str(user.get("user_id") or "")
+    try:
+        async with get_session() as session:
+            schedule = await save_schedule(
+                session,
+                body.model_dump(),
+                updated_by_user_id=user_id or None,
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return JobSyncScheduleResponse(**schedule_public_view(schedule))
 
 
 @scraper_router.get("/sync/checkpoints", response_model=list[SyncCheckpointInfo])

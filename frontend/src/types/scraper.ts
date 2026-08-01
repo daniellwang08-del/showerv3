@@ -226,6 +226,35 @@ export interface SyncTriggerOptions {
   posted_until?: string;
 }
 
+export interface JobSyncSchedule {
+  enabled: boolean;
+  cadence: 'interval' | 'daily';
+  interval_hours: number;
+  daily_time: string;
+  timezone: string;
+  sync_mode: 'incremental' | 'date_backfill';
+  lookback_days: number;
+  spider_names: string[] | null;
+  run_as_user_id: string | null;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_run_message: string | null;
+  next_run_at: string | null;
+  allowed_timezones: string[];
+}
+
+export type JobSyncScheduleUpdate = Pick<
+  JobSyncSchedule,
+  | 'enabled'
+  | 'cadence'
+  | 'interval_hours'
+  | 'daily_time'
+  | 'timezone'
+  | 'sync_mode'
+  | 'lookback_days'
+  | 'spider_names'
+>;
+
 export interface SpiderInfo {
   name: string;
   label: string;

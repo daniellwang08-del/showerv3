@@ -1,6 +1,6 @@
 import asyncio
 import traceback
-from arq import create_pool, func
+from arq import create_pool, cron, func
 from arq.connections import RedisSettings, ArqRedis
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
@@ -856,6 +856,130 @@ async def run_scraper_task(
         clear_logging_context()
 
 
+async def check_job_sync_schedule_task(ctx: dict) -> dict:
+    """Cron tick: enqueue incremental/date sync when the admin schedule is due."""
+    from datetime import date as date_cls
+    import uuid
+
+    from app.core.redis_support import pipeline_job_id
+    from app.scraper.runner import check_spider_auth
+    from app.services.job_sync_schedule_service import (
+        build_sync_args,
+        get_schedule,
+        is_schedule_due,
+        is_scrape_running,
+        mark_schedule_run,
+        schedule_public_view,
+    )
+    from app.services.scraper_sync_service import build_run_plan
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="job_sync_schedule_tick")
+
+    try:
+        async with get_session() as session:
+            schedule = await get_schedule(session)
+            if not schedule.get("enabled"):
+                return {"status": "disabled"}
+            if not is_schedule_due(schedule):
+                return {
+                    "status": "not_due",
+                    "next_run_at": schedule_public_view(schedule).get("next_run_at"),
+                }
+            if await is_scrape_running(session):
+                logger.info("job_sync_schedule_skipped_busy")
+                return {"status": "skipped", "reason": "scrape_running"}
+
+            # Claim the slot before enqueue so overlapping ticks do not double-fire.
+            await mark_schedule_run(
+                session,
+                status="queued",
+                message="Scheduled sync claimed; enqueueing…",
+            )
+
+        args = build_sync_args(schedule)
+        spider_names = args.get("spider_names")
+        try:
+            plan = build_run_plan(
+                spider_name=args["spider_name"],
+                spider_names=spider_names,
+                sync_mode=args["sync_mode"],
+                posted_since=(
+                    date_cls.fromisoformat(args["posted_since"])
+                    if args.get("posted_since")
+                    else None
+                ),
+                posted_until=(
+                    date_cls.fromisoformat(args["posted_until"])
+                    if args.get("posted_until")
+                    else None
+                ),
+            )
+        except ValueError as e:
+            async with get_session() as session:
+                await mark_schedule_run(session, status="failed", message=str(e))
+            return {"status": "failed", "error": str(e)}
+
+        for name, _kwargs in plan:
+            auth_check = check_spider_auth(name)
+            if auth_check["requires_auth"] and not auth_check["ok"]:
+                msg = (
+                    f"Spider '{name}' requires authentication. "
+                    f"Run: {auth_check['auth_setup_command']}"
+                )
+                async with get_session() as session:
+                    await mark_schedule_run(session, status="failed", message=msg)
+                logger.error("job_sync_schedule_auth_required", spider_name=name)
+                return {"status": "failed", "error": "auth_required", "message": msg}
+
+        pool = await get_scraper_pool()
+        await pool.enqueue_job(
+            "run_scraper_task",
+            args["spider_name"],
+            args["user_id"],
+            sync_mode=args["sync_mode"],
+            posted_since=args.get("posted_since"),
+            posted_until=args.get("posted_until"),
+            spider_names=spider_names,
+            _job_id=pipeline_job_id(
+                "scrape",
+                f"sched-{args['spider_name']}",
+                args["user_id"],
+                uuid.uuid4().hex[:10],
+            ),
+        )
+
+        mode_label = (
+            "date-range" if args["sync_mode"] == "date_backfill" else "incremental"
+        )
+        message = (
+            f"Scheduled {mode_label} sync queued for "
+            f"{len(plan)} platform{'s' if len(plan) != 1 else ''}."
+        )
+        async with get_session() as session:
+            await mark_schedule_run(session, status="queued", message=message)
+
+        logger.info(
+            "job_sync_schedule_enqueued",
+            sync_mode=args["sync_mode"],
+            platform_count=len(plan),
+            cadence=schedule.get("cadence"),
+        )
+        return {"status": "queued", "message": message, "platform_count": len(plan)}
+    except Exception as e:
+        logger.exception("job_sync_schedule_tick_failed", error=str(e))
+        try:
+            async with get_session() as session:
+                await mark_schedule_run(
+                    session, status="failed", message=str(e)[:500]
+                )
+        except Exception:
+            pass
+        return {"status": "failed", "error": str(e)}
+    finally:
+        clear_logging_context()
+
+
 def _redis_settings() -> RedisSettings:
     from app.core.redis_support import arq_redis_settings
 
@@ -1037,6 +1161,10 @@ async def get_scraper_pool() -> ArqRedis:
 class ScraperWorkerSettings:
     """arq settings for the scraper crawl pipeline (subprocess-based Scrapy)."""
     functions = [run_scraper_task]
+    cron_jobs = [
+        # Dynamic schedules (interval hours / daily HH:MM + timezone) are evaluated here.
+        cron(check_job_sync_schedule_task, minute=set(range(60)), unique=True),
+    ]
     redis_settings = _redis_settings
     queue_name = SCRAPER_QUEUE
     job_timeout = 3600

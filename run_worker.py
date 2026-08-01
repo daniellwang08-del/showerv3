@@ -315,6 +315,7 @@ class ScraperWorkerConfig(ScraperWorkerSettings):
     on_startup = scraper_startup
     on_shutdown = scraper_shutdown
     functions = [run_scraper_task]
+    cron_jobs = ScraperWorkerSettings.cron_jobs
     queue_name = ScraperWorkerSettings.queue_name
     job_timeout = ScraperWorkerSettings.job_timeout
     max_jobs = ScraperWorkerSettings.max_jobs
