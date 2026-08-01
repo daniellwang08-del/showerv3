@@ -634,6 +634,27 @@ html.dark { color-scheme: dark; }
   0%, 100% { opacity: 0.35; transform: scale(0.92); }
   50%      { opacity: 0.8; transform: scale(1.08); }
 }
+@keyframes stats-spark-draw {
+  from { stroke-dashoffset: 1; opacity: 0.15; }
+  to   { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes stats-spark-area-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes stats-spark-dot-in {
+  0%   { opacity: 0; transform: scale(0.2); }
+  60%  { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes stats-spark-halo {
+  0%, 100% { opacity: 0.15; transform: scale(0.85); }
+  50%      { opacity: 0.45; transform: scale(1.2); }
+}
+@keyframes stats-sparkline-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
 
 .stats-board-shell {
   animation: stats-hero-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -708,6 +729,33 @@ html.dark { color-scheme: dark; }
   background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.35), transparent 55%);
   animation: stats-total-glow 2.8s ease-in-out infinite;
 }
+.stats-sparkline {
+  animation: stats-sparkline-in 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stats-spark-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: stats-spark-draw 1.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stats-spark-area {
+  opacity: 0;
+  transform-origin: bottom center;
+  animation: stats-spark-area-in 0.9s ease-out both;
+}
+.stats-spark-dot {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: stats-spark-dot-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stats-spark-halo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: stats-spark-halo 2.2s ease-in-out infinite;
+}
+.stats-spark-runner {
+  opacity: 0.9;
+}
 
 .dashboard-metric-tile {
   animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -729,9 +777,18 @@ html.dark { color-scheme: dark; }
   .stats-num-bump,
   .stats-board-pulse,
   .stats-total-icon-glow,
+  .stats-sparkline,
+  .stats-spark-line,
+  .stats-spark-area,
+  .stats-spark-dot,
+  .stats-spark-halo,
   .dashboard-metric-tile {
     animation: none !important;
   }
+  .stats-spark-line { stroke-dashoffset: 0; opacity: 1; }
+  .stats-spark-area,
+  .stats-spark-dot { opacity: 1; }
+  .stats-spark-runner { display: none; }
 }
 
 .app-surface { position: relative; }

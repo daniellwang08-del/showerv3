@@ -144,6 +144,15 @@ class SourceStats(BaseModel):
     latest_scraped: Optional[datetime] = None
 
 
+class BoardTrends(BaseModel):
+    """Last-7-day daily counts for the four main board side tiles."""
+    labels: list[str] = Field(default_factory=list)
+    ready: list[int] = Field(default_factory=list)
+    best: list[int] = Field(default_factory=list)
+    remote: list[int] = Field(default_factory=list)
+    available: list[int] = Field(default_factory=list)
+
+
 class ScraperStatsResponse(BaseModel):
     total_jobs: int
     total_remote: int
@@ -155,6 +164,7 @@ class ScraperStatsResponse(BaseModel):
     ready_jobs: int = 0       # tailored resume/cover letter ready
     best_jobs: int = 0        # match score >= 75 (Strong)
     good_jobs: int = 0        # match score 50-74 (Good)
+    qualified_jobs: int = 0   # match score >= user's preference minimum
     scored_jobs: int = 0      # jobs with any match score
     avg_match_score: int = 0  # average match score across scored jobs
     available_jobs: int = 0   # not yet marked applied
@@ -162,6 +172,7 @@ class ScraperStatsResponse(BaseModel):
     applied_today: int = 0    # marked applied today
     sheet_posted_jobs: int = 0
     pumble_posted_jobs: int = 0
+    trends: BoardTrends = Field(default_factory=BoardTrends)
     sources: list[SourceStats]
     recent_runs: list[dict] = Field(default_factory=list)
 
@@ -799,11 +810,22 @@ async def get_scraper_stats(
     day_start, day_end = day_bounds_for_timezone(timezone)
 
     async with get_session() as session:
+        from app.storage.user_repository import UserRepository
+        from app.services.weekly_progress import fetch_board_trend_series
+
+        min_score = await UserRepository(session).get_effective_min_match_score(user_id)
         data = await fetch_dashboard_stats(
             session,
             user_id,
             day_start=day_start,
             day_end=day_end,
+            min_match_score=min_score,
+        )
+        trends = await fetch_board_trend_series(
+            session,
+            user_id,
+            tz_name=timezone,
+            days=7,
         )
 
         return ScraperStatsResponse(
@@ -817,6 +839,7 @@ async def get_scraper_stats(
             ready_jobs=data["ready_jobs"],
             best_jobs=data["best_jobs"],
             good_jobs=data["good_jobs"],
+            qualified_jobs=data["qualified_jobs"],
             scored_jobs=data["scored_jobs"],
             avg_match_score=data["avg_match_score"],
             available_jobs=data["available_jobs"],
@@ -824,6 +847,7 @@ async def get_scraper_stats(
             applied_today=data["applied_today"],
             sheet_posted_jobs=data["sheet_posted_jobs"],
             pumble_posted_jobs=data["pumble_posted_jobs"],
+            trends=BoardTrends(**trends),
             sources=[
                 SourceStats(
                     source=row["source"],

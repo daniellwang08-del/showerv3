@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ScraperStats } from '../../types/scraper';
+import { TrendSparkline } from './TrendSparkline';
 
 function safe(n: number): number {
   return Number.isFinite(n) ? n : 0;
@@ -204,6 +205,9 @@ interface SideTileProps {
   delay: number;
   onClick?: () => void;
   title?: string;
+  trend?: number[];
+  trendColor?: string;
+  trendLabel?: string;
 }
 
 const SideTile = memo(function SideTile({
@@ -216,9 +220,12 @@ const SideTile = memo(function SideTile({
   delay,
   onClick,
   title,
+  trend,
+  trendColor = '#34d399',
+  trendLabel,
 }: SideTileProps) {
   const className = [
-    'stats-side-tile group relative flex min-h-[108px] flex-1 items-center gap-4 overflow-hidden rounded-2xl border px-4 py-4 text-left shadow-sm transition-all duration-300 sm:px-5',
+    'stats-side-tile group relative flex min-h-[118px] flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left shadow-sm transition-all duration-300 sm:gap-4 sm:px-5 sm:py-4',
     'border-slate-200/90 bg-white/95 dark:border-slate-700/80 dark:bg-[#141d31]/95',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 dark:hover:border-slate-500'
@@ -229,20 +236,28 @@ const SideTile = memo(function SideTile({
     <>
       <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accent} opacity-[0.08] transition-opacity duration-300 group-hover:opacity-[0.16]`} />
       <div className={`absolute inset-y-4 left-0 w-1 rounded-r-full bg-gradient-to-b ${accent}`} />
-      <div className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${iconWrap} text-white shadow-lg transition-transform duration-300 group-hover:scale-105`}>
-        <Icon size={24} strokeWidth={2.35} />
+      <div className={`relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${iconWrap} text-white shadow-lg transition-transform duration-300 group-hover:scale-105 sm:h-14 sm:w-14`}>
+        <Icon size={22} strokeWidth={2.35} />
       </div>
-      <div className="relative min-w-0 flex-1">
+      <div className="relative min-w-0 flex-[1.05]">
         <AnimatedNumber
           value={value}
-          className="block text-[2.15rem] font-black leading-none tracking-tight text-slate-900 tabular-nums dark:text-white"
+          className="block text-[2rem] font-black leading-none tracking-tight text-slate-900 tabular-nums sm:text-[2.15rem]"
         />
-        <p className="mt-2 truncate text-[14px] font-bold leading-none text-slate-700 dark:text-slate-100">
+        <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
           {label}
         </p>
-        <p className="mt-1.5 truncate text-[12px] font-medium leading-snug text-slate-500 dark:text-slate-400">
+        <p className="mt-1.5 truncate text-[11.5px] font-medium leading-snug text-slate-500 sm:text-[12px]">
           {hint}
         </p>
+      </div>
+      <div className="relative min-w-0 flex-1 self-stretch pl-0.5 sm:pl-1">
+        <TrendSparkline
+          values={trend ?? []}
+          color={trendColor}
+          delayMs={delay + 180}
+          label={trendLabel ?? label}
+        />
       </div>
     </>
   );
@@ -318,9 +333,9 @@ const RailStat = memo(function RailStat({
       <div className="min-w-0 flex-1">
         <AnimatedNumber
           value={value}
-          className="block text-[1.45rem] font-black leading-none tracking-tight text-slate-900 tabular-nums dark:text-white"
+          className="block text-[1.45rem] font-black leading-none tracking-tight text-slate-900 tabular-nums"
         />
-        <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500 dark:text-slate-400">
+        <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500">
           {label}
         </p>
       </div>
@@ -355,8 +370,12 @@ interface ScraperStatsBarProps {
   onSelectReady?: () => void;
   onSelectBest?: () => void;
   onSelectGood?: () => void;
+  onSelectAvg?: () => void;
   onSelectRemote?: () => void;
   onSelectAvailable?: () => void;
+  onSelectApplied?: () => void;
+  onSelectSheet?: () => void;
+  onSelectPumble?: () => void;
   onSelectMine?: () => void;
   onSelectAll?: () => void;
 }
@@ -378,8 +397,12 @@ const StatsBoardContent = memo(function StatsBoardContent({
   onSelectReady,
   onSelectBest,
   onSelectGood,
+  onSelectAvg,
   onSelectRemote,
   onSelectAvailable,
+  onSelectApplied,
+  onSelectSheet,
+  onSelectPumble,
   onSelectMine,
   onSelectAll,
 }: {
@@ -388,8 +411,12 @@ const StatsBoardContent = memo(function StatsBoardContent({
   onSelectReady?: () => void;
   onSelectBest?: () => void;
   onSelectGood?: () => void;
+  onSelectAvg?: () => void;
   onSelectRemote?: () => void;
   onSelectAvailable?: () => void;
+  onSelectApplied?: () => void;
+  onSelectSheet?: () => void;
+  onSelectPumble?: () => void;
   onSelectMine?: () => void;
   onSelectAll?: () => void;
 }) {
@@ -398,6 +425,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const ready = safe(view.ready_jobs);
   const best = safe(view.best_jobs ?? 0);
   const good = safe(view.good_jobs ?? 0);
+  const qualified = safe(view.qualified_jobs ?? good + best);
   const scored = safe(view.scored_jobs ?? 0);
   const avgScore = safe(view.avg_match_score ?? 0);
   const remote = safe(view.total_remote);
@@ -414,6 +442,11 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const appliedRatio = total > 0 ? applied / total : 0;
   const remotePct = total > 0 ? Math.round((remote / total) * 100) : 0;
   const todayBumped = useBumpOnIncrease(today);
+  const trends = view.trends;
+  const readyTrend = trends?.ready ?? [];
+  const bestTrend = trends?.best ?? [];
+  const remoteTrend = trends?.remote ?? [];
+  const availableTrend = trends?.available ?? [];
 
   return (
     <div className="stats-board-shell relative w-full overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5">
@@ -438,14 +471,15 @@ const StatsBoardContent = memo(function StatsBoardContent({
             label={appliedToday > 0 ? `Applied · ${fmt(appliedToday)} today` : 'Applied'}
             tone="bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
             title="Jobs you marked as applied"
+            onClick={onSelectApplied}
             delay={70}
           />
           <RailStat
             icon={ThumbsUp}
-            value={good + best}
+            value={qualified}
             label="Good+ matches"
             tone="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
-            title="Jobs scoring 50+ (Good and Strong)"
+            title="Jobs at or above your preference minimum match score"
             onClick={onSelectGood}
             delay={110}
           />
@@ -454,7 +488,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
             value={avgScore}
             label={scored > 0 ? `Avg match · ${fmt(scored)} scored` : 'Avg match'}
             tone="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
-            title="Average AI match score across analysed jobs"
+            title="Average AI match score — click to show qualified matches"
+            onClick={onSelectAvg}
             delay={150}
           />
         </div>
@@ -471,6 +506,9 @@ const StatsBoardContent = memo(function StatsBoardContent({
               delay={40}
               onClick={onSelectReady}
               title="Jobs with a tailored resume ready to send"
+              trend={readyTrend}
+              trendColor="#34d399"
+              trendLabel="Ready to apply"
             />
             <SideTile
               icon={Sparkles}
@@ -482,6 +520,9 @@ const StatsBoardContent = memo(function StatsBoardContent({
               delay={90}
               onClick={onSelectBest}
               title="Jobs with a strong match score (75+)"
+              trend={bestTrend}
+              trendColor="#fbbf24"
+              trendLabel="Best jobs"
             />
           </div>
 
@@ -504,7 +545,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
                 <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
                 <AnimatedNumber
                   value={today}
-                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900 tabular-nums dark:text-white"
+                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900 tabular-nums"
                 />
                 <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-300">
                   Today&apos;s jobs
@@ -512,14 +553,14 @@ const StatsBoardContent = memo(function StatsBoardContent({
               </div>
             </div>
             <div className="mt-1 space-y-1">
-              <p className="text-[13px] font-semibold leading-snug text-slate-600 dark:text-slate-300">
+              <p className="text-[13px] font-semibold leading-snug text-slate-600">
                 {todayRemote > 0
                   ? `${fmt(todayRemote)} remote added today`
                   : total > 0
                     ? `${Math.round(readyRatio * 100)}% of pool ready to apply`
                     : 'New jobs added to your board today'}
               </p>
-              <p className="text-[12px] font-medium text-slate-400 dark:text-slate-500">
+              <p className="text-[12px] font-medium text-slate-500">
                 {fmt(applied)} applied · {Math.round(appliedRatio * 100)}% of pool
               </p>
             </div>
@@ -536,6 +577,9 @@ const StatsBoardContent = memo(function StatsBoardContent({
               delay={40}
               onClick={onSelectRemote}
               title="Show remote-friendly jobs"
+              trend={remoteTrend}
+              trendColor="#38bdf8"
+              trendLabel="Remote jobs"
             />
             <SideTile
               icon={CirclePlay}
@@ -547,6 +591,9 @@ const StatsBoardContent = memo(function StatsBoardContent({
               delay={90}
               onClick={onSelectAvailable}
               title="Jobs you have not marked as applied"
+              trend={availableTrend}
+              trendColor="#a78bfa"
+              trendLabel="Available to start"
             />
           </div>
         </div>
@@ -558,6 +605,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             label="In Google Sheets"
             tone="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200"
             title="Jobs posted to Google Sheets"
+            onClick={onSelectSheet}
             delay={30}
           />
           <RailStat
@@ -566,6 +614,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             label="In Pumble"
             tone="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
             title="Jobs posted to Pumble"
+            onClick={onSelectPumble}
             delay={70}
           />
           <RailStat
@@ -590,8 +639,12 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
   onSelectReady,
   onSelectBest,
   onSelectGood,
+  onSelectAvg,
   onSelectRemote,
   onSelectAvailable,
+  onSelectApplied,
+  onSelectSheet,
+  onSelectPumble,
   onSelectMine,
   onSelectAll,
 }: ScraperStatsBarProps) {
@@ -610,8 +663,12 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
       onSelectReady={onSelectReady}
       onSelectBest={onSelectBest}
       onSelectGood={onSelectGood}
+      onSelectAvg={onSelectAvg}
       onSelectRemote={onSelectRemote}
       onSelectAvailable={onSelectAvailable}
+      onSelectApplied={onSelectApplied}
+      onSelectSheet={onSelectSheet}
+      onSelectPumble={onSelectPumble}
       onSelectMine={onSelectMine}
       onSelectAll={onSelectAll}
     />

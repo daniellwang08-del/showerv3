@@ -1404,7 +1404,21 @@ async def extract_job_urls_from_attachments(
     return AttachmentExtractUrlsResponse(urls=urls, files_processed=len(parts), warnings=warnings)
 
 
-DASHBOARD_VIEWS = {"all", "today", "mine", "suggested", "applied_today"}
+DASHBOARD_VIEWS = {
+    "all",
+    "today",
+    "mine",
+    "suggested",
+    "applied_today",
+    "applied",
+    "available",
+    "ready",
+    "sheet_posted",
+    "pumble_posted",
+}
+
+VIEWS_NEEDING_APPLICATION_JOIN = frozenset({"applied_today", "applied", "available"})
+VIEWS_NEEDING_RESUME_JOIN = frozenset({"ready"})
 
 
 def _dashboard_view_clauses(
@@ -1418,13 +1432,6 @@ def _dashboard_view_clauses(
 
     Returns ``(clauses, needs_match_join)`` where *needs_match_join* signals that
     the ``JobMatchResult`` outer-join must be present for the clauses to resolve.
-
-    Views:
-      * ``all``           - every visible job (scraped, others', and mine).
-      * ``today``         - jobs created during the current calendar day (user tz).
-      * ``mine``          - jobs I added via submission/attachment (manual, in my pool).
-      * ``suggested``     - analysed jobs scoring at/above my effective minimum.
-      * ``applied_today`` - jobs I marked applied during the current calendar day.
     """
     clauses: list = []
     needs_match_join = False
@@ -1452,6 +1459,16 @@ def _dashboard_view_clauses(
             clauses.append(ValidJobUserApplication.applied_at.isnot(None))
             clauses.append(ValidJobUserApplication.applied_at >= day_start)
             clauses.append(ValidJobUserApplication.applied_at < day_end)
+    elif view == "applied":
+        clauses.append(ValidJobUserApplication.id.is_not(None))
+    elif view == "available":
+        clauses.append(ValidJobUserApplication.id.is_(None))
+    elif view == "ready":
+        clauses.append(ResumeBuildResult.resume_docx_status == "completed")
+    elif view == "sheet_posted":
+        clauses.append(Job.sheet_posted_at.is_not(None))
+    elif view == "pumble_posted":
+        clauses.append(Job.pumble_posted_at.is_not(None))
 
     return clauses, needs_match_join
 
@@ -1525,12 +1542,8 @@ async def get_dashboard_jobs(
     timezone: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ) -> DashboardJobsPage:
-    """Paginated list of processed jobs from the jobs table, with per-user status.
-
-    The ``view`` tab narrows the result set: ``all`` (default), ``today`` (added
-    today in the caller's ``timezone``), ``mine`` (jobs I submitted),
-    ``suggested`` (jobs analysed at/above my effective minimum match score), or
-    ``applied_today`` (jobs I marked applied today in the caller's ``timezone``).
+    """Paginated jobs list. ``view`` narrows results (all/today/mine/suggested/
+    applied/available/ready/sheet_posted/pumble_posted/applied_today).
     """
     user_id = current_user.get("user_id")
     if not user_id:
@@ -1600,11 +1613,16 @@ async def get_dashboard_jobs(
                 JobMatchResult,
                 (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
             )
-        if view == "applied_today":
+        if view in VIEWS_NEEDING_APPLICATION_JOIN:
             count_stmt = count_stmt.outerjoin(
                 ValidJobUserApplication,
                 (ValidJobUserApplication.job_id == Job.id)
                 & (ValidJobUserApplication.user_id == user_id),
+            )
+        if view in VIEWS_NEEDING_RESUME_JOIN:
+            count_stmt = count_stmt.outerjoin(
+                ResumeBuildResult,
+                (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
             )
         count_stmt = count_stmt.where(*base_filter)
         total = (await session.execute(count_stmt)).scalar() or 0
@@ -1791,11 +1809,16 @@ async def get_dashboard_counts(
                     JobMatchResult,
                     (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
                 )
-            if view == "applied_today":
+            if view in VIEWS_NEEDING_APPLICATION_JOIN:
                 stmt = stmt.outerjoin(
                     ValidJobUserApplication,
                     (ValidJobUserApplication.job_id == Job.id)
                     & (ValidJobUserApplication.user_id == user_id),
+                )
+            if view in VIEWS_NEEDING_RESUME_JOIN:
+                stmt = stmt.outerjoin(
+                    ResumeBuildResult,
+                    (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
                 )
             stmt = stmt.where(*shared_filter, *view_clauses, *score_clauses)
             return (await session.execute(stmt)).scalar() or 0

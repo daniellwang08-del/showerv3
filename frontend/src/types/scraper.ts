@@ -145,6 +145,8 @@ export interface ScraperStats {
   best_jobs?: number;
   /** Match score 50-74 (Good). Optional for older backends. */
   good_jobs?: number;
+  /** Match score at/above preference minimum. Optional for older backends. */
+  qualified_jobs?: number;
   /** Jobs with any match score. Optional for older backends. */
   scored_jobs?: number;
   /** Average match score across scored jobs. Optional for older backends. */
@@ -159,6 +161,14 @@ export interface ScraperStats {
   sheet_posted_jobs?: number;
   /** Posted to Pumble. Optional for older backends. */
   pumble_posted_jobs?: number;
+  /** Last-7-day daily series for the four main side tiles. */
+  trends?: {
+    labels?: string[];
+    ready?: number[];
+    best?: number[];
+    remote?: number[];
+    available?: number[];
+  };
   sources: SourceStats[];
   recent_runs: ScrapeRun[];
 }

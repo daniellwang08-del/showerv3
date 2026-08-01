@@ -6,6 +6,11 @@ import {
   Sparkles,
   ChevronDown,
   Check,
+  ClipboardCheck,
+  CirclePlay,
+  Rocket,
+  Table2,
+  MessageSquare,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { DashboardView, DashboardCounts } from '../../api/scraperApi';
@@ -21,42 +26,95 @@ interface ViewMeta {
   active: string;
 }
 
+/** Primary tabs shown in the dropdown. */
 export const DASHBOARD_VIEWS: ViewMeta[] = [
   {
     id: 'today',
     label: "Today's new jobs",
     description: 'Jobs added to the system today',
     icon: CalendarClock,
-    accent: 'bg-emerald-50 text-emerald-600',
-    active: 'text-emerald-700',
+    accent: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+    active: 'text-emerald-700 dark:text-emerald-300',
   },
   {
     id: 'mine',
     label: 'Jobs from me',
     description: 'Everything you added by URL or attachment',
     icon: UserRound,
-    accent: 'bg-violet-50 text-violet-600',
-    active: 'text-violet-700',
+    accent: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
+    active: 'text-violet-700 dark:text-violet-300',
   },
   {
     id: 'all',
     label: 'All jobs in system',
     description: 'Scraped, shared, and your own jobs',
     icon: LayoutGrid,
-    accent: 'bg-blue-50 text-blue-600',
-    active: 'text-blue-700',
+    accent: 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300',
+    active: 'text-blue-700 dark:text-blue-300',
   },
   {
     id: 'suggested',
     label: 'Suggested jobs',
     description: 'Analysed matches at or above your minimum score',
     icon: Sparkles,
-    accent: 'bg-amber-50 text-amber-600',
-    active: 'text-amber-700',
+    accent: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
+    active: 'text-amber-700 dark:text-amber-300',
   },
 ];
 
-const VIEW_BY_ID: Record<DashboardView, ViewMeta> = DASHBOARD_VIEWS.reduce(
+/** Board-driven views — shown in the trigger when active, not in the dropdown. */
+const BOARD_VIEWS: ViewMeta[] = [
+  {
+    id: 'applied',
+    label: 'Applied jobs',
+    description: 'Jobs you marked as applied',
+    icon: ClipboardCheck,
+    accent: 'bg-sky-50 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300',
+    active: 'text-sky-700 dark:text-sky-300',
+  },
+  {
+    id: 'applied_today',
+    label: 'Applied today',
+    description: 'Jobs you marked applied today',
+    icon: ClipboardCheck,
+    accent: 'bg-sky-50 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300',
+    active: 'text-sky-700 dark:text-sky-300',
+  },
+  {
+    id: 'available',
+    label: 'Available to start',
+    description: 'Jobs not marked applied yet',
+    icon: CirclePlay,
+    accent: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
+    active: 'text-violet-700 dark:text-violet-300',
+  },
+  {
+    id: 'ready',
+    label: 'Ready to apply',
+    description: 'Jobs with a tailored resume ready',
+    icon: Rocket,
+    accent: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+    active: 'text-emerald-700 dark:text-emerald-300',
+  },
+  {
+    id: 'sheet_posted',
+    label: 'In Google Sheets',
+    description: 'Jobs posted to Google Sheets',
+    icon: Table2,
+    accent: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+    active: 'text-emerald-700 dark:text-emerald-300',
+  },
+  {
+    id: 'pumble_posted',
+    label: 'In Pumble',
+    description: 'Jobs posted to Pumble',
+    icon: MessageSquare,
+    accent: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
+    active: 'text-violet-700 dark:text-violet-300',
+  },
+];
+
+const VIEW_BY_ID: Record<DashboardView, ViewMeta> = [...DASHBOARD_VIEWS, ...BOARD_VIEWS].reduce(
   (acc, v) => ({ ...acc, [v.id]: v }),
   {} as Record<DashboardView, ViewMeta>,
 );
@@ -70,9 +128,16 @@ interface DashboardViewSwitcherProps {
   view: DashboardView;
   counts: DashboardCounts;
   onChange: (view: DashboardView) => void;
+  /** Optional override for the badge when viewing a board-driven filter. */
+  activeCount?: number;
 }
 
-export function DashboardViewSwitcher({ view, counts, onChange }: DashboardViewSwitcherProps) {
+export function DashboardViewSwitcher({
+  view,
+  counts,
+  onChange,
+  activeCount,
+}: DashboardViewSwitcherProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -94,7 +159,16 @@ export function DashboardViewSwitcher({ view, counts, onChange }: DashboardViewS
 
   const current = VIEW_BY_ID[view] ?? VIEW_BY_ID.all;
   const CurrentIcon = current.icon;
-  const currentCount = counts[view] ?? 0;
+  const tabCountKeys: Array<keyof DashboardCounts> = ['all', 'today', 'mine', 'suggested', 'applied_today'];
+  const countFromTabs = tabCountKeys.includes(view as keyof DashboardCounts)
+    ? counts[view as keyof DashboardCounts]
+    : undefined;
+  const currentCount =
+    typeof activeCount === 'number'
+      ? activeCount
+      : typeof countFromTabs === 'number'
+        ? countFromTabs
+        : 0;
 
   const handleSelect = (next: DashboardView) => {
     setOpen(false);
@@ -109,27 +183,27 @@ export function DashboardViewSwitcher({ view, counts, onChange }: DashboardViewS
         aria-haspopup="listbox"
         aria-expanded={open}
         className={[
-          'group inline-flex items-center gap-2.5 rounded-xl border bg-white py-2 pl-2.5 pr-3 text-sm font-semibold shadow-sm transition-all',
+          'group inline-flex items-center gap-2.5 rounded-xl border bg-white py-2 pl-2.5 pr-3 text-sm font-semibold shadow-sm transition-all dark:border-slate-600 dark:bg-slate-100',
           open
-            ? 'border-slate-300 ring-2 ring-slate-900/5'
-            : 'border-slate-200 hover:border-slate-300 hover:shadow',
+            ? 'border-slate-300 ring-2 ring-slate-900/5 dark:border-slate-500'
+            : 'border-slate-200 hover:border-slate-300 hover:shadow dark:hover:border-slate-500',
         ].join(' ')}
       >
         <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${current.accent}`}>
           <CurrentIcon size={16} />
         </span>
         <span className="flex flex-col items-start leading-tight">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
             Viewing
           </span>
           <span className={current.active}>{current.label}</span>
         </span>
-        <span className="ml-1 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-bold tabular-nums text-slate-600">
+        <span className="ml-1 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-bold tabular-nums text-slate-700 dark:bg-slate-200 dark:text-slate-800">
           {formatCount(currentCount)}
         </span>
         <ChevronDown
           size={16}
-          className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
@@ -137,12 +211,12 @@ export function DashboardViewSwitcher({ view, counts, onChange }: DashboardViewS
         <>
           <div
             role="listbox"
-            className="absolute left-0 top-full z-20 mt-2 w-[19rem] origin-top-left overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5"
+            className="absolute left-0 top-full z-20 mt-2 w-[19rem] origin-top-left overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-slate-600 dark:bg-slate-100 dark:ring-white/5"
           >
             {DASHBOARD_VIEWS.map((v) => {
               const Icon = v.icon;
               const isActive = v.id === view;
-              const count = counts[v.id] ?? 0;
+              const count = counts[v.id as keyof DashboardCounts] ?? 0;
               return (
                 <button
                   key={v.id}
@@ -152,7 +226,7 @@ export function DashboardViewSwitcher({ view, counts, onChange }: DashboardViewS
                   onClick={() => handleSelect(v.id)}
                   className={[
                     'flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors',
-                    isActive ? 'bg-slate-50' : 'hover:bg-slate-50/70',
+                    isActive ? 'bg-slate-100 dark:bg-slate-200' : 'hover:bg-slate-50 dark:hover:bg-slate-200/70',
                   ].join(' ')}
                 >
                   <span
@@ -162,19 +236,21 @@ export function DashboardViewSwitcher({ view, counts, onChange }: DashboardViewS
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
-                      <span className={`truncate text-sm font-semibold ${isActive ? v.active : 'text-slate-700'}`}>
+                      <span className={`truncate text-sm font-semibold ${isActive ? v.active : 'text-slate-800'}`}>
                         {v.label}
                       </span>
-                      {isActive && <Check size={14} className="shrink-0 text-slate-400" />}
+                      {isActive && <Check size={14} className="shrink-0 text-slate-500" />}
                     </span>
-                    <span className="mt-0.5 block truncate text-xs text-slate-400">
+                    <span className="mt-0.5 block truncate text-xs text-slate-500">
                       {v.description}
                     </span>
                   </span>
                   <span
                     className={[
                       'inline-flex min-w-[1.75rem] items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums',
-                      isActive ? 'bg-white text-slate-700 shadow-sm ring-1 ring-slate-200' : 'bg-slate-100 text-slate-500',
+                      isActive
+                        ? 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-300 dark:bg-slate-50'
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-200',
                     ].join(' ')}
                   >
                     {formatCount(count)}

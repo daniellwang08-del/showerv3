@@ -28,7 +28,17 @@ export async function fetchScrapedJobs(params: {
   return data;
 }
 
-export type DashboardView = 'all' | 'today' | 'mine' | 'suggested';
+export type DashboardView =
+  | 'all'
+  | 'today'
+  | 'mine'
+  | 'suggested'
+  | 'applied'
+  | 'applied_today'
+  | 'available'
+  | 'ready'
+  | 'sheet_posted'
+  | 'pumble_posted';
 
 export async function fetchDashboardJobs(params: {
   page?: number;

@@ -20,7 +20,17 @@ export interface AgentJobCard {
 }
 
 export interface AgentDashboardFilters {
-  view?: 'all' | 'today' | 'mine' | 'suggested';
+  view?:
+    | 'all'
+    | 'today'
+    | 'mine'
+    | 'suggested'
+    | 'applied'
+    | 'applied_today'
+    | 'available'
+    | 'ready'
+    | 'sheet_posted'
+    | 'pumble_posted';
   remote_only?: boolean;
   source?: string;
   query?: string;

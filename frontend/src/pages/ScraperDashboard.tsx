@@ -180,20 +180,36 @@ export function ScraperDashboard() {
           stats={stats}
           loading={statsLoading}
           onSelectToday={() => applyAgentDashboard({ view: 'today', remote_only: false, min_match_score: 0 })}
-          onSelectReady={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
+          onSelectReady={() => applyAgentDashboard({ view: 'ready', remote_only: false, min_match_score: 0 })}
           onSelectBest={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 75 })}
-          onSelectGood={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 50 })}
-          onSelectRemote={() => applyAgentDashboard({ view: 'all', remote_only: true })}
-          onSelectAvailable={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
+          onSelectGood={() => applyAgentDashboard({ view: 'suggested', remote_only: false, min_match_score: 0 })}
+          onSelectAvg={() => applyAgentDashboard({ view: 'suggested', remote_only: false, min_match_score: 0 })}
+          onSelectRemote={() => applyAgentDashboard({ view: 'all', remote_only: true, min_match_score: 0 })}
+          onSelectAvailable={() => applyAgentDashboard({ view: 'available', remote_only: false, min_match_score: 0 })}
+          onSelectApplied={() => applyAgentDashboard({ view: 'applied', remote_only: false, min_match_score: 0 })}
+          onSelectSheet={() => applyAgentDashboard({ view: 'sheet_posted', remote_only: false, min_match_score: 0 })}
+          onSelectPumble={() => applyAgentDashboard({ view: 'pumble_posted', remote_only: false, min_match_score: 0 })}
           onSelectMine={() => applyAgentDashboard({ view: 'mine', remote_only: false, min_match_score: 0 })}
           onSelectAll={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
         />
       </div>
 
-      <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+      <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 dark:border-slate-600 dark:bg-slate-100">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
           <div className="shrink-0">
-            <DashboardViewSwitcher view={view} counts={counts} onChange={handleViewChange} />
+            <DashboardViewSwitcher
+              view={view}
+              counts={counts}
+              onChange={handleViewChange}
+              activeCount={
+                view === 'applied' ? (stats?.applied_jobs ?? total)
+                : view === 'available' ? (stats?.available_jobs ?? total)
+                : view === 'ready' ? (stats?.ready_jobs ?? total)
+                : view === 'sheet_posted' ? (stats?.sheet_posted_jobs ?? total)
+                : view === 'pumble_posted' ? (stats?.pumble_posted_jobs ?? total)
+                : undefined
+              }
+            />
           </div>
 
           <div className="hidden self-stretch w-px bg-slate-200 xl:block" />

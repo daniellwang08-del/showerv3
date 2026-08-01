@@ -17,7 +17,6 @@ import {
   X,
   ExternalLink as OpenUrl,
   Download,
-  ClipboardCopy,
   ClipboardCheck,
   ClipboardX,
   Table2,
@@ -121,7 +120,8 @@ const columns = [
   { key: 'posted_date',    label: 'Posted',     sortable: true  },
   { key: 'created_at',     label: 'Added',      sortable: true  },
   { key: '__processing__', label: 'Match',      sortable: true, sortKey: 'match_score' },
-  { key: '__docs__',       label: 'Docs',       sortable: false },
+  { key: '__resume__',     label: 'Resume',     sortable: false },
+  { key: '__cover__',      label: 'Cover',      sortable: false },
   { key: '__status__',     label: 'Status',     sortable: false },
   { key: '__actions__',    label: 'Actions',    sortable: false },
 ] as const;
@@ -140,7 +140,8 @@ const COLUMN_WIDTHS: Record<(typeof columns)[number]['key'], string> = {
   posted_date: '68px',
   created_at: '68px',
   __processing__: '108px',
-  __docs__: '120px',
+  __resume__: '108px',
+  __cover__: '108px',
   __status__: '112px',
   __actions__: '300px',
 };
@@ -154,40 +155,50 @@ const CELL = 'px-3 py-0 align-middle overflow-hidden';
 const STICKY_SHADOW = 'shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)]';
 
 // ---------------------------------------------------------------------------
-// Docs column helpers
+// Resume / Cover letter column helpers
 // ---------------------------------------------------------------------------
 
-type DocPreviewTarget = {
-  jobId: string;
-  fileType: PreviewDocType;
-  title: string;
-  filePath: string | null;
-};
+function isDocsBuilding(job: DashboardJob): boolean {
+  const cg = job.content_generation_status;
+  return (
+    cg !== 'failed' &&
+    cg !== 'skipped' &&
+    (cg === 'pending' ||
+      cg === 'processing' ||
+      ((cg === 'completed' || !cg) &&
+        (job.resume_build_status === 'pending' || job.resume_build_status === 'processing')))
+  );
+}
 
-function DocButton({
-  label,
+const DocActionPair = memo(function DocActionPair({
+  shortLabel,
+  fullLabel,
   jobId,
   filePath,
   fileType,
   docTitle,
-  onOpen,
+  accent,
 }: {
-  label: string;
+  shortLabel: string;
+  fullLabel: string;
   jobId: string;
   filePath: string | null;
   fileType: PreviewDocType;
   docTitle: string;
-  onOpen: (target: DocPreviewTarget) => void;
+  accent: 'violet' | 'sky';
 }) {
-  const [copied, setCopied] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const handleOpen = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onOpen({ jobId, fileType, title: docTitle, filePath });
+    setPreviewOpen(true);
   };
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (downloading) return;
+    setDownloading(true);
     try {
       const res = await apiClient.get(
         `/jobs/valid/${jobId}/resume-build/download/${fileType}`,
@@ -209,121 +220,124 @@ function DocButton({
       URL.revokeObjectURL(url);
     } catch {
       /* ignore */
+    } finally {
+      setDownloading(false);
     }
   };
 
-  const handleCopyPath = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!filePath) return;
-    navigator.clipboard.writeText(filePath).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  return (
-    <div className="flex items-center gap-0.5">
-      <span className="text-[10px] font-medium text-slate-500 w-[16px] shrink-0">{label}</span>
-      <button
-        type="button"
-        onClick={handleOpen}
-        title={`View ${label} PDF`}
-        className="inline-flex h-[20px] w-[20px] items-center justify-center rounded hover:bg-violet-100 text-violet-600 transition"
-      >
-        <Eye size={11} />
-      </button>
-      <button
-        type="button"
-        onClick={handleDownload}
-        title={`Download ${label} PDF`}
-        className="inline-flex h-[20px] w-[20px] items-center justify-center rounded hover:bg-blue-100 text-blue-600 transition"
-      >
-        <Download size={11} />
-      </button>
-      <button
-        type="button"
-        onClick={handleCopyPath}
-        title={copied ? 'Copied!' : `Copy ${label} file path`}
-        className={`inline-flex h-[20px] w-[20px] items-center justify-center rounded transition ${
-          copied ? 'bg-emerald-100 text-emerald-600' : 'hover:bg-slate-100 text-slate-400 hover:text-slate-600'
-        }`}
-      >
-        {copied ? <CheckCircle2 size={11} /> : <ClipboardCopy size={11} />}
-      </button>
-    </div>
-  );
-}
-
-function DocsCell({ job }: { job: DashboardJob }) {
-  const [preview, setPreview] = useState<DocPreviewTarget | null>(null);
-  const resumeReady = job.resume_pdf_status === 'completed';
-  const clReady = job.cover_letter_pdf_status === 'completed';
-  const cg = job.content_generation_status;
-  // When content gen failed/skipped, leftover file `pending` must not look in-flight.
-  const resumeBuilding =
-    cg !== 'failed' &&
-    cg !== 'skipped' &&
-    (cg === 'pending' ||
-      cg === 'processing' ||
-      ((cg === 'completed' || !cg) &&
-        (job.resume_build_status === 'pending' || job.resume_build_status === 'processing')));
-  const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
-
-  if (resumeBuilding && !resumeReady && !clReady) {
-    return <DocsProcessingRing />;
-  }
-
-  if (!resumeReady && !clReady) {
-    return <span className="text-slate-300 text-xs">-</span>;
-  }
+  const labelTone =
+    accent === 'violet'
+      ? 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200'
+      : 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-200';
+  const viewTone =
+    accent === 'violet'
+      ? 'border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200 dark:hover:bg-violet-500/25'
+      : 'border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:bg-sky-100 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-200 dark:hover:bg-sky-500/25';
+  const downloadTone =
+    'border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-300 hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-200 dark:hover:bg-blue-500/25';
 
   return (
     <>
-      <div className="flex items-center gap-1.5">
-        {resumeBuilding && <DocsProcessingRing compact />}
-        <div className="flex min-w-0 flex-col gap-0 leading-none">
-          {resumeReady && (
-            <DocButton
-              label="R"
-              jobId={job.id}
-              filePath={job.resume_pdf_path}
-              fileType="resume_pdf"
-              docTitle={`Resume - ${jobLabel}`}
-              onOpen={setPreview}
-            />
-          )}
-          {clReady && (
-            <DocButton
-              label="CL"
-              jobId={job.id}
-              filePath={job.cover_letter_pdf_path}
-              fileType="cover_letter_pdf"
-              docTitle={`Cover letter - ${jobLabel}`}
-              onOpen={setPreview}
-            />
-          )}
-        </div>
+      <div className="inline-flex items-center gap-1" style={{ height: MATCH_BADGE_H }}>
+        <span
+          title={fullLabel}
+          className={`inline-flex h-full min-w-[28px] items-center justify-center rounded-lg border px-1.5 text-[11px] font-bold shadow-sm ${labelTone}`}
+        >
+          {shortLabel}
+        </span>
+        <button
+          type="button"
+          onClick={handleOpen}
+          title={`View ${fullLabel}`}
+          aria-label={`View ${fullLabel}`}
+          className={`inline-flex h-full w-[28px] items-center justify-center rounded-lg border shadow-sm transition ${viewTone}`}
+        >
+          <Eye size={14} strokeWidth={2.35} />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => void handleDownload(e)}
+          disabled={downloading}
+          title={`Download ${fullLabel}`}
+          aria-label={`Download ${fullLabel}`}
+          className={`inline-flex h-full w-[28px] items-center justify-center rounded-lg border shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${downloadTone}`}
+        >
+          {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} strokeWidth={2.35} />}
+        </button>
       </div>
-      {preview && (
+      {previewOpen && (
         <DocumentPreviewModal
-          jobId={preview.jobId}
-          fileType={preview.fileType}
-          title={preview.title}
-          filePath={preview.filePath}
-          onClose={() => setPreview(null)}
+          jobId={jobId}
+          fileType={fileType}
+          title={docTitle}
+          filePath={filePath}
+          onClose={() => setPreviewOpen(false)}
         />
       )}
     </>
   );
+});
+
+function ResumeDocCell({ job }: { job: DashboardJob }) {
+  const ready = job.resume_pdf_status === 'completed';
+  const building = isDocsBuilding(job);
+  const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
+
+  if (!ready && building) {
+    return <DocsProcessingRing />;
+  }
+  if (!ready) {
+    return <span className="text-slate-300 text-xs">-</span>;
+  }
+
+  return (
+    <div className="inline-flex items-center gap-1.5">
+      {building && <DocsProcessingRing compact />}
+      <DocActionPair
+        shortLabel="R"
+        fullLabel="Resume"
+        jobId={job.id}
+        filePath={job.resume_pdf_path}
+        fileType="resume_pdf"
+        docTitle={`Resume - ${jobLabel}`}
+        accent="violet"
+      />
+    </div>
+  );
 }
 
-/** Circular progress shown in the Docs column while resume/cover letter are building. */
+function CoverDocCell({ job }: { job: DashboardJob }) {
+  const ready = job.cover_letter_pdf_status === 'completed';
+  const building = isDocsBuilding(job);
+  const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
+
+  if (!ready && building) {
+    return <span className="text-[11px] font-semibold text-emerald-600/80">…</span>;
+  }
+  if (!ready) {
+    return <span className="text-slate-300 text-xs">-</span>;
+  }
+
+  return (
+    <DocActionPair
+      shortLabel="CL"
+      fullLabel="Cover letter"
+      jobId={job.id}
+      filePath={job.cover_letter_pdf_path}
+      fileType="cover_letter_pdf"
+      docTitle={`Cover letter - ${jobLabel}`}
+      accent="sky"
+    />
+  );
+}
+
 const DocsProcessingRing = memo(function DocsProcessingRing({ compact = false }: { compact?: boolean }) {
   return (
     <div
       className="inline-flex items-center gap-1.5 text-emerald-600"
       title="Building resume & cover letter…"
       aria-label="Building resume and cover letter"
+      style={{ height: MATCH_BADGE_H }}
     >
       <span className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center">
         <svg className="absolute inset-0 h-7 w-7 animate-spin" viewBox="0 0 28 28" aria-hidden>
@@ -1465,7 +1479,7 @@ export function ScraperJobsTable({
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="-mx-0 overflow-x-auto overscroll-x-contain">
-          <table className="w-full min-w-[1100px] table-fixed border-collapse text-sm md:min-w-[1450px]">
+          <table className="w-full min-w-[1180px] table-fixed border-collapse text-sm md:min-w-[1560px]">
             <colgroup>
               {columns.map((col) => (
                 <col key={col.key} style={{ width: COLUMN_WIDTHS[col.key] }} />
@@ -1515,6 +1529,10 @@ export function ScraperJobsTable({
                           <span className="h-2 w-2 rounded-[2px] bg-violet-500" />
                         </span>
                       </span>
+                    ) : col.key === '__resume__' ? (
+                      <span title="Tailored resume PDF">Resume</span>
+                    ) : col.key === '__cover__' ? (
+                      <span title="Cover letter PDF">Cover</span>
                     ) : (
                       <span className="inline-flex items-center gap-1">
                         {col.label}
@@ -1647,9 +1665,14 @@ export function ScraperJobsTable({
                       <MatchCell job={job} />
                     </td>
 
-                    {/* Docs (Resume / Cover Letter / build progress) */}
+                    {/* Resume */}
                     <td className={CELL} onClick={(e) => e.stopPropagation()}>
-                      <DocsCell job={job} />
+                      <ResumeDocCell job={job} />
+                    </td>
+
+                    {/* Cover letter */}
+                    <td className={CELL} onClick={(e) => e.stopPropagation()}>
+                      <CoverDocCell job={job} />
                     </td>
 
                     {/* Status squares: Applied · Sheets · Pumble */}

@@ -64,11 +64,13 @@ async def fetch_dashboard_stats(
     *,
     day_start: datetime,
     day_end: datetime,
+    min_match_score: int = GOOD_MATCH_SCORE,
 ) -> dict:
     join = _dashboard_join(user_id)
     visible = _visible_job_clause(user_id)
     added_at = _job_added_at_expr()
     is_remote = _is_remote_expr()
+    qualified_min = max(0, int(min_match_score or 0))
 
     ext_join = join.outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
     rb_join = ext_join.outerjoin(
@@ -132,6 +134,9 @@ async def fetch_dashboard_stats(
                         JobMatchResult.overall_score < BEST_MATCH_SCORE,
                     )
                 ).label("good_jobs"),
+                func.count().filter(
+                    JobMatchResult.overall_score >= qualified_min
+                ).label("qualified_jobs"),
                 func.count().filter(
                     JobMatchResult.overall_score.is_not(None)
                 ).label("scored_jobs"),
@@ -205,6 +210,7 @@ async def fetch_dashboard_stats(
         "ready_jobs": stats_row.ready_jobs or 0,
         "best_jobs": stats_row.best_jobs or 0,
         "good_jobs": stats_row.good_jobs or 0,
+        "qualified_jobs": stats_row.qualified_jobs or 0,
         "scored_jobs": stats_row.scored_jobs or 0,
         "avg_match_score": int(round(float(stats_row.avg_match_score or 0))),
         "available_jobs": stats_row.available_jobs or 0,

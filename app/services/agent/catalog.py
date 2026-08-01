@@ -62,13 +62,30 @@ async def _run_background_tasks(bt: Any) -> None:
 
 # ── Dashboard control (drives the main jobs table, not the chat) ───────────
 
-_VIEWS = {"all", "today", "mine", "suggested"}
+_VIEWS = {
+    "all",
+    "today",
+    "mine",
+    "suggested",
+    "applied",
+    "applied_today",
+    "available",
+    "ready",
+    "sheet_posted",
+    "pumble_posted",
+}
 _SORTS = {"created_at", "match_score", "posted_date", "title", "company", "updated_at"}
 _VIEW_LABELS = {
     "all": "all jobs",
     "today": "today's new jobs",
     "mine": "jobs you posted",
     "suggested": "suggested jobs",
+    "applied": "applied jobs",
+    "applied_today": "jobs applied today",
+    "available": "available jobs",
+    "ready": "ready-to-apply jobs",
+    "sheet_posted": "jobs in Google Sheets",
+    "pumble_posted": "jobs in Pumble",
 }
 
 
@@ -155,7 +172,18 @@ async def _search_jobs(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     limit = max(1, min(limit, 50))
 
     view = str(args.get("view") or "all").strip().lower()
-    if view not in {"all", "today", "mine", "suggested"}:
+    if view not in {
+        "all",
+        "today",
+        "mine",
+        "suggested",
+        "applied",
+        "applied_today",
+        "available",
+        "ready",
+        "sheet_posted",
+        "pumble_posted",
+    }:
         view = "all"
 
     page = await get_dashboard_jobs(
@@ -361,7 +389,11 @@ AGENT_TOOLS: list[ToolSpec] = [
                 "'clear filters'). Results appear in the dashboard, NOT the chat."
             ),
             params=[
-                ToolParam("view", "string", "view tab: all, today, mine, suggested"),
+                ToolParam(
+                    "view",
+                    "string",
+                    "view tab: all, today, mine, suggested, applied, available, ready, sheet_posted, pumble_posted",
+                ),
                 ToolParam("remote_only", "boolean", "show only remote jobs"),
                 ToolParam("query", "string", "free-text keyword filter"),
                 ToolParam("title", "string", "filter by job title substring"),
@@ -389,7 +421,11 @@ AGENT_TOOLS: list[ToolSpec] = [
                 ToolParam("company", "string", "filter by company substring"),
                 ToolParam("source", "string", "platform/source name (e.g. linkedin, adzuna)"),
                 ToolParam("remote_only", "boolean", "only remote jobs"),
-                ToolParam("view", "string", "one of: all, today, mine, suggested"),
+                ToolParam(
+                    "view",
+                    "string",
+                    "one of: all, today, mine, suggested, applied, available, ready, sheet_posted, pumble_posted",
+                ),
                 ToolParam("sort", "string", "created_at | match_score | posted_date | title | company"),
                 ToolParam("order", "string", "asc | desc"),
                 ToolParam("limit", "number", "max jobs to return (1-50, default 20)"),
