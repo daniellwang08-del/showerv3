@@ -207,9 +207,14 @@ function TypingDots() {
   );
 }
 
+const AGENT_CLOSE_MS = 170;
+
 export function AgentChat({ isAdmin = false }: { isAdmin?: boolean }) {
-  const { open, sending, timeline, openChat, closeChat, clear, send } = useAgentStore();
+  const { open, sending, timeline, closeChat, clear, send } = useAgentStore();
   const [draft, setDraft] = useState('');
+  const [visible, setVisible] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const wasOpenRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -225,10 +230,38 @@ export function AgentChat({ isAdmin = false }: { isAdmin?: boolean }) {
 
   useEffect(() => {
     if (open) {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-      inputRef.current?.focus();
+      wasOpenRef.current = true;
+      setLeaving(false);
+      setVisible(true);
+      return;
     }
+    if (!wasOpenRef.current) return;
+    setLeaving(true);
+    const t = window.setTimeout(() => {
+      wasOpenRef.current = false;
+      setVisible(false);
+      setLeaving(false);
+    }, AGENT_CLOSE_MS);
+    return () => window.clearTimeout(t);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [open, timeline]);
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') closeChat();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, closeChat]);
 
   const submit = () => {
     const text = draft.trim();
@@ -244,141 +277,153 @@ export function AgentChat({ isAdmin = false }: { isAdmin?: boolean }) {
     }
   };
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={openChat}
-        aria-label="Open AI assistant"
-        className="agent-launcher oneclick-launcher-glow group flex h-14 w-14 items-center justify-center overflow-visible rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-500 shadow-xl shadow-fuchsia-600/40 ring-2 ring-white/50 focus:outline-none focus-visible:ring-4 focus-visible:ring-fuchsia-300"
-      >
-        <BrandMark mood="idle" size="md" />
-      </button>
-    );
-  }
+  if (!visible) return null;
 
   return (
-    <div className="brand-fade-in fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-[max(0.75rem,env(safe-area-inset-right))] z-[60] flex h-[min(640px,calc(100dvh-5.5rem))] w-[min(420px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border-2 border-violet-200 bg-slate-50 shadow-2xl shadow-violet-900/20 sm:bottom-[max(1.25rem,env(safe-area-inset-bottom))] sm:right-[max(1.25rem,env(safe-area-inset-right))] sm:h-[min(640px,calc(100dvh-2.5rem))] sm:w-[min(420px,calc(100vw-2.5rem))]">
-      {/* Product header - Atomspace brand chrome */}
-      <div className="flex items-center justify-between gap-2 border-b border-violet-200/80 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 px-3.5 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <BrandMark mood={sending ? 'thinking' : 'idle'} size="sm" />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <p className="text-sm font-extrabold leading-none text-white">AI Assistant</p>
-              <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white ring-1 ring-white/30">
-                Jobs
-              </span>
-              {sending && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-300/95 px-1.5 py-0.5 text-[9px] font-bold text-amber-950 ring-1 ring-amber-200">
-                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                  In progress
-                </span>
-              )}
-            </div>
-            <p className="mt-1 truncate text-[11px] font-medium leading-snug text-white/90">
-              {sending ? 'Working through your request - hang tight…' : AI_PRODUCT.assistantHeader}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {timeline.length > 0 && (
-            <button
-              type="button"
-              onClick={clear}
-              title="Clear conversation"
-              className="rounded-lg p-1.5 text-white/80 transition hover:bg-white/15 hover:text-white"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={closeChat}
-            title="Close"
-            aria-label="Close"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white ring-1 ring-white/40 transition hover:bg-white/25"
-          >
-            <X className="h-4 w-4" strokeWidth={2.5} />
-          </button>
-        </div>
-      </div>
+    <div
+      className="fixed inset-0 z-[60] md:left-60"
+      role="presentation"
+    >
+      <button
+        type="button"
+        aria-label="Close AI assistant"
+        className={`absolute inset-0 bg-slate-950/35 backdrop-blur-[1px] ${
+          leaving ? 'animate-agent-backdrop-out' : 'animate-agent-backdrop-in'
+        }`}
+        onClick={closeChat}
+      />
 
-      {/* Timeline */}
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3.5 py-4">
-        {timeline.length === 0 && (
-          <div className="brand-fade-in flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
-            <BrandMark mood="idle" size="lg" />
-            <div className="brand-fade-in brand-fade-in-delay-1">
-              <p className="text-sm font-bold text-slate-800">How can I help?</p>
-              <p className="mt-1 text-xs text-slate-500">
-                {isAdmin
-                  ? 'Ask me to display or filter jobs, check stats, submit a URL, mark jobs applied, or sync platforms.'
-                  : 'Ask me to display or filter jobs, check stats, submit a URL, or mark jobs applied.'}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="AI Assistant"
+        className={[
+          'absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(0.75rem,env(safe-area-inset-left))] z-[61]',
+          'flex h-[min(640px,calc(100dvh-5.5rem))] w-[min(420px,calc(100vw-1.5rem))] flex-col overflow-hidden',
+          'rounded-2xl border-2 border-violet-200 bg-slate-50 shadow-2xl shadow-violet-900/25',
+          'md:bottom-[max(1.25rem,env(safe-area-inset-bottom))] md:left-3',
+          'md:h-[min(640px,calc(100dvh-2.5rem))] md:w-[min(420px,calc(100%-1.5rem))]',
+          leaving ? 'animate-agent-modal-out' : 'animate-agent-modal-in',
+        ].join(' ')}
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-violet-200/80 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 px-3.5 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <BrandMark mood={sending ? 'thinking' : 'idle'} size="sm" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <p className="text-sm font-extrabold leading-none text-white">AI Assistant</p>
+                <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white ring-1 ring-white/30">
+                  Jobs
+                </span>
+                {sending && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-300/95 px-1.5 py-0.5 text-[9px] font-bold text-amber-950 ring-1 ring-amber-200">
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                    In progress
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 truncate text-[11px] font-medium leading-snug text-white/90">
+                {sending ? 'Working through your request - hang tight…' : AI_PRODUCT.assistantHeader}
               </p>
             </div>
-            <div className="brand-fade-in brand-fade-in-delay-2 flex flex-wrap justify-center gap-1.5">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => void send(s)}
-                  className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-fuchsia-50 hover:text-fuchsia-700"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
           </div>
-        )}
+          <div className="flex shrink-0 items-center gap-1">
+            {timeline.length > 0 && (
+              <button
+                type="button"
+                onClick={clear}
+                title="Clear conversation"
+                className="rounded-lg p-1.5 text-white/80 transition hover:bg-white/15 hover:text-white"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={closeChat}
+              title="Close"
+              aria-label="Close"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-white ring-1 ring-white/40 transition hover:bg-white/25"
+            >
+              <X className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
 
-        {timeline.map((item) => {
-          switch (item.kind) {
-            case 'user':
-            case 'assistant':
-              if (item.kind === 'assistant' && !item.text.trim()) return null;
-              return <Bubble key={item.id} item={item} />;
-            case 'tool':
-              return <ToolRow key={item.id} item={item} />;
-            case 'confirm':
-              return <ConfirmRow key={item.id} item={item} />;
-            case 'error':
-              return (
-                <div key={item.id} className="brand-fade-in flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200">
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>{item.text}</span>
-                </div>
-              );
-            default:
-              return null;
-          }
-        })}
+        <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3.5 py-4">
+          {timeline.length === 0 && (
+            <div className="brand-fade-in flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
+              <BrandMark mood="idle" size="lg" />
+              <div className="brand-fade-in brand-fade-in-delay-1">
+                <p className="text-sm font-bold text-slate-800">How can I help?</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {isAdmin
+                    ? 'Ask me to display or filter jobs, check stats, submit a URL, mark jobs applied, or sync platforms.'
+                    : 'Ask me to display or filter jobs, check stats, submit a URL, or mark jobs applied.'}
+                </p>
+              </div>
+              <div className="brand-fade-in brand-fade-in-delay-2 flex flex-wrap justify-center gap-1.5">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => void send(s)}
+                    className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-fuchsia-50 hover:text-fuchsia-700"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
-        {sending && lastIsEmptyAssistant && <TypingDots />}
-      </div>
+          {timeline.map((item) => {
+            switch (item.kind) {
+              case 'user':
+              case 'assistant':
+                if (item.kind === 'assistant' && !item.text.trim()) return null;
+                return <Bubble key={item.id} item={item} />;
+              case 'tool':
+                return <ToolRow key={item.id} item={item} />;
+              case 'confirm':
+                return <ConfirmRow key={item.id} item={item} />;
+              case 'error':
+                return (
+                  <div key={item.id} className="brand-fade-in flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200">
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{item.text}</span>
+                  </div>
+                );
+              default:
+                return null;
+            }
+          })}
 
-      {/* Composer */}
-      <div className="border-t border-slate-200 bg-white px-3 py-3">
-        <div className="relative">
-          <textarea
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-            rows={2}
-            placeholder="Ask anything about your jobs…"
-            disabled={sending}
-            className="max-h-28 min-h-[52px] w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 pr-12 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
-          />
-          <button
-            type="button"
-            onClick={submit}
-            disabled={sending || !draft.trim()}
-            className="absolute bottom-2.5 right-2.5 inline-flex h-9 w-9 -rotate-6 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/25 transition hover:-rotate-12 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:rotate-[-6deg] disabled:hover:scale-100"
-            aria-label="Send"
-          >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 -translate-x-px translate-y-px" />}
-          </button>
+          {sending && lastIsEmptyAssistant && <TypingDots />}
+        </div>
+
+        <div className="border-t border-slate-200 bg-white px-3 py-3">
+          <div className="relative">
+            <textarea
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onKeyDown}
+              rows={2}
+              placeholder="Ask anything about your jobs…"
+              disabled={sending}
+              className="max-h-28 min-h-[52px] w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 pr-12 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:opacity-60"
+            />
+            <button
+              type="button"
+              onClick={submit}
+              disabled={sending || !draft.trim()}
+              className="absolute bottom-2.5 right-2.5 inline-flex h-9 w-9 -rotate-6 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/25 transition hover:-rotate-12 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:rotate-[-6deg] disabled:hover:scale-100"
+              aria-label="Send"
+            >
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 -translate-x-px translate-y-px" />}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -522,25 +522,28 @@ html.dark { color-scheme: dark; }
   animation: oneclick-shimmer 2.4s ease infinite;
 }
 
-/* Agent FAB: flush to the right edge, slightly above the bottom;
-   half peeking until hover/focus. */
-.agent-launcher {
-  position: fixed;
-  right: 0;
-  bottom: 1.25rem;
-  z-index: 60;
-  transform: translateX(50%);
-  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+/* AI Assistant panel: quick zoom from the sidebar entry point */
+@keyframes agent-modal-in {
+  from { opacity: 0; transform: scale(0.86); }
+  to   { opacity: 1; transform: scale(1); }
 }
-.agent-launcher:hover,
-.agent-launcher:focus-visible {
-  transform: translateX(0);
+@keyframes agent-modal-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.86); }
 }
-@media (hover: none) {
-  /* Touch / no-hover: keep the full control reachable. */
-  .agent-launcher {
-    transform: translateX(0);
-  }
+.animate-agent-modal-in {
+  transform-origin: bottom left;
+  animation: agent-modal-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-agent-modal-out {
+  transform-origin: bottom left;
+  animation: agent-modal-out 0.16s ease-in both;
+}
+.animate-agent-backdrop-in {
+  animation: modal-backdrop-in 0.16s ease-out both;
+}
+.animate-agent-backdrop-out {
+  animation: oneclick-backdrop-out 0.16s ease-in both;
 }
 
 @keyframes resume-rail-loading {
@@ -561,12 +564,12 @@ html.dark { color-scheme: dark; }
   .brand-fade-in,
   .oneclick-launcher-glow,
   .oneclick-shimmer,
-  .resume-rail-loading-bar {
+  .resume-rail-loading-bar,
+  .animate-agent-modal-in,
+  .animate-agent-modal-out,
+  .animate-agent-backdrop-in,
+  .animate-agent-backdrop-out {
     animation: none !important;
-  }
-  .agent-launcher {
-    transition: none;
-    transform: translateX(0);
   }
 }
 
@@ -590,8 +593,8 @@ html.dark { color-scheme: dark; }
   100% { box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12); }
 }
 @keyframes stats-hero-glow {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50%      { opacity: 0.9; transform: scale(1.04); }
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50%      { opacity: 0.95; transform: scale(1.06); }
 }
 @keyframes stats-board-pulse {
   0%, 100% { opacity: 0.45; transform: scale(1); }
@@ -602,6 +605,35 @@ html.dark { color-scheme: dark; }
   15%  { opacity: 0.35; }
   100% { transform: translateX(220%) skewX(-12deg); opacity: 0; }
 }
+@keyframes stats-orbit-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes stats-orbit-dashes {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -48; }
+}
+@keyframes stats-ring-shimmer {
+  0%   { stroke-dashoffset: 0; opacity: 0.15; }
+  40%  { opacity: 0.55; }
+  100% { stroke-dashoffset: -120; opacity: 0.2; }
+}
+@keyframes stats-aura-breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.96); }
+  50%      { opacity: 0.75; transform: scale(1.04); }
+}
+@keyframes stats-aura-core {
+  0%, 100% { opacity: 0.25; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(1.08); }
+}
+@keyframes stats-hero-icon-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+@keyframes stats-total-glow {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50%      { opacity: 0.8; transform: scale(1.08); }
+}
 
 .stats-board-shell {
   animation: stats-hero-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -609,9 +641,8 @@ html.dark { color-scheme: dark; }
 .stats-side-tile {
   animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.stats-strip-stat {
+.stats-rail-stat {
   animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
-  animation-delay: 0.12s;
 }
 .stats-side-tile::after {
   content: "";
@@ -640,8 +671,25 @@ html.dark { color-scheme: dark; }
 .stats-hero-tile {
   animation: stats-hero-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.stats-hero-glow {
-  animation: stats-hero-glow 3.2s ease-in-out infinite;
+.stats-hero-aura {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.28) 0%, rgba(99, 102, 241, 0.12) 42%, transparent 72%);
+  animation: stats-aura-breathe 3.4s ease-in-out infinite;
+}
+.stats-hero-aura-core {
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.22) 0%, rgba(139, 92, 246, 0.1) 50%, transparent 70%);
+  animation: stats-aura-core 2.6s ease-in-out infinite;
+}
+.stats-orbit-spin {
+  animation: stats-orbit-spin 8.5s linear infinite;
+}
+.stats-orbit-dashes {
+  animation: stats-orbit-dashes 10s linear infinite;
+}
+.stats-ring-shimmer {
+  animation: stats-ring-shimmer 2.4s linear infinite;
+}
+.stats-hero-icon-float {
+  animation: stats-hero-icon-float 2.8s ease-in-out infinite;
 }
 .stats-hero-pulse {
   animation: stats-hero-pulse 0.7s ease-out;
@@ -653,8 +701,14 @@ html.dark { color-scheme: dark; }
 .stats-board-pulse {
   animation: stats-board-pulse 1.2s ease-in-out infinite;
 }
+.stats-total-icon {
+  overflow: hidden;
+}
+.stats-total-icon-glow {
+  background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.35), transparent 55%);
+  animation: stats-total-glow 2.8s ease-in-out infinite;
+}
 
-/* Legacy class names kept for any residual references */
 .dashboard-metric-tile {
   animation: stats-tile-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -663,12 +717,18 @@ html.dark { color-scheme: dark; }
   .stats-board-shell,
   .stats-side-tile,
   .stats-side-tile::after,
-  .stats-strip-stat,
+  .stats-rail-stat,
   .stats-hero-tile,
-  .stats-hero-glow,
+  .stats-hero-aura,
+  .stats-hero-aura-core,
+  .stats-orbit-spin,
+  .stats-orbit-dashes,
+  .stats-ring-shimmer,
+  .stats-hero-icon-float,
   .stats-hero-pulse,
   .stats-num-bump,
   .stats-board-pulse,
+  .stats-total-icon-glow,
   .dashboard-metric-tile {
     animation: none !important;
   }

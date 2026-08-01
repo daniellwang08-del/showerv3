@@ -11,8 +11,11 @@ import {
   Sun,
   Puzzle,
   UserCog,
+  Sparkles,
 } from 'lucide-react';
 import { useThemeStore } from '../../stores/themeStore';
+import { useAgentStore } from '../../stores/agentStore';
+import { BrandMark } from '../shared/BrandMark';
 
 interface SidebarProps {
   userEmail?: string;
@@ -93,6 +96,8 @@ export function Sidebar({
   const displayName = userName || userEmail || 'User';
   const initial = displayName.charAt(0).toUpperCase();
   const navItems = isAdmin ? [...baseNavItems, ...adminNavItems] : baseNavItems;
+  const agentOpen = useAgentStore((s) => s.open);
+  const toggleChat = useAgentStore((s) => s.toggleChat);
 
   return (
     <aside
@@ -123,6 +128,40 @@ export function Sidebar({
           </NavLink>
         ))}
       </nav>
+
+      <div className="px-3 pb-2 pt-1">
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate?.();
+            toggleChat();
+          }}
+          aria-label={agentOpen ? 'Close AI assistant' : 'Open AI assistant'}
+          aria-pressed={agentOpen}
+          title="AI Assistant"
+          className={[
+            'oneclick-launcher-glow group flex w-full items-center gap-3 overflow-hidden rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition-all',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300',
+            agentOpen
+              ? 'border-violet-400 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 text-white shadow-md shadow-violet-500/30'
+              : 'border-violet-200 bg-gradient-to-r from-indigo-50 via-violet-50 to-fuchsia-50 text-violet-800 shadow-sm hover:border-violet-300 hover:shadow-md',
+          ].join(' ')}
+        >
+          {agentOpen ? (
+            <BrandMark mood="idle" size="sm" />
+          ) : (
+            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-500 text-white shadow-sm">
+              <Sparkles size={15} strokeWidth={2.4} />
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate leading-none">AI Assistant</span>
+            <span className={`mt-1 block truncate text-[11px] font-medium leading-none ${agentOpen ? 'text-white/85' : 'text-violet-600/80'}`}>
+              Ask about your jobs
+            </span>
+          </span>
+        </button>
+      </div>
 
       <div className="border-t border-slate-100 px-3 py-2">
         <ThemeToggle />
