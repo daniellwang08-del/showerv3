@@ -12,6 +12,7 @@ export interface WsEvent {
   overall_score?: number;
   recommendation?: string;
   error?: string;
+  message?: string;
   reason?: string;
   company?: string;
   file_type?: string;

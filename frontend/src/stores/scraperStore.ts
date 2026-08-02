@@ -263,6 +263,8 @@ interface ScraperState {
     elapsed_seconds?: number;
     success?: boolean;
     error?: string;
+    /** Optional human-readable detail (e.g. stop-fetch confirmation). */
+    message?: string;
   }) => void;
   startSync: (options?: string | SyncTriggerOptions) => Promise<void>;
 
