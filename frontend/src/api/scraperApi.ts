@@ -142,6 +142,20 @@ export async function saveJobSyncSchedule(
   return data;
 }
 
+export interface StopFetchResponse {
+  status: string;
+  message: string;
+  interrupted_count: number;
+  interrupted_run_ids: string[];
+  schedule_disabled: boolean;
+  stop_requested: boolean;
+}
+
+export async function stopJobFetch(): Promise<StopFetchResponse> {
+  const { data } = await apiClient.post('/scraper/sync/stop');
+  return data;
+}
+
 export async function fetchSyncStatus(): Promise<SyncStatus> {
   const { data } = await apiClient.get('/scraper/sync/status');
   return data;

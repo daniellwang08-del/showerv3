@@ -253,9 +253,63 @@ async def test_below_min_score_uses_low_score_exclusion():
         user_id,
         _match_data(40),
         extraction_id=None,
+        recycle_days=30,
         min_match_score=50,
     )
     assert result["exclusion_type"] == BELOW_MIN_SCORE_EXCLUSION
+
+
+@pytest.mark.asyncio
+async def test_zero_score_always_excluded_even_when_min_is_zero():
+    async with get_session() as session:
+        user_id = await _seed_user(session)
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/{uuid.uuid4()}",
+            company="Acme Corp",
+            title="Engineer",
+        )
+        job_id = job.id
+
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        _match_data(0),
+        extraction_id=None,
+        recycle_days=30,
+        min_match_score=0,
+    )
+    assert result["action"] == "saved_duplicated"
+    assert result["exclusion_type"] == BELOW_MIN_SCORE_EXCLUSION
+
+
+@pytest.mark.asyncio
+async def test_not_a_job_posting_excluded():
+    from app.services.job_exclusion_types import NOT_A_JOB_POSTING_EXCLUSION
+
+    async with get_session() as session:
+        user_id = await _seed_user(session)
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/{uuid.uuid4()}",
+            company="Acme Corp",
+            title="Engineer",
+        )
+        job_id = job.id
+
+    payload = _match_data(0)
+    payload["is_job_posting"] = False
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        payload,
+        extraction_id=None,
+        recycle_days=30,
+        min_match_score=0,
+    )
+    assert result["exclusion_type"] == NOT_A_JOB_POSTING_EXCLUSION
 
 
 @pytest.mark.asyncio

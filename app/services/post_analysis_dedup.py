@@ -5,7 +5,8 @@ whether the job should be saved as active, marked as duplicated, or skipped
 entirely based on same-company comparisons within the user's recycle window.
 
 Rules (applied in order):
-  0. Minimum match score - score below user's threshold → duplicated (below_min_score).
+  0a. Security clearance / not-a-job → duplicated (removed from Jobs list).
+  0b. Score 0 or below user's min threshold → duplicated (below_min_score).
   1. US location filter - non-US structured location → duplicated (non_us_location).
      Missing/ambiguous location → duplicated (location_unknown) for review in Duplicates tab.
   2. Same URL - another active job with identical normalized_url → duplicated (same_url).
@@ -28,7 +29,9 @@ from app.services.job_exclusion_types import (
     LOCATION_UNKNOWN_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
     NON_US_LOCATION_EXCLUSION,
+    NOT_A_JOB_POSTING_EXCLUSION,
     SAME_URL_EXCLUSION,
+    SECURITY_CLEARANCE_EXCLUSION,
     STRICT_SIMILARITY_EXCLUSION,
     SUPERSEDED_BY_HIGHER_EXCLUSION,
 )
@@ -220,7 +223,10 @@ async def run_post_analysis_dedup(
 
     from app.services.system_settings_service import get_effective_value_sync
 
-    overall_score = match_data.get("overall_score", 0)
+    try:
+        overall_score = int(match_data.get("overall_score", 0) or 0)
+    except (TypeError, ValueError):
+        overall_score = 0
 
     async with get_session() as session:
         if recycle_days is None or min_match_score is None:
@@ -236,7 +242,55 @@ async def run_post_analysis_dedup(
             logger.warning("post_analysis_dedup_job_not_found", job_id=job_id)
             return {"action": "skipped", "reason": "job_not_found"}
 
-        if min_match_score > 0 and overall_score < min_match_score:
+        if match_data.get("requires_security_clearance"):
+            logger.info(
+                "post_analysis_dedup_security_clearance",
+                job_id=job_id,
+                user_id=user_id,
+            )
+            return await _save_duplicated(
+                session,
+                job_id=job_id,
+                user_id=user_id,
+                match_data=match_data,
+                overall_score=overall_score,
+                duplicated_because_id=None,
+                exclusion_type=SECURITY_CLEARANCE_EXCLUSION,
+                reason="Requires security clearance — removed after analysis.",
+            )
+
+        if match_data.get("is_job_posting") is False:
+            logger.info(
+                "post_analysis_dedup_not_a_job_posting",
+                job_id=job_id,
+                user_id=user_id,
+            )
+            return await _save_duplicated(
+                session,
+                job_id=job_id,
+                user_id=user_id,
+                match_data=match_data,
+                overall_score=overall_score,
+                duplicated_because_id=None,
+                exclusion_type=NOT_A_JOB_POSTING_EXCLUSION,
+                reason="Not a job posting — removed after analysis.",
+            )
+
+        # Score 0 ("0 Weak") must leave the Jobs list after Phase A. Also honor
+        # the user's configured minimum when it is > 0.
+        if overall_score <= 0 or (
+            min_match_score is not None
+            and min_match_score > 0
+            and overall_score < min_match_score
+        ):
+            reason = (
+                "Match score is 0 (Weak) — removed after analysis."
+                if overall_score <= 0
+                else (
+                    f"Match score {overall_score}% is below your minimum threshold "
+                    f"({min_match_score}%)."
+                )
+            )
             logger.info(
                 "post_analysis_dedup_below_min_score",
                 job_id=job_id,
@@ -252,10 +306,7 @@ async def run_post_analysis_dedup(
                 overall_score=overall_score,
                 duplicated_because_id=None,
                 exclusion_type=BELOW_MIN_SCORE_EXCLUSION,
-                reason=(
-                    f"Match score {overall_score}% is below your minimum threshold "
-                    f"({min_match_score}%)."
-                ),
+                reason=reason,
             )
 
         extraction = None

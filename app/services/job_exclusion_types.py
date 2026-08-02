@@ -5,6 +5,8 @@ from __future__ import annotations
 from sqlalchemy import or_
 
 BELOW_MIN_SCORE_EXCLUSION = "below_min_score"
+NOT_A_JOB_POSTING_EXCLUSION = "not_a_job_posting"
+SECURITY_CLEARANCE_EXCLUSION = "security_clearance"
 EXTRACTION_FAILED_EXCLUSION = "extraction_failed"
 SAME_URL_EXCLUSION = "same_url"
 STRICT_SIMILARITY_EXCLUSION = "strict_similarity"
@@ -24,13 +26,19 @@ INVALID_JOB_CATEGORIES = frozenset({
 })
 
 _CATEGORY_ONLY: dict[str, frozenset[str | None]] = {
-    "low_score": frozenset({BELOW_MIN_SCORE_EXCLUSION}),
+    "low_score": frozenset({
+        BELOW_MIN_SCORE_EXCLUSION,
+        NOT_A_JOB_POSTING_EXCLUSION,
+        SECURITY_CLEARANCE_EXCLUSION,
+    }),
     "extraction_failed": frozenset({EXTRACTION_FAILED_EXCLUSION}),
     "non_us": frozenset({NON_US_LOCATION_EXCLUSION}),
 }
 
 _EXCLUDED_FROM_DUPLICATES_TAB = frozenset({
     BELOW_MIN_SCORE_EXCLUSION,
+    NOT_A_JOB_POSTING_EXCLUSION,
+    SECURITY_CLEARANCE_EXCLUSION,
     EXTRACTION_FAILED_EXCLUSION,
     NON_US_LOCATION_EXCLUSION,
     LINKEDIN_JOB_EXCLUSION,
@@ -58,7 +66,13 @@ def matches_invalid_job_category(exclusion_type: str | None, category: str) -> b
 def sql_filter_for_invalid_category(exclusion_type_column, category: str):
     """Build a SQLAlchemy filter for GET /jobs/invalid tab queries."""
     if category == "low_score":
-        return exclusion_type_column == BELOW_MIN_SCORE_EXCLUSION
+        return exclusion_type_column.in_(
+            [
+                BELOW_MIN_SCORE_EXCLUSION,
+                NOT_A_JOB_POSTING_EXCLUSION,
+                SECURITY_CLEARANCE_EXCLUSION,
+            ]
+        )
     if category == "extraction_failed":
         return exclusion_type_column == EXTRACTION_FAILED_EXCLUSION
     if category == "non_us":

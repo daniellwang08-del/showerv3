@@ -932,6 +932,10 @@ async def trigger_sync(body: SyncRequest, user=Depends(_get_current_user)):
 
     user_id = user.get("user_id", "")
 
+    from app.services.scraper_stop_service import clear_stop
+
+    await clear_stop()
+
     try:
         plan = build_run_plan(
             spider_name=body.spider_name,
@@ -1023,11 +1027,14 @@ async def get_job_sync_schedule(user=Depends(_get_current_user)):
 async def put_job_sync_schedule(body: JobSyncScheduleUpdate, user=Depends(_get_current_user)):
     """Save automatic job-sync schedule. Admin-only. Evaluated every minute by the scraper worker."""
     from app.services.job_sync_schedule_service import save_schedule, schedule_public_view
+    from app.services.scraper_stop_service import clear_stop
 
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     user_id = str(user.get("user_id") or "")
+    if body.enabled:
+        await clear_stop()
     try:
         async with get_session() as session:
             schedule = await save_schedule(
@@ -1039,6 +1046,52 @@ async def put_job_sync_schedule(body: JobSyncScheduleUpdate, user=Depends(_get_c
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     return JobSyncScheduleResponse(**schedule_public_view(schedule))
+
+
+class StopFetchResponse(BaseModel):
+    status: str
+    message: str = ""
+    interrupted_count: int = 0
+    interrupted_run_ids: list[str] = Field(default_factory=list)
+    schedule_disabled: bool = False
+    stop_requested: bool = True
+
+
+@scraper_router.post("/sync/stop", response_model=StopFetchResponse)
+async def stop_job_fetch(user=Depends(_get_current_user)):
+    """Stop in-flight platform scraping and disable scheduled sync. Admin-only."""
+    from app.api.websocket import publish_ws_event
+    from app.services.scraper_stop_service import stop_job_fetching
+
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    user_id = str(user.get("user_id") or "")
+    result = await stop_job_fetching(
+        disable_schedule=True,
+        updated_by_user_id=user_id or None,
+    )
+    await publish_ws_event({
+        "type": "sync_failed",
+        "user_id": user_id,
+        "spider_name": "all",
+        "error": "stopped",
+        "message": result.get("message"),
+    })
+    logger.info(
+        "scraper_sync_stop_requested",
+        user_id=user_id,
+        interrupted_count=result.get("interrupted_count"),
+        schedule_disabled=result.get("schedule_disabled"),
+    )
+    return StopFetchResponse(
+        status=result["status"],
+        message=result["message"],
+        interrupted_count=int(result.get("interrupted_count") or 0),
+        interrupted_run_ids=list(result.get("interrupted_run_ids") or []),
+        schedule_disabled=bool(result.get("schedule_disabled")),
+        stop_requested=True,
+    )
 
 
 @scraper_router.get("/sync/checkpoints", response_model=list[SyncCheckpointInfo])

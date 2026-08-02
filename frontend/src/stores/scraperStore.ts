@@ -617,6 +617,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     }
 
     if (event.type === 'sync_completed' || event.type === 'sync_failed') {
+      const stopped = event.type === 'sync_failed' && event.error === 'stopped';
       set({
         syncing: false,
         syncProgress: null,
@@ -625,7 +626,9 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
           spider_name: null,
           message: event.type === 'sync_completed'
             ? 'Sync completed.'
-            : (event.error ? `Sync failed: ${event.error}` : 'Sync failed.'),
+            : stopped
+              ? (event.message || 'Job fetching stopped.')
+              : (event.error ? `Sync failed: ${event.error}` : 'Sync failed.'),
         },
       });
       void get().loadLastSyncRuns();

@@ -720,7 +720,11 @@ function ContextMenu({
   const multi = targets.length > 1;
   const label = multi ? `${targets.length} jobs` : (job.title ? `"${job.title.slice(0, 28)}${job.title.length > 28 ? '…' : ''}"` : 'this job');
   const pipelineStatus = job.extraction_status;
-  const isRunning = pipelineStatus === 'pending' || pipelineStatus === 'processing' || pipelineStatus === 'extracted';
+  // Once a match score exists, Phase A is done — never treat as still "Analyzing".
+  const analysisDone = job.match_overall_score != null;
+  const isRunning =
+    !analysisDone &&
+    (pipelineStatus === 'pending' || pipelineStatus === 'processing' || pipelineStatus === 'extracted');
 
   const unappliedTargets = targets.filter((t) => !dashboardJobMarkedApplied(t));
   const appliedTargets = targets.filter((t) => dashboardJobMarkedApplied(t));
@@ -1656,9 +1660,14 @@ export function ScraperJobsTable({
                 const isSelected      = selectedIds.has(job.id);
                 const isApiCallInFlight = rerunningId === job.id;
                 const pipelineStatus  = job.extraction_status;
-                const isPipelineRunning = pipelineStatus === 'pending' || pipelineStatus === 'processing' || pipelineStatus === 'extracted';
+                const analysisDone = job.match_overall_score != null;
+                const isPipelineRunning =
+                  !analysisDone &&
+                  (pipelineStatus === 'pending' ||
+                    pipelineStatus === 'processing' ||
+                    pipelineStatus === 'extracted');
                 const isRerunning     = isApiCallInFlight || isPipelineRunning;
-                const hasExtraction   = !!job.extraction_id;
+                const hasExtraction   = !!job.extraction_id || analysisDone;
 
                 const isEntering = enteringJobIds.has(job.id);
 
@@ -1821,9 +1830,9 @@ export function ScraperJobsTable({
                           onClick={() => handleRerun(job)}
                           title={
                             isApiCallInFlight         ? 'Starting pipeline…'
-                            : pipelineStatus === 'pending'    ? 'Queued – waiting for worker'
-                            : pipelineStatus === 'processing' ? 'Extracting job description…'
-                            : pipelineStatus === 'extracted'  ? 'Analyzing with AI…'
+                            : isPipelineRunning && pipelineStatus === 'pending'    ? 'Queued – waiting for worker'
+                            : isPipelineRunning && pipelineStatus === 'processing' ? 'Extracting job description…'
+                            : isPipelineRunning && pipelineStatus === 'extracted'  ? 'Analyzing with AI…'
                             : hasExtraction                   ? 'Rerun full lifecycle'
                             : 'Run extraction'
                           }
@@ -1839,9 +1848,9 @@ export function ScraperJobsTable({
                           {isRerunning ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                           <span>
                             {isApiCallInFlight         ? 'Starting…'
-                              : pipelineStatus === 'pending'    ? 'Queued'
-                              : pipelineStatus === 'processing' ? 'Extracting'
-                              : pipelineStatus === 'extracted'  ? 'Analyzing'
+                              : isPipelineRunning && pipelineStatus === 'pending'    ? 'Queued'
+                              : isPipelineRunning && pipelineStatus === 'processing' ? 'Extracting'
+                              : isPipelineRunning && pipelineStatus === 'extracted'  ? 'Analyzing'
                               : hasExtraction                   ? 'Rerun'
                               : 'Run'}
                           </span>

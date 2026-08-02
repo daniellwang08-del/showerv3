@@ -287,6 +287,18 @@ async def run_spider(
 
     logger.info("Starting spider '%s': %s", spider_name, " ".join(cmd))
     started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    from app.services.scraper_stop_service import is_stop_requested
+
+    if await is_stop_requested():
+        logger.info("Spider '%s' skipped — fetch stop requested", spider_name)
+        return {
+            "spider": spider_name,
+            "success": False,
+            "error": "stopped",
+            "message": "Job fetching was stopped.",
+        }
+
     stop_monitor = asyncio.Event()
 
     async def _stream_lines(stream, label: str) -> None:
@@ -343,17 +355,50 @@ async def run_spider(
         stderr_task = asyncio.create_task(_stream_lines(proc.stderr, "stderr"))
         monitor_task = asyncio.create_task(_monitor_progress())
 
+        stopped = False
         try:
-            await asyncio.wait_for(proc.wait(), timeout=1800)
-        except asyncio.TimeoutError:
-            logger.error("Spider '%s' timed out after 1800s - killing subprocess", spider_name)
-            proc.kill()
-            await proc.wait()
-            await asyncio.to_thread(_mark_scrape_run_interrupted, spider_name, started_at)
-            return {"spider": spider_name, "success": False, "error": "timeout"}
+            while True:
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                    break
+                except asyncio.TimeoutError:
+                    elapsed = int(
+                        (datetime.now(timezone.utc).replace(tzinfo=None) - started_at).total_seconds()
+                    )
+                    if elapsed >= 1800:
+                        logger.error(
+                            "Spider '%s' timed out after 1800s - killing subprocess",
+                            spider_name,
+                        )
+                        proc.kill()
+                        await proc.wait()
+                        await asyncio.to_thread(
+                            _mark_scrape_run_interrupted, spider_name, started_at
+                        )
+                        return {"spider": spider_name, "success": False, "error": "timeout"}
+                    if await is_stop_requested():
+                        logger.info(
+                            "Spider '%s' stop requested — killing subprocess",
+                            spider_name,
+                        )
+                        proc.kill()
+                        await proc.wait()
+                        await asyncio.to_thread(
+                            _mark_scrape_run_interrupted, spider_name, started_at
+                        )
+                        stopped = True
+                        break
         finally:
             stop_monitor.set()
             await asyncio.gather(monitor_task, stdout_task, stderr_task, return_exceptions=True)
+
+        if stopped:
+            return {
+                "spider": spider_name,
+                "success": False,
+                "error": "stopped",
+                "message": "Job fetching was stopped.",
+            }
 
         scrape_run = await asyncio.to_thread(
             _latest_scrape_run, spider_name, started_at
@@ -434,10 +479,31 @@ async def run_spiders_from_plan(
     spider_progress_callback=None,
 ) -> list[dict]:
     """Run an explicit list of (spider_name, scrapy_kwargs) pairs."""
+    from app.services.scraper_stop_service import is_stop_requested
+
     results = []
     total = len(plan)
 
     for i, (name, kwargs) in enumerate(plan):
+        if await is_stop_requested():
+            logger.info(
+                "Stopping remaining spiders after fetch-stop request (next=%s, left=%d)",
+                name,
+                total - i,
+            )
+            for j in range(i, total):
+                skipped_name = plan[j][0]
+                skipped = {
+                    "spider": skipped_name,
+                    "success": False,
+                    "error": "stopped",
+                    "message": "Job fetching was stopped.",
+                }
+                results.append(skipped)
+                if on_progress:
+                    await on_progress(skipped_name, j + 1, total, skipped)
+            break
+
         if on_spider_start:
             await on_spider_start(name, i + 1, total)
         result = await run_spider(
@@ -448,5 +514,19 @@ async def run_spiders_from_plan(
         results.append(result)
         if on_progress:
             await on_progress(name, i + 1, total, result)
+
+        if result.get("error") == "stopped":
+            for j in range(i + 1, total):
+                skipped_name = plan[j][0]
+                skipped = {
+                    "spider": skipped_name,
+                    "success": False,
+                    "error": "stopped",
+                    "message": "Job fetching was stopped.",
+                }
+                results.append(skipped)
+                if on_progress:
+                    await on_progress(skipped_name, j + 1, total, skipped)
+            break
 
     return results

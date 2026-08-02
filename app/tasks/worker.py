@@ -699,6 +699,24 @@ async def run_scraper_task(
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="run_scraper", spider_name=spider_name, user_id=user_id)
 
+    from app.services.scraper_stop_service import is_stop_requested
+
+    if await is_stop_requested():
+        logger.info("worker_scraper_aborted_stop_flag", spider_name=spider_name)
+        await publish_ws_event({
+            "type": "sync_failed",
+            "user_id": user_id,
+            "spider_name": spider_name,
+            "error": "stopped",
+            "message": "Job fetching was stopped.",
+        })
+        return {
+            "spider": spider_name,
+            "success": False,
+            "error": "stopped",
+            "message": "Job fetching was stopped.",
+        }
+
     since = date.fromisoformat(posted_since) if posted_since else None
     until = date.fromisoformat(posted_until) if posted_until else None
     try:
@@ -820,12 +838,23 @@ async def run_scraper_task(
             })
             logger.info("worker_scraper_completed", spider_name=spider_name)
         else:
-            error = summary.get("error") or summary.get("message") or "scrape_failed"
+            stopped = False
+            if isinstance(summary.get("results"), list):
+                stopped = any(
+                    isinstance(r, dict) and r.get("error") == "stopped"
+                    for r in summary["results"]
+                )
+            elif summary.get("error") == "stopped":
+                stopped = True
+            error = "stopped" if stopped else (
+                summary.get("error") or summary.get("message") or "scrape_failed"
+            )
             await publish_ws_event({
                 "type": "sync_failed",
                 "user_id": user_id,
                 "spider_name": spider_name,
                 "error": error,
+                "message": "Job fetching was stopped." if stopped else None,
                 "summary": summary,
             })
             logger.error(
@@ -881,6 +910,11 @@ async def check_job_sync_schedule_task(ctx: dict) -> dict:
             schedule = await get_schedule(session)
             if not schedule.get("enabled"):
                 return {"status": "disabled"}
+            from app.services.scraper_stop_service import is_stop_requested
+
+            if await is_stop_requested():
+                logger.info("job_sync_schedule_skipped_stop_flag")
+                return {"status": "skipped", "reason": "stop_requested"}
             if not is_schedule_due(schedule):
                 return {
                     "status": "not_due",

@@ -27,6 +27,8 @@ async def heal_stale_pipeline_state(
     progress_age = max(60, int(progress_max_age_seconds))
     failed_content = 0
     cleared_progress = 0
+    completed_extractions = 0
+    excluded_zero_scores = 0
 
     async with get_session() as session:
         content_result = await session.execute(
@@ -61,19 +63,69 @@ async def heal_stale_pipeline_state(
             {"age": progress_age},
         )
         cleared_progress = len(progress_result.fetchall())
+
+        # Heal rows stuck at EXTRACTED after a score already exists (UI "Analyzing"
+        # while Match shows e.g. "0 Weak"). Phase A finished; status was never advanced.
+        completed_result = await session.execute(
+            text(
+                """
+                UPDATE job_extractions AS je
+                SET status = 'COMPLETED',
+                    completed_at = coalesce(je.completed_at, timezone('UTC', now())),
+                    updated_at = timezone('UTC', now())
+                WHERE je.status = 'EXTRACTED'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM jobs j
+                      JOIN job_match_results jmr ON jmr.job_id = j.id
+                      WHERE j.extraction_id = je.id
+                  )
+                RETURNING je.id
+                """
+            )
+        )
+        completed_extractions = len(completed_result.fetchall())
+
+        # Remove already-scored 0 Weak jobs that remained active on the Jobs list.
+        zero_score_result = await session.execute(
+            text(
+                """
+                UPDATE user_job_status AS ujs
+                SET status = 'duplicated',
+                    exclusion_type = 'below_min_score',
+                    reason = 'Match score is 0 (Weak) — removed after analysis.',
+                    match_score_at_decision = coalesce(ujs.match_score_at_decision, 0),
+                    updated_at = timezone('UTC', now())
+                WHERE ujs.status = 'active'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM job_match_results jmr
+                      WHERE jmr.job_id = ujs.job_id
+                        AND jmr.user_id = ujs.user_id
+                        AND jmr.overall_score <= 0
+                  )
+                RETURNING ujs.id
+                """
+            )
+        )
+        excluded_zero_scores = len(zero_score_result.fetchall())
         await session.commit()
 
-    if failed_content or cleared_progress:
+    if failed_content or cleared_progress or completed_extractions or excluded_zero_scores:
         logger.info(
             "pipeline_stale_state_healed",
             failed_content=failed_content,
             cleared_progress=cleared_progress,
+            completed_extractions=completed_extractions,
+            excluded_zero_scores=excluded_zero_scores,
             processing_max_age_seconds=processing_age,
             progress_max_age_seconds=progress_age,
         )
     return {
         "failed_content": failed_content,
         "cleared_progress": cleared_progress,
+        "completed_extractions": completed_extractions,
+        "excluded_zero_scores": excluded_zero_scores,
         "processing_max_age_seconds": processing_age,
         "progress_max_age_seconds": progress_age,
     }

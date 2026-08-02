@@ -107,7 +107,9 @@ export function ScraperDashboard() {
     const CONTENT_IN_PROGRESS = new Set(['pending', 'processing']);
     const hasInProgress = jobs.some(
       (j) =>
-        (j.extraction_status && EXTRACTION_IN_PROGRESS.has(j.extraction_status)) ||
+        (j.match_overall_score == null &&
+          j.extraction_status &&
+          EXTRACTION_IN_PROGRESS.has(j.extraction_status)) ||
         (j.match_in_progress === true) ||
         (j.content_generation_status && CONTENT_IN_PROGRESS.has(j.content_generation_status)) ||
         (j.resume_build_status && RESUME_IN_PROGRESS.has(j.resume_build_status)),

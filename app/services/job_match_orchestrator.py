@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import bind_logging_context, get_logger
 from app.models.database import Job
-from app.models.schemas import JobDescriptionSchema
+from app.models.schemas import ExtractionStatus, JobDescriptionSchema
 from app.services.system_settings_service import get_effective_value_sync
 from app.services.job_match_service import (
     analyze_job_match_phase_a,
@@ -250,6 +250,7 @@ async def run_job_match_analysis(
 
             try:
                 structured_company: str | None = None
+                structured_persisted = False
                 if structured_job:
                     try:
                         structured_company = _truncate_for_db(structured_job.company, 500)
@@ -259,6 +260,7 @@ async def run_job_match_analysis(
                             extraction_repo_method=None,
                             is_job_posting=is_job_posting,
                         )
+                        structured_persisted = True
                         job_repo = JobRepository(session)
                         await job_repo.update_from_structured_extraction(job_id, structured_job)
                         logger.info(
@@ -275,7 +277,13 @@ async def run_job_match_analysis(
                         )
                 else:
                     logger.warning("job_match_no_structured_job_returned", job_id=job_id)
+
+                # Always advance past EXTRACTED after Phase A. Otherwise the Jobs UI
+                # keeps showing "Analyzing" even when a match score (incl. 0 Weak)
+                # was already produced and saved.
+                if not structured_persisted:
                     await extraction_repo.update_is_job_posting(ext_id, is_job_posting)
+                    await extraction_repo.update_status(ext_id, ExtractionStatus.COMPLETED)
 
                 try:
                     cache = ExtractionCache()
@@ -283,11 +291,14 @@ async def run_job_match_analysis(
                 except Exception:
                     pass
 
+                overall_score = int(result.get("overall_score") or 0)
+                result["is_job_posting"] = is_job_posting
                 result["should_run_phase_b"] = (
                     bool(get_effective_value_sync("auto_generate_tailored_content"))
                     and has_profile
                     and is_job_posting
                     and not result.get("requires_security_clearance")
+                    and overall_score > 0
                 )
                 result["extraction_id"] = ext_id
                 result["structured_company"] = structured_company
@@ -306,6 +317,7 @@ async def run_job_match_analysis(
                     user_id=user_id,
                     error=str(e),
                 )
+                await clear_job_match_progress(job_id, user_id)
                 return None
 
         # Auto-post runs on the save worker after persistence so Phase A does not

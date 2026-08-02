@@ -5,6 +5,7 @@ import {
   CalendarRange,
   CheckCircle2,
   Loader2,
+  OctagonX,
   RefreshCw,
   Save,
 } from 'lucide-react';
@@ -13,6 +14,7 @@ import {
   fetchSyncCheckpoints,
   fetchSyncPlatforms,
   saveJobSyncSchedule,
+  stopJobFetch,
   triggerSync,
 } from '../../api/scraperApi';
 import type { JobSyncSchedule, SyncCheckpoint, SyncPlatform } from '../../types/scraper';
@@ -178,6 +180,9 @@ export function JobSyncSettingsSection() {
   const [schedSaving, setSchedSaving] = useState(false);
   const [schedMsg, setSchedMsg] = useState('');
   const [schedOk, setSchedOk] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopMsg, setStopMsg] = useState('');
+  const [stopOk, setStopOk] = useState(false);
 
   const authByPlatform = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -355,6 +360,42 @@ export function JobSyncSettingsSection() {
     }
   };
 
+  const handleStopFetching = async () => {
+    setStopping(true);
+    setStopMsg('');
+    setStopOk(false);
+    try {
+      const res = await stopJobFetch();
+      useScraperStore.setState({
+        syncing: false,
+        syncProgress: null,
+        syncStatus: {
+          status: 'idle',
+          spider_name: null,
+          message: res.message || 'Job fetching stopped.',
+        },
+      });
+      if (res.schedule_disabled || schedEnabled) {
+        setSchedEnabled(false);
+        if (schedule) {
+          setSchedule({
+            ...schedule,
+            enabled: false,
+            next_run_at: null,
+          });
+        }
+      }
+      void checkSyncStatus();
+      setStopOk(true);
+      setStopMsg(res.message || 'Job fetching stopped.');
+    } catch (err: unknown) {
+      setStopOk(false);
+      setStopMsg(extractErrorMessage(err, 'Failed to stop job fetching.'));
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const timezoneOptions = schedule?.allowed_timezones?.length
     ? schedule.allowed_timezones
     : Object.keys(TIMEZONE_LABELS);
@@ -378,6 +419,38 @@ export function JobSyncSettingsSection() {
             <p className="mt-4 text-sm text-rose-700">{loadError}</p>
           ) : (
             <div className="mt-5 space-y-6">
+              {/* ── Stop fetching ── */}
+              <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-bold text-rose-900">Stop job fetching</h3>
+                    <p className="mt-0.5 text-xs leading-snug text-rose-800/80">
+                      Interrupt any platform scrape that is running now, skip remaining platforms
+                      in the current run, and turn off scheduled sync so nothing auto-starts again.
+                    </p>
+                    {syncing && syncProgress && (
+                      <p className="mt-2 text-xs font-medium text-rose-800">
+                        Currently syncing: {syncProgress.message || syncProgress.spiderName || 'in progress'}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleStopFetching()}
+                    disabled={stopping}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {stopping ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <OctagonX size={14} />
+                    )}
+                    {stopping ? 'Stopping…' : 'Stop fetching'}
+                  </button>
+                </div>
+                {stopMsg && <SectionMessage ok={stopOk} text={stopMsg} />}
+              </div>
+
               {/* ── Scheduled sync ── */}
               <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
