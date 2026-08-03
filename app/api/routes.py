@@ -2938,6 +2938,7 @@ async def get_job_analysis_panel(
         extraction_method = None
         is_job_posting = None
         job_data = None
+        raw_plain_text = None
         content_enriched_by_ai = False
 
         if job.extraction_id:
@@ -2948,28 +2949,43 @@ async def get_job_analysis_panel(
                 extraction_method = extraction.extraction_method
                 is_job_posting = extraction.is_job_posting
                 content_enriched_by_ai = _ai_enriched_extraction(extraction)
+                raw_plain_text = (getattr(extraction, "raw_plain_text", None) or "").strip() or None
+                structured_desc = (extraction.description or "").strip() or None
+                # Admin extract-only saves raw_plain_text; structured description may be empty.
+                body_text = structured_desc or raw_plain_text or ""
                 display_title = resolve_job_display_title(
                     job_title=extraction.title,
-                    description=extraction.description,
+                    submitted_title=job.title,
+                    description=body_text or None,
                 )
-                if extraction.status == ExtractionStatus.COMPLETED and display_title:
-                    job_data = JobDescriptionSchema(
-                        title=display_title,
-                        company=extraction.company,
-                        location=extraction.location,
-                        employment_type=extraction.employment_type,
-                        salary_range=extraction.salary_range,
-                        description=extraction.description or "",
-                        responsibilities=extraction.responsibilities or [],
-                        requirements=extraction.requirements or [],
-                        benefits=extraction.benefits or [],
-                        posted_date=job.posted_date,
-                        remote_policy=extraction.remote_policy,
-                        work_mode=extraction.work_mode,
-                        experience_level=extraction.experience_level,
-                        industry=extraction.industry,
-                        raw_metadata=extraction.raw_metadata or {},
+                ready_statuses = {
+                    ExtractionStatus.COMPLETED,
+                    ExtractionStatus.EXTRACTED,
+                }
+                if extraction.status in ready_statuses and (display_title or body_text):
+                    title = display_title or (job.title or "").strip() or "Job posting"
+                    # JobDescriptionSchema requires description min_length=10.
+                    description = body_text if len(body_text) >= 10 else (
+                        raw_plain_text if raw_plain_text and len(raw_plain_text) >= 10 else None
                     )
+                    if description:
+                        job_data = JobDescriptionSchema(
+                            title=title,
+                            company=extraction.company or job.company,
+                            location=extraction.location or job.location,
+                            employment_type=extraction.employment_type,
+                            salary_range=extraction.salary_range,
+                            description=description,
+                            responsibilities=extraction.responsibilities or [],
+                            requirements=extraction.requirements or [],
+                            benefits=extraction.benefits or [],
+                            posted_date=job.posted_date,
+                            remote_policy=extraction.remote_policy,
+                            work_mode=extraction.work_mode,
+                            experience_level=extraction.experience_level or job.experience_level,
+                            industry=extraction.industry or job.industry,
+                            raw_metadata=extraction.raw_metadata or {},
+                        )
 
         match_repo = JobMatchRepository(session)
         match_row = await match_repo.get(job_id, user_id)
@@ -3039,6 +3055,7 @@ async def get_job_analysis_panel(
             extraction_status=extraction_status,
             source_url=job.source_url,
             job_data=job_data,
+            raw_plain_text=raw_plain_text,
             extraction_method=extraction_method,
             is_job_posting=is_job_posting,
             content_enriched_by_ai=content_enriched_by_ai,

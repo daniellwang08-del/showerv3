@@ -12,9 +12,11 @@ import { DetailContentPanel } from '../extraction/DetailContentPanel';
 interface JobAnalysisModalProps {
   validJobId: string;
   onClose: () => void;
+  /** Admin inventory view emphasizes extracted raw JD. */
+  isAdmin?: boolean;
 }
 
-export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps) {
+export function JobAnalysisModal({ validJobId, onClose, isAdmin = false }: JobAnalysisModalProps) {
   /* ── Keyboard: Escape to close ─────────────────────────────────────── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -39,8 +41,8 @@ export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps)
       className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-4 md:p-6 animate-modal-backdrop-in"
       role="dialog"
       aria-modal="true"
-      aria-label="Job analysis"
-    >
+        aria-label={isAdmin ? 'Job description' : 'Job analysis'}
+      >
       {/* Dimmed backdrop - click outside to close */}
       <div
         className="absolute inset-0 bg-slate-900/55 backdrop-blur-[3px]"
@@ -68,7 +70,7 @@ export function JobAnalysisModal({ validJobId, onClose }: JobAnalysisModalProps)
          * fetching.  Passing `onClose` so the panel's "← Back" button also
          * dismisses the modal.
          */}
-        <DetailContentPanel validJobId={validJobId} onClose={onClose} />
+        <DetailContentPanel validJobId={validJobId} onClose={onClose} isAdmin={isAdmin} />
       </div>
     </div>
   );

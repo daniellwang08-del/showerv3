@@ -332,6 +332,8 @@ class JobAnalysisResponse(BaseModel):
     extraction_status: ExtractionStatus | None
     source_url: str
     job_data: JobDescriptionSchema | None = None
+    # Raw extracted posting text (admin inventory / before LLM structuring).
+    raw_plain_text: str | None = None
     extraction_method: ExtractionMethod | None = None
     is_job_posting: bool | None = None
     content_enriched_by_ai: bool = False

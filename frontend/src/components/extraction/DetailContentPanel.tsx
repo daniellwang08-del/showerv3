@@ -87,6 +87,7 @@ type JobAnalysisResponse = {
   extraction_status: string | null;
   source_url: string;
   job_data: JobData | null;
+  raw_plain_text?: string | null;
   extraction_method: string | null;
   is_job_posting: boolean | null;
   content_enriched_by_ai: boolean;
@@ -129,6 +130,8 @@ type Props = {
   onClose: () => void;
   onAnalysisUpdated?: () => void;
   refreshKey?: number;
+  /** Admin inventory view: emphasize extracted raw JD, de-emphasize profile match. */
+  isAdmin?: boolean;
 };
 
 /* ── Resume build file badges ────────────────────────────────────────── */
@@ -428,7 +431,13 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
   );
 }
 
-export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, refreshKey }: Props) {
+export function DetailContentPanel({
+  validJobId,
+  onClose,
+  onAnalysisUpdated,
+  refreshKey,
+  isAdmin = false,
+}: Props) {
   const onAnalysisUpdatedRef = useRef(onAnalysisUpdated);
   onAnalysisUpdatedRef.current = onAnalysisUpdated;
 
@@ -597,7 +606,9 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
         <div className="flex min-w-0 flex-1 items-center justify-between gap-2 border-l border-blue-200/60 pl-3">
           <div className="flex min-w-0 items-center gap-2">
             <Target className="h-5 w-5 shrink-0 text-blue-600" />
-            <span className="text-base font-bold text-slate-900">Job match analysis</span>
+            <span className="text-base font-bold text-slate-900">
+              {isAdmin ? 'Job description' : 'Job match analysis'}
+            </span>
           </div>
           {analysis?.promotion ? (
             <div
@@ -631,6 +642,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
 
         {!initialLoading && !loadError && analysis && (
           <div className="animate-content-in space-y-6 text-sm">
+            {!isAdmin && (
             <section className="relative overflow-hidden rounded-2xl border border-sky-200/70 bg-gradient-to-br from-sky-50/95 via-white to-slate-50/50 p-5 shadow-md shadow-sky-900/5 ring-1 ring-sky-100/70">
               <div
                 aria-hidden
@@ -779,6 +791,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
                 </div>
               )}
             </section>
+            )}
 
             <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -786,7 +799,9 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
                   <FileText className="h-4 w-4" strokeWidth={2} aria-hidden />
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-base font-semibold text-slate-900">Job details</h3>
+                  <h3 className="text-base font-semibold text-slate-900">
+                    {isAdmin ? 'Extracted job description' : 'Job details'}
+                  </h3>
                   {analysis.content_enriched_by_ai && (
                     <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-800">
                       <Sparkles className="h-3 w-3" />
@@ -796,7 +811,7 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
                 </div>
               </div>
 
-              {analysis.source_url && (!analysis.job_data || extractionBusy) && (
+              {analysis.source_url && (
                 <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <MetaTile icon={Link2} label="Original posting" wide>
                     <a
@@ -831,11 +846,41 @@ export function DetailContentPanel({ validJobId, onClose, onAnalysisUpdated, ref
                 </div>
               )}
 
-              {analysis.job_data && !extractionBusy && postingBody(analysis.job_data, analysis.source_url)}
+              {/* Admin inventory: show raw extracted posting text directly under the URL. */}
+              {isAdmin && !extractionBusy && (analysis.raw_plain_text || analysis.job_data?.description) && (
+                <div>
+                  <SectionLabel icon={FileText}>Raw job description</SectionLabel>
+                  <div className="mt-2 max-h-[min(36rem,55vh)] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner dark:border-slate-600 dark:bg-[#0b1220] dark:text-slate-100">
+                    {analysis.raw_plain_text || analysis.job_data?.description}
+                  </div>
+                </div>
+              )}
 
-              {!analysis.job_data && extractionStatus === 'completed' && (
+              {isAdmin &&
+                !extractionBusy &&
+                !analysis.raw_plain_text &&
+                !analysis.job_data?.description &&
+                (extractionStatus === 'completed' || extractionStatus === 'extracted') && (
                 <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-900">
-                  No posting text available yet.
+                  Extraction finished but no posting text was saved. Try Re-extract on this job.
+                </div>
+              )}
+
+              {/* Applicant / structured view */}
+              {!isAdmin && analysis.job_data && !extractionBusy && postingBody(analysis.job_data, null)}
+
+              {!isAdmin && !analysis.job_data && extractionStatus === 'completed' && (
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-900">
+                  {analysis.raw_plain_text ? (
+                    <div>
+                      <p className="mb-2 font-medium">Extracted posting text</p>
+                      <div className="max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-lg border border-amber-100 bg-white p-3 text-slate-800">
+                        {analysis.raw_plain_text}
+                      </div>
+                    </div>
+                  ) : (
+                    'No posting text available yet.'
+                  )}
                 </div>
               )}
 

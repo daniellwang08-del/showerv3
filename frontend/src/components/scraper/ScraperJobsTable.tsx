@@ -610,81 +610,101 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
 /** Admin Status column: detailed JD extraction progress (not applicant apply/match). */
 const AdminExtractionStatusCell = memo(function AdminExtractionStatusCell({
   job,
+  onOpen,
 }: {
   job: DashboardJob;
+  onOpen?: (job: DashboardJob) => void;
 }) {
   const status = (job.extraction_status || '').toLowerCase();
+  const interactive = typeof onOpen === 'function';
+
+  const wrap = (node: ReactNode, title: string) =>
+    interactive ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen(job);
+        }}
+        title={`${title} — click to view`}
+        className="inline-flex cursor-pointer"
+      >
+        {node}
+      </button>
+    ) : (
+      <div title={title}>{node}</div>
+    );
 
   if (status === 'completed') {
-    return (
+    return wrap(
       <div
-        className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2 text-emerald-800 shadow-sm dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300"
-        title="Job description extracted and ready"
+        className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2 text-emerald-800 shadow-sm transition hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300"
       >
         <CheckCircle2 size={14} className="shrink-0" strokeWidth={2.25} />
         <span className="text-[11px] font-bold leading-none">Ready</span>
-      </div>
+      </div>,
+      'Job description extracted and ready',
     );
   }
 
   if (status === 'failed') {
-    return (
+    return wrap(
       <div
         className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-2 text-rose-800 shadow-sm dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-300"
-        title="Job description extraction failed"
       >
         <AlertCircle size={13} className="shrink-0" />
         <span className="text-[11px] font-bold leading-none">Failed</span>
-      </div>
+      </div>,
+      'Job description extraction failed',
     );
   }
 
   if (status === 'processing') {
-    return (
+    return wrap(
       <div
         className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2 text-amber-800 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
-        title="Extracting job description from the posting"
       >
         <Loader2 size={13} className="shrink-0 animate-spin" />
         <span className="text-[11px] font-bold leading-none">Extracting</span>
-      </div>
+      </div>,
+      'Extracting job description from the posting',
     );
   }
 
   if (status === 'pending') {
-    return (
+    return wrap(
       <div
         className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-2 text-slate-700 shadow-sm dark:border-slate-500 dark:bg-slate-700/40 dark:text-slate-200"
-        title="Queued for job description extraction"
       >
         <span className="relative flex h-2 w-2 shrink-0">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
         </span>
         <span className="text-[11px] font-bold leading-none">Queued</span>
-      </div>
+      </div>,
+      'Queued for job description extraction',
     );
   }
 
   if (status === 'extracted') {
-    return (
+    return wrap(
       <div
         className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-sky-300 bg-sky-50 px-2 text-sky-800 shadow-sm dark:border-sky-500/40 dark:bg-sky-500/15 dark:text-sky-300"
-        title="Raw job description captured — finalizing shared JD"
       >
         <Loader2 size={13} className="shrink-0 animate-spin" />
         <span className="text-[11px] font-bold leading-none">Finalizing</span>
-      </div>
+      </div>,
+      'Raw job description captured — finalizing shared JD',
     );
   }
 
-  return (
+  return wrap(
     <div
       className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-2 text-slate-400 dark:border-slate-600 dark:bg-transparent dark:text-slate-500"
-      title="No extraction started yet"
     >
       <span className="text-[11px] font-semibold leading-none">Not started</span>
-    </div>
+    </div>,
+    'No extraction started yet',
   );
 });
 
@@ -2011,7 +2031,10 @@ export function ScraperJobsTable({
                     <td className={`${CELL} text-right`}>
                       <div className="flex h-[28px] w-full items-center justify-end">
                         {isAdmin ? (
-                          <AdminExtractionStatusCell job={job} />
+                          <AdminExtractionStatusCell
+                            job={job}
+                            onOpen={(j) => setViewingJobId(j.id)}
+                          />
                         ) : (
                           <StatusSquaresCell
                             job={job}
@@ -2177,7 +2200,11 @@ export function ScraperJobsTable({
       />
 
       {viewingJobId && (
-        <JobAnalysisModal validJobId={viewingJobId} onClose={() => setViewingJobId(null)} />
+        <JobAnalysisModal
+          validJobId={viewingJobId}
+          onClose={() => setViewingJobId(null)}
+          isAdmin={isAdmin}
+        />
       )}
 
       <InstallExtensionModal
