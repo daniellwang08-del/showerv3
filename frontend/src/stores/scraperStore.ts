@@ -991,7 +991,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         const { data: res } = await apiClient.post<{
           status: string;
           enqueued: number;
-          jobs: { job_id: string; mode?: string; extraction_id?: string }[];
+          jobs: { job_id: string; mode?: string; status?: string; extraction_id?: string }[];
           skipped: { id: string; reason: string }[];
         }>('/jobs/valid/prepare/batch', { job_ids: chunk });
 
