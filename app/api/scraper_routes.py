@@ -153,6 +153,15 @@ class BoardTrends(BaseModel):
     available: list[int] = Field(default_factory=list)
 
 
+class AdminBoardTrends(BaseModel):
+    """Last-7-day daily counts for the admin ops board side tiles."""
+    labels: list[str] = Field(default_factory=list)
+    fetched: list[int] = Field(default_factory=list)
+    extracted: list[int] = Field(default_factory=list)
+    sheet_posted: list[int] = Field(default_factory=list)
+    pumble_posted: list[int] = Field(default_factory=list)
+
+
 class ScraperStatsResponse(BaseModel):
     total_jobs: int
     total_remote: int
@@ -173,6 +182,29 @@ class ScraperStatsResponse(BaseModel):
     sheet_posted_jobs: int = 0
     pumble_posted_jobs: int = 0
     trends: BoardTrends = Field(default_factory=BoardTrends)
+    sources: list[SourceStats]
+    recent_runs: list[dict] = Field(default_factory=list)
+
+
+class AdminScraperStatsResponse(BaseModel):
+    """System-wide fetch → extract → post funnel for the admin Jobs board."""
+    total_jobs: int
+    total_remote: int
+    today_fetched: int = 0
+    today_scraped: int = 0  # alias of today_fetched for shared UI helpers
+    today_remote: int = 0
+    today_posted: int = 0
+    extracted_jobs: int = 0
+    needs_extraction_jobs: int = 0
+    extraction_failed_jobs: int = 0
+    extraction_pending_jobs: int = 0
+    sheet_posted_jobs: int = 0
+    pumble_posted_jobs: int = 0
+    manual_jobs: int = 0
+    team_applied_today: int = 0
+    last_sync_items_new: int = 0
+    last_sync_errors: int = 0
+    trends: AdminBoardTrends = Field(default_factory=AdminBoardTrends)
     sources: list[SourceStats]
     recent_runs: list[dict] = Field(default_factory=list)
 
@@ -867,6 +899,62 @@ async def get_scraper_stats(
             sheet_posted_jobs=data["sheet_posted_jobs"],
             pumble_posted_jobs=data["pumble_posted_jobs"],
             trends=BoardTrends(**trends),
+            sources=[
+                SourceStats(
+                    source=row["source"],
+                    count=row["count"],
+                    latest_scraped=row["latest_scraped"],
+                )
+                for row in data["sources"]
+            ],
+            recent_runs=data["recent_runs"],
+        )
+
+
+@scraper_router.get("/stats/admin", response_model=AdminScraperStatsResponse)
+async def get_admin_scraper_stats(
+    user=Depends(_get_current_user),
+    timezone: str | None = Query(None, description="IANA timezone for today's counts (browser local time)"),
+):
+    """System-wide fetch → extract → post funnel for the admin Jobs board."""
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from app.services.dashboard_stats import fetch_admin_dashboard_stats
+    from app.services.weekly_progress import fetch_admin_board_trend_series
+    from app.utils.date_bounds import day_bounds_for_timezone
+
+    day_start, day_end = day_bounds_for_timezone(timezone)
+
+    async with get_session() as session:
+        data = await fetch_admin_dashboard_stats(
+            session,
+            day_start=day_start,
+            day_end=day_end,
+        )
+        trends = await fetch_admin_board_trend_series(
+            session,
+            tz_name=timezone,
+            days=7,
+        )
+        return AdminScraperStatsResponse(
+            total_jobs=data["total_jobs"],
+            total_remote=data["total_remote"],
+            today_fetched=data["today_fetched"],
+            today_scraped=data["today_scraped"],
+            today_remote=data["today_remote"],
+            today_posted=data["today_posted"],
+            extracted_jobs=data["extracted_jobs"],
+            needs_extraction_jobs=data["needs_extraction_jobs"],
+            extraction_failed_jobs=data["extraction_failed_jobs"],
+            extraction_pending_jobs=data["extraction_pending_jobs"],
+            sheet_posted_jobs=data["sheet_posted_jobs"],
+            pumble_posted_jobs=data["pumble_posted_jobs"],
+            manual_jobs=data["manual_jobs"],
+            team_applied_today=data["team_applied_today"],
+            last_sync_items_new=data["last_sync_items_new"],
+            last_sync_errors=data["last_sync_errors"],
+            trends=AdminBoardTrends(**trends),
             sources=[
                 SourceStats(
                     source=row["source"],

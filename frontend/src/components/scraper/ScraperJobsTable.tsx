@@ -1659,7 +1659,7 @@ export function ScraperJobsTable({
         </p>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-600 dark:bg-slate-100">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#141d31]">
         <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
           <table className="w-full table-fixed border-collapse text-sm">
             <colgroup>
@@ -1678,7 +1678,7 @@ export function ScraperJobsTable({
 
             {/* ── Header ── */}
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50/70 dark:border-slate-600 dark:bg-slate-200/40">
+              <tr className="border-b border-slate-100 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-900/50">
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -1690,7 +1690,7 @@ export function ScraperJobsTable({
                       'px-3 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap overflow-hidden',
                       RIGHT_ALIGN_KEYS.has(col.key) ? 'text-right' : 'text-left',
                       col.sortable ? 'cursor-pointer select-none hover:text-slate-700 hover:bg-slate-100/60' : '',
-                      col.key === '__actions__' ? `sticky right-0 z-20 bg-slate-50/70 dark:bg-slate-200/40 ${STICKY_SHADOW}` : '',
+                      col.key === '__actions__' ? `sticky right-0 z-20 bg-slate-50/70 dark:bg-slate-900/50 ${STICKY_SHADOW}` : '',
                       col.key === '__check__' ? 'px-2' : '',
                       col.key === 'source' ? SOURCE_CELL_CLASS : '',
                     ].join(' ')}

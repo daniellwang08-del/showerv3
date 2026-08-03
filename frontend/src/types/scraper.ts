@@ -179,6 +179,35 @@ export interface ScraperStats {
   recent_runs: ScrapeRun[];
 }
 
+/** System-wide ops funnel for the admin Jobs Dashboard board. */
+export interface AdminScraperStats {
+  total_jobs: number;
+  total_remote: number;
+  today_fetched: number;
+  today_scraped: number;
+  today_remote: number;
+  today_posted: number;
+  extracted_jobs: number;
+  needs_extraction_jobs: number;
+  extraction_failed_jobs: number;
+  extraction_pending_jobs: number;
+  sheet_posted_jobs: number;
+  pumble_posted_jobs: number;
+  manual_jobs: number;
+  team_applied_today: number;
+  last_sync_items_new: number;
+  last_sync_errors: number;
+  trends?: {
+    labels?: string[];
+    fetched?: number[];
+    extracted?: number[];
+    sheet_posted?: number[];
+    pumble_posted?: number[];
+  };
+  sources: SourceStats[];
+  recent_runs: ScrapeRun[];
+}
+
 export interface ScrapeRun {
   id: string;
   spider_name: string;

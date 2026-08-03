@@ -12,9 +12,14 @@ import {
   UserRound,
   Gauge,
   ThumbsUp,
+  FileSearch,
+  FileCheck2,
+  CircleAlert,
+  Upload,
+  Activity,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { ScraperStats } from '../../types/scraper';
+import type { AdminScraperStats, ScraperStats } from '../../types/scraper';
 import { fetchSheetsConfig } from '../../api/googleSheetsApi';
 import { fetchPumbleConfig } from '../../api/pumbleApi';
 import { TrendSparkline } from './TrendSparkline';
@@ -302,7 +307,7 @@ const SideTile = memo(function SideTile({
         <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
           {label}
         </p>
-        <p className="mt-1.5 truncate text-[11.5px] font-medium leading-snug text-slate-500 sm:text-[12px]">
+        <p className="mt-1.5 truncate text-[11.5px] font-medium leading-snug text-slate-500 dark:text-slate-400 sm:text-[12px]">
           {hint}
         </p>
       </div>
@@ -393,7 +398,7 @@ const RailStat = memo(function RailStat({
           value={value}
           className="text-[1.45rem] font-black leading-none tracking-tight text-slate-900"
         />
-        <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500">
+        <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500 dark:text-slate-400">
           {label}
         </p>
       </div>
@@ -423,7 +428,9 @@ const RailStat = memo(function RailStat({
 
 interface ScraperStatsBarProps {
   stats: ScraperStats | null;
+  adminStats?: AdminScraperStats | null;
   loading: boolean;
+  variant?: 'applicant' | 'admin';
   /** When true, show the Google Sheets rail tile (user has Sheets connected). */
   sheetsConfigured?: boolean;
   /** When true, show the Pumble rail tile (user has Pumble connected). */
@@ -440,14 +447,19 @@ interface ScraperStatsBarProps {
   onSelectPumble?: () => void;
   onSelectMine?: () => void;
   onSelectAll?: () => void;
+  onSelectNeedsExtraction?: () => void;
+  onSelectExtracted?: () => void;
+  onSelectExtractionFailed?: () => void;
+  onSelectManual?: () => void;
+  onSelectTeamAppliedToday?: () => void;
 }
 
-function StatsBoardSkeleton() {
+function StatsBoardSkeleton({ label = 'Loading your job status…' }: { label?: string }) {
   return (
-    <div className="stats-board-shell flex min-h-[280px] w-full items-center justify-center rounded-[1.75rem] border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-[#141d31]">
-      <div className="flex items-center gap-3 text-base font-medium text-slate-400">
+    <div className="stats-board-shell flex min-h-[280px] w-full items-center justify-center rounded-[1.75rem] border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-[#141d31]" style={{ contentVisibility: 'auto' }}>
+      <div className="flex items-center gap-3 text-base font-medium text-slate-400 dark:text-slate-300">
         <span className="stats-board-pulse inline-block h-3 w-3 rounded-full bg-blue-500" />
-        Loading your job status…
+        {label}
       </div>
     </div>
   );
@@ -720,14 +732,14 @@ const StatsBoardContent = memo(function StatsBoardContent({
               </div>
             </div>
             <div className="mt-1 flex h-[52px] flex-col justify-center space-y-1">
-              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
+              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600 dark:text-slate-300">
                 {todayRemote > 0
                   ? `${fmt(todayRemote)} remote added today`
                   : total > 0
                     ? `${Math.round(readyRatio * 100)}% of pool ready to apply`
                     : 'New jobs added to your board today'}
               </p>
-              <p className="truncate text-[12px] font-medium text-slate-500">
+              <p className="truncate text-[12px] font-medium text-slate-500 dark:text-slate-400">
                 {fmt(applied)} applied · {Math.round(appliedRatio * 100)}% of pool
               </p>
             </div>
@@ -794,9 +806,321 @@ const StatsBoardContent = memo(function StatsBoardContent({
   );
 });
 
+
+const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
+  view,
+  onSelectToday,
+  onSelectNeedsExtraction,
+  onSelectExtracted,
+  onSelectSheet,
+  onSelectPumble,
+  onSelectExtractionFailed,
+  onSelectManual,
+  onSelectTeamAppliedToday,
+  onSelectAll,
+  onSelectRemote,
+}: {
+  view: AdminScraperStats;
+  onSelectToday?: () => void;
+  onSelectNeedsExtraction?: () => void;
+  onSelectExtracted?: () => void;
+  onSelectSheet?: () => void;
+  onSelectPumble?: () => void;
+  onSelectExtractionFailed?: () => void;
+  onSelectManual?: () => void;
+  onSelectTeamAppliedToday?: () => void;
+  onSelectAll?: () => void;
+  onSelectRemote?: () => void;
+}) {
+  const today = safe(view.today_fetched ?? view.today_scraped);
+  const todayRemote = safe(view.today_remote);
+  const total = safe(view.total_jobs);
+  const remote = safe(view.total_remote);
+  const extracted = safe(view.extracted_jobs);
+  const needs = safe(view.needs_extraction_jobs);
+  const failed = safe(view.extraction_failed_jobs);
+  const pending = safe(view.extraction_pending_jobs);
+  const sheetPosted = safe(view.sheet_posted_jobs);
+  const pumblePosted = safe(view.pumble_posted_jobs);
+  const manual = safe(view.manual_jobs);
+  const teamAppliedToday = safe(view.team_applied_today);
+  const lastNew = safe(view.last_sync_items_new);
+  const lastErrors = safe(view.last_sync_errors);
+  const extractRatio = total > 0 ? extracted / total : 0;
+  const remotePct = total > 0 ? Math.round((remote / total) * 100) : 0;
+  const todayBumped = useBumpOnIncrease(today);
+  const sourceCount = Array.isArray(view.sources) ? view.sources.length : 0;
+  const trends = view.trends;
+  const trendDayLabels = trends?.labels ?? [];
+  const fetchedTrend = trends?.fetched ?? [];
+  const extractedTrend = trends?.extracted ?? [];
+  const sheetTrend = trends?.sheet_posted ?? [];
+  const pumbleTrend = trends?.pumble_posted ?? [];
+  const trendMaxScale = Math.max(
+    1,
+    ...[...fetchedTrend, ...extractedTrend, ...sheetTrend, ...pumbleTrend].map((n) =>
+      Number.isFinite(n) ? Math.max(0, n) : 0,
+    ),
+  );
+
+  const { left: leftRail, right: rightRail } = useMemo(() => {
+    const leftSeed: RailItem[] = [
+      {
+        key: 'total',
+        icon: Layers,
+        value: total,
+        label: 'Total jobs',
+        tone: 'bg-gradient-to-br from-slate-700 via-slate-800 to-indigo-900 text-white',
+        title: 'All non-blocked jobs in the platform pool',
+        onClick: onSelectAll,
+        delay: 30,
+        modern: true,
+      },
+      {
+        key: 'failed',
+        icon: CircleAlert,
+        value: failed + pending,
+        label: failed > 0 ? `Failed/stuck · ${fmt(failed)} failed` : 'Failed / stuck',
+        tone: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+        title: 'Extractions that failed or are still pending/processing',
+        onClick: onSelectExtractionFailed,
+        delay: 70,
+      },
+      {
+        key: 'manual',
+        icon: Upload,
+        value: manual,
+        label: 'Manual intake',
+        tone: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300',
+        title: 'Jobs submitted by URL or attachment',
+        onClick: onSelectManual,
+        delay: 110,
+      },
+      {
+        key: 'team_applied',
+        icon: ClipboardCheck,
+        value: teamAppliedToday,
+        label: 'Apps marked today',
+        tone: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300',
+        title: 'Applications marked by any user today',
+        onClick: onSelectTeamAppliedToday,
+        delay: 150,
+      },
+    ];
+    const rightSeed: RailItem[] = [
+      {
+        key: 'sources',
+        icon: Activity,
+        value: sourceCount,
+        label: lastErrors > 0 ? `Sources · ${fmt(lastErrors)} sync errs` : 'Active sources',
+        tone: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',
+        title: lastNew > 0
+          ? `Last sync added ${fmt(lastNew)} new job(s)`
+          : 'Distinct sources in the job pool',
+        delay: 30,
+      },
+      {
+        key: 'remote',
+        icon: Wifi,
+        value: remote,
+        label: remotePct > 0 ? `Remote · ${remotePct}%` : 'Remote jobs',
+        tone: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-300',
+        title: 'Remote-friendly jobs in the pool',
+        onClick: onSelectRemote,
+        delay: 70,
+      },
+    ];
+    return balanceRailColumns(leftSeed, rightSeed);
+  }, [
+    total,
+    failed,
+    pending,
+    manual,
+    teamAppliedToday,
+    sourceCount,
+    lastErrors,
+    lastNew,
+    remote,
+    remotePct,
+    onSelectAll,
+    onSelectExtractionFailed,
+    onSelectManual,
+    onSelectTeamAppliedToday,
+    onSelectRemote,
+  ]);
+
+  return (
+    <div
+      className="stats-board-shell relative w-full overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5"
+      style={{ contentVisibility: 'auto' }}
+    >
+      <div className="pointer-events-none absolute -left-20 top-0 h-48 w-48 rounded-full bg-blue-400/10 blur-3xl dark:bg-blue-500/10" />
+      <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
+
+      <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)_13.5rem] xl:gap-4">
+        <div
+          className={[
+            'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+            railGridClass(leftRail.length),
+          ].join(' ')}
+        >
+          {leftRail.map((item) => (
+            <RailStat
+              key={item.key}
+              icon={item.icon}
+              value={item.value}
+              label={item.label}
+              tone={item.tone}
+              title={item.title}
+              onClick={item.onClick}
+              delay={item.delay}
+              modern={item.modern}
+            />
+          ))}
+        </div>
+
+        <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[1fr_auto_1fr] lg:gap-4 xl:order-2">
+          <div className="flex h-full min-h-0 flex-col gap-3.5">
+            <SideTile
+              icon={FileSearch}
+              value={needs}
+              label="Needs extraction"
+              hint={pending > 0 ? `${fmt(pending)} currently in progress` : 'Missing or incomplete JD'}
+              accent="from-amber-400 to-orange-500"
+              iconWrap="from-amber-500 to-orange-500"
+              delay={40}
+              onClick={onSelectNeedsExtraction}
+              title="Jobs without a completed job description"
+              trend={fetchedTrend}
+              trendLabels={trendDayLabels}
+              trendColor="#fbbf24"
+              trendLabel="Fetched / day"
+              trendMaxScale={trendMaxScale}
+            />
+            <SideTile
+              icon={FileCheck2}
+              value={extracted}
+              label="Extracted"
+              hint={total > 0 ? `${Math.round(extractRatio * 100)}% of pool covered` : 'Completed JD extraction'}
+              accent="from-emerald-400 to-teal-500"
+              iconWrap="from-emerald-500 to-teal-500"
+              delay={90}
+              onClick={onSelectExtracted}
+              title="Jobs with a completed job description"
+              trend={extractedTrend}
+              trendLabels={trendDayLabels}
+              trendColor="#34d399"
+              trendLabel="Extracted / day"
+              trendMaxScale={trendMaxScale}
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={onSelectToday}
+            title="Show today's fetched jobs"
+            className={[
+              'stats-hero-tile group relative mx-auto flex h-full min-h-[280px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-4 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
+              'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
+              'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
+              'dark:border-blue-500/30 dark:bg-[#152033]/95 dark:shadow-blue-900/25',
+              todayBumped ? 'stats-hero-pulse' : '',
+            ].join(' ')}
+          >
+            <div className="relative flex items-center justify-center">
+              <HeroOrbitRing progress={extractRatio} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
+                <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
+                <AnimatedNumber
+                  value={today}
+                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
+                />
+                <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-300">
+                  Today&apos;s fetched
+                </span>
+              </div>
+            </div>
+            <div className="mt-1 flex h-[52px] flex-col justify-center space-y-1">
+              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600 dark:text-slate-300">
+                {todayRemote > 0
+                  ? `${fmt(todayRemote)} remote fetched today`
+                  : lastNew > 0
+                    ? `${fmt(lastNew)} new from last sync`
+                    : 'New jobs added to the platform today'}
+              </p>
+              <p className="truncate text-[12px] font-medium text-slate-500 dark:text-slate-400">
+                {fmt(extracted)} extracted · {Math.round(extractRatio * 100)}% coverage
+              </p>
+            </div>
+          </button>
+
+          <div className="flex h-full min-h-0 flex-col gap-3.5">
+            <SideTile
+              icon={Table2}
+              value={sheetPosted}
+              label="Posted to Sheets"
+              hint="Distributed to Google Sheets"
+              accent="from-emerald-400 to-green-500"
+              iconWrap="from-emerald-500 to-green-600"
+              delay={40}
+              onClick={onSelectSheet}
+              title="Jobs posted to Google Sheets"
+              trend={sheetTrend}
+              trendLabels={trendDayLabels}
+              trendColor="#34d399"
+              trendLabel="Sheets / day"
+              trendMaxScale={trendMaxScale}
+            />
+            <SideTile
+              icon={MessageSquare}
+              value={pumblePosted}
+              label="Posted to Pumble"
+              hint="Distributed to Pumble channels"
+              accent="from-violet-400 to-indigo-500"
+              iconWrap="from-violet-500 to-indigo-600"
+              delay={90}
+              onClick={onSelectPumble}
+              title="Jobs posted to Pumble"
+              trend={pumbleTrend}
+              trendLabels={trendDayLabels}
+              trendColor="#a78bfa"
+              trendLabel="Pumble / day"
+              trendMaxScale={trendMaxScale}
+            />
+          </div>
+        </div>
+
+        <div
+          className={[
+            'order-3 grid gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+            railGridClass(rightRail.length),
+          ].join(' ')}
+        >
+          {rightRail.map((item) => (
+            <RailStat
+              key={item.key}
+              icon={item.icon}
+              value={item.value}
+              label={item.label}
+              tone={item.tone}
+              title={item.title}
+              onClick={item.onClick}
+              delay={item.delay}
+              modern={item.modern}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export const ScraperStatsBar = memo(function ScraperStatsBar({
   stats,
+  adminStats,
   loading,
+  variant = 'applicant',
   sheetsConfigured: sheetsConfiguredProp,
   pumbleConfigured: pumbleConfiguredProp,
   onSelectToday,
@@ -811,16 +1135,26 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
   onSelectPumble,
   onSelectMine,
   onSelectAll,
+  onSelectNeedsExtraction,
+  onSelectExtracted,
+  onSelectExtractionFailed,
+  onSelectManual,
+  onSelectTeamAppliedToday,
 }: ScraperStatsBarProps) {
-  const cachedRef = useRef<ScraperStats | null>(null);
-  if (stats) cachedRef.current = stats;
-  const view = stats ?? cachedRef.current;
+  const isAdmin = variant === 'admin';
+  const cachedApplicantRef = useRef<ScraperStats | null>(null);
+  const cachedAdminRef = useRef<AdminScraperStats | null>(null);
+  if (stats) cachedApplicantRef.current = stats;
+  if (adminStats) cachedAdminRef.current = adminStats;
+  const applicantView = stats ?? cachedApplicantRef.current;
+  const adminView = adminStats ?? cachedAdminRef.current;
 
   const [sheetsConfiguredLocal, setSheetsConfiguredLocal] = useState(false);
   const [pumbleConfiguredLocal, setPumbleConfiguredLocal] = useState(false);
 
-  // Resolve optional integrations from the user's Integrations settings.
+  // Applicant only: resolve optional integrations. Admins always show Sheet/Pumble tiles.
   useEffect(() => {
+    if (isAdmin) return;
     if (sheetsConfiguredProp !== undefined && pumbleConfiguredProp !== undefined) return;
     let cancelled = false;
     void fetchSheetsConfig()
@@ -842,18 +1176,39 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
     return () => {
       cancelled = true;
     };
-  }, [sheetsConfiguredProp, pumbleConfiguredProp]);
+  }, [isAdmin, sheetsConfiguredProp, pumbleConfiguredProp]);
 
   const sheetsConfigured = sheetsConfiguredProp ?? sheetsConfiguredLocal;
   const pumbleConfigured = pumbleConfiguredProp ?? pumbleConfiguredLocal;
 
-  if (!view) {
+  if (isAdmin) {
+    if (!adminView) {
+      return <StatsBoardSkeleton label={loading ? 'Loading platform status…' : 'Loading platform status…'} />;
+    }
+    return (
+      <AdminStatsBoardContent
+        view={adminView}
+        onSelectToday={onSelectToday}
+        onSelectNeedsExtraction={onSelectNeedsExtraction}
+        onSelectExtracted={onSelectExtracted}
+        onSelectSheet={onSelectSheet}
+        onSelectPumble={onSelectPumble}
+        onSelectExtractionFailed={onSelectExtractionFailed}
+        onSelectManual={onSelectManual}
+        onSelectTeamAppliedToday={onSelectTeamAppliedToday}
+        onSelectAll={onSelectAll}
+        onSelectRemote={onSelectRemote}
+      />
+    );
+  }
+
+  if (!applicantView) {
     return <StatsBoardSkeleton />;
   }
 
   return (
     <StatsBoardContent
-      view={view}
+      view={applicantView}
       sheetsConfigured={sheetsConfigured}
       pumbleConfigured={pumbleConfigured}
       onSelectToday={onSelectToday}

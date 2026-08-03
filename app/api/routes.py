@@ -1731,10 +1731,19 @@ DASHBOARD_VIEWS = {
     "ready",
     "sheet_posted",
     "pumble_posted",
+    "needs_extraction",
+    "extracted",
+    "extraction_failed",
+    "manual",
 }
 
 VIEWS_NEEDING_APPLICATION_JOIN = frozenset({"applied_today", "applied", "available"})
 VIEWS_NEEDING_RESUME_JOIN = frozenset({"ready"})
+# Extraction is always joined on the dashboard list query; this set documents
+# views whose WHERE clauses depend on JobExtraction columns.
+VIEWS_NEEDING_EXTRACTION_CLAUSE = frozenset(
+    {"needs_extraction", "extracted", "extraction_failed"}
+)
 
 
 def _dashboard_view_clauses(
@@ -1743,6 +1752,7 @@ def _dashboard_view_clauses(
     min_score: int = 0,
     day_start: datetime | None = None,
     day_end: datetime | None = None,
+    is_admin: bool = False,
 ) -> tuple[list, bool]:
     """Extra WHERE clauses for a dashboard view tab.
 
@@ -1766,15 +1776,30 @@ def _dashboard_view_clauses(
         # with an active per-user status; scraped/promoted jobs never carry it.
         clauses.append(UserJobStatus.status == "active")
         clauses.append(Job.raw_metadata["submitted_data"].isnot(None))
+    elif view == "manual":
+        # Admin ops: any job that entered via URL/attachment (system-wide).
+        clauses.append(Job.raw_metadata["submitted_data"].isnot(None))
     elif view == "suggested":
         needs_match_join = True
         clauses.append(JobMatchResult.overall_score.isnot(None))
         clauses.append(JobMatchResult.overall_score >= min_score)
     elif view == "applied_today":
         if day_start is not None and day_end is not None:
-            clauses.append(ValidJobUserApplication.applied_at.isnot(None))
-            clauses.append(ValidJobUserApplication.applied_at >= day_start)
-            clauses.append(ValidJobUserApplication.applied_at < day_end)
+            if is_admin:
+                # Any applicant marked applied today (ops signal; avoid join fan-out).
+                clauses.append(
+                    Job.id.in_(
+                        select(ValidJobUserApplication.job_id).where(
+                            ValidJobUserApplication.applied_at.isnot(None),
+                            ValidJobUserApplication.applied_at >= day_start,
+                            ValidJobUserApplication.applied_at < day_end,
+                        )
+                    )
+                )
+            else:
+                clauses.append(ValidJobUserApplication.applied_at.isnot(None))
+                clauses.append(ValidJobUserApplication.applied_at >= day_start)
+                clauses.append(ValidJobUserApplication.applied_at < day_end)
     elif view == "applied":
         clauses.append(ValidJobUserApplication.id.is_not(None))
     elif view == "available":
@@ -1785,6 +1810,30 @@ def _dashboard_view_clauses(
         clauses.append(Job.sheet_posted_at.is_not(None))
     elif view == "pumble_posted":
         clauses.append(Job.pumble_posted_at.is_not(None))
+    elif view == "needs_extraction":
+        from app.models.schemas import ExtractionStatus
+
+        clauses.append(
+            or_(
+                Job.extraction_id.is_(None),
+                JobExtraction.status.is_(None),
+                JobExtraction.status.in_(
+                    (
+                        ExtractionStatus.PENDING,
+                        ExtractionStatus.PROCESSING,
+                        ExtractionStatus.EXTRACTED,
+                    )
+                ),
+            )
+        )
+    elif view == "extracted":
+        from app.models.schemas import ExtractionStatus
+
+        clauses.append(JobExtraction.status == ExtractionStatus.COMPLETED)
+    elif view == "extraction_failed":
+        from app.models.schemas import ExtractionStatus
+
+        clauses.append(JobExtraction.status == ExtractionStatus.FAILED)
 
     return clauses, needs_match_join
 
@@ -1900,8 +1949,11 @@ def _dashboard_select_columns():
     )
 
 
-def _dashboard_apply_joins(stmt, user_id: str):
+def _dashboard_apply_joins(stmt, user_id: str, *, team_applications: bool = False):
     """Outer-joins needed to hydrate a DashboardJobResponse row."""
+    app_on = ValidJobUserApplication.job_id == Job.id
+    if not team_applications:
+        app_on = app_on & (ValidJobUserApplication.user_id == user_id)
     return (
         stmt.select_from(Job)
         .outerjoin(
@@ -1921,11 +1973,7 @@ def _dashboard_apply_joins(stmt, user_id: str):
             ResumeBuildResult,
             (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
         )
-        .outerjoin(
-            ValidJobUserApplication,
-            (ValidJobUserApplication.job_id == Job.id)
-            & (ValidJobUserApplication.user_id == user_id),
-        )
+        .outerjoin(ValidJobUserApplication, app_on)
     )
 
 
@@ -2074,18 +2122,23 @@ async def get_dashboard_jobs(
     current_user: dict = Depends(get_current_user),
 ) -> DashboardJobsPage:
     """Paginated jobs list. ``view`` narrows results (all/today/mine/suggested/
-    applied/available/ready/sheet_posted/pumble_posted/applied_today).
+    applied/available/ready/sheet_posted/pumble_posted/applied_today/
+    needs_extraction/extracted/extraction_failed/manual).
     """
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
+    is_admin = bool(current_user.get("is_admin"))
     if view not in DASHBOARD_VIEWS:
         view = "all"
 
     day_start = day_end = None
     if view in ("today", "applied_today"):
         day_start, day_end = day_bounds_for_timezone(timezone)
+
+    # Admin applied_today: filter via EXISTS in view clauses (no join fan-out).
+    team_applied_view = False
 
     SORT_COLUMNS = {
         "created_at": Job.created_at,
@@ -2123,7 +2176,11 @@ async def get_dashboard_jobs(
         )
 
         view_clauses, needs_match_join = _dashboard_view_clauses(
-            view, min_score=min_score, day_start=day_start, day_end=day_end,
+            view,
+            min_score=min_score,
+            day_start=day_start,
+            day_end=day_end,
+            is_admin=is_admin,
         )
         base_filter.extend(view_clauses)
 
@@ -2145,15 +2202,25 @@ async def get_dashboard_jobs(
                 (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
             )
         if view in VIEWS_NEEDING_APPLICATION_JOIN:
-            count_stmt = count_stmt.outerjoin(
-                ValidJobUserApplication,
-                (ValidJobUserApplication.job_id == Job.id)
-                & (ValidJobUserApplication.user_id == user_id),
-            )
+            if team_applied_view:
+                count_stmt = count_stmt.outerjoin(
+                    ValidJobUserApplication,
+                    ValidJobUserApplication.job_id == Job.id,
+                )
+            else:
+                count_stmt = count_stmt.outerjoin(
+                    ValidJobUserApplication,
+                    (ValidJobUserApplication.job_id == Job.id)
+                    & (ValidJobUserApplication.user_id == user_id),
+                )
         if view in VIEWS_NEEDING_RESUME_JOIN:
             count_stmt = count_stmt.outerjoin(
                 ResumeBuildResult,
                 (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
+            )
+        if view in VIEWS_NEEDING_EXTRACTION_CLAUSE:
+            count_stmt = count_stmt.outerjoin(
+                JobExtraction, Job.extraction_id == JobExtraction.id
             )
         count_stmt = count_stmt.where(*base_filter)
         total = (await session.execute(count_stmt)).scalar() or 0
@@ -2161,13 +2228,11 @@ async def get_dashboard_jobs(
         pages = max(1, -(-total // per_page))
         offset = (page - 1) * per_page
 
-        stmt = (
-            _dashboard_apply_joins(select(*_dashboard_select_columns()), user_id)
-            .where(*base_filter)
-            .order_by(*order_clauses)
-            .limit(per_page)
-            .offset(offset)
-        )
+        stmt = _dashboard_apply_joins(
+            select(*_dashboard_select_columns()),
+            user_id,
+            team_applications=team_applied_view,
+        ).where(*base_filter).order_by(*order_clauses).limit(per_page).offset(offset)
         result = await session.execute(stmt)
         rows = result.all()
 

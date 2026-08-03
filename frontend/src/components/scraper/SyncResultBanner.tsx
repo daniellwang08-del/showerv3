@@ -161,7 +161,7 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss sync notification"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-black/5 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50 dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-800"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-black/5 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-slate-100"
         >
           <X size={16} strokeWidth={2.25} />
         </button>

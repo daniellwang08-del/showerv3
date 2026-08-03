@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   DashboardJob,
   ScraperStats,
+  AdminScraperStats,
   SpiderInfo,
   SyncStatus,
   SyncProgress,
@@ -13,6 +14,7 @@ import {
   fetchDashboardJobs,
   fetchDashboardCounts,
   fetchScraperStats,
+  fetchAdminScraperStats,
   fetchScrapeRuns,
   fetchSpiders,
   fetchSyncStatus,
@@ -205,7 +207,10 @@ interface ScraperState {
   loading: boolean;
 
   stats: ScraperStats | null;
+  adminStats: AdminScraperStats | null;
   statsLoading: boolean;
+  /** Which stats endpoint last populated the board cache. */
+  statsRole: 'applicant' | 'admin' | null;
 
   spiders: SpiderInfo[];
 
@@ -252,7 +257,7 @@ interface ScraperState {
    * stats bar never flips into its skeleton state - which would unmount/remount
    * every tile and replay the count-up animation from 0 on each job-status change.
    */
-  loadStats: (opts?: { silent?: boolean }) => Promise<void>;
+  loadStats: (opts?: { silent?: boolean; isAdmin?: boolean }) => Promise<void>;
   loadSpiders: () => Promise<void>;
   /** Refresh the recent scrape-run history used for "last synced" labels. */
   loadLastSyncRuns: () => Promise<void>;
@@ -474,7 +479,9 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   loading: false,
 
   stats: null,
+  adminStats: null,
   statsLoading: false,
+  statsRole: null,
 
   spiders: [],
 
@@ -627,16 +634,50 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     } catch {
       set({ page: 1 });
     }
-    void get().loadStats({ silent: true });
+    void get().loadStats({ silent: true, isAdmin: get().statsRole === 'admin' });
   },
 
   loadStats: async (opts) => {
-    // Only show the skeleton on the very first load. Background refreshes keep the
-    // existing tiles mounted so unchanged numbers don't flash / re-animate.
-    if (!opts?.silent && get().stats === null) set({ statsLoading: true });
+    const isAdmin = opts?.isAdmin ?? get().statsRole === 'admin';
+    const role = isAdmin ? 'admin' : 'applicant';
+    const cacheKey = isAdmin ? 'admin_scraper_stats_v1' : 'applicant_scraper_stats_v1';
+
+    // Instant paint from session cache on first mount.
+    if (!opts?.silent && get().stats === null && get().adminStats === null) {
+      try {
+        const raw = sessionStorage.getItem(cacheKey);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          if (isAdmin) set({ adminStats: cached, statsRole: role, statsLoading: false });
+          else set({ stats: cached, statsRole: role, statsLoading: false });
+        } else {
+          set({ statsLoading: true });
+        }
+      } catch {
+        set({ statsLoading: true });
+      }
+    } else if (!opts?.silent && (isAdmin ? get().adminStats === null : get().stats === null)) {
+      set({ statsLoading: true });
+    }
+
     try {
-      const stats = await fetchScraperStats();
-      set({ stats, statsLoading: false });
+      if (isAdmin) {
+        const adminStats = await fetchAdminScraperStats();
+        set({ adminStats, statsRole: role, statsLoading: false });
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify(adminStats));
+        } catch {
+          /* ignore quota */
+        }
+      } else {
+        const stats = await fetchScraperStats();
+        set({ stats, statsRole: role, statsLoading: false });
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify(stats));
+        } catch {
+          /* ignore quota */
+        }
+      }
     } catch {
       set({ statsLoading: false });
     }
@@ -826,7 +867,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         },
       });
       void get().loadLastSyncRuns();
-      void get().loadStats({ silent: true });
+      void get().loadStats({ silent: true, isAdmin: get().statsRole === 'admin' });
     }
   },
 
@@ -940,7 +981,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         ...(isLastOnPage ? { page: s.page - 1 } : {}),
       });
       void get().loadJobs();
-      void get().loadStats();
+      void get().loadStats({ isAdmin: get().statsRole === 'admin' });
       return { ok: true, message: 'Deleted.' };
     } catch (err) {
       return { ok: false, message: extractErrorMessage(err, 'Failed to delete job.') };
@@ -964,7 +1005,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         ...(isPageEmpty ? { page: s.page - 1 } : {}),
       });
       void get().loadJobs();
-      void get().loadStats();
+      void get().loadStats({ isAdmin: get().statsRole === 'admin' });
       const failed = jobIds.length - succeeded.length;
       return {
         ok: failed === 0,

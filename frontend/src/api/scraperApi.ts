@@ -4,6 +4,7 @@ import type {
   ScrapedJobsPage,
   ScrapedJobUpdatePayload,
   ScraperStats,
+  AdminScraperStats,
   ScrapeRun,
   SyncStatus,
   SpiderInfo,
@@ -40,7 +41,11 @@ export type DashboardView =
   | 'available'
   | 'ready'
   | 'sheet_posted'
-  | 'pumble_posted';
+  | 'pumble_posted'
+  | 'needs_extraction'
+  | 'extracted'
+  | 'extraction_failed'
+  | 'manual';
 
 export async function fetchDashboardJobs(params: {
   page?: number;
@@ -90,6 +95,12 @@ export async function fetchScrapedJob(id: string) {
 export async function fetchScraperStats(): Promise<ScraperStats> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const { data } = await apiClient.get('/scraper/stats', { params: { timezone } });
+  return data;
+}
+
+export async function fetchAdminScraperStats(): Promise<AdminScraperStats> {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const { data } = await apiClient.get('/scraper/stats/admin', { params: { timezone } });
   return data;
 }
 

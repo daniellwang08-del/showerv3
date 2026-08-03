@@ -235,3 +235,156 @@ async def fetch_dashboard_stats(
         "sources": sources,
         "recent_runs": recent_runs,
     }
+
+
+def _admin_system_visible_clause():
+    """System-wide pool for admin ops metrics (not per-user match/resume)."""
+    return Job.status != "blocked"
+
+
+def _admin_needs_extraction_expr():
+    """Jobs without a completed JD extraction (excludes hard failures)."""
+    return or_(
+        Job.extraction_id.is_(None),
+        JobExtraction.status.is_(None),
+        JobExtraction.status.in_(
+            (
+                ExtractionStatus.PENDING,
+                ExtractionStatus.PROCESSING,
+                ExtractionStatus.EXTRACTED,
+            )
+        ),
+    )
+
+
+async def fetch_admin_dashboard_stats(
+    session: AsyncSession,
+    *,
+    day_start: datetime,
+    day_end: datetime,
+) -> dict:
+    """Platform-wide fetch → extract → post funnel for the admin Jobs board."""
+    visible = _admin_system_visible_clause()
+    is_remote = _is_remote_expr()
+    added_at = Job.created_at
+    needs_ext = _admin_needs_extraction_expr()
+
+    frm = Job.__table__.outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
+
+    stats_row = (
+        await session.execute(
+            select(
+                func.count().label("total_jobs"),
+                func.count().filter(is_remote == True).label("total_remote"),  # noqa: E712
+                func.count().filter(
+                    and_(added_at >= day_start, added_at < day_end)
+                ).label("today_fetched"),
+                func.count().filter(
+                    and_(added_at >= day_start, added_at < day_end, is_remote == True)  # noqa: E712
+                ).label("today_remote"),
+                func.count().filter(
+                    and_(
+                        Job.posted_date.is_not(None),
+                        Job.posted_date >= day_start,
+                        Job.posted_date < day_end,
+                    )
+                ).label("today_posted"),
+                func.count().filter(
+                    JobExtraction.status == ExtractionStatus.COMPLETED
+                ).label("extracted_jobs"),
+                func.count().filter(needs_ext).label("needs_extraction_jobs"),
+                func.count().filter(
+                    JobExtraction.status == ExtractionStatus.FAILED
+                ).label("extraction_failed_jobs"),
+                func.count().filter(
+                    JobExtraction.status.in_(
+                        (ExtractionStatus.PENDING, ExtractionStatus.PROCESSING)
+                    )
+                ).label("extraction_pending_jobs"),
+                func.count().filter(
+                    Job.sheet_posted_at.is_not(None)
+                ).label("sheet_posted_jobs"),
+                func.count().filter(
+                    Job.pumble_posted_at.is_not(None)
+                ).label("pumble_posted_jobs"),
+                func.count().filter(
+                    Job.raw_metadata["submitted_data"].isnot(None)
+                ).label("manual_jobs"),
+            )
+            .select_from(frm)
+            .where(visible)
+        )
+    ).one()
+
+    team_applied_today = (
+        await session.execute(
+            select(func.count())
+            .select_from(ValidJobUserApplication)
+            .where(
+                ValidJobUserApplication.applied_at.is_not(None),
+                ValidJobUserApplication.applied_at >= day_start,
+                ValidJobUserApplication.applied_at < day_end,
+            )
+        )
+    ).scalar() or 0
+
+    source_expr = _job_source_expr()
+    source_rows = (
+        await session.execute(
+            select(
+                source_expr.label("source"),
+                func.count().label("cnt"),
+                func.max(added_at).label("latest_added"),
+            )
+            .select_from(Job)
+            .where(visible)
+            .group_by(source_expr)
+            .order_by(func.count().desc())
+        )
+    ).all()
+
+    sources = [
+        {
+            "source": row.source or "unknown",
+            "count": row.cnt,
+            "latest_scraped": row.latest_added,
+        }
+        for row in source_rows
+    ]
+
+    runs_result = await session.execute(
+        text(
+            "SELECT id, spider_name, started_at, finished_at, items_scraped, "
+            "items_new, items_updated, errors, status "
+            "FROM scrape_runs ORDER BY started_at DESC LIMIT 10"
+        )
+    )
+    recent_runs = [dict(row._mapping) for row in runs_result]
+
+    last_sync_new = 0
+    last_sync_errors = 0
+    if recent_runs:
+        last = recent_runs[0]
+        last_sync_new = int(last.get("items_new") or 0)
+        last_sync_errors = int(last.get("errors") or 0)
+
+    return {
+        "total_jobs": stats_row.total_jobs or 0,
+        "total_remote": stats_row.total_remote or 0,
+        "today_fetched": stats_row.today_fetched or 0,
+        "today_scraped": stats_row.today_fetched or 0,
+        "today_remote": stats_row.today_remote or 0,
+        "today_posted": stats_row.today_posted or 0,
+        "extracted_jobs": stats_row.extracted_jobs or 0,
+        "needs_extraction_jobs": stats_row.needs_extraction_jobs or 0,
+        "extraction_failed_jobs": stats_row.extraction_failed_jobs or 0,
+        "extraction_pending_jobs": stats_row.extraction_pending_jobs or 0,
+        "sheet_posted_jobs": stats_row.sheet_posted_jobs or 0,
+        "pumble_posted_jobs": stats_row.pumble_posted_jobs or 0,
+        "manual_jobs": stats_row.manual_jobs or 0,
+        "team_applied_today": int(team_applied_today),
+        "last_sync_items_new": last_sync_new,
+        "last_sync_errors": last_sync_errors,
+        "sources": sources,
+        "recent_runs": recent_runs,
+    }

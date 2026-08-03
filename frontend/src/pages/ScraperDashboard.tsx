@@ -27,7 +27,7 @@ export function ScraperDashboard() {
   const { isAdmin } = useOutletContext<AppShellOutletContext>();
   const {
     jobs, total, page, perPage, pages, loading,
-    stats, statsLoading,
+    stats, adminStats, statsLoading,
     spiders,
     syncing,
     syncProgress,
@@ -77,9 +77,16 @@ export function ScraperDashboard() {
     (j) => j.user_status !== 'duplicated' && j.user_status !== 'manual_hidden',
   );
 
+  const refreshStats = useCallback(
+    (opts?: { silent?: boolean }) => {
+      void loadStats({ silent: opts?.silent, isAdmin });
+    },
+    [loadStats, isAdmin],
+  );
+
   useEffect(() => {
     loadJobs();
-    loadStats();
+    refreshStats();
     loadSpiders();
     loadLastSyncRuns();
     checkSyncStatus();
@@ -101,7 +108,7 @@ export function ScraperDashboard() {
         sessionStorage.removeItem(LOCATION_RECONCILE_FLAG);
       });
     }
-  }, []);
+  }, [isAdmin]);
 
   // Poll every 6 s while any job is mid-pipeline so dots/badges update live.
   useEffect(() => {
@@ -121,32 +128,74 @@ export function ScraperDashboard() {
         (j.content_generation_status && CONTENT_IN_PROGRESS.has(j.content_generation_status)) ||
         (j.resume_build_status && RESUME_IN_PROGRESS.has(j.resume_build_status)),
     );
+    const adminExtractionBacklog =
+      isAdmin &&
+      adminStats != null &&
+      (adminStats.needs_extraction_jobs > 0 || adminStats.extraction_pending_jobs > 0);
 
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
 
-    if (hasInProgress) {
-      pollTimerRef.current = setTimeout(() => void bgRefreshJobs(), 6000);
+    if (hasInProgress || adminExtractionBacklog) {
+      pollTimerRef.current = setTimeout(() => {
+        void bgRefreshJobs();
+        // Only refresh stats when extraction backlog exists (admin) or jobs are mid-pipeline.
+        refreshStats({ silent: true });
+      }, 6000);
     }
 
     return () => {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
-  }, [jobs, isAdmin]);
+  }, [jobs, isAdmin, adminStats, bgRefreshJobs, refreshStats]);
 
   useEffect(() => {
     if (!syncing) return;
     const id = window.setInterval(() => {
       void checkSyncStatus();
+      if (isAdmin) refreshStats({ silent: true });
     }, 10000);
     return () => window.clearInterval(id);
-  }, [syncing, checkSyncStatus]);
+  }, [syncing, checkSyncStatus, isAdmin, refreshStats]);
 
   const handleSync = useCallback((options: Parameters<typeof startSync>[0]) => {
     void startSync(options);
   }, [startSync]);
+
+  const activeBoardCount = (() => {
+    if (!isAdmin || !adminStats) {
+      if (view === 'applied') return stats?.applied_jobs ?? total;
+      if (view === 'available') return stats?.available_jobs ?? total;
+      if (view === 'ready') return stats?.ready_jobs ?? total;
+      if (view === 'sheet_posted') return stats?.sheet_posted_jobs ?? total;
+      if (view === 'pumble_posted') return stats?.pumble_posted_jobs ?? total;
+      return undefined;
+    }
+    switch (view) {
+      case 'needs_extraction':
+        return adminStats.needs_extraction_jobs;
+      case 'extracted':
+        return adminStats.extracted_jobs;
+      case 'extraction_failed':
+        return adminStats.extraction_failed_jobs;
+      case 'manual':
+        return adminStats.manual_jobs;
+      case 'sheet_posted':
+        return adminStats.sheet_posted_jobs;
+      case 'pumble_posted':
+        return adminStats.pumble_posted_jobs;
+      case 'applied_today':
+        return adminStats.team_applied_today;
+      case 'today':
+        return adminStats.today_fetched ?? adminStats.today_scraped;
+      case 'all':
+        return adminStats.total_jobs;
+      default:
+        return undefined;
+    }
+  })();
 
   if (!booted) {
     return (
@@ -163,18 +212,24 @@ export function ScraperDashboard() {
         icon={Briefcase}
         gradient="from-slate-700 to-slate-900"
         title="Jobs Dashboard"
-        description="Browse and manage processed job listings across all platforms."
+        description={
+          isAdmin
+            ? 'Monitor job fetching, extraction progress, and distribution across the platform.'
+            : 'Browse and manage processed job listings across all platforms.'
+        }
         actions={
           <div className="flex w-full flex-wrap items-start gap-2 sm:w-auto sm:justify-end">
-            <button
-              type="button"
-              onClick={openResumeAiCenter}
-              title="Paste a job description and tailor your resume with AI"
-              className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:shadow-md sm:flex-none"
-            >
-              <Wand2 size={15} className="shrink-0" />
-              <span className="truncate">Tailor with AI</span>
-            </button>
+            {!isAdmin && (
+              <button
+                type="button"
+                onClick={openResumeAiCenter}
+                title="Paste a job description and tailor your resume with AI"
+                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:shadow-md sm:flex-none"
+              >
+                <Wand2 size={15} className="shrink-0" />
+                <span className="truncate">Tailor with AI</span>
+              </button>
+            )}
             <LlmProviderSelector />
             {isAdmin && (
               <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} lastSyncRuns={lastSyncRuns} onSync={handleSync} />
@@ -194,10 +249,12 @@ export function ScraperDashboard() {
       {/* z-0 keeps metric tiles below PageHeader menus (header is z-40). */}
       <div className="relative z-0">
         <ScraperStatsBar
+          variant={isAdmin ? 'admin' : 'applicant'}
           stats={stats}
+          adminStats={adminStats}
           loading={statsLoading}
-          sheetsConfigured={isAdmin ? false : undefined}
-          pumbleConfigured={isAdmin ? false : undefined}
+          sheetsConfigured={isAdmin ? true : undefined}
+          pumbleConfigured={isAdmin ? true : undefined}
           onSelectToday={() => applyAgentDashboard({ view: 'today', remote_only: false, min_match_score: 0 })}
           onSelectReady={() => applyAgentDashboard({ view: 'ready', remote_only: false, min_match_score: 0 })}
           onSelectBest={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 75 })}
@@ -210,28 +267,36 @@ export function ScraperDashboard() {
           onSelectPumble={() => applyAgentDashboard({ view: 'pumble_posted', remote_only: false, min_match_score: 0 })}
           onSelectMine={() => applyAgentDashboard({ view: 'mine', remote_only: false, min_match_score: 0 })}
           onSelectAll={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
+          onSelectNeedsExtraction={() =>
+            applyAgentDashboard({ view: 'needs_extraction', remote_only: false, min_match_score: 0 })
+          }
+          onSelectExtracted={() =>
+            applyAgentDashboard({ view: 'extracted', remote_only: false, min_match_score: 0 })
+          }
+          onSelectExtractionFailed={() =>
+            applyAgentDashboard({ view: 'extraction_failed', remote_only: false, min_match_score: 0 })
+          }
+          onSelectManual={() => applyAgentDashboard({ view: 'manual', remote_only: false, min_match_score: 0 })}
+          onSelectTeamAppliedToday={() =>
+            applyAgentDashboard({ view: 'applied_today', remote_only: false, min_match_score: 0 })
+          }
         />
       </div>
 
-      <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 dark:border-slate-600 dark:bg-slate-100">
+      <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 dark:border-slate-700 dark:bg-[#141d31]">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
           <div className="shrink-0">
             <DashboardViewSwitcher
               view={view}
               counts={counts}
               onChange={handleViewChange}
-              activeCount={
-                view === 'applied' ? (stats?.applied_jobs ?? total)
-                : view === 'available' ? (stats?.available_jobs ?? total)
-                : view === 'ready' ? (stats?.ready_jobs ?? total)
-                : view === 'sheet_posted' ? (stats?.sheet_posted_jobs ?? total)
-                : view === 'pumble_posted' ? (stats?.pumble_posted_jobs ?? total)
-                : undefined
-              }
+              isAdmin={isAdmin}
+              adminStats={adminStats}
+              activeCount={activeBoardCount}
             />
           </div>
 
-          <div className="hidden self-stretch w-px bg-slate-200 xl:block" />
+          <div className="hidden self-stretch w-px bg-slate-200 dark:bg-slate-700 xl:block" />
 
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:shrink-0">
             <SearchInput
@@ -251,10 +316,12 @@ export function ScraperDashboard() {
               className="w-full sm:w-44"
             />
             <RemoteFilterToggle active={remoteOnly} onChange={setRemoteOnly} className="w-full sm:w-auto" />
-            <MatchScoreFilter value={minScore} onChange={setMinScore} className="w-full sm:w-44" />
+            {!isAdmin && (
+              <MatchScoreFilter value={minScore} onChange={setMinScore} className="w-full sm:w-44" />
+            )}
           </div>
 
-          <div className="hidden self-stretch w-px bg-slate-200 xl:block" />
+          <div className="hidden self-stretch w-px bg-slate-200 dark:bg-slate-700 xl:block" />
 
           <div className="flex w-full min-w-0 flex-wrap items-start gap-2 sm:gap-3 xl:flex-1 xl:min-w-[18rem]">
             <div className="min-w-0 flex-1 basis-[min(100%,16rem)]">

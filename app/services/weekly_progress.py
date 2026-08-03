@@ -263,3 +263,100 @@ async def fetch_board_trend_series(
         "remote": _series_for_days(day_list, _rows_to_day_map(remote_rows)),
         "available": _series_for_days(day_list, _rows_to_day_map(available_rows)),
     }
+
+
+async def fetch_admin_board_trend_series(
+    session: AsyncSession,
+    *,
+    tz_name: str | None,
+    days: int = 7,
+) -> dict:
+    """Daily ops series for the admin board side tiles (last *days*).
+
+    * fetched       — jobs created that day
+    * extracted     — extractions that reached completed that day
+    * sheet_posted  — jobs that gained sheet_posted_at that day
+    * pumble_posted — jobs that gained pumble_posted_at that day
+    """
+    from app.models.database import JobExtraction
+    from app.models.schemas import ExtractionStatus
+    from app.services.dashboard_stats import _admin_system_visible_clause
+
+    start_utc, end_utc, day_list = recent_week_bounds_for_timezone(tz_name, days=days)
+    visible = _admin_system_visible_clause()
+    created_day = _local_date_expr(Job.created_at, tz_name)
+
+    fetched_rows = (
+        await session.execute(
+            select(created_day.label("day"), func.count().label("cnt"))
+            .select_from(Job)
+            .where(
+                visible,
+                Job.created_at.is_not(None),
+                Job.created_at >= start_utc,
+                Job.created_at < end_utc,
+            )
+            .group_by(created_day)
+        )
+    ).all()
+
+    ext_ts = func.coalesce(JobExtraction.completed_at, JobExtraction.updated_at)
+    ext_day = _local_date_expr(ext_ts, tz_name)
+    extracted_rows = (
+        await session.execute(
+            select(ext_day.label("day"), func.count().label("cnt"))
+            .select_from(
+                Job.__table__.outerjoin(
+                    JobExtraction.__table__,
+                    Job.extraction_id == JobExtraction.id,
+                )
+            )
+            .where(
+                visible,
+                JobExtraction.status == ExtractionStatus.COMPLETED,
+                ext_ts.is_not(None),
+                ext_ts >= start_utc,
+                ext_ts < end_utc,
+            )
+            .group_by(ext_day)
+        )
+    ).all()
+
+    sheet_day = _local_date_expr(Job.sheet_posted_at, tz_name)
+    sheet_rows = (
+        await session.execute(
+            select(sheet_day.label("day"), func.count().label("cnt"))
+            .select_from(Job)
+            .where(
+                visible,
+                Job.sheet_posted_at.is_not(None),
+                Job.sheet_posted_at >= start_utc,
+                Job.sheet_posted_at < end_utc,
+            )
+            .group_by(sheet_day)
+        )
+    ).all()
+
+    pumble_day = _local_date_expr(Job.pumble_posted_at, tz_name)
+    pumble_rows = (
+        await session.execute(
+            select(pumble_day.label("day"), func.count().label("cnt"))
+            .select_from(Job)
+            .where(
+                visible,
+                Job.pumble_posted_at.is_not(None),
+                Job.pumble_posted_at >= start_utc,
+                Job.pumble_posted_at < end_utc,
+            )
+            .group_by(pumble_day)
+        )
+    ).all()
+
+    labels = [str(d.day) for d in day_list]
+    return {
+        "labels": labels,
+        "fetched": _series_for_days(day_list, _rows_to_day_map(fetched_rows)),
+        "extracted": _series_for_days(day_list, _rows_to_day_map(extracted_rows)),
+        "sheet_posted": _series_for_days(day_list, _rows_to_day_map(sheet_rows)),
+        "pumble_posted": _series_for_days(day_list, _rows_to_day_map(pumble_rows)),
+    }
