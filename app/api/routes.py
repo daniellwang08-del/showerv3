@@ -1732,6 +1732,7 @@ async def get_dashboard_jobs(
                     salary_raw=ext_salary_range or meta.get("salary_raw"),
                     job_type=meta.get("job_type"),
                     from_me=bool(meta.get("submitted_data")),
+                    added_from="manual" if meta.get("submitted_data") else "job_sites",
                 )
             )
 
@@ -1764,11 +1765,26 @@ async def get_dashboard_counts(
     company: str | None = Query(None),
     source: str | None = Query(None),
     remote_only: bool = Query(False),
-    min_match_score: int | None = Query(None, ge=0, le=100),
+    min_match_score: int | None = Query(
+        None,
+        ge=0,
+        le=100,
+        description=(
+            "Ignored for tab badges. Match-score filtering is list-only so "
+            "'All jobs in system' stays aligned with the Total jobs tile."
+        ),
+    ),
     timezone: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ) -> DashboardCountsResponse:
-    """Counts for every dashboard view tab, honoring the active search filters."""
+    """Counts for every dashboard view tab, honoring the active search filters.
+
+    Tab badges intentionally ignore ``min_match_score``. That toolbar filter only
+    narrows the paginated list. Applying it here made ``counts.all`` collapse to
+    the Best-jobs subset (e.g. 837) while the Total jobs tile still showed the
+    full visible pool (e.g. 1133).
+    """
+    del min_match_score  # accepted for backward-compatible clients; not used
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -1776,6 +1792,7 @@ async def get_dashboard_counts(
     day_start, day_end = day_bounds_for_timezone(timezone)
 
     async with get_session() as session:
+        # Preference threshold for the Suggested tab only (not the Match Score toolbar).
         min_score = await UserRepository(session).get_effective_min_match_score(user_id)
 
         shared_filter = [
@@ -1788,13 +1805,10 @@ async def get_dashboard_counts(
             )
         )
 
-        score_clauses, score_needs_join = _dashboard_min_score_clauses(min_match_score)
-
         async def _count(view: str) -> int:
             view_clauses, needs_match_join = _dashboard_view_clauses(
                 view, min_score=min_score, day_start=day_start, day_end=day_end,
             )
-            needs_match_join = needs_match_join or score_needs_join
             stmt = (
                 select(func.count())
                 .select_from(Job)
@@ -1819,7 +1833,7 @@ async def get_dashboard_counts(
                     ResumeBuildResult,
                     (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
                 )
-            stmt = stmt.where(*shared_filter, *view_clauses, *score_clauses)
+            stmt = stmt.where(*shared_filter, *view_clauses)
             return (await session.execute(stmt)).scalar() or 0
 
         return DashboardCountsResponse(

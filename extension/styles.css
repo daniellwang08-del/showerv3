@@ -184,15 +184,36 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
 }
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
-/* Home hub tiles (replaces topic tabs) */
-.home-tiles {
-  display: grid;
-  grid-template-columns: 1.1fr 1fr 1fr;
-  grid-template-rows: minmax(72px, 1fr) minmax(72px, 1fr) minmax(72px, 1fr);
+/* Home hub — platform dashboard + tools */
+.home-board {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   flex: 1;
-  min-height: 240px;
+  min-height: 0;
+}
+.home-board-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 2px;
+}
+.home-tiles {
+  display: grid;
+  gap: 10px;
   align-content: stretch;
+}
+.home-tiles-platform {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(88px, auto);
+  flex: 1;
+  min-height: 200px;
+}
+.home-tiles-tools {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(68px, auto);
+  flex-shrink: 0;
 }
 
 /* Weekly progress chart (hub) */
@@ -272,30 +293,27 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
 }
 .home-tile:active { transform: scale(0.985); }
-.home-tile-progress { grid-column: 1; grid-row: 1; }
-.home-tile-ready { grid-column: 1; grid-row: 2; }
-.home-tile-applied,
-.home-tile-tailor { grid-column: 1; grid-row: 3; }
-.home-tile-today {
-  grid-column: 2 / 4;
-  grid-row: 1 / 3;
+.home-tile-featured {
   background: linear-gradient(160deg, color-mix(in srgb, var(--primary) 14%, var(--panel)), var(--panel));
 }
-.home-tile-stats { grid-column: 2; grid-row: 3; }
-.home-tile-settings { grid-column: 3; grid-row: 3; }
+.home-tiles-tools .home-tile {
+  padding: 12px 8px;
+  gap: 6px;
+}
 .home-tile-ico {
   display: inline-flex;
   color: var(--primary);
 }
 .home-tile-ico svg { width: 22px; height: 22px; display: block; }
-.home-tile-today .home-tile-ico svg { width: 28px; height: 28px; }
+.home-tiles-tools .home-tile-ico svg { width: 18px; height: 18px; }
 .home-tile-label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.01em;
   line-height: 1.25;
 }
-.home-tile-today .home-tile-label { font-size: 16px; }
+.home-tiles-tools .home-tile-label { font-size: 11px; }
+.home-tile-featured .home-tile-label { font-size: 13px; }
 .home-tile-count {
   display: inline-flex;
   align-items: center;
@@ -309,13 +327,18 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
   font-weight: 800;
   color: var(--text);
 }
-.home-tile-today .home-tile-count {
+.home-tile-featured .home-tile-count {
   background: rgba(56, 189, 248, 0.16);
   border-color: rgba(56, 189, 248, 0.35);
   color: var(--primary);
-  font-size: 15px;
-  min-width: 36px;
-  padding: 4px 12px;
+  font-size: 14px;
+  min-width: 32px;
+  padding: 3px 10px;
+}
+.home-tiles-tools .home-tile-count {
+  font-size: 11px;
+  min-width: 24px;
+  padding: 1px 7px;
 }
 .home-tile-count.loading {
   background: transparent;

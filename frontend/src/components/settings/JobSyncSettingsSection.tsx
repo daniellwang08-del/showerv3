@@ -15,7 +15,6 @@ import {
   fetchSyncPlatforms,
   saveJobSyncSchedule,
   stopJobFetch,
-  triggerSync,
 } from '../../api/scraperApi';
 import type { JobSyncSchedule, SyncCheckpoint, SyncPlatform } from '../../types/scraper';
 import { useScraperStore } from '../../stores/scraperStore';
@@ -272,6 +271,17 @@ export function JobSyncSettingsSection() {
     void load();
   }, [load]);
 
+  // Keep syncing state fresh so Stop fetching enables while a run is in progress.
+  useEffect(() => {
+    void checkSyncStatus();
+    const id = window.setInterval(() => {
+      void checkSyncStatus();
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [checkSyncStatus]);
+
+  const canStop = syncing && !stopping;
+
   const togglePlatform = (name: string) => {
     setSelectedPlatforms((prev) => {
       const next = new Set(prev);
@@ -298,29 +308,20 @@ export function JobSyncSettingsSection() {
     setActionMsg('');
     setActionOk(false);
     try {
-      const status = await triggerSync({
+      await useScraperStore.getState().startSync({
         spider_name: 'all',
         sync_mode: 'date_backfill',
         spider_names: selectedList,
         posted_since: postedSince,
         posted_until: postedUntil || undefined,
       });
-      useScraperStore.setState({
-        syncing: true,
-        syncProgress: {
-          spiderName: 'all',
-          current: 0,
-          total: selectedList.length,
-          itemsScraped: 0,
-          itemsNew: 0,
-          elapsedSeconds: 0,
-          message: 'Date-range sync queued…',
-        },
-        syncStatus: status,
-      });
+      const { syncing: stillSyncing, syncStatus: status } = useScraperStore.getState();
       void checkSyncStatus();
+      if (!stillSyncing) {
+        throw new Error('Failed to queue date-range sync.');
+      }
       setActionOk(true);
-      setActionMsg(status.message || 'Date-range sync queued.');
+      setActionMsg(status?.message || 'Date-range sync queued.');
     } catch (err: unknown) {
       setActionOk(false);
       setActionMsg(extractErrorMessage(err, 'Failed to queue date-range sync.'));
@@ -361,6 +362,7 @@ export function JobSyncSettingsSection() {
   };
 
   const handleStopFetching = async () => {
+    if (!canStop) return;
     setStopping(true);
     setStopMsg('');
     setStopOk(false);
@@ -401,44 +403,74 @@ export function JobSyncSettingsSection() {
     : Object.keys(TIMEZONE_LABELS);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-500/30 dark:bg-[#0f172a]/80 md:p-6">
       <div className="flex items-start gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 text-white">
           <CalendarRange size={20} />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-bold text-slate-900">Job sync</h2>
-          <p className="mt-0.5 text-sm leading-snug text-slate-500">
-            Manual date-range sync, plus automatic polling on an interval or daily clock time.
-            Jobs page <strong>Sync All</strong> is still available for one-off incremental updates.
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">Job sync</h2>
+          <p className="mt-0.5 text-sm leading-snug text-slate-500 dark:text-slate-500">
+            Admin controls for platform scraping: stop an in-flight run, schedule automatic polling,
+            or run a one-off date-range backfill. Jobs page <strong className="text-slate-700 dark:text-slate-600">Sync All</strong> remains available for incremental updates.
           </p>
 
           {loading ? (
             <BrandedLoader compact label="Loading sync settings…" className="mt-2" />
           ) : loadError ? (
-            <p className="mt-4 text-sm text-rose-700">{loadError}</p>
+            <p className="mt-4 text-sm text-rose-700 dark:text-rose-300">{loadError}</p>
           ) : (
             <div className="mt-5 space-y-6">
-              {/* ── Stop fetching ── */}
-              <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4">
+              {/* ── Stop fetching (active only while a sync is processing) ── */}
+              <div
+                className={[
+                  'rounded-xl border p-4 transition-opacity',
+                  syncing
+                    ? 'border-rose-300 bg-rose-50/80 dark:border-rose-400/40 dark:bg-rose-500/10'
+                    : 'border-slate-200 bg-slate-50/80 opacity-75 dark:border-slate-500/30 dark:bg-slate-200/5',
+                ].join(' ')}
+              >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold text-rose-900">Stop job fetching</h3>
-                    <p className="mt-0.5 text-xs leading-snug text-rose-800/80">
-                      Interrupt any platform scrape that is running now, skip remaining platforms
-                      in the current run, and turn off scheduled sync so nothing auto-starts again.
+                    <h3
+                      className={[
+                        'text-sm font-bold',
+                        syncing
+                          ? 'text-rose-900 dark:text-rose-200'
+                          : 'text-slate-700 dark:text-slate-600',
+                      ].join(' ')}
+                    >
+                      Stop job fetching
+                    </h3>
+                    <p
+                      className={[
+                        'mt-0.5 text-xs leading-snug',
+                        syncing
+                          ? 'text-rose-800/85 dark:text-rose-200/80'
+                          : 'text-slate-500',
+                      ].join(' ')}
+                    >
+                      {syncing
+                        ? 'Interrupt the scrape that is running now, skip remaining platforms in this run, and turn off scheduled sync so nothing auto-starts again.'
+                        : 'Becomes available while a platform sync is queued or running. When idle, use the schedule toggle below to prevent future auto-runs.'}
                     </p>
                     {syncing && syncProgress && (
-                      <p className="mt-2 text-xs font-medium text-rose-800">
-                        Currently syncing: {syncProgress.message || syncProgress.spiderName || 'in progress'}
+                      <p className="mt-2 text-xs font-medium text-rose-800 dark:text-rose-200">
+                        Currently syncing:{' '}
+                        {syncProgress.message || syncProgress.spiderName || 'in progress'}
                       </p>
                     )}
                   </div>
                   <button
                     type="button"
                     onClick={() => void handleStopFetching()}
-                    disabled={stopping}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!canStop}
+                    title={
+                      syncing
+                        ? 'Stop the in-flight job sync'
+                        : 'Available only while a job sync is processing'
+                    }
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-rose-600 dark:hover:bg-rose-500"
                   >
                     {stopping ? (
                       <Loader2 size={14} className="animate-spin" />

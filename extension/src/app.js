@@ -25,26 +25,51 @@ let state = {
   cache: null,
   sync: null, // { changed: string[] }
   sessions: [],
-  queue: [], // ready-to-apply jobs (resume built, scored, not yet applied)
+  queue: [], // all jobs (dashboard view=all)
+  readyQueue: [], // ready to apply (resume DOCX completed)
+  bestQueue: [], // strong matches (score >= 75)
+  remoteQueue: [], // remote-only jobs
+  mineQueue: [], // jobs posted by me
   todayQueue: [], // jobs added today (matches dashboard view=today)
   todayPlatformQueue: [], // today's scraped/platform jobs (not user-submitted)
   todayMineQueue: [], // today's user-submitted jobs
   todayCounts: { all: 0, platform: 0, mine: 0 },
   // Authoritative server totals (same as dashboard view switcher badges).
   dashboardCounts: { all: 0, today: 0, mine: 0, suggested: 0, applied_today: 0 },
+  // Platform dashboard tile totals (from /scraper/stats + dashboard counts).
+  platformCounts: {
+    total: 0,
+    ready: 0,
+    best: 0,
+    today: 0,
+    remote: 0,
+    mine: 0,
+  },
   weeklyProgress: null, // { series, totals, min_match_score } from /jobs/dashboard/weekly-progress
   statsPeriod: "week", // "day" | "week" | "month"
   statsProgress: null, // period-scoped series for Statistics page
   statsLoading: false,
   scraperStats: null, // from /scraper/stats
   appliedQueue: [], // jobs applied to today (most recent first)
-  homeTab: "hub", // "hub" | "progress" | "today" | "ready" | "tailor" | "stats" | "settings"
+  // Which Jobs list the user opened chat from — Complete & Next advances in this list.
+  applyListContext: null, // { key, view?, remote_only?, min_match_score?, jobIds: string[] }
+  homeTab: "hub", // hub | progress | today | all | ready | best | remote | mine | tailor | stats | settings
   todaySubTab: "all", // "all" | "platform" | "mine" — narrows the New today list
   tailorSubTab: "making", // "making" | "ready" — in-progress vs generated resumes
   tailorHits: [], // unified resume search hits (library + job builds)
   tailorHitsLoading: false,
   tailorRuns: [], // [{ id, kind, jobId?, title, company, stage, label, status, error?, resumeId? }]
-  pageByTab: { progress: 1, today: 1, ready: 1, tailor: 1 }, // 1-based page per list section
+  pageByTab: {
+    progress: 1,
+    today: 1,
+    all: 1,
+    ready: 1,
+    best: 1,
+    remote: 1,
+    mine: 1,
+    tailor: 1,
+  }, // 1-based page per list section
+  BEST_MATCH_SCORE: 75,
   pageSize: 25, // rows per page, user-selectable
   listFilters: {
     title: "",
@@ -699,7 +724,13 @@ async function goHome() {
   } catch {
     /* ignore */
   }
-  setState({ view: "home", job: null, reportNotice: null, homeTab: "hub" });
+  setState({
+    view: "home",
+    job: null,
+    reportNotice: null,
+    homeTab: "hub",
+    applyListContext: null,
+  });
   await Promise.all([loadQueue(), checkSync()]);
   startHomePolling();
 }
@@ -848,11 +879,21 @@ async function fetchDashboardPages({
   sort = "created_at",
   order = "desc",
   min_match_score,
+  remote_only = false,
   maxPages = 50,
 } = {}) {
   const timezone = localTimezone();
   const first = await api
-    .getDashboard({ view, per_page: 200, page: 1, sort, order, timezone, min_match_score })
+    .getDashboard({
+      view,
+      per_page: 200,
+      page: 1,
+      sort,
+      order,
+      timezone,
+      min_match_score,
+      remote_only,
+    })
     .catch(() => ({ items: [], pages: 1, total: 0 }));
   let items = first.items || [];
   const total = first.total != null ? first.total : items.length;
@@ -869,6 +910,7 @@ async function fetchDashboardPages({
             order,
             timezone,
             min_match_score,
+            remote_only,
           })
           .catch(() => ({ items: [] }))
       )
@@ -928,6 +970,9 @@ function homeDataUnchanged(prev, next) {
   if (JSON.stringify(prev.dashboardCounts || {}) !== JSON.stringify(next.dashboardCounts || {})) {
     return false;
   }
+  if (JSON.stringify(prev.platformCounts || {}) !== JSON.stringify(next.platformCounts || {})) {
+    return false;
+  }
   if (JSON.stringify(prev.weeklyProgress || null) !== JSON.stringify(next.weeklyProgress || null)) {
     return false;
   }
@@ -936,6 +981,10 @@ function homeDataUnchanged(prev, next) {
   }
   if (sessionsListSig(prev.sessions) !== sessionsListSig(next.sessions)) return false;
   if (jobsListSig(prev.queue) !== jobsListSig(next.queue)) return false;
+  if (jobsListSig(prev.readyQueue) !== jobsListSig(next.readyQueue)) return false;
+  if (jobsListSig(prev.bestQueue) !== jobsListSig(next.bestQueue)) return false;
+  if (jobsListSig(prev.remoteQueue) !== jobsListSig(next.remoteQueue)) return false;
+  if (jobsListSig(prev.mineQueue) !== jobsListSig(next.mineQueue)) return false;
   if (jobsListSig(prev.todayQueue) !== jobsListSig(next.todayQueue)) return false;
   if (jobsListSig(prev.appliedQueue) !== jobsListSig(next.appliedQueue)) return false;
   return true;
@@ -948,14 +997,39 @@ async function loadQueue({ silent = false } = {}) {
   try {
     const score = minScoreParam();
     const timezone = localTimezone();
-    const [sessions, todayPage, allPage, appliedPage, counts, weekly, scraperStats, pumbleCfg] =
-      await Promise.all([
+    const bestFloor = state.BEST_MATCH_SCORE || 75;
+    const [
+      sessions,
+      todayPage,
+      allPage,
+      readyPage,
+      bestPage,
+      remotePage,
+      minePage,
+      appliedPage,
+      counts,
+      weekly,
+      scraperStats,
+      pumbleCfg,
+    ] = await Promise.all([
       api.listSessions("in_progress").catch(() => []),
-      // Same server filter as the web dashboard "Today's new jobs" tab.
       fetchDashboardPages({ view: "today", sort: "created_at", order: "desc", min_match_score: score }),
-      // Same server filter as the web dashboard "All jobs in system" tab.
       fetchDashboardPages({ view: "all", sort: "created_at", order: "desc", min_match_score: score }),
-      // Applied today — server timezone day bounds (not a client-side scan of view=all).
+      fetchDashboardPages({ view: "ready", sort: "match_score", order: "desc", min_match_score: score }),
+      fetchDashboardPages({
+        view: "all",
+        sort: "match_score",
+        order: "desc",
+        min_match_score: bestFloor,
+      }),
+      fetchDashboardPages({
+        view: "all",
+        sort: "created_at",
+        order: "desc",
+        min_match_score: score,
+        remote_only: true,
+      }),
+      fetchDashboardPages({ view: "mine", sort: "created_at", order: "desc", min_match_score: score }),
       fetchDashboardPages({
         view: "applied_today",
         sort: "applied_at",
@@ -975,10 +1049,20 @@ async function loadQueue({ silent = false } = {}) {
     const dashboardCounts = {
       all: counts && counts.all != null ? counts.all : allPage.total,
       today: counts && counts.today != null ? counts.today : todayPage.total,
-      mine: counts && counts.mine != null ? counts.mine : todayMine.length,
+      mine: counts && counts.mine != null ? counts.mine : minePage.total,
       suggested: counts && counts.suggested != null ? counts.suggested : 0,
       applied_today:
         counts && counts.applied_today != null ? counts.applied_today : appliedPage.total,
+    };
+
+    const ss = scraperStats || {};
+    const platformCounts = {
+      total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
+      ready: ss.ready_jobs != null ? ss.ready_jobs : readyPage.total,
+      best: ss.best_jobs != null ? ss.best_jobs : bestPage.total,
+      today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
+      remote: ss.total_remote != null ? ss.total_remote : remotePage.total,
+      mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
     };
 
     const pumbleConfigured = Boolean(
@@ -995,6 +1079,10 @@ async function loadQueue({ silent = false } = {}) {
     const nextHome = {
       sessions: sessions || [],
       queue: allPage.items || [],
+      readyQueue: readyPage.items || [],
+      bestQueue: bestPage.items || [],
+      remoteQueue: remotePage.items || [],
+      mineQueue: minePage.items || [],
       todayQueue: todayAll,
       todayPlatformQueue: todayPlatform,
       todayMineQueue: todayMine,
@@ -1004,6 +1092,7 @@ async function loadQueue({ silent = false } = {}) {
         mine: todayMine.length,
       },
       dashboardCounts,
+      platformCounts,
       weeklyProgress: weekly || state.weeklyProgress,
       scraperStats: scraperStats || state.scraperStats,
       appliedQueue: appliedPage.items || [],
@@ -1019,12 +1108,26 @@ async function loadQueue({ silent = false } = {}) {
     const syncedRuns = syncTailorRunsFromJobs([
       ...(nextHome.queue || []),
       ...(nextHome.todayQueue || []),
+      ...(nextHome.readyQueue || []),
     ]);
 
     setState({
       ...nextHome,
       ...(syncedRuns ? { tailorRuns: syncedRuns } : {}),
-      ...(silent ? {} : { pageByTab: { progress: 1, today: 1, ready: 1, tailor: 1 } }),
+      ...(silent
+        ? {}
+        : {
+            pageByTab: {
+              progress: 1,
+              today: 1,
+              all: 1,
+              ready: 1,
+              best: 1,
+              remote: 1,
+              mine: 1,
+              tailor: 1,
+            },
+          }),
       queueLoading: false,
     });
   } catch (err) {
@@ -1087,6 +1190,120 @@ async function consumePendingWebappJob() {
   } catch (err) {
     console.warn("consumePendingWebappJob failed", err);
   }
+}
+
+/**
+ * List-context for Complete & Next — mirrors the hub section the user opened.
+ * jobIds preserve the filtered UI order so "next" matches what they see.
+ */
+function applyContextForTab(tabId, jobIds) {
+  const score = minScoreParam();
+  const bestFloor = state.BEST_MATCH_SCORE || 75;
+  const ids = (jobIds || []).map(String);
+  switch (tabId) {
+    case "best":
+      return { key: "best", view: "all", min_match_score: bestFloor, jobIds: ids };
+    case "remote":
+      return {
+        key: "remote",
+        view: "all",
+        remote_only: true,
+        min_match_score: score,
+        jobIds: ids,
+      };
+    case "mine":
+      return { key: "mine", view: "mine", min_match_score: score, jobIds: ids };
+    case "today":
+      return { key: "today", view: "today", min_match_score: score, jobIds: ids };
+    case "all":
+      return { key: "all", view: "all", min_match_score: score, jobIds: ids };
+    case "ready":
+      return { key: "ready", view: "ready", min_match_score: score, jobIds: ids };
+    case "progress":
+      return { key: "progress", view: "ready", min_match_score: score, jobIds: ids };
+    default:
+      return { key: "ready", view: "ready", min_match_score: score, jobIds: ids };
+  }
+}
+
+/** Rebind card clicks so Complete & Next advances within this visible list. */
+function bindApplyListContext(tabId, cards) {
+  const jobIds = (cards || []).map((c) => String(c.jobId));
+  const ctx = applyContextForTab(tabId, jobIds);
+  return (cards || []).map((c) => ({
+    ...c,
+    onClick: () => {
+      setState({ applyListContext: { ...ctx, jobIds } });
+      void openJob(c.jobId, { redirect: true });
+    },
+  }));
+}
+
+/**
+ * Resolve the next job after Complete & Next / report-invalid.
+ * Prefers the exact list the user opened; falls back to /assistant/next-job
+ * with the same view filters.
+ */
+async function resolveNextJob(afterJobId) {
+  const ctx = state.applyListContext;
+  const after = String(afterJobId || "");
+  if (ctx && Array.isArray(ctx.jobIds) && ctx.jobIds.length) {
+    const original = ctx.jobIds.map(String).filter(Boolean);
+    const idxInOriginal = original.indexOf(after);
+    let nextId = null;
+    if (idxInOriginal >= 0) {
+      // Strict forward advance within the opened list (no wrap-around).
+      for (let i = idxInOriginal + 1; i < original.length; i++) {
+        if (original[i] && original[i] !== after) {
+          nextId = original[i];
+          break;
+        }
+      }
+    } else {
+      // Current job not in the cached list — take the first remaining entry.
+      nextId = original.find((id) => id !== after) || null;
+    }
+    if (nextId) {
+      const nextJobIds = original.filter((id) => id !== after && id !== nextId);
+      return {
+        job_id: nextId,
+        remaining: nextJobIds.length,
+        source: "list",
+        nextJobIds,
+      };
+    }
+    // Exhausted this list — do not jump into a different view.
+    return { job_id: null, remaining: 0, source: "list", nextJobIds: [] };
+  }
+
+  const opts = { timezone: localTimezone() };
+  if (ctx) {
+    if (ctx.view) opts.view = ctx.view;
+    if (ctx.remote_only) opts.remote_only = true;
+    if (ctx.min_match_score != null && ctx.min_match_score !== "") {
+      opts.min_match_score = ctx.min_match_score;
+    }
+  } else {
+    opts.view = "ready";
+  }
+  const nx = await api.nextJob(afterJobId, opts);
+  return nx
+    ? { ...nx, source: "api", nextJobIds: null }
+    : { job_id: null, remaining: 0, source: "api", nextJobIds: null };
+}
+
+function listContextLabel(ctx) {
+  if (!ctx || !ctx.key) return "ready";
+  const labels = {
+    ready: "ready",
+    best: "best",
+    remote: "remote",
+    mine: "posted by me",
+    today: "today",
+    all: "all jobs",
+    progress: "in progress",
+  };
+  return labels[ctx.key] || ctx.key;
 }
 
 async function openJob(jobId, { redirect = false, keepReportNotice = false } = {}) {
@@ -1443,14 +1660,24 @@ async function completeJob({ next }) {
     }
     if (next) {
       try {
-        const nx = await api.nextJob(jobId);
+        const listLabel = listContextLabel(state.applyListContext);
+        const nx = await resolveNextJob(jobId);
         if (nx && nx.job_id) {
+          if (state.applyListContext && Array.isArray(nx.nextJobIds)) {
+            setState({
+              applyListContext: {
+                ...state.applyListContext,
+                jobIds: nx.nextJobIds,
+              },
+            });
+          }
           await openJob(nx.job_id, { redirect: true });
-          toast(`Loaded next job (${nx.remaining} ready remaining).`);
+          const rem = nx.remaining != null ? nx.remaining : 0;
+          toast(`Loaded next ${listLabel} job (${rem} remaining).`);
           advancedOk = true;
           return;
         }
-        toast("No more ready-to-apply jobs.");
+        toast(`No more jobs in this list (${listLabel}).`);
         await goHome();
         advancedOk = true;
       } catch (err) {
@@ -1575,15 +1802,25 @@ async function confirmReportInvalid() {
   const notice = { reportedTitle, reportedCompany };
   setState({ modal: null, reportNotice: notice });
   try {
-    const nx = await api.nextJob(jobId);
+    const nx = await resolveNextJob(jobId);
     if (nx && nx.job_id) {
+      if (state.applyListContext && Array.isArray(nx.nextJobIds)) {
+        setState({
+          applyListContext: {
+            ...state.applyListContext,
+            jobIds: nx.nextJobIds,
+          },
+        });
+      }
       await openJob(nx.job_id, { redirect: true, keepReportNotice: true });
       return;
     }
   } catch {
     /* fall through to Home */
   }
-  toast("Reported as expired. No more ready jobs.");
+  toast(
+    `Reported as expired. No more jobs in this list (${listContextLabel(state.applyListContext)}).`
+  );
   await goHome();
 }
 
@@ -3206,8 +3443,12 @@ function renderHome() {
 
 const HOME_SECTION_META = {
   progress: { title: "In progress", empty: "No applications in progress yet." },
-  today: { title: "Today new jobs", empty: "No jobs were added today." },
-  ready: { title: "All jobs", empty: null },
+  today: { title: "Today's jobs", empty: "No jobs were added today." },
+  all: { title: "Total jobs", empty: "No jobs in the system yet." },
+  ready: { title: "Ready to apply", empty: "No ready-to-apply jobs yet." },
+  best: { title: "Best jobs", empty: "No best-match jobs yet." },
+  remote: { title: "Remote jobs", empty: "No remote jobs yet." },
+  mine: { title: "Posted by me", empty: "You have not posted any jobs yet." },
   tailor: { title: "Tailor resume", empty: null },
   stats: { title: "Statistics", empty: null },
   settings: { title: "Settings", empty: null },
@@ -3329,17 +3570,18 @@ function buildWeeklyChartSvg(series, opts = {}) {
 
 function renderHomeTiles() {
   const loading = !!state.queueLoading;
+  const pc = state.platformCounts || {};
   const count = (n) =>
     loading
       ? el("span", { class: "home-tile-count loading" }, el("span", { class: "spinner-sm" }))
-      : el("span", { class: "home-tile-count" }, String(n));
+      : el("span", { class: "home-tile-count" }, String(n ?? 0));
 
-  const tile = ({ id, label, countNode, variant, iconSvg }) =>
+  const tile = ({ id, label, countNode, variant, iconSvg, featured }) =>
     el(
       "button",
       {
         type: "button",
-        class: `home-tile home-tile-${variant || id}`,
+        class: `home-tile home-tile-${variant || id}${featured ? " home-tile-featured" : ""}`,
         onclick: () => openHomeSection(id),
       },
       [
@@ -3349,42 +3591,80 @@ function renderHomeTiles() {
       ]
     );
 
-  return el("div", { class: "home-tiles", "aria-label": "Home" }, [
-    tile({
-      id: "progress",
-      label: "In progress",
-      countNode: count(state.sessions.length),
-      iconSvg: ICON_LIST,
-    }),
-    tile({
-      id: "today",
-      label: "Today new jobs",
-      countNode: count(state.dashboardCounts.today || state.todayCounts.all || state.todayQueue.length),
-      iconSvg: ICON_STAR,
-    }),
-    tile({
-      id: "ready",
-      label: "All jobs",
-      countNode: count(state.dashboardCounts.all || state.queue.length),
-      iconSvg: ICON_BRIEFCASE,
-    }),
-    tile({
-      id: "tailor",
-      label: "Tailor resume",
-      countNode: count(tailorInProgressJobs().length),
-      iconSvg: ICON_DOC,
-    }),
-    tile({
-      id: "stats",
-      label: "Statistics",
-      iconSvg: ICON_CHART,
-    }),
-    tile({
-      id: "settings",
-      label: "Settings",
-      iconSvg: ICON_GEAR,
-    }),
-  ]);
+  const wrap = el("div", { class: "home-board", "aria-label": "Home" });
+  wrap.appendChild(
+    el("div", { class: "home-board-label muted small" }, "Platform dashboard")
+  );
+  wrap.appendChild(
+    el("div", { class: "home-tiles home-tiles-platform", "aria-label": "Job lists" }, [
+      tile({
+        id: "all",
+        label: "Total jobs",
+        countNode: count(pc.total),
+        iconSvg: ICON_BRIEFCASE,
+      }),
+      tile({
+        id: "ready",
+        label: "Ready to apply",
+        countNode: count(pc.ready),
+        iconSvg: ICON_CHECK,
+        featured: true,
+      }),
+      tile({
+        id: "best",
+        label: "Best jobs",
+        countNode: count(pc.best),
+        iconSvg: ICON_STAR,
+        featured: true,
+      }),
+      tile({
+        id: "today",
+        label: "Today's jobs",
+        countNode: count(pc.today),
+        iconSvg: ICON_BOLT,
+      }),
+      tile({
+        id: "remote",
+        label: "Remote jobs",
+        countNode: count(pc.remote),
+        iconSvg: ICON_CHIP,
+      }),
+      tile({
+        id: "mine",
+        label: "Posted by me",
+        countNode: count(pc.mine),
+        iconSvg: ICON_LIST,
+      }),
+    ])
+  );
+  wrap.appendChild(el("div", { class: "home-board-label muted small" }, "Tools"));
+  wrap.appendChild(
+    el("div", { class: "home-tiles home-tiles-tools", "aria-label": "Tools" }, [
+      tile({
+        id: "progress",
+        label: "In progress",
+        countNode: count(state.sessions.length),
+        iconSvg: ICON_LIST,
+      }),
+      tile({
+        id: "tailor",
+        label: "Tailor resume",
+        countNode: count(tailorInProgressJobs().length),
+        iconSvg: ICON_DOC,
+      }),
+      tile({
+        id: "stats",
+        label: "Statistics",
+        iconSvg: ICON_CHART,
+      }),
+      tile({
+        id: "settings",
+        label: "Settings",
+        iconSvg: ICON_GEAR,
+      }),
+    ])
+  );
+  return wrap;
 }
 
 function renderTodaySubTabs() {
@@ -3503,7 +3783,16 @@ function getListFilters() {
 }
 
 function resetListPages() {
-  return { progress: 1, today: 1, ready: 1, tailor: 1 };
+  return {
+    progress: 1,
+    today: 1,
+    all: 1,
+    ready: 1,
+    best: 1,
+    remote: 1,
+    mine: 1,
+    tailor: 1,
+  };
 }
 
 function commitListFilters(patch) {
@@ -3811,9 +4100,10 @@ function renderListFilterBar(totalBefore, totalAfter, { resumeMode = false } = {
 }
 
 /** Filter bar + paginated list for every job list page. */
-function renderFilteredJobList(tabId, cards, emptyMsg, { prepend } = {}) {
+function renderFilteredJobList(tabId, cards, emptyMsg, { prepend, bindContext = true } = {}) {
   const all = cards || [];
-  const filtered = filterAndRankCards(all);
+  let filtered = filterAndRankCards(all);
+  if (bindContext) filtered = bindApplyListContext(tabId, filtered);
   const empty =
     all.length && !filtered.length ? "No jobs match these filters." : emptyMsg;
   const section = el("div", { class: "filtered-job-list tab-panel" });
@@ -3828,6 +4118,9 @@ function renderFilteredJobList(tabId, cards, emptyMsg, { prepend } = {}) {
 }
 
 function renderActiveTab() {
+  const scoreHint =
+    state.minScore > 0 ? `No jobs at or above match score ${state.minScore}.` : null;
+  const bestFloor = state.BEST_MATCH_SCORE || 75;
   switch (state.homeTab) {
     case "progress":
       return renderFilteredJobList(
@@ -3859,6 +4152,40 @@ function renderActiveTab() {
         todayEmptyMessage(),
         { prepend: renderTodaySubTabs() }
       );
+    case "all":
+      return renderFilteredJobList(
+        "all",
+        state.queue.map((j) => jobToCard(j)),
+        scoreHint || "No jobs in the system yet.",
+        { prepend: renderMinScoreControl() }
+      );
+    case "ready":
+      return renderFilteredJobList(
+        "ready",
+        (state.readyQueue || []).map((j) => jobToCard(j)),
+        scoreHint || "No ready-to-apply jobs yet (tailored resume DOCX completed).",
+        { prepend: renderMinScoreControl() }
+      );
+    case "best":
+      return renderFilteredJobList(
+        "best",
+        (state.bestQueue || []).map((j) => jobToCard(j)),
+        `No jobs with match score ≥ ${bestFloor}.`,
+        { prepend: renderMinScoreControl() }
+      );
+    case "remote":
+      return renderFilteredJobList(
+        "remote",
+        (state.remoteQueue || []).map((j) => jobToCard(j)),
+        scoreHint || "No remote jobs yet.",
+        { prepend: renderMinScoreControl() }
+      );
+    case "mine":
+      return renderFilteredJobList(
+        "mine",
+        (state.mineQueue || []).map((j) => jobToCard(j)),
+        "You have not posted any jobs yet."
+      );
     case "applied":
     case "tailor":
       return renderTailorResume();
@@ -3866,14 +4193,11 @@ function renderActiveTab() {
       return renderStatistics();
     case "settings":
       return renderSettings();
-    case "ready":
     default:
       return renderFilteredJobList(
-        "ready",
+        "all",
         state.queue.map((j) => jobToCard(j)),
-        state.minScore > 0
-          ? `No jobs at or above match score ${state.minScore}.`
-          : "No jobs in the system yet.",
+        scoreHint || "No jobs in the system yet.",
         { prepend: renderMinScoreControl() }
       );
   }
@@ -4075,6 +4399,8 @@ async function openTailoredJob(j) {
       await openResumeBuilderTab();
       return;
     }
+    const readyIds = (state.readyQueue || []).map((row) => String(row.id));
+    setState({ applyListContext: applyContextForTab("ready", readyIds) });
     await openJob(j.id, { redirect: true });
   } catch (err) {
     toast((err && err.message) || "Could not open tailored resume.");

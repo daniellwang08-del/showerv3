@@ -5,6 +5,8 @@ import type {
   SpiderInfo,
   SyncStatus,
   SyncProgress,
+  SyncResultNotice,
+  SyncCompletionSummary,
   SyncTriggerOptions,
 } from '../types/scraper';
 import {
@@ -210,6 +212,8 @@ interface ScraperState {
   syncStatus: SyncStatus | null;
   syncing: boolean;
   syncProgress: SyncProgress | null;
+  /** Closable post-sync summary under the Jobs Dashboard header. */
+  syncNotice: SyncResultNotice | null;
 
   /** Recent scrape runs, newest first - drives "last synced" timestamps. */
   lastSyncRuns: ScrapeRun[];
@@ -260,13 +264,20 @@ interface ScraperState {
     total?: number;
     items_scraped?: number;
     items_new?: number;
+    items_updated?: number;
     elapsed_seconds?: number;
     success?: boolean;
     error?: string;
     /** Optional human-readable detail (e.g. stop-fetch confirmation). */
     message?: string;
+    summary?: Record<string, unknown>;
+    sync_mode?: string;
+    platforms?: string[];
+    posted_since?: string | null;
+    posted_until?: string | null;
   }) => void;
   startSync: (options?: string | SyncTriggerOptions) => Promise<void>;
+  dismissSyncNotice: () => void;
 
   rerunJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
   deleteJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
@@ -309,6 +320,141 @@ function localTimezone(): string {
   }
 }
 
+let _syncNoticeCounter = 0;
+
+type PendingSyncContext = {
+  spiderName: string;
+  syncMode: string;
+  postedSince: string | null;
+  postedUntil: string | null;
+  platforms: string[];
+};
+
+let _pendingSyncContext: PendingSyncContext | null = null;
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((v) => String(v)).filter(Boolean);
+}
+
+function buildSyncResultNotice(event: {
+  type: string;
+  spider_name?: string;
+  sync_mode?: string;
+  platforms?: string[];
+  posted_since?: string | null;
+  posted_until?: string | null;
+  items_scraped?: number;
+  items_new?: number;
+  items_updated?: number;
+  success?: boolean;
+  error?: string;
+  message?: string;
+  summary?: Record<string, unknown> | SyncCompletionSummary;
+}): SyncResultNotice {
+  const summary = (event.summary ?? {}) as SyncCompletionSummary;
+  const pending = _pendingSyncContext;
+  const results = Array.isArray(summary.results) ? summary.results : [];
+
+  const platformsFromResults = results
+    .map((r) => String(r.spider || ''))
+    .filter(Boolean);
+  const platforms =
+    asStringArray(event.platforms).length > 0
+      ? asStringArray(event.platforms)
+      : asStringArray(summary.platforms).length > 0
+        ? asStringArray(summary.platforms)
+        : platformsFromResults.length > 0
+          ? platformsFromResults
+          : pending?.platforms?.length
+            ? pending.platforms
+            : event.spider_name && event.spider_name !== 'all'
+              ? [event.spider_name]
+              : pending?.spiderName && pending.spiderName !== 'all'
+                ? [pending.spiderName]
+                : [];
+
+  const itemsScraped =
+    event.items_scraped ??
+    summary.items_scraped ??
+    results.reduce((n, r) => n + (Number(r.items_scraped) || 0), 0) ??
+    0;
+  const itemsNew =
+    event.items_new ??
+    summary.items_new ??
+    results.reduce((n, r) => n + (Number(r.items_new) || 0), 0) ??
+    0;
+  const itemsUpdated =
+    event.items_updated ??
+    summary.items_updated ??
+    results.reduce((n, r) => n + (Number(r.items_updated) || 0), 0) ??
+    0;
+
+  const syncMode =
+    event.sync_mode ||
+    summary.sync_mode ||
+    pending?.syncMode ||
+    'incremental';
+  const postedSince =
+    event.posted_since ??
+    summary.posted_since ??
+    pending?.postedSince ??
+    null;
+  const postedUntil =
+    event.posted_until ??
+    summary.posted_until ??
+    pending?.postedUntil ??
+    null;
+
+  const stopped = event.type === 'sync_failed' && event.error === 'stopped';
+  const failedCount = Number(summary.failed ?? 0);
+  const succeededCount = Number(summary.succeeded ?? 0);
+  let kind: SyncResultNotice['kind'] = 'success';
+  if (event.type === 'sync_failed') {
+    kind = stopped ? 'warning' : 'error';
+  } else if (failedCount > 0 && succeededCount > 0) {
+    kind = 'warning';
+  } else if (failedCount > 0 && succeededCount === 0) {
+    kind = 'error';
+  }
+
+  const scraped = Number(itemsScraped) || 0;
+  const sources =
+    platforms.length === 0
+      ? 'all platforms'
+      : platforms.length === 1
+        ? platforms[0]
+        : `${platforms.length} platforms`;
+  let message: string;
+  if (stopped) {
+    message =
+      scraped > 0
+        ? `Stopped after fetching ${scraped} job${scraped === 1 ? '' : 's'} from ${sources}.`
+        : 'Job fetching was stopped.';
+  } else if (kind === 'error') {
+    message = event.message || event.error || summary.message || summary.error || 'Sync failed.';
+  } else if (scraped === 0) {
+    message = `Sync completed — no listings fetched from ${sources}.`;
+  } else {
+    message = `Fetched ${scraped} job${scraped === 1 ? '' : 's'} from ${sources}.`;
+  }
+
+  return {
+    id: `sync-notice-${++_syncNoticeCounter}`,
+    kind,
+    itemsScraped: scraped,
+    itemsNew: Number(itemsNew) || 0,
+    itemsUpdated: Number(itemsUpdated) || 0,
+    platforms,
+    syncMode,
+    postedSince: postedSince ? String(postedSince) : null,
+    postedUntil: postedUntil ? String(postedUntil) : null,
+    error: event.error ? String(event.error) : summary.error ? String(summary.error) : null,
+    message,
+    completedAt: new Date().toISOString(),
+  };
+}
+
 function extractErrorMessage(err: unknown, fallback: string): string {
   if (err && typeof err === 'object') {
     const anyErr = err as { response?: { data?: { detail?: string } }; message?: string };
@@ -335,6 +481,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   syncStatus: null,
   syncing: false,
   syncProgress: null,
+  syncNotice: null,
 
   lastSyncRuns: [],
 
@@ -390,13 +537,15 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   loadCounts: async () => {
     const s = get();
     try {
+      // Tab badges intentionally omit min_match_score: that filter is list-only.
+      // Sending it made "All jobs in system" match Best jobs (score ≥ 75) while
+      // the Total jobs tile still reported the full visible pool.
       const counts = await fetchDashboardCounts({
         source: s.sourceFilter || undefined,
         q: s.searchQuery || undefined,
         title: s.titleFilter || undefined,
         company: s.companyFilter || undefined,
         remote_only: s.remoteOnly || undefined,
-        min_match_score: s.minScore || undefined,
         timezone: localTimezone(),
       });
       set({ counts });
@@ -406,8 +555,11 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   },
 
   setView: (view) => {
-    if (get().view === view) return;
-    set({ view, page: 1 });
+    const s = get();
+    // Switching Viewing tabs clears the Match Score toolbar filter so
+    // "All jobs in system" shows the full pool, not a leftover Best-jobs slice.
+    if (s.view === view && s.minScore === 0) return;
+    set({ view, minScore: 0, page: 1 });
     get().loadJobs();
   },
 
@@ -512,20 +664,32 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     try {
       const status = await fetchSyncStatus();
       const running = status.status === 'running';
+      const prev = get();
+      // GET /sync/status only reports running|idle. After enqueue the worker may not
+      // have a scrape_runs row yet — keep optimistic "queued" syncing so Stop stays enabled.
+      const queuedOptimistic =
+        !running &&
+        prev.syncing &&
+        Boolean(prev.syncProgress) &&
+        (prev.syncStatus?.status === 'queued' ||
+          /queued|queueing/i.test(prev.syncProgress?.message ?? ''));
+      const syncing = running || queuedOptimistic;
       set({
-        syncStatus: status,
-        syncing: running,
+        syncStatus: running || !queuedOptimistic ? status : prev.syncStatus,
+        syncing,
         syncProgress: running
           ? {
               spiderName: status.spider_name,
-              current: get().syncProgress?.current ?? 0,
-              total: get().syncProgress?.total ?? 0,
+              current: prev.syncProgress?.current ?? 0,
+              total: prev.syncProgress?.total ?? 0,
               itemsScraped: status.items_scraped ?? 0,
               itemsNew: status.items_new ?? 0,
               elapsedSeconds: status.elapsed_seconds ?? 0,
               message: status.message,
             }
-          : null,
+          : queuedOptimistic
+            ? prev.syncProgress
+            : null,
       });
     } catch {
       /* ignore */
@@ -534,6 +698,18 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
 
   handleSyncWsEvent: (event) => {
     if (event.type === 'sync_started') {
+      const platforms = asStringArray(event.platforms);
+      if (!_pendingSyncContext) {
+        _pendingSyncContext = {
+          spiderName: event.spider_name || 'all',
+          syncMode: event.sync_mode || 'incremental',
+          postedSince: event.posted_since ?? null,
+          postedUntil: event.posted_until ?? null,
+          platforms,
+        };
+      } else if (platforms.length > 0) {
+        _pendingSyncContext = { ..._pendingSyncContext, platforms };
+      }
       set({
         syncing: true,
         syncProgress: {
@@ -620,22 +796,41 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
 
     if (event.type === 'sync_completed' || event.type === 'sync_failed') {
       const stopped = event.type === 'sync_failed' && event.error === 'stopped';
+      const notice = buildSyncResultNotice(event);
+      // Prefer live activity counters when the completion summary omitted counts
+      // (older workers / interrupted runs).
+      const prevProgress = get().syncProgress;
+      if (
+        prevProgress &&
+        notice.itemsScraped === 0 &&
+        (prevProgress.itemsScraped > 0 || prevProgress.itemsNew > 0)
+      ) {
+        notice.itemsScraped = prevProgress.itemsScraped;
+        notice.itemsNew = prevProgress.itemsNew;
+      }
+      _pendingSyncContext = null;
       set({
         syncing: false,
         syncProgress: null,
+        syncNotice: notice,
         syncStatus: {
           status: 'idle',
           spider_name: null,
-          message: event.type === 'sync_completed'
-            ? 'Sync completed.'
-            : stopped
-              ? (event.message || 'Job fetching stopped.')
-              : (event.error ? `Sync failed: ${event.error}` : 'Sync failed.'),
+          message: notice.message || (
+            event.type === 'sync_completed'
+              ? 'Sync completed.'
+              : stopped
+                ? (event.message || 'Job fetching stopped.')
+                : (event.error ? `Sync failed: ${event.error}` : 'Sync failed.')
+          ),
         },
       });
       void get().loadLastSyncRuns();
+      void get().loadStats({ silent: true });
     }
   },
+
+  dismissSyncNotice: () => set({ syncNotice: null }),
 
   startSync: async (options: string | SyncTriggerOptions = 'all') => {
     const opts: SyncTriggerOptions =
@@ -651,12 +846,26 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     const spiderName = opts.spider_name || 'all';
     const dated =
       opts.sync_mode === 'date_backfill' && Boolean(opts.posted_since?.trim());
+    const platforms =
+      opts.spider_names && opts.spider_names.length > 0
+        ? [...opts.spider_names]
+        : spiderName !== 'all'
+          ? [spiderName]
+          : [];
+    _pendingSyncContext = {
+      spiderName,
+      syncMode: opts.sync_mode || 'incremental',
+      postedSince: opts.posted_since?.trim() || null,
+      postedUntil: opts.posted_until?.trim() || null,
+      platforms,
+    };
     set({
       syncing: true,
+      syncNotice: null,
       syncProgress: {
         spiderName,
         current: 0,
-        total: 0,
+        total: platforms.length,
         itemsScraped: 0,
         itemsNew: 0,
         elapsedSeconds: 0,
@@ -669,6 +878,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
       const status = await triggerSync(opts);
       set({ syncStatus: status });
     } catch {
+      _pendingSyncContext = null;
       set({ syncing: false, syncProgress: null });
     }
   },

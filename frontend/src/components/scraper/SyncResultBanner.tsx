@@ -1,0 +1,160 @@
+import { CheckCircle2, AlertTriangle, XCircle, X, CalendarRange, Layers } from 'lucide-react';
+import type { SpiderInfo, SyncResultNotice } from '../../types/scraper';
+
+interface SyncResultBannerProps {
+  notice: SyncResultNotice;
+  spiders?: SpiderInfo[];
+  onDismiss: () => void;
+}
+
+function formatShortDate(iso: string): string {
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function platformLabel(name: string, spiders: SpiderInfo[]): string {
+  const meta = spiders.find((s) => s.name.toLowerCase() === name.toLowerCase());
+  if (meta?.label) return meta.label;
+  if (!name || name === 'all') return 'all platforms';
+  return name
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatSources(platforms: string[], spiders: SpiderInfo[]): string {
+  const unique = [...new Set(platforms.filter(Boolean))];
+  if (unique.length === 0 || (unique.length === 1 && unique[0] === 'all')) {
+    return 'all platforms';
+  }
+  const labels = unique.map((p) => platformLabel(p, spiders));
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  if (labels.length <= 4) {
+    return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+  }
+  return `${labels.slice(0, 3).join(', ')}, and ${labels.length - 3} more`;
+}
+
+function formatWindow(notice: SyncResultNotice): string | null {
+  if (notice.syncMode === 'date_backfill' && notice.postedSince) {
+    const since = formatShortDate(notice.postedSince);
+    const until = notice.postedUntil ? formatShortDate(notice.postedUntil) : 'today';
+    return `${since} → ${until}`;
+  }
+  return null;
+}
+
+const KIND_STYLES = {
+  success: {
+    wrap: 'border-emerald-200/90 bg-gradient-to-r from-emerald-50 via-white to-teal-50/70 text-emerald-950 dark:border-emerald-500/30 dark:from-emerald-950/50 dark:via-slate-900 dark:to-teal-950/40 dark:text-emerald-50',
+    accent: 'bg-gradient-to-b from-emerald-500 to-teal-600',
+    iconWrap: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+    Icon: CheckCircle2,
+    chip: 'bg-emerald-600/10 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200',
+  },
+  warning: {
+    wrap: 'border-amber-200/90 bg-gradient-to-r from-amber-50 via-white to-orange-50/70 text-amber-950 dark:border-amber-500/30 dark:from-amber-950/50 dark:via-slate-900 dark:to-orange-950/40 dark:text-amber-50',
+    accent: 'bg-gradient-to-b from-amber-500 to-orange-600',
+    iconWrap: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+    Icon: AlertTriangle,
+    chip: 'bg-amber-600/10 text-amber-800 dark:bg-amber-400/10 dark:text-amber-200',
+  },
+  error: {
+    wrap: 'border-rose-200/90 bg-gradient-to-r from-rose-50 via-white to-red-50/70 text-rose-950 dark:border-rose-500/30 dark:from-rose-950/50 dark:via-slate-900 dark:to-red-950/40 dark:text-rose-50',
+    accent: 'bg-gradient-to-b from-rose-500 to-red-600',
+    iconWrap: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+    Icon: XCircle,
+    chip: 'bg-rose-600/10 text-rose-800 dark:bg-rose-400/10 dark:text-rose-200',
+  },
+} as const;
+
+export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResultBannerProps) {
+  const style = KIND_STYLES[notice.kind];
+  const Icon = style.Icon;
+  const sources = formatSources(notice.platforms, spiders);
+  const windowLabel = formatWindow(notice);
+  const scraped = notice.itemsScraped;
+  const jobsWord = scraped === 1 ? 'job' : 'jobs';
+
+  let headline: string;
+  if (notice.kind === 'error' && notice.error === 'stopped') {
+    headline =
+      scraped > 0
+        ? `Job sync stopped after fetching ${scraped.toLocaleString()} ${jobsWord} from ${sources}`
+        : 'Job sync was stopped before any listings were fetched';
+  } else if (notice.kind === 'error') {
+    headline =
+      scraped > 0
+        ? `Job sync finished with errors — ${scraped.toLocaleString()} ${jobsWord} fetched from ${sources}`
+        : `Job sync failed for ${sources}`;
+  } else if (notice.kind === 'warning') {
+    headline = `Fetched ${scraped.toLocaleString()} ${jobsWord} from ${sources} with some platform issues`;
+  } else if (scraped === 0) {
+    headline = `Sync finished — no new listings from ${sources}`;
+  } else {
+    headline = `Fetched ${scraped.toLocaleString()} ${jobsWord} from ${sources}`;
+  }
+
+  const detailParts: string[] = [];
+  if (notice.itemsNew > 0) detailParts.push(`${notice.itemsNew.toLocaleString()} new`);
+  if (notice.itemsUpdated > 0) detailParts.push(`${notice.itemsUpdated.toLocaleString()} updated`);
+  if (notice.syncMode === 'incremental' && !windowLabel) {
+    detailParts.push('incremental sync');
+  }
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`relative w-full overflow-hidden rounded-2xl border shadow-sm ${style.wrap}`}
+    >
+      <span aria-hidden className={`pointer-events-none absolute inset-y-0 left-0 w-1.5 ${style.accent}`} />
+      <div className="flex items-start gap-3 px-4 py-3 sm:items-center sm:gap-4 sm:px-5">
+        <div
+          className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:mt-0 ${style.iconWrap}`}
+        >
+          <Icon size={18} strokeWidth={2.25} />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold leading-snug tracking-tight sm:text-[15px]">
+            {headline}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {windowLabel ? (
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
+              >
+                <CalendarRange size={11} className="shrink-0 opacity-80" />
+                {windowLabel}
+              </span>
+            ) : null}
+            {detailParts.length > 0 ? (
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
+              >
+                <Layers size={11} className="shrink-0 opacity-80" />
+                {detailParts.join(' · ')}
+              </span>
+            ) : null}
+            {notice.kind === 'error' && notice.error && notice.error !== 'stopped' ? (
+              <span className="truncate text-[11px] font-medium text-rose-700/90 dark:text-rose-300/90">
+                {notice.message || notice.error}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss sync notification"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-black/5 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
+        >
+          <X size={16} strokeWidth={2.25} />
+        </button>
+      </div>
+    </div>
+  );
+}

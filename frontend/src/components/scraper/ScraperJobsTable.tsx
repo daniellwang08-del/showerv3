@@ -118,6 +118,7 @@ const columns = [
   { key: 'job_type',       label: 'Type',       sortable: false },
   { key: 'source',         label: 'Source',     sortable: false },
   { key: 'posted_date',    label: 'Posted',     sortable: true  },
+  { key: 'added_from',     label: 'Added from', sortable: false },
   { key: 'created_at',     label: 'Added',      sortable: true  },
   { key: '__processing__', label: 'Match',      sortable: true, sortKey: 'match_score' },
   { key: '__resume__',     label: 'Resume',     sortable: false },
@@ -139,6 +140,7 @@ const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   salary_raw: '100px',
   job_type: '78px',
   posted_date: '68px',
+  added_from: '88px',
   created_at: '68px',
   __processing__: '108px',
   __resume__: '108px',
@@ -482,6 +484,29 @@ const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number
     </div>
   );
 });
+
+/** How the job entered the pool — separate from ATS/platform Source. */
+function resolveAddedFrom(job: DashboardJob): 'manual' | 'job_sites' {
+  if (job.added_from === 'manual' || job.from_me) return 'manual';
+  if (job.added_from === 'job_sites') return 'job_sites';
+  return job.from_me ? 'manual' : 'job_sites';
+}
+
+function AddedFromBadge({ job }: { job: DashboardJob }) {
+  const origin = resolveAddedFrom(job);
+  if (origin === 'manual') {
+    return (
+      <span title="You added this job by URL or attachment">
+        <Badge variant="info">Manual</Badge>
+      </span>
+    );
+  }
+  return (
+    <span title="Fetched from job sites during platform sync">
+      <Badge variant="default">Job sites</Badge>
+    </span>
+  );
+}
 
 function WorkModeBadge({ mode, isRemoteFallback }: { mode: string | null | undefined; isRemoteFallback?: boolean }) {
   const raw = (mode || '').trim().toLowerCase();
@@ -1759,6 +1784,11 @@ export function ScraperJobsTable({
                     {/* Posted */}
                     <td className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs`}>
                       {relativeTime(job.posted_date)}
+                    </td>
+
+                    {/* Added from — manual vs job-site sync (Source stays the ATS/site) */}
+                    <td className={`${CELL} whitespace-nowrap`}>
+                      <AddedFromBadge job={job} />
                     </td>
 
                     {/* Added */}

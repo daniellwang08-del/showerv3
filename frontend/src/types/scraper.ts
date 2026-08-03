@@ -82,6 +82,10 @@ export interface DashboardJob {
   work_mode: string | null;
   salary_raw: string | null;
   job_type: string | null;
+  /** True when this user added the job via URL/attachment. */
+  from_me?: boolean;
+  /** How the job entered the pool: manual | job_sites. */
+  added_from?: 'manual' | 'job_sites' | string | null;
 }
 
 export interface DashboardJobsPage {
@@ -204,6 +208,54 @@ export interface SyncProgress {
   itemsNew: number;
   elapsedSeconds: number;
   message: string;
+}
+
+/** Closable post-sync summary shown under the Jobs Dashboard header. */
+export interface SyncResultNotice {
+  id: string;
+  kind: 'success' | 'warning' | 'error';
+  /** Total listings scraped across platforms. */
+  itemsScraped: number;
+  /** Newly inserted listings (subset of scraped). */
+  itemsNew: number;
+  /** Updated existing listings. */
+  itemsUpdated: number;
+  /** Spider names that ran (e.g. remoterocketship). */
+  platforms: string[];
+  syncMode: 'incremental' | 'date_backfill' | string;
+  postedSince: string | null;
+  postedUntil: string | null;
+  /** Optional failure / stop detail. */
+  error: string | null;
+  message: string;
+  completedAt: string;
+}
+
+export interface SyncPlatformResult {
+  spider?: string;
+  success?: boolean;
+  items_scraped?: number;
+  items_new?: number;
+  items_updated?: number;
+  error?: string;
+  message?: string;
+}
+
+export interface SyncCompletionSummary {
+  spider?: string;
+  sync_mode?: string;
+  posted_since?: string | null;
+  posted_until?: string | null;
+  platforms?: string[];
+  items_scraped?: number;
+  items_new?: number;
+  items_updated?: number;
+  total?: number;
+  succeeded?: number;
+  failed?: number;
+  error?: string;
+  message?: string;
+  results?: SyncPlatformResult[];
 }
 
 export interface SyncPlatform {

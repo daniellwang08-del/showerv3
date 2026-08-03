@@ -2,6 +2,8 @@ import { memo, useId, useMemo } from 'react';
 
 export interface TrendSparklineProps {
   values: number[];
+  /** Day-of-month labels for the X-axis (e.g. ["27","28",…,"2"]). */
+  labels?: string[];
   /** Stroke / glow color (CSS color). */
   color: string;
   /** Soft fill under the line. */
@@ -11,6 +13,12 @@ export interface TrendSparklineProps {
   delayMs?: number;
   /** Accessible label for the series. */
   label?: string;
+  /**
+   * Shared Y-domain max across sibling charts. When set, this series is scaled
+   * against the board-wide peak so e.g. 836 renders shorter than 1131.
+   * Without it, each chart auto-scales to its own max (every line looks "full").
+   */
+  maxScale?: number;
 }
 
 function buildSmoothPath(points: Array<{ x: number; y: number }>): string {
@@ -43,13 +51,27 @@ function weekDelta(values: number[]): number {
   return late - early;
 }
 
+/** Last N local calendar day-of-month numbers when the API omits labels. */
+function fallbackDayLabels(count: number): string[] {
+  const n = Math.max(count, 2);
+  const out: string[] = [];
+  const now = new Date();
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    out.push(String(d.getDate()));
+  }
+  return out;
+}
+
 export const TrendSparkline = memo(function TrendSparkline({
   values,
+  labels,
   color,
   fillColor,
   className,
   delayMs = 0,
   label = '7-day trend',
+  maxScale,
 }: TrendSparklineProps) {
   const uid = useId().replace(/:/g, '');
   const series = useMemo(() => {
@@ -58,15 +80,29 @@ export const TrendSparkline = memo(function TrendSparkline({
     return raw;
   }, [values]);
 
+  const axisLabels = useMemo(() => {
+    if (Array.isArray(labels) && labels.length > 0) {
+      const cleaned = labels.map((l) => String(l ?? '').trim()).filter(Boolean);
+      if (cleaned.length >= series.length) return cleaned.slice(-series.length);
+      if (cleaned.length === series.length) return cleaned;
+    }
+    return fallbackDayLabels(series.length);
+  }, [labels, series.length]);
+
   const width = 140;
-  const height = 56;
+  const height = 48;
   const padX = 4;
-  const padY = 8;
+  const padY = 6;
   const plotW = width - padX * 2;
   const plotH = height - padY * 2;
 
   const { linePath, areaPath, end, maxVal } = useMemo(() => {
-    const max = Math.max(...series, 1);
+    const ownMax = Math.max(...series, 0);
+    // Prefer the shared board scale so sibling tiles are visually comparable.
+    const max =
+      maxScale != null && Number.isFinite(maxScale) && maxScale > 0
+        ? Math.max(maxScale, ownMax, 1)
+        : Math.max(ownMax, 1);
     const min = 0;
     const span = Math.max(max - min, 1);
     const pts = series.map((v, i) => ({
@@ -78,7 +114,7 @@ export const TrendSparkline = memo(function TrendSparkline({
     const first = pts[0];
     const area = `${line} L ${last.x} ${height - 2} L ${first.x} ${height - 2} Z`;
     return { linePath: line, areaPath: area, end: last, maxVal: max };
-  }, [series, plotW, plotH]);
+  }, [series, plotW, plotH, maxScale]);
 
   const delta = weekDelta(series);
   const total = series.reduce((a, b) => a + b, 0);
@@ -87,10 +123,10 @@ export const TrendSparkline = memo(function TrendSparkline({
 
   return (
     <div
-      className={['stats-sparkline relative flex h-full min-h-[56px] w-full min-w-[96px] flex-col justify-center', className ?? ''].join(' ')}
+      className={['stats-sparkline relative flex h-full min-h-[64px] w-full min-w-[96px] flex-col justify-center', className ?? ''].join(' ')}
       style={{ animationDelay: `${delayMs}ms` }}
-      title={`${label} · last 7 days`}
-      aria-label={`${label}: ${series.join(', ')} over the last 7 days`}
+      title={`${label} · last ${series.length} days`}
+      aria-label={`${label}: ${series.join(', ')} over the last ${series.length} days`}
     >
       <div className="mb-0.5 flex items-center justify-end gap-1.5 pr-0.5">
         <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-500">
@@ -112,7 +148,7 @@ export const TrendSparkline = memo(function TrendSparkline({
 
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        className="stats-sparkline-svg h-[52px] w-full overflow-visible"
+        className="stats-sparkline-svg h-[40px] w-full overflow-visible"
         preserveAspectRatio="none"
         role="img"
       >
@@ -202,6 +238,21 @@ export const TrendSparkline = memo(function TrendSparkline({
           />
         )}
       </svg>
+
+      {/* HTML X-axis — avoids SVG text stretch from preserveAspectRatio="none". */}
+      <div
+        className="mt-0.5 flex w-full items-center justify-between px-[1px]"
+        aria-hidden
+      >
+        {axisLabels.map((day, i) => (
+          <span
+            key={`${day}-${i}`}
+            className="min-w-0 flex-1 text-center text-[8px] font-semibold leading-none tabular-nums text-slate-500 dark:text-slate-400"
+          >
+            {day}
+          </span>
+        ))}
+      </div>
     </div>
   );
 });

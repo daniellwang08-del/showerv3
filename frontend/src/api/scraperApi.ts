@@ -75,9 +75,9 @@ export async function fetchDashboardCounts(params: {
   title?: string;
   company?: string;
   remote_only?: boolean;
-  min_match_score?: number;
   timezone?: string;
 }): Promise<DashboardCounts> {
+  // Match-score filtering is list-only; tab badges stay aligned with Total jobs.
   const { data } = await apiClient.get('/jobs/dashboard/counts', { params });
   return data;
 }

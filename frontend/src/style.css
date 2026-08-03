@@ -582,10 +582,20 @@ html.dark { color-scheme: dark; }
   from { opacity: 0; transform: scale(0.92); }
   to   { opacity: 1; transform: scale(1); }
 }
+/* Color/opacity only — never scale/translate (those fight transition-all and
+   shift the stats tile box while the bump class is on). */
 @keyframes stats-num-bump {
-  0%   { transform: scale(1); }
-  35%  { transform: scale(1.08); }
-  100% { transform: scale(1); }
+  0%   { color: inherit; filter: brightness(1); }
+  35%  { color: #2563eb; filter: brightness(1.08); }
+  100% { color: inherit; filter: brightness(1); }
+}
+.dark .stats-num-bump {
+  animation-name: stats-num-bump-dark;
+}
+@keyframes stats-num-bump-dark {
+  0%   { color: inherit; filter: brightness(1); }
+  35%  { color: #38bdf8; filter: brightness(1.12); }
+  100% { color: inherit; filter: brightness(1); }
 }
 @keyframes stats-hero-pulse {
   0%   { box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12); }
@@ -613,10 +623,11 @@ html.dark { color-scheme: dark; }
   from { stroke-dashoffset: 0; }
   to   { stroke-dashoffset: -48; }
 }
+/* Unit space via pathLength=1 on the SVG circle: -1 = one full loop. */
 @keyframes stats-ring-shimmer {
-  0%   { stroke-dashoffset: 0; opacity: 0.15; }
-  40%  { opacity: 0.55; }
-  100% { stroke-dashoffset: -120; opacity: 0.2; }
+  0%   { stroke-dashoffset: 0; opacity: 0.25; }
+  50%  { opacity: 0.85; }
+  100% { stroke-dashoffset: -1; opacity: 0.25; }
 }
 @keyframes stats-aura-breathe {
   0%, 100% { opacity: 0.35; transform: scale(0.96); }
@@ -707,7 +718,8 @@ html.dark { color-scheme: dark; }
   animation: stats-orbit-dashes 10s linear infinite;
 }
 .stats-ring-shimmer {
-  animation: stats-ring-shimmer 2.4s linear infinite;
+  opacity: 0.55;
+  animation: stats-ring-shimmer 2.2s linear infinite;
 }
 .stats-hero-icon-float {
   animation: stats-hero-icon-float 2.8s ease-in-out infinite;
@@ -716,7 +728,8 @@ html.dark { color-scheme: dark; }
   animation: stats-hero-pulse 0.7s ease-out;
 }
 .stats-num-bump {
-  display: inline-block;
+  /* Keep display from the element (block/inline-flex). Do not override it —
+     toggling block ↔ inline-block was resizing the tile on every count change. */
   animation: stats-num-bump 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .stats-board-pulse {

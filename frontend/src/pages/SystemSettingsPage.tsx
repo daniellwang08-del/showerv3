@@ -18,6 +18,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { SettingsCard } from '../components/settings/SettingsCard';
+import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { LlmBenchmarkSection } from '../components/settings/LlmBenchmarkSection';
 import type { BenchmarkCatalogModel } from '../components/settings/LlmBenchmarkSection';
 import { ConfirmDialog } from '../components/extraction/ConfirmDialog';
@@ -714,7 +715,7 @@ export function SystemSettingsPage() {
           icon={Cpu}
           gradient="from-violet-600 to-indigo-700"
           title="System Settings"
-          description="Changes save automatically. API keys require a successful validation before they are stored."
+          description="Platform defaults, LLM keys, job sync, and ops. Changes save automatically; API keys require a successful validation before they are stored."
         />
 
         {message ? (
@@ -1269,6 +1270,9 @@ export function SystemSettingsPage() {
             </div>
           ) : null}
         </SettingsCard>
+
+        {/* Platform job sync — admin-only (schedule, date backfill, stop) */}
+        <JobSyncSettingsSection />
 
         {/* Queues */}
         <SettingsCard

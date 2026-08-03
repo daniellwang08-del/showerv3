@@ -9,7 +9,7 @@ Endpoints (all under /api/v1, all require auth via cookie or Bearer token):
 - GET    /assistant/sessions/{id}  get one session + its conversation
 - PATCH  /assistant/sessions/{id}  update session status
 - DELETE /assistant/sessions/{id}  remove a session (and its conversation)
-- GET    /assistant/next-job       next "ready to apply" job for Complete & Next
+- GET    /assistant/next-job       next job in list context (view/remote/score) for Complete & Next
 
 The conversation feature is net-new: free-text, multi-turn, streamed, grounded in
 the user's cached profile and a per-job structured job description. The job
@@ -29,7 +29,15 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, delete as sa_delete, nullslast, or_, select
 from sqlalchemy.orm import undefer
 
-from app.api.routes import get_current_user
+from app.api.routes import (
+    DASHBOARD_VIEWS,
+    VIEWS_NEEDING_APPLICATION_JOIN,
+    VIEWS_NEEDING_RESUME_JOIN,
+    _dashboard_min_score_clauses,
+    _dashboard_search_clauses,
+    _dashboard_view_clauses,
+    get_current_user,
+)
 from app.core.config import get_settings
 from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
 from app.core.logging import get_logger
@@ -46,6 +54,7 @@ from app.models.database import (
 )
 from app.models.schemas import ExtractionStatus
 from app.storage.database import get_session
+from app.utils.date_bounds import day_bounds_for_timezone
 
 assistant_router = APIRouter()
 logger = get_logger(__name__)
@@ -2021,24 +2030,72 @@ async def clear_session_messages(job_id: str, current_user: dict = Depends(get_c
     return None
 
 
-# ── next ready-to-apply job (Complete & Next) ───────────────────────────────
+# ── next job in list context (Complete & Next) ──────────────────────────────
 
 
 @assistant_router.get("/assistant/next-job", response_model=NextJobResponse)
 async def next_job(
     after: str | None = Query(None, description="Job id just completed; excluded from results"),
+    view: str | None = Query(
+        None,
+        description=(
+            "Dashboard list context: ready (default), all, today, mine, suggested, "
+            "available, applied_today, …"
+        ),
+    ),
+    remote_only: bool = Query(False, description="Restrict to remote jobs (same as dashboard filter)"),
+    min_match_score: int | None = Query(
+        None,
+        ge=0,
+        le=100,
+        description="Minimum match score filter (e.g. 75 for Best jobs)",
+    ),
+    timezone: str | None = Query(None, description="IANA timezone for today/applied_today views"),
     current_user: dict = Depends(get_current_user),
 ) -> NextJobResponse:
-    """Return the next 'ready to apply' job (tailored resume DOCX completed),
-    not yet applied and visible to the user, ordered by match score desc."""
+    """Return the next unapplied job in the given list context.
+
+    Default ``view=ready`` preserves the historical Complete & Next behaviour
+    (tailored resume DOCX completed). Other views mirror the Jobs dashboard tabs
+    so the extension advances within the list the user opened (remote, best,
+    today, mine, …).
+    """
     user_id = _require_user_id(current_user)
+    list_view = (view or "ready").strip().lower()
+    if list_view not in DASHBOARD_VIEWS:
+        list_view = "ready"
+
+    day_start = day_end = None
+    if list_view in ("today", "applied_today"):
+        day_start, day_end = day_bounds_for_timezone(timezone)
+
     async with get_session() as session:
-        visible = and_(
+        from app.storage.user_repository import UserRepository
+
+        suggested_min = 0
+        if list_view == "suggested":
+            suggested_min = await UserRepository(session).get_effective_min_match_score(user_id)
+
+        view_clauses, needs_match_join = _dashboard_view_clauses(
+            list_view,
+            min_score=suggested_min,
+            day_start=day_start,
+            day_end=day_end,
+        )
+        score_clauses, score_needs_join = _dashboard_min_score_clauses(min_match_score)
+        needs_match_join = needs_match_join or score_needs_join or True
+        search_clauses = _dashboard_search_clauses(remote_only=remote_only)
+
+        filters = [
             Job.status != "blocked",
             or_(UserJobStatus.status.is_(None), UserJobStatus.status == "active"),
-            ResumeBuildResult.resume_docx_status == "completed",
-            ValidJobUserApplication.id.is_(None),  # not yet applied
-        )
+            ValidJobUserApplication.id.is_(None),  # never jump to already-applied
+            *view_clauses,
+            *score_clauses,
+            *search_clauses,
+        ]
+        if after:
+            filters.append(Job.id != after)
 
         base = (
             select(
@@ -2053,10 +2110,6 @@ async def next_job(
                 UserJobStatus,
                 (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
             )
-            .join(
-                ResumeBuildResult,
-                (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
-            )
             .outerjoin(
                 JobMatchResult,
                 (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
@@ -2066,13 +2119,21 @@ async def next_job(
                 (ValidJobUserApplication.job_id == Job.id)
                 & (ValidJobUserApplication.user_id == user_id),
             )
-            .where(visible)
         )
-        if after:
-            base = base.where(Job.id != after)
+        if list_view in VIEWS_NEEDING_RESUME_JOIN or list_view == "ready":
+            base = base.join(
+                ResumeBuildResult,
+                (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
+            )
+        if list_view in VIEWS_NEEDING_APPLICATION_JOIN:
+            # already outer-joined above for applied filter
+            pass
 
+        base = base.where(and_(*filters))
         ordered = base.order_by(
-            nullslast(JobMatchResult.overall_score.desc()), Job.created_at.desc(), Job.id.desc()
+            nullslast(JobMatchResult.overall_score.desc()),
+            Job.created_at.desc(),
+            Job.id.desc(),
         )
         rows = (await session.execute(ordered)).all()
         remaining = len(rows)

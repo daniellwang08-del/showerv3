@@ -673,6 +673,73 @@ async def _promote_and_publish(
     return stats
 
 
+def _build_sync_summary(
+    *,
+    spider_name: str,
+    sync_mode: str,
+    posted_since: str | None,
+    posted_until: str | None,
+    platforms: list[str],
+    results: list[dict],
+) -> dict:
+    """Normalize per-spider scrape results into a dashboard-friendly summary."""
+    items_scraped = 0
+    items_new = 0
+    items_updated = 0
+    succeeded = 0
+    failed = 0
+    first_error: str | None = None
+    first_message: str | None = None
+    platform_rows: list[dict] = []
+
+    for row in results:
+        if not isinstance(row, dict):
+            continue
+        scraped = int(row.get("items_scraped") or 0)
+        new = int(row.get("items_new") or 0)
+        updated = int(row.get("items_updated") or 0)
+        items_scraped += scraped
+        items_new += new
+        items_updated += updated
+        ok = bool(row.get("success"))
+        if ok:
+            succeeded += 1
+        else:
+            failed += 1
+            if first_error is None:
+                err = row.get("error")
+                if err:
+                    first_error = str(err)
+            if first_message is None and row.get("message"):
+                first_message = str(row["message"])
+        platform_rows.append({
+            "spider": row.get("spider"),
+            "success": ok,
+            "items_scraped": scraped,
+            "items_new": new,
+            "items_updated": updated,
+            "error": row.get("error"),
+            "message": row.get("message"),
+        })
+
+    return {
+        "spider": spider_name,
+        "sync_mode": sync_mode,
+        "posted_since": posted_since,
+        "posted_until": posted_until,
+        "platforms": platforms,
+        "items_scraped": items_scraped,
+        "items_new": items_new,
+        "items_updated": items_updated,
+        "total": len(platform_rows),
+        "succeeded": succeeded,
+        "failed": failed,
+        "error": first_error,
+        "message": first_message,
+        "results": platform_rows,
+    }
+
+
 async def run_scraper_task(
     ctx: dict,
     spider_name: str,
@@ -757,6 +824,8 @@ async def run_scraper_task(
         "user_id": user_id,
         "spider_name": spider_name,
         "sync_mode": sync_mode,
+        "posted_since": posted_since,
+        "posted_until": posted_until,
         "total": len(plan),
         "platforms": [name for name, _ in plan],
     })
@@ -812,40 +881,52 @@ async def run_scraper_task(
             on_spider_start=on_spider_start,
             spider_progress_callback=publish_spider_activity,
         )
+        platform_names = [name for name, _ in plan]
         if len(plan) == 1:
-            summary = dict(results[0])
-            summary["promotion"] = promotions.get(plan[0][0])
-            overall_ok = bool(summary.get("success"))
+            single = dict(results[0])
+            single["promotion"] = promotions.get(plan[0][0])
+            results_for_summary = [single]
+            overall_ok = bool(single.get("success"))
         else:
-            succeeded = sum(1 for r in results if r.get("success"))
-            failed = sum(1 for r in results if not r.get("success"))
-            summary = {
-                "spider": spider_name,
-                "sync_mode": sync_mode,
-                "total": len(results),
-                "succeeded": succeeded,
-                "failed": failed,
-                "results": results,
-            }
-            overall_ok = failed == 0
+            results_for_summary = list(results)
+            overall_ok = all(bool(r.get("success")) for r in results_for_summary)
+
+        summary = _build_sync_summary(
+            spider_name=spider_name,
+            sync_mode=sync_mode,
+            posted_since=posted_since,
+            posted_until=posted_until,
+            platforms=platform_names,
+            results=results_for_summary,
+        )
+        if len(plan) == 1 and results_for_summary:
+            summary["promotion"] = results_for_summary[0].get("promotion")
 
         if overall_ok:
             await publish_ws_event({
                 "type": "sync_completed",
                 "user_id": user_id,
                 "spider_name": spider_name,
+                "sync_mode": sync_mode,
+                "posted_since": posted_since,
+                "posted_until": posted_until,
+                "platforms": platform_names,
+                "items_scraped": summary.get("items_scraped", 0),
+                "items_new": summary.get("items_new", 0),
+                "items_updated": summary.get("items_updated", 0),
                 "summary": summary,
             })
-            logger.info("worker_scraper_completed", spider_name=spider_name)
+            logger.info(
+                "worker_scraper_completed",
+                spider_name=spider_name,
+                items_scraped=summary.get("items_scraped", 0),
+                items_new=summary.get("items_new", 0),
+            )
         else:
-            stopped = False
-            if isinstance(summary.get("results"), list):
-                stopped = any(
-                    isinstance(r, dict) and r.get("error") == "stopped"
-                    for r in summary["results"]
-                )
-            elif summary.get("error") == "stopped":
-                stopped = True
+            stopped = any(
+                isinstance(r, dict) and r.get("error") == "stopped"
+                for r in results_for_summary
+            )
             error = "stopped" if stopped else (
                 summary.get("error") or summary.get("message") or "scrape_failed"
             )
@@ -855,6 +936,13 @@ async def run_scraper_task(
                 "spider_name": spider_name,
                 "error": error,
                 "message": "Job fetching was stopped." if stopped else None,
+                "sync_mode": sync_mode,
+                "posted_since": posted_since,
+                "posted_until": posted_until,
+                "platforms": platform_names,
+                "items_scraped": summary.get("items_scraped", 0),
+                "items_new": summary.get("items_new", 0),
+                "items_updated": summary.get("items_updated", 0),
                 "summary": summary,
             })
             logger.error(

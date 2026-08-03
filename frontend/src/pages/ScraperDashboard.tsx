@@ -9,6 +9,7 @@ import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { ScraperStatsBar } from '../components/scraper/ScraperStatsBar';
 import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
 import { SyncButton } from '../components/scraper/SyncButton';
+import { SyncResultBanner } from '../components/scraper/SyncResultBanner';
 import { LlmProviderSelector } from '../components/scraper/LlmProviderSelector';
 import { Pagination } from '../components/shared/Pagination';
 import { DashboardViewSwitcher } from '../components/scraper/DashboardViewSwitcher';
@@ -30,11 +31,13 @@ export function ScraperDashboard() {
     spiders,
     syncing,
     syncProgress,
+    syncNotice,
     sortField, sortOrder,
     view, counts,
     titleFilter, companyFilter, remoteOnly, minScore,
     lastSyncRuns,
     loadJobs, bgRefreshJobs, loadStats, loadSpiders, loadLastSyncRuns, checkSyncStatus, startSync,
+    dismissSyncNotice,
     setPage, setPerPage, setSort, setView,
     setTitleFilter, setCompanyFilter, setRemoteOnly, setMinScore,
     applyAgentDashboard,
@@ -175,6 +178,14 @@ export function ScraperDashboard() {
           </div>
         }
       />
+
+      {syncNotice ? (
+        <SyncResultBanner
+          notice={syncNotice}
+          spiders={spiders}
+          onDismiss={dismissSyncNotice}
+        />
+      ) : null}
 
       {/* z-0 keeps metric tiles below PageHeader menus (header is z-40). */}
       <div className="relative z-0">

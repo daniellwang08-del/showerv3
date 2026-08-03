@@ -29,7 +29,6 @@ import {
   BUILTIN_COVER_LETTER_PROMPT_MAX_LENGTH,
 } from '../constants/builtinCoverLetterPrompt';
 import { MarkdownPromptEditor } from '../components/settings/MarkdownPromptEditor';
-import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { ProviderKeysCard } from '../components/settings/ProviderKeysCard';
 import { SettingsCard } from '../components/settings/SettingsCard';
 import { prefsSaveBtnClass } from '../components/settings/prefsSaveButtonClass';
@@ -38,10 +37,8 @@ import { AddressPreferencesSection } from '../components/preferences/AddressPref
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
-import type { AppShellOutletContext } from '../components/layout/AppShell';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
-import { useOutletContext } from 'react-router-dom';
 
 const DEDUP_SLIDER_MAX = 365;
 const DEDUP_PRESETS = [30, 60, 90, 180] as const;
@@ -110,7 +107,6 @@ function SectionMessage({ ok, text }: { ok?: boolean; text: string }) {
 }
 
 export function MyPreferencesPage() {
-  const { isAdmin } = useOutletContext<AppShellOutletContext>();
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -603,11 +599,7 @@ export function MyPreferencesPage() {
           icon={UserCog}
           gradient="from-slate-700 to-slate-900"
           title="My Preferences"
-          description={
-            isAdmin
-              ? 'API keys, match scoring, prompts, EEO, location, and job sync - your personal defaults.'
-              : 'API keys, match scoring, prompts, EEO, and location - your personal defaults.'
-          }
+          description="API keys, match scoring, prompts, EEO, and location — your personal defaults."
         />
 
         {loading ? (
@@ -977,8 +969,6 @@ export function MyPreferencesPage() {
                 {coverPromptSaveMsg && <SectionMessage ok={coverPromptSaveOk} text={coverPromptSaveMsg} />}
               </SettingsCard>
             </div>
-
-            {isAdmin && <JobSyncSettingsSection />}
           </div>
         )}
       </div>

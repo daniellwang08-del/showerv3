@@ -254,7 +254,8 @@ async def fetch_board_trend_series(
         )
     ).all()
 
-    labels = [d.strftime("%a") for d in day_list]
+    # Day-of-month numbers for the sparkline X-axis (e.g. 27, 28, …, 2).
+    labels = [str(d.day) for d in day_list]
     return {
         "labels": labels,
         "ready": _series_for_days(day_list, _rows_to_day_map(ready_rows)),

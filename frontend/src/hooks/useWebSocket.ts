@@ -23,6 +23,8 @@ export interface WsEvent {
   summary?: Record<string, unknown>;
   sync_mode?: string;
   platforms?: string[];
+  posted_since?: string | null;
+  posted_until?: string | null;
   items_scraped?: number;
   items_new?: number;
   items_updated?: number;

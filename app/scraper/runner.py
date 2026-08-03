@@ -416,6 +416,9 @@ async def run_spider(
             "return_code": proc.returncode,
             "scrape_run_id": scrape_run_id,
             "scrape_run_status": run_status,
+            "items_scraped": int((scrape_run or {}).get("items_scraped") or 0),
+            "items_new": int((scrape_run or {}).get("items_new") or 0),
+            "items_updated": int((scrape_run or {}).get("items_updated") or 0),
         }
         if not success and run_status and run_status != "success":
             result["error"] = run_status

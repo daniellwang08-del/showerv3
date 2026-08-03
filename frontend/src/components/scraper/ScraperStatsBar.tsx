@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useRef, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Rocket,
   Sparkles,
@@ -15,7 +15,43 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ScraperStats } from '../../types/scraper';
+import { fetchSheetsConfig } from '../../api/googleSheetsApi';
+import { fetchPumbleConfig } from '../../api/pumbleApi';
 import { TrendSparkline } from './TrendSparkline';
+
+interface RailItem {
+  key: string;
+  icon: LucideIcon;
+  value: number;
+  label: string;
+  tone: string;
+  title: string;
+  onClick?: () => void;
+  delay: number;
+  modern?: boolean;
+}
+
+/** Split rail metrics left/right with a slight left bias on odd counts (5 → 3|2). */
+function balanceRailColumns(leftSeed: RailItem[], rightSeed: RailItem[]): {
+  left: RailItem[];
+  right: RailItem[];
+} {
+  const left = [...leftSeed];
+  const right = [...rightSeed];
+  const targetLeft = Math.ceil((left.length + right.length) / 2);
+  while (left.length > targetLeft) {
+    const moved = left.pop();
+    if (moved) right.unshift(moved);
+  }
+  return { left, right };
+}
+
+function railGridClass(count: number): string {
+  if (count <= 1) return 'grid-cols-1';
+  if (count === 2) return 'grid-cols-2';
+  if (count === 3) return 'grid-cols-2 sm:grid-cols-3';
+  return 'grid-cols-2 sm:grid-cols-4';
+}
 
 function safe(n: number): number {
   return Number.isFinite(n) ? n : 0;
@@ -71,8 +107,17 @@ function useBumpOnIncrease(value: number): boolean {
 function AnimatedNumber({ value, className }: { value: number; className?: string }) {
   const displayed = useAnimatedNumber(value);
   const bumped = useBumpOnIncrease(value);
+  // Fixed line box + tabular nums so digit/count-up changes never alter tile height.
   return (
-    <span className={`${className ?? ''} ${bumped ? 'stats-num-bump' : ''}`.trim()}>
+    <span
+      className={[
+        'inline-flex h-[1.05em] max-w-full items-center overflow-hidden tabular-nums',
+        className ?? '',
+        bumped ? 'stats-num-bump' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
       {fmt(displayed)}
     </span>
   );
@@ -177,6 +222,9 @@ function HeroOrbitRing({
             filter={`url(#stats-soft-glow-${uid})`}
             className="stats-ring-progress transition-[stroke-dashoffset] duration-700 ease-out"
           />
+          {/* Loading highlight: pathLength=1 so CSS can loop a full revolution
+              (dashoffset -1). Previously offset was hard-coded to -120px ≈ 20% of
+              the ring, so the white bar only traveled top → left-middle. */}
           <circle
             cx={cx}
             cy={cy}
@@ -185,9 +233,9 @@ function HeroOrbitRing({
             stroke="white"
             strokeWidth={stroke - 4}
             strokeLinecap="round"
-            strokeDasharray={`${Math.max(16, circumference * 0.07)} ${circumference}`}
-            strokeDashoffset={offset}
-            className="stats-ring-shimmer opacity-45 mix-blend-screen"
+            pathLength={1}
+            strokeDasharray="0.1 0.9"
+            className="stats-ring-shimmer mix-blend-screen"
           />
         </g>
       </svg>
@@ -206,8 +254,11 @@ interface SideTileProps {
   onClick?: () => void;
   title?: string;
   trend?: number[];
+  trendLabels?: string[];
   trendColor?: string;
   trendLabel?: string;
+  /** Shared Y max for all board sparklines (comparable peak heights). */
+  trendMaxScale?: number;
 }
 
 const SideTile = memo(function SideTile({
@@ -221,11 +272,15 @@ const SideTile = memo(function SideTile({
   onClick,
   title,
   trend,
+  trendLabels,
   trendColor = '#34d399',
   trendLabel,
+  trendMaxScale,
 }: SideTileProps) {
   const className = [
-    'stats-side-tile group relative flex min-h-[118px] flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left shadow-sm transition-all duration-300 sm:gap-4 sm:px-5 sm:py-4',
+    // transition-* only for paint/motion props — never `transition-all` (it was
+    // animating height when bump/count-up briefly changed the number box).
+    'stats-side-tile group relative flex h-[126px] min-h-[126px] max-h-[126px] flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left shadow-sm transition-[border-color,box-shadow,transform,background-color] duration-300 sm:gap-4 sm:px-5 sm:py-4',
     'border-slate-200/90 bg-white/95 dark:border-slate-700/80 dark:bg-[#141d31]/95',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 dark:hover:border-slate-500'
@@ -242,7 +297,7 @@ const SideTile = memo(function SideTile({
       <div className="relative min-w-0 flex-[1.05]">
         <AnimatedNumber
           value={value}
-          className="block text-[2rem] font-black leading-none tracking-tight text-slate-900 tabular-nums sm:text-[2.15rem]"
+          className="text-[2rem] font-black leading-none tracking-tight text-slate-900 sm:text-[2.15rem]"
         />
         <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
           {label}
@@ -254,9 +309,11 @@ const SideTile = memo(function SideTile({
       <div className="relative min-w-0 flex-1 self-stretch pl-0.5 sm:pl-1">
         <TrendSparkline
           values={trend ?? []}
+          labels={trendLabels}
           color={trendColor}
           delayMs={delay + 180}
           label={trendLabel ?? label}
+          maxScale={trendMaxScale}
         />
       </div>
     </>
@@ -305,7 +362,7 @@ const RailStat = memo(function RailStat({
   modern = false,
 }: RailStatProps) {
   const className = [
-    'stats-rail-stat group flex w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-3 text-left transition-all duration-300',
+    'stats-rail-stat group flex min-h-[68px] w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-3 text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
     'border-slate-200/80 bg-white/85 dark:border-slate-700/70 dark:bg-[#101827]/85',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40 dark:hover:border-slate-500'
@@ -333,7 +390,7 @@ const RailStat = memo(function RailStat({
       <div className="min-w-0 flex-1">
         <AnimatedNumber
           value={value}
-          className="block text-[1.45rem] font-black leading-none tracking-tight text-slate-900 tabular-nums"
+          className="text-[1.45rem] font-black leading-none tracking-tight text-slate-900"
         />
         <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500">
           {label}
@@ -366,6 +423,10 @@ const RailStat = memo(function RailStat({
 interface ScraperStatsBarProps {
   stats: ScraperStats | null;
   loading: boolean;
+  /** When true, show the Google Sheets rail tile (user has Sheets connected). */
+  sheetsConfigured?: boolean;
+  /** When true, show the Pumble rail tile (user has Pumble connected). */
+  pumbleConfigured?: boolean;
   onSelectToday?: () => void;
   onSelectReady?: () => void;
   onSelectBest?: () => void;
@@ -393,6 +454,8 @@ function StatsBoardSkeleton() {
 
 const StatsBoardContent = memo(function StatsBoardContent({
   view,
+  sheetsConfigured = false,
+  pumbleConfigured = false,
   onSelectToday,
   onSelectReady,
   onSelectBest,
@@ -407,6 +470,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
   onSelectAll,
 }: {
   view: ScraperStats;
+  sheetsConfigured?: boolean;
+  pumbleConfigured?: boolean;
   onSelectToday?: () => void;
   onSelectReady?: () => void;
   onSelectBest?: () => void;
@@ -443,10 +508,126 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const remotePct = total > 0 ? Math.round((remote / total) * 100) : 0;
   const todayBumped = useBumpOnIncrease(today);
   const trends = view.trends;
+  const trendDayLabels = trends?.labels ?? [];
   const readyTrend = trends?.ready ?? [];
   const bestTrend = trends?.best ?? [];
   const remoteTrend = trends?.remote ?? [];
   const availableTrend = trends?.available ?? [];
+  // One Y-domain for all four side sparklines so absolute daily peaks compare
+  // (836 best must draw shorter than 1131 ready — not both maxed out).
+  const trendMaxScale = Math.max(
+    1,
+    ...[...readyTrend, ...bestTrend, ...remoteTrend, ...availableTrend].map((n) =>
+      Number.isFinite(n) ? Math.max(0, n) : 0,
+    ),
+  );
+
+  // Core rails always show; Sheets/Pumble only when the user connected them.
+  const { left: leftRail, right: rightRail } = useMemo(() => {
+    const leftSeed: RailItem[] = [
+      {
+        key: 'total',
+        icon: Layers,
+        value: total,
+        label: 'Total jobs',
+        tone: 'bg-gradient-to-br from-slate-700 via-slate-800 to-indigo-900 text-white',
+        title: 'All jobs in your active pool',
+        onClick: onSelectAll,
+        delay: 30,
+        modern: true,
+      },
+      {
+        key: 'applied',
+        icon: ClipboardCheck,
+        value: applied,
+        label: appliedToday > 0 ? `Applied · ${fmt(appliedToday)} today` : 'Applied',
+        tone: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300',
+        title: 'Jobs you marked as applied',
+        onClick: onSelectApplied,
+        delay: 70,
+      },
+      {
+        key: 'good',
+        icon: ThumbsUp,
+        value: qualified,
+        label: 'Good+ matches',
+        tone: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+        title: 'Jobs at or above your preference minimum match score',
+        onClick: onSelectGood,
+        delay: 110,
+      },
+      {
+        key: 'avg',
+        icon: Gauge,
+        value: avgScore,
+        label: scored > 0 ? `Avg match · ${fmt(scored)} scored` : 'Avg match',
+        tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+        title: 'Average AI match score — click to show qualified matches',
+        onClick: onSelectAvg,
+        delay: 150,
+      },
+    ];
+    const rightSeed: RailItem[] = [
+      ...(sheetsConfigured
+        ? [
+            {
+              key: 'sheets',
+              icon: Table2,
+              value: sheetPosted,
+              label: 'In Google Sheets',
+              tone: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200',
+              title: 'Jobs posted to Google Sheets',
+              onClick: onSelectSheet,
+              delay: 30,
+            } satisfies RailItem,
+          ]
+        : []),
+      ...(pumbleConfigured
+        ? [
+            {
+              key: 'pumble',
+              icon: MessageSquare,
+              value: pumblePosted,
+              label: 'In Pumble',
+              tone: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
+              title: 'Jobs posted to Pumble',
+              onClick: onSelectPumble,
+              delay: 70,
+            } satisfies RailItem,
+          ]
+        : []),
+      {
+        key: 'mine',
+        icon: UserRound,
+        value: myJobs,
+        label: 'Posted by me',
+        tone: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300',
+        title: 'Jobs you added by URL or attachment',
+        onClick: onSelectMine,
+        delay: 110,
+      },
+    ];
+    return balanceRailColumns(leftSeed, rightSeed);
+  }, [
+    total,
+    applied,
+    appliedToday,
+    qualified,
+    avgScore,
+    scored,
+    sheetPosted,
+    pumblePosted,
+    myJobs,
+    sheetsConfigured,
+    pumbleConfigured,
+    onSelectAll,
+    onSelectApplied,
+    onSelectGood,
+    onSelectAvg,
+    onSelectSheet,
+    onSelectPumble,
+    onSelectMine,
+  ]);
 
   return (
     <div className="stats-board-shell relative w-full overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5">
@@ -454,44 +635,25 @@ const StatsBoardContent = memo(function StatsBoardContent({
       <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
 
       <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)_13.5rem] xl:gap-4">
-        <div className="order-2 grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:order-1 xl:flex xl:h-full xl:flex-col">
-          <RailStat
-            icon={Layers}
-            value={total}
-            label="Total jobs"
-            tone="bg-gradient-to-br from-slate-700 via-slate-800 to-indigo-900 text-white"
-            title="All jobs in your active pool"
-            onClick={onSelectAll}
-            delay={30}
-            modern
-          />
-          <RailStat
-            icon={ClipboardCheck}
-            value={applied}
-            label={appliedToday > 0 ? `Applied · ${fmt(appliedToday)} today` : 'Applied'}
-            tone="bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
-            title="Jobs you marked as applied"
-            onClick={onSelectApplied}
-            delay={70}
-          />
-          <RailStat
-            icon={ThumbsUp}
-            value={qualified}
-            label="Good+ matches"
-            tone="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
-            title="Jobs at or above your preference minimum match score"
-            onClick={onSelectGood}
-            delay={110}
-          />
-          <RailStat
-            icon={Gauge}
-            value={avgScore}
-            label={scored > 0 ? `Avg match · ${fmt(scored)} scored` : 'Avg match'}
-            tone="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
-            title="Average AI match score — click to show qualified matches"
-            onClick={onSelectAvg}
-            delay={150}
-          />
+        <div
+          className={[
+            'order-2 grid gap-2.5 xl:order-1 xl:flex xl:h-full xl:flex-col',
+            railGridClass(leftRail.length),
+          ].join(' ')}
+        >
+          {leftRail.map((item) => (
+            <RailStat
+              key={item.key}
+              icon={item.icon}
+              value={item.value}
+              label={item.label}
+              tone={item.tone}
+              title={item.title}
+              onClick={item.onClick}
+              delay={item.delay}
+              modern={item.modern}
+            />
+          ))}
         </div>
 
         <div className="order-1 grid grid-cols-1 items-stretch gap-3.5 lg:grid-cols-[1fr_auto_1fr] lg:gap-4 xl:order-2">
@@ -507,8 +669,10 @@ const StatsBoardContent = memo(function StatsBoardContent({
               onClick={onSelectReady}
               title="Jobs with a tailored resume ready to send"
               trend={readyTrend}
+              trendLabels={trendDayLabels}
               trendColor="#34d399"
               trendLabel="Ready to apply"
+              trendMaxScale={trendMaxScale}
             />
             <SideTile
               icon={Sparkles}
@@ -521,8 +685,10 @@ const StatsBoardContent = memo(function StatsBoardContent({
               onClick={onSelectBest}
               title="Jobs with a strong match score (75+)"
               trend={bestTrend}
+              trendLabels={trendDayLabels}
               trendColor="#fbbf24"
               trendLabel="Best jobs"
+              trendMaxScale={trendMaxScale}
             />
           </div>
 
@@ -531,7 +697,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             onClick={onSelectToday}
             title="Show today's new jobs"
             className={[
-              'stats-hero-tile group relative mx-auto flex w-full max-w-[280px] flex-col items-center justify-center rounded-[2rem] border px-4 py-4 text-center transition-all duration-300',
+              'stats-hero-tile group relative mx-auto flex h-full min-h-[280px] w-full max-w-[280px] flex-col items-center justify-center rounded-[2rem] border px-4 py-4 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
               'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
               'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
@@ -545,22 +711,22 @@ const StatsBoardContent = memo(function StatsBoardContent({
                 <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
                 <AnimatedNumber
                   value={today}
-                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900 tabular-nums"
+                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
                 />
                 <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-300">
                   Today&apos;s jobs
                 </span>
               </div>
             </div>
-            <div className="mt-1 space-y-1">
-              <p className="text-[13px] font-semibold leading-snug text-slate-600">
+            <div className="mt-1 flex h-[52px] flex-col justify-center space-y-1">
+              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
                 {todayRemote > 0
                   ? `${fmt(todayRemote)} remote added today`
                   : total > 0
                     ? `${Math.round(readyRatio * 100)}% of pool ready to apply`
                     : 'New jobs added to your board today'}
               </p>
-              <p className="text-[12px] font-medium text-slate-500">
+              <p className="truncate text-[12px] font-medium text-slate-500">
                 {fmt(applied)} applied · {Math.round(appliedRatio * 100)}% of pool
               </p>
             </div>
@@ -578,8 +744,10 @@ const StatsBoardContent = memo(function StatsBoardContent({
               onClick={onSelectRemote}
               title="Show remote-friendly jobs"
               trend={remoteTrend}
+              trendLabels={trendDayLabels}
               trendColor="#38bdf8"
               trendLabel="Remote jobs"
+              trendMaxScale={trendMaxScale}
             />
             <SideTile
               icon={CirclePlay}
@@ -592,40 +760,33 @@ const StatsBoardContent = memo(function StatsBoardContent({
               onClick={onSelectAvailable}
               title="Jobs you have not marked as applied"
               trend={availableTrend}
+              trendLabels={trendDayLabels}
               trendColor="#a78bfa"
               trendLabel="Available to start"
+              trendMaxScale={trendMaxScale}
             />
           </div>
         </div>
 
-        <div className="order-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:flex xl:h-full xl:flex-col">
-          <RailStat
-            icon={Table2}
-            value={sheetPosted}
-            label="In Google Sheets"
-            tone="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200"
-            title="Jobs posted to Google Sheets"
-            onClick={onSelectSheet}
-            delay={30}
-          />
-          <RailStat
-            icon={MessageSquare}
-            value={pumblePosted}
-            label="In Pumble"
-            tone="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
-            title="Jobs posted to Pumble"
-            onClick={onSelectPumble}
-            delay={70}
-          />
-          <RailStat
-            icon={UserRound}
-            value={myJobs}
-            label="Posted by me"
-            tone="bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"
-            title="Jobs you added by URL or attachment"
-            onClick={onSelectMine}
-            delay={110}
-          />
+        <div
+          className={[
+            'order-3 grid gap-2.5 xl:flex xl:h-full xl:flex-col',
+            railGridClass(rightRail.length),
+          ].join(' ')}
+        >
+          {rightRail.map((item) => (
+            <RailStat
+              key={item.key}
+              icon={item.icon}
+              value={item.value}
+              label={item.label}
+              tone={item.tone}
+              title={item.title}
+              onClick={item.onClick}
+              delay={item.delay}
+              modern={item.modern}
+            />
+          ))}
         </div>
       </div>
     </div>
@@ -635,6 +796,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
 export const ScraperStatsBar = memo(function ScraperStatsBar({
   stats,
   loading,
+  sheetsConfigured: sheetsConfiguredProp,
+  pumbleConfigured: pumbleConfiguredProp,
   onSelectToday,
   onSelectReady,
   onSelectBest,
@@ -652,6 +815,37 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
   if (stats) cachedRef.current = stats;
   const view = stats ?? cachedRef.current;
 
+  const [sheetsConfiguredLocal, setSheetsConfiguredLocal] = useState(false);
+  const [pumbleConfiguredLocal, setPumbleConfiguredLocal] = useState(false);
+
+  // Resolve optional integrations from the user's Integrations settings.
+  useEffect(() => {
+    if (sheetsConfiguredProp !== undefined && pumbleConfiguredProp !== undefined) return;
+    let cancelled = false;
+    void fetchSheetsConfig()
+      .then((config) => {
+        if (!cancelled) setSheetsConfiguredLocal(Boolean(config.configured));
+      })
+      .catch(() => {
+        if (!cancelled) setSheetsConfiguredLocal(false);
+      });
+    void fetchPumbleConfig()
+      .then((config) => {
+        if (cancelled) return;
+        const integrations = (config.integrations ?? []).filter((i) => i.is_enabled !== false);
+        setPumbleConfiguredLocal(integrations.length > 0 || Boolean(config.configured));
+      })
+      .catch(() => {
+        if (!cancelled) setPumbleConfiguredLocal(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sheetsConfiguredProp, pumbleConfiguredProp]);
+
+  const sheetsConfigured = sheetsConfiguredProp ?? sheetsConfiguredLocal;
+  const pumbleConfigured = pumbleConfiguredProp ?? pumbleConfiguredLocal;
+
   if (!view) {
     return <StatsBoardSkeleton />;
   }
@@ -659,6 +853,8 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
   return (
     <StatsBoardContent
       view={view}
+      sheetsConfigured={sheetsConfigured}
+      pumbleConfigured={pumbleConfigured}
       onSelectToday={onSelectToday}
       onSelectReady={onSelectReady}
       onSelectBest={onSelectBest}

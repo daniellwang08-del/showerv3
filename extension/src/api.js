@@ -130,6 +130,10 @@ export const getDashboard = (params = {}) => {
     ...(params.min_match_score != null && params.min_match_score !== ""
       ? { min_match_score: String(params.min_match_score) }
       : {}),
+    ...(params.remote_only ? { remote_only: "true" } : {}),
+    ...(params.title ? { title: params.title } : {}),
+    ...(params.company ? { company: params.company } : {}),
+    ...(params.source ? { source: params.source } : {}),
   });
   return apiFetch(`/jobs/dashboard?${q.toString()}`);
 };
@@ -181,8 +185,23 @@ export const deleteSession = (jobId) =>
 export const clearSessionMessages = (jobId) =>
   apiFetch(`/assistant/sessions/${jobId}/messages`, { method: "DELETE" });
 
-export const nextJob = (after) =>
-  apiFetch(`/assistant/next-job${after ? `?after=${encodeURIComponent(after)}` : ""}`);
+/**
+ * Next job after Complete & Next.
+ * @param {string} [after] job id just completed
+ * @param {{ view?: string, remote_only?: boolean, min_match_score?: number, timezone?: string }} [opts]
+ */
+export const nextJob = (after, opts = {}) => {
+  const q = new URLSearchParams();
+  if (after) q.set("after", after);
+  if (opts.view) q.set("view", opts.view);
+  if (opts.remote_only) q.set("remote_only", "true");
+  if (opts.min_match_score != null && opts.min_match_score !== "") {
+    q.set("min_match_score", String(opts.min_match_score));
+  }
+  if (opts.timezone) q.set("timezone", opts.timezone);
+  const qs = q.toString();
+  return apiFetch(`/assistant/next-job${qs ? `?${qs}` : ""}`);
+};
 
 export const markApplied = (jobIds) =>
   apiFetch("/jobs/valid/applied/batch", { method: "POST", body: { job_ids: jobIds } });
