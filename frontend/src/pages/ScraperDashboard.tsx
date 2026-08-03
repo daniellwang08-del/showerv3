@@ -196,6 +196,8 @@ export function ScraperDashboard() {
         <ScraperStatsBar
           stats={stats}
           loading={statsLoading}
+          sheetsConfigured={isAdmin ? false : undefined}
+          pumbleConfigured={isAdmin ? false : undefined}
           onSelectToday={() => applyAgentDashboard({ view: 'today', remote_only: false, min_match_score: 0 })}
           onSelectReady={() => applyAgentDashboard({ view: 'ready', remote_only: false, min_match_score: 0 })}
           onSelectBest={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 75 })}

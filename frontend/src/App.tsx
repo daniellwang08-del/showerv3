@@ -205,7 +205,14 @@ function App() {
               </ApplicantOnly>
             }
           />
-          <Route path="/integrations" element={<IntegrationsPage />} />
+          <Route
+            path="/integrations"
+            element={
+              <ApplicantOnly isAdmin={!!user?.is_admin}>
+                <IntegrationsPage />
+              </ApplicantOnly>
+            }
+          />
           <Route
             path="/resume-builder"
             element={

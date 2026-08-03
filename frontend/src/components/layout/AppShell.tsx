@@ -4,6 +4,7 @@ import { Menu, X } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { AgentChat } from '../agent/AgentChat';
 import { setAgentNavigator } from '../../lib/agentNavigation';
+import { useAgentStore } from '../../stores/agentStore';
 
 export type AppShellOutletContext = {
   isAdmin: boolean;
@@ -21,11 +22,17 @@ export function AppShell({ userEmail, userName, isAdmin, onLogout }: AppShellPro
   const location = useLocation();
   const admin = !!isAdmin;
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const closeChat = useAgentStore((s) => s.closeChat);
 
   useEffect(() => {
     setAgentNavigator((path) => navigate(path));
     return () => setAgentNavigator(null);
   }, [navigate]);
+
+  // AI Assistant is applicant-only — never leave it open for admins.
+  useEffect(() => {
+    if (admin) closeChat();
+  }, [admin, closeChat]);
 
   // Close drawer on route change (mobile nav link taps).
   useEffect(() => {
@@ -107,7 +114,7 @@ export function AppShell({ userEmail, userName, isAdmin, onLogout }: AppShellPro
           <Outlet context={{ isAdmin: admin } satisfies AppShellOutletContext} />
         </div>
       </main>
-      <AgentChat isAdmin={admin} />
+      {!admin ? <AgentChat /> : null}
     </div>
   );
 }

@@ -41,7 +41,7 @@ export function IntegrationsPage() {
           icon={Puzzle}
           gradient="from-slate-700 to-slate-900"
           title="Integrations"
-          description="Connect Google Sheets and Pumble to auto-post jobs by match score, work mode, and excluded companies."
+          description="Connect Google Sheets and Pumble to auto-post matching jobs by score, work mode, and excluded companies."
         />
 
         <div className="grid items-start gap-3 sm:gap-4 xl:grid-cols-2">

@@ -36,13 +36,13 @@ PLANNER_MAX_TOKENS = 700
 OBSERVATION_DATA_LIMIT = 1800
 
 
-def _system_prompt() -> str:
+def _system_prompt(*, is_admin: bool = False) -> str:
     return (
         "You are the in-app AI assistant for a job-search platform. You help the "
         "signed-in user by calling tools to search their jobs and perform actions on "
         "their behalf. Every tool acts only for this authenticated user.\n\n"
         "AVAILABLE TOOLS:\n"
-        f"{catalog_prompt()}\n\n"
+        f"{catalog_prompt(is_admin=is_admin)}\n\n"
         "RESPONSE FORMAT - reply with a SINGLE JSON object, no markdown fences, "
         "matching ONE of:\n"
         '  1. Call a tool:  {"thought": "...", "action": {"tool": "<name>", "args": {...}}}\n'
@@ -101,8 +101,10 @@ def _compact(data: Any) -> str:
 def _build_messages(
     message: str,
     history: list[dict[str, str]],
+    *,
+    is_admin: bool = False,
 ) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [{"role": "system", "content": _system_prompt()}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": _system_prompt(is_admin=is_admin)}]
     for turn in history[-MAX_HISTORY_TURNS:]:
         role = "assistant" if turn.get("role") == "assistant" else "user"
         text = str(turn.get("content") or "").strip()
@@ -125,7 +127,7 @@ async def run_agent_turn(
 
     ctx = ToolContext(user_id=user_id, timezone=timezone, is_admin=is_admin)
     settings = get_settings()
-    messages = _build_messages(message, history or [])
+    messages = _build_messages(message, history or [], is_admin=is_admin)
 
     try:
         client = await get_llm_client_for_user(user_id, job_type="agent")
@@ -139,6 +141,8 @@ async def run_agent_turn(
         spec = get_tool(tool_name)
         if spec is None:
             return {"observation": f"Unknown tool '{tool_name}'. Choose one from the catalog."}
+        if spec.admin_only and not ctx.is_admin:
+            return {"observation": f"Tool '{tool_name}' is not available."}
         try:
             result = await spec.handler(ctx, args or {})
         except Exception as exc:  # noqa: BLE001 - never crash the stream

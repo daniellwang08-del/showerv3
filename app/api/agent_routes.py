@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.api.routes import get_current_user
+from app.api.routes import require_applicant
 from app.core.logging import get_logger
 from app.services.agent import run_agent_turn
 
@@ -60,7 +60,7 @@ def _sse(obj: dict[str, Any]) -> str:
 
 
 @agent_router.post("/chat")
-async def agent_chat(req: AgentChatRequest, current_user: dict = Depends(get_current_user)):
+async def agent_chat(req: AgentChatRequest, current_user: dict = Depends(require_applicant)):
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -77,7 +77,7 @@ async def agent_chat(req: AgentChatRequest, current_user: dict = Depends(get_cur
                 history=history,
                 timezone=req.timezone,
                 confirmed=confirmed,
-                is_admin=bool(current_user.get("is_admin")),
+                is_admin=False,
             ):
                 if event.get("type") in {"done", "error"}:
                     saw_terminal = True

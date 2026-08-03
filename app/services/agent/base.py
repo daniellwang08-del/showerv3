@@ -59,6 +59,8 @@ class ToolSpec:
     requires_confirmation: bool = False
     # Short imperative gerund shown in the UI while running, e.g. "Searching jobs".
     running_title: str = "Working"
+    # Admin-only tools are omitted from the applicant assistant catalog.
+    admin_only: bool = False
 
     def prompt_signature(self) -> str:
         """One-line tool description for the planner catalog."""
@@ -90,6 +92,7 @@ def registered_tools() -> list[ToolSpec]:
     return list(_REGISTRY.values())
 
 
-def catalog_prompt() -> str:
-    """Render every registered tool into a compact catalog for the system prompt."""
-    return "\n".join(spec.prompt_signature() for spec in _REGISTRY.values())
+def catalog_prompt(*, is_admin: bool = False) -> str:
+    """Render registered tools into a compact catalog for the system prompt."""
+    tools = [spec for spec in _REGISTRY.values() if is_admin or not spec.admin_only]
+    return "\n".join(spec.prompt_signature() for spec in tools)

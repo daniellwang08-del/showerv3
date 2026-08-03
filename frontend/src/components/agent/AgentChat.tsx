@@ -27,8 +27,6 @@ const BASE_SUGGESTIONS = [
   'Sort jobs by match score',
 ];
 
-const ADMIN_SUGGESTIONS = ['Sync all platforms'];
-
 function ScorePill({ score }: { score: number }) {
   const tone =
     score >= 75
@@ -209,7 +207,7 @@ function TypingDots() {
 
 const AGENT_CLOSE_MS = 170;
 
-export function AgentChat({ isAdmin = false }: { isAdmin?: boolean }) {
+export function AgentChat() {
   const { open, sending, timeline, closeChat, clear, send } = useAgentStore();
   const [draft, setDraft] = useState('');
   const [visible, setVisible] = useState(false);
@@ -218,10 +216,7 @@ export function AgentChat({ isAdmin = false }: { isAdmin?: boolean }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const suggestions = useMemo(
-    () => (isAdmin ? [...BASE_SUGGESTIONS, ...ADMIN_SUGGESTIONS] : BASE_SUGGESTIONS),
-    [isAdmin],
-  );
+  const suggestions = BASE_SUGGESTIONS;
 
   const lastIsEmptyAssistant = useMemo(() => {
     const last = timeline[timeline.length - 1];
@@ -357,9 +352,7 @@ export function AgentChat({ isAdmin = false }: { isAdmin?: boolean }) {
               <div className="brand-fade-in brand-fade-in-delay-1">
                 <p className="text-sm font-bold text-slate-800">How can I help?</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {isAdmin
-                    ? 'Ask me to display or filter jobs, check stats, submit a URL, mark jobs applied, or sync platforms.'
-                    : 'Ask me to display or filter jobs, check stats, submit a URL, or mark jobs applied.'}
+                  Ask me to display or filter jobs, check stats, submit a URL, or mark jobs applied.
                 </p>
               </div>
               <div className="brand-fade-in brand-fade-in-delay-2 flex flex-wrap justify-center gap-1.5">

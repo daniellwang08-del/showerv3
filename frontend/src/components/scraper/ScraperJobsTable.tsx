@@ -1214,6 +1214,12 @@ export function ScraperJobsTable({
   }, [contextMenu]);
 
   useEffect(() => {
+    if (isAdmin) {
+      setSheetsConfigured(false);
+      setPumbleConfigured(false);
+      setPumbleIntegrations([]);
+      return;
+    }
     let cancelled = false;
     void fetchSheetsConfig()
       .then((config) => {
@@ -1236,7 +1242,7 @@ export function ScraperJobsTable({
         }
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [isAdmin]);
 
   // ── Row mouse handlers ────────────────────────────────────────────────────
   const handleRowMouseDown = useCallback((e: React.MouseEvent, job: DashboardJob) => {

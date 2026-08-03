@@ -502,6 +502,7 @@ AGENT_TOOLS: list[ToolSpec] = [
             handler=_trigger_sync,
             requires_confirmation=True,
             running_title="Starting sync",
+            admin_only=True,
         )
     ),
 ]

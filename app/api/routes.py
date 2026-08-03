@@ -226,6 +226,16 @@ async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     return current_user
 
 
+async def require_applicant(current_user: dict = Depends(get_current_user)) -> dict:
+    """Applicant-only routes (Integrations, Sheets/Pumble posting, AI assistant)."""
+    if current_user.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Available to applicant accounts only",
+        )
+    return current_user
+
+
 @router.post("/auth/signup", response_model=AuthResponse)
 async def signup(request: SignupRequest, response: Response) -> AuthResponse:
     """Register a new user with email and password"""
@@ -5015,7 +5025,7 @@ class SheetsEnabledRequest(BaseModel):
     is_enabled: bool
 
 
-@router.get("/sheets/status", dependencies=[Depends(get_current_user)])
+@router.get("/sheets/status", dependencies=[Depends(require_applicant)])
 async def get_sheets_status():
     """Server-side Google Sheets credentials readiness."""
     from app.services.google_sheets_service import get_server_status
@@ -5023,7 +5033,7 @@ async def get_sheets_status():
     return get_server_status()
 
 
-@router.get("/sheets/tabs", dependencies=[Depends(get_current_user)])
+@router.get("/sheets/tabs", dependencies=[Depends(require_applicant)])
 async def get_sheets_tabs(url: str = Query(..., min_length=10)):
     """Verify spreadsheet access and fetch all tab names."""
     from app.services.google_sheets_service import SpreadsheetAccessError, verify_spreadsheet
@@ -5041,7 +5051,7 @@ async def get_sheets_tabs(url: str = Query(..., min_length=10)):
         raise HTTPException(status_code=502, detail=f"Could not read spreadsheet: {e}")
 
 
-@router.get("/sheets/config", dependencies=[Depends(get_current_user)])
+@router.get("/sheets/config", dependencies=[Depends(require_applicant)])
 async def get_sheets_config(current_user: dict = Depends(get_current_user)):
     """Get user's Google Sheets integration config."""
     user_id = current_user.get("user_id")
@@ -5067,7 +5077,7 @@ async def get_sheets_config(current_user: dict = Depends(get_current_user)):
     }
 
 
-@router.post("/sheets/config", dependencies=[Depends(get_current_user)])
+@router.post("/sheets/config", dependencies=[Depends(require_applicant)])
 async def save_sheets_config(
     body: SheetsConfigRequest,
     current_user: dict = Depends(get_current_user),
@@ -5134,7 +5144,7 @@ async def save_sheets_config(
     }
 
 
-@router.patch("/sheets/config/auto-post-threshold", dependencies=[Depends(get_current_user)])
+@router.patch("/sheets/config/auto-post-threshold", dependencies=[Depends(require_applicant)])
 async def patch_sheets_auto_post_threshold(
     body: SheetsAutoPostThresholdRequest,
     current_user: dict = Depends(get_current_user),
@@ -5168,7 +5178,7 @@ async def patch_sheets_auto_post_threshold(
     }
 
 
-@router.patch("/sheets/config/auto-post-settings", dependencies=[Depends(get_current_user)])
+@router.patch("/sheets/config/auto-post-settings", dependencies=[Depends(require_applicant)])
 async def patch_sheets_auto_post_settings(
     body: SheetsAutoPostSettingsRequest,
     current_user: dict = Depends(get_current_user),
@@ -5206,7 +5216,7 @@ async def patch_sheets_auto_post_settings(
     }
 
 
-@router.patch("/sheets/config/enabled", dependencies=[Depends(get_current_user)])
+@router.patch("/sheets/config/enabled", dependencies=[Depends(require_applicant)])
 async def patch_sheets_enabled(
     body: SheetsEnabledRequest,
     current_user: dict = Depends(get_current_user),
@@ -5242,7 +5252,7 @@ async def patch_sheets_enabled(
     }
 
 
-@router.delete("/sheets/config", dependencies=[Depends(get_current_user)])
+@router.delete("/sheets/config", dependencies=[Depends(require_applicant)])
 async def delete_sheets_config(current_user: dict = Depends(get_current_user)):
     """Disconnect Google Sheets integration for the current user."""
     user_id = current_user.get("user_id")
@@ -5255,7 +5265,7 @@ async def delete_sheets_config(current_user: dict = Depends(get_current_user)):
     return {"success": True, "removed": removed}
 
 
-@router.post("/sheets/post-jobs", dependencies=[Depends(get_current_user)])
+@router.post("/sheets/post-jobs", dependencies=[Depends(require_applicant)])
 async def post_jobs_to_sheet(
     body: SheetsPostJobsRequest,
     current_user: dict = Depends(get_current_user),
@@ -5334,13 +5344,13 @@ class PumbleEnabledRequest(BaseModel):
     is_enabled: bool
 
 
-@router.get("/pumble/status", dependencies=[Depends(get_current_user)])
+@router.get("/pumble/status", dependencies=[Depends(require_applicant)])
 async def get_pumble_status():
     """Pumble integration is always available (user-provided API keys)."""
     return {"integration_available": True}
 
 
-@router.post("/pumble/verify", dependencies=[Depends(get_current_user)])
+@router.post("/pumble/verify", dependencies=[Depends(require_applicant)])
 async def verify_pumble_api_key(body: PumbleVerifyRequest):
     from app.services.pumble_service import verify_api_key
 
@@ -5353,7 +5363,7 @@ async def verify_pumble_api_key(body: PumbleVerifyRequest):
         raise HTTPException(status_code=502, detail=f"Could not verify Pumble API key: {e}")
 
 
-@router.post("/pumble/channels", dependencies=[Depends(get_current_user)])
+@router.post("/pumble/channels", dependencies=[Depends(require_applicant)])
 async def list_pumble_channels(
     body: PumbleChannelsRequest,
     current_user: dict = Depends(get_current_user),
@@ -5388,7 +5398,7 @@ async def list_pumble_channels(
     return {"channels": channels, "channel_count": len(channels)}
 
 
-@router.get("/pumble/config", dependencies=[Depends(get_current_user)])
+@router.get("/pumble/config", dependencies=[Depends(require_applicant)])
 async def get_pumble_config(current_user: dict = Depends(get_current_user)):
     from app.utils.secret_encryption import decrypt_secret, mask_api_key
     from app.services.pumble_service import _serialize_integration, list_user_configs
@@ -5423,7 +5433,7 @@ async def get_pumble_config(current_user: dict = Depends(get_current_user)):
     }
 
 
-@router.post("/pumble/config", dependencies=[Depends(get_current_user)])
+@router.post("/pumble/config", dependencies=[Depends(require_applicant)])
 async def save_pumble_config(
     body: PumbleConfigRequest,
     current_user: dict = Depends(get_current_user),
@@ -5457,7 +5467,7 @@ async def save_pumble_config(
     }
 
 
-@router.patch("/pumble/config/auto-post-threshold", dependencies=[Depends(get_current_user)])
+@router.patch("/pumble/config/auto-post-threshold", dependencies=[Depends(require_applicant)])
 async def patch_pumble_auto_post_threshold(
     body: PumbleAutoPostThresholdRequest,
     current_user: dict = Depends(get_current_user),
@@ -5487,7 +5497,7 @@ async def patch_pumble_auto_post_threshold(
     }
 
 
-@router.patch("/pumble/config/auto-post-settings", dependencies=[Depends(get_current_user)])
+@router.patch("/pumble/config/auto-post-settings", dependencies=[Depends(require_applicant)])
 async def patch_pumble_auto_post_settings(
     body: PumbleAutoPostSettingsRequest,
     current_user: dict = Depends(get_current_user),
@@ -5522,7 +5532,7 @@ async def patch_pumble_auto_post_settings(
     }
 
 
-@router.patch("/pumble/config/enabled", dependencies=[Depends(get_current_user)])
+@router.patch("/pumble/config/enabled", dependencies=[Depends(require_applicant)])
 async def patch_pumble_all_enabled(
     body: PumbleEnabledRequest,
     current_user: dict = Depends(get_current_user),
@@ -5565,7 +5575,7 @@ async def patch_pumble_all_enabled(
     }
 
 
-@router.patch("/pumble/config/{integration_id}/enabled", dependencies=[Depends(get_current_user)])
+@router.patch("/pumble/config/{integration_id}/enabled", dependencies=[Depends(require_applicant)])
 async def patch_pumble_integration_enabled(
     integration_id: str,
     body: PumbleEnabledRequest,
@@ -5603,7 +5613,7 @@ async def patch_pumble_integration_enabled(
     }
 
 
-@router.delete("/pumble/config/{integration_id}", dependencies=[Depends(get_current_user)])
+@router.delete("/pumble/config/{integration_id}", dependencies=[Depends(require_applicant)])
 async def delete_pumble_integration(
     integration_id: str,
     current_user: dict = Depends(get_current_user),
@@ -5620,7 +5630,7 @@ async def delete_pumble_integration(
     return {"success": True, "removed": True}
 
 
-@router.delete("/pumble/config", dependencies=[Depends(get_current_user)])
+@router.delete("/pumble/config", dependencies=[Depends(require_applicant)])
 async def delete_pumble_config(current_user: dict = Depends(get_current_user)):
     from app.services.pumble_service import delete_user_config
 
@@ -5632,7 +5642,7 @@ async def delete_pumble_config(current_user: dict = Depends(get_current_user)):
     return {"success": True, "removed": removed}
 
 
-@router.post("/pumble/post-jobs", dependencies=[Depends(get_current_user)])
+@router.post("/pumble/post-jobs", dependencies=[Depends(require_applicant)])
 async def post_jobs_to_pumble(
     body: PumblePostJobsRequest,
     current_user: dict = Depends(get_current_user),
