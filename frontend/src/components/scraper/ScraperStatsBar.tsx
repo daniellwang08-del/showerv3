@@ -278,9 +278,9 @@ const SideTile = memo(function SideTile({
   trendMaxScale,
 }: SideTileProps) {
   const className = [
-    // transition-* only for paint/motion props — never `transition-all` (it was
-    // animating height when bump/count-up briefly changed the number box).
-    'stats-side-tile group relative flex h-[126px] min-h-[126px] max-h-[126px] flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left shadow-sm transition-[border-color,box-shadow,transform,background-color] duration-300 sm:gap-4 sm:px-5 sm:py-4',
+    // flex-1 + min-h only — fixed h/max-h left empty gaps under the main panels
+    // while side rails stretched to the taller hero column.
+    'stats-side-tile group relative flex min-h-[126px] w-full flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left shadow-sm transition-[border-color,box-shadow,transform,background-color] duration-300 sm:gap-4 sm:px-5 sm:py-4',
     'border-slate-200/90 bg-white/95 dark:border-slate-700/80 dark:bg-[#141d31]/95',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 dark:hover:border-slate-500'
@@ -362,6 +362,7 @@ const RailStat = memo(function RailStat({
   modern = false,
 }: RailStatProps) {
   const className = [
+    // flex-1 fills the rail column so left/right rails match the main board height.
     'stats-rail-stat group flex min-h-[68px] w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-3 text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
     'border-slate-200/80 bg-white/85 dark:border-slate-700/70 dark:bg-[#101827]/85',
     onClick
@@ -637,7 +638,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
       <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)_13.5rem] xl:gap-4">
         <div
           className={[
-            'order-2 grid gap-2.5 xl:order-1 xl:flex xl:h-full xl:flex-col',
+            'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
             railGridClass(leftRail.length),
           ].join(' ')}
         >
@@ -656,8 +657,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
           ))}
         </div>
 
-        <div className="order-1 grid grid-cols-1 items-stretch gap-3.5 lg:grid-cols-[1fr_auto_1fr] lg:gap-4 xl:order-2">
-          <div className="flex flex-col gap-3.5">
+        <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[1fr_auto_1fr] lg:gap-4 xl:order-2">
+          <div className="flex h-full min-h-0 flex-col gap-3.5">
             <SideTile
               icon={Rocket}
               value={ready}
@@ -697,7 +698,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             onClick={onSelectToday}
             title="Show today's new jobs"
             className={[
-              'stats-hero-tile group relative mx-auto flex h-full min-h-[280px] w-full max-w-[280px] flex-col items-center justify-center rounded-[2rem] border px-4 py-4 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
+              'stats-hero-tile group relative mx-auto flex h-full min-h-[280px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-4 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
               'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
               'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
@@ -732,7 +733,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             </div>
           </button>
 
-          <div className="flex flex-col gap-3.5">
+          <div className="flex h-full min-h-0 flex-col gap-3.5">
             <SideTile
               icon={Wifi}
               value={remote}
@@ -770,7 +771,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
 
         <div
           className={[
-            'order-3 grid gap-2.5 xl:flex xl:h-full xl:flex-col',
+            'order-3 grid gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:flex-col',
             railGridClass(rightRail.length),
           ].join(' ')}
         >
