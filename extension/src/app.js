@@ -675,6 +675,9 @@ async function doLogin(email, password) {
 
 async function doLogout() {
   stopHomePolling();
+  const uid = state.user && state.user.user_id;
+  if (uid) await store.clearJobsCatalog(uid);
+  jobsCatalog = null;
   await api.logout();
   await store.clearCurrentUser();
   const remembered = await store.getRememberedEmail();
@@ -731,7 +734,9 @@ async function goHome() {
     homeTab: "hub",
     applyListContext: null,
   });
-  await Promise.all([loadQueue(), checkSync()]);
+  // Paint cached lists immediately, then sync in the background.
+  const hadCache = await hydrateCatalogFromStorage();
+  await Promise.all([loadQueue({ silent: hadCache }), checkSync()]);
   startHomePolling();
 }
 
@@ -872,8 +877,259 @@ function minScoreParam() {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-// The dashboard caps per_page at 200. Page through a view so the extension
-// mirrors the web dashboard tabs (same server filters + same totals).
+// In-memory job catalog (mirrors chrome.storage / IndexedDB). Lists are derived.
+let jobsCatalog = null;
+
+function localDayBoundsMs() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { startMs: start.getTime(), endMs: end.getTime() };
+}
+
+function tsInLocalDay(iso) {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return false;
+  const { startMs, endMs } = localDayBoundsMs();
+  return t >= startMs && t < endMs;
+}
+
+function jobSortTs(j, key) {
+  if (key === "match_score") {
+    const n = Number(j && j.match_overall_score);
+    return Number.isFinite(n) ? n : -1;
+  }
+  if (key === "applied_at") return Date.parse((j && j.applied_at) || 0) || 0;
+  return Date.parse((j && (j.created_at || j.posted_date)) || 0) || 0;
+}
+
+function sortJobs(items, key, order) {
+  const dir = order === "asc" ? 1 : -1;
+  return (items || []).slice().sort((a, b) => {
+    const d = (jobSortTs(a, key) - jobSortTs(b, key)) * dir;
+    if (d !== 0) return d;
+    return String((b && b.id) || "").localeCompare(String((a && a.id) || ""));
+  });
+}
+
+function isRemoteJob(j) {
+  if (!j) return false;
+  if (j.is_remote) return true;
+  if (String(j.work_mode || "").toLowerCase() === "remote") return true;
+  return /remote/i.test(String(j.location || ""));
+}
+
+function isReadyJob(j) {
+  return String((j && (j.resume_build_status || j.resume_docx_status)) || "").toLowerCase() === "completed";
+}
+
+/** Derive all Home queues + count tiles from the canonical jobsById map. */
+function deriveHomeFromCatalog(catalog) {
+  const jobsById = (catalog && catalog.jobsById) || {};
+  const all = Object.values(jobsById);
+  const bestFloor = state.BEST_MATCH_SCORE || 75;
+  const todayAll = sortJobs(
+    all.filter((j) => tsInLocalDay(j.pool_added_at || j.created_at)),
+    "created_at",
+    "desc"
+  );
+  const todayMine = todayAll.filter((j) => isFromMe(j));
+  const todayPlatform = todayAll.filter((j) => !isFromMe(j));
+  const queue = sortJobs(all, "created_at", "desc");
+  const readyQueue = sortJobs(all.filter(isReadyJob), "match_score", "desc");
+  const bestQueue = sortJobs(
+    all.filter((j) => Number(j.match_overall_score) >= bestFloor),
+    "match_score",
+    "desc"
+  );
+  const remoteQueue = sortJobs(all.filter(isRemoteJob), "created_at", "desc");
+  const mineQueue = sortJobs(all.filter((j) => isFromMe(j)), "created_at", "desc");
+  const appliedQueue = sortJobs(
+    all.filter((j) => tsInLocalDay(j.applied_at)),
+    "applied_at",
+    "desc"
+  );
+
+  const meta = (catalog && catalog.meta) || {};
+  const counts = meta.dashboardCounts || {};
+  const dashboardCounts = {
+    all: counts.all != null ? counts.all : queue.length,
+    today: counts.today != null ? counts.today : todayAll.length,
+    mine: counts.mine != null ? counts.mine : mineQueue.length,
+    suggested: counts.suggested != null ? counts.suggested : 0,
+    applied_today: counts.applied_today != null ? counts.applied_today : appliedQueue.length,
+  };
+  const ss = meta.scraperStats || {};
+  const platformCounts = meta.platformCounts || {
+    total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
+    ready: ss.ready_jobs != null ? ss.ready_jobs : readyQueue.length,
+    best: ss.best_jobs != null ? ss.best_jobs : bestQueue.length,
+    today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
+    remote: ss.total_remote != null ? ss.total_remote : remoteQueue.length,
+    mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
+  };
+
+  return {
+    queue,
+    readyQueue,
+    bestQueue,
+    remoteQueue,
+    mineQueue,
+    todayQueue: todayAll,
+    todayPlatformQueue: todayPlatform,
+    todayMineQueue: todayMine,
+    todayCounts: {
+      all: dashboardCounts.today,
+      platform: todayPlatform.length,
+      mine: todayMine.length,
+    },
+    dashboardCounts,
+    platformCounts,
+    weeklyProgress: meta.weeklyProgress != null ? meta.weeklyProgress : state.weeklyProgress,
+    scraperStats: meta.scraperStats != null ? meta.scraperStats : state.scraperStats,
+    appliedQueue,
+    pumbleConfigured: !!meta.pumbleConfigured,
+    pumbleDestinationCount: meta.pumbleDestinationCount || 0,
+    sessions: meta.sessions != null ? meta.sessions : state.sessions,
+  };
+}
+
+function catalogServerTimeIso(value) {
+  if (!value) return new Date().toISOString();
+  if (typeof value === "string") return value;
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
+function buildMetaFromExtras(extras, counts, catalog) {
+  const prev = (catalog && catalog.meta) || {};
+  const ss = extras.scraperStats || prev.scraperStats || {};
+  const dashboardCounts = {
+    all: counts && counts.all != null ? counts.all : prev.dashboardCounts?.all,
+    today: counts && counts.today != null ? counts.today : prev.dashboardCounts?.today,
+    mine: counts && counts.mine != null ? counts.mine : prev.dashboardCounts?.mine,
+    suggested: counts && counts.suggested != null ? counts.suggested : prev.dashboardCounts?.suggested || 0,
+    applied_today:
+      counts && counts.applied_today != null
+        ? counts.applied_today
+        : prev.dashboardCounts?.applied_today,
+  };
+  const platformCounts = {
+    total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
+    ready: ss.ready_jobs != null ? ss.ready_jobs : prev.platformCounts?.ready,
+    best: ss.best_jobs != null ? ss.best_jobs : prev.platformCounts?.best,
+    today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
+    remote: ss.total_remote != null ? ss.total_remote : prev.platformCounts?.remote,
+    mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
+  };
+  return {
+    ...prev,
+    dashboardCounts,
+    platformCounts,
+    weeklyProgress:
+      extras.weeklyProgress != null ? extras.weeklyProgress : prev.weeklyProgress,
+    scraperStats: extras.scraperStats != null ? extras.scraperStats : prev.scraperStats,
+    sessions: extras.sessions != null ? extras.sessions : prev.sessions,
+    pumbleConfigured: extras.pumbleConfigured,
+    pumbleDestinationCount: extras.pumbleDestinationCount,
+  };
+}
+
+function applyHomeFromCatalog(catalog, { silent = false, resetPages = false } = {}) {
+  jobsCatalog = catalog;
+  const nextHome = deriveHomeFromCatalog(catalog);
+  if (silent && !state.queueLoading && homeDataUnchanged(state, nextHome)) {
+    return false;
+  }
+  const syncedRuns = syncTailorRunsFromJobs([
+    ...(nextHome.queue || []),
+    ...(nextHome.todayQueue || []),
+    ...(nextHome.readyQueue || []),
+  ]);
+  setState({
+    ...nextHome,
+    ...(syncedRuns ? { tailorRuns: syncedRuns } : {}),
+    ...(resetPages
+      ? {
+          pageByTab: {
+            progress: 1,
+            today: 1,
+            all: 1,
+            ready: 1,
+            best: 1,
+            remote: 1,
+            mine: 1,
+            tailor: 1,
+          },
+        }
+      : {}),
+    queueLoading: false,
+  });
+  return true;
+}
+
+async function persistJobsCatalog(catalog) {
+  const uid = state.user && state.user.user_id;
+  if (!uid || !catalog) return;
+  jobsCatalog = catalog;
+  await store.setJobsCatalog(uid, catalog);
+}
+
+async function hydrateCatalogFromStorage() {
+  const uid = state.user && state.user.user_id;
+  if (!uid) return false;
+  try {
+    const catalog = await store.getJobsCatalog(uid);
+    if (!catalog || !catalog.jobsById) return false;
+    const want = Number(state.minScore) || 0;
+    if (Number(catalog.minScore) !== want) return false;
+    if (!Object.keys(catalog.jobsById).length && !catalog.since) return false;
+    applyHomeFromCatalog(catalog, { silent: true, resetPages: false });
+    return true;
+  } catch (err) {
+    console.warn("hydrateCatalogFromStorage failed", err);
+    return false;
+  }
+}
+
+async function patchCatalogJobs(mutator) {
+  if (!jobsCatalog || !jobsCatalog.jobsById) return;
+  const next = mutator({
+    ...jobsCatalog,
+    jobsById: { ...jobsCatalog.jobsById },
+    meta: { ...(jobsCatalog.meta || {}) },
+  });
+  if (!next) return;
+  await persistJobsCatalog(next);
+  applyHomeFromCatalog(next, { silent: true, resetPages: false });
+}
+
+async function patchCatalogJob(jobId, patch) {
+  const id = String(jobId || "");
+  if (!id) return;
+  await patchCatalogJobs((cat) => {
+    const cur = cat.jobsById[id];
+    if (!cur) return null;
+    cat.jobsById[id] = { ...cur, ...patch };
+    return cat;
+  });
+}
+
+async function removeCatalogJob(jobId) {
+  const id = String(jobId || "");
+  if (!id) return;
+  await patchCatalogJobs((cat) => {
+    if (!cat.jobsById[id]) return null;
+    delete cat.jobsById[id];
+    return cat;
+  });
+}
+
+// The dashboard caps per_page at 200. Page through a view for cold bootstrap.
 async function fetchDashboardPages({
   view = "all",
   sort = "created_at",
@@ -917,8 +1173,6 @@ async function fetchDashboardPages({
     );
     for (const r of rest) items = items.concat(r.items || []);
   }
-  // If the server reported more rows than we fetched (cap hit), keep the
-  // authoritative total so tile badges still match the dashboard.
   return { items, total: Math.max(total, items.length) };
 }
 
@@ -990,146 +1244,110 @@ function homeDataUnchanged(prev, next) {
   return true;
 }
 
+async function fetchHomeExtras({ timezone, score }) {
+  const [sessions, weekly, scraperStats, pumbleCfg] = await Promise.all([
+    api.listSessions("in_progress").catch(() => []),
+    api.getWeeklyProgress({ timezone, days: 7 }).catch(() => null),
+    api.getScraperStats({ timezone }).catch(() => null),
+    api.getPumbleConfig().catch(() => ({ configured: false })),
+  ]);
+  const pumbleConfigured = Boolean(
+    pumbleCfg &&
+      ((Array.isArray(pumbleCfg.integrations) && pumbleCfg.integrations.length > 0) ||
+        pumbleCfg.configured)
+  );
+  const pumbleDestinationCount = Array.isArray(pumbleCfg?.integrations)
+    ? pumbleCfg.integrations.filter((i) => i.is_enabled !== false).length
+    : pumbleCfg?.configured
+      ? 1
+      : 0;
+  return {
+    sessions: sessions || [],
+    weeklyProgress: weekly,
+    scraperStats,
+    pumbleConfigured,
+    pumbleDestinationCount,
+  };
+}
+
+async function bootstrapJobsCatalog({ score, wantScore, timezone, extras }) {
+  const [allPage, counts, revision] = await Promise.all([
+    fetchDashboardPages({
+      view: "all",
+      sort: "created_at",
+      order: "desc",
+      min_match_score: score,
+    }),
+    api.getDashboardCounts({ timezone, min_match_score: score }).catch(() => null),
+    api.getDashboardRevision({ min_match_score: score }).catch(() => null),
+  ]);
+  const meta = buildMetaFromExtras(extras, counts, jobsCatalog);
+  const since = catalogServerTimeIso(revision && revision.server_time);
+  const catalog = store.replaceJobsCatalog(jobsCatalog, allPage.items || [], {
+    since,
+    revision: revision && revision.revision,
+    minScore: wantScore,
+    meta,
+  });
+  await persistJobsCatalog(catalog);
+  return catalog;
+}
+
 async function loadQueue({ silent = false } = {}) {
-  // Show skeletons while we page through the (potentially large) dashboard —
-  // skip the flash on background polls.
+  // Show skeletons while cold-loading — skip the flash on background polls /
+  // when we already painted from cache.
   if (!silent) setState({ queueLoading: true });
   try {
     const score = minScoreParam();
+    const wantScore = Number(state.minScore) || 0;
     const timezone = localTimezone();
-    const bestFloor = state.BEST_MATCH_SCORE || 75;
-    const [
-      sessions,
-      todayPage,
-      allPage,
-      readyPage,
-      bestPage,
-      remotePage,
-      minePage,
-      appliedPage,
-      counts,
-      weekly,
-      scraperStats,
-      pumbleCfg,
-    ] = await Promise.all([
-      api.listSessions("in_progress").catch(() => []),
-      fetchDashboardPages({ view: "today", sort: "created_at", order: "desc", min_match_score: score }),
-      fetchDashboardPages({ view: "all", sort: "created_at", order: "desc", min_match_score: score }),
-      fetchDashboardPages({ view: "ready", sort: "match_score", order: "desc", min_match_score: score }),
-      fetchDashboardPages({
-        view: "all",
-        sort: "match_score",
-        order: "desc",
-        min_match_score: bestFloor,
-      }),
-      fetchDashboardPages({
-        view: "all",
-        sort: "created_at",
-        order: "desc",
-        min_match_score: score,
-        remote_only: true,
-      }),
-      fetchDashboardPages({ view: "mine", sort: "created_at", order: "desc", min_match_score: score }),
-      fetchDashboardPages({
-        view: "applied_today",
-        sort: "applied_at",
-        order: "desc",
-        min_match_score: score,
-      }),
-      api.getDashboardCounts({ timezone, min_match_score: score }).catch(() => null),
-      api.getWeeklyProgress({ timezone, days: 7 }).catch(() => null),
-      api.getScraperStats({ timezone }).catch(() => null),
-      api.getPumbleConfig().catch(() => ({ configured: false })),
-    ]);
 
-    const todayAll = todayPage.items || [];
-    const todayMine = todayAll.filter((j) => isFromMe(j));
-    const todayPlatform = todayAll.filter((j) => !isFromMe(j));
-
-    const dashboardCounts = {
-      all: counts && counts.all != null ? counts.all : allPage.total,
-      today: counts && counts.today != null ? counts.today : todayPage.total,
-      mine: counts && counts.mine != null ? counts.mine : minePage.total,
-      suggested: counts && counts.suggested != null ? counts.suggested : 0,
-      applied_today:
-        counts && counts.applied_today != null ? counts.applied_today : appliedPage.total,
-    };
-
-    const ss = scraperStats || {};
-    const platformCounts = {
-      total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
-      ready: ss.ready_jobs != null ? ss.ready_jobs : readyPage.total,
-      best: ss.best_jobs != null ? ss.best_jobs : bestPage.total,
-      today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
-      remote: ss.total_remote != null ? ss.total_remote : remotePage.total,
-      mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
-    };
-
-    const pumbleConfigured = Boolean(
-      pumbleCfg &&
-        ((Array.isArray(pumbleCfg.integrations) && pumbleCfg.integrations.length > 0) ||
-          pumbleCfg.configured)
-    );
-    const pumbleDestinationCount = Array.isArray(pumbleCfg?.integrations)
-      ? pumbleCfg.integrations.filter((i) => i.is_enabled !== false).length
-      : pumbleCfg?.configured
-        ? 1
-        : 0;
-
-    const nextHome = {
-      sessions: sessions || [],
-      queue: allPage.items || [],
-      readyQueue: readyPage.items || [],
-      bestQueue: bestPage.items || [],
-      remoteQueue: remotePage.items || [],
-      mineQueue: minePage.items || [],
-      todayQueue: todayAll,
-      todayPlatformQueue: todayPlatform,
-      todayMineQueue: todayMine,
-      todayCounts: {
-        all: dashboardCounts.today,
-        platform: todayPlatform.length,
-        mine: todayMine.length,
-      },
-      dashboardCounts,
-      platformCounts,
-      weeklyProgress: weekly || state.weeklyProgress,
-      scraperStats: scraperStats || state.scraperStats,
-      appliedQueue: appliedPage.items || [],
-      pumbleConfigured,
-      pumbleDestinationCount,
-    };
-
-    // Silent poll with identical data: skip the DOM rebuild (main scroll-jump cause).
-    if (silent && !state.queueLoading && homeDataUnchanged(state, nextHome)) {
-      return;
+    // Silent warm poll: skip network entirely when revision is unchanged.
+    if (silent && jobsCatalog && jobsCatalog.revision) {
+      const rev = await api.getDashboardRevision({ min_match_score: score }).catch(() => null);
+      if (rev && rev.revision === jobsCatalog.revision) {
+        return;
+      }
     }
 
-    const syncedRuns = syncTailorRunsFromJobs([
-      ...(nextHome.queue || []),
-      ...(nextHome.todayQueue || []),
-      ...(nextHome.readyQueue || []),
-    ]);
+    const extras = await fetchHomeExtras({ timezone, score });
+    const needBootstrap =
+      !jobsCatalog ||
+      !jobsCatalog.since ||
+      Number(jobsCatalog.minScore) !== wantScore ||
+      !jobsCatalog.jobsById;
 
-    setState({
-      ...nextHome,
-      ...(syncedRuns ? { tailorRuns: syncedRuns } : {}),
-      ...(silent
-        ? {}
-        : {
-            pageByTab: {
-              progress: 1,
-              today: 1,
-              all: 1,
-              ready: 1,
-              best: 1,
-              remote: 1,
-              mine: 1,
-              tailor: 1,
-            },
-          }),
-      queueLoading: false,
-    });
+    let catalog;
+    if (needBootstrap) {
+      catalog = await bootstrapJobsCatalog({ score, wantScore, timezone, extras });
+    } else {
+      const knownIds = Object.keys(jobsCatalog.jobsById || {});
+      const sync = await api
+        .getDashboardSync({
+          since: jobsCatalog.since,
+          timezone,
+          min_match_score: score,
+          known_ids: knownIds.length <= 2000 ? knownIds : undefined,
+        })
+        .catch(() => null);
+
+      if (!sync || sync.reset) {
+        catalog = await bootstrapJobsCatalog({ score, wantScore, timezone, extras });
+      } else {
+        const meta = buildMetaFromExtras(extras, sync.counts, jobsCatalog);
+        catalog = store.mergeJobsCatalog(jobsCatalog, {
+          upserts: sync.upserts || [],
+          removed_ids: sync.removed_ids || [],
+          since: catalogServerTimeIso(sync.server_time),
+          revision: sync.revision,
+          meta,
+        });
+        catalog.minScore = wantScore;
+        await persistJobsCatalog(catalog);
+      }
+    }
+
+    applyHomeFromCatalog(catalog, { silent, resetPages: !silent });
   } catch (err) {
     setState({ error: silent ? state.error : err.message, queueLoading: false });
   }
@@ -1410,6 +1628,16 @@ async function loadJobDocsAvailability(jobId) {
   // Prefer live build status; fall back to dashboard queue fields already in memory.
   try {
     const st = await api.getResumeBuildStatus(jobId);
+    // Keep the cached catalog in sync so Ready / Tailor lists update without a full refetch.
+    void patchCatalogJob(jobId, {
+      resume_build_status: st.resume_docx_status ?? null,
+      resume_pdf_status: st.resume_pdf_status ?? null,
+      cover_letter_pdf_status: st.cover_letter_pdf_status ?? null,
+      content_generation_status: st.content_generation_status ?? null,
+      ...(st.id || st.resume_build_id
+        ? { resume_build_id: st.id || st.resume_build_id }
+        : {}),
+    });
     return {
       resumePdf: String(st.resume_pdf_status || "").toLowerCase() === "completed",
       resumeDocx: String(st.resume_docx_status || "").toLowerCase() === "completed",
@@ -1529,6 +1757,13 @@ async function pollReady(jobId, attempt) {
       setState({
         job: { ...state.job, snapshot: snap, ready: true, score: snap.match_score, title: snap.title || state.job.title },
       });
+      if (snap.match_score != null) {
+        void patchCatalogJob(jobId, {
+          match_overall_score: snap.match_score,
+          match_in_progress: false,
+          ...(snap.title ? { title: snap.title } : {}),
+        });
+      }
       void pollJobDocs(jobId, 0);
       return;
     }
@@ -1616,7 +1851,17 @@ async function postJobsToPumble(jobIds) {
       if (state.job && ids.includes(state.job.job_id)) {
         setState({ job: { ...state.job, pumblePosted: true } });
       }
-      await loadQueue();
+      const postedAt = new Date().toISOString();
+      await patchCatalogJobs((cat) => {
+        let touched = false;
+        for (const id of ids) {
+          if (!cat.jobsById[id]) continue;
+          cat.jobsById[id] = { ...cat.jobsById[id], pumble_posted_at: postedAt };
+          touched = true;
+        }
+        return touched ? cat : null;
+      });
+      await loadQueue({ silent: true });
     }
   } catch (err) {
     setState({ error: err.message || "Failed to post to Pumble." });
@@ -1654,6 +1899,7 @@ async function completeJob({ next }) {
     try {
       await api.markApplied([jobId]);
       await api.updateSession(jobId, "completed").catch(() => {});
+      void patchCatalogJob(jobId, { applied_at: new Date().toISOString() });
     } catch (err) {
       setState({ error: err.message });
       return;
@@ -1794,6 +2040,7 @@ async function confirmReportInvalid() {
   try {
     await api.reportJobInvalid(jobId, "expired");
     await api.updateSession(jobId, "completed").catch(() => {});
+    void removeCatalogJob(jobId);
   } catch (err) {
     setState({ modal: null, error: err.message });
     return;

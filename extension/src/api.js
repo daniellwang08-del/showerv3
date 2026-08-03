@@ -138,6 +138,35 @@ export const getDashboard = (params = {}) => {
   return apiFetch(`/jobs/dashboard?${q.toString()}`);
 };
 
+export const getDashboardRevision = (params = {}) => {
+  const q = new URLSearchParams({
+    ...(params.min_match_score != null && params.min_match_score !== ""
+      ? { min_match_score: String(params.min_match_score) }
+      : {}),
+  });
+  const qs = q.toString();
+  return apiFetch(`/jobs/dashboard/revision${qs ? `?${qs}` : ""}`);
+};
+
+/**
+ * Incremental catalog sync.
+ * @param {{ since?: string, timezone?: string, min_match_score?: number, known_ids?: string[] }} [params]
+ */
+export const getDashboardSync = (params = {}) => {
+  const q = new URLSearchParams({
+    ...(params.since ? { since: params.since } : {}),
+    ...(params.timezone ? { timezone: params.timezone } : {}),
+    ...(params.min_match_score != null && params.min_match_score !== ""
+      ? { min_match_score: String(params.min_match_score) }
+      : {}),
+  });
+  // Cap known_ids to keep the query string reasonable; server also caps.
+  if (Array.isArray(params.known_ids) && params.known_ids.length) {
+    q.set("known_ids", params.known_ids.slice(0, 2000).join(","));
+  }
+  return apiFetch(`/jobs/dashboard/sync?${q.toString()}`);
+};
+
 export const getDashboardCounts = (params = {}) => {
   const q = new URLSearchParams({
     ...(params.q ? { q: params.q } : {}),

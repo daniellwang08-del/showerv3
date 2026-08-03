@@ -154,6 +154,256 @@ export async function clearCache(userId) {
   await LOCAL.remove(cacheKey(userId));
 }
 
+// ── Job catalog cache (extension Home lists) ───────────────────────────────
+// One canonical jobsById map per user. Lists (today/ready/best/…) are derived
+// in memory. Large catalogs fall back to IndexedDB when chrome.storage.local
+// hits quota.
+
+export const JOBS_CATALOG_VERSION = 1;
+
+function jobsCatalogMetaKey(userId) {
+  return `jobsCatalogMeta_${userId}`;
+}
+
+function jobsCatalogLocalKey(userId) {
+  return `jobsCatalog_${userId}`;
+}
+
+const IDB_NAME = "atomspace_jobs";
+const IDB_STORE = "catalogs";
+
+function openJobsIdb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB unavailable"));
+      return;
+    }
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB open failed"));
+  });
+}
+
+async function idbGetCatalog(userId) {
+  const db = await openJobsIdb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(String(userId));
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function idbSetCatalog(userId, catalog) {
+  const db = await openJobsIdb();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(catalog, String(userId));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function idbClearCatalog(userId) {
+  try {
+    const db = await openJobsIdb();
+    try {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).delete(String(userId));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Strip to list-card fields so chrome.storage / IDB stay small. */
+export function slimJob(job) {
+  if (!job || !job.id) return null;
+  return {
+    id: job.id,
+    source_url: job.source_url || "",
+    normalized_url: job.normalized_url || "",
+    domain: job.domain || "",
+    title: job.title ?? null,
+    company: job.company || "",
+    location: job.location ?? null,
+    posted_date: job.posted_date ?? null,
+    status: job.status || "active",
+    created_at: job.created_at || null,
+    updated_at: job.updated_at || null,
+    match_overall_score: job.match_overall_score ?? null,
+    match_in_progress: !!job.match_in_progress,
+    resume_build_status: job.resume_build_status ?? null,
+    content_generation_status: job.content_generation_status ?? null,
+    resume_build_id: job.resume_build_id ?? null,
+    resume_pdf_status: job.resume_pdf_status ?? null,
+    cover_letter_pdf_status: job.cover_letter_pdf_status ?? null,
+    applied_at: job.applied_at ?? null,
+    applied_by_name: job.applied_by_name ?? null,
+    source: job.source ?? null,
+    is_remote: !!job.is_remote,
+    work_mode: job.work_mode ?? null,
+    from_me: !!job.from_me,
+    added_from: job.added_from || "job_sites",
+    pool_added_at: job.pool_added_at || job.created_at || null,
+    user_status: job.user_status ?? null,
+    pumble_posted_at: job.pumble_posted_at ?? null,
+    sheet_posted_at: job.sheet_posted_at ?? null,
+  };
+}
+
+export function emptyJobsCatalog(minScore = 0) {
+  return {
+    version: JOBS_CATALOG_VERSION,
+    since: null,
+    checkedAt: null,
+    revision: null,
+    minScore: Number.isFinite(Number(minScore)) ? Number(minScore) : 0,
+    jobsById: {},
+    meta: {},
+    storage: "local",
+  };
+}
+
+/**
+ * @returns {Promise<object|null>}
+ */
+export async function getJobsCatalog(userId) {
+  if (!userId) return null;
+  const metaKey = jobsCatalogMetaKey(userId);
+  const localKey = jobsCatalogLocalKey(userId);
+  const obj = await LOCAL.get([metaKey, localKey]);
+  const meta = obj[metaKey];
+  if (meta && meta.storage === "idb") {
+    try {
+      const catalog = await idbGetCatalog(userId);
+      if (catalog && catalog.version === JOBS_CATALOG_VERSION) return catalog;
+    } catch (err) {
+      console.warn("getJobsCatalog idb failed", err);
+    }
+    return null;
+  }
+  const catalog = obj[localKey];
+  if (catalog && catalog.version === JOBS_CATALOG_VERSION) return catalog;
+  return null;
+}
+
+/**
+ * Persist catalog. Tries chrome.storage.local first; on quota, uses IndexedDB
+ * and keeps a small meta pointer in local storage.
+ */
+export async function setJobsCatalog(userId, catalog) {
+  if (!userId || !catalog) return false;
+  const localKey = jobsCatalogLocalKey(userId);
+  const metaKey = jobsCatalogMetaKey(userId);
+  const payload = {
+    ...catalog,
+    version: JOBS_CATALOG_VERSION,
+    checkedAt: catalog.checkedAt || new Date().toISOString(),
+  };
+  try {
+    await LOCAL.set({ [localKey]: { ...payload, storage: "local" } });
+    await LOCAL.remove(metaKey);
+    // Best-effort: clear any stale IDB copy so we don't serve two sources.
+    void idbClearCatalog(userId);
+    return true;
+  } catch (err) {
+    const msg = String((err && err.message) || err || "");
+    const quota =
+      /QUOTA|quota|exceed/i.test(msg) ||
+      (err && (err.name === "QuotaExceededError" || err.code === 22));
+    if (!quota) {
+      console.warn("setJobsCatalog local failed", err);
+      return false;
+    }
+  }
+  try {
+    const idbPayload = { ...payload, storage: "idb" };
+    await idbSetCatalog(userId, idbPayload);
+    await LOCAL.set({
+      [metaKey]: {
+        storage: "idb",
+        since: idbPayload.since,
+        revision: idbPayload.revision,
+        minScore: idbPayload.minScore,
+        checkedAt: idbPayload.checkedAt,
+        jobCount: Object.keys(idbPayload.jobsById || {}).length,
+      },
+    });
+    await LOCAL.remove(localKey);
+    return true;
+  } catch (err) {
+    console.warn("setJobsCatalog idb failed", err);
+    return false;
+  }
+}
+
+export async function clearJobsCatalog(userId) {
+  if (!userId) return;
+  const localKey = jobsCatalogLocalKey(userId);
+  const metaKey = jobsCatalogMetaKey(userId);
+  await LOCAL.remove([localKey, metaKey]);
+  await idbClearCatalog(userId);
+}
+
+/**
+ * Merge upserts / removals into an existing catalog object (mutates a copy).
+ */
+export function mergeJobsCatalog(catalog, { upserts = [], removed_ids = [], since, revision, meta } = {}) {
+  const next = {
+    ...(catalog || emptyJobsCatalog()),
+    jobsById: { ...((catalog && catalog.jobsById) || {}) },
+    meta: { ...((catalog && catalog.meta) || {}), ...(meta || {}) },
+  };
+  for (const raw of upserts) {
+    const slim = slimJob(raw);
+    if (slim) next.jobsById[slim.id] = slim;
+  }
+  for (const id of removed_ids || []) {
+    if (id) delete next.jobsById[id];
+  }
+  if (since) next.since = since;
+  if (revision != null) next.revision = revision;
+  next.checkedAt = new Date().toISOString();
+  return next;
+}
+
+/** Replace the entire job map (cold bootstrap). */
+export function replaceJobsCatalog(catalog, jobs, { since, revision, minScore, meta } = {}) {
+  const jobsById = {};
+  for (const raw of jobs || []) {
+    const slim = slimJob(raw);
+    if (slim) jobsById[slim.id] = slim;
+  }
+  return {
+    version: JOBS_CATALOG_VERSION,
+    since: since || null,
+    revision: revision || null,
+    checkedAt: new Date().toISOString(),
+    minScore: minScore != null ? minScore : (catalog && catalog.minScore) || 0,
+    jobsById,
+    meta: { ...((catalog && catalog.meta) || {}), ...(meta || {}) },
+  };
+}
+
 // Minimum match score filter. Defaults to 0 (same as the web dashboard) so the
 // extension shows the same job set unless the user raises the threshold.
 export const DEFAULT_MIN_SCORE = 0;

@@ -24,6 +24,8 @@ from app.models.schemas import (
     ResumeBuildStatusResponse,
     DashboardJobResponse,
     DashboardJobsPage,
+    DashboardRevisionResponse,
+    DashboardSyncResponse,
 )
 from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
 from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest, ResumeParseResponse
@@ -1862,6 +1864,199 @@ def _dashboard_min_score_clauses(min_match_score: int | None) -> tuple[list, boo
     return [], False
 
 
+def _dashboard_visible_base_filter(user_id: str, min_match_score: int | None = None) -> tuple[list, bool]:
+    """Shared visibility filter for dashboard list / revision / sync (view=all)."""
+    base_filter = [
+        Job.status != "blocked",
+        (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
+    ]
+    score_clauses, needs_match_join = _dashboard_min_score_clauses(min_match_score)
+    base_filter.extend(score_clauses)
+    return base_filter, needs_match_join
+
+
+def _dashboard_select_columns():
+    """Columns shared by dashboard list + incremental sync upserts."""
+    return (
+        Job,
+        JobExtraction.status.label("ext_status"),
+        JobExtraction.is_job_posting,
+        JobExtraction.salary_range,
+        JobExtraction.work_mode,
+        JobExtraction.remote_policy,
+        JobMatchResult.overall_score,
+        JobMatchInProgress.id.label("match_progress_id"),
+        ResumeBuildResult.id.label("rb_id"),
+        ResumeBuildResult.resume_docx_status,
+        ResumeBuildResult.content_generation_status,
+        ResumeBuildResult.resume_pdf_status,
+        ResumeBuildResult.resume_pdf_path,
+        ResumeBuildResult.cover_letter_pdf_status,
+        ResumeBuildResult.cover_letter_pdf_path,
+        ValidJobUserApplication.applied_at,
+        ValidJobUserApplication.applied_by_name,
+        UserJobStatus.status.label("ujs_status"),
+        UserJobStatus.created_at.label("ujs_created_at"),
+    )
+
+
+def _dashboard_apply_joins(stmt, user_id: str):
+    """Outer-joins needed to hydrate a DashboardJobResponse row."""
+    return (
+        stmt.select_from(Job)
+        .outerjoin(
+            UserJobStatus,
+            (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+        )
+        .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
+        .outerjoin(
+            JobMatchResult,
+            (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+        )
+        .outerjoin(
+            JobMatchInProgress,
+            (JobMatchInProgress.job_id == Job.id) & (JobMatchInProgress.user_id == user_id),
+        )
+        .outerjoin(
+            ResumeBuildResult,
+            (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
+        )
+        .outerjoin(
+            ValidJobUserApplication,
+            (ValidJobUserApplication.job_id == Job.id)
+            & (ValidJobUserApplication.user_id == user_id),
+        )
+    )
+
+
+def _row_to_dashboard_job(row) -> DashboardJobResponse:
+    (
+        job,
+        ext_status,
+        is_job_posting,
+        ext_salary_range,
+        ext_work_mode,
+        ext_remote_policy,
+        match_score,
+        match_progress_id,
+        rb_id,
+        rb_docx_status,
+        cg_status,
+        rb_pdf_status,
+        rb_pdf_path,
+        cl_pdf_status,
+        cl_pdf_path,
+        applied_at,
+        applied_by_name,
+        ujs_status,
+        ujs_created_at,
+    ) = row
+    meta = job.raw_metadata or {}
+    work_mode = resolve_display_work_mode(
+        analysis_work_mode=ext_work_mode or job.work_mode,
+        location=job.location,
+        remote_policy=ext_remote_policy,
+        is_remote=bool(meta.get("is_remote", False)),
+    )
+    pool_added_at = ujs_created_at or job.created_at
+    return DashboardJobResponse(
+        id=job.id,
+        source_url=job.source_url,
+        normalized_url=job.normalized_url,
+        domain=job.domain,
+        title=job.title,
+        company=job.company,
+        location=job.location,
+        posted_date=job.posted_date,
+        experience_level=job.experience_level,
+        industry=job.industry,
+        status=job.status,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        extraction_id=job.extraction_id,
+        extraction_status=ext_status.value if ext_status else None,
+        is_job_posting=is_job_posting,
+        match_overall_score=match_score,
+        match_in_progress=bool(match_progress_id and match_score is None),
+        resume_build_status=rb_docx_status,
+        content_generation_status=cg_status,
+        resume_build_id=rb_id,
+        resume_pdf_status=rb_pdf_status,
+        resume_pdf_path=rb_pdf_path,
+        cover_letter_pdf_status=cl_pdf_status,
+        cover_letter_pdf_path=cl_pdf_path,
+        applied_at=applied_at,
+        applied_by_name=applied_by_name,
+        sheet_posted_at=job.sheet_posted_at,
+        pumble_posted_at=job.pumble_posted_at,
+        user_status=ujs_status,
+        source=meta.get("source"),
+        is_remote=work_mode == "remote" or bool(meta.get("is_remote", False)),
+        work_mode=work_mode,
+        salary_raw=ext_salary_range or meta.get("salary_raw"),
+        job_type=meta.get("job_type"),
+        from_me=bool(meta.get("submitted_data")),
+        added_from=resolve_dashboard_added_from(meta),
+        pool_added_at=pool_added_at,
+    )
+
+
+async def _dashboard_revision_for_user(
+    session,
+    user_id: str,
+    *,
+    min_match_score: int | None = None,
+) -> tuple[str, int, datetime]:
+    """Return (revision, total, server_time) for the user's visible job catalog."""
+    base_filter, needs_match_join = _dashboard_visible_base_filter(user_id, min_match_score)
+    # Fingerprint from visible row count + newest related activity timestamps.
+    activity = func.greatest(
+        Job.updated_at,
+        func.coalesce(UserJobStatus.updated_at, Job.updated_at),
+        func.coalesce(ResumeBuildResult.updated_at, Job.updated_at),
+        func.coalesce(ValidJobUserApplication.applied_at, Job.updated_at),
+        func.coalesce(JobMatchResult.created_at, Job.updated_at),
+        func.coalesce(JobMatchInProgress.created_at, Job.updated_at),
+    )
+    stmt = (
+        select(func.count(), func.max(activity))
+        .select_from(Job)
+        .outerjoin(
+            UserJobStatus,
+            (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+        )
+        .outerjoin(
+            JobMatchResult,
+            (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+        )
+        .outerjoin(
+            JobMatchInProgress,
+            (JobMatchInProgress.job_id == Job.id) & (JobMatchInProgress.user_id == user_id),
+        )
+        .outerjoin(
+            ResumeBuildResult,
+            (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
+        )
+        .outerjoin(
+            ValidJobUserApplication,
+            (ValidJobUserApplication.job_id == Job.id)
+            & (ValidJobUserApplication.user_id == user_id),
+        )
+        .where(*base_filter)
+    )
+    # needs_match_join is already satisfied by the always-present match join above.
+    del needs_match_join
+    total, max_activity = (await session.execute(stmt)).one()
+    total = int(total or 0)
+    server_time = _utcnow()
+    stamp = max_activity.isoformat() if max_activity is not None else "none"
+    revision = f"{total}:{stamp}"
+    return revision, total, server_time
+
+
+DASHBOARD_SYNC_UPSERT_CAP = 500
+
+
 @router.get("/jobs/dashboard", response_model=DashboardJobsPage, dependencies=[Depends(get_current_user)])
 async def get_dashboard_jobs(
     page: int = Query(1, ge=1),
@@ -1967,32 +2162,173 @@ async def get_dashboard_jobs(
         offset = (page - 1) * per_page
 
         stmt = (
-            select(
-                Job,
-                JobExtraction.status.label("ext_status"),
-                JobExtraction.is_job_posting,
-                JobExtraction.salary_range,
-                JobExtraction.work_mode,
-                JobExtraction.remote_policy,
-                JobMatchResult.overall_score,
-                JobMatchInProgress.id.label("match_progress_id"),
-                ResumeBuildResult.id.label("rb_id"),
-                ResumeBuildResult.resume_docx_status,
-                ResumeBuildResult.content_generation_status,
-                ResumeBuildResult.resume_pdf_status,
-                ResumeBuildResult.resume_pdf_path,
-                ResumeBuildResult.cover_letter_pdf_status,
-                ResumeBuildResult.cover_letter_pdf_path,
-                ValidJobUserApplication.applied_at,
-                ValidJobUserApplication.applied_by_name,
-                UserJobStatus.status.label("ujs_status"),
+            _dashboard_apply_joins(select(*_dashboard_select_columns()), user_id)
+            .where(*base_filter)
+            .order_by(*order_clauses)
+            .limit(per_page)
+            .offset(offset)
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+
+        items = [_row_to_dashboard_job(row) for row in rows]
+
+        return DashboardJobsPage(
+            items=items,
+            total=total,
+            page=page,
+            per_page=per_page,
+            pages=pages,
+        )
+
+
+@router.get(
+    "/jobs/dashboard/revision",
+    response_model=DashboardRevisionResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_dashboard_revision(
+    min_match_score: int | None = Query(None, ge=0, le=100),
+    current_user: dict = Depends(get_current_user),
+) -> DashboardRevisionResponse:
+    """Cheap fingerprint so the extension can skip a full catalog sync."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    async with get_session() as session:
+        revision, total, server_time = await _dashboard_revision_for_user(
+            session, user_id, min_match_score=min_match_score
+        )
+        return DashboardRevisionResponse(
+            revision=revision,
+            total=total,
+            server_time=server_time,
+        )
+
+
+@router.get(
+    "/jobs/dashboard/sync",
+    response_model=DashboardSyncResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_dashboard_sync(
+    since: str | None = Query(
+        None,
+        description="ISO watermark from the previous sync. Omit for a cold bootstrap reset.",
+    ),
+    min_match_score: int | None = Query(None, ge=0, le=100),
+    timezone_name: str | None = Query(None, alias="timezone"),
+    known_ids: str | None = Query(
+        None,
+        description="Comma-separated job ids the client currently caches (optional; used for removals).",
+    ),
+    current_user: dict = Depends(get_current_user),
+) -> DashboardSyncResponse:
+    """Incremental job-catalog sync for the browser extension.
+
+    Without ``since``, returns ``reset=true`` so the client rebuilds via paginated
+    ``/jobs/dashboard?view=all``. With ``since``, returns upserts for rows that
+    changed after the watermark plus ``removed_ids`` for jobs that left the
+    visible set. If too many rows changed, returns ``reset=true``.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    since_dt: datetime | None = None
+    if since and since.strip():
+        raw = since.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(raw)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            since_dt = parsed
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid since timestamp; use ISO-8601.",
             )
+
+    day_start, day_end = day_bounds_for_timezone(timezone_name)
+
+    async with get_session() as session:
+        revision, total, server_time = await _dashboard_revision_for_user(
+            session, user_id, min_match_score=min_match_score
+        )
+
+        min_score_pref = await UserRepository(session).get_effective_min_match_score(user_id)
+        shared_filter = [
+            Job.status != "blocked",
+            (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
+        ]
+
+        async def _count(view: str) -> int:
+            view_clauses, needs_match_join = _dashboard_view_clauses(
+                view, min_score=min_score_pref, day_start=day_start, day_end=day_end,
+            )
+            stmt_c = (
+                select(func.count())
+                .select_from(Job)
+                .outerjoin(
+                    UserJobStatus,
+                    (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+                )
+            )
+            if needs_match_join:
+                stmt_c = stmt_c.outerjoin(
+                    JobMatchResult,
+                    (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+                )
+            if view in VIEWS_NEEDING_APPLICATION_JOIN:
+                stmt_c = stmt_c.outerjoin(
+                    ValidJobUserApplication,
+                    (ValidJobUserApplication.job_id == Job.id)
+                    & (ValidJobUserApplication.user_id == user_id),
+                )
+            if view in VIEWS_NEEDING_RESUME_JOIN:
+                stmt_c = stmt_c.outerjoin(
+                    ResumeBuildResult,
+                    (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
+                )
+            stmt_c = stmt_c.where(*shared_filter, *view_clauses)
+            return (await session.execute(stmt_c)).scalar() or 0
+
+        counts = {
+            "all": await _count("all"),
+            "today": await _count("today"),
+            "mine": await _count("mine"),
+            "suggested": await _count("suggested"),
+            "applied_today": await _count("applied_today"),
+        }
+
+        if since_dt is None:
+            return DashboardSyncResponse(
+                server_time=server_time,
+                revision=revision,
+                upserts=[],
+                removed_ids=[],
+                reset=True,
+                counts=counts,
+            )
+
+        base_filter, _needs = _dashboard_visible_base_filter(user_id, min_match_score)
+        changed_clause = or_(
+            Job.updated_at >= since_dt,
+            UserJobStatus.updated_at >= since_dt,
+            ResumeBuildResult.updated_at >= since_dt,
+            ValidJobUserApplication.applied_at >= since_dt,
+            JobMatchResult.created_at >= since_dt,
+            JobMatchInProgress.created_at >= since_dt,
+        )
+
+        count_changed = (
+            select(func.count())
             .select_from(Job)
             .outerjoin(
                 UserJobStatus,
                 (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
             )
-            .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
             .outerjoin(
                 JobMatchResult,
                 (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
@@ -2007,79 +2343,91 @@ async def get_dashboard_jobs(
             )
             .outerjoin(
                 ValidJobUserApplication,
-                (ValidJobUserApplication.job_id == Job.id) & (ValidJobUserApplication.user_id == user_id),
+                (ValidJobUserApplication.job_id == Job.id)
+                & (ValidJobUserApplication.user_id == user_id),
             )
-            .where(*base_filter)
-            .order_by(*order_clauses)
-            .limit(per_page)
-            .offset(offset)
+            .where(*base_filter, changed_clause)
         )
-        result = await session.execute(stmt)
-        rows = result.all()
-
-        items = []
-        for (
-            job, ext_status, is_job_posting, ext_salary_range, ext_work_mode, ext_remote_policy, match_score,
-            match_progress_id, rb_id, rb_docx_status, cg_status,
-            rb_pdf_status, rb_pdf_path, cl_pdf_status, cl_pdf_path,
-            applied_at, applied_by_name, ujs_status,
-        ) in rows:
-            meta = job.raw_metadata or {}
-            work_mode = resolve_display_work_mode(
-                analysis_work_mode=ext_work_mode or job.work_mode,
-                location=job.location,
-                remote_policy=ext_remote_policy,
-                is_remote=bool(meta.get("is_remote", False)),
+        changed_total = (await session.execute(count_changed)).scalar() or 0
+        if changed_total > DASHBOARD_SYNC_UPSERT_CAP:
+            return DashboardSyncResponse(
+                server_time=server_time,
+                revision=revision,
+                upserts=[],
+                removed_ids=[],
+                reset=True,
+                counts=counts,
             )
-            items.append(
-                DashboardJobResponse(
-                    id=job.id,
-                    source_url=job.source_url,
-                    normalized_url=job.normalized_url,
-                    domain=job.domain,
-                    title=job.title,
-                    company=job.company,
-                    location=job.location,
-                    posted_date=job.posted_date,
-                    experience_level=job.experience_level,
-                    industry=job.industry,
-                    status=job.status,
-                    created_at=job.created_at,
-                    updated_at=job.updated_at,
-                    extraction_id=job.extraction_id,
-                    extraction_status=ext_status.value if ext_status else None,
-                    is_job_posting=is_job_posting,
-                    match_overall_score=match_score,
-                    match_in_progress=bool(match_progress_id and match_score is None),
-                    resume_build_status=rb_docx_status,
-                    content_generation_status=cg_status,
-                    resume_build_id=rb_id,
-                    resume_pdf_status=rb_pdf_status,
-                    resume_pdf_path=rb_pdf_path,
-                    cover_letter_pdf_status=cl_pdf_status,
-                    cover_letter_pdf_path=cl_pdf_path,
-                    applied_at=applied_at,
-                    applied_by_name=applied_by_name,
-                    sheet_posted_at=job.sheet_posted_at,
-                    pumble_posted_at=job.pumble_posted_at,
-                    user_status=ujs_status,
-                    source=meta.get("source"),
-                    is_remote=work_mode == "remote" or bool(meta.get("is_remote", False)),
-                    work_mode=work_mode,
-                    salary_raw=ext_salary_range or meta.get("salary_raw"),
-                    job_type=meta.get("job_type"),
-                    from_me=bool(meta.get("submitted_data")),
-                    added_from=resolve_dashboard_added_from(meta),
+
+        upsert_stmt = (
+            _dashboard_apply_joins(select(*_dashboard_select_columns()), user_id)
+            .where(*base_filter, changed_clause)
+            .order_by(Job.updated_at.desc(), Job.id.desc())
+            .limit(DASHBOARD_SYNC_UPSERT_CAP)
+        )
+        upsert_rows = (await session.execute(upsert_stmt)).all()
+        upserts = [_row_to_dashboard_job(row) for row in upsert_rows]
+
+        removed_ids: list[str] = []
+        left_stmt = (
+            select(Job.id)
+            .select_from(Job)
+            .outerjoin(
+                UserJobStatus,
+                (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+            )
+            .where(
+                or_(
+                    and_(Job.status == "blocked", Job.updated_at >= since_dt),
+                    and_(
+                        UserJobStatus.status.isnot(None),
+                        UserJobStatus.status != "active",
+                        UserJobStatus.updated_at >= since_dt,
+                    ),
                 )
             )
-
-        return DashboardJobsPage(
-            items=items,
-            total=total,
-            page=page,
-            per_page=per_page,
-            pages=pages,
+            .limit(2000)
         )
+        removed_ids.extend([r[0] for r in (await session.execute(left_stmt)).all()])
+
+        if known_ids:
+            client_ids = [x.strip() for x in known_ids.split(",") if x.strip()]
+            client_ids = client_ids[:5000]
+            if client_ids:
+                visible_stmt = (
+                    select(Job.id)
+                    .select_from(Job)
+                    .outerjoin(
+                        UserJobStatus,
+                        (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+                    )
+                    .outerjoin(
+                        JobMatchResult,
+                        (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+                    )
+                    .where(Job.id.in_(client_ids), *base_filter)
+                )
+                still_visible = {r[0] for r in (await session.execute(visible_stmt)).all()}
+                for jid in client_ids:
+                    if jid not in still_visible:
+                        removed_ids.append(jid)
+
+        seen: set[str] = set()
+        deduped_removed: list[str] = []
+        for jid in removed_ids:
+            if jid not in seen:
+                seen.add(jid)
+                deduped_removed.append(jid)
+
+        return DashboardSyncResponse(
+            server_time=server_time,
+            revision=revision,
+            upserts=upserts,
+            removed_ids=deduped_removed,
+            reset=False,
+            counts=counts,
+        )
+
 
 
 class DashboardCountsResponse(BaseModel):

@@ -252,6 +252,10 @@ class DashboardJobResponse(BaseModel):
     # How the job entered the pool: "manual", a scraper slug
     # (remoterocketship, jobright, …), or legacy "job_sites".
     added_from: str = "job_sites"
+    # When the job entered this user's visible pool (UserJobStatus.created_at,
+    # falling back to Job.created_at). Used by the extension for client-side
+    # "today" list derivation.
+    pool_added_at: datetime | None = None
 
 
 class DashboardJobsPage(BaseModel):
@@ -260,6 +264,24 @@ class DashboardJobsPage(BaseModel):
     page: int
     per_page: int
     pages: int
+
+
+class DashboardRevisionResponse(BaseModel):
+    """Cheap fingerprint for the user's visible dashboard job set."""
+    revision: str
+    total: int
+    server_time: datetime
+
+
+class DashboardSyncResponse(BaseModel):
+    """Incremental dashboard catalog sync for the browser extension."""
+    server_time: datetime
+    revision: str
+    upserts: list[DashboardJobResponse] = []
+    removed_ids: list[str] = []
+    # When True the client must discard its catalog and rebuild from /jobs/dashboard.
+    reset: bool = False
+    counts: dict | None = None
 
 
 class JobIdsBatchRequest(BaseModel):
