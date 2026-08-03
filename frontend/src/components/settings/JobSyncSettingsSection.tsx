@@ -4,6 +4,7 @@ import {
   CalendarClock,
   CalendarRange,
   CheckCircle2,
+  ChevronDown,
   Loader2,
   OctagonX,
   RefreshCw,
@@ -19,6 +20,7 @@ import {
 import type { JobSyncSchedule, SyncCheckpoint, SyncPlatform } from '../../types/scraper';
 import { useScraperStore } from '../../stores/scraperStore';
 import { BrandedLoader } from '../layout/BrandedLoader';
+import { SettingsToggle } from '../shared/SettingsToggle';
 
 const INTERVAL_PRESETS = [1, 2, 4, 6, 8, 12, 24] as const;
 
@@ -29,6 +31,8 @@ const TIMEZONE_LABELS: Record<string, string> = {
   'America/Denver': 'Mountain (Denver)',
   UTC: 'UTC',
 };
+
+type SyncPanelMode = 'scheduled' | 'manual';
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
@@ -62,11 +66,11 @@ function SectionMessage({ ok, text }: { ok?: boolean; text: string }) {
   if (!text) return null;
   return (
     <p
-      className={`mt-3 flex items-center gap-1.5 text-sm font-medium ${
-        ok ? 'text-emerald-700' : 'text-rose-700'
+      className={`mt-2 flex items-center gap-1.5 text-xs font-medium ${
+        ok ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'
       }`}
     >
-      {ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+      {ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
       {text}
     </p>
   );
@@ -86,6 +90,17 @@ function formatCheckpointMarkers(markers: SyncCheckpoint['marker_job_ids']): str
   return '-';
 }
 
+const fieldClass =
+  'rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200 dark:border-slate-600 dark:bg-[#0b1220] dark:text-slate-100 dark:focus:border-sky-500 dark:focus:ring-sky-500/30';
+
+const chipClass = (active: boolean) =>
+  [
+    'rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition',
+    active
+      ? 'border-sky-400 bg-sky-100 text-sky-900 dark:border-sky-400/50 dark:bg-sky-500/20 dark:text-sky-200'
+      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-600 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:border-slate-500',
+  ].join(' ');
+
 function PlatformRow({
   platforms,
   selected,
@@ -101,12 +116,14 @@ function PlatformRow({
 }) {
   return (
     <div>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-slate-700">Platforms</span>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          Platforms
+        </span>
         <button
           type="button"
           onClick={onSelectAll}
-          className="text-xs font-semibold text-sky-700 hover:text-sky-900"
+          className="text-xs font-semibold text-sky-700 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
         >
           Select all
         </button>
@@ -118,9 +135,13 @@ function PlatformRow({
           return (
             <label
               key={platform.name}
-              className={`flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-sm whitespace-nowrap ${
-                checked ? 'border-sky-300 bg-sky-50/60' : 'border-slate-200 bg-white'
-              } ${!authOk ? 'opacity-70' : ''}`}
+              className={[
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-sm whitespace-nowrap transition',
+                checked
+                  ? 'border-sky-300 bg-sky-50/70 dark:border-sky-400/40 dark:bg-sky-500/10'
+                  : 'border-slate-200 bg-white dark:border-slate-600 dark:bg-[#0b1220]',
+                !authOk ? 'opacity-70' : '',
+              ].join(' ')}
             >
               <input
                 type="checkbox"
@@ -128,11 +149,11 @@ function PlatformRow({
                 onChange={() => onToggle(platform.name)}
                 className="shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
               />
-              <span className="min-w-0 truncate">{platform.label}</span>
+              <span className="min-w-0 truncate text-slate-800 dark:text-slate-100">{platform.label}</span>
               {platform.requires_auth && (
                 <span
                   className={`shrink-0 text-[10px] font-semibold ${
-                    authOk ? 'text-emerald-700' : 'text-rose-700'
+                    authOk ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'
                   }`}
                 >
                   {authOk ? 'Auth OK' : 'Auth required'}
@@ -142,6 +163,49 @@ function PlatformRow({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function ModeSwitch({
+  mode,
+  onChange,
+}: {
+  mode: SyncPanelMode;
+  onChange: (next: SyncPanelMode) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Sync mode"
+      className="inline-flex w-full rounded-xl border border-slate-200 bg-slate-100/80 p-1 dark:border-slate-600 dark:bg-[#0b1220] sm:w-auto"
+    >
+      {(
+        [
+          { id: 'scheduled' as const, label: 'Scheduled', icon: CalendarClock },
+          { id: 'manual' as const, label: 'Manual date range', icon: CalendarRange },
+        ] as const
+      ).map(({ id, label, icon: Icon }) => {
+        const active = mode === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(id)}
+            className={[
+              'inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition sm:flex-none sm:px-4',
+              active
+                ? 'bg-white text-sky-800 shadow-sm dark:bg-slate-700 dark:text-sky-200'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200',
+            ].join(' ')}
+          >
+            <Icon size={14} className="shrink-0" />
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -158,6 +222,8 @@ export function JobSyncSettingsSection() {
   const [schedule, setSchedule] = useState<JobSyncSchedule | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [panelMode, setPanelMode] = useState<SyncPanelMode>('scheduled');
+  const [checkpointsOpen, setCheckpointsOpen] = useState(false);
 
   const [postedSince, setPostedSince] = useState(() => daysAgoIsoDate(30));
   const [postedUntil, setPostedUntil] = useState(() => todayIsoDate());
@@ -190,6 +256,8 @@ export function JobSyncSettingsSection() {
     }
     return map;
   }, [spiders]);
+
+  const activePlatforms = panelMode === 'scheduled' ? schedPlatforms : selectedPlatforms;
 
   const selectedList = useMemo(
     () => platforms.filter((p) => selectedPlatforms.has(p.name)).map((p) => p.name),
@@ -271,7 +339,6 @@ export function JobSyncSettingsSection() {
     void load();
   }, [load]);
 
-  // Keep syncing state fresh so Stop fetching enables while a run is in progress.
   useEffect(() => {
     void checkSyncStatus();
     const id = window.setInterval(() => {
@@ -282,7 +349,17 @@ export function JobSyncSettingsSection() {
 
   const canStop = syncing && !stopping;
 
-  const togglePlatform = (name: string) => {
+  const toggleActivePlatform = (name: string) => {
+    if (panelMode === 'scheduled') {
+      setSchedPlatforms((prev) => {
+        const next = new Set(prev);
+        if (next.has(name)) next.delete(name);
+        else next.add(name);
+        return next;
+      });
+      setSchedMsg('');
+      return;
+    }
     setSelectedPlatforms((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
@@ -292,14 +369,15 @@ export function JobSyncSettingsSection() {
     setActionMsg('');
   };
 
-  const toggleSchedulePlatform = (name: string) => {
-    setSchedPlatforms((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-    setSchedMsg('');
+  const selectAllActivePlatforms = () => {
+    const all = new Set(platforms.map((p) => p.name));
+    if (panelMode === 'scheduled') {
+      setSchedPlatforms(all);
+      setSchedMsg('');
+      return;
+    }
+    setSelectedPlatforms(all);
+    setActionMsg('');
   };
 
   const handleRunDateSync = async () => {
@@ -402,309 +480,405 @@ export function JobSyncSettingsSection() {
     ? schedule.allowed_timezones
     : Object.keys(TIMEZONE_LABELS);
 
+  const blockedActive =
+    panelMode === 'scheduled' ? blockedScheduleSelection : blockedSelection;
+
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-500/30 dark:bg-[#0f172a]/80 md:p-6">
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-500/30 dark:bg-[#0f172a]/80 sm:p-5">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 text-white">
-          <CalendarRange size={20} />
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-blue-600 text-white">
+          <CalendarRange size={18} />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white">Job sync</h2>
-          <p className="mt-0.5 text-sm leading-snug text-slate-500 dark:text-slate-500">
-            Admin controls for platform scraping: stop an in-flight run, schedule automatic polling,
-            or run a one-off date-range backfill. Jobs page <strong className="text-slate-700 dark:text-slate-600">Sync All</strong> remains available for incremental updates.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white">Job sync</h2>
+              <p className="mt-0.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
+                Schedule automatic polling or run a one-off date backfill. Jobs page Sync All still
+                handles quick incremental updates.
+              </p>
+            </div>
+            {!loading && !loadError && (
+              <button
+                type="button"
+                onClick={() => void load()}
+                disabled={loading}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <RefreshCw size={12} />
+                Refresh
+              </button>
+            )}
+          </div>
 
           {loading ? (
             <BrandedLoader compact label="Loading sync settings…" className="mt-2" />
           ) : loadError ? (
-            <p className="mt-4 text-sm text-rose-700 dark:text-rose-300">{loadError}</p>
+            <p className="mt-3 text-sm text-rose-700 dark:text-rose-300">{loadError}</p>
           ) : (
-            <div className="mt-5 space-y-6">
-              {/* ── Stop fetching (active only while a sync is processing) ── */}
+            <div className="mt-3 space-y-3">
+              {/* Stop strip — compact; emphasized only while a run is active */}
               <div
                 className={[
-                  'rounded-xl border p-4 transition-opacity',
+                  'flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2',
                   syncing
-                    ? 'border-rose-300 bg-rose-50/80 dark:border-rose-400/40 dark:bg-rose-500/10'
-                    : 'border-slate-200 bg-slate-50/80 opacity-75 dark:border-slate-500/30 dark:bg-slate-200/5',
+                    ? 'border-rose-300 bg-rose-50/90 dark:border-rose-400/40 dark:bg-rose-500/10'
+                    : 'border-slate-200 bg-slate-50/80 dark:border-slate-600 dark:bg-slate-200/5',
                 ].join(' ')}
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <h3
-                      className={[
-                        'text-sm font-bold',
-                        syncing
-                          ? 'text-rose-900 dark:text-rose-200'
-                          : 'text-slate-700 dark:text-slate-600',
-                      ].join(' ')}
-                    >
-                      Stop job fetching
-                    </h3>
-                    <p
-                      className={[
-                        'mt-0.5 text-xs leading-snug',
-                        syncing
-                          ? 'text-rose-800/85 dark:text-rose-200/80'
-                          : 'text-slate-500',
-                      ].join(' ')}
-                    >
-                      {syncing
-                        ? 'Interrupt the scrape that is running now, skip remaining platforms in this run, and turn off scheduled sync so nothing auto-starts again.'
-                        : 'Becomes available while a platform sync is queued or running. When idle, use the schedule toggle below to prevent future auto-runs.'}
-                    </p>
-                    {syncing && syncProgress && (
-                      <p className="mt-2 text-xs font-medium text-rose-800 dark:text-rose-200">
-                        Currently syncing:{' '}
-                        {syncProgress.message || syncProgress.spiderName || 'in progress'}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleStopFetching()}
-                    disabled={!canStop}
-                    title={
+                <div className="min-w-0">
+                  <p
+                    className={[
+                      'text-xs font-bold',
                       syncing
-                        ? 'Stop the in-flight job sync'
-                        : 'Available only while a job sync is processing'
-                    }
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-rose-600 dark:hover:bg-rose-500"
+                        ? 'text-rose-900 dark:text-rose-200'
+                        : 'text-slate-700 dark:text-slate-300',
+                    ].join(' ')}
                   >
-                    {stopping ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <OctagonX size={14} />
-                    )}
-                    {stopping ? 'Stopping…' : 'Stop fetching'}
-                  </button>
+                    {syncing ? 'Fetch in progress' : 'Stop job fetching'}
+                  </p>
+                  <p
+                    className={[
+                      'text-[11px] leading-snug',
+                      syncing
+                        ? 'text-rose-800/90 dark:text-rose-200/80'
+                        : 'text-slate-500 dark:text-slate-400',
+                    ].join(' ')}
+                  >
+                    {syncing
+                      ? syncProgress?.message ||
+                        syncProgress?.spiderName ||
+                        'Stops the current scrape, skips remaining platforms, and disables the schedule.'
+                      : 'Available while a sync is queued or running.'}
+                  </p>
                 </div>
-                {stopMsg && <SectionMessage ok={stopOk} text={stopMsg} />}
+                <button
+                  type="button"
+                  onClick={() => void handleStopFetching()}
+                  disabled={!canStop}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-rose-700 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-rose-600 dark:hover:bg-rose-500"
+                >
+                  {stopping ? <Loader2 size={13} className="animate-spin" /> : <OctagonX size={13} />}
+                  {stopping ? 'Stopping…' : 'Stop'}
+                </button>
               </div>
+              {stopMsg && <SectionMessage ok={stopOk} text={stopMsg} />}
 
-              {/* ── Scheduled sync ── */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex items-start gap-2">
-                    <CalendarClock size={18} className="mt-0.5 text-sky-700" />
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Scheduled sync</h3>
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        Runs on the VPS scraper worker. Interval and daily time are fully selectable.
-                      </p>
-                    </div>
-                  </div>
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={schedEnabled}
-                      onChange={(e) => {
-                        setSchedEnabled(e.target.checked);
-                        setSchedMsg('');
-                      }}
-                      className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
-                    />
-                    Enabled
-                  </label>
+              {/* Mode toggle + shared body */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-600 dark:bg-[#0b1220]/50 sm:p-3.5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <ModeSwitch
+                    mode={panelMode}
+                    onChange={(next) => {
+                      setPanelMode(next);
+                      setActionMsg('');
+                      setSchedMsg('');
+                    }}
+                  />
+                  {panelMode === 'scheduled' && (
+                    <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      <SettingsToggle
+                        checked={schedEnabled}
+                        onChange={(next) => {
+                          setSchedEnabled(next);
+                          setSchedMsg('');
+                        }}
+                        aria-label="Enable scheduled sync"
+                      />
+                      Auto-run {schedEnabled ? 'on' : 'off'}
+                    </label>
+                  )}
                 </div>
 
-                <div className="mt-4 space-y-4">
-                  <div>
-                    <span className="text-xs font-semibold text-slate-700">Cadence</span>
-                    <div className="mt-1.5 flex flex-wrap gap-2">
-                      {(
-                        [
-                          ['daily', 'Daily at clock time'],
-                          ['interval', 'Every N hours'],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => {
-                            setSchedCadence(value);
-                            setSchedMsg('');
-                          }}
-                          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                            schedCadence === value
-                              ? 'border-sky-400 bg-sky-100 text-sky-900'
-                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {schedCadence === 'daily' ? (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <label htmlFor="sched-daily-time" className="text-xs font-semibold text-slate-700">
-                          Run at
-                        </label>
-                        <input
-                          id="sched-daily-time"
-                          type="time"
-                          value={schedDailyTime}
-                          onChange={(e) => {
-                            setSchedDailyTime(e.target.value);
-                            setSchedMsg('');
-                          }}
-                          className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor="sched-timezone" className="text-xs font-semibold text-slate-700">
-                          Timezone
-                        </label>
-                        <select
-                          id="sched-timezone"
-                          value={schedTimezone}
-                          onChange={(e) => {
-                            setSchedTimezone(e.target.value);
-                            setSchedMsg('');
-                          }}
-                          className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                        >
-                          {timezoneOptions.map((tz) => (
-                            <option key={tz} value={tz}>
-                              {TIMEZONE_LABELS[tz] || tz}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <label htmlFor="sched-interval" className="text-xs font-semibold text-slate-700">
-                        Interval (hours)
-                      </label>
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <input
-                          id="sched-interval"
-                          type="number"
-                          min={1}
-                          max={168}
-                          value={schedIntervalHours}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            setSchedIntervalHours(Number.isFinite(n) ? n : 1);
-                            setSchedMsg('');
-                          }}
-                          className="w-24 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                        />
-                        <div className="flex flex-wrap gap-1.5">
-                          {INTERVAL_PRESETS.map((hours) => (
+                {/* Mode-specific controls — dense horizontal rows */}
+                {panelMode === 'scheduled' ? (
+                  <div className="mt-3 space-y-3">
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="min-w-[9rem]">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          Cadence
+                        </span>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {(
+                            [
+                              ['daily', 'Daily'],
+                              ['interval', 'Every N hours'],
+                            ] as const
+                          ).map(([value, label]) => (
                             <button
-                              key={hours}
+                              key={value}
                               type="button"
                               onClick={() => {
-                                setSchedIntervalHours(hours);
+                                setSchedCadence(value);
                                 setSchedMsg('');
                               }}
-                              className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
-                                schedIntervalHours === hours
-                                  ? 'border-sky-400 bg-sky-100 text-sky-900'
-                                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                              }`}
+                              className={chipClass(schedCadence === value)}
                             >
-                              {hours}h
+                              {label}
                             </button>
                           ))}
                         </div>
                       </div>
-                    </div>
-                  )}
 
-                  <div>
-                    <span className="text-xs font-semibold text-slate-700">What to poll</span>
-                    <div className="mt-1.5 flex flex-wrap gap-2">
-                      {(
-                        [
-                          ['incremental', 'New since checkpoint (recommended)'],
-                          ['date_backfill', 'Recent lookback window'],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => {
-                            setSchedSyncMode(value);
-                            setSchedMsg('');
-                          }}
-                          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                            schedSyncMode === value
-                              ? 'border-sky-400 bg-sky-100 text-sky-900'
-                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                      {schedCadence === 'daily' ? (
+                        <>
+                          <div>
+                            <label
+                              htmlFor="sched-daily-time"
+                              className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                            >
+                              Run at
+                            </label>
+                            <input
+                              id="sched-daily-time"
+                              type="time"
+                              value={schedDailyTime}
+                              onChange={(e) => {
+                                setSchedDailyTime(e.target.value);
+                                setSchedMsg('');
+                              }}
+                              className={`mt-1 block w-[7.5rem] ${fieldClass}`}
+                            />
+                          </div>
+                          <div className="min-w-[10rem] flex-1">
+                            <label
+                              htmlFor="sched-timezone"
+                              className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                            >
+                              Timezone
+                            </label>
+                            <select
+                              id="sched-timezone"
+                              value={schedTimezone}
+                              onChange={(e) => {
+                                setSchedTimezone(e.target.value);
+                                setSchedMsg('');
+                              }}
+                              className={`mt-1 w-full ${fieldClass}`}
+                            >
+                              {timezoneOptions.map((tz) => (
+                                <option key={tz} value={tz}>
+                                  {TIMEZONE_LABELS[tz] || tz}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="min-w-0 flex-1">
+                          <label
+                            htmlFor="sched-interval"
+                            className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                          >
+                            Interval
+                          </label>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <input
+                              id="sched-interval"
+                              type="number"
+                              min={1}
+                              max={168}
+                              value={schedIntervalHours}
+                              onChange={(e) => {
+                                const n = Number(e.target.value);
+                                setSchedIntervalHours(Number.isFinite(n) ? n : 1);
+                                setSchedMsg('');
+                              }}
+                              className={`w-16 ${fieldClass}`}
+                            />
+                            <span className="text-xs text-slate-500 dark:text-slate-400">hours</span>
+                            {INTERVAL_PRESETS.map((hours) => (
+                              <button
+                                key={hours}
+                                type="button"
+                                onClick={() => {
+                                  setSchedIntervalHours(hours);
+                                  setSchedMsg('');
+                                }}
+                                className={chipClass(schedIntervalHours === hours)}
+                              >
+                                {hours}h
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    {schedSyncMode === 'date_backfill' && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <label htmlFor="sched-lookback" className="text-xs font-semibold text-slate-700">
-                          Lookback days
-                        </label>
-                        <input
-                          id="sched-lookback"
-                          type="number"
-                          min={1}
-                          max={90}
-                          value={schedLookbackDays}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            setSchedLookbackDays(Number.isFinite(n) ? n : 1);
-                            setSchedMsg('');
-                          }}
-                          className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                        />
+
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div>
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          What to pull
+                        </span>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {(
+                            [
+                              ['incremental', 'Since checkpoint'],
+                              ['date_backfill', 'Lookback window'],
+                            ] as const
+                          ).map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => {
+                                setSchedSyncMode(value);
+                                setSchedMsg('');
+                              }}
+                              className={chipClass(schedSyncMode === value)}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                      {schedSyncMode === 'date_backfill' && (
+                        <div>
+                          <label
+                            htmlFor="sched-lookback"
+                            className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                          >
+                            Days
+                          </label>
+                          <input
+                            id="sched-lookback"
+                            type="number"
+                            min={1}
+                            max={90}
+                            value={schedLookbackDays}
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              setSchedLookbackDays(Number.isFinite(n) ? n : 1);
+                              setSchedMsg('');
+                            }}
+                            className={`mt-1 block w-20 ${fieldClass}`}
+                          />
+                        </div>
+                      )}
+                    </div>
 
-                  <PlatformRow
-                    platforms={platforms}
-                    selected={schedPlatforms}
-                    authByPlatform={authByPlatform}
-                    onToggle={toggleSchedulePlatform}
-                    onSelectAll={() => {
-                      setSchedPlatforms(new Set(platforms.map((p) => p.name)));
-                      setSchedMsg('');
-                    }}
-                  />
-                  {blockedScheduleSelection.length > 0 && (
-                    <p className="text-xs text-rose-700">
-                      Schedule platforms need auth: {blockedScheduleSelection.join(', ')}
-                    </p>
-                  )}
-
-                  {schedule && (
-                    <div className="grid gap-1 text-xs text-slate-600 sm:grid-cols-2">
-                      <p>
-                        <span className="font-semibold text-slate-700">Next run:</span>{' '}
+                    {schedule && (
+                      <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">Next:</span>{' '}
                         {schedEnabled ? formatWhen(schedule.next_run_at) : '— (disabled)'}
-                      </p>
-                      <p>
-                        <span className="font-semibold text-slate-700">Last run:</span>{' '}
+                        <span className="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">Last:</span>{' '}
                         {formatWhen(schedule.last_run_at)}
                         {schedule.last_run_status ? ` · ${schedule.last_run_status}` : ''}
                       </p>
-                      {schedule.last_run_message && (
-                        <p className="sm:col-span-2 text-slate-500">{schedule.last_run_message}</p>
-                      )}
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div>
+                        <label
+                          htmlFor="sync-posted-since"
+                          className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                        >
+                          Posted since
+                        </label>
+                        <input
+                          id="sync-posted-since"
+                          type="date"
+                          value={postedSince}
+                          max={postedUntil || undefined}
+                          onChange={(e) => {
+                            setPostedSince(e.target.value);
+                            setActionMsg('');
+                          }}
+                          className={`mt-1 block ${fieldClass}`}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor="sync-posted-until"
+                          className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                        >
+                          Posted until
+                        </label>
+                        <input
+                          id="sync-posted-until"
+                          type="date"
+                          value={postedUntil}
+                          min={postedSince || undefined}
+                          onChange={(e) => {
+                            setPostedUntil(e.target.value);
+                            setActionMsg('');
+                          }}
+                          className={`mt-1 block ${fieldClass}`}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pb-0.5">
+                        {[7, 14, 30, 60].map((days) => (
+                          <button
+                            key={days}
+                            type="button"
+                            onClick={() => {
+                              setPostedSince(daysAgoIsoDate(days));
+                              setPostedUntil(todayIsoDate());
+                              setActionMsg('');
+                            }}
+                            className={chipClass(false)}
+                          >
+                            Last {days}d
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  )}
 
-                  <div className="flex flex-wrap items-center gap-2">
+                    {checkpoints.length > 0 && (
+                      <div className="rounded-lg border border-slate-200 dark:border-slate-600">
+                        <button
+                          type="button"
+                          onClick={() => setCheckpointsOpen((v) => !v)}
+                          className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+                        >
+                          Checkpoint markers
+                          <ChevronDown
+                            size={14}
+                            className={`transition ${checkpointsOpen ? 'rotate-180' : ''}`}
+                          />
+                        </button>
+                        {checkpointsOpen && (
+                          <ul className="space-y-1 border-t border-slate-200 px-2.5 py-2 text-xs text-slate-700 dark:border-slate-600 dark:text-slate-300">
+                            {checkpoints.map((cp) => (
+                              <li key={cp.spider_name} className="flex flex-wrap gap-x-2">
+                                <span className="font-semibold capitalize">{cp.spider_name}</span>
+                                <span className="truncate text-slate-500 dark:text-slate-400">
+                                  {formatCheckpointMarkers(cp.marker_job_ids)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Shared platforms — one row for whichever mode is active */}
+                <div className="mt-3 border-t border-slate-200/80 pt-3 dark:border-slate-600/80">
+                  <PlatformRow
+                    platforms={platforms}
+                    selected={activePlatforms}
+                    authByPlatform={authByPlatform}
+                    onToggle={toggleActivePlatform}
+                    onSelectAll={selectAllActivePlatforms}
+                  />
+                  {blockedActive.length > 0 && (
+                    <p className="mt-1.5 text-xs text-rose-700 dark:text-rose-300">
+                      Auth required: {blockedActive.join(', ')}
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200/80 pt-3 dark:border-slate-600/80">
+                  {panelMode === 'scheduled' ? (
                     <button
                       type="button"
                       onClick={() => void handleSaveSchedule()}
                       disabled={!canSaveSchedule}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-600 dark:hover:bg-sky-500"
                     >
                       {schedSaving ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -713,115 +887,12 @@ export function JobSyncSettingsSection() {
                       )}
                       {schedSaving ? 'Saving…' : 'Save schedule'}
                     </button>
-                  </div>
-                  {schedMsg && <SectionMessage ok={schedOk} text={schedMsg} />}
-                </div>
-              </div>
-
-              {/* ── Manual date-range ── */}
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">Manual date-range sync</h3>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  One-off backfill for a posted-date window.
-                </p>
-
-                <div className="mt-4 space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label htmlFor="sync-posted-since" className="text-xs font-semibold text-slate-700">
-                        Posted since (required)
-                      </label>
-                      <input
-                        id="sync-posted-since"
-                        type="date"
-                        value={postedSince}
-                        max={postedUntil || undefined}
-                        onChange={(e) => {
-                          setPostedSince(e.target.value);
-                          setActionMsg('');
-                        }}
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                      />
-                    </div>
-                    <div>
-                      <label htmlFor="sync-posted-until" className="text-xs font-semibold text-slate-700">
-                        Posted until (optional)
-                      </label>
-                      <input
-                        id="sync-posted-until"
-                        type="date"
-                        value={postedUntil}
-                        min={postedSince || undefined}
-                        onChange={(e) => {
-                          setPostedUntil(e.target.value);
-                          setActionMsg('');
-                        }}
-                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {[7, 14, 30, 90].map((days) => (
-                      <button
-                        key={days}
-                        type="button"
-                        onClick={() => {
-                          setPostedSince(daysAgoIsoDate(days));
-                          setPostedUntil(todayIsoDate());
-                          setActionMsg('');
-                        }}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300"
-                      >
-                        Last {days}d
-                      </button>
-                    ))}
-                  </div>
-
-                  <PlatformRow
-                    platforms={platforms}
-                    selected={selectedPlatforms}
-                    authByPlatform={authByPlatform}
-                    onToggle={togglePlatform}
-                    onSelectAll={() => {
-                      setSelectedPlatforms(new Set(platforms.map((p) => p.name)));
-                      setActionMsg('');
-                    }}
-                  />
-                  {blockedSelection.length > 0 && (
-                    <p className="text-xs text-rose-700">
-                      Selected platforms need auth setup before sync: {blockedSelection.join(', ')}
-                    </p>
-                  )}
-
-                  {checkpoints.length > 0 && (
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Saved checkpoint markers
-                      </p>
-                      <ul className="mt-2 space-y-1 text-xs text-slate-700">
-                        {checkpoints.map((cp) => (
-                          <li key={cp.spider_name} className="flex flex-wrap gap-x-2">
-                            <span className="font-semibold capitalize">{cp.spider_name}</span>
-                            <span className="truncate">
-                              {formatCheckpointMarkers(cp.marker_job_ids)}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {syncing && syncProgress && (
-                    <p className="text-xs text-slate-600">{syncProgress.message}</p>
-                  )}
-
-                  <div className="flex flex-wrap items-center gap-2">
+                  ) : (
                     <button
                       type="button"
                       onClick={() => void handleRunDateSync()}
                       disabled={!canRun}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-600 dark:hover:bg-sky-500"
                     >
                       {running || syncing ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -830,18 +901,12 @@ export function JobSyncSettingsSection() {
                       )}
                       {running || syncing ? 'Sync running…' : 'Run date-range sync'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void load()}
-                      disabled={loading}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-                    >
-                      Refresh
-                    </button>
-                  </div>
-
-                  {actionMsg && <SectionMessage ok={actionOk} text={actionMsg} />}
+                  )}
                 </div>
+
+                {panelMode === 'scheduled'
+                  ? schedMsg && <SectionMessage ok={schedOk} text={schedMsg} />
+                  : actionMsg && <SectionMessage ok={actionOk} text={actionMsg} />}
               </div>
             </div>
           )}
