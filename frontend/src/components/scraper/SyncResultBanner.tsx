@@ -1,4 +1,4 @@
-import { CheckCircle2, AlertTriangle, XCircle, X, CalendarRange, Layers, FileSearch } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, X, CalendarRange, Layers, FileSearch, CopyX } from 'lucide-react';
 import type { SpiderInfo, SyncResultNotice } from '../../types/scraper';
 
 interface SyncResultBannerProps {
@@ -92,7 +92,11 @@ function buildHeadline(notice: SyncResultNotice, sources: string): string {
     notice.itemsUpdated > 0
       ? `${notice.itemsUpdated.toLocaleString()} updated`
       : null;
-  const breakdown = [newPart, updatedPart].filter(Boolean).join(', ');
+  const droppedPart =
+    notice.exactDuplicatesDropped > 0
+      ? `${notice.exactDuplicatesDropped.toLocaleString()} exact-URL drops`
+      : null;
+  const breakdown = [newPart, updatedPart, droppedPart].filter(Boolean).join(', ');
 
   if (notice.kind === 'error' && notice.error === 'stopped') {
     if (scraped <= 0) return 'Job sync was stopped before any listings were scraped';
@@ -122,15 +126,22 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
   const sources = formatSources(notice.platforms, spiders);
   const windowLabel = formatWindow(notice);
   const headline = buildHeadline(notice, sources);
+  const dropped =
+    notice.exactDuplicatesDropped || notice.promotionLinkedExisting || 0;
 
   const detailParts: string[] = [];
   if (notice.itemsNew > 0) detailParts.push(`${notice.itemsNew.toLocaleString()} new in scrape DB`);
   if (notice.itemsUpdated > 0) {
     detailParts.push(`${notice.itemsUpdated.toLocaleString()} already known (kept existing JD)`);
   }
+  if (dropped > 0) {
+    detailParts.push(
+      `${dropped.toLocaleString()} dropped — exact source URL already saved`,
+    );
+  }
   if (notice.extractionEnqueued > 0) {
     detailParts.push(`${notice.extractionEnqueued.toLocaleString()} queued for JD extraction`);
-  } else if (notice.itemsScraped > 0 && notice.itemsNew === 0 && notice.itemsUpdated > 0) {
+  } else if (notice.itemsScraped > 0 && notice.itemsNew === 0 && notice.itemsUpdated > 0 && dropped === 0) {
     detailParts.push('No new extraction queue — updates reuse existing JD');
   }
   if (notice.syncMode === 'incremental' && !windowLabel) {
@@ -140,6 +151,10 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
   const showExtractNote =
     notice.kind !== 'error' &&
     notice.extractionEnqueued > 0;
+
+  const platformRows = (notice.platformResults ?? []).filter(
+    (row) => row.itemsScraped > 0 || row.exactDuplicatesDropped > 0,
+  );
 
   return (
     <div
@@ -185,23 +200,45 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
                 {detailParts.join(' · ')}
               </span>
             ) : null}
+            {dropped > 0 ? (
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
+              >
+                <CopyX size={11} className="shrink-0 opacity-90" />
+                {dropped.toLocaleString()} exact URL duplicate
+                {dropped === 1 ? '' : 's'} not saved
+              </span>
+            ) : null}
             {notice.extractionEnqueued > 0 ? (
               <span
                 className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
               >
                 <FileSearch size={11} className="shrink-0 opacity-90" />
                 {notice.promotionNew > 0
-                  ? `${notice.promotionNew.toLocaleString()} new jobs`
+                  ? `${notice.promotionNew.toLocaleString()} new jobs saved`
                   : null}
-                {notice.promotionNew > 0 && notice.promotionLinkedExisting > 0 ? ' · ' : null}
-                {notice.promotionLinkedExisting > 0
-                  ? `${notice.promotionLinkedExisting.toLocaleString()} re-linked`
+                {notice.promotionNew > 0 && dropped > 0 ? ' · ' : null}
+                {dropped > 0 && notice.promotionNew === 0
+                  ? `${dropped.toLocaleString()} skipped as duplicates`
                   : null}
-                {notice.promotionNew === 0 && notice.promotionLinkedExisting === 0
+                {notice.promotionNew === 0 && dropped === 0
                   ? 'Extraction queued'
                   : null}
               </span>
             ) : null}
+            {platformRows.map((row) => (
+              <span
+                key={row.spider}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
+                title={`${platformLabel(row.spider, spiders)}: ${row.itemsScraped} fetched, ${row.exactDuplicatesDropped} exact-URL drops`}
+              >
+                {platformLabel(row.spider, spiders)}:{' '}
+                {row.itemsScraped.toLocaleString()} fetched
+                {row.exactDuplicatesDropped > 0
+                  ? ` · ${row.exactDuplicatesDropped.toLocaleString()} dropped`
+                  : ''}
+              </span>
+            ))}
             {notice.kind === 'error' && notice.error && notice.error !== 'stopped' ? (
               <span className="truncate text-[11px] font-medium text-rose-700 dark:text-rose-300">
                 {notice.message || notice.error}

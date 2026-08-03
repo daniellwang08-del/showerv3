@@ -78,9 +78,25 @@ export function ScraperDashboard() {
     setCompanyFilter(value);
   }, [setCompanyFilter]);
 
-  const displayedJobs: DashboardJob[] = jobs.filter(
-    (j) => j.user_status !== 'duplicated' && j.user_status !== 'manual_hidden',
-  );
+  // Extraction failures belong on the dedicated Extraction failed board only —
+  // never on the admin main table. Failures are also stored as UJS "duplicated"
+  // for applicants; that hide still applies outside the failed board.
+  const displayedJobs: DashboardJob[] =
+    view === 'extraction_failed'
+      ? jobs
+      : jobs.filter((j) => {
+          if (j.user_status === 'duplicated' || j.user_status === 'manual_hidden') {
+            return false;
+          }
+          if (
+            isAdmin &&
+            (j.status === 'extraction_failed' ||
+              String(j.extraction_status || '').toLowerCase() === 'failed')
+          ) {
+            return false;
+          }
+          return true;
+        });
 
   const refreshStats = useCallback(
     (opts?: { silent?: boolean }) => {
@@ -453,7 +469,7 @@ export function ScraperDashboard() {
       )}
 
       {/* ── Duplicates modal ─────────────────────────────────────────────── */}
-      {dupOpen && <DuplicatesModal onClose={() => setDupOpen(false)} />}
+      {dupOpen && <DuplicatesModal onClose={() => setDupOpen(false)} isAdmin={isAdmin} />}
     </div>
     </PageScrollArea>
   );

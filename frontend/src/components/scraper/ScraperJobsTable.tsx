@@ -1727,13 +1727,17 @@ export function ScraperJobsTable({
 
   if (jobs.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-slate-700 dark:bg-[#141d31]">
         <div className="p-12 text-center">
-          <p className="text-slate-500 text-sm">No scraped jobs found.</p>
-          <p className="text-slate-400 text-xs mt-1">
-            {canSync
-              ? 'Hit "Sync All" to start scraping.'
-              : 'Jobs will appear here once an admin runs a sync.'}
+          <p className="text-slate-500 text-sm dark:text-slate-400">
+            {isAdmin ? 'No jobs match this view.' : 'No scraped jobs found.'}
+          </p>
+          <p className="text-slate-400 text-xs mt-1 dark:text-slate-500">
+            {isAdmin
+              ? 'Try another board filter, or Sync All if the pool is empty.'
+              : canSync
+                ? 'Hit "Sync All" to start scraping.'
+                : 'Jobs will appear here once an admin runs a sync.'}
           </p>
         </div>
       </div>

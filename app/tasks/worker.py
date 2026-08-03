@@ -691,6 +691,7 @@ async def _promote_and_publish(
 _PROMOTION_SUM_KEYS = (
     "total",
     "new",
+    "exact_duplicate_dropped",
     "linked_existing",
     "blocked",
     "skipped_invalid_url",
@@ -714,7 +715,13 @@ def _aggregate_promotion_stats(results: list[dict]) -> dict | None:
         found = True
         for key in _PROMOTION_SUM_KEYS:
             totals[key] += int(promo.get(key) or 0)
-    return totals if found else None
+    if not found:
+        return None
+    # Prefer the explicit drop counter; fall back to legacy linked_existing.
+    dropped = totals["exact_duplicate_dropped"] or totals["linked_existing"]
+    totals["exact_duplicate_dropped"] = dropped
+    totals["linked_existing"] = dropped
+    return totals
 
 
 def _build_sync_summary(

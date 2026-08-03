@@ -2191,6 +2191,17 @@ async def get_dashboard_jobs(
         )
         base_filter.extend(view_clauses)
 
+        # Admin main table: extraction failures live on the dedicated
+        # Extraction failed board — never mix them into All / other ops views.
+        needs_extraction_join = view in VIEWS_NEEDING_EXTRACTION_CLAUSE
+        if is_admin and view != "extraction_failed":
+            base_filter.append(Job.status != "extraction_failed")
+            base_filter.append(
+                (JobExtraction.status.is_(None))
+                | (JobExtraction.status != ExtractionStatus.FAILED)
+            )
+            needs_extraction_join = True
+
         score_clauses, score_needs_join = _dashboard_min_score_clauses(min_match_score)
         base_filter.extend(score_clauses)
         needs_match_join = needs_match_join or score_needs_join
@@ -2225,7 +2236,7 @@ async def get_dashboard_jobs(
                 ResumeBuildResult,
                 (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
             )
-        if view in VIEWS_NEEDING_EXTRACTION_CLAUSE:
+        if needs_extraction_join:
             count_stmt = count_stmt.outerjoin(
                 JobExtraction, Job.extraction_id == JobExtraction.id
             )
@@ -2572,6 +2583,15 @@ async def get_dashboard_counts(
                 day_end=day_end,
                 is_admin=is_admin,
             )
+            filters = list(shared_filter)
+            needs_extraction_join = False
+            if is_admin and view != "extraction_failed":
+                filters.append(Job.status != "extraction_failed")
+                filters.append(
+                    (JobExtraction.status.is_(None))
+                    | (JobExtraction.status != ExtractionStatus.FAILED)
+                )
+                needs_extraction_join = True
             stmt = (
                 select(func.count())
                 .select_from(Job)
@@ -2596,7 +2616,11 @@ async def get_dashboard_counts(
                     ResumeBuildResult,
                     (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
                 )
-            stmt = stmt.where(*shared_filter, *view_clauses)
+            if needs_extraction_join or view in VIEWS_NEEDING_EXTRACTION_CLAUSE:
+                stmt = stmt.outerjoin(
+                    JobExtraction, Job.extraction_id == JobExtraction.id
+                )
+            stmt = stmt.where(*filters, *view_clauses)
             return (await session.execute(stmt)).scalar() or 0
 
         return DashboardCountsResponse(

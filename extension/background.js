@@ -84,6 +84,7 @@ const ENGINE_SCRIPTS = {
     "content/engine/lever.js",
     "content/engine/workable.js",
     "content/engine/breezy.js",
+    "content/engine/manatal.js",
     "content/engine/drivers/sr-select.js",
     "content/engine/drivers/native.js",
     "content/engine/drivers/react-select.js",

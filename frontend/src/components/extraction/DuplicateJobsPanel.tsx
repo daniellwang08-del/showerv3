@@ -152,6 +152,8 @@ const MENU_EST_HEIGHT = 200;
 type Props = {
   onClosePanel: () => void;
   children: ReactNode;
+  /** When true, omit the Extraction failed tab (admin Jobs board owns that). */
+  hideExtractionFailed?: boolean;
 };
 
 function clampDupContextMenu(clientX: number, clientY: number) {
@@ -309,8 +311,12 @@ function DuplicateActionsMenuPortal({
 export function DuplicateJobsPanel({
   onClosePanel,
   children,
+  hideExtractionFailed = false,
 }: Props) {
   const [activeTab, setActiveTab] = useState<'duplicates' | 'non_us' | 'low_score' | 'extraction_failed'>('duplicates');
+  const visibleTabs = hideExtractionFailed
+    ? DUP_TABS.filter((t) => t.id !== 'extraction_failed')
+    : DUP_TABS;
 
   const loadingLists = useJobsStore((s) => s.loadingLists);
   const duplicateItems = useJobsStore((s) => s.duplicateUrls);
@@ -392,6 +398,13 @@ export function DuplicateJobsPanel({
   const [dupMenuOverride, setDupMenuOverride] = useState<{ left: number; top: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
+  useEffect(() => {
+    if (hideExtractionFailed && activeTab === 'extraction_failed') {
+      setActiveTab('duplicates');
+      setSelectedIds(new Set());
+    }
+  }, [hideExtractionFailed, activeTab]);
+
   const closeDupMenu = () => {
     setDupMenuOverride(null);
     onCloseMenu();
@@ -462,7 +475,7 @@ export function DuplicateJobsPanel({
     return () => io.disconnect();
   }, [onLoadMoreActive, duplicateListHasMoreActive, loadingMoreActive, items.length, activeTab]);
 
-  const activeMeta = DUP_TABS.find((t) => t.id === activeTab) ?? DUP_TABS[0];
+  const activeMeta = visibleTabs.find((t) => t.id === activeTab) ?? visibleTabs[0] ?? DUP_TABS[0];
   const countFor = (id: DupTabId): number =>
     id === 'non_us'
       ? invalidCounts.non_us
@@ -500,8 +513,8 @@ export function DuplicateJobsPanel({
           </div>
 
           {/* Tabs */}
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {DUP_TABS.map((tab) => {
+          <div className={`mt-4 grid gap-2 ${visibleTabs.length >= 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3'}`}>
+            {visibleTabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               const count = countFor(tab.id);

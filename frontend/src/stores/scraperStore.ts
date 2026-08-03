@@ -9,6 +9,8 @@ import type {
   SyncResultNotice,
   SyncCompletionSummary,
   SyncTriggerOptions,
+  SyncPlatformResultNotice,
+  SyncPromotionStats,
 } from '../types/scraper';
 import {
   fetchDashboardJobs,
@@ -345,7 +347,10 @@ function asStringArray(value: unknown): string[] {
 function readPromotionStats(
   event: { promotion?: unknown; summary?: Record<string, unknown> | SyncCompletionSummary },
   summary: SyncCompletionSummary,
-): { enqueued: number; promotionNew: number; linkedExisting: number } {
+): { enqueued: number; promotionNew: number; exactDuplicatesDropped: number } {
+  const droppedOf = (p: SyncPromotionStats | undefined) =>
+    Number(p?.exact_duplicate_dropped) || Number(p?.linked_existing) || 0;
+
   const fromEvent = event.promotion && typeof event.promotion === 'object'
     ? (event.promotion as SyncCompletionSummary['promotion'])
     : undefined;
@@ -357,20 +362,49 @@ function readPromotionStats(
       return {
         enqueued: acc.enqueued + (Number(p.enqueued) || 0),
         promotionNew: acc.promotionNew + (Number(p.new) || 0),
-        linkedExisting: acc.linkedExisting + (Number(p.linked_existing) || 0),
+        exactDuplicatesDropped: acc.exactDuplicatesDropped + droppedOf(p),
       };
     },
-    { enqueued: 0, promotionNew: 0, linkedExisting: 0 },
+    { enqueued: 0, promotionNew: 0, exactDuplicatesDropped: 0 },
   );
   const promo = fromEvent ?? fromSummary;
   if (promo) {
     return {
       enqueued: Number(promo.enqueued) || 0,
       promotionNew: Number(promo.new) || 0,
-      linkedExisting: Number(promo.linked_existing) || 0,
+      exactDuplicatesDropped: droppedOf(promo),
     };
   }
   return fromResults;
+}
+
+function buildPlatformResults(
+  summary: SyncCompletionSummary,
+  platforms: string[],
+): SyncPlatformResultNotice[] {
+  const rows = Array.isArray(summary.results) ? summary.results : [];
+  if (rows.length > 0) {
+    return rows.map((row) => {
+      const p = row.promotion;
+      const dropped =
+        Number(p?.exact_duplicate_dropped) || Number(p?.linked_existing) || 0;
+      return {
+        spider: String(row.spider || 'unknown'),
+        itemsScraped: Number(row.items_scraped) || 0,
+        itemsNew: Number(row.items_new) || 0,
+        itemsUpdated: Number(row.items_updated) || 0,
+        exactDuplicatesDropped: dropped,
+        success: row.success,
+      };
+    });
+  }
+  return platforms.map((spider) => ({
+    spider,
+    itemsScraped: 0,
+    itemsNew: 0,
+    itemsUpdated: 0,
+    exactDuplicatesDropped: 0,
+  }));
 }
 
 function buildSyncResultNotice(event: {
@@ -459,6 +493,8 @@ function buildSyncResultNotice(event: {
   const scraped = Number(itemsScraped) || 0;
   const newCount = Number(itemsNew) || 0;
   const updatedCount = Number(itemsUpdated) || 0;
+  const dropped = promo.exactDuplicatesDropped;
+  const platformResults = buildPlatformResults(summary, platforms);
   const sources =
     platforms.length === 0
       ? 'all platforms'
@@ -475,14 +511,15 @@ function buildSyncResultNotice(event: {
     message = event.message || event.error || summary.message || summary.error || 'Sync failed.';
   } else if (scraped === 0) {
     message = `Sync completed — no listings scraped from ${sources}.`;
-  } else if (promo.enqueued > 0) {
-    message =
-      `Scraped ${scraped} listing${scraped === 1 ? '' : 's'} from ${sources} ` +
-      `(${newCount} new, ${updatedCount} updated); ${promo.enqueued} queued for JD extraction.`;
   } else {
-    message =
-      `Scraped ${scraped} listing${scraped === 1 ? '' : 's'} from ${sources} ` +
-      `(${newCount} new, ${updatedCount} updated). Updated listings keep their existing JD.`;
+    const parts = [`${newCount} new in scrape DB`, `${updatedCount} updated`];
+    if (dropped > 0) {
+      parts.push(`${dropped} dropped (exact URL already saved)`);
+    }
+    if (promo.enqueued > 0) {
+      parts.push(`${promo.enqueued} queued for JD extraction`);
+    }
+    message = `Scraped ${scraped} listing${scraped === 1 ? '' : 's'} from ${sources} (${parts.join(', ')}).`;
   }
 
   return {
@@ -493,7 +530,9 @@ function buildSyncResultNotice(event: {
     itemsUpdated: updatedCount,
     extractionEnqueued: promo.enqueued,
     promotionNew: promo.promotionNew,
-    promotionLinkedExisting: promo.linkedExisting,
+    exactDuplicatesDropped: dropped,
+    promotionLinkedExisting: dropped,
+    platformResults,
     platforms,
     syncMode,
     postedSince: postedSince ? String(postedSince) : null,

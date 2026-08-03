@@ -102,10 +102,17 @@
       if (!label && (root.id === "main-attachment" || root.name === "cResume")) label = "Resume";
       if (!label && root.getAttribute && root.getAttribute("data-ui") === "resume") label = "Resume";
       if (!label && (root.name === "resume" || root.id === "resume-upload-input")) label = "Resume/CV";
+      // Manatal: placeholder="Resume" / .form-group label "Resume: *".
+      if (!label && AF.manatal && AF.manatal.questionTitleFor) {
+        label = AF.manatal.questionTitleFor(root);
+      }
       return {
         kind: "file",
         label: label || "File",
-        required: !!root.required || (root.getAttribute && root.getAttribute("aria-required") === "true"),
+        required:
+          !!root.required ||
+          (root.getAttribute && root.getAttribute("aria-required") === "true") ||
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
         is_file: true,
         // Cap the accept hint: SmartRecruiters' dropzone lists ~60 extensions
         // (600+ chars), which overflows the backend's accept length cap and 422s

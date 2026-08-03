@@ -210,6 +210,9 @@
       if (AF.greenhouse && AF.greenhouse.isEmbedParent && AF.greenhouse.isEmbedParent()) {
         return "Application form (Greenhouse embed)";
       }
+      if (AF.manatal && AF.manatal.isManatalPage && AF.manatal.isManatalPage()) {
+        return "Application form (Manatal)";
+      }
     } catch {}
     return "Application form";
   }
@@ -271,6 +274,12 @@
     "form[action*='lever.co']",
     ".section.application-form",
     ".application-form",
+    // Manatal (careers-page.com): single Vue form under #app with .form-group
+    // native fields + .btn-apply / terms checkbox.
+    "#app form",
+    "form:has(.btn-apply)",
+    "form:has(.custom-file-input)",
+    'form:has(input[name="terms_and_condition"])',
     // Generic fallback
     "form",
   ];
@@ -1936,6 +1945,26 @@
         } catch {}
       });
       return true; // async sendResponse
+    }
+    // Manatal pre-pass: tick the required terms/privacy consent checkbox before
+    // extraction so the group driver reports it filled and the LLM skips it.
+    if (msg.type === "AF_MANATAL_PREP") {
+      const isMn =
+        !!(AF.manatal && AF.manatal.isManatalPage && AF.manatal.isManatalPage()) ||
+        !!document.querySelector(
+          '#app form, form input[name="terms_and_condition"], form .btn-apply'
+        );
+      if (!isMn) return false;
+      runExclusive(async () => {
+        const ticked =
+          AF.manatal && AF.manatal.tickConsent ? AF.manatal.tickConsent() : 0;
+        return { ticked };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
     }
     // Fill a cover-letter textarea with the AI-generated cover letter body before
     // extraction. Only the frame that hosts a text/textarea control answers.

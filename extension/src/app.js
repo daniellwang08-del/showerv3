@@ -2611,6 +2611,14 @@ async function prepareApplyToJob(tabId) {
   await delay(400);
 }
 
+// Manatal (careers-page.com): tick the required terms/privacy consent checkbox
+// before extraction so it is already filled for the LLM pass.
+async function prepareManatal(tabId) {
+  if (tabId == null) return;
+  await tabSend(tabId, { type: "AF_MANATAL_PREP" });
+  await delay(200);
+}
+
 // RecruiterFlow: add a repeating Experience/Education row per profile entry
 // (Workday-style) and fill Company/Title/School/Degree/dates + Country
 // deterministically, and tick the required consent box, BEFORE the generic fill.
@@ -3105,6 +3113,10 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     setAutofill({ runStatus: "Preparing the resume upload…" });
     await prepareApplyToJob(tabId);
   }
+  if (eng && eng.platform === "manatal") {
+    setAutofill({ runStatus: "Accepting terms…" });
+    await prepareManatal(tabId);
+  }
   if (eng && eng.platform === "recruiterflow") {
     setAutofill({ runStatus: "Adding your work & education history…" });
     await prepareRecruiterFlow(tabId);
@@ -3343,6 +3355,16 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       const ticked = await tabSend(tabId, { type: "AF_PP_TICK_CONSENT" });
       if (ticked && ticked.ticked) {
         console.log("[autofill] Pinpoint consent ticked");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (eng && eng.platform === "manatal") {
+    try {
+      const ticked = await tabSend(tabId, { type: "AF_MANATAL_PREP" });
+      if (ticked && ticked.ticked) {
+        console.log("[autofill] Manatal consent ticked:", ticked.ticked);
       }
     } catch {
       /* ignore */
@@ -5756,6 +5778,7 @@ const SOURCE_META = {
   smartrecruiters: { label: "SmartRecruiters", color: "#0CA0E8", short: "SR" },
   pinpoint: { label: "Pinpoint", color: "#E11D48", short: "PP" },
   breezy: { label: "Breezy", color: "#2BB573", short: "BZ" },
+  manatal: { label: "Manatal", color: "#2563EB", short: "MN" },
 };
 
 const DEFAULT_SOURCE_META = { label: null, color: "#3a4150", short: null };
@@ -5774,6 +5797,7 @@ function sourceFromUrl(url) {
   if (u.includes("breezy.hr")) return "breezy";
   if (u.includes("ashbyhq")) return "ashby";
   if (u.includes("smartrecruiters")) return "smartrecruiters";
+  if (u.includes("careers-page.com") || u.includes("manatal.com")) return "manatal";
   if (/^https?:\/\/careers\./.test(u) && /\/postings\/.+\/applications/.test(u)) return "pinpoint";
   if (u.includes("linkedin.")) return "linkedin";
   if (u.includes("dice.com")) return "dice";

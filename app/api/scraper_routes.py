@@ -362,20 +362,13 @@ def _rerun_response_from_promote_outcome(
     """Map ``promote_single_scraped_row`` result to a :class:`RerunResponse`."""
     bucket = outcome.get("bucket")
     target_url = outcome.get("target_url")
-    if bucket in ("new", "linked_existing"):
+    if bucket == "new":
         enqueued = bool(outcome.get("enqueued"))
-        if bucket == "new":
-            message = (
-                "Promoted and enqueued for full lifecycle."
-                if enqueued
-                else "Promoted but extraction queue unavailable."
-            )
-        else:
-            message = (
-                "Linked to existing job; re-enqueued for full lifecycle."
-                if enqueued
-                else "Linked to existing job but extraction queue unavailable."
-            )
+        message = (
+            "Promoted and enqueued for full lifecycle."
+            if enqueued
+            else "Promoted but extraction queue unavailable."
+        )
         return RerunResponse(
             status="enqueued" if enqueued else "enqueue_failed",
             scraped_job_id=job_id,
@@ -384,6 +377,16 @@ def _rerun_response_from_promote_outcome(
             target_url=target_url,
             enqueued=enqueued,
             message=message,
+        )
+    if bucket in ("exact_duplicate_dropped", "linked_existing"):
+        return RerunResponse(
+            status="duplicate",
+            scraped_job_id=job_id,
+            extraction_id=outcome.get("extraction_id"),
+            job_id=outcome.get("job_id"),
+            target_url=target_url,
+            enqueued=False,
+            message="Exact source URL already saved; skipped duplicate.",
         )
     if bucket == "linkedin_skipped":
         return RerunResponse(

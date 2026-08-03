@@ -84,6 +84,13 @@
         if (q) return q;
       }
     } catch {}
+    // Manatal: consent / field labels from .form-group or sibling <span>.
+    try {
+      if (AF.manatal && AF.manatal.questionTitleFor) {
+        const q = AF.manatal.questionTitleFor(root);
+        if (q) return q;
+      }
+    } catch {}
     return labelForControl(root);
   }
 
@@ -241,7 +248,9 @@
       return {
         kind: t,
         label: groupLabel(root),
-        required: group.some((g) => g.required),
+        required:
+          group.some((g) => g.required) ||
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
         multi: t === "checkbox" && group.length > 1,
         options: leverGroupOptions(root, group),
         name: root.name || "",

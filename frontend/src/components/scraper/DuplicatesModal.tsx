@@ -7,9 +7,11 @@ import { Z_INDEX } from '../../constants/zIndex';
 
 interface Props {
   onClose: () => void;
+  /** Admins manage extraction failures on the Jobs board, not this modal. */
+  isAdmin?: boolean;
 }
 
-export function DuplicatesModal({ onClose }: Props) {
+export function DuplicatesModal({ onClose, isAdmin = false }: Props) {
   // Lock body scroll while open
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -62,7 +64,7 @@ export function DuplicatesModal({ onClose }: Props) {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <DuplicateJobsPanel onClosePanel={onClose}>
+            <DuplicateJobsPanel onClosePanel={onClose} hideExtractionFailed={isAdmin}>
               <></>
             </DuplicateJobsPanel>
           </div>

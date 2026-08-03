@@ -131,7 +131,9 @@
       return {
         kind: "select",
         label: labelForControl(root),
-        required: !!root.required,
+        required:
+          !!root.required ||
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
         multi: !!root.multiple,
         options: [...root.options].map((o) => clean(o.text)).filter(Boolean),
       };
@@ -161,7 +163,9 @@
       return {
         kind: "textarea",
         label: labelForControl(root),
-        required: !!root.required,
+        required:
+          !!root.required ||
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
         constraints: constraintsOf(root),
       };
     },
@@ -195,7 +199,10 @@
       return {
         kind: inputKind(root),
         label: labelForControl(root),
-        required: !!root.required || (root.getAttribute && root.getAttribute("aria-required") === "true"),
+        required:
+          !!root.required ||
+          (root.getAttribute && root.getAttribute("aria-required") === "true") ||
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
         constraints: constraintsOf(root),
       };
     },

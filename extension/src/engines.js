@@ -74,6 +74,8 @@ const PLATFORM_MATCHERS = [
   ["bamboohr", (h) => h.includes("bamboohr.com")],
   ["workable", (h) => h.includes("workable.com")],
   ["breezy", (h) => h.includes("breezy.hr")],
+  // Manatal white-label careers (careers-page.com / manatal.com).
+  ["manatal", (h) => h.includes("careers-page.com") || h.includes("manatal.com")],
 ];
 
 // Detect the ATS platform for a job. Prefers the live page URL (the actual
@@ -218,6 +220,18 @@ export const ENGINES = {
     available: true,
     autoDiscover: true,
     note: "Finds the Breezy application form and fills it automatically.",
+  },
+  // Manatal (careers-page.com): single Vue form of native text/textarea/file +
+  // terms checkbox. Reuses the greenhouse bundle + auto-discover; Manatal-specific
+  // label/required/consent helpers live in content/engine/manatal.js.
+  manatal: {
+    id: "manatal",
+    label: "Manatal",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Finds the application form and fills it automatically.",
   },
   generic: {
     id: "generic",

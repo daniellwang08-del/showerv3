@@ -25,11 +25,11 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.models.database import JobExtraction, Job, UserJobStatus
+from app.models.database import Job, UserJobStatus
 from app.services.url_manager import URLManager
 from app.services.linkedin_job_filter import is_linkedin_job_url, LINKEDIN_JOB_BLOCK_REASON
 from app.storage.database import get_session
@@ -136,20 +136,34 @@ def _is_blocked_domain(domain: str) -> str | None:
         return None
 
 
-async def _find_existing_valid_job(
+async def _find_existing_job_by_url(
     session: AsyncSession, *, source_url: str
 ) -> Job | None:
-    """Return an active Job with the same source_url, if any."""
+    """Return any non-blocked Job already saved with this exact posting URL.
+
+    Matches ``source_url`` or ``normalized_url`` so aggregator → ATS promote
+    still collides with a job saved under either form of the same URL.
+    """
     result = await session.execute(
         select(Job)
         .where(
-            Job.source_url == source_url,
-            Job.status == "active",
+            Job.status != "blocked",
+            or_(
+                Job.source_url == source_url,
+                Job.normalized_url == source_url,
+            ),
         )
         .order_by(Job.created_at.asc())
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _find_existing_valid_job(
+    session: AsyncSession, *, source_url: str
+) -> Job | None:
+    """Backward-compatible alias of :func:`_find_existing_job_by_url`."""
+    return await _find_existing_job_by_url(session, source_url=source_url)
 
 
 async def _stamp_promoted(
@@ -221,6 +235,9 @@ async def promote_scrape_run(scrape_run_id: str, user_id: str | None = None) -> 
         "scrape_run_id": scrape_run_id,
         "total": 0,
         "new": 0,
+        # Exact source-URL collision: do not create another Job / re-extract.
+        "exact_duplicate_dropped": 0,
+        # Legacy alias kept so older banner clients still sum a drop count.
         "linked_existing": 0,
         "blocked": 0,
         "skipped_invalid_url": 0,
@@ -265,6 +282,9 @@ async def promote_scrape_run(scrape_run_id: str, user_id: str | None = None) -> 
         bucket = outcome.get("bucket") or "failed"
         if bucket in stats:
             stats[bucket] = stats[bucket] + 1
+        # Keep linked_existing in sync for older clients / aggregators.
+        if bucket == "exact_duplicate_dropped":
+            stats["linked_existing"] = stats["linked_existing"] + 1
         if outcome.get("enqueued"):
             stats["enqueued"] += 1
 
@@ -296,7 +316,7 @@ async def _promote_single_scraped_row(
     pipeline.  Returns a dict shaped:
 
         {
-          "bucket": "new" | "linked_existing" | "blocked" | "skipped_invalid_url" | "failed",
+          "bucket": "new" | "exact_duplicate_dropped" | "blocked" | "skipped_invalid_url" | "failed",
           "extraction_id": str | None,
           "job_id": str | None,
           "target_url": str | None,
@@ -305,7 +325,7 @@ async def _promote_single_scraped_row(
         }
 
     Safe to call repeatedly; idempotency is enforced upstream by the
-    ``promoted_extraction_id`` stamp and by ``_find_existing_valid_job``.
+    ``promoted_extraction_id`` stamp and by ``_find_existing_job_by_url``.
     """
     scraped_job_id = row.get("id")
     result: dict = {
@@ -361,23 +381,27 @@ async def _promote_single_scraped_row(
                 )
                 return result
 
-            existing = await _find_existing_valid_job(session, source_url=target_url)
-            if existing and existing.extraction_id:
+            existing = await _find_existing_job_by_url(session, source_url=target_url)
+            if existing:
+                # Exact URL already in the jobs pool — do not create another Job
+                # and do not re-queue extraction. Stamp the scraped row so the
+                # promoter skips it on the next run.
+                stamp_id = existing.extraction_id or existing.id
                 if scraped_job_id:
-                    await _stamp_promoted(session, scraped_job_id, existing.extraction_id)
+                    await _stamp_promoted(session, scraped_job_id, stamp_id)
                     await session.commit()
-                result["bucket"] = "linked_existing"
+                result["bucket"] = "exact_duplicate_dropped"
                 result["extraction_id"] = existing.extraction_id
                 result["job_id"] = existing.id
+                result["enqueued"] = False
                 logger.info(
-                    "scrape_promoter_linked_existing",
+                    "scrape_promoter_exact_duplicate_dropped",
                     scraped_job_id=scraped_job_id,
                     job_id=existing.id,
                     extraction_id=existing.extraction_id,
+                    target_url=target_url,
+                    enqueue_requested=enqueue,
                 )
-                if enqueue:
-                    enqueued = await _enqueue_extraction(existing.extraction_id, target_url, user_id=user_id)
-                    result["enqueued"] = enqueued
                 return result
 
             title = (row.get("title") or "").strip()

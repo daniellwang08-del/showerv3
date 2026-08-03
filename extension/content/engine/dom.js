@@ -250,6 +250,14 @@
         if (q) return q.slice(0, 200);
       }
     } catch {}
+    // Manatal (careers-page.com): labels use empty for=""; question text is the
+    // sibling .form-group > label (or a sibling <span> for the terms checkbox).
+    try {
+      if (AF.manatal && AF.manatal.isManatalPage && AF.manatal.isManatalPage()) {
+        const q = AF.manatal.questionTitleFor && AF.manatal.questionTitleFor(inp);
+        if (q) return q.slice(0, 200);
+      }
+    } catch {}
     const wrap = inp.closest && inp.closest("label");
     if (wrap && clean(wrap.innerText)) return clean(wrap.innerText).slice(0, 200);
     const labelledby = inp.getAttribute && inp.getAttribute("aria-labelledby");

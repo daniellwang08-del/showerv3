@@ -265,6 +265,9 @@ export interface SyncProgress {
 export interface SyncPromotionStats {
   total?: number;
   new?: number;
+  /** Exact source-URL already in pool — not saved again / not re-extracted. */
+  exact_duplicate_dropped?: number;
+  /** Legacy alias of exact_duplicate_dropped. */
   linked_existing?: number;
   blocked?: number;
   skipped_invalid_url?: number;
@@ -273,6 +276,15 @@ export interface SyncPromotionStats {
   /** Jobs enqueued onto the extraction queue from this sync. */
   enqueued?: number;
   linkedin_purged?: number;
+}
+
+export interface SyncPlatformResultNotice {
+  spider: string;
+  itemsScraped: number;
+  itemsNew: number;
+  itemsUpdated: number;
+  exactDuplicatesDropped: number;
+  success?: boolean;
 }
 
 export interface SyncResultNotice {
@@ -288,8 +300,15 @@ export interface SyncResultNotice {
   extractionEnqueued: number;
   /** Brand-new Job rows created by promotion (subset of enqueued). */
   promotionNew: number;
-  /** Existing jobs re-linked / re-queued (already in the pool). */
+  /**
+   * Scraped rows whose source URL already existed in the jobs pool —
+   * dropped (not saved again, not re-extracted).
+   */
+  exactDuplicatesDropped: number;
+  /** @deprecated Prefer exactDuplicatesDropped. */
   promotionLinkedExisting: number;
+  /** Per-platform scrape + drop breakdown for the banner. */
+  platformResults: SyncPlatformResultNotice[];
   /** Spider names that ran (e.g. remoterocketship). */
   platforms: string[];
   syncMode: 'incremental' | 'date_backfill' | string;
