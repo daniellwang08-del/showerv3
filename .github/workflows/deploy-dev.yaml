@@ -20,8 +20,6 @@ jobs:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
-          # Default is 10m; pip + npm + vite on the CPX21 often exceeds that.
-          command_timeout: 30m
 
           script: |
             set -e

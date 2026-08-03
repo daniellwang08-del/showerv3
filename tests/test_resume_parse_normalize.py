@@ -6,6 +6,7 @@ from app.services.resume_parse_service import (
     _fill_missing_contact_from_text,
     _fill_missing_skills_from_text,
     _infer_job_type,
+    _normalize_draft,
     _normalize_linkedin_url,
     _normalize_phone_fields,
     _parse_skills_section_from_text,
@@ -157,4 +158,28 @@ def test_fill_missing_skills_replaces_sparse_llm_output():
     assert len(draft.technical_skills) == 6
     assert draft.technical_skills[0].category == "Languages"
     assert any("Technical skills were recovered" in n for n in notes)
+
+
+def test_normalize_draft_preserves_structured_work_fields():
+    raw = {
+        "name_first": "Jane",
+        "name_last": "Doe",
+        "work_experience": [
+            {
+                "company_name": "Acme",
+                "job_title": "Engineer",
+                "project_title": "Search platform",
+                "project_intro": "Built a high-scale search infrastructure.",
+                "contributions": ["Designed indexing pipelines", "Improved query latency"],
+                "used_skills": "Python, Spark",
+                "description": "Built the platform and shipped it.",
+            }
+        ],
+    }
+    draft = _normalize_draft(raw)
+    assert draft.work_experience[0].project_title == "Search platform"
+    assert draft.work_experience[0].project_intro == "Built a high-scale search infrastructure."
+    assert draft.work_experience[0].contributions == ["Designed indexing pipelines", "Improved query latency"]
+    assert draft.work_experience[0].used_skills == "Python, Spark"
+    assert draft.work_experience[0].description == "Built the platform and shipped it."
 

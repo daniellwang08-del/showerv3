@@ -29,6 +29,10 @@ export type ResumeDraft = {
     period_end?: string | null;
     location?: string | null;
     job_type?: string | null;
+    project_title?: string | null;
+    project_intro?: string | null;
+    contributions?: string[] | null;
+    used_skills?: string | null;
     description?: string | null;
   }>;
   education?: Array<{
@@ -124,6 +128,12 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
         period_end: normalizePeriodEnd(w.period_end),
         location,
         job_type: inferJobArrangement(location, parsedType, description),
+        project_title: pick(w.project_title) ?? '',
+        project_intro: pick(w.project_intro) ?? '',
+        contributions: Array.isArray(w.contributions)
+          ? w.contributions.map((c) => (c ?? '').trim()).filter(Boolean)
+          : [],
+        used_skills: pick(w.used_skills) ?? '',
         description,
       };
     })
