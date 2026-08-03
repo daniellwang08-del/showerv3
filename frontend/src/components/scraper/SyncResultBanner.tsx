@@ -1,4 +1,4 @@
-import { CheckCircle2, AlertTriangle, XCircle, X, CalendarRange, Layers } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, X, CalendarRange, Layers, FileSearch } from 'lucide-react';
 import type { SpiderInfo, SyncResultNotice } from '../../types/scraper';
 
 interface SyncResultBannerProps {
@@ -59,6 +59,7 @@ const KIND_STYLES = {
     Icon: CheckCircle2,
     chip: 'bg-emerald-600/10 text-emerald-800 dark:bg-emerald-500/25 dark:text-emerald-300',
     headline: 'text-emerald-950 dark:text-emerald-300',
+    note: 'text-emerald-900/80 dark:text-emerald-200/80',
   },
   warning: {
     wrap: 'border-amber-200/90 bg-gradient-to-r from-amber-50 via-white to-orange-50/70 dark:border-amber-500/35 dark:from-amber-950/60 dark:via-slate-900 dark:to-orange-950/45',
@@ -67,6 +68,7 @@ const KIND_STYLES = {
     Icon: AlertTriangle,
     chip: 'bg-amber-600/10 text-amber-800 dark:bg-amber-500/25 dark:text-amber-300',
     headline: 'text-amber-950 dark:text-amber-300',
+    note: 'text-amber-900/80 dark:text-amber-200/80',
   },
   error: {
     wrap: 'border-rose-200/90 bg-gradient-to-r from-rose-50 via-white to-red-50/70 dark:border-rose-500/35 dark:from-rose-950/60 dark:via-slate-900 dark:to-red-950/45',
@@ -75,42 +77,69 @@ const KIND_STYLES = {
     Icon: XCircle,
     chip: 'bg-rose-600/10 text-rose-800 dark:bg-rose-500/25 dark:text-rose-300',
     headline: 'text-rose-950 dark:text-rose-300',
+    note: 'text-rose-900/80 dark:text-rose-200/80',
   },
 } as const;
+
+function buildHeadline(notice: SyncResultNotice, sources: string): string {
+  const scraped = notice.itemsScraped;
+  const listingsWord = scraped === 1 ? 'listing' : 'listings';
+  const newPart =
+    notice.itemsNew > 0
+      ? `${notice.itemsNew.toLocaleString()} new`
+      : null;
+  const updatedPart =
+    notice.itemsUpdated > 0
+      ? `${notice.itemsUpdated.toLocaleString()} updated`
+      : null;
+  const breakdown = [newPart, updatedPart].filter(Boolean).join(', ');
+
+  if (notice.kind === 'error' && notice.error === 'stopped') {
+    if (scraped <= 0) return 'Job sync was stopped before any listings were scraped';
+    return breakdown
+      ? `Job sync stopped after scraping ${scraped.toLocaleString()} ${listingsWord} from ${sources} (${breakdown})`
+      : `Job sync stopped after scraping ${scraped.toLocaleString()} ${listingsWord} from ${sources}`;
+  }
+  if (notice.kind === 'error') {
+    if (scraped <= 0) return `Job sync failed for ${sources}`;
+    return breakdown
+      ? `Job sync finished with errors — scraped ${scraped.toLocaleString()} ${listingsWord} from ${sources} (${breakdown})`
+      : `Job sync finished with errors — scraped ${scraped.toLocaleString()} ${listingsWord} from ${sources}`;
+  }
+  if (scraped === 0) {
+    return `Sync finished — no listings scraped from ${sources}`;
+  }
+  const prefix = 'Scraped';
+  const suffix = notice.kind === 'warning' ? ' with some platform issues' : '';
+  return breakdown
+    ? `${prefix} ${scraped.toLocaleString()} ${listingsWord} from ${sources} · ${breakdown}${suffix}`
+    : `${prefix} ${scraped.toLocaleString()} ${listingsWord} from ${sources}${suffix}`;
+}
 
 export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResultBannerProps) {
   const style = KIND_STYLES[notice.kind];
   const Icon = style.Icon;
   const sources = formatSources(notice.platforms, spiders);
   const windowLabel = formatWindow(notice);
-  const scraped = notice.itemsScraped;
-  const jobsWord = scraped === 1 ? 'job' : 'jobs';
-
-  let headline: string;
-  if (notice.kind === 'error' && notice.error === 'stopped') {
-    headline =
-      scraped > 0
-        ? `Job sync stopped after fetching ${scraped.toLocaleString()} ${jobsWord} from ${sources}`
-        : 'Job sync was stopped before any listings were fetched';
-  } else if (notice.kind === 'error') {
-    headline =
-      scraped > 0
-        ? `Job sync finished with errors — ${scraped.toLocaleString()} ${jobsWord} fetched from ${sources}`
-        : `Job sync failed for ${sources}`;
-  } else if (notice.kind === 'warning') {
-    headline = `Fetched ${scraped.toLocaleString()} ${jobsWord} from ${sources} with some platform issues`;
-  } else if (scraped === 0) {
-    headline = `Sync finished — no new listings from ${sources}`;
-  } else {
-    headline = `Fetched ${scraped.toLocaleString()} ${jobsWord} from ${sources}`;
-  }
+  const headline = buildHeadline(notice, sources);
 
   const detailParts: string[] = [];
-  if (notice.itemsNew > 0) detailParts.push(`${notice.itemsNew.toLocaleString()} new`);
-  if (notice.itemsUpdated > 0) detailParts.push(`${notice.itemsUpdated.toLocaleString()} updated`);
+  if (notice.itemsNew > 0) detailParts.push(`${notice.itemsNew.toLocaleString()} new in scrape DB`);
+  if (notice.itemsUpdated > 0) {
+    detailParts.push(`${notice.itemsUpdated.toLocaleString()} already known (kept existing JD)`);
+  }
+  if (notice.extractionEnqueued > 0) {
+    detailParts.push(`${notice.extractionEnqueued.toLocaleString()} queued for JD extraction`);
+  } else if (notice.itemsScraped > 0 && notice.itemsNew === 0 && notice.itemsUpdated > 0) {
+    detailParts.push('No new extraction queue — updates reuse existing JD');
+  }
   if (notice.syncMode === 'incremental' && !windowLabel) {
     detailParts.push('Incremental sync');
   }
+
+  const showExtractNote =
+    notice.kind !== 'error' &&
+    notice.extractionEnqueued > 0;
 
   return (
     <div
@@ -132,6 +161,13 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
           >
             {headline}
           </p>
+          {showExtractNote ? (
+            <p className={`mt-1 text-[12px] font-medium leading-snug ${style.note}`}>
+              Auto-extraction is running. Jobs move to <span className="font-semibold">JD ready</span> when
+              done — <span className="font-semibold">Extraction backlog</span> is the live unfinished pool,
+              not this sync&apos;s scrape total.
+            </p>
+          ) : null}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {windowLabel ? (
               <span
@@ -147,6 +183,23 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
               >
                 <Layers size={11} className="shrink-0 opacity-90" />
                 {detailParts.join(' · ')}
+              </span>
+            ) : null}
+            {notice.extractionEnqueued > 0 ? (
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
+              >
+                <FileSearch size={11} className="shrink-0 opacity-90" />
+                {notice.promotionNew > 0
+                  ? `${notice.promotionNew.toLocaleString()} new jobs`
+                  : null}
+                {notice.promotionNew > 0 && notice.promotionLinkedExisting > 0 ? ' · ' : null}
+                {notice.promotionLinkedExisting > 0
+                  ? `${notice.promotionLinkedExisting.toLocaleString()} re-linked`
+                  : null}
+                {notice.promotionNew === 0 && notice.promotionLinkedExisting === 0
+                  ? 'Extraction queued'
+                  : null}
               </span>
             ) : null}
             {notice.kind === 'error' && notice.error && notice.error !== 'stopped' ? (

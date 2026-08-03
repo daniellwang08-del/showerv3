@@ -28,6 +28,7 @@ export interface WsEvent {
   items_scraped?: number;
   items_new?: number;
   items_updated?: number;
+  promotion?: Record<string, unknown>;
   elapsed_seconds?: number;
 }
 

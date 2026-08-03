@@ -342,6 +342,37 @@ function asStringArray(value: unknown): string[] {
   return value.map((v) => String(v)).filter(Boolean);
 }
 
+function readPromotionStats(
+  event: { promotion?: unknown; summary?: Record<string, unknown> | SyncCompletionSummary },
+  summary: SyncCompletionSummary,
+): { enqueued: number; promotionNew: number; linkedExisting: number } {
+  const fromEvent = event.promotion && typeof event.promotion === 'object'
+    ? (event.promotion as SyncCompletionSummary['promotion'])
+    : undefined;
+  const fromSummary = summary.promotion;
+  const fromResults = (summary.results ?? []).reduce(
+    (acc, row) => {
+      const p = row.promotion;
+      if (!p) return acc;
+      return {
+        enqueued: acc.enqueued + (Number(p.enqueued) || 0),
+        promotionNew: acc.promotionNew + (Number(p.new) || 0),
+        linkedExisting: acc.linkedExisting + (Number(p.linked_existing) || 0),
+      };
+    },
+    { enqueued: 0, promotionNew: 0, linkedExisting: 0 },
+  );
+  const promo = fromEvent ?? fromSummary;
+  if (promo) {
+    return {
+      enqueued: Number(promo.enqueued) || 0,
+      promotionNew: Number(promo.new) || 0,
+      linkedExisting: Number(promo.linked_existing) || 0,
+    };
+  }
+  return fromResults;
+}
+
 function buildSyncResultNotice(event: {
   type: string;
   spider_name?: string;
@@ -352,6 +383,7 @@ function buildSyncResultNotice(event: {
   items_scraped?: number;
   items_new?: number;
   items_updated?: number;
+  promotion?: SyncCompletionSummary['promotion'];
   success?: boolean;
   error?: string;
   message?: string;
@@ -394,6 +426,7 @@ function buildSyncResultNotice(event: {
     summary.items_updated ??
     results.reduce((n, r) => n + (Number(r.items_updated) || 0), 0) ??
     0;
+  const promo = readPromotionStats(event, summary);
 
   const syncMode =
     event.sync_mode ||
@@ -424,6 +457,8 @@ function buildSyncResultNotice(event: {
   }
 
   const scraped = Number(itemsScraped) || 0;
+  const newCount = Number(itemsNew) || 0;
+  const updatedCount = Number(itemsUpdated) || 0;
   const sources =
     platforms.length === 0
       ? 'all platforms'
@@ -434,22 +469,31 @@ function buildSyncResultNotice(event: {
   if (stopped) {
     message =
       scraped > 0
-        ? `Stopped after fetching ${scraped} job${scraped === 1 ? '' : 's'} from ${sources}.`
+        ? `Stopped after scraping ${scraped} listing${scraped === 1 ? '' : 's'} from ${sources}.`
         : 'Job fetching was stopped.';
   } else if (kind === 'error') {
     message = event.message || event.error || summary.message || summary.error || 'Sync failed.';
   } else if (scraped === 0) {
-    message = `Sync completed — no listings fetched from ${sources}.`;
+    message = `Sync completed — no listings scraped from ${sources}.`;
+  } else if (promo.enqueued > 0) {
+    message =
+      `Scraped ${scraped} listing${scraped === 1 ? '' : 's'} from ${sources} ` +
+      `(${newCount} new, ${updatedCount} updated); ${promo.enqueued} queued for JD extraction.`;
   } else {
-    message = `Fetched ${scraped} job${scraped === 1 ? '' : 's'} from ${sources}.`;
+    message =
+      `Scraped ${scraped} listing${scraped === 1 ? '' : 's'} from ${sources} ` +
+      `(${newCount} new, ${updatedCount} updated). Updated listings keep their existing JD.`;
   }
 
   return {
     id: `sync-notice-${++_syncNoticeCounter}`,
     kind,
     itemsScraped: scraped,
-    itemsNew: Number(itemsNew) || 0,
-    itemsUpdated: Number(itemsUpdated) || 0,
+    itemsNew: newCount,
+    itemsUpdated: updatedCount,
+    extractionEnqueued: promo.enqueued,
+    promotionNew: promo.promotionNew,
+    promotionLinkedExisting: promo.linkedExisting,
     platforms,
     syncMode,
     postedSince: postedSince ? String(postedSince) : null,

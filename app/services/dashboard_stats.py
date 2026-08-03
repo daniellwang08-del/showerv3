@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from app.models.database import (
     JobExtraction,
     JobMatchResult,
     ResumeBuildResult,
+    User,
     UserJobStatus,
     ValidJobUserApplication,
 )
@@ -363,10 +364,40 @@ async def fetch_admin_dashboard_stats(
 
     last_sync_new = 0
     last_sync_errors = 0
+    last_sync_scraped = 0
+    last_sync_at = None
+    last_sync_spider = None
     if recent_runs:
         last = recent_runs[0]
         last_sync_new = int(last.get("items_new") or 0)
         last_sync_errors = int(last.get("errors") or 0)
+        last_sync_scraped = int(last.get("items_scraped") or 0)
+        last_sync_at = last.get("finished_at") or last.get("started_at")
+        last_sync_spider = last.get("spider_name")
+
+    # Active sources = configured sync platforms (schedule), not distinct job
+    # metadata strings. ``spider_names is None`` means all platforms.
+    from app.services.job_sync_schedule_service import get_schedule
+    from app.services.scraper_sync_service import list_sync_platforms
+
+    schedule = await get_schedule(session)
+    spider_names = schedule.get("spider_names")
+    if isinstance(spider_names, list) and spider_names:
+        active_sources = len(spider_names)
+    else:
+        active_sources = len(list_sync_platforms())
+
+    week_start = day_end - timedelta(days=7)
+    user_row = (
+        await session.execute(
+            select(
+                func.count().label("total_users"),
+                func.count()
+                .filter(User.created_at >= week_start)
+                .label("new_users_week"),
+            ).select_from(User)
+        )
+    ).one()
 
     return {
         "total_jobs": stats_row.total_jobs or 0,
@@ -384,7 +415,13 @@ async def fetch_admin_dashboard_stats(
         "manual_jobs": stats_row.manual_jobs or 0,
         "team_applied_today": int(team_applied_today),
         "last_sync_items_new": last_sync_new,
+        "last_sync_items_scraped": last_sync_scraped,
         "last_sync_errors": last_sync_errors,
+        "last_sync_at": last_sync_at,
+        "last_sync_spider": last_sync_spider,
+        "active_sources": active_sources,
+        "total_users": int(user_row.total_users or 0),
+        "new_users_week": int(user_row.new_users_week or 0),
         "sources": sources,
         "recent_runs": recent_runs,
     }

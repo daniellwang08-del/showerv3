@@ -1764,13 +1764,16 @@ def _dashboard_view_clauses(
 
     if view == "today":
         if day_start is not None and day_end is not None:
-            # "Added today" mirrors the dashboard stats tile: when the job entered
-            # (or re-entered) this user's pool, falling back to the job row's own
-            # creation date for global/un-added jobs. Filtering on Job.created_at
-            # alone would miss jobs added today that were scraped earlier.
-            added_at = func.coalesce(UserJobStatus.created_at, Job.created_at)
-            clauses.append(added_at >= day_start)
-            clauses.append(added_at < day_end)
+            if is_admin:
+                # Admin ops board uses platform Job.created_at (today_fetched).
+                clauses.append(Job.created_at >= day_start)
+                clauses.append(Job.created_at < day_end)
+            else:
+                # Applicant: when the job entered (or re-entered) this user's pool,
+                # falling back to the job row's own creation date.
+                added_at = func.coalesce(UserJobStatus.created_at, Job.created_at)
+                clauses.append(added_at >= day_start)
+                clauses.append(added_at < day_end)
     elif view == "mine":
         # Manual submissions stamp raw_metadata.submitted_data and live in my pool
         # with an active per-user status; scraped/promoted jobs never carry it.
@@ -2165,10 +2168,13 @@ async def get_dashboard_jobs(
         if view == "suggested":
             min_score = await UserRepository(session).get_effective_min_match_score(user_id)
 
-        base_filter = [
-            Job.status != "blocked",
-            (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
-        ]
+        # Admins see the full non-blocked pool (matches admin stats). Applicants
+        # still hide jobs they marked duplicated / manual_hidden via UJS.
+        base_filter = [Job.status != "blocked"]
+        if not is_admin:
+            base_filter.append(
+                (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")
+            )
         base_filter.extend(
             _dashboard_search_clauses(
                 q=q, title=title, company=company, source=source, remote_only=remote_only,
@@ -2539,16 +2545,18 @@ async def get_dashboard_counts(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
+    is_admin = bool(current_user.get("is_admin"))
     day_start, day_end = day_bounds_for_timezone(timezone)
 
     async with get_session() as session:
         # Preference threshold for the Suggested tab only (not the Match Score toolbar).
         min_score = await UserRepository(session).get_effective_min_match_score(user_id)
 
-        shared_filter = [
-            Job.status != "blocked",
-            (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
-        ]
+        shared_filter = [Job.status != "blocked"]
+        if not is_admin:
+            shared_filter.append(
+                (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")
+            )
         shared_filter.extend(
             _dashboard_search_clauses(
                 q=q, title=title, company=company, source=source, remote_only=remote_only,
@@ -2557,7 +2565,11 @@ async def get_dashboard_counts(
 
         async def _count(view: str) -> int:
             view_clauses, needs_match_join = _dashboard_view_clauses(
-                view, min_score=min_score, day_start=day_start, day_end=day_end,
+                view,
+                min_score=min_score,
+                day_start=day_start,
+                day_end=day_end,
+                is_admin=is_admin,
             )
             stmt = (
                 select(func.count())

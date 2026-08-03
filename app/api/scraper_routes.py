@@ -203,7 +203,13 @@ class AdminScraperStatsResponse(BaseModel):
     manual_jobs: int = 0
     team_applied_today: int = 0
     last_sync_items_new: int = 0
+    last_sync_items_scraped: int = 0
     last_sync_errors: int = 0
+    last_sync_at: Optional[datetime] = None
+    last_sync_spider: str | None = None
+    active_sources: int = 0
+    total_users: int = 0
+    new_users_week: int = 0
     trends: AdminBoardTrends = Field(default_factory=AdminBoardTrends)
     sources: list[SourceStats]
     recent_runs: list[dict] = Field(default_factory=list)
@@ -953,7 +959,13 @@ async def get_admin_scraper_stats(
             manual_jobs=data["manual_jobs"],
             team_applied_today=data["team_applied_today"],
             last_sync_items_new=data["last_sync_items_new"],
+            last_sync_items_scraped=data.get("last_sync_items_scraped", 0),
             last_sync_errors=data["last_sync_errors"],
+            last_sync_at=data.get("last_sync_at"),
+            last_sync_spider=data.get("last_sync_spider"),
+            active_sources=data.get("active_sources", 0),
+            total_users=data.get("total_users", 0),
+            new_users_week=data.get("new_users_week", 0),
             trends=AdminBoardTrends(**trends),
             sources=[
                 SourceStats(

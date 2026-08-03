@@ -17,6 +17,8 @@ import {
   CircleAlert,
   Upload,
   Activity,
+  Users,
+  Clock3,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { AdminScraperStats, ScraperStats } from '../../types/scraper';
@@ -58,8 +60,8 @@ function railGridClass(count: number): string {
   return 'grid-cols-2 sm:grid-cols-4';
 }
 
-function safe(n: number): number {
-  return Number.isFinite(n) ? n : 0;
+function safe(n: number | null | undefined): number {
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0;
 }
 
 function fmt(n: number): string {
@@ -302,25 +304,27 @@ const SideTile = memo(function SideTile({
       <div className="relative min-w-0 flex-[1.05]">
         <AnimatedNumber
           value={value}
-          className="text-[2rem] font-black leading-none tracking-tight text-slate-900 sm:text-[2.15rem]"
+          className="text-[2rem] font-black leading-none tracking-tight text-slate-900 dark:text-slate-50 sm:text-[2.15rem]"
         />
-        <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
+        <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 dark:text-slate-200 sm:text-[14px]">
           {label}
         </p>
         <p className="mt-1.5 truncate text-[11.5px] font-medium leading-snug text-slate-500 dark:text-slate-400 sm:text-[12px]">
           {hint}
         </p>
       </div>
-      <div className="relative min-w-0 flex-1 self-stretch pl-0.5 sm:pl-1">
-        <TrendSparkline
-          values={trend ?? []}
-          labels={trendLabels}
-          color={trendColor}
-          delayMs={delay + 180}
-          label={trendLabel ?? label}
-          maxScale={trendMaxScale}
-        />
-      </div>
+      {Array.isArray(trend) && trend.length > 0 ? (
+        <div className="relative min-w-0 flex-1 self-stretch pl-0.5 sm:pl-1">
+          <TrendSparkline
+            values={trend}
+            labels={trendLabels}
+            color={trendColor}
+            delayMs={delay + 180}
+            label={trendLabel ?? label}
+            maxScale={trendMaxScale}
+          />
+        </div>
+      ) : null}
     </>
   );
 
@@ -807,8 +811,25 @@ const StatsBoardContent = memo(function StatsBoardContent({
 });
 
 
+function formatLastSyncAt(iso: string | null | undefined): string {
+  if (!iso) return 'No sync recorded yet';
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  } catch {
+    return 'No sync recorded yet';
+  }
+}
+
 const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   view,
+  sheetsConfigured = false,
+  pumbleConfigured = false,
   onSelectToday,
   onSelectNeedsExtraction,
   onSelectExtracted,
@@ -821,6 +842,8 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   onSelectRemote,
 }: {
   view: AdminScraperStats;
+  sheetsConfigured?: boolean;
+  pumbleConfigured?: boolean;
   onSelectToday?: () => void;
   onSelectNeedsExtraction?: () => void;
   onSelectExtracted?: () => void;
@@ -845,20 +868,28 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   const manual = safe(view.manual_jobs);
   const teamAppliedToday = safe(view.team_applied_today);
   const lastNew = safe(view.last_sync_items_new);
+  const lastScraped = safe(view.last_sync_items_scraped);
   const lastErrors = safe(view.last_sync_errors);
+  const totalUsers = safe(view.total_users);
+  const newUsersWeek = safe(view.new_users_week);
   const extractRatio = total > 0 ? extracted / total : 0;
   const remotePct = total > 0 ? Math.round((remote / total) * 100) : 0;
   const todayBumped = useBumpOnIncrease(today);
-  const sourceCount = Array.isArray(view.sources) ? view.sources.length : 0;
+  const sourceCount =
+    typeof view.active_sources === 'number' && view.active_sources > 0
+      ? view.active_sources
+      : Array.isArray(view.sources)
+        ? view.sources.length
+        : 0;
+  const lastSyncLabel = formatLastSyncAt(view.last_sync_at);
+  const lastSyncSpider = view.last_sync_spider ? String(view.last_sync_spider) : null;
   const trends = view.trends;
   const trendDayLabels = trends?.labels ?? [];
   const fetchedTrend = trends?.fetched ?? [];
   const extractedTrend = trends?.extracted ?? [];
-  const sheetTrend = trends?.sheet_posted ?? [];
-  const pumbleTrend = trends?.pumble_posted ?? [];
   const trendMaxScale = Math.max(
     1,
-    ...[...fetchedTrend, ...extractedTrend, ...sheetTrend, ...pumbleTrend].map((n) =>
+    ...[...fetchedTrend, ...extractedTrend].map((n) =>
       Number.isFinite(n) ? Math.max(0, n) : 0,
     ),
   );
@@ -879,10 +910,18 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
       {
         key: 'failed',
         icon: CircleAlert,
-        value: failed + pending,
-        label: failed > 0 ? `Failed/stuck · ${fmt(failed)} failed` : 'Failed / stuck',
+        value: failed,
+        label:
+          pending > 0
+            ? `Failed · ${fmt(pending)} pending`
+            : failed > 0
+              ? 'Extraction failed'
+              : 'Failed / stuck',
         tone: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
-        title: 'Extractions that failed or are still pending/processing',
+        title:
+          pending > 0
+            ? `${fmt(failed)} failed · ${fmt(pending)} still pending/processing`
+            : 'Jobs whose JD extraction failed',
         onClick: onSelectExtractionFailed,
         delay: 70,
       },
@@ -912,11 +951,9 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         key: 'sources',
         icon: Activity,
         value: sourceCount,
-        label: lastErrors > 0 ? `Sources · ${fmt(lastErrors)} sync errs` : 'Active sources',
+        label: lastErrors > 0 ? `Sources · ${fmt(lastErrors)} errs` : 'Active sources',
         tone: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',
-        title: lastNew > 0
-          ? `Last sync added ${fmt(lastNew)} new job(s)`
-          : 'Distinct sources in the job pool',
+        title: 'Configured sync platforms in System Settings',
         delay: 30,
       },
       {
@@ -926,10 +963,33 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         label: remotePct > 0 ? `Remote · ${remotePct}%` : 'Remote jobs',
         tone: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-300',
         title: 'Remote-friendly jobs in the pool',
-        onClick: onSelectRemote,
         delay: 70,
       },
     ];
+    if (sheetsConfigured) {
+      rightSeed.push({
+        key: 'sheets',
+        icon: Table2,
+        value: sheetPosted,
+        label: 'Sheets posted',
+        tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+        title: 'Jobs posted to Google Sheets',
+        onClick: onSelectSheet,
+        delay: 110,
+      });
+    }
+    if (pumbleConfigured) {
+      rightSeed.push({
+        key: 'pumble',
+        icon: MessageSquare,
+        value: pumblePosted,
+        label: 'Pumble posted',
+        tone: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
+        title: 'Jobs posted to Pumble',
+        onClick: onSelectPumble,
+        delay: 150,
+      });
+    }
     return balanceRailColumns(leftSeed, rightSeed);
   }, [
     total,
@@ -939,14 +999,18 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
     teamAppliedToday,
     sourceCount,
     lastErrors,
-    lastNew,
     remote,
     remotePct,
+    sheetPosted,
+    pumblePosted,
+    sheetsConfigured,
+    pumbleConfigured,
     onSelectAll,
     onSelectExtractionFailed,
     onSelectManual,
     onSelectTeamAppliedToday,
-    onSelectRemote,
+    onSelectSheet,
+    onSelectPumble,
   ]);
 
   return (
@@ -984,13 +1048,17 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
             <SideTile
               icon={FileSearch}
               value={needs}
-              label="Needs extraction"
-              hint={pending > 0 ? `${fmt(pending)} currently in progress` : 'Missing or incomplete JD'}
+              label="Extraction backlog"
+              hint={
+                pending > 0
+                  ? `${fmt(pending)} in progress now · live unfinished pool`
+                  : 'Live unfinished JD pool (not this sync\'s scrape total)'
+              }
               accent="from-amber-400 to-orange-500"
               iconWrap="from-amber-500 to-orange-500"
               delay={40}
               onClick={onSelectNeedsExtraction}
-              title="Jobs without a completed job description"
+              title="Jobs whose job description is still missing, pending, processing, or stuck mid-extract. Successful syncs auto-queue extraction; completed jobs leave this backlog."
               trend={fetchedTrend}
               trendLabels={trendDayLabels}
               trendColor="#fbbf24"
@@ -1000,17 +1068,17 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
             <SideTile
               icon={FileCheck2}
               value={extracted}
-              label="Extracted"
-              hint={total > 0 ? `${Math.round(extractRatio * 100)}% of pool covered` : 'Completed JD extraction'}
+              label="JD ready"
+              hint={total > 0 ? `${Math.round(extractRatio * 100)}% of pool with completed JD` : 'Completed job descriptions'}
               accent="from-emerald-400 to-teal-500"
               iconWrap="from-emerald-500 to-teal-500"
               delay={90}
               onClick={onSelectExtracted}
-              title="Jobs with a completed job description"
+              title="Jobs with a completed job description ready for applicants"
               trend={extractedTrend}
               trendLabels={trendDayLabels}
               trendColor="#34d399"
-              trendLabel="Extracted / day"
+              trendLabel="JD ready / day"
               trendMaxScale={trendMaxScale}
             />
           </div>
@@ -1034,7 +1102,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
                 <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
                 <AnimatedNumber
                   value={today}
-                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
+                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900 dark:text-slate-50"
                 />
                 <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-300">
                   Today&apos;s fetched
@@ -1057,36 +1125,36 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
 
           <div className="flex h-full min-h-0 flex-col gap-3.5">
             <SideTile
-              icon={Table2}
-              value={sheetPosted}
-              label="Posted to Sheets"
-              hint="Distributed to Google Sheets"
-              accent="from-emerald-400 to-green-500"
-              iconWrap="from-emerald-500 to-green-600"
+              icon={Clock3}
+              value={lastNew}
+              label="Last check"
+              hint={
+                lastScraped > 0
+                  ? `${lastSyncLabel} · ${fmt(lastScraped)} scraped`
+                  : lastSyncLabel
+              }
+              accent="from-sky-400 to-blue-500"
+              iconWrap="from-sky-500 to-blue-600"
               delay={40}
-              onClick={onSelectSheet}
-              title="Jobs posted to Google Sheets"
-              trend={sheetTrend}
-              trendLabels={trendDayLabels}
-              trendColor="#34d399"
-              trendLabel="Sheets / day"
-              trendMaxScale={trendMaxScale}
+              title={
+                lastSyncSpider
+                  ? `Last sync (${lastSyncSpider}): ${fmt(lastNew)} new · ${fmt(lastScraped)} scraped`
+                  : `Last sync: ${fmt(lastNew)} new job(s)`
+              }
             />
             <SideTile
-              icon={MessageSquare}
-              value={pumblePosted}
-              label="Posted to Pumble"
-              hint="Distributed to Pumble channels"
-              accent="from-violet-400 to-indigo-500"
-              iconWrap="from-violet-500 to-indigo-600"
+              icon={Users}
+              value={totalUsers}
+              label="Total users"
+              hint={
+                newUsersWeek > 0
+                  ? `${fmt(newUsersWeek)} new this week`
+                  : 'No new signups this week'
+              }
+              accent="from-indigo-400 to-blue-500"
+              iconWrap="from-indigo-500 to-blue-600"
               delay={90}
-              onClick={onSelectPumble}
-              title="Jobs posted to Pumble"
-              trend={pumbleTrend}
-              trendLabels={trendDayLabels}
-              trendColor="#a78bfa"
-              trendLabel="Pumble / day"
-              trendMaxScale={trendMaxScale}
+              title={`${fmt(totalUsers)} accounts · ${fmt(newUsersWeek)} created in the last 7 days`}
             />
           </div>
         </div>
@@ -1152,9 +1220,8 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
   const [sheetsConfiguredLocal, setSheetsConfiguredLocal] = useState(false);
   const [pumbleConfiguredLocal, setPumbleConfiguredLocal] = useState(false);
 
-  // Applicant only: resolve optional integrations. Admins always show Sheet/Pumble tiles.
+  // Resolve optional integrations for both applicant and admin boards.
   useEffect(() => {
-    if (isAdmin) return;
     if (sheetsConfiguredProp !== undefined && pumbleConfiguredProp !== undefined) return;
     let cancelled = false;
     void fetchSheetsConfig()
@@ -1176,7 +1243,7 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
     return () => {
       cancelled = true;
     };
-  }, [isAdmin, sheetsConfiguredProp, pumbleConfiguredProp]);
+  }, [sheetsConfiguredProp, pumbleConfiguredProp]);
 
   const sheetsConfigured = sheetsConfiguredProp ?? sheetsConfiguredLocal;
   const pumbleConfigured = pumbleConfiguredProp ?? pumbleConfiguredLocal;
@@ -1188,6 +1255,8 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
     return (
       <AdminStatsBoardContent
         view={adminView}
+        sheetsConfigured={sheetsConfigured}
+        pumbleConfigured={pumbleConfigured}
         onSelectToday={onSelectToday}
         onSelectNeedsExtraction={onSelectNeedsExtraction}
         onSelectExtracted={onSelectExtracted}

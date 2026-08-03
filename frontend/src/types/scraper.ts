@@ -196,7 +196,13 @@ export interface AdminScraperStats {
   manual_jobs: number;
   team_applied_today: number;
   last_sync_items_new: number;
+  last_sync_items_scraped?: number;
   last_sync_errors: number;
+  last_sync_at?: string | null;
+  last_sync_spider?: string | null;
+  active_sources?: number;
+  total_users?: number;
+  new_users_week?: number;
   trends?: {
     labels?: string[];
     fetched?: number[];
@@ -242,15 +248,34 @@ export interface SyncProgress {
 }
 
 /** Closable post-sync summary shown under the Jobs Dashboard header. */
+export interface SyncPromotionStats {
+  total?: number;
+  new?: number;
+  linked_existing?: number;
+  blocked?: number;
+  skipped_invalid_url?: number;
+  linkedin_skipped?: number;
+  failed?: number;
+  /** Jobs enqueued onto the extraction queue from this sync. */
+  enqueued?: number;
+  linkedin_purged?: number;
+}
+
 export interface SyncResultNotice {
   id: string;
   kind: 'success' | 'warning' | 'error';
-  /** Total listings scraped across platforms. */
+  /** Total listings scraped across platforms (new + updated). */
   itemsScraped: number;
   /** Newly inserted listings (subset of scraped). */
   itemsNew: number;
   /** Updated existing listings. */
   itemsUpdated: number;
+  /** Jobs queued for JD extraction from this sync (promoter). */
+  extractionEnqueued: number;
+  /** Brand-new Job rows created by promotion (subset of enqueued). */
+  promotionNew: number;
+  /** Existing jobs re-linked / re-queued (already in the pool). */
+  promotionLinkedExisting: number;
   /** Spider names that ran (e.g. remoterocketship). */
   platforms: string[];
   syncMode: 'incremental' | 'date_backfill' | string;
@@ -270,6 +295,7 @@ export interface SyncPlatformResult {
   items_updated?: number;
   error?: string;
   message?: string;
+  promotion?: SyncPromotionStats;
 }
 
 export interface SyncCompletionSummary {
@@ -287,6 +313,7 @@ export interface SyncCompletionSummary {
   error?: string;
   message?: string;
   results?: SyncPlatformResult[];
+  promotion?: SyncPromotionStats;
 }
 
 export interface SyncPlatform {

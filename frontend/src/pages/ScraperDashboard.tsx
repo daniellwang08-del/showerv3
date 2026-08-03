@@ -62,8 +62,13 @@ export function ScraperDashboard() {
   const refreshLists    = useJobsStore((s) => s.refreshLists);
 
   const handleViewChange = useCallback((next: DashboardView) => {
+    if (isAdmin) {
+      // Keep admin list aligned with board tiles (no leftover applicant filters).
+      applyAgentDashboard({ reset: true, view: next, remote_only: false, min_match_score: 0 });
+      return;
+    }
     setView(next);
-  }, [setView]);
+  }, [isAdmin, applyAgentDashboard, setView]);
 
   const handleTitleFilter = useCallback((value: string) => {
     setTitleFilter(value);
@@ -85,6 +90,28 @@ export function ScraperDashboard() {
   );
 
   useEffect(() => {
+    // Admin ops views must not inherit applicant list filters (title/company/remote/score).
+    if (isAdmin) {
+      const s = useScraperStore.getState();
+      if (
+        s.titleFilter ||
+        s.companyFilter ||
+        s.remoteOnly ||
+        s.minScore > 0 ||
+        s.sourceFilter ||
+        s.searchQuery
+      ) {
+        useScraperStore.setState({
+          titleFilter: '',
+          companyFilter: '',
+          remoteOnly: false,
+          minScore: 0,
+          sourceFilter: '',
+          searchQuery: '',
+          page: 1,
+        });
+      }
+    }
     loadJobs();
     refreshStats();
     loadSpiders();
@@ -214,7 +241,7 @@ export function ScraperDashboard() {
         title="Jobs Dashboard"
         description={
           isAdmin
-            ? 'Monitor job fetching, extraction progress, and distribution across the platform.'
+            ? 'Fetch listings, auto-extract job descriptions, and track the live JD backlog.'
             : 'Browse and manage processed job listings across all platforms.'
         }
         actions={
@@ -253,32 +280,71 @@ export function ScraperDashboard() {
           stats={stats}
           adminStats={adminStats}
           loading={statsLoading}
-          sheetsConfigured={isAdmin ? true : undefined}
-          pumbleConfigured={isAdmin ? true : undefined}
-          onSelectToday={() => applyAgentDashboard({ view: 'today', remote_only: false, min_match_score: 0 })}
-          onSelectReady={() => applyAgentDashboard({ view: 'ready', remote_only: false, min_match_score: 0 })}
-          onSelectBest={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 75 })}
-          onSelectGood={() => applyAgentDashboard({ view: 'suggested', remote_only: false, min_match_score: 0 })}
-          onSelectAvg={() => applyAgentDashboard({ view: 'suggested', remote_only: false, min_match_score: 0 })}
-          onSelectRemote={() => applyAgentDashboard({ view: 'all', remote_only: true, min_match_score: 0 })}
-          onSelectAvailable={() => applyAgentDashboard({ view: 'available', remote_only: false, min_match_score: 0 })}
-          onSelectApplied={() => applyAgentDashboard({ view: 'applied', remote_only: false, min_match_score: 0 })}
-          onSelectSheet={() => applyAgentDashboard({ view: 'sheet_posted', remote_only: false, min_match_score: 0 })}
-          onSelectPumble={() => applyAgentDashboard({ view: 'pumble_posted', remote_only: false, min_match_score: 0 })}
-          onSelectMine={() => applyAgentDashboard({ view: 'mine', remote_only: false, min_match_score: 0 })}
-          onSelectAll={() => applyAgentDashboard({ view: 'all', remote_only: false, min_match_score: 0 })}
+          onSelectToday={() =>
+            applyAgentDashboard({ reset: true, view: 'today', remote_only: false, min_match_score: 0 })
+          }
+          onSelectReady={() =>
+            applyAgentDashboard({ reset: true, view: 'ready', remote_only: false, min_match_score: 0 })
+          }
+          onSelectBest={() =>
+            applyAgentDashboard({ reset: true, view: 'all', remote_only: false, min_match_score: 75 })
+          }
+          onSelectGood={() =>
+            applyAgentDashboard({ reset: true, view: 'suggested', remote_only: false, min_match_score: 0 })
+          }
+          onSelectAvg={() =>
+            applyAgentDashboard({ reset: true, view: 'suggested', remote_only: false, min_match_score: 0 })
+          }
+          onSelectRemote={() =>
+            applyAgentDashboard({ reset: true, view: 'all', remote_only: true, min_match_score: 0 })
+          }
+          onSelectAvailable={() =>
+            applyAgentDashboard({ reset: true, view: 'available', remote_only: false, min_match_score: 0 })
+          }
+          onSelectApplied={() =>
+            applyAgentDashboard({ reset: true, view: 'applied', remote_only: false, min_match_score: 0 })
+          }
+          onSelectSheet={() =>
+            applyAgentDashboard({ reset: true, view: 'sheet_posted', remote_only: false, min_match_score: 0 })
+          }
+          onSelectPumble={() =>
+            applyAgentDashboard({ reset: true, view: 'pumble_posted', remote_only: false, min_match_score: 0 })
+          }
+          onSelectMine={() =>
+            applyAgentDashboard({ reset: true, view: 'mine', remote_only: false, min_match_score: 0 })
+          }
+          onSelectAll={() =>
+            applyAgentDashboard({ reset: true, view: 'all', remote_only: false, min_match_score: 0 })
+          }
           onSelectNeedsExtraction={() =>
-            applyAgentDashboard({ view: 'needs_extraction', remote_only: false, min_match_score: 0 })
+            applyAgentDashboard({
+              reset: true,
+              view: 'needs_extraction',
+              remote_only: false,
+              min_match_score: 0,
+            })
           }
           onSelectExtracted={() =>
-            applyAgentDashboard({ view: 'extracted', remote_only: false, min_match_score: 0 })
+            applyAgentDashboard({ reset: true, view: 'extracted', remote_only: false, min_match_score: 0 })
           }
           onSelectExtractionFailed={() =>
-            applyAgentDashboard({ view: 'extraction_failed', remote_only: false, min_match_score: 0 })
+            applyAgentDashboard({
+              reset: true,
+              view: 'extraction_failed',
+              remote_only: false,
+              min_match_score: 0,
+            })
           }
-          onSelectManual={() => applyAgentDashboard({ view: 'manual', remote_only: false, min_match_score: 0 })}
+          onSelectManual={() =>
+            applyAgentDashboard({ reset: true, view: 'manual', remote_only: false, min_match_score: 0 })
+          }
           onSelectTeamAppliedToday={() =>
-            applyAgentDashboard({ view: 'applied_today', remote_only: false, min_match_score: 0 })
+            applyAgentDashboard({
+              reset: true,
+              view: 'applied_today',
+              remote_only: false,
+              min_match_score: 0,
+            })
           }
         />
       </div>
@@ -292,34 +358,36 @@ export function ScraperDashboard() {
               onChange={handleViewChange}
               isAdmin={isAdmin}
               adminStats={adminStats}
-              activeCount={activeBoardCount}
+              activeCount={isAdmin ? total : activeBoardCount}
             />
           </div>
 
-          <div className="hidden self-stretch w-px bg-slate-200 dark:bg-slate-700 xl:block" />
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:shrink-0">
-            <SearchInput
-              value={titleFilter}
-              onChange={handleTitleFilter}
-              placeholder="Filter by title"
-              icon={Briefcase}
-              variant="solid"
-              className="w-full sm:w-44"
-            />
-            <SearchInput
-              value={companyFilter}
-              onChange={handleCompanyFilter}
-              placeholder="Filter by company"
-              icon={Building2}
-              variant="solid"
-              className="w-full sm:w-44"
-            />
-            <RemoteFilterToggle active={remoteOnly} onChange={setRemoteOnly} className="w-full sm:w-auto" />
-            {!isAdmin && (
-              <MatchScoreFilter value={minScore} onChange={setMinScore} className="w-full sm:w-44" />
-            )}
-          </div>
+          {/* Applicant-only list filters — admins fetch/extract, they do not filter the job pool. */}
+          {!isAdmin && (
+            <>
+              <div className="hidden self-stretch w-px bg-slate-200 dark:bg-slate-700 xl:block" />
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:shrink-0">
+                <SearchInput
+                  value={titleFilter}
+                  onChange={handleTitleFilter}
+                  placeholder="Filter by title"
+                  icon={Briefcase}
+                  variant="solid"
+                  className="w-full sm:w-44"
+                />
+                <SearchInput
+                  value={companyFilter}
+                  onChange={handleCompanyFilter}
+                  placeholder="Filter by company"
+                  icon={Building2}
+                  variant="solid"
+                  className="w-full sm:w-44"
+                />
+                <RemoteFilterToggle active={remoteOnly} onChange={setRemoteOnly} className="w-full sm:w-auto" />
+                <MatchScoreFilter value={minScore} onChange={setMinScore} className="w-full sm:w-44" />
+              </div>
+            </>
+          )}
 
           <div className="hidden self-stretch w-px bg-slate-200 dark:bg-slate-700 xl:block" />
 

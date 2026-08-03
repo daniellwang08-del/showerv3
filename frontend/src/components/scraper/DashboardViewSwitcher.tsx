@@ -87,15 +87,15 @@ export const ADMIN_DASHBOARD_VIEWS: ViewMeta[] = [
   },
   {
     id: 'needs_extraction',
-    label: 'Needs extraction',
-    description: 'Missing or in-progress JD extraction',
+    label: 'Extraction backlog',
+    description: 'Live unfinished JD pool — not the last sync scrape total',
     icon: FileSearch,
     accent: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
     active: 'text-amber-700 dark:text-amber-300',
   },
   {
     id: 'extracted',
-    label: 'Extracted',
+    label: 'JD ready',
     description: 'Jobs with a completed job description',
     icon: FileCheck2,
     accent: 'bg-teal-50 text-teal-600 dark:bg-teal-500/15 dark:text-teal-300',
@@ -187,15 +187,15 @@ const BOARD_VIEWS: ViewMeta[] = [
   },
   {
     id: 'needs_extraction',
-    label: 'Needs extraction',
-    description: 'Missing or in-progress JD extraction',
+    label: 'Extraction backlog',
+    description: 'Live unfinished JD pool — not the last sync scrape total',
     icon: FileSearch,
     accent: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
     active: 'text-amber-700 dark:text-amber-300',
   },
   {
     id: 'extracted',
-    label: 'Extracted',
+    label: 'JD ready',
     description: 'Jobs with a completed job description',
     icon: FileCheck2,
     accent: 'bg-teal-50 text-teal-600 dark:bg-teal-500/15 dark:text-teal-300',
@@ -329,10 +329,11 @@ export function DashboardViewSwitcher({
         aria-haspopup="listbox"
         aria-expanded={open}
         className={[
-          'group inline-flex items-center gap-2.5 rounded-xl border bg-white py-2 pl-2.5 pr-3 text-sm font-semibold shadow-sm transition-all dark:border-slate-700 dark:bg-[#141d31]',
+          'group inline-flex items-center gap-2.5 rounded-xl border py-2 pl-2.5 pr-3 text-sm font-semibold shadow-sm transition-all',
+          'border-slate-200 bg-white',
           open
-            ? 'border-slate-300 ring-2 ring-slate-900/5 dark:border-slate-500'
-            : 'border-slate-200 hover:border-slate-300 hover:shadow dark:hover:border-slate-500',
+            ? 'border-slate-300 ring-2 ring-slate-900/5 dark:border-blue-400/40 dark:ring-blue-400/20'
+            : 'hover:border-slate-300 hover:shadow',
         ].join(' ')}
       >
         <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${current.accent}`}>
@@ -344,7 +345,7 @@ export function DashboardViewSwitcher({
           </span>
           <span className={current.active}>{current.label}</span>
         </span>
-        <span className="ml-1 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-bold tabular-nums text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+        <span className="ml-1 inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-xs font-bold tabular-nums text-slate-700">
           {formatCount(currentCount)}
         </span>
         <ChevronDown
@@ -354,11 +355,16 @@ export function DashboardViewSwitcher({
       </button>
 
       {open && (
-        <>
-          <div
-            role="listbox"
-            className="absolute left-0 top-full z-20 mt-2 w-[19rem] origin-top-left overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 dark:border-slate-700 dark:bg-[#141d31] dark:ring-white/5"
-          >
+        <div
+          role="listbox"
+          className={[
+            'absolute left-0 top-full z-30 mt-2 w-[20rem] origin-top-left overflow-hidden rounded-2xl p-1.5',
+            'border border-slate-200 bg-white shadow-xl ring-1 ring-black/5',
+            /* Explicit navy panel — do not use dark:bg-slate-900 (palette remap → white). */
+            'dark:border-[#334155] dark:bg-[#0f172a] dark:shadow-2xl dark:shadow-black/55 dark:ring-white/10',
+          ].join(' ')}
+        >
+          <div className="max-h-[min(24rem,70vh)] overflow-y-auto overscroll-contain p-0.5">
             {menuViews.map((v) => {
               const Icon = v.icon;
               const isActive = v.id === view;
@@ -375,8 +381,8 @@ export function DashboardViewSwitcher({
                   className={[
                     'flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors',
                     isActive
-                      ? 'bg-slate-100 dark:bg-slate-800'
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/70',
+                      ? 'bg-slate-100 dark:bg-blue-500/15 dark:ring-1 dark:ring-blue-400/30'
+                      : 'hover:bg-slate-50 dark:hover:bg-white/[0.06]',
                   ].join(' ')}
                 >
                   <span
@@ -393,7 +399,9 @@ export function DashboardViewSwitcher({
                       >
                         {v.label}
                       </span>
-                      {isActive && <Check size={14} className="shrink-0 text-slate-500" />}
+                      {isActive && (
+                        <Check size={14} className="shrink-0 text-slate-500 dark:text-blue-300" />
+                      )}
                     </span>
                     <span className="mt-0.5 block truncate text-xs text-slate-500">
                       {v.description}
@@ -403,8 +411,8 @@ export function DashboardViewSwitcher({
                     className={[
                       'inline-flex min-w-[1.75rem] items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums',
                       isActive
-                        ? 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-300 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-600'
-                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+                        ? 'bg-slate-200 text-slate-800 ring-1 ring-slate-300/80 dark:bg-[#1a2438] dark:text-[#e2e8f0] dark:ring-white/12'
+                        : 'bg-slate-100 text-slate-600 dark:bg-[#1a2438] dark:text-[#cbd5e1] dark:ring-1 dark:ring-white/8',
                     ].join(' ')}
                   >
                     {formatCount(count)}
@@ -413,7 +421,7 @@ export function DashboardViewSwitcher({
               );
             })}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

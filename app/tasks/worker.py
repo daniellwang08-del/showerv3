@@ -688,6 +688,35 @@ async def _promote_and_publish(
     return stats
 
 
+_PROMOTION_SUM_KEYS = (
+    "total",
+    "new",
+    "linked_existing",
+    "blocked",
+    "skipped_invalid_url",
+    "linkedin_skipped",
+    "failed",
+    "enqueued",
+    "linkedin_purged",
+)
+
+
+def _aggregate_promotion_stats(results: list[dict]) -> dict | None:
+    """Sum scrape→extract promotion counters across platforms for the sync banner."""
+    found = False
+    totals = {key: 0 for key in _PROMOTION_SUM_KEYS}
+    for row in results:
+        if not isinstance(row, dict):
+            continue
+        promo = row.get("promotion")
+        if not isinstance(promo, dict):
+            continue
+        found = True
+        for key in _PROMOTION_SUM_KEYS:
+            totals[key] += int(promo.get(key) or 0)
+    return totals if found else None
+
+
 def _build_sync_summary(
     *,
     spider_name: str,
@@ -727,7 +756,7 @@ def _build_sync_summary(
                     first_error = str(err)
             if first_message is None and row.get("message"):
                 first_message = str(row["message"])
-        platform_rows.append({
+        platform_row = {
             "spider": row.get("spider"),
             "success": ok,
             "items_scraped": scraped,
@@ -735,9 +764,13 @@ def _build_sync_summary(
             "items_updated": updated,
             "error": row.get("error"),
             "message": row.get("message"),
-        })
+        }
+        promo = row.get("promotion")
+        if isinstance(promo, dict):
+            platform_row["promotion"] = promo
+        platform_rows.append(platform_row)
 
-    return {
+    summary = {
         "spider": spider_name,
         "sync_mode": sync_mode,
         "posted_since": posted_since,
@@ -753,6 +786,10 @@ def _build_sync_summary(
         "message": first_message,
         "results": platform_rows,
     }
+    promotion = _aggregate_promotion_stats(results)
+    if promotion is not None:
+        summary["promotion"] = promotion
+    return summary
 
 
 async def run_scraper_task(
@@ -897,14 +934,21 @@ async def run_scraper_task(
             spider_progress_callback=publish_spider_activity,
         )
         platform_names = [name for name, _ in plan]
-        if len(plan) == 1:
-            single = dict(results[0])
-            single["promotion"] = promotions.get(plan[0][0])
-            results_for_summary = [single]
-            overall_ok = bool(single.get("success"))
-        else:
-            results_for_summary = list(results)
-            overall_ok = all(bool(r.get("success")) for r in results_for_summary)
+        results_for_summary: list[dict] = []
+        for row in results:
+            if not isinstance(row, dict):
+                continue
+            enriched = dict(row)
+            spider = enriched.get("spider") or enriched.get("spider_name")
+            if spider and spider in promotions and "promotion" not in enriched:
+                enriched["promotion"] = promotions.get(spider)
+            # Single-spider plans may omit spider on the result row.
+            if len(plan) == 1 and plan[0][0] in promotions and "promotion" not in enriched:
+                enriched["promotion"] = promotions.get(plan[0][0])
+            results_for_summary.append(enriched)
+        overall_ok = bool(results_for_summary) and all(
+            bool(r.get("success")) for r in results_for_summary
+        )
 
         summary = _build_sync_summary(
             spider_name=spider_name,
@@ -914,8 +958,6 @@ async def run_scraper_task(
             platforms=platform_names,
             results=results_for_summary,
         )
-        if len(plan) == 1 and results_for_summary:
-            summary["promotion"] = results_for_summary[0].get("promotion")
 
         if overall_ok:
             await publish_ws_event({
@@ -929,6 +971,7 @@ async def run_scraper_task(
                 "items_scraped": summary.get("items_scraped", 0),
                 "items_new": summary.get("items_new", 0),
                 "items_updated": summary.get("items_updated", 0),
+                "promotion": summary.get("promotion"),
                 "summary": summary,
             })
             logger.info(
@@ -936,6 +979,7 @@ async def run_scraper_task(
                 spider_name=spider_name,
                 items_scraped=summary.get("items_scraped", 0),
                 items_new=summary.get("items_new", 0),
+                promotion_enqueued=(summary.get("promotion") or {}).get("enqueued"),
             )
         else:
             stopped = any(
@@ -958,6 +1002,7 @@ async def run_scraper_task(
                 "items_scraped": summary.get("items_scraped", 0),
                 "items_new": summary.get("items_new", 0),
                 "items_updated": summary.get("items_updated", 0),
+                "promotion": summary.get("promotion"),
                 "summary": summary,
             })
             logger.error(

@@ -1678,7 +1678,7 @@ export function ScraperJobsTable({
 
             {/* ── Header ── */}
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-900/50">
+              <tr className="border-b border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-[#1a2438]">
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -1687,10 +1687,15 @@ export function ScraperJobsTable({
                       if (col.sortable) onSort(sortKey);
                     }}
                     className={[
-                      'px-3 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap overflow-hidden',
+                      'px-3 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden',
+                      'text-slate-600 dark:text-slate-200',
                       RIGHT_ALIGN_KEYS.has(col.key) ? 'text-right' : 'text-left',
-                      col.sortable ? 'cursor-pointer select-none hover:text-slate-700 hover:bg-slate-100/60' : '',
-                      col.key === '__actions__' ? `sticky right-0 z-20 bg-slate-50/70 dark:bg-slate-900/50 ${STICKY_SHADOW}` : '',
+                      col.sortable
+                        ? 'cursor-pointer select-none hover:bg-slate-200/70 hover:text-slate-800 dark:hover:bg-slate-700/50 dark:hover:text-white'
+                        : '',
+                      col.key === '__actions__'
+                        ? `sticky right-0 z-20 bg-slate-100 dark:bg-[#1a2438] ${STICKY_SHADOW}`
+                        : '',
                       col.key === '__check__' ? 'px-2' : '',
                       col.key === 'source' ? SOURCE_CELL_CLASS : '',
                     ].join(' ')}
@@ -1704,7 +1709,7 @@ export function ScraperJobsTable({
                           if (selectedIds.size === jobs.length) setSelectedIds(new Set());
                           else setSelectedIds(new Set(jobs.map((j) => j.id)));
                         }}
-                        className="flex h-4 w-4 items-center justify-center rounded border border-slate-300 bg-white transition hover:border-blue-400 hover:bg-blue-50"
+                        className="flex h-4 w-4 items-center justify-center rounded border border-slate-300 bg-white transition hover:border-blue-400 hover:bg-blue-50 dark:border-slate-500 dark:bg-slate-800 dark:hover:border-blue-400 dark:hover:bg-slate-700"
                       >
                         {selectedIds.size === jobs.length && jobs.length > 0
                           ? <CheckCircle2 size={12} className="text-blue-600" />
@@ -1737,11 +1742,11 @@ export function ScraperJobsTable({
                         {col.label}
                         {col.sortable && (
                           <ArrowUpDown
-                            size={11}
+                            size={12}
                             className={
                               sortField === ('sortKey' in col && col.sortKey ? col.sortKey : col.key)
-                                ? 'text-blue-600'
-                                : 'text-slate-300'
+                                ? 'text-blue-600 dark:text-blue-400'
+                                : 'text-slate-400 dark:text-slate-500'
                             }
                           />
                         )}
