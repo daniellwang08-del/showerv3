@@ -54,6 +54,10 @@ Copy profile fields from the résumé into structured JSON for a job-search appl
     "period_end": string | null,
     "location": string | null,
     "job_type": "onsite" | "hybrid" | "remote" | null,
+    "project_title": string | null,
+    "project_intro": string | null,
+    "contributions": [ string ],
+    "used_skills": string | null,
     "description": string | null
   } ],
   "education": [ {
@@ -805,6 +809,8 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
             jtype = jtype.lower()
         desc = _clean(w.description)
         jtype = _infer_job_type(_clean(w.location), jtype, desc)
+        raw_contributions = w.contributions if isinstance(w.contributions, list) else []
+        contributions = [str(c).strip() for c in raw_contributions if c is not None and str(c).strip()]
         clean_work.append(
             ResumeWorkBlock(
                 company_name=cn,
@@ -813,6 +819,10 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
                 period_end=_clean(w.period_end),
                 location=_clean(w.location),
                 job_type=jtype,
+                project_title=_clean(w.project_title),
+                project_intro=_clean(w.project_intro),
+                contributions=contributions,
+                used_skills=_clean(w.used_skills),
                 description=desc,
             )
         )
