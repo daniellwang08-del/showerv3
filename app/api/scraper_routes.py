@@ -186,6 +186,19 @@ class ScraperStatsResponse(BaseModel):
     recent_runs: list[dict] = Field(default_factory=list)
 
 
+class PlatformSyncStats(BaseModel):
+    """Per registered job-site sync status for the admin board side rails."""
+    name: str
+    label: str
+    job_count: int = 0
+    last_sync_at: Optional[datetime] = None
+    last_items_new: int = 0
+    last_items_scraped: int = 0
+    last_items_updated: int = 0
+    last_errors: int = 0
+    last_status: str | None = None
+
+
 class AdminScraperStatsResponse(BaseModel):
     """System-wide fetch → extract → post funnel for the admin Jobs board."""
     total_jobs: int
@@ -210,6 +223,7 @@ class AdminScraperStatsResponse(BaseModel):
     active_sources: int = 0
     total_users: int = 0
     new_users_week: int = 0
+    platform_sync: list[PlatformSyncStats] = Field(default_factory=list)
     trends: AdminBoardTrends = Field(default_factory=AdminBoardTrends)
     sources: list[SourceStats]
     recent_runs: list[dict] = Field(default_factory=list)
@@ -966,6 +980,9 @@ async def get_admin_scraper_stats(
             active_sources=data.get("active_sources", 0),
             total_users=data.get("total_users", 0),
             new_users_week=data.get("new_users_week", 0),
+            platform_sync=[
+                PlatformSyncStats(**row) for row in data.get("platform_sync", [])
+            ],
             trends=AdminBoardTrends(**trends),
             sources=[
                 SourceStats(

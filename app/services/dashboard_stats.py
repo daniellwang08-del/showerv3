@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, case, func, or_, select, text
+from sqlalchemy import and_, bindparam, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import (
@@ -379,13 +379,58 @@ async def fetch_admin_dashboard_stats(
     # metadata strings. ``spider_names is None`` means all platforms.
     from app.services.job_sync_schedule_service import get_schedule
     from app.services.scraper_sync_service import list_sync_platforms
+    from app.scraper.runner import SPIDER_META
 
     schedule = await get_schedule(session)
     spider_names = schedule.get("spider_names")
+    all_platforms = list_sync_platforms()
     if isinstance(spider_names, list) and spider_names:
-        active_sources = len(spider_names)
+        platform_names = [n for n in spider_names if n in SPIDER_META]
     else:
-        active_sources = len(list_sync_platforms())
+        platform_names = [p["name"] for p in all_platforms]
+    active_sources = len(platform_names)
+
+    source_count_map: dict[str, int] = {}
+    for row in source_rows:
+        key = (row.source or "unknown").strip().lower()
+        source_count_map[key] = int(row.cnt or 0)
+
+    latest_by_spider: dict[str, dict] = {}
+    if platform_names:
+        # Latest scrape_runs row per registered spider (Postgres DISTINCT ON).
+        latest_runs = await session.execute(
+            text(
+                "SELECT DISTINCT ON (spider_name) "
+                "spider_name, started_at, finished_at, items_scraped, "
+                "items_new, items_updated, errors, status "
+                "FROM scrape_runs "
+                "WHERE spider_name IN :names "
+                "ORDER BY spider_name, started_at DESC"
+            ).bindparams(bindparam("names", expanding=True)),
+            {"names": list(platform_names)},
+        )
+        for row in latest_runs:
+            mapping = dict(row._mapping)
+            latest_by_spider[str(mapping.get("spider_name") or "")] = mapping
+
+    platform_sync: list[dict] = []
+    for name in platform_names:
+        meta = SPIDER_META.get(name) or {}
+        label = str(meta.get("label") or name)
+        run = latest_by_spider.get(name) or {}
+        platform_sync.append(
+            {
+                "name": name,
+                "label": label,
+                "job_count": int(source_count_map.get(name, 0)),
+                "last_sync_at": run.get("finished_at") or run.get("started_at"),
+                "last_items_new": int(run.get("items_new") or 0),
+                "last_items_scraped": int(run.get("items_scraped") or 0),
+                "last_items_updated": int(run.get("items_updated") or 0),
+                "last_errors": int(run.get("errors") or 0),
+                "last_status": run.get("status"),
+            }
+        )
 
     week_start = day_end - timedelta(days=7)
     user_row = (
@@ -422,6 +467,7 @@ async def fetch_admin_dashboard_stats(
         "active_sources": active_sources,
         "total_users": int(user_row.total_users or 0),
         "new_users_week": int(user_row.new_users_week or 0),
+        "platform_sync": platform_sync,
         "sources": sources,
         "recent_runs": recent_runs,
     }

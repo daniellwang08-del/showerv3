@@ -180,6 +180,18 @@ export interface ScraperStats {
 }
 
 /** System-wide ops funnel for the admin Jobs Dashboard board. */
+export interface PlatformSyncStats {
+  name: string;
+  label: string;
+  job_count: number;
+  last_sync_at?: string | null;
+  last_items_new: number;
+  last_items_scraped: number;
+  last_items_updated?: number;
+  last_errors: number;
+  last_status?: string | null;
+}
+
 export interface AdminScraperStats {
   total_jobs: number;
   total_remote: number;
@@ -203,6 +215,7 @@ export interface AdminScraperStats {
   active_sources?: number;
   total_users?: number;
   new_users_week?: number;
+  platform_sync?: PlatformSyncStats[];
   trends?: {
     labels?: string[];
     fetched?: number[];

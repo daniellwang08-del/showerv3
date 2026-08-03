@@ -21,7 +21,7 @@ import {
   Clock3,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { AdminScraperStats, ScraperStats } from '../../types/scraper';
+import type { AdminScraperStats, PlatformSyncStats, ScraperStats } from '../../types/scraper';
 import { fetchSheetsConfig } from '../../api/googleSheetsApi';
 import { fetchPumbleConfig } from '../../api/pumbleApi';
 import { TrendSparkline } from './TrendSparkline';
@@ -36,6 +36,13 @@ interface RailItem {
   onClick?: () => void;
   delay: number;
   modern?: boolean;
+}
+
+interface PlatformRailItem {
+  key: string;
+  platform: PlatformSyncStats;
+  delay: number;
+  onClick?: () => void;
 }
 
 /** Split rail metrics left/right with a slight left bias on odd counts (5 → 3|2). */
@@ -304,12 +311,12 @@ const SideTile = memo(function SideTile({
       <div className="relative min-w-0 flex-[1.05]">
         <AnimatedNumber
           value={value}
-          className="text-[2rem] font-black leading-none tracking-tight text-slate-900 dark:text-slate-50 sm:text-[2.15rem]"
+          className="text-[2rem] font-black leading-none tracking-tight text-slate-900 sm:text-[2.15rem]"
         />
-        <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 dark:text-slate-200 sm:text-[14px]">
+        <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
           {label}
         </p>
-        <p className="mt-1.5 truncate text-[11.5px] font-medium leading-snug text-slate-500 dark:text-slate-400 sm:text-[12px]">
+        <p className="mt-1.5 truncate text-[11.5px] font-medium leading-snug text-slate-500 sm:text-[12px]">
           {hint}
         </p>
       </div>
@@ -402,7 +409,7 @@ const RailStat = memo(function RailStat({
           value={value}
           className="text-[1.45rem] font-black leading-none tracking-tight text-slate-900"
         />
-        <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500 dark:text-slate-400">
+        <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500">
           {label}
         </p>
       </div>
@@ -456,12 +463,14 @@ interface ScraperStatsBarProps {
   onSelectExtractionFailed?: () => void;
   onSelectManual?: () => void;
   onSelectTeamAppliedToday?: () => void;
+  /** Admin: filter the job list to one registered sync platform. */
+  onSelectPlatform?: (source: string) => void;
 }
 
 function StatsBoardSkeleton({ label = 'Loading your job status…' }: { label?: string }) {
   return (
     <div className="stats-board-shell flex min-h-[280px] w-full items-center justify-center rounded-[1.75rem] border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-[#141d31]" style={{ contentVisibility: 'auto' }}>
-      <div className="flex items-center gap-3 text-base font-medium text-slate-400 dark:text-slate-300">
+      <div className="flex items-center gap-3 text-base font-medium text-slate-400">
         <span className="stats-board-pulse inline-block h-3 w-3 rounded-full bg-blue-500" />
         {label}
       </div>
@@ -736,14 +745,14 @@ const StatsBoardContent = memo(function StatsBoardContent({
               </div>
             </div>
             <div className="mt-1 flex h-[52px] flex-col justify-center space-y-1">
-              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600 dark:text-slate-300">
+              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
                 {todayRemote > 0
                   ? `${fmt(todayRemote)} remote added today`
                   : total > 0
                     ? `${Math.round(readyRatio * 100)}% of pool ready to apply`
                     : 'New jobs added to your board today'}
               </p>
-              <p className="truncate text-[12px] font-medium text-slate-500 dark:text-slate-400">
+              <p className="truncate text-[12px] font-medium text-slate-500">
                 {fmt(applied)} applied · {Math.round(appliedRatio * 100)}% of pool
               </p>
             </div>
@@ -812,19 +821,138 @@ const StatsBoardContent = memo(function StatsBoardContent({
 
 
 function formatLastSyncAt(iso: string | null | undefined): string {
-  if (!iso) return 'No sync recorded yet';
+  if (!iso) return 'Never synced';
   try {
     return new Date(iso).toLocaleString(undefined, {
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
     });
   } catch {
-    return 'No sync recorded yet';
+    return 'Never synced';
   }
 }
+
+function formatRelativeSync(iso: string | null | undefined): string {
+  if (!iso) return 'Never synced';
+  try {
+    const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return 'Never synced';
+    const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (diffSec < 60) return 'Just now';
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    if (diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)}d ago`;
+    return formatLastSyncAt(iso);
+  } catch {
+    return 'Never synced';
+  }
+}
+
+const PLATFORM_TONES = [
+  'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',
+  'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300',
+  'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+  'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
+  'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+  'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300',
+];
+
+const PlatformSyncRail = memo(function PlatformSyncRail({
+  platform,
+  delay = 0,
+  tone,
+  onClick,
+}: {
+  platform: PlatformSyncStats;
+  delay?: number;
+  tone: string;
+  onClick?: () => void;
+}) {
+  const jobs = safe(platform.job_count);
+  const added = safe(platform.last_items_new);
+  const scraped = safe(platform.last_items_scraped);
+  const errors = safe(platform.last_errors);
+  const status = (platform.last_status || '').toLowerCase();
+  const relative = formatRelativeSync(platform.last_sync_at);
+  const detailParts: string[] = [];
+  if (platform.last_sync_at) {
+    detailParts.push(relative);
+    if (added > 0) detailParts.push(`+${fmt(added)} new`);
+    else if (scraped > 0) detailParts.push(`${fmt(scraped)} scraped`);
+    if (errors > 0) detailParts.push(`${fmt(errors)} err`);
+  } else {
+    detailParts.push('No sync yet');
+  }
+  const detail = detailParts.join(' · ');
+  const statusDot =
+    status === 'running'
+      ? 'bg-sky-400'
+      : status === 'failed' || errors > 0
+        ? 'bg-rose-400'
+        : platform.last_sync_at
+          ? 'bg-emerald-400'
+          : 'bg-slate-400';
+
+  const className = [
+    'stats-rail-stat group flex min-h-[72px] w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-3 text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
+    'border-slate-200/80 bg-white/85 dark:border-slate-700/70 dark:bg-[#101827]/85',
+    onClick
+      ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40 dark:hover:border-slate-500'
+      : '',
+  ].join(' ');
+
+  const body = (
+    <>
+      <div
+        className={[
+          'relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-105',
+          tone,
+        ].join(' ')}
+      >
+        <Activity size={18} strokeWidth={2.4} />
+        <span className={`absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-[#101827] ${statusDot}`} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-bold leading-none text-slate-800">
+          {platform.label}
+        </p>
+        <AnimatedNumber
+          value={jobs}
+          className="mt-1.5 text-[1.35rem] font-black leading-none tracking-tight text-slate-900"
+        />
+        <p className="mt-1 truncate text-[11px] font-medium text-slate-500" title={formatLastSyncAt(platform.last_sync_at)}>
+          {detail}
+        </p>
+      </div>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={`${platform.label}: ${fmt(jobs)} jobs in pool · last sync ${relative}`}
+        style={{ animationDelay: `${delay}ms` }}
+        className={className}
+      >
+        {body}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      title={`${platform.label}: ${fmt(jobs)} jobs in pool · last sync ${relative}`}
+      style={{ animationDelay: `${delay}ms` }}
+      className={className}
+    >
+      {body}
+    </div>
+  );
+});
 
 const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   view,
@@ -837,9 +965,8 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   onSelectPumble,
   onSelectExtractionFailed,
   onSelectManual,
-  onSelectTeamAppliedToday,
   onSelectAll,
-  onSelectRemote,
+  onSelectPlatform,
 }: {
   view: AdminScraperStats;
   sheetsConfigured?: boolean;
@@ -851,14 +978,11 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   onSelectPumble?: () => void;
   onSelectExtractionFailed?: () => void;
   onSelectManual?: () => void;
-  onSelectTeamAppliedToday?: () => void;
   onSelectAll?: () => void;
-  onSelectRemote?: () => void;
+  onSelectPlatform?: (source: string) => void;
 }) {
   const today = safe(view.today_fetched ?? view.today_scraped);
-  const todayRemote = safe(view.today_remote);
   const total = safe(view.total_jobs);
-  const remote = safe(view.total_remote);
   const extracted = safe(view.extracted_jobs);
   const needs = safe(view.needs_extraction_jobs);
   const failed = safe(view.extraction_failed_jobs);
@@ -866,21 +990,13 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   const sheetPosted = safe(view.sheet_posted_jobs);
   const pumblePosted = safe(view.pumble_posted_jobs);
   const manual = safe(view.manual_jobs);
-  const teamAppliedToday = safe(view.team_applied_today);
   const lastNew = safe(view.last_sync_items_new);
   const lastScraped = safe(view.last_sync_items_scraped);
-  const lastErrors = safe(view.last_sync_errors);
   const totalUsers = safe(view.total_users);
   const newUsersWeek = safe(view.new_users_week);
   const extractRatio = total > 0 ? extracted / total : 0;
-  const remotePct = total > 0 ? Math.round((remote / total) * 100) : 0;
   const todayBumped = useBumpOnIncrease(today);
-  const sourceCount =
-    typeof view.active_sources === 'number' && view.active_sources > 0
-      ? view.active_sources
-      : Array.isArray(view.sources)
-        ? view.sources.length
-        : 0;
+  const platforms = Array.isArray(view.platform_sync) ? view.platform_sync : [];
   const lastSyncLabel = formatLastSyncAt(view.last_sync_at);
   const lastSyncSpider = view.last_sync_spider ? String(view.last_sync_spider) : null;
   const trends = view.trends;
@@ -894,8 +1010,8 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
     ),
   );
 
-  const { left: leftRail, right: rightRail } = useMemo(() => {
-    const leftSeed: RailItem[] = [
+  const leftRail = useMemo(() => {
+    const items: RailItem[] = [
       {
         key: 'total',
         icon: Layers,
@@ -935,39 +1051,9 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         onClick: onSelectManual,
         delay: 110,
       },
-      {
-        key: 'team_applied',
-        icon: ClipboardCheck,
-        value: teamAppliedToday,
-        label: 'Apps marked today',
-        tone: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300',
-        title: 'Applications marked by any user today',
-        onClick: onSelectTeamAppliedToday,
-        delay: 150,
-      },
-    ];
-    const rightSeed: RailItem[] = [
-      {
-        key: 'sources',
-        icon: Activity,
-        value: sourceCount,
-        label: lastErrors > 0 ? `Sources · ${fmt(lastErrors)} errs` : 'Active sources',
-        tone: 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',
-        title: 'Configured sync platforms in System Settings',
-        delay: 30,
-      },
-      {
-        key: 'remote',
-        icon: Wifi,
-        value: remote,
-        label: remotePct > 0 ? `Remote · ${remotePct}%` : 'Remote jobs',
-        tone: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-300',
-        title: 'Remote-friendly jobs in the pool',
-        delay: 70,
-      },
     ];
     if (sheetsConfigured) {
-      rightSeed.push({
+      items.push({
         key: 'sheets',
         icon: Table2,
         value: sheetPosted,
@@ -975,11 +1061,11 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
         title: 'Jobs posted to Google Sheets',
         onClick: onSelectSheet,
-        delay: 110,
+        delay: 190,
       });
     }
     if (pumbleConfigured) {
-      rightSeed.push({
+      items.push({
         key: 'pumble',
         icon: MessageSquare,
         value: pumblePosted,
@@ -987,20 +1073,15 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         tone: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
         title: 'Jobs posted to Pumble',
         onClick: onSelectPumble,
-        delay: 150,
+        delay: 230,
       });
     }
-    return balanceRailColumns(leftSeed, rightSeed);
+    return items;
   }, [
     total,
     failed,
     pending,
     manual,
-    teamAppliedToday,
-    sourceCount,
-    lastErrors,
-    remote,
-    remotePct,
     sheetPosted,
     pumblePosted,
     sheetsConfigured,
@@ -1008,10 +1089,22 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
     onSelectAll,
     onSelectExtractionFailed,
     onSelectManual,
-    onSelectTeamAppliedToday,
     onSelectSheet,
     onSelectPumble,
   ]);
+
+  const platformRails: PlatformRailItem[] = useMemo(
+    () =>
+      platforms.map((platform, index) => ({
+        key: platform.name,
+        platform,
+        delay: 30 + index * 40,
+        onClick: onSelectPlatform
+          ? () => onSelectPlatform(platform.name)
+          : undefined,
+      })),
+    [platforms, onSelectPlatform],
+  );
 
   return (
     <div
@@ -1021,7 +1114,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
       <div className="pointer-events-none absolute -left-20 top-0 h-48 w-48 rounded-full bg-blue-400/10 blur-3xl dark:bg-blue-500/10" />
       <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
 
-      <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)_13.5rem] xl:gap-4">
+      <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)_14.5rem] xl:gap-4">
         <div
           className={[
             'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
@@ -1058,7 +1151,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
               iconWrap="from-amber-500 to-orange-500"
               delay={40}
               onClick={onSelectNeedsExtraction}
-              title="Jobs whose job description is still missing, pending, processing, or stuck mid-extract. Successful syncs auto-queue extraction; completed jobs leave this backlog."
+              title="Jobs whose job description is still missing, pending, processing, or stuck mid-extract."
               trend={fetchedTrend}
               trendLabels={trendDayLabels}
               trendColor="#fbbf24"
@@ -1099,26 +1192,26 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
             <div className="relative flex items-center justify-center">
               <HeroOrbitRing progress={extractRatio} />
               <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
-                <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
+                <CalendarDays size={15} className="mb-1 text-blue-500 stats-hero-icon-float" />
                 <AnimatedNumber
                   value={today}
-                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900 dark:text-slate-50"
+                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
                 />
-                <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-300">
+                <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600">
                   Today&apos;s fetched
                 </span>
               </div>
             </div>
             <div className="mt-1 flex h-[52px] flex-col justify-center space-y-1">
-              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600 dark:text-slate-300">
-                {todayRemote > 0
-                  ? `${fmt(todayRemote)} remote fetched today`
-                  : lastNew > 0
-                    ? `${fmt(lastNew)} new from last sync`
+              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
+                {lastNew > 0
+                  ? `${fmt(lastNew)} new from last sync`
+                  : platforms.length > 0
+                    ? `${platforms.length} job sites registered`
                     : 'New jobs added to the platform today'}
               </p>
-              <p className="truncate text-[12px] font-medium text-slate-500 dark:text-slate-400">
-                {fmt(extracted)} extracted · {Math.round(extractRatio * 100)}% coverage
+              <p className="truncate text-[12px] font-medium text-slate-500">
+                {fmt(extracted)} JD ready · {Math.round(extractRatio * 100)}% coverage
               </p>
             </div>
           </button>
@@ -1162,22 +1255,24 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         <div
           className={[
             'order-3 grid gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:flex-col',
-            railGridClass(rightRail.length),
+            railGridClass(Math.max(platformRails.length, 1)),
           ].join(' ')}
         >
-          {rightRail.map((item) => (
-            <RailStat
-              key={item.key}
-              icon={item.icon}
-              value={item.value}
-              label={item.label}
-              tone={item.tone}
-              title={item.title}
-              onClick={item.onClick}
-              delay={item.delay}
-              modern={item.modern}
-            />
-          ))}
+          {platformRails.length > 0 ? (
+            platformRails.map((item, index) => (
+              <PlatformSyncRail
+                key={item.key}
+                platform={item.platform}
+                delay={item.delay}
+                tone={PLATFORM_TONES[index % PLATFORM_TONES.length]}
+                onClick={item.onClick}
+              />
+            ))
+          ) : (
+            <div className="flex min-h-[72px] flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-300 px-3 text-center text-xs font-medium text-slate-500 dark:border-slate-600">
+              No job sites configured in System Settings
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1208,6 +1303,7 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
   onSelectExtractionFailed,
   onSelectManual,
   onSelectTeamAppliedToday,
+  onSelectPlatform,
 }: ScraperStatsBarProps) {
   const isAdmin = variant === 'admin';
   const cachedApplicantRef = useRef<ScraperStats | null>(null);
@@ -1264,9 +1360,8 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
         onSelectPumble={onSelectPumble}
         onSelectExtractionFailed={onSelectExtractionFailed}
         onSelectManual={onSelectManual}
-        onSelectTeamAppliedToday={onSelectTeamAppliedToday}
         onSelectAll={onSelectAll}
-        onSelectRemote={onSelectRemote}
+        onSelectPlatform={onSelectPlatform}
       />
     );
   }

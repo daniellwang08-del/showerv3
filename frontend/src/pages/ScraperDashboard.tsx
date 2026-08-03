@@ -346,6 +346,15 @@ export function ScraperDashboard() {
               min_match_score: 0,
             })
           }
+          onSelectPlatform={(source) =>
+            applyAgentDashboard({
+              reset: true,
+              view: 'all',
+              source,
+              remote_only: false,
+              min_match_score: 0,
+            })
+          }
         />
       </div>
 

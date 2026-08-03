@@ -1863,10 +1863,11 @@ def _dashboard_search_clauses(
     if company and company.strip():
         clauses.append(Job.company.ilike(f"%{company.strip()}%"))
     if source:
+        src = source.strip()
         clauses.append(
             or_(
-                Job.raw_metadata["source"].as_string() == source,
-                Job.raw_metadata["scraped_source"].as_string() == source,
+                Job.raw_metadata["source"].as_string().ilike(src),
+                Job.raw_metadata["scraped_source"].as_string().ilike(src),
             )
         )
     if remote_only:
