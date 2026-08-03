@@ -1,10 +1,11 @@
 /** Extraction pipeline stages returned by the jobs-list endpoint.
  *  pending    → queued for extraction
  *  processing → extraction worker running
- *  extracted  → raw text captured, waiting for LLM structuring
- *  completed  → LLM analysis done, structured output stored
+ *  extracted  → raw text captured (admin inventory then advances to completed)
+ *  completed  → shared JD ready (admin) / analysis done (applicant)
+ *  failed     → extraction failed
  */
-export type ExtractionStatus = 'pending' | 'processing' | 'extracted' | 'completed';
+export type ExtractionStatus = 'pending' | 'processing' | 'extracted' | 'completed' | 'failed';
 
 export interface ScrapedJob {
   id: string;
