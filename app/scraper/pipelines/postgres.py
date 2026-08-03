@@ -63,15 +63,22 @@ class PostgresPipeline:
         self.session.commit()
         spider.logger.info("ScrapeRun %s started", self.scrape_run.id)
 
-    def close_spider(self):
-        spider = self._spider()
+    def close_spider(self, spider=None):
+        spider = spider or self._spider()
         if self.scrape_run:
             self._flush_run_counters(force=True)
             self.scrape_run.finished_at = utcnow_naive()
             # Scrapy's normal completion reason is "finished". Custom
             # CloseSpider reasons (auth_expired, fetch_failed, …) must not
             # be recorded as success — that caused false-green sync runs.
-            finish_reason = self.crawler.stats.get_value("finish_reason") or "finished"
+            #
+            # Pipeline close_spider often runs BEFORE stats finish_reason is
+            # set, so also honor spider._close_reason when present.
+            finish_reason = (
+                getattr(spider, "_close_reason", None)
+                or self.crawler.stats.get_value("finish_reason")
+                or "finished"
+            )
             if finish_reason == "finished":
                 self.scrape_run.status = "success"
                 spider.logger.info(

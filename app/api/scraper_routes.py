@@ -327,6 +327,10 @@ class SpiderInfo(BaseModel):
     auth_configured: bool = False
     auth_saved_at: Optional[str] = None
     auth_setup_command: Optional[str] = None
+    # RRS listing works without cookies; capture remains available but optional.
+    auth_optional: bool = False
+    token_expired: Optional[bool] = None
+    token_expires_at: Optional[str] = None
 
 
 class AuthPlatformStatus(BaseModel):
@@ -337,6 +341,8 @@ class AuthPlatformStatus(BaseModel):
     saved_at: Optional[str] = None
     cookie_count: int = 0
     setup_command: str = ""
+    token_expired: Optional[bool] = None
+    token_expires_at: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1489,6 +1495,8 @@ async def get_auth_status(
             saved_at=status.get("saved_at"),
             cookie_count=status.get("cookie_count", 0),
             setup_command=f"python -m app.scraper.auth capture {key}",
+            token_expired=status.get("token_expired"),
+            token_expires_at=status.get("token_expires_at"),
         ))
 
     return results

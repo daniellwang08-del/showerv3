@@ -14,6 +14,7 @@ from app.scraper.auth import (
     dedicated_profile_dir,
     default_chrome_user_data_dir,
     is_default_chrome_user_data_dir,
+    parse_supabase_session_expiry,
 )
 
 
@@ -108,3 +109,38 @@ def test_parser_capture_command():
     args = parser.parse_args(["capture", "rrs"])
     assert args.command == "capture"
     assert args.platform == "rrs"
+
+
+def test_parse_supabase_session_expiry_expired():
+    import base64
+    import json
+
+    payload = {
+        "access_token": "x.y.z",
+        "expires_at": 1000000000,  # 2001-09-09 UTC
+        "refresh_token": "abc",
+    }
+    encoded = "base64-" + base64.b64encode(json.dumps(payload).encode()).decode()
+    mid = len(encoded) // 2
+    cookies = [
+        {"name": "sb-xxx-auth-token.0", "value": encoded[:mid]},
+        {"name": "sb-xxx-auth-token.1", "value": encoded[mid:]},
+    ]
+    info = parse_supabase_session_expiry(cookies)
+    assert info["token_expired"] is True
+    assert info["token_expires_at"] is not None
+
+
+def test_rrs_auth_is_optional_without_session(monkeypatch, tmp_path):
+    from app.scraper import auth as auth_mod
+    from app.scraper.runner import check_spider_auth
+
+    monkeypatch.setitem(
+        auth_mod.PLATFORMS["rrs"],
+        "session_file",
+        tmp_path / "missing_rrs_session.json",
+    )
+    result = check_spider_auth("remoterocketship")
+    assert result["ok"] is True
+    assert result["auth_optional"] is True
+    assert result["auth_configured"] is False

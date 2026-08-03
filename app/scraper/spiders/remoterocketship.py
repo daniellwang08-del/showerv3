@@ -21,9 +21,7 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-import scrapy
 from scrapy import signals
-from scrapy.exceptions import CloseSpider
 
 from app.scraper.spiders.base import BaseJobSpider
 from app.scraper.utils.cloudflare import CloudflareSession
@@ -91,6 +89,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
         self._marker_ids: set[str] = set()
         self._page1_ids: list[str] = []
         self._marker_hit = False
+        self._close_reason: str | None = None
 
         if self._use_filtered_search:
             self.job_titles = (
@@ -224,17 +223,24 @@ class RemoteRocketshipSpider(BaseJobSpider):
         return f"{self.base_url}{API_PATH}?q={quote(q_json)}"
 
     # ------------------------------------------------------------------
-    # start (Scrapy 2.13+)
+    # start (Scrapy 2.13+) — fetch only via curl_cffi (chrome124)
     # ------------------------------------------------------------------
 
     async def start(self):
+        """Paginate RRS entirely through CloudflareSession.
+
+        Do not schedule Scrapy Requests against remoterocketship.com: Scrapy's
+        TLS fingerprint triggers Cloudflare and can burn the IP for curl_cffi.
+        Scrapy 2.13+ allows yielding items directly from ``start``.
+        """
         session = self._get_session()
+        # Listing API works without cookies once Cloudflare TLS impersonation
+        # succeeds (chrome124). Cookies remain preferred when present.
         if not session.is_authenticated:
-            self.logger.error(
-                "No saved session found. Run: "
-                "python -m app.scraper.auth capture rrs"
+            self.logger.warning(
+                "No saved RRS session — continuing with unauthenticated listing. "
+                "Optional: python -m app.scraper.auth capture rrs"
             )
-            raise CloseSpider("auth_required")
 
         self._load_checkpoint()
 
@@ -247,114 +253,96 @@ class RemoteRocketshipSpider(BaseJobSpider):
         else:
             self.logger.info("Starting keyword search: query=%s", self.query)
 
-        api_url = self._build_api_url(page=1)
-        yield scrapy.Request(
-            api_url,
-            callback=self.parse_listing,
-            meta={"page": 1, "_rrs_url": api_url, "handle_httpstatus_all": True},
-            dont_filter=True,
-        )
+        page = 1
+        while page <= self.max_pages:
+            api_url = self._build_api_url(page)
+            body = session.fetch(api_url)
 
-    # ------------------------------------------------------------------
-    # parse_listing
-    # ------------------------------------------------------------------
+            if not body:
+                reason = session.last_failure_reason or "fetch_failed"
+                self.logger.error(
+                    "Failed to fetch page %d after all retries (reason=%s)",
+                    page,
+                    reason,
+                )
+                if page == 1:
+                    # Do not raise CloseSpider from async start() — Scrapy treats
+                    # that as an unexpected error and reports finish_reason=finished.
+                    self._close_reason = reason
+                break
 
-    def parse_listing(self, response):
-        """Fetch via curl_cffi and parse the JSON API response."""
-        page = response.meta["page"]
-        real_url = response.meta["_rrs_url"]
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError as e:
+                self.logger.error("Failed to parse JSON for page %d: %s", page, e)
+                if page == 1:
+                    self._close_reason = "json_parse_failed"
+                break
 
-        session = self._get_session()
-        body = session.fetch(real_url)
+            jobs = data.get("jobOpenings", [])
+            total_count = data.get("totalCount")
 
-        if not body:
-            reason = session.last_failure_reason or "fetch_failed"
-            self.logger.error(
-                "Failed to fetch page %d after all retries (reason=%s)",
-                page,
-                reason,
-            )
-            if page == 1:
-                raise CloseSpider(reason)
-            return
-
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError as e:
-            self.logger.error("Failed to parse JSON for page %d: %s", page, e)
-            if page == 1:
-                raise CloseSpider("json_parse_failed")
-            return
-
-        jobs = data.get("jobOpenings", [])
-        total_count = data.get("totalCount")
-
-        if total_count is not None:
-            total_pages = math.ceil(total_count / JOBS_PER_PAGE)
-            self.logger.info(
-                "Page %d: %d jobs, %d total (%d pages)",
-                page, len(jobs), total_count, total_pages,
-            )
-        else:
-            total_pages = None
-            self.logger.info("Page %d: %d jobs (total unknown)", page, len(jobs))
-
-        if not jobs:
-            self.logger.info("Page %d returned 0 jobs - stopping", page)
-            return
-
-        job_ids = [str(j.get("id", "")) for j in jobs]
-
-        if page == 1:
-            self._page1_ids = job_ids[:]
-
-        marker_hit_on_page = False
-        if not self._fresh_mode and self._marker_ids:
-            for job, jid in zip(jobs, job_ids):
-                if jid and jid in self._marker_ids:
-                    self.logger.info(
-                        "Checkpoint marker %s found on page %d - caught up with previous run",
-                        jid, page,
-                    )
-                    marker_hit_on_page = True
-                    self._marker_hit = True
-                    break
-                yield from self._parse_job_data(job)
-        else:
-            for job in jobs:
-                yield from self._parse_job_data(job)
-
-        if marker_hit_on_page:
-            return
-
-        next_page = page + 1
-        should_continue = True
-
-        if next_page > self.max_pages:
-            if self._marker_ids:
-                self.logger.warning(
-                    "Reached max_pages limit (%d) without hitting a checkpoint marker - "
-                    "markers may have expired",
-                    self.max_pages,
+            if total_count is not None:
+                total_pages = math.ceil(total_count / JOBS_PER_PAGE)
+                self.logger.info(
+                    "Page %d: %d jobs, %d total (%d pages)",
+                    page, len(jobs), total_count, total_pages,
                 )
             else:
-                self.logger.info("Reached max_pages limit (%d) - stopping", self.max_pages)
-            should_continue = False
-        elif total_pages is not None and next_page > total_pages:
-            self.logger.info("Reached last page (%d/%d) - stopping", page, total_pages)
-            should_continue = False
-        elif len(jobs) < JOBS_PER_PAGE:
-            self.logger.info("Page %d had %d < %d jobs - last page", page, len(jobs), JOBS_PER_PAGE)
-            should_continue = False
+                total_pages = None
+                self.logger.info("Page %d: %d jobs (total unknown)", page, len(jobs))
 
-        if should_continue:
-            next_url = self._build_api_url(next_page)
-            yield scrapy.Request(
-                next_url,
-                callback=self.parse_listing,
-                meta={"page": next_page, "_rrs_url": next_url, "handle_httpstatus_all": True},
-                dont_filter=True,
-            )
+            if not jobs:
+                self.logger.info("Page %d returned 0 jobs - stopping", page)
+                break
+
+            job_ids = [str(j.get("id", "")) for j in jobs]
+            if page == 1:
+                self._page1_ids = job_ids[:]
+
+            marker_hit_on_page = False
+            if not self._fresh_mode and self._marker_ids:
+                for job, jid in zip(jobs, job_ids):
+                    if jid and jid in self._marker_ids:
+                        self.logger.info(
+                            "Checkpoint marker %s found on page %d - caught up with previous run",
+                            jid, page,
+                        )
+                        marker_hit_on_page = True
+                        self._marker_hit = True
+                        break
+                    for item in self._parse_job_data(job):
+                        yield item
+            else:
+                for job in jobs:
+                    for item in self._parse_job_data(job):
+                        yield item
+
+            if marker_hit_on_page:
+                break
+
+            next_page = page + 1
+            if next_page > self.max_pages:
+                if self._marker_ids:
+                    self.logger.warning(
+                        "Reached max_pages limit (%d) without hitting a checkpoint marker - "
+                        "markers may have expired",
+                        self.max_pages,
+                    )
+                else:
+                    self.logger.info("Reached max_pages limit (%d) - stopping", self.max_pages)
+                break
+            if total_pages is not None and next_page > total_pages:
+                self.logger.info("Reached last page (%d/%d) - stopping", page, total_pages)
+                break
+            if len(jobs) < JOBS_PER_PAGE:
+                self.logger.info(
+                    "Page %d had %d < %d jobs - last page",
+                    page, len(jobs), JOBS_PER_PAGE,
+                )
+                break
+
+            page = next_page
 
     # ------------------------------------------------------------------
     # Job data parsing

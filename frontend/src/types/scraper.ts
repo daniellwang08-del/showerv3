@@ -386,4 +386,8 @@ export interface SpiderInfo {
   auth_configured: boolean;
   auth_saved_at: string | null;
   auth_setup_command: string | null;
+  /** When true, sync can run without a captured session (RRS listing is public). */
+  auth_optional?: boolean;
+  token_expired?: boolean | null;
+  token_expires_at?: string | null;
 }

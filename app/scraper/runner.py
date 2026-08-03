@@ -57,7 +57,11 @@ def check_spider_auth(spider_name: str) -> dict:
     """Check whether a spider's auth requirements are met.
 
     Returns dict with keys: ok, requires_auth, auth_configured, auth_saved_at,
-    auth_setup_command.
+    auth_setup_command, and optionally token_expired / token_expires_at.
+
+    RemoteRocketship listing (``/api/fetch_job_openings/``) works without a
+    valid session once Cloudflare TLS impersonation succeeds, so a missing or
+    expired RRS session does not block the sync — cookies remain optional.
     """
     from app.scraper.auth import session_status, PLATFORMS
 
@@ -75,13 +79,22 @@ def check_spider_auth(spider_name: str) -> dict:
     configured = status.get("exists", False) and not status.get("corrupt", False)
     saved_at = status.get("saved_at") if configured else None
     cmd = f"python -m app.scraper.auth capture {platform_key}"
+    token_expired = status.get("token_expired")
+    token_expires_at = status.get("token_expires_at")
+
+    # RRS: public listing API — do not hard-block sync on missing/expired cookies.
+    soft_auth = platform_key == "rrs"
+    ok = True if soft_auth else configured
 
     return {
-        "ok": configured,
+        "ok": ok,
         "requires_auth": True,
         "auth_configured": configured,
         "auth_saved_at": saved_at,
         "auth_setup_command": cmd,
+        "token_expired": token_expired,
+        "token_expires_at": token_expires_at,
+        "auth_optional": soft_auth,
     }
 
 
@@ -97,9 +110,11 @@ def get_available_spiders() -> list[dict]:
         entry["auth_configured"] = auth["auth_configured"]
         entry["auth_saved_at"] = auth["auth_saved_at"]
         entry["auth_setup_command"] = auth["auth_setup_command"]
+        entry["auth_optional"] = bool(auth.get("auth_optional"))
+        entry["token_expired"] = auth.get("token_expired")
+        entry["token_expires_at"] = auth.get("token_expires_at")
         result.append(entry)
     return result
-
 
 def _running_scrape_run_stats(spider_name: str, started_after: datetime) -> dict | None:
     """Return live counters for the in-progress scrape_runs row, if any."""
@@ -427,6 +442,11 @@ async def run_spider(
                 cmd = auth.get("auth_setup_command") or "python -m app.scraper.auth setup"
                 result["message"] = (
                     f"Authentication failed ({run_status}). Re-run: {cmd}"
+                )
+            elif run_status == "cloudflare_blocked":
+                result["message"] = (
+                    "Cloudflare blocked the scraper (browser challenge). "
+                    "Retry later or re-capture a fresh browser session."
                 )
 
         if success:

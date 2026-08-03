@@ -1062,6 +1062,73 @@ def load_session(platform_key: str = "rrs") -> Optional[list[dict]]:
         return None
 
 
+def _b64url_json(segment: str) -> dict | None:
+    """Decode a base64/base64url JSON segment; return None on failure."""
+    import base64
+    from urllib.parse import unquote
+
+    raw = unquote(segment or "").strip()
+    if raw.startswith("base64-"):
+        raw = raw[len("base64-") :]
+    if not raw:
+        return None
+    pad = "=" * ((4 - len(raw) % 4) % 4)
+    for decoder in (base64.urlsafe_b64decode, base64.b64decode):
+        try:
+            text = decoder(raw + pad).decode("utf-8")
+            data = json.loads(text)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            continue
+    return None
+
+
+def parse_supabase_session_expiry(cookies: list[dict]) -> dict:
+    """Extract expires_at from chunked ``sb-*-auth-token`` cookies when present.
+
+    RemoteRocketship stores Supabase auth as ``base64-{json}`` split across
+    ``…-auth-token.0``, ``…-auth-token.1``, …
+    """
+    chunks: dict[str, str] = {}
+    for cookie in cookies or []:
+        name = str(cookie.get("name") or "")
+        if "auth-token" not in name or not name.startswith("sb-"):
+            continue
+        value = cookie.get("value")
+        if value:
+            chunks[name] = str(value)
+
+    if not chunks:
+        return {"token_expires_at": None, "token_expired": None}
+
+    combined = "".join(chunks[k] for k in sorted(chunks.keys()))
+    payload = _b64url_json(combined)
+    if not payload:
+        return {"token_expires_at": None, "token_expired": None}
+
+    expires_at = payload.get("expires_at")
+    if expires_at is None:
+        access = payload.get("access_token") or ""
+        if isinstance(access, str) and access.count(".") == 2:
+            jwt_payload = _b64url_json(access.split(".")[1])
+            if jwt_payload and jwt_payload.get("exp") is not None:
+                expires_at = jwt_payload["exp"]
+
+    if expires_at is None:
+        return {"token_expires_at": None, "token_expired": None}
+
+    try:
+        exp_ts = int(expires_at)
+    except (TypeError, ValueError):
+        return {"token_expires_at": None, "token_expired": None}
+
+    exp_dt = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+    return {
+        "token_expires_at": exp_dt.isoformat(),
+        "token_expired": exp_dt < datetime.now(timezone.utc),
+    }
+
+
 def session_status(platform_key: str) -> dict:
     """Return info about the saved session."""
     cfg = _get_platform(platform_key)
@@ -1073,13 +1140,18 @@ def session_status(platform_key: str) -> dict:
     try:
         data = json.loads(session_file.read_text(encoding="utf-8"))
         cookies = data.get("cookies", [])
-        return {
+        status = {
             "exists": True,
             "platform": cfg["label"],
             "saved_at": data.get("saved_at", "unknown"),
             "cookie_count": len(cookies),
             "path": str(session_file),
+            "token_expires_at": None,
+            "token_expired": None,
         }
+        if platform_key == "rrs":
+            status.update(parse_supabase_session_expiry(cookies))
+        return status
     except (json.JSONDecodeError, KeyError):
         return {"exists": True, "corrupt": True, "platform": cfg["label"], "path": str(session_file)}
 

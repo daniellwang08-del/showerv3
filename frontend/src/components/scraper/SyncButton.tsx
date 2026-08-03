@@ -350,7 +350,10 @@ export function SyncButton({ syncing, syncProgress, spiders, lastSyncRuns = [], 
               </div>
               <div className="max-h-64 overflow-y-auto pb-1">
                 {spiders.map((spider) => {
-                  const needsAuth = spider.requires_auth && !spider.auth_configured;
+                  const needsAuth =
+                    spider.requires_auth &&
+                    !spider.auth_configured &&
+                    spider.auth_optional !== true;
                   const disabled = needsAuth || syncing || windowInvalid;
                   return (
                     <div key={spider.name}>

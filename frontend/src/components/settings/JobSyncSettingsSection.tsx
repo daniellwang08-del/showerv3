@@ -252,7 +252,10 @@ export function JobSyncSettingsSection() {
   const authByPlatform = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const spider of spiders) {
-      map.set(spider.name, !spider.requires_auth || spider.auth_configured);
+      map.set(
+        spider.name,
+        !spider.requires_auth || spider.auth_optional === true || spider.auth_configured,
+      );
     }
     return map;
   }, [spiders]);
