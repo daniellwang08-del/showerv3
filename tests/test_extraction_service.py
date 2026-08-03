@@ -163,13 +163,13 @@ async def test_worker_enqueues_analysis_after_extraction(monkeypatch):
         return DummySession()
 
     monkeypatch.setattr("app.tasks.worker.get_session", dummy_session_context)
-    monkeypatch.setattr("app.tasks.worker.ValidJobRepository", MockValidJobRepo)
+    monkeypatch.setattr("app.tasks.worker.JobRepository", MockValidJobRepo)
     monkeypatch.setattr("app.tasks.worker.JobMatchInProgressRepository", MockProgressRepo)
     monkeypatch.setattr("app.tasks.worker.publish_ws_event", AsyncMock())
 
     enqueued = []
     class DummyPool:
-        async def enqueue_job(self, *args):
+        async def enqueue_job(self, *args, **kwargs):
             enqueued.append(args)
         async def close(self):
             pass
@@ -181,3 +181,64 @@ async def test_worker_enqueues_analysis_after_extraction(monkeypatch):
     assert result["status"] == "extracted"
     assert len(enqueued) == 1
     assert enqueued[0][0] == "analyze_job_match"
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_analysis_when_no_user_id(monkeypatch):
+    """Admin/platform extract-only: do not chain analyze after shared JD scrape."""
+    from app.tasks.worker import extract_job
+
+    mock_service = AsyncMock()
+    mock_service.process_job.return_value = {
+        "job_id": "test-job-id",
+        "status": "extracted",
+        "method": "static_html",
+        "content_length": 500,
+    }
+    monkeypatch.setattr("app.tasks.worker.ExtractionService", lambda: mock_service)
+    monkeypatch.setattr("app.tasks.worker.publish_ws_event", AsyncMock())
+
+    status_updates = []
+
+    class MockExtractionRepo:
+        def __init__(self, session):
+            pass
+
+        async def update_status(self, job_id, status):
+            status_updates.append((job_id, status))
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def commit(self):
+            return None
+
+    def dummy_session_context():
+        return DummySession()
+
+    monkeypatch.setattr("app.tasks.worker.get_session", dummy_session_context)
+    monkeypatch.setattr(
+        "app.storage.repository.JobExtractionRepository", MockExtractionRepo
+    )
+
+    enqueued = []
+
+    class DummyPool:
+        async def enqueue_job(self, *args, **kwargs):
+            enqueued.append(args)
+
+    monkeypatch.setattr("app.tasks.worker.get_analysis_pool", AsyncMock(return_value=DummyPool()))
+
+    result = await extract_job({}, "test-job-id", "https://example.com/job", None)
+
+    assert result["status"] == "extracted"
+    assert enqueued == []
+    assert len(status_updates) == 1
+    assert status_updates[0][0] == "test-job-id"
+    from app.models.schemas import ExtractionStatus
+
+    assert status_updates[0][1] == ExtractionStatus.COMPLETED

@@ -71,7 +71,7 @@ function ThemeToggle() {
   );
 }
 
-const baseNavItems = [
+const applicantNavItems = [
   { to: '/scraper', label: 'Jobs', icon: Briefcase },
   { to: '/profile', label: 'Profile', icon: UserCircle },
   { to: '/preferences', label: 'My Preferences', icon: UserCog },
@@ -80,6 +80,8 @@ const baseNavItems = [
 ];
 
 const adminNavItems = [
+  { to: '/scraper', label: 'Jobs', icon: Briefcase },
+  { to: '/integrations', label: 'Integrations', icon: Puzzle },
   { to: '/data-analysis', label: 'Data Analysis', icon: Database },
   { to: '/user-management', label: 'User Management', icon: Users },
   { to: '/system-settings', label: 'System Settings', icon: Cpu },
@@ -95,7 +97,7 @@ export function Sidebar({
 }: SidebarProps) {
   const displayName = userName || userEmail || 'User';
   const initial = displayName.charAt(0).toUpperCase();
-  const navItems = isAdmin ? [...baseNavItems, ...adminNavItems] : baseNavItems;
+  const navItems = isAdmin ? adminNavItems : applicantNavItems;
   const agentOpen = useAgentStore((s) => s.open);
   const toggleChat = useAgentStore((s) => s.toggleChat);
 

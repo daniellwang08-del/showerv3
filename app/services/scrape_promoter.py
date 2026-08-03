@@ -79,8 +79,8 @@ async def enqueue_extraction_for_url(
 ) -> bool:
     """Public alias of ``_enqueue_extraction`` for reuse by API routes.
 
-    Pass *user_id* to trigger the full lifecycle (extraction → LLM analysis →
-    resume tailoring) instead of extraction-only.
+    Pass *user_id* only for applicant full lifecycle (extraction → analysis →
+    resume). Omit it (``None``) for admin/platform inventory prep (extraction only).
     """
     return await _enqueue_extraction(extraction_id, target_url, user_id=user_id)
 
@@ -208,7 +208,9 @@ async def promote_scrape_run(scrape_run_id: str, user_id: str | None = None) -> 
     """Promote every un-promoted ``scraped_jobs`` row from this run into a
     JobExtraction + Job and enqueue the extraction worker.
 
-    Pass *user_id* so the extraction worker chains analyze + resume (full lifecycle).
+    Pass *user_id* only when the caller wants extract → analyze → tailor for that
+    user (applicant manual/full lifecycle). Platform sync must pass ``user_id=None``
+    so extraction stops after saving the shared job description.
 
     Returns a stats dict the worker can publish via WebSocket.
     """

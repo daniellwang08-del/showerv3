@@ -86,6 +86,31 @@ async def heal_stale_pipeline_state(
         )
         completed_extractions = len(completed_result.fetchall())
 
+        # Platform extract-only leftovers: scraped text exists, no analysis in flight.
+        # Advance to COMPLETED so Jobs UI and prepare treat them as shared-JD ready.
+        shared_ready_result = await session.execute(
+            text(
+                """
+                UPDATE job_extractions AS je
+                SET status = 'COMPLETED',
+                    completed_at = coalesce(je.completed_at, timezone('UTC', now())),
+                    updated_at = timezone('UTC', now())
+                WHERE je.status = 'EXTRACTED'
+                  AND je.raw_plain_text IS NOT NULL
+                  AND length(btrim(je.raw_plain_text)) > 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM jobs j
+                      JOIN job_match_in_progress jmp ON jmp.job_id = j.id
+                      WHERE j.extraction_id = je.id
+                  )
+                RETURNING je.id
+                """
+            )
+        )
+        shared_ready = len(shared_ready_result.fetchall())
+        completed_extractions += shared_ready
+
         # Remove already-scored 0 Weak jobs that remained active on the Jobs list.
         zero_score_result = await session.execute(
             text(

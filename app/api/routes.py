@@ -737,6 +737,11 @@ async def try_get_analysis_pool():
     return await _try_pool(get_analysis_pool, ANALYSIS_QUEUE)
 
 
+async def try_get_save_pool():
+    from app.tasks.worker import get_save_pool, SAVE_QUEUE
+    return await _try_pool(get_save_pool, SAVE_QUEUE)
+
+
 def _raise_queue_unavailable(operation: str) -> None:
     from app.core.redis_support import require_redis_for_jobs
 
@@ -809,15 +814,69 @@ async def enqueue_extraction(
     )
 
 
+async def _run_analyze_and_enqueue_save(
+    job_id: str,
+    user_id: str,
+    *,
+    extraction_id: str | None = None,
+) -> None:
+    """In-process Phase A then enqueue (or run) save → tailor chain.
+
+    ``run_job_match_analysis`` alone does not persist the match or start Phase B;
+    the Redis worker does that via ``save_analyzed_job``. This mirrors that chain
+    when Redis analysis queue is unavailable.
+    """
+    from app.core.redis_support import pipeline_job_id
+    from app.services.job_match_orchestrator import run_job_match_analysis
+
+    result = await run_job_match_analysis(job_id, user_id, extraction_id=extraction_id)
+    if not result:
+        return
+
+    pool = await try_get_save_pool()
+    if pool:
+        try:
+            await pool.enqueue_job(
+                "save_analyzed_job",
+                job_id,
+                user_id,
+                extraction_id,
+                result,
+                _job_id=pipeline_job_id("save", job_id, user_id),
+            )
+            return
+        except Exception as e:
+            logger.warning(
+                "save_after_match_redis_enqueue_failed",
+                job_id=job_id,
+                user_id=user_id,
+                error=str(e),
+            )
+
+    from app.tasks.worker import save_analyzed_job
+
+    await save_analyzed_job(
+        {"redis": None},
+        job_id,
+        user_id,
+        extraction_id,
+        result,
+    )
+
+
 async def enqueue_job_match_analysis(
     job_id: str,
     user_id: str,
     *,
     background_tasks: BackgroundTasks | None = None,
+    extraction_id: str | None = None,
 ) -> None:
     """
     Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks
     only outside production. Uses the dedicated analysis queue.
+
+    The analysis worker enqueues ``save_analyzed_job`` (persist + Phase B). The
+    in-process fallback must do the same via ``_run_analyze_and_enqueue_save``.
     """
     from app.core.redis_support import allow_in_process_job_fallback, pipeline_job_id
     from app.tasks.worker import ANALYSIS_QUEUE
@@ -831,6 +890,7 @@ async def enqueue_job_match_analysis(
                 "analyze_job_match",
                 job_id,
                 user_id,
+                extraction_id,
                 _job_id=arq_id,
             )
             logger.info(
@@ -846,10 +906,19 @@ async def enqueue_job_match_analysis(
             logger.warning("job_match_redis_enqueue_failed", job_id=job_id, error=str(e))
 
     if allow_in_process_job_fallback() and background_tasks:
-        from app.services.job_match_orchestrator import run_job_match_analysis
-
-        background_tasks.add_task(run_job_match_analysis, job_id, user_id)
+        background_tasks.add_task(
+            _run_analyze_and_enqueue_save,
+            job_id,
+            user_id,
+            extraction_id=extraction_id,
+        )
         logger.info("job_match_enqueued_in_process", job_id=job_id, user_id=user_id)
+        return
+
+    if allow_in_process_job_fallback():
+        await _run_analyze_and_enqueue_save(
+            job_id, user_id, extraction_id=extraction_id
+        )
         return
 
     _raise_queue_unavailable("enqueue match analysis")
@@ -862,11 +931,9 @@ async def enqueue_job_match_analysis(
 
 
 async def _fallback_job_match_after_extraction(job_id: str, user_id: str) -> None:
-    """Run match in a separate task so extraction (BackgroundTasks) does not block on OpenAI."""
-    from app.services.job_match_orchestrator import run_job_match_analysis
-
+    """Run match+save chain so extraction (BackgroundTasks) does not block on OpenAI."""
     try:
-        await run_job_match_analysis(job_id, user_id)
+        await _run_analyze_and_enqueue_save(job_id, user_id)
     except Exception as match_err:
         logger.warning(
             "fallback_job_match_failed",
@@ -876,12 +943,193 @@ async def _fallback_job_match_after_extraction(job_id: str, user_id: str) -> Non
         )
 
 
+async def start_personal_job_analysis(
+    job_id: str,
+    user_id: str,
+    *,
+    background_tasks: BackgroundTasks | None = None,
+    force: bool = False,
+) -> dict:
+    """Queue per-user analysis for a job that already has (or will use) shared JD.
+
+    Returns a small status dict: queued | cached | in_progress | error detail keys.
+    """
+    from app.services.job_pipeline_mode import extraction_has_shared_jd
+    from app.storage.repository import JobMatchInProgressRepository
+
+    async with get_session() as session:
+        progress_repo = JobMatchInProgressRepository(session)
+        match_repo = JobMatchRepository(session)
+        in_prog = await session.execute(
+            select(JobMatchInProgress).where(
+                JobMatchInProgress.job_id == job_id,
+                JobMatchInProgress.user_id == user_id,
+            )
+        )
+        if in_prog.scalar_one_or_none():
+            return {"status": "in_progress", "message": "Match analysis already in progress"}
+
+        existing = await match_repo.get(job_id, user_id)
+        if existing and not force:
+            return {"status": "cached", "message": "Match already computed"}
+        if existing and force:
+            await match_repo.delete(job_id, user_id)
+
+        r = await session.execute(select(Job).where(Job.id == job_id, Job.status == "active"))
+        job = r.scalar_one_or_none()
+        if not job or not job.extraction_id:
+            return {"status": "error", "message": "Job has no scraped description yet"}
+
+        extraction_repo = JobExtractionRepository(session)
+        extraction = await extraction_repo.get_by_id(job.extraction_id)
+        if not extraction_has_shared_jd(extraction):
+            return {"status": "error", "message": "Job description not yet scraped"}
+
+        await progress_repo.add(job_id, user_id)
+        await session.commit()
+        extraction_id = job.extraction_id
+
+    await enqueue_job_match_analysis(
+        job_id,
+        user_id,
+        background_tasks=background_tasks,
+        extraction_id=extraction_id,
+    )
+    return {"status": "queued", "message": "Match analysis queued"}
+
+
+async def prepare_job_for_user(
+    job_id: str,
+    user_id: str,
+    *,
+    background_tasks: BackgroundTasks | None = None,
+    force_rescrape: bool = False,
+) -> dict:
+    """Smart entry for applicants: analyze if JD ready, else extract then analyze.
+
+    ``force_rescrape`` resets extraction (same as legacy rescrape) then chains
+    analysis for this user.
+    """
+    from app.services.job_pipeline_mode import extraction_has_shared_jd
+
+    async with get_session() as session:
+        job = await _get_job_for_rescrape(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Valid job not found")
+
+        source_url = (job.source_url or "").strip()
+        if not source_url:
+            raise HTTPException(status_code=400, detail="This job has no URL")
+
+        extraction_repo = JobExtractionRepository(session)
+        extraction = None
+        if job.extraction_id:
+            extraction = await extraction_repo.get_by_id(job.extraction_id)
+
+        jd_ready = bool(extraction_has_shared_jd(extraction) and not force_rescrape)
+
+        if jd_ready:
+            # Personal pipeline only — do not touch shared extraction.
+            pass
+        else:
+            try:
+                extraction_id = await _prepare_job_rescrape_in_session(
+                    session, job, source_url, user_id
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await session.commit()
+            await enqueue_extraction(
+                extraction_id,
+                source_url,
+                user_id=user_id,
+                background_tasks=background_tasks,
+            )
+            return {
+                "status": "queued",
+                "mode": "extract_then_analyze",
+                "job_id": job_id,
+                "extraction_id": extraction_id,
+                "message": "Extraction queued; analysis will follow for your profile.",
+            }
+
+    result = await start_personal_job_analysis(
+        job_id,
+        user_id,
+        background_tasks=background_tasks,
+        force=True,
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+    return {
+        "status": result["status"],
+        "mode": "analyze",
+        "job_id": job_id,
+        "message": result.get("message")
+        or "Analysis queued using the saved job description.",
+    }
+
+
+async def prepare_shared_job_extraction(
+    job_id: str,
+    *,
+    background_tasks: BackgroundTasks | None = None,
+    force_rescrape: bool = False,
+) -> dict:
+    """Admin / platform: ensure shared JD exists (extract-only, never analyze)."""
+    from app.services.job_pipeline_mode import extraction_has_shared_jd
+
+    async with get_session() as session:
+        job = await _get_job_for_rescrape(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Valid job not found")
+
+        source_url = (job.source_url or "").strip()
+        if not source_url:
+            raise HTTPException(status_code=400, detail="This job has no URL")
+
+        extraction_repo = JobExtractionRepository(session)
+        extraction = None
+        if job.extraction_id:
+            extraction = await extraction_repo.get_by_id(job.extraction_id)
+
+        if extraction_has_shared_jd(extraction) and not force_rescrape:
+            return {
+                "status": "ready",
+                "mode": "extract_only",
+                "job_id": job_id,
+                "extraction_id": job.extraction_id,
+                "message": "Shared job description already prepared.",
+            }
+
+        try:
+            extraction_id = await _prepare_job_rescrape_in_session(
+                session, job, source_url, None
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        await session.commit()
+
+    await enqueue_extraction(
+        extraction_id,
+        source_url,
+        user_id=None,
+        background_tasks=background_tasks,
+    )
+    return {
+        "status": "queued",
+        "mode": "extract_only",
+        "job_id": job_id,
+        "extraction_id": extraction_id,
+        "message": "Extraction queued (admin inventory prep).",
+    }
+
+
 async def _fallback_match_batch_parallel(user_id: str, job_ids: list[str]) -> None:
     """
     When Redis is unavailable, run many matches with bounded concurrency (not one-by-one
     Starlette background tasks, which would serialize all match calls).
     """
-    from app.services.job_match_orchestrator import run_job_match_analysis
     from app.services.system_settings_service import get_effective_value_sync
 
     sem = asyncio.Semaphore(max(1, int(get_effective_value_sync("analysis_worker_max_jobs"))))
@@ -889,7 +1137,7 @@ async def _fallback_match_batch_parallel(user_id: str, job_ids: list[str]) -> No
     async def one(jid: str) -> None:
         async with sem:
             try:
-                await run_job_match_analysis(jid, user_id)
+                await _run_analyze_and_enqueue_save(jid, user_id)
             except Exception as e:
                 logger.warning("fallback_batch_job_match_failed", job_id=jid, error=str(e))
 
@@ -949,18 +1197,28 @@ async def process_extraction_sync(
     try:
         service = ExtractionService()
         result = await service.process_job(extraction_id, url)
-        if user_id and result.get("status") == "extracted":
-            found_job_id: str | None = None
-            async with get_session() as session:
-                job_repo = JobRepository(session)
-                job = await job_repo.get_by_extraction_id(extraction_id)
-                if job:
-                    found_job_id = job.id
-                    progress_repo = JobMatchInProgressRepository(session)
-                    await progress_repo.add(job.id, user_id)
+        if result.get("status") == "extracted":
+            if not user_id:
+                from app.models.schemas import ExtractionStatus
+
+                async with get_session() as session:
+                    extraction_repo = JobExtractionRepository(session)
+                    await extraction_repo.update_status(
+                        extraction_id, ExtractionStatus.COMPLETED
+                    )
                     await session.commit()
-            if found_job_id:
-                asyncio.create_task(_fallback_job_match_after_extraction(found_job_id, user_id))
+            elif user_id:
+                found_job_id: str | None = None
+                async with get_session() as session:
+                    job_repo = JobRepository(session)
+                    job = await job_repo.get_by_extraction_id(extraction_id)
+                    if job:
+                        found_job_id = job.id
+                        progress_repo = JobMatchInProgressRepository(session)
+                        await progress_repo.add(job.id, user_id)
+                        await session.commit()
+                if found_job_id:
+                    asyncio.create_task(_fallback_job_match_after_extraction(found_job_id, user_id))
     except Exception as e:
         logger.error("sync_extraction_failed", extraction_id=extraction_id, error=str(e))
 
@@ -1000,8 +1258,16 @@ async def extract_job(
         response = _build_response(extraction)
 
     if should_enqueue and extraction_id:
+        from app.services.job_pipeline_mode import ingest_chain_user_id
+
         await enqueue_extraction(
-            extraction_id, url, user_id=current_user.get("user_id"), background_tasks=background_tasks
+            extraction_id,
+            url,
+            user_id=ingest_chain_user_id(
+                is_admin=bool(current_user.get("is_admin")),
+                user_id=current_user.get("user_id"),
+            ),
+            background_tasks=background_tasks,
         )
     return response
 
@@ -1038,11 +1304,17 @@ async def extract_batch(
             job_ids.append(extraction.id)
             to_enqueue.append((extraction.id, url_str))
 
+    from app.services.job_pipeline_mode import ingest_chain_user_id
+
+    chain_user_id = ingest_chain_user_id(
+        is_admin=bool(current_user.get("is_admin")),
+        user_id=current_user.get("user_id"),
+    )
     for extraction_id, url_str in to_enqueue:
         await enqueue_extraction(
             extraction_id,
             url_str,
-            user_id=current_user.get("user_id"),
+            user_id=chain_user_id,
             background_tasks=background_tasks,
         )
 
@@ -1136,7 +1408,14 @@ async def submit_job(
     2. Blocked domain → Job(status='blocked') + UserJobStatus(status='duplicated')
     3. URL match → reuse existing Job row if possible
     4. New URL → create Job + JobExtraction + UserJobStatus(status='active'), enqueue extraction
+
+    Pipeline ownership:
+    - Admin: extraction only (shared JD inventory).
+    - Applicant + new URL: extract then analyze/tailor for that user.
+    - Applicant + existing URL with completed JD: link pool and start analysis (no rescrape).
     """
+    from app.services.job_pipeline_mode import ingest_chain_user_id, extraction_has_shared_jd
+
     is_valid, error = URLManager.validate_url(request.url)
     if not is_valid:
         logger.warning("jobs_submit_invalid_url", url=request.url, error=error)
@@ -1149,6 +1428,8 @@ async def submit_job(
         )
 
     user_id = current_user.get("user_id")
+    is_admin = bool(current_user.get("is_admin"))
+    chain_user_id = ingest_chain_user_id(is_admin=is_admin, user_id=user_id)
     normalized_url = request.url
     domain = URLManager.extract_domain(request.url)
 
@@ -1210,31 +1491,62 @@ async def submit_job(
         if existing_job and user_id:
             ujs_repo = UserJobStatusRepository(session)
             existing_ujs = await ujs_repo.get(user_id, existing_job.id)
-            if existing_ujs:
-                await session.commit()
-                logger.info("jobs_submit_already_in_pool", job_id=existing_job.id, url=request.url)
-                return JobSubmissionResponse(
-                    success=True,
+            already_in_pool = existing_ujs is not None
+            if not already_in_pool:
+                await ujs_repo.upsert(
+                    user_id=user_id,
                     job_id=existing_job.id,
-                    is_duplicate=True,
-                    duplicate_job_id=existing_job.id,
-                    message="Already in your pool",
+                    status="active",
                 )
-            # User doesn't have a status row yet - add one
-            await ujs_repo.upsert(
-                user_id=user_id,
-                job_id=existing_job.id,
-                status="active",
-            )
+
+            extraction_id = existing_job.extraction_id
+            extraction = None
+            extraction_status = None
+            if extraction_id:
+                extraction_repo = JobExtractionRepository(session)
+                extraction = await extraction_repo.get_by_id(extraction_id)
+                extraction_status = extraction.status if extraction else None
+            jd_ready = extraction_has_shared_jd(extraction)
+
             await session.commit()
-            logger.info("jobs_submit_existing_job_linked", job_id=existing_job.id, url=request.url)
+
+            logger.info(
+                "jobs_submit_existing_job_linked",
+                job_id=existing_job.id,
+                url=request.url,
+                already_in_pool=already_in_pool,
+                is_admin=is_admin,
+                extraction_status=str(extraction_status) if extraction_status else None,
+            )
             await _publish_job_submitted(user_id, existing_job.id, request.url)
+
+            # Applicants: start personal analysis on shared JD, or finish extraction first.
+            if chain_user_id:
+                if jd_ready:
+                    await start_personal_job_analysis(
+                        existing_job.id,
+                        chain_user_id,
+                        background_tasks=background_tasks,
+                        force=False,
+                    )
+                elif extraction_id:
+                    await enqueue_extraction(
+                        extraction_id,
+                        request.url,
+                        user_id=chain_user_id,
+                        background_tasks=background_tasks,
+                    )
+
             return JobSubmissionResponse(
                 success=True,
                 job_id=existing_job.id,
-                is_duplicate=False,
-                duplicate_job_id=None,
-                message="Job submitted successfully",
+                is_duplicate=already_in_pool,
+                duplicate_job_id=existing_job.id if already_in_pool else None,
+                message=(
+                    "Already in your pool"
+                    if already_in_pool
+                    else "Job submitted successfully"
+                ),
             )
 
         if existing_job and not user_id:
@@ -1293,37 +1605,29 @@ async def submit_job(
         await session.commit()
 
         if extraction.status != ExtractionStatus.COMPLETED:
+            # Admin: extract-only. Applicant: extract then analyze (chain_user_id set).
             await enqueue_extraction(
                 extraction.id,
                 request.url,
-                user_id=user_id,
+                user_id=chain_user_id,
                 background_tasks=background_tasks,
             )
-        elif user_id:
-            async with get_session() as match_session:
-                existing_match = await match_session.execute(
-                    select(JobMatchResult).where(
-                        JobMatchResult.job_id == new_job.id,
-                        JobMatchResult.user_id == user_id,
-                    )
-                )
-                existing_progress = await match_session.execute(
-                    select(JobMatchInProgress).where(
-                        JobMatchInProgress.job_id == new_job.id,
-                        JobMatchInProgress.user_id == user_id,
-                    )
-                )
-                if not existing_match.scalar_one_or_none() and not existing_progress.scalar_one_or_none():
-                    progress_repo = JobMatchInProgressRepository(match_session)
-                    await progress_repo.add(new_job.id, user_id)
-                    await match_session.commit()
-                    await enqueue_job_match_analysis(
-                        new_job.id,
-                        user_id,
-                        background_tasks=background_tasks,
-                    )
+        elif chain_user_id:
+            await start_personal_job_analysis(
+                new_job.id,
+                chain_user_id,
+                background_tasks=background_tasks,
+                force=False,
+            )
 
-        logger.info("jobs_submit_created", job_id=new_job.id, url=request.url, extraction_id=extraction.id)
+        logger.info(
+            "jobs_submit_created",
+            job_id=new_job.id,
+            url=request.url,
+            extraction_id=extraction.id,
+            is_admin=is_admin,
+            chain_user_id=chain_user_id,
+        )
         await _publish_job_submitted(user_id, new_job.id, request.url)
         return JobSubmissionResponse(
             success=True,
@@ -2324,7 +2628,9 @@ async def trigger_job_match(
             raise HTTPException(status_code=400, detail="Job has no scraped description yet")
         extraction_repo = JobExtractionRepository(session)
         extraction = await extraction_repo.get_by_id(job.extraction_id)
-        if not extraction or extraction.status != ExtractionStatus.COMPLETED:
+        from app.services.job_pipeline_mode import extraction_has_shared_jd
+
+        if not extraction_has_shared_jd(extraction):
             raise HTTPException(status_code=400, detail="Job description not yet scraped")
         await progress_repo.add(job_id, user_id)
         await session.commit()
@@ -2468,7 +2774,9 @@ async def rerun_job_match_batch(
                 continue
 
             extraction = extractions_by_id.get(job.extraction_id)
-            if not extraction or extraction.status != ExtractionStatus.COMPLETED:
+            from app.services.job_pipeline_mode import extraction_has_shared_jd
+
+            if not extraction_has_shared_jd(extraction):
                 skipped.append({"id": job_id, "reason": "extraction_not_ready"})
                 continue
 
@@ -2564,12 +2872,20 @@ async def rescrape_valid_jobs_batch(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Re-queue page extraction for many valid jobs (stored source_url each).
-    Uses the same extraction queue and post-completion match pipeline as a new job post.
+    Force re-queue page extraction for many valid jobs (stored source_url each).
+
+    Admin: extraction only (shared JD). Applicant: extract then personal analysis.
+    Prefer ``POST /jobs/valid/prepare/batch`` for smart analyze-without-rescrape.
     """
+    from app.services.job_pipeline_mode import ingest_chain_user_id
+
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    chain_user_id = ingest_chain_user_id(
+        is_admin=bool(current_user.get("is_admin")),
+        user_id=user_id,
+    )
 
     seen: set[str] = set()
     unique_ids: list[str] = []
@@ -2593,7 +2909,9 @@ async def rescrape_valid_jobs_batch(
                 skipped.append({"id": job_id, "reason": "no_url"})
                 continue
             try:
-                extraction_id = await _prepare_job_rescrape_in_session(session, job, source_url, user_id)
+                extraction_id = await _prepare_job_rescrape_in_session(
+                    session, job, source_url, chain_user_id
+                )
             except ValueError as e:
                 skipped.append({"id": job_id, "reason": str(e)[:200]})
                 continue
@@ -2602,11 +2920,113 @@ async def rescrape_valid_jobs_batch(
         await enqueue_extraction(
             extraction_id,
             source_url,
-            user_id=user_id,
+            user_id=chain_user_id,
             background_tasks=background_tasks,
         )
         jobs_out.append({"job_id": job_id, "extraction_id": extraction_id})
         logger.info("rescrape_batch_enqueued", job_id=job_id, extraction_id=extraction_id)
+
+    return {
+        "status": "queued",
+        "enqueued": len(jobs_out),
+        "jobs": jobs_out,
+        "skipped": skipped,
+    }
+
+
+@router.post("/jobs/valid/{job_id}/prepare", dependencies=[Depends(get_current_user)])
+async def prepare_valid_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    force_rescrape: bool = Query(
+        False,
+        description="If true, reset shared extraction and re-scrape before analyzing.",
+    ),
+    current_user: dict = Depends(get_current_user),
+):
+    """Start personal analysis using saved JD when ready; otherwise extract then analyze.
+
+    Admins: extract-only shared inventory (never personal analyze/tailor).
+    Applicants: Jobs table Run/Rerun — analyze from saved JD when possible.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if current_user.get("is_admin"):
+        return await prepare_shared_job_extraction(
+            job_id,
+            background_tasks=background_tasks,
+            force_rescrape=force_rescrape,
+        )
+
+    return await prepare_job_for_user(
+        job_id,
+        user_id,
+        background_tasks=background_tasks,
+        force_rescrape=force_rescrape,
+    )
+
+
+@router.post(
+    "/jobs/valid/prepare/batch",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(get_current_user)],
+)
+async def prepare_valid_jobs_batch(
+    body: JobIdsBatchRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """Smart prepare for many jobs.
+
+    Admins: extract-only for jobs missing a shared JD.
+    Applicants: analyze if JD ready, else extract then analyze.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    is_admin = bool(current_user.get("is_admin"))
+
+    seen: set[str] = set()
+    unique_ids: list[str] = []
+    for jid in body.job_ids:
+        if jid in seen:
+            continue
+        seen.add(jid)
+        unique_ids.append(jid)
+
+    jobs_out: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+
+    for job_id in unique_ids:
+        try:
+            if is_admin:
+                result = await prepare_shared_job_extraction(
+                    job_id,
+                    background_tasks=background_tasks,
+                    force_rescrape=False,
+                )
+            else:
+                result = await prepare_job_for_user(
+                    job_id,
+                    user_id,
+                    background_tasks=background_tasks,
+                    force_rescrape=False,
+                )
+            jobs_out.append(
+                {
+                    "job_id": job_id,
+                    "mode": str(result.get("mode") or ""),
+                    "status": str(result.get("status") or ""),
+                    "extraction_id": str(result.get("extraction_id") or ""),
+                }
+            )
+        except HTTPException as e:
+            detail = e.detail if isinstance(e.detail, str) else str(e.detail)
+            skipped.append({"id": job_id, "reason": detail[:200]})
+        except Exception as e:
+            skipped.append({"id": job_id, "reason": str(e)[:200]})
 
     return {
         "status": "queued",
@@ -2623,8 +3043,18 @@ async def rescrape_valid_job(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
-    """Reset extraction for a valid job and re-enqueue it for scraping. Uses the URL from the request to ensure we scrape exactly the URL the user clicked on."""
+    """Force-reset extraction and re-enqueue scraping.
+
+    Admin: extract-only. Applicant: extract then analyze for their profile.
+    Prefer ``/jobs/valid/{id}/prepare`` when the JD is already saved.
+    """
+    from app.services.job_pipeline_mode import ingest_chain_user_id
+
     user_id = current_user.get("user_id")
+    chain_user_id = ingest_chain_user_id(
+        is_admin=bool(current_user.get("is_admin")),
+        user_id=user_id,
+    )
     source_url = request.url.strip()
 
     async with get_session() as session:
@@ -2632,7 +3062,9 @@ async def rescrape_valid_job(
         if not job:
             raise HTTPException(status_code=404, detail="Valid job not found")
         try:
-            extraction_id = await _prepare_job_rescrape_in_session(session, job, source_url, user_id)
+            extraction_id = await _prepare_job_rescrape_in_session(
+                session, job, source_url, chain_user_id
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         await session.commit()
@@ -2640,10 +3072,16 @@ async def rescrape_valid_job(
     await enqueue_extraction(
         extraction_id,
         source_url,
-        user_id=user_id,
+        user_id=chain_user_id,
         background_tasks=background_tasks,
     )
-    logger.info("rescrape_enqueued", job_id=job_id, extraction_id=extraction_id, url=source_url)
+    logger.info(
+        "rescrape_enqueued",
+        job_id=job_id,
+        extraction_id=extraction_id,
+        url=source_url,
+        chain_user_id=chain_user_id,
+    )
     return {"status": "ok", "extraction_id": extraction_id}
 
 
@@ -3983,15 +4421,24 @@ async def promote_invalid_to_valid(
         source_url = job.source_url
 
     # Re-enqueue extraction if needed
+    from app.services.job_pipeline_mode import ingest_chain_user_id, extraction_has_shared_jd
+
+    chain_user_id = ingest_chain_user_id(
+        is_admin=bool(current_user.get("is_admin")),
+        user_id=user_id,
+    )
     if extraction_id:
         async with get_session() as session:
             ext_repo = JobExtractionRepository(session)
             extraction = await ext_repo.get_by_id(extraction_id)
-            if extraction and extraction.status != ExtractionStatus.COMPLETED:
+            if extraction and not extraction_has_shared_jd(extraction):
                 await enqueue_extraction(
-                    extraction_id, source_url, user_id=user_id, background_tasks=background_tasks
+                    extraction_id,
+                    source_url,
+                    user_id=chain_user_id,
+                    background_tasks=background_tasks,
                 )
-            elif extraction and extraction.status == ExtractionStatus.COMPLETED:
+            elif extraction_has_shared_jd(extraction) and chain_user_id:
                 existing_match = await session.execute(
                     select(JobMatchResult).where(
                         JobMatchResult.job_id == actual_job_id,
@@ -4026,7 +4473,10 @@ async def promote_invalid_to_valid(
                 job.extraction_id = extraction.id
                 await session.commit()
                 await enqueue_extraction(
-                    extraction.id, source_url, user_id=user_id, background_tasks=background_tasks
+                    extraction.id,
+                    source_url,
+                    user_id=chain_user_id,
+                    background_tasks=background_tasks,
                 )
 
     logger.info("promote_invalid_to_valid_success", job_id=actual_job_id, user_id=user_id)

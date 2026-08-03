@@ -50,6 +50,8 @@ interface ScraperJobsTableProps {
   rowOffset?: number;
   /** When true, empty-state copy can mention Sync All (admins only). */
   canSync?: boolean;
+  /** Admins run extract-only; applicants run analyze (from saved JD when ready). */
+  isAdmin?: boolean;
   /** Instant patch for AI-search rows (not in paginated store). */
   onAppliedStateChange?: (patches: Array<{
     id: string;
@@ -721,6 +723,7 @@ interface ContextMenuProps {
   postingToSheet: boolean;
   pumbleConfigured: boolean;
   postingToPumble: boolean;
+  isAdmin?: boolean;
 }
 
 function ContextMenu({
@@ -741,6 +744,7 @@ function ContextMenu({
   postingToSheet,
   pumbleConfigured,
   postingToPumble,
+  isAdmin = false,
 }: ContextMenuProps) {
   const multi = targets.length > 1;
   const label = multi ? `${targets.length} jobs` : (job.title ? `"${job.title.slice(0, 28)}${job.title.length > 28 ? '…' : ''}"` : 'this job');
@@ -749,7 +753,9 @@ function ContextMenu({
   const analysisDone = job.match_overall_score != null;
   const isRunning =
     !analysisDone &&
-    (pipelineStatus === 'pending' || pipelineStatus === 'processing' || pipelineStatus === 'extracted');
+    (pipelineStatus === 'pending' ||
+      pipelineStatus === 'processing' ||
+      (!isAdmin && pipelineStatus === 'extracted'));
 
   const unappliedTargets = targets.filter((t) => !dashboardJobMarkedApplied(t));
   const appliedTargets = targets.filter((t) => dashboardJobMarkedApplied(t));
@@ -842,7 +848,11 @@ function ContextMenu({
     'divider' as const,
     {
       icon: isRunning ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />,
-      label: multi ? `Rerun ${targets.length} jobs` : (job.extraction_id ? 'Rerun extraction' : 'Run extraction'),
+      label: multi
+        ? `Prepare ${targets.length} jobs`
+        : (isAdmin
+          ? (job.extraction_id ? 'Re-extract job description' : 'Extract job description')
+          : (job.extraction_id ? 'Analyze with saved JD' : 'Extract then analyze')),
       disabled: isRunning && !multi,
       onClick: () => { onRerun(targets); onClose(); },
     },
@@ -922,6 +932,7 @@ interface BulkBarProps {
   pumbleConfigured: boolean;
   postingToSheet: boolean;
   postingToPumble: boolean;
+  isAdmin?: boolean;
 }
 
 function BulkBar({
@@ -940,6 +951,7 @@ function BulkBar({
   pumbleConfigured,
   postingToSheet,
   postingToPumble,
+  isAdmin = false,
 }: BulkBarProps) {
   const busy = rerunning || deleting || postingToSheet || postingToPumble;
   return (
@@ -954,7 +966,7 @@ function BulkBar({
       <button type="button" onClick={onRerun} disabled={busy}
         className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:opacity-50">
         {rerunning ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-        Rerun selected
+        {isAdmin ? 'Extract selected' : 'Prepare selected'}
       </button>
 
       <button type="button" onClick={onOpenUrls} disabled={busy}
@@ -1022,6 +1034,7 @@ export function ScraperJobsTable({
   onSort,
   rowOffset = 0,
   canSync = false,
+  isAdmin = false,
   onAppliedStateChange,
   onSheetPostedStateChange,
   onPumblePostedStateChange,
@@ -1299,7 +1312,14 @@ export function ScraperJobsTable({
 
   const handleRerun = async (job: DashboardJob) => {
     setRerunningId(job.id);
-    const res = await rerunJob(job.id);
+    const jdReady =
+      job.extraction_status === 'extracted' ||
+      job.extraction_status === 'completed' ||
+      job.match_overall_score != null;
+    // Admin "Re-extract" must reset shared JD; applicants re-analyze without rescrape.
+    const res = await rerunJob(job.id, {
+      forceRescrape: isAdmin && jdReady,
+    });
     setRerunningId(null);
     showToast(res.ok ? 'success' : 'error', res.message);
   };
@@ -1579,6 +1599,7 @@ export function ScraperJobsTable({
           pumbleConfigured={pumbleConfigured}
           postingToSheet={postingToSheet}
           postingToPumble={postingToPumble}
+          isAdmin={isAdmin}
         />
       )}
 
@@ -1690,9 +1711,14 @@ export function ScraperJobsTable({
                   !analysisDone &&
                   (pipelineStatus === 'pending' ||
                     pipelineStatus === 'processing' ||
-                    pipelineStatus === 'extracted');
+                    (!isAdmin && pipelineStatus === 'extracted') ||
+                    (!isAdmin && job.match_in_progress === true));
                 const isRerunning     = isApiCallInFlight || isPipelineRunning;
                 const hasExtraction   = !!job.extraction_id || analysisDone;
+                const jdReady =
+                  pipelineStatus === 'extracted' ||
+                  pipelineStatus === 'completed' ||
+                  analysisDone;
 
                 const isEntering = enteringJobIds.has(job.id);
 
@@ -1863,11 +1889,18 @@ export function ScraperJobsTable({
                             : isPipelineRunning && pipelineStatus === 'pending'    ? 'Queued – waiting for worker'
                             : isPipelineRunning && pipelineStatus === 'processing' ? 'Extracting job description…'
                             : isPipelineRunning && pipelineStatus === 'extracted'  ? 'Analyzing with AI…'
-                            : hasExtraction                   ? 'Rerun full lifecycle'
-                            : 'Run extraction'
+                            : isAdmin
+                              ? (jdReady
+                                ? 'Re-extract shared job description (inventory only)'
+                                : 'Extract shared job description (inventory only)')
+                              : job.match_overall_score != null
+                                ? 'Re-analyze with your profile (uses saved job description)'
+                                : hasExtraction
+                                  ? 'Analyze with your profile (uses saved job description)'
+                                  : 'Extract job description then analyze'
                           }
                           className={[
-                            'relative inline-flex w-[84px] h-[28px] items-center justify-center gap-1 rounded-md border text-xs font-medium transition-all disabled:cursor-not-allowed',
+                            'relative inline-flex w-[96px] h-[28px] items-center justify-center gap-1 rounded-md border text-xs font-medium transition-all disabled:cursor-not-allowed',
                             isPipelineRunning
                               ? 'border-amber-300 bg-amber-50 text-amber-700 opacity-90'
                               : hasExtraction
@@ -1881,8 +1914,11 @@ export function ScraperJobsTable({
                               : isPipelineRunning && pipelineStatus === 'pending'    ? 'Queued'
                               : isPipelineRunning && pipelineStatus === 'processing' ? 'Extracting'
                               : isPipelineRunning && pipelineStatus === 'extracted'  ? 'Analyzing'
-                              : hasExtraction                   ? 'Rerun'
-                              : 'Run'}
+                              : isAdmin
+                                ? (jdReady ? 'Re-extract' : 'Extract')
+                                : job.match_overall_score != null ? 'Re-analyze'
+                                : hasExtraction                   ? 'Analyze'
+                                : 'Run'}
                           </span>
                           {hasExtraction && !isRerunning && (
                             <CheckCircle2 size={10} className="text-emerald-500 shrink-0" />
@@ -1938,6 +1974,7 @@ export function ScraperJobsTable({
           postingToSheet={postingToSheet}
           pumbleConfigured={pumbleConfigured}
           postingToPumble={postingToPumble}
+          isAdmin={isAdmin}
         />
       )}
 

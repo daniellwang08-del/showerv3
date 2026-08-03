@@ -152,6 +152,19 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                 method=method,
                 content_length=content_length,
             )
+            if not user_id:
+                # Platform / admin extract-only: mark shared JD ready so applicants
+                # can start analysis without re-scraping. Applicant runs stay at
+                # EXTRACTED until Phase A advances them to COMPLETED.
+                from app.models.schemas import ExtractionStatus
+                from app.storage.repository import JobExtractionRepository
+
+                async with get_session() as session:
+                    extraction_repo = JobExtractionRepository(session)
+                    await extraction_repo.update_status(job_id, ExtractionStatus.COMPLETED)
+                    await session.commit()
+                logger.info("worker_extract_job_marked_shared_ready", job_id=job_id)
+
             if user_id:
                 await publish_ws_event({
                     "type": "extraction_completed",
@@ -653,7 +666,9 @@ async def _promote_and_publish(
         return None
     try:
         from app.services.scrape_promoter import promote_scrape_run
-        stats = await promote_scrape_run(scrape_run_id, user_id=user_id)
+        # Platform sync always prepares shared JD only (no analyze/tailor for the
+        # syncing admin). Applicants start analysis separately via /prepare.
+        stats = await promote_scrape_run(scrape_run_id, user_id=None)
     except Exception as e:
         logger.exception(
             "scrape_promote_failed",

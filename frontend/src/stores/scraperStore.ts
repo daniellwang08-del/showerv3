@@ -279,7 +279,7 @@ interface ScraperState {
   startSync: (options?: string | SyncTriggerOptions) => Promise<void>;
   dismissSyncNotice: () => void;
 
-  rerunJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
+  rerunJob: (jobId: string, opts?: { forceRescrape?: boolean }) => Promise<{ ok: boolean; message: string }>;
   deleteJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
   batchDeleteJobs: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   batchRerunJobs: (jobIds: string[]) => Promise<{ ok: boolean; partial?: boolean; message: string }>;
@@ -883,29 +883,48 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     }
   },
 
-  rerunJob: async (jobId: string) => {
+  rerunJob: async (jobId, opts) => {
     const job = get().jobs.find((j) => j.id === jobId);
     const url = (job?.source_url ?? '').trim();
     if (!url) {
-      return { ok: false, message: 'This job has no URL to rescrape.' };
+      return { ok: false, message: 'This job has no URL to process.' };
     }
     try {
-      const { data: res } = await apiClient.post(`/jobs/valid/${jobId}/rescrape`, { url });
+      const forceRescrape = !!opts?.forceRescrape;
+      const { data: res } = await apiClient.post(
+        `/jobs/valid/${jobId}/prepare`,
+        null,
+        { params: forceRescrape ? { force_rescrape: true } : undefined },
+      );
       _rerunAt.set(jobId, Date.now());
+      const mode = String(res?.mode || '');
+      const extractionPending = mode === 'extract_then_analyze' || (mode === 'extract_only' && res?.status === 'queued');
       set({
         jobs: get().jobs.map((j) =>
           j.id === jobId
             ? {
                 ...j,
                 extraction_id: res.extraction_id ?? j.extraction_id,
-                extraction_status: 'pending' as const,
+                extraction_status: extractionPending
+                  ? ('pending' as const)
+                  : j.extraction_status,
+                match_in_progress: mode === 'analyze' ? true : j.match_in_progress,
               }
             : j,
         ),
       });
-      return { ok: true, message: res.message || 'Rerun queued.' };
+      return {
+        ok: true,
+        message:
+          res.message
+          || (mode === 'analyze'
+            ? 'Analysis queued from saved job description.'
+            : mode === 'extract_only' && res?.status === 'ready'
+              ? 'Shared job description already prepared.'
+              : 'Pipeline queued.'),
+      };
     } catch (err) {
-      return { ok: false, message: extractErrorMessage(err, 'Failed to rerun extraction.') };
+      return { ok: false, message: extractErrorMessage(err, 'Failed to prepare job.') };
     }
   },
 
@@ -962,6 +981,8 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     const unique = [...new Set(jobIds)];
     const BATCH_LIMIT = 200;
     const enqueuedIds: string[] = [];
+    const analyzeIds: string[] = [];
+    const extractIds: string[] = [];
     const skipped: { id: string; reason: string }[] = [];
 
     try {
@@ -970,30 +991,41 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         const { data: res } = await apiClient.post<{
           status: string;
           enqueued: number;
-          jobs: { job_id: string; extraction_id: string }[];
+          jobs: { job_id: string; mode?: string; extraction_id?: string }[];
           skipped: { id: string; reason: string }[];
-        }>('/jobs/valid/rescrape/batch', { job_ids: chunk });
+        }>('/jobs/valid/prepare/batch', { job_ids: chunk });
 
         for (const j of res.jobs ?? []) {
           enqueuedIds.push(j.job_id);
+          if (j.mode === 'analyze') analyzeIds.push(j.job_id);
+          else if (j.status === 'ready') {
+            /* shared JD already prepared — no UI pending state */
+          } else extractIds.push(j.job_id);
         }
         for (const s of res.skipped ?? []) {
           skipped.push(s);
         }
       }
 
-      const queuedSet = new Set(enqueuedIds);
+      const analyzeSet = new Set(analyzeIds);
+      const extractSet = new Set(extractIds);
       set({
-        jobs: get().jobs.map((j) =>
-          queuedSet.has(j.id) ? { ...j, extraction_status: 'pending' as const } : j,
-        ),
+        jobs: get().jobs.map((j) => {
+          if (extractSet.has(j.id)) {
+            return { ...j, extraction_status: 'pending' as const };
+          }
+          if (analyzeSet.has(j.id)) {
+            return { ...j, match_in_progress: true };
+          }
+          return j;
+        }),
       });
 
       const allOk = skipped.length === 0 && enqueuedIds.length === unique.length;
       const anyOk = enqueuedIds.length > 0;
       const msg =
         skipped.length === 0
-          ? `Queued ${enqueuedIds.length} job${enqueuedIds.length === 1 ? '' : 's'} for rerun.`
+          ? `Queued ${enqueuedIds.length} job${enqueuedIds.length === 1 ? '' : 's'} (${analyzeIds.length} analyze, ${extractIds.length} extract).`
           : `Queued ${enqueuedIds.length}, skipped ${skipped.length}.`;
 
       return {
@@ -1002,7 +1034,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         message: msg,
       };
     } catch (err) {
-      return { ok: false, partial: false, message: extractErrorMessage(err, 'Batch rerun failed.') };
+      return { ok: false, partial: false, message: extractErrorMessage(err, 'Batch prepare failed.') };
     }
   },
 

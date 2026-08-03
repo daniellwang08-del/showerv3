@@ -105,15 +105,19 @@ export function ScraperDashboard() {
 
   // Poll every 6 s while any job is mid-pipeline so dots/badges update live.
   useEffect(() => {
-    const EXTRACTION_IN_PROGRESS = new Set(['pending', 'processing', 'extracted']);
+    const EXTRACTION_IN_PROGRESS = new Set(['pending', 'processing']);
+    const APPLICANT_EXTRACTION_IN_PROGRESS = new Set(['pending', 'processing', 'extracted']);
     const RESUME_IN_PROGRESS     = new Set(['pending', 'processing']);
     const CONTENT_IN_PROGRESS = new Set(['pending', 'processing']);
+    const extractionInProgress = isAdmin
+      ? EXTRACTION_IN_PROGRESS
+      : APPLICANT_EXTRACTION_IN_PROGRESS;
     const hasInProgress = jobs.some(
       (j) =>
         (j.match_overall_score == null &&
           j.extraction_status &&
-          EXTRACTION_IN_PROGRESS.has(j.extraction_status)) ||
-        (j.match_in_progress === true) ||
+          extractionInProgress.has(j.extraction_status)) ||
+        (!isAdmin && j.match_in_progress === true) ||
         (j.content_generation_status && CONTENT_IN_PROGRESS.has(j.content_generation_status)) ||
         (j.resume_build_status && RESUME_IN_PROGRESS.has(j.resume_build_status)),
     );
@@ -130,7 +134,7 @@ export function ScraperDashboard() {
     return () => {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
-  }, [jobs]);
+  }, [jobs, isAdmin]);
 
   useEffect(() => {
     if (!syncing) return;
@@ -288,6 +292,7 @@ export function ScraperDashboard() {
         onSort={setSort}
         rowOffset={(page - 1) * perPage}
         canSync={isAdmin}
+        isAdmin={isAdmin}
       />
 
       {total > 0 && (

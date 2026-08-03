@@ -361,7 +361,11 @@ async def _rerun_scraped_job_lifecycle(
     *,
     user_id: str | None,
 ) -> RerunResponse:
-    """Run the full extraction → analysis → resume lifecycle for one scraped row."""
+    """Re-promote / re-extract a scraped row for shared JD inventory.
+
+    Platform scraped jobs are always extraction-only (``pipeline_user_id=None``).
+    ``user_id`` is kept for API compatibility / logging only.
+    """
     from sqlalchemy import text
 
     from app.models.database import JobExtraction
@@ -374,6 +378,9 @@ async def _rerun_scraped_job_lifecycle(
     )
 
     from app.services.linkedin_job_filter import linkedin_job_block_reason
+
+    # Shared catalog: never chain personal analyze/tailor from scraped-job rerun.
+    pipeline_user_id = None
 
     job_id = str(scraped.get("id") or "")
     target_url = pick_target_url(scraped)
@@ -406,7 +413,7 @@ async def _rerun_scraped_job_lifecycle(
 
     if not promoted_extraction_id:
         outcome = await promote_single_scraped_row(
-            scraped, scrape_run_id=None, enqueue=True, user_id=user_id
+            scraped, scrape_run_id=None, enqueue=True, user_id=pipeline_user_id
         )
         return _rerun_response_from_promote_outcome(job_id, outcome)
 
@@ -419,12 +426,12 @@ async def _rerun_scraped_job_lifecycle(
             )
             await session.commit()
             outcome = await promote_single_scraped_row(
-                scraped, scrape_run_id=None, enqueue=True, user_id=user_id
+                scraped, scrape_run_id=None, enqueue=True, user_id=pipeline_user_id
             )
             result = _rerun_response_from_promote_outcome(job_id, outcome)
             if result.status == "enqueued":
                 result.message = (
-                    "Stale promotion link cleared; re-promoted and enqueued for full lifecycle."
+                    "Stale promotion link cleared; re-promoted and enqueued for extraction."
                 )
             return result
 
@@ -450,38 +457,22 @@ async def _rerun_scraped_job_lifecycle(
                 "eid": promoted_extraction_id,
             },
         )).mappings().first()
-        job_id: str | None = str(vj_row["id"]) if vj_row else None
-
-        if user_id and job_id:
-            await session.execute(
-                text(
-                    "DELETE FROM job_match_results "
-                    "WHERE job_id = :vjid AND user_id = :uid"
-                ),
-                {"vjid": job_id, "uid": user_id},
-            )
-            await session.execute(
-                text(
-                    "DELETE FROM resume_build_results "
-                    "WHERE job_id = :vjid AND user_id = :uid"
-                ),
-                {"vjid": job_id, "uid": user_id},
-            )
+        valid_job_id: str | None = str(vj_row["id"]) if vj_row else None
 
         await session.commit()
 
     enqueued = await enqueue_extraction_for_url(
-        promoted_extraction_id, target_url, user_id=user_id
+        promoted_extraction_id, target_url, user_id=pipeline_user_id
     )
     return RerunResponse(
         status="enqueued" if enqueued else "enqueue_failed",
         scraped_job_id=job_id,
         extraction_id=promoted_extraction_id,
-        job_id=job_id,
+        job_id=valid_job_id,
         target_url=target_url,
         enqueued=enqueued,
         message=(
-            "Existing extraction reset and re-enqueued for full lifecycle."
+            "Existing extraction reset and re-enqueued (shared JD only)."
             if enqueued
             else "Extraction reset but queue unavailable."
         ),
