@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -145,7 +145,7 @@ const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   // 1.5× prior 130px so labels like "Welcome to the Jungle" fit without clipping.
   added_from: '195px',
   created_at: '68px',
-  __processing__: '108px',
+  __processing__: '120px',
   __resume__: '108px',
   __cover__: '108px',
   __status__: '112px',
@@ -479,7 +479,7 @@ const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number
   return (
     <div
       title={`Match score: ${score}/100 - ${scoreLabel(score)}`}
-      className={`inline-flex h-[28px] items-center gap-1.5 rounded-lg border px-2.5 shadow-sm ${scoreColors(score)}`}
+      className={`inline-flex h-[28px] max-w-full shrink-0 items-center gap-1.5 rounded-lg border px-2.5 shadow-sm ${scoreColors(score)}`}
     >
       <Sparkles size={11} className="shrink-0 opacity-75" />
       <span className="text-sm font-bold tabular-nums leading-none">{score}</span>
@@ -556,27 +556,45 @@ function WorkModeBadge({ mode, isRemoteFallback }: { mode: string | null | undef
   return <span className="text-slate-300 text-xs">-</span>;
 }
 
-/** Match column: score only (or pipeline dots). Integration badges live in Status. */
+/** Match column: score only (or pipeline dots). Integration badges live in Status.
+ *
+ * Both states must share the same right edge. Unscored rows used to left-align the
+ * dots inside a block sized by the "No score yet" caption, so the dots sat left of
+ * score badges on neighboring rows.
+ */
 const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
   if (job.match_overall_score != null) {
     return <MatchScoreBadge score={job.match_overall_score} />;
   }
 
   const dots = processingDots(job);
+  let caption: ReactNode = null;
+  if (job.match_in_progress) {
+    caption = (
+      <span className="flex items-center gap-1 text-[10px] font-medium leading-none text-blue-500 animate-pulse dark:text-sky-300">
+        <Sparkles size={9} className="shrink-0" />
+        Matching…
+      </span>
+    );
+  } else if (job.extraction_status === 'completed') {
+    caption = (
+      <span className="text-[10px] font-medium leading-none text-slate-400 dark:text-slate-600">
+        No score yet
+      </span>
+    );
+  }
+
   return (
-    <div className="flex h-[28px] flex-col justify-center gap-0.5">
-      <div className="flex h-[10px] items-center gap-2">
+    <div
+      className="flex h-[28px] w-full min-w-0 flex-col items-end justify-center gap-0.5"
+      title="Pipeline progress: scrape → structure → documents"
+    >
+      <div className="flex h-[10px] shrink-0 items-center justify-end gap-1.5">
         {dots.map((dot) => (
           <StatusDot key={dot.label} {...dot} />
         ))}
       </div>
-      {job.match_in_progress ? (
-        <span className="flex items-center gap-1 text-[10px] font-medium text-blue-500 animate-pulse">
-          <Sparkles size={9} />Matching…
-        </span>
-      ) : job.extraction_status === 'completed' ? (
-        <span className="text-[10px] font-medium leading-none text-slate-400">No score yet</span>
-      ) : null}
+      {caption}
     </div>
   );
 });
@@ -1858,28 +1876,28 @@ export function ScraperJobsTable({
 
                     {/* Match (score only) */}
                     <td className={`${CELL} text-right`}>
-                      <div className="inline-flex justify-end">
+                      <div className="flex h-[28px] w-full items-center justify-end">
                         <MatchCell job={job} />
                       </div>
                     </td>
 
                     {/* Resume */}
                     <td className={`${CELL} text-right`} onClick={(e) => e.stopPropagation()}>
-                      <div className="inline-flex justify-end">
+                      <div className="flex h-[28px] w-full items-center justify-end">
                         <ResumeDocCell job={job} />
                       </div>
                     </td>
 
                     {/* Cover letter */}
                     <td className={`${CELL} text-right`} onClick={(e) => e.stopPropagation()}>
-                      <div className="inline-flex justify-end">
+                      <div className="flex h-[28px] w-full items-center justify-end">
                         <CoverDocCell job={job} />
                       </div>
                     </td>
 
                     {/* Status actions: Applied · Sheets? · Pumble? */}
                     <td className={`${CELL} text-right`}>
-                      <div className="inline-flex justify-end">
+                      <div className="flex h-[28px] w-full items-center justify-end">
                         <StatusSquaresCell
                           job={job}
                           sheetsConfigured={sheetsConfigured}
