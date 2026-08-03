@@ -26,6 +26,14 @@ function AdminOnly({ isAdmin, children }: { isAdmin: boolean; children: React.Re
   return <>{children}</>;
 }
 
+/** Applicant-only tools — admins prepare shared jobs and manage the platform. */
+function ApplicantOnly({ isAdmin, children }: { isAdmin: boolean; children: React.ReactNode }) {
+  if (isAdmin) {
+    return <Navigate to="/scraper" replace />;
+  }
+  return <>{children}</>;
+}
+
 function App() {
   const { isAuthenticated, user, authPage, logout, onAuthSuccess, refreshUser } = useAuth();
 
@@ -173,11 +181,39 @@ function App() {
           }
         >
           <Route path="/scraper" element={<ScraperDashboard />} />
-          <Route path="/profile" element={<ProfilePage user={user} onLogout={logout} onProfileSaved={refreshUser} />} />
-          <Route path="/preferences" element={<MyPreferencesPage />} />
-          <Route path="/settings" element={<Navigate to="/preferences" replace />} />
+          <Route
+            path="/profile"
+            element={
+              <ApplicantOnly isAdmin={!!user?.is_admin}>
+                <ProfilePage user={user} onLogout={logout} onProfileSaved={refreshUser} />
+              </ApplicantOnly>
+            }
+          />
+          <Route
+            path="/preferences"
+            element={
+              <ApplicantOnly isAdmin={!!user?.is_admin}>
+                <MyPreferencesPage />
+              </ApplicantOnly>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ApplicantOnly isAdmin={!!user?.is_admin}>
+                <Navigate to="/preferences" replace />
+              </ApplicantOnly>
+            }
+          />
           <Route path="/integrations" element={<IntegrationsPage />} />
-          <Route path="/resume-builder" element={<ResumeBuilderPage />} />
+          <Route
+            path="/resume-builder"
+            element={
+              <ApplicantOnly isAdmin={!!user?.is_admin}>
+                <ResumeBuilderPage />
+              </ApplicantOnly>
+            }
+          />
           <Route
             path="/data-analysis"
             element={

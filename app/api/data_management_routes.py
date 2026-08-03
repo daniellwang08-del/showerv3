@@ -379,8 +379,9 @@ async def rescrape_data_management_jobs(
                 skipped.append({"id": job_id, "reason": "no_url"})
                 continue
             try:
+                # Admin inventory refresh: reset shared extraction only (no personal chain).
                 extraction_id = await _prepare_job_rescrape_in_session(
-                    session, job, source_url, user_id
+                    session, job, source_url, None
                 )
             except ValueError as e:
                 skipped.append({"id": job_id, "reason": str(e)[:200]})
@@ -390,7 +391,7 @@ async def rescrape_data_management_jobs(
         await enqueue_extraction(
             extraction_id,
             source_url,
-            user_id=user_id,
+            user_id=None,
             background_tasks=background_tasks,
         )
         jobs_out.append({"job_id": job_id, "extraction_id": extraction_id})

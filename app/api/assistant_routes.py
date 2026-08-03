@@ -53,6 +53,7 @@ from app.models.database import (
     ValidJobUserApplication,
 )
 from app.models.schemas import ExtractionStatus
+from app.services.job_pipeline_mode import extraction_has_shared_jd
 from app.storage.database import get_session
 from app.utils.date_bounds import day_bounds_for_timezone
 
@@ -127,7 +128,7 @@ async def _load_job_snapshot(session, job_id: str, user_id: str) -> tuple[Job | 
     ).scalar_one_or_none()
 
     ext_status = getattr(extraction, "status", None)
-    ready = extraction is not None and ext_status == ExtractionStatus.COMPLETED
+    ready = extraction is not None and extraction_has_shared_jd(extraction)
 
     snapshot: dict[str, Any] = {
         "job_id": job.id,
