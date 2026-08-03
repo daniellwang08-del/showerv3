@@ -1,16 +1,15 @@
 """Authenticated HTTP session for RemoteRocketship.
 
-Uses cookies saved during one-time browser setup (app.scraper.auth) and
-injects them into a curl_cffi session with Chrome TLS impersonation.
+Fetches via curl_cffi with pinned Chrome TLS fingerprints and optional
+residential proxies (``SCRAPER_PROXY_LIST_PATH``).
 
 Evidence (2026-08-03):
-  - Default ``impersonate="chrome"`` (and chrome131/chrome136) get a Cloudflare
-    403 "Just a moment..." challenge on remoterocketship.com.
-  - ``impersonate="chrome124"`` returns HTTP 200 for homepage + API.
-  - Aggressive retry storms against CF burn the IP temporarily; keep retries
-    few and spaced.
-  - Scrapy's own TLS handshake to remoterocketship.com also triggers CF and
-    must not precede curl_cffi fetches (handled in the spider).
+  - Floating ``impersonate="chrome"`` → chrome146 → Cloudflare 403 challenge.
+  - Direct home IP can burn such that every fingerprint gets CF 403.
+  - Residential proxy ``151.247.185.166`` + ``chrome123`` returned HTTP 200
+    with jobs while ``chrome124`` on the same proxy still got CF 403.
+  - Headless Playwright does not clear remoterocketship managed challenges.
+  - Scrapy must not TLS-handshake remoterocketship.com (handled in the spider).
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ import random
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from curl_cffi import requests as cffi_requests
 
@@ -27,8 +27,11 @@ from app.scraper.auth import load_session
 
 logger = logging.getLogger(__name__)
 
-# Only fingerprint proven to pass remoterocketship.com Cloudflare as of 2026-08-03.
-IMPERSONATE_CANDIDATES = ("chrome124",)
+# Prefer fingerprints proven to pass remoterocketship CF via residential proxy.
+# Never use the floating alias "chrome" (maps to chrome146 → blocked).
+IMPERSONATE_CANDIDATES = ("chrome123", "chrome124", "chrome116", "chrome110")
+# Back-compat alias used by tests / logs.
+IMPERSONATE = IMPERSONATE_CANDIDATES[0]
 
 BROWSER_HEADERS = {
     "Accept": "application/json, text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -54,22 +57,64 @@ _CF_TEXT_HINTS = (
 
 
 def _load_proxies(proxy_path: str) -> list[str]:
+    """Load proxy URLs from a text file (one per line).
+
+    Accepted line formats:
+      - http://user:pass@host:port
+      - host:port:user:pass
+      - host:port user pass   (whitespace / tab separated)
+      - host:port            (no auth)
+    """
     if not proxy_path:
         return []
     p = Path(proxy_path)
+    if not p.is_absolute():
+        from app.scraper.config import PROJECT_ROOT
+        p = PROJECT_ROOT / p
     if not p.exists():
+        logger.warning("Proxy list file not found: %s", p)
         return []
-    lines = p.read_text().strip().splitlines()
-    return [l.strip() for l in lines if l.strip() and not l.startswith("#")]
+    lines = p.read_text(encoding="utf-8").strip().splitlines()
+    out: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parsed = _parse_proxy_line(line)
+        if parsed:
+            out.append(parsed)
+    return out
 
 
-def _pick_proxy(proxies: list[str]) -> Optional[str]:
-    if not proxies:
-        return None
-    proxy = random.choice(proxies)
-    if not proxy.startswith("http"):
-        proxy = f"http://{proxy}"
-    return proxy
+def _parse_proxy_line(line: str) -> Optional[str]:
+    """Normalize a single proxy line into ``http://user:pass@host:port``."""
+    if "://" in line:
+        return line
+
+    # host:port:user:pass
+    parts_colon = line.split(":")
+    if len(parts_colon) == 4 and parts_colon[1].isdigit():
+        host, port, user, password = parts_colon
+        return (
+            f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
+        )
+
+    # host:port<whitespace>user<whitespace>pass
+    tokens = line.replace("\t", " ").split()
+    if len(tokens) == 3 and ":" in tokens[0]:
+        hostport, user, password = tokens
+        host, _, port = hostport.partition(":")
+        if host and port.isdigit():
+            return (
+                f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
+            )
+
+    # host:port (no auth)
+    if len(parts_colon) == 2 and parts_colon[1].isdigit():
+        return f"http://{line}"
+
+    logger.warning("Unrecognized proxy line format: %s", line[:60])
+    return None
 
 
 def is_cloudflare_challenge_response(
@@ -93,22 +138,39 @@ def is_cloudflare_challenge_response(
 
 
 class CloudflareSession:
-    """HTTP session that loads saved cookies and fetches via curl_cffi.
+    """HTTP session for RRS: proxy + rotating Chrome TLS fingerprints.
 
-    Cookies are saved by `python -m app.scraper.auth capture rrs`. Listing
-    endpoints work without cookies once Cloudflare is bypassed; cookies are
-    still injected when present.
+    Complete reliability against remoterocketship Cloudflare requires:
+      1. Residential proxies via ``SCRAPER_PROXY_LIST_PATH``
+      2. Fingerprint rotation (chrome123/124/…) — CF blocks specific JA3s per IP
+      3. Never using the floating ``chrome`` alias
     """
 
-    def __init__(self, proxy_path: str = "", timeout: int = 20):
+    def __init__(self, proxy_path: str = "", timeout: int = 25):
         self.timeout = timeout
         self.proxies_list = _load_proxies(proxy_path)
-        self._session: Optional[cffi_requests.Session] = None
+        self._proxy_index = 0
+        self._current_proxy: Optional[str] = None
+        self._impersonate_index = 0
         self._impersonate: str = IMPERSONATE_CANDIDATES[0]
+        self._cf_hits_on_fingerprint = 0
+        self._session: Optional[cffi_requests.Session] = None
         self._authenticated = False
         self.last_status_code: Optional[int] = None
         self.last_failure_reason: Optional[str] = None
         self._cookies: list[dict] = []
+        if self.proxies_list:
+            logger.info(
+                "RRS CloudflareSession loaded %d proxies from %s",
+                len(self.proxies_list),
+                proxy_path,
+            )
+            self._current_proxy = self.proxies_list[0]
+        else:
+            logger.warning(
+                "RRS CloudflareSession has no proxies configured "
+                "(SCRAPER_PROXY_LIST_PATH). Cloudflare blocks are much more likely."
+            )
         self._create_session(self._impersonate)
         self._load_saved_session()
 
@@ -170,30 +232,47 @@ class CloudflareSession:
     def is_authenticated(self) -> bool:
         return self._authenticated
 
-    def _get_proxy_dict(self) -> dict:
-        proxy = _pick_proxy(self.proxies_list)
-        if proxy:
-            return {"http": proxy, "https": proxy}
-        return {}
+    def _proxy_dict(self) -> dict:
+        if not self._current_proxy:
+            return {}
+        return {"http": self._current_proxy, "https": self._current_proxy}
 
-    def fetch(self, url: str, max_retries: int = 2) -> Optional[str]:
-        """Fetch a URL using curl_cffi with chrome124 impersonation.
+    def _rotate_proxy(self) -> None:
+        if not self.proxies_list:
+            return
+        self._proxy_index = (self._proxy_index + 1) % len(self.proxies_list)
+        self._current_proxy = self.proxies_list[self._proxy_index]
+        host = self._current_proxy.split("@")[-1]
+        logger.info("Rotated RRS proxy egress → %s", host)
+
+    def _rotate_impersonate(self) -> str:
+        self._impersonate_index = (self._impersonate_index + 1) % len(IMPERSONATE_CANDIDATES)
+        nxt = IMPERSONATE_CANDIDATES[self._impersonate_index]
+        logger.info("Rotating TLS impersonation → %s", nxt)
+        self._create_session(nxt)
+        return nxt
+
+    def fetch(self, url: str, max_retries: int | None = None) -> Optional[str]:
+        """Fetch via proxy + fingerprint rotation until success or exhausted.
 
         Returns the body on success, None on failure.
         On failure, ``last_failure_reason`` and ``last_status_code`` are set.
-
-        Do not pre-hit the homepage: a failed warm-up challenge burns the IP
-        before the real API call. Cloudflare cool-downs after challenges are
-        long (~1–2 minutes); retries use a matching backoff.
         """
         self.last_status_code = None
         self.last_failure_reason = None
 
-        for attempt in range(max_retries):
+        # Each candidate fingerprint once, then one cool-down pass if no proxies.
+        attempts = max_retries
+        if attempts is None:
+            attempts = len(IMPERSONATE_CANDIDATES) * max(1, len(self.proxies_list) or 1)
+            attempts = min(max(attempts, 4), 12)
+
+        for attempt in range(attempts):
             try:
                 html = self._try_curl_cffi(url)
                 if html is not None:
                     self.last_failure_reason = None
+                    self._cf_hits_on_fingerprint = 0
                     return html
 
                 reason = self.last_failure_reason
@@ -201,25 +280,38 @@ class CloudflareSession:
                     return None
 
                 if reason == "cloudflare_blocked":
-                    if attempt + 1 >= max_retries:
-                        break
-                    delay = 50.0 + random.uniform(0, 20.0)
+                    self._cf_hits_on_fingerprint += 1
+                    # Evidence: after a cool-down, retrying the SAME fingerprint
+                    # (chrome123) succeeded; rotating before the wait burned attempts
+                    # on chrome124 which still failed on this proxy.
+                    if self._cf_hits_on_fingerprint >= 2:
+                        self._rotate_impersonate()
+                        self._cf_hits_on_fingerprint = 0
+                        if self.proxies_list and len(self.proxies_list) > 1:
+                            self._rotate_proxy()
+
+                    if self.proxies_list and len(self.proxies_list) > 1:
+                        delay = 2.0 + random.uniform(0, 2.0)
+                    else:
+                        # Single/no proxy: CF burns the egress IP if we hammer it.
+                        delay = 55.0 + random.uniform(0, 25.0)
                     logger.warning(
-                        "Cloudflare challenge (impersonate=%s) — cool-down "
-                        "retry %d/%d in %.0fs",
-                        self._impersonate,
+                        "Cloudflare challenge — retry %d/%d in %.0fs "
+                        "(impersonate=%s, proxy=%s)",
                         attempt + 1,
-                        max_retries,
+                        attempts,
                         delay,
+                        self._impersonate,
+                        "yes" if self._current_proxy else "none",
                     )
                     time.sleep(delay)
                     continue
 
-                delay = (2 ** attempt) + random.uniform(0, 1)
+                delay = (2 ** min(attempt, 3)) + random.uniform(0, 1)
                 logger.warning(
                     "Retry %d/%d for %s in %.1fs (reason=%s)",
                     attempt + 1,
-                    max_retries,
+                    attempts,
                     url,
                     delay,
                     reason,
@@ -229,32 +321,34 @@ class CloudflareSession:
             except Exception as e:
                 self.last_failure_reason = "fetch_failed"
                 logger.error("Fetch error on attempt %d for %s: %s", attempt + 1, url, e)
-                delay = (2 ** attempt) + random.uniform(0, 1)
+                delay = (2 ** min(attempt, 3)) + random.uniform(0, 1)
                 time.sleep(delay)
 
         if not self.last_failure_reason:
             self.last_failure_reason = "fetch_failed"
         logger.error(
-            "Fetch failed for %s (reason=%s, status=%s, impersonate=%s)",
+            "Fetch failed for %s (reason=%s, status=%s, impersonate=%s, proxy=%s)",
             url,
             self.last_failure_reason,
             self.last_status_code,
             self._impersonate,
+            "yes" if self._current_proxy else "none",
         )
         return None
 
     def _try_curl_cffi(self, url: str) -> Optional[str]:
         try:
-            proxy_dict = self._get_proxy_dict()
-            resp = self._session.get(url, proxies=proxy_dict)
+            proxy_dict = self._proxy_dict()
+            resp = self._session.get(url, proxies=proxy_dict or None)
             self.last_status_code = resp.status_code
             body = resp.text or ""
             logger.info(
-                "curl_cffi[%s] %s → %d (%d bytes)",
+                "curl_cffi[%s] %s → %d (%d bytes)%s",
                 self._impersonate,
                 url[:80],
                 resp.status_code,
                 len(resp.content),
+                " via proxy" if proxy_dict else "",
             )
 
             if is_cloudflare_challenge_response(
@@ -292,6 +386,10 @@ class CloudflareSession:
         except Exception as e:
             self.last_failure_reason = "fetch_failed"
             logger.error("curl_cffi request failed for %s: %s", url, e)
+            # Proxy connection failures should rotate too.
+            if self.proxies_list and len(self.proxies_list) > 1:
+                self._rotate_proxy()
+                self._create_session(self._impersonate)
             return None
 
     def close(self):

@@ -446,7 +446,8 @@ async def run_spider(
             elif run_status == "cloudflare_blocked":
                 result["message"] = (
                     "Cloudflare blocked the scraper (browser challenge). "
-                    "Retry later or re-capture a fresh browser session."
+                    "Configure residential proxies via SCRAPER_PROXY_LIST_PATH "
+                    "for durable recovery, then retry."
                 )
 
         if success:

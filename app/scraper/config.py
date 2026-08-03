@@ -41,6 +41,16 @@ def _build_sync_database_url() -> str:
     return url
 
 
+def _resolve_proxy_list_path(path: str) -> str:
+    """Resolve relative proxy list paths against the project root."""
+    if not path:
+        return ""
+    p = Path(path)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return str(p)
+
+
 def get_scraper_settings() -> ScraperSettings:
     sync_url = _build_sync_database_url()
 
@@ -52,12 +62,16 @@ def get_scraper_settings() -> ScraperSettings:
             ADZUNA_APP_ID=getattr(main_settings, "adzuna_app_id", ""),
             ADZUNA_APP_KEY=getattr(main_settings, "adzuna_app_key", ""),
             ZIPRECRUITER_API_KEY=getattr(main_settings, "ziprecruiter_api_key", ""),
-            PROXY_LIST_PATH=getattr(main_settings, "scraper_proxy_list_path", ""),
+            PROXY_LIST_PATH=_resolve_proxy_list_path(
+                getattr(main_settings, "scraper_proxy_list_path", "")
+            ),
         )
     except Exception:
         s = ScraperSettings()
         if sync_url:
             s.DATABASE_URL = sync_url
+        env_path = os.environ.get("SCRAPER_PROXY_LIST_PATH", s.PROXY_LIST_PATH)
+        s.PROXY_LIST_PATH = _resolve_proxy_list_path(env_path)
         return s
 
 

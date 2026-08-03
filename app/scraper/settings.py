@@ -5,6 +5,7 @@ same PostgreSQL instance as the rest of the application.
 """
 
 import os
+from pathlib import Path
 
 BOT_NAME = "scraper"
 
@@ -83,5 +84,27 @@ def _get_database_url() -> str:
 
 
 DATABASE_URL = _get_database_url()
+
+
+def _get_proxy_list_path() -> str:
+    """Resolve residential proxy list path for spiders (esp. RRS CloudflareSession)."""
+    path = os.environ.get("SCRAPER_PROXY_LIST_PATH", "")
+    if not path:
+        try:
+            from app.core.config import get_settings
+            path = get_settings().scraper_proxy_list_path or ""
+        except Exception:
+            path = ""
+    if not path:
+        return ""
+    p = Path(path)
+    if not p.is_absolute():
+        from app.scraper.config import PROJECT_ROOT
+        p = PROJECT_ROOT / p
+    return str(p) if p.exists() else str(p)
+
+
+# Imported by remoterocketship spider → CloudflareSession(proxy_path=...).
+PROXY_LIST_PATH = _get_proxy_list_path()
 
 REQUEST_FINGERPRINTER_IMPLEMENTATION = "2.7"
