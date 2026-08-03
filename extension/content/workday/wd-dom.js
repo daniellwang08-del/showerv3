@@ -238,15 +238,23 @@
     }
     try {
       const bytes = Uint8Array.from(atob(file.base64), (c) => c.charCodeAt(0));
-      const f = new File([bytes], file.filename || "resume.pdf", {
-        type: file.mime || "application/octet-stream",
-      });
+      const name = file.filename || "resume.pdf";
+      const mime =
+        file.mime ||
+        (/\.pdf$/i.test(name) ? "application/pdf" : "application/octet-stream");
+      const f = new File([bytes], name, { type: mime });
       const dt = new DataTransfer();
       dt.items.add(f);
       el.files = dt.files;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
+      // Some Workday tenants only commit after a bubbling InputEvent as well.
+      try {
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+      } catch {}
+      const ok = !!(el.files && el.files.length);
+      try { WD.log("attachFile: set files=", ok ? el.files[0].name : "none", "mime=", mime, "bytes=", bytes.length); } catch {}
+      return ok;
     } catch (e) {
       try { WD.warn("attachFile: exception", (e && e.message) || e); } catch {}
       return false;

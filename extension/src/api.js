@@ -246,22 +246,63 @@ export const getAutofillProfile = (jobId, resumeSource = "original") =>
 export async function downloadResumeFile(jobId, fileType) {
   const url = await buildUrl(`/jobs/valid/${jobId}/resume-build/download/${fileType}`);
   const h = await authHeaders({});
-  const res = await fetch(url, { method: "GET", headers: h });
+  let res;
+  try {
+    res = await fetch(url, { method: "GET", headers: h });
+  } catch (networkErr) {
+    throw new ApiError(
+      `Cannot download ${fileType}: backend unreachable. Confirm the extension is signed in to https://robertstaff.com (reload the extension after switching off localhost).`,
+      0
+    );
+  }
   if (res.status === 401) {
     await clearToken();
     throw new ApiError("Your session expired. Please sign in again.", 401);
   }
   if (!res.ok) {
-    throw new ApiError(`Could not fetch ${fileType} (${res.status}).`, res.status);
+    let detail = `Could not fetch ${fileType} (${res.status}).`;
+    try {
+      const body = await res.json();
+      if (body && body.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    } catch {
+      /* ignore non-JSON error bodies */
+    }
+    throw new ApiError(detail, res.status);
   }
-  const blob = await res.blob();
-  const buf = await blob.arrayBuffer();
+  const buf = await res.arrayBuffer();
+  if (!buf || buf.byteLength < 8) {
+    throw new ApiError(`${fileType} download was empty.`, res.status || 500);
+  }
+  const bytes = new Uint8Array(buf);
+  const isPdf = fileType.endsWith("_pdf");
+  if (isPdf) {
+    const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
+    if (magic !== "%PDF-") {
+      throw new ApiError(
+        `${fileType} download was not a PDF (server may have returned an error page). Re-login to the extension and retry.`,
+        500
+      );
+    }
+  }
   const base64 = arrayBufferToBase64(buf);
-  let filename = `${fileType}`;
+  let filename = `${fileType}${isPdf ? ".pdf" : ".docx"}`;
   const disp = res.headers.get("Content-Disposition") || "";
-  const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disp);
-  if (m) filename = decodeURIComponent(m[1].replace(/"/g, ""));
-  return { base64, filename, mime: blob.type || "application/octet-stream" };
+  // Prefer RFC 5987 filename*=, then plain filename=
+  const star = /filename\*\s*=\s*(?:UTF-8''|utf-8'')([^;]+)/i.exec(disp);
+  const plain = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^";]+)/i.exec(disp);
+  if (star) {
+    try {
+      filename = decodeURIComponent(star[1].trim().replace(/["']/g, ""));
+    } catch {
+      filename = star[1].trim().replace(/["']/g, "");
+    }
+  } else if (plain) {
+    filename = (plain[1] || plain[2] || filename).trim().replace(/["']/g, "");
+  }
+  const mime = isPdf
+    ? "application/pdf"
+    : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  return { base64, filename, mime };
 }
 
 function arrayBufferToBase64(buf) {

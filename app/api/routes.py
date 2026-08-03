@@ -4498,7 +4498,6 @@ async def download_resume_file(
 ):
     """Download a generated resume or cover letter file."""
     from fastapi.responses import FileResponse
-    from pathlib import Path
 
     user_id = current_user.get("user_id")
     if not user_id:
@@ -4519,8 +4518,13 @@ async def download_resume_file(
     if not file_path:
         raise HTTPException(status_code=404, detail=f"{file_type} not generated yet")
 
-    p = Path(file_path)
-    if not p.exists():
+    # Resolve relative DB paths against project root / RESUME_OUTPUT_ROOT so
+    # downloads (and the extension autofill attach flow) keep working after
+    # local→VPS moves or CWD differences between API and workers.
+    from app.services.resume_builder_service import resolve_resume_artifact_path
+
+    p = resolve_resume_artifact_path(file_path)
+    if p is None or not p.is_file():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
     media_type = "application/pdf" if file_type.endswith("_pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

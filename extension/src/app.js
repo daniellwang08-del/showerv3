@@ -1926,10 +1926,11 @@ async function startWorkdayAutofill(tab, engine) {
   let resumeFile = null;
   try {
     resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
-    console.debug("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)");
+    console.debug("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)", "b64=", resumeFile && resumeFile.base64 && resumeFile.base64.length);
   } catch (e) {
     console.warn("[workday] resume PDF download failed:", (e && e.message) || e);
     resumeFile = null;
+    toast((e && e.message) || "Could not download the tailored resume PDF for upload.");
   }
 
   // Auto-advance: drive the whole flow (fill → flush → recover → Save) until the
@@ -2673,6 +2674,7 @@ async function fetchRoleFile(jobId, role, accept, cache) {
   const order = wantsDocxFirst
     ? [`${role}_docx`, `${role}_pdf`]
     : [`${role}_pdf`, `${role}_docx`];
+  let lastErr = null;
   for (const fileType of order) {
     if (fileType in cache) {
       if (cache[fileType]) return cache[fileType];
@@ -2681,10 +2683,15 @@ async function fetchRoleFile(jobId, role, accept, cache) {
     try {
       cache[fileType] = await api.downloadResumeFile(jobId, fileType);
       return cache[fileType];
-    } catch {
+    } catch (err) {
+      lastErr = err;
       cache[fileType] = null;
+      try {
+        console.warn(`[autofill] download ${fileType} failed:`, (err && err.message) || err);
+      } catch {}
     }
   }
+  if (lastErr) cache.__lastError = lastErr;
   return null;
 }
 
@@ -2996,6 +3003,11 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
           reason: `Upload manually - ${why}`,
         });
       }
+    }
+    if (missing.length) {
+      try {
+        console.warn("[autofill] missing generated files for upload:", missing);
+      } catch {}
     }
 
     const writeCount = results.reduce((n, r) => n + (r.controls || []).length, 0);
@@ -6786,10 +6798,11 @@ async function rerunWorkday() {
     let resumeFile = null;
     try {
       resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
-      console.debug("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)");
+      console.debug("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)", "b64=", resumeFile && resumeFile.base64 && resumeFile.base64.length);
     } catch (e) {
       console.warn("[workday] resume PDF download failed:", (e && e.message) || e);
       resumeFile = null;
+      toast((e && e.message) || "Could not download the tailored resume PDF for upload.");
     }
     if (useLoop) {
       await autoAdvanceWorkday(tabId, profile, resumeFile);
