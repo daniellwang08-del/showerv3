@@ -142,7 +142,8 @@ const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   salary_raw: '100px',
   job_type: '78px',
   posted_date: '68px',
-  added_from: '88px',
+  // 1.5× prior 130px so labels like "Welcome to the Jungle" fit without clipping.
+  added_from: '195px',
   created_at: '68px',
   __processing__: '108px',
   __resume__: '108px',
@@ -488,24 +489,47 @@ const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number
 });
 
 /** How the job entered the pool — separate from ATS/platform Source. */
-function resolveAddedFrom(job: DashboardJob): 'manual' | 'job_sites' {
+const ADDED_FROM_LABELS: Record<string, string> = {
+  manual: 'Manual',
+  job_sites: 'Job sites',
+  remoterocketship: 'RemoteRocketship',
+  jobright: 'Jobright.ai',
+  welcometothejungle: 'Welcome to the Jungle',
+  adzuna: 'Adzuna',
+  ziprecruiter: 'ZipRecruiter',
+};
+
+const ADDED_FROM_VARIANT: Record<string, 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
+  manual: 'info',
+  job_sites: 'default',
+  remoterocketship: 'default',
+  jobright: 'info',
+  welcometothejungle: 'success',
+  adzuna: 'info',
+  ziprecruiter: 'warning',
+};
+
+function resolveAddedFromSlug(job: DashboardJob): string {
   if (job.added_from === 'manual' || job.from_me) return 'manual';
-  if (job.added_from === 'job_sites') return 'job_sites';
-  return job.from_me ? 'manual' : 'job_sites';
+  const raw = (job.added_from || '').trim().toLowerCase();
+  if (raw && raw !== 'job_sites') return raw;
+  return 'job_sites';
 }
 
 function AddedFromBadge({ job }: { job: DashboardJob }) {
-  const origin = resolveAddedFrom(job);
-  if (origin === 'manual') {
-    return (
-      <span title="You added this job by URL or attachment">
-        <Badge variant="info">Manual</Badge>
-      </span>
-    );
-  }
+  const slug = resolveAddedFromSlug(job);
+  const label = ADDED_FROM_LABELS[slug] || slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const title =
+    slug === 'manual'
+      ? 'You added this job by URL or attachment'
+      : slug === 'job_sites'
+        ? 'Fetched from job sites during platform sync'
+        : `Fetched from ${label} during platform sync`;
   return (
-    <span title="Fetched from job sites during platform sync">
-      <Badge variant="default">Job sites</Badge>
+    <span title={title} className="inline-flex max-w-full">
+      <Badge variant={ADDED_FROM_VARIANT[slug] || 'default'}>
+        <span className="whitespace-nowrap">{label}</span>
+      </Badge>
     </span>
   );
 }
@@ -1624,7 +1648,11 @@ export function ScraperJobsTable({
               {columns.map((col) => (
                 <col
                   key={col.key}
-                  style={COLUMN_WIDTHS[col.key] ? { width: COLUMN_WIDTHS[col.key] } : undefined}
+                  style={
+                    COLUMN_WIDTHS[col.key]
+                      ? { width: COLUMN_WIDTHS[col.key], minWidth: COLUMN_WIDTHS[col.key] }
+                      : undefined
+                  }
                   className={col.key === 'source' ? SOURCE_COL_CLASS : undefined}
                 />
               ))}
@@ -1818,8 +1846,8 @@ export function ScraperJobsTable({
                       {relativeTime(job.posted_date)}
                     </td>
 
-                    {/* Added from — manual vs job-site sync (Source stays the ATS/site) */}
-                    <td className={`${CELL} whitespace-nowrap`}>
+                    {/* Added from — scrape site or Manual (Source stays the ATS/site) */}
+                    <td className="px-3 py-0 align-middle whitespace-nowrap overflow-visible">
                       <AddedFromBadge job={job} />
                     </td>
 

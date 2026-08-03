@@ -45,27 +45,36 @@ function formatWindow(notice: SyncResultNotice): string | null {
   return null;
 }
 
+/**
+ * Dark-mode text must NOT use *-50 / *-100 accent tokens.
+ * `style.css` remaps those CSS variables to dark background tints, so
+ * `dark:text-emerald-50` (etc.) renders near-black and disappears on the banner.
+ * Use 300+ steps (unremapped light hues) or inverted slate-600+ for light text.
+ */
 const KIND_STYLES = {
   success: {
-    wrap: 'border-emerald-200/90 bg-gradient-to-r from-emerald-50 via-white to-teal-50/70 text-emerald-950 dark:border-emerald-500/30 dark:from-emerald-950/50 dark:via-slate-900 dark:to-teal-950/40 dark:text-emerald-50',
+    wrap: 'border-emerald-200/90 bg-gradient-to-r from-emerald-50 via-white to-teal-50/70 dark:border-emerald-500/35 dark:from-emerald-950/60 dark:via-slate-900 dark:to-teal-950/45',
     accent: 'bg-gradient-to-b from-emerald-500 to-teal-600',
-    iconWrap: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+    iconWrap: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/25 dark:text-emerald-300',
     Icon: CheckCircle2,
-    chip: 'bg-emerald-600/10 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200',
+    chip: 'bg-emerald-600/10 text-emerald-800 dark:bg-emerald-500/25 dark:text-emerald-300',
+    headline: 'text-emerald-950 dark:text-emerald-300',
   },
   warning: {
-    wrap: 'border-amber-200/90 bg-gradient-to-r from-amber-50 via-white to-orange-50/70 text-amber-950 dark:border-amber-500/30 dark:from-amber-950/50 dark:via-slate-900 dark:to-orange-950/40 dark:text-amber-50',
+    wrap: 'border-amber-200/90 bg-gradient-to-r from-amber-50 via-white to-orange-50/70 dark:border-amber-500/35 dark:from-amber-950/60 dark:via-slate-900 dark:to-orange-950/45',
     accent: 'bg-gradient-to-b from-amber-500 to-orange-600',
-    iconWrap: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+    iconWrap: 'bg-amber-100 text-amber-700 dark:bg-amber-500/25 dark:text-amber-300',
     Icon: AlertTriangle,
-    chip: 'bg-amber-600/10 text-amber-800 dark:bg-amber-400/10 dark:text-amber-200',
+    chip: 'bg-amber-600/10 text-amber-800 dark:bg-amber-500/25 dark:text-amber-300',
+    headline: 'text-amber-950 dark:text-amber-300',
   },
   error: {
-    wrap: 'border-rose-200/90 bg-gradient-to-r from-rose-50 via-white to-red-50/70 text-rose-950 dark:border-rose-500/30 dark:from-rose-950/50 dark:via-slate-900 dark:to-red-950/40 dark:text-rose-50',
+    wrap: 'border-rose-200/90 bg-gradient-to-r from-rose-50 via-white to-red-50/70 dark:border-rose-500/35 dark:from-rose-950/60 dark:via-slate-900 dark:to-red-950/45',
     accent: 'bg-gradient-to-b from-rose-500 to-red-600',
-    iconWrap: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300',
+    iconWrap: 'bg-rose-100 text-rose-700 dark:bg-rose-500/25 dark:text-rose-300',
     Icon: XCircle,
-    chip: 'bg-rose-600/10 text-rose-800 dark:bg-rose-400/10 dark:text-rose-200',
+    chip: 'bg-rose-600/10 text-rose-800 dark:bg-rose-500/25 dark:text-rose-300',
+    headline: 'text-rose-950 dark:text-rose-300',
   },
 } as const;
 
@@ -100,7 +109,7 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
   if (notice.itemsNew > 0) detailParts.push(`${notice.itemsNew.toLocaleString()} new`);
   if (notice.itemsUpdated > 0) detailParts.push(`${notice.itemsUpdated.toLocaleString()} updated`);
   if (notice.syncMode === 'incremental' && !windowLabel) {
-    detailParts.push('incremental sync');
+    detailParts.push('Incremental sync');
   }
 
   return (
@@ -118,7 +127,9 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
         </div>
 
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-snug tracking-tight sm:text-[15px]">
+          <p
+            className={`text-sm font-semibold leading-snug tracking-tight sm:text-[15px] ${style.headline}`}
+          >
             {headline}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -126,7 +137,7 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
               <span
                 className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
               >
-                <CalendarRange size={11} className="shrink-0 opacity-80" />
+                <CalendarRange size={11} className="shrink-0 opacity-90" />
                 {windowLabel}
               </span>
             ) : null}
@@ -134,12 +145,12 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
               <span
                 className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${style.chip}`}
               >
-                <Layers size={11} className="shrink-0 opacity-80" />
+                <Layers size={11} className="shrink-0 opacity-90" />
                 {detailParts.join(' · ')}
               </span>
             ) : null}
             {notice.kind === 'error' && notice.error && notice.error !== 'stopped' ? (
-              <span className="truncate text-[11px] font-medium text-rose-700/90 dark:text-rose-300/90">
+              <span className="truncate text-[11px] font-medium text-rose-700 dark:text-rose-300">
                 {notice.message || notice.error}
               </span>
             ) : null}
@@ -150,7 +161,7 @@ export function SyncResultBanner({ notice, spiders = [], onDismiss }: SyncResult
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss sync notification"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-black/5 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-black/5 hover:text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50 dark:text-slate-600 dark:hover:bg-white/10 dark:hover:text-slate-800"
         >
           <X size={16} strokeWidth={2.25} />
         </button>

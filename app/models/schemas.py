@@ -249,7 +249,8 @@ class DashboardJobResponse(BaseModel):
     job_type: str | None = None
     # True when the job was added by this user via URL/attachment (has submitted_data).
     from_me: bool = False
-    # How the job entered the pool: "manual" (URL/attachment) or "job_sites" (platform sync).
+    # How the job entered the pool: "manual", a scraper slug
+    # (remoterocketship, jobright, …), or legacy "job_sites".
     added_from: str = "job_sites"
 
 

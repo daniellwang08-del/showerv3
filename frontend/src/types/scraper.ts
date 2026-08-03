@@ -84,7 +84,7 @@ export interface DashboardJob {
   job_type: string | null;
   /** True when this user added the job via URL/attachment. */
   from_me?: boolean;
-  /** How the job entered the pool: manual | job_sites. */
+  /** How the job entered the pool: manual | scraper slug (remoterocketship, …) | legacy job_sites. */
   added_from?: 'manual' | 'job_sites' | string | null;
 }
 

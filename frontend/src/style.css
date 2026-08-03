@@ -298,6 +298,25 @@ html.dark { color-scheme: dark; }
 .dark .text-amber-600, .dark .text-amber-700, .dark .text-amber-800, .dark .text-amber-900, .dark .text-yellow-700, .dark .text-yellow-800, .dark .text-yellow-900, .dark .text-orange-600, .dark .text-orange-700, .dark .text-orange-800, .dark .text-orange-900 { color: #fcd34d; }
 .dark .text-rose-600, .dark .text-rose-700, .dark .text-rose-800, .dark .text-rose-900, .dark .text-red-600, .dark .text-red-700, .dark .text-red-800, .dark .text-red-900 { color: #fda4af; }
 
+/* *-50 / *-100 accent vars are remapped above to dark BACKGROUND tints.
+   Using them as text (e.g. dark:text-emerald-50) makes copy invisible.
+   Force a light readable color whenever those utilities are applied as text. */
+.dark .text-emerald-50, .dark .text-emerald-100,
+.dark .text-green-50, .dark .text-green-100,
+.dark .text-teal-50, .dark .text-teal-100 { color: #a7f3d0; }
+.dark .text-amber-50, .dark .text-amber-100,
+.dark .text-yellow-50, .dark .text-yellow-100,
+.dark .text-orange-50, .dark .text-orange-100 { color: #fde68a; }
+.dark .text-rose-50, .dark .text-rose-100,
+.dark .text-red-50, .dark .text-red-100 { color: #fecdd3; }
+.dark .text-sky-50, .dark .text-sky-100,
+.dark .text-cyan-50, .dark .text-cyan-100 { color: #bae6fd; }
+.dark .text-indigo-50, .dark .text-indigo-100,
+.dark .text-violet-50, .dark .text-violet-100,
+.dark .text-purple-50, .dark .text-purple-100 { color: #c4b5fd; }
+.dark .text-fuchsia-50, .dark .text-fuchsia-100,
+.dark .text-pink-50, .dark .text-pink-100 { color: #f5d0fe; }
+
 /* ---- Shared animations ---- */
 
 @keyframes fade-in {

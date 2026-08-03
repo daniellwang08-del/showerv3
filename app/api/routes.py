@@ -1809,7 +1809,12 @@ def _dashboard_search_clauses(
     if company and company.strip():
         clauses.append(Job.company.ilike(f"%{company.strip()}%"))
     if source:
-        clauses.append(Job.raw_metadata["source"].as_string() == source)
+        clauses.append(
+            or_(
+                Job.raw_metadata["source"].as_string() == source,
+                Job.raw_metadata["scraped_source"].as_string() == source,
+            )
+        )
     if remote_only:
         # Keep in sync with dashboard_stats._is_remote_expr (work_mode, metadata, location).
         clauses.append(
@@ -1820,6 +1825,24 @@ def _dashboard_search_clauses(
             )
         )
     return clauses
+
+
+def resolve_dashboard_added_from(meta: dict | None) -> str:
+    """Origin for the Jobs table "Added from" column.
+
+    Prefer the concrete scraper slug stored at promote time (``scraped_source``),
+    so the UI can show RemoteRocketship / Jobright / etc. instead of a generic
+    "Job sites" bucket. Manual URL/attachment submissions stay ``manual``.
+    """
+    data = meta if isinstance(meta, dict) else {}
+    if data.get("submitted_data"):
+        return "manual"
+    scraped = data.get("scraped_source")
+    if isinstance(scraped, str):
+        slug = scraped.strip().lower()
+        if slug and slug not in {"manual", "scraper", "unknown", "job_sites"}:
+            return slug
+    return "job_sites"
 
 
 def _dashboard_min_score_clauses(min_match_score: int | None) -> tuple[list, bool]:
@@ -2046,7 +2069,7 @@ async def get_dashboard_jobs(
                     salary_raw=ext_salary_range or meta.get("salary_raw"),
                     job_type=meta.get("job_type"),
                     from_me=bool(meta.get("submitted_data")),
-                    added_from="manual" if meta.get("submitted_data") else "job_sites",
+                    added_from=resolve_dashboard_added_from(meta),
                 )
             )
 
