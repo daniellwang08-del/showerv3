@@ -20,15 +20,20 @@
   function writeFile(el, fileData) {
     try {
       const bytes = base64ToBytes(fileData.base64);
-      const file = new File([bytes], fileData.filename || "resume.pdf", {
-        type: fileData.mime || "application/pdf",
-      });
+      const name = fileData.filename || "resume.pdf";
+      const mime =
+        fileData.mime ||
+        (/\.pdf$/i.test(name) ? "application/pdf" : "application/octet-stream");
+      const file = new File([bytes], name, { type: mime });
       const dt = new DataTransfer();
       dt.items.add(file);
       el.files = dt.files;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
+      try {
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
+      } catch {}
+      return !!(el.files && el.files.length);
     } catch {
       return false;
     }

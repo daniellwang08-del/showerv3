@@ -464,6 +464,7 @@
       }
     }
     if (/accept these terms|yes i accept/i.test(low)) return "Yes";
+    if (/cover\s*letter/i.test(low) && p.coverLetter) return p.coverLetter;
     if (/please check one of the boxes|disability|cc-305|self.identif/i.test(low)) {
       return e.disability
         ? "Yes, I have a disability"

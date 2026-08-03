@@ -38,6 +38,9 @@ from app.utils.resume_text_format import parse_inline_markup
 
 logger = get_logger(__name__)
 
+# app/services/resume_builder_service.py → project root (same layout on VPS: /opt/showerv3)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 WNS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 COVER_LETTER_BODY_TAG = "{{COVER_LETTER_BODY}}"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -1314,6 +1317,67 @@ def person_resume_stem(first_name: str, last_name: str) -> str:
     return person_document_stem(first_name, last_name, "resume")
 
 
+def resume_output_root() -> Path:
+    """Absolute root for resume/cover-letter artifacts.
+
+    Relative ``RESUME_OUTPUT_ROOT`` / ``./resume_output`` is resolved against the
+    *project root* (not process CWD). That keeps DB paths and downloads stable
+    when systemd/workers start with a different working directory than the
+    process that originally wrote the files.
+    """
+    settings = get_settings()
+    root = Path(settings.resume_output_root).expanduser()
+    if not root.is_absolute():
+        root = (_PROJECT_ROOT / root).resolve()
+    else:
+        root = root.resolve()
+    return root
+
+
+def resolve_resume_artifact_path(stored: str | Path | None) -> Path | None:
+    """Resolve a DB-stored resume artifact path to an existing absolute file.
+
+    Builds historically stored *relative* paths like
+    ``resume_output/Acme/<job_id>/Name_resume.pdf``. Those only work when the
+    API/worker CWD matches the build CWD — which broke extension autofill
+    downloads whenever a process started elsewhere. Prefer the project root and
+    configured output root over CWD.
+    """
+    if stored is None:
+        return None
+    raw = str(stored).strip()
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    if p.is_absolute():
+        return p if p.is_file() else p
+
+    root = resume_output_root()
+    candidates = [
+        (_PROJECT_ROOT / p).resolve(),
+        (root.parent / p).resolve(),
+        (Path.cwd() / p).resolve(),
+        (root / p).resolve(),
+    ]
+    # ``resume_output/...`` when root is already ``.../resume_output``
+    parts = p.parts
+    if parts and parts[0] not in {".", ".."}:
+        if parts[0] == root.name:
+            trimmed = Path(*parts[1:]) if len(parts) > 1 else Path()
+            if str(trimmed):
+                candidates.insert(0, (root / trimmed).resolve())
+
+    seen: set[str] = set()
+    for cand in candidates:
+        key = str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        if cand.is_file():
+            return cand
+    return candidates[0] if candidates else p
+
+
 def build_output_directory(company_name: str, job_id: str | None = None) -> Path:
     """Create ``{RESUME_OUTPUT_ROOT}/{Company}/{job_id}/`` for resume artifacts.
 
@@ -1321,9 +1385,10 @@ def build_output_directory(company_name: str, job_id: str | None = None) -> Path
     same company (or every job with a missing company → ``Unknown``) would
     overwrite ``{First_Last}_resume.pdf`` and downloads for earlier jobs would
     silently serve the latest build.
+
+    Always returns an absolute path (see :func:`resume_output_root`).
     """
-    settings = get_settings()
-    root = Path(settings.resume_output_root)
+    root = resume_output_root()
     company_clean = safe_path_segment(company_name or "Unknown", fallback="Unknown", max_len=80)
     if job_id and str(job_id).strip():
         job_clean = safe_path_segment(str(job_id).strip(), fallback="job", max_len=36)
@@ -1331,4 +1396,4 @@ def build_output_directory(company_name: str, job_id: str | None = None) -> Path
     else:
         full_path = root / company_clean
     full_path.mkdir(parents=True, exist_ok=True)
-    return full_path
+    return full_path.resolve()
