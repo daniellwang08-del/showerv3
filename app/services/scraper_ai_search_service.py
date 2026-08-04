@@ -621,7 +621,8 @@ def _build_scraper_search_sql(
         sql += " AND sj.promoted_extraction_id IS NULL"
 
     if spec.extraction_completed_only:
-        sql += " AND LOWER(je.status::text) = 'completed'"
+        # Shared JD ready: scrape finished (extracted) or Phase A structured (completed).
+        sql += " AND LOWER(je.status::text) IN ('extracted', 'completed')"
 
     if spec.has_match_score is True:
         sql += " AND jmr.overall_score IS NOT NULL"

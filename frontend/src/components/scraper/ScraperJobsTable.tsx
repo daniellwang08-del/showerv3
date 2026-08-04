@@ -452,13 +452,17 @@ function StatusDot({ color, state, label }: DotConfig) {
 
 function processingDots(job: DashboardJob): [DotConfig, DotConfig, DotConfig] {
   const es = job.extraction_status as ExtractionStatus | null;
+
+  // Yellow = scrape. Done once raw JD exists (EXTRACTED or COMPLETED).
   let dot1: DotState = 'idle';
   if (es === 'pending' || es === 'processing') dot1 = 'active';
   else if (es === 'extracted' || es === 'completed') dot1 = 'done';
 
+  // Blue = structuring (Phase A). Drive off match progress + true COMPLETED.
+  // Legacy scrape-only COMPLETED rows (no is_job_posting) stay blue-idle until healed.
   let dot2: DotState = 'idle';
-  if (es === 'extracted') dot2 = 'active';
-  else if (es === 'completed') dot2 = 'done';
+  if (job.match_in_progress) dot2 = 'active';
+  else if (es === 'completed' && job.is_job_posting != null) dot2 = 'done';
 
   let dot3: DotState = 'idle';
   const cg = job.content_generation_status;
@@ -586,7 +590,7 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
     return <MatchScoreBadge score={job.match_overall_score} />;
   }
 
-  const dots = processingDots(job);
+  const dots = processingDots(job).filter((dot) => dot.state !== 'idle');
   let caption: ReactNode = null;
   if (job.match_in_progress) {
     caption = (
@@ -595,7 +599,7 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
         Matching…
       </span>
     );
-  } else if (job.extraction_status === 'completed') {
+  } else if (job.extraction_status === 'extracted' || job.extraction_status === 'completed') {
     caption = (
       <span className="text-[10px] font-medium leading-none text-slate-400 dark:text-slate-600">
         No score yet
@@ -652,9 +656,9 @@ const AdminExtractionStatusCell = memo(function AdminExtractionStatusCell({
         className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2 text-emerald-800 shadow-sm transition hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300"
       >
         <CheckCircle2 size={14} className="shrink-0" strokeWidth={2.25} />
-        <span className="text-[11px] font-bold leading-none">Ready</span>
+        <span className="text-[11px] font-bold leading-none">Structured</span>
       </div>,
-      'Job description extracted and ready',
+      'Job description structured by analysis',
     );
   }
 
@@ -700,12 +704,12 @@ const AdminExtractionStatusCell = memo(function AdminExtractionStatusCell({
   if (status === 'extracted') {
     return wrap(
       <div
-        className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-sky-300 bg-sky-50 px-2 text-sky-800 shadow-sm dark:border-sky-500/40 dark:bg-sky-500/15 dark:text-sky-300"
+        className="inline-flex h-[28px] items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-2 text-emerald-800 shadow-sm transition hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300"
       >
-        <Loader2 size={13} className="shrink-0 animate-spin" />
-        <span className="text-[11px] font-bold leading-none">Finalizing</span>
+        <CheckCircle2 size={14} className="shrink-0" strokeWidth={2.25} />
+        <span className="text-[11px] font-bold leading-none">Ready</span>
       </div>,
-      'Raw job description captured — finalizing shared JD',
+      'Shared job description scraped and ready',
     );
   }
 
@@ -912,14 +916,13 @@ function ContextMenu({
   const label = multi ? `${targets.length} jobs` : (job.title ? `"${job.title.slice(0, 28)}${job.title.length > 28 ? '…' : ''}"` : 'this job');
   const pipelineStatus = job.extraction_status;
   const analysisDone = job.match_overall_score != null;
+  // EXTRACTED = shared JD ready (not in-flight). Applicant analysis uses match_in_progress.
   const isRunning = isAdmin
-    ? (pipelineStatus === 'pending' ||
-      pipelineStatus === 'processing' ||
-      pipelineStatus === 'extracted')
+    ? (pipelineStatus === 'pending' || pipelineStatus === 'processing')
     : (!analysisDone &&
       (pipelineStatus === 'pending' ||
         pipelineStatus === 'processing' ||
-        pipelineStatus === 'extracted'));
+        job.match_in_progress === true));
 
   const unappliedTargets = targets.filter((t) => !dashboardJobMarkedApplied(t));
   const appliedTargets = targets.filter((t) => dashboardJobMarkedApplied(t));
@@ -1904,17 +1907,19 @@ export function ScraperJobsTable({
                 const isApiCallInFlight = rerunningId === job.id;
                 const pipelineStatus  = job.extraction_status;
                 const analysisDone = job.match_overall_score != null;
+                // EXTRACTED = shared JD ready (not in-flight). Analysis uses match_in_progress.
                 const isPipelineRunning = isAdmin
-                  ? (pipelineStatus === 'pending' ||
-                    pipelineStatus === 'processing' ||
-                    pipelineStatus === 'extracted')
+                  ? (pipelineStatus === 'pending' || pipelineStatus === 'processing')
                   : (!analysisDone &&
                     (pipelineStatus === 'pending' ||
                       pipelineStatus === 'processing' ||
-                      pipelineStatus === 'extracted' ||
                       job.match_in_progress === true));
                 const isRerunning     = isApiCallInFlight || isPipelineRunning;
-                const hasExtraction   = !!job.extraction_id || analysisDone || pipelineStatus === 'completed';
+                const hasExtraction   =
+                  !!job.extraction_id ||
+                  analysisDone ||
+                  pipelineStatus === 'completed' ||
+                  pipelineStatus === 'extracted';
                 const jdReady =
                   pipelineStatus === 'extracted' ||
                   pipelineStatus === 'completed' ||
@@ -2113,8 +2118,8 @@ export function ScraperJobsTable({
                             isApiCallInFlight         ? 'Starting pipeline…'
                             : isPipelineRunning && pipelineStatus === 'pending'    ? 'Queued – waiting for worker'
                             : isPipelineRunning && pipelineStatus === 'processing' ? 'Extracting job description…'
-                            : isPipelineRunning && pipelineStatus === 'extracted'
-                              ? (isAdmin ? 'Finalizing shared job description…' : 'Analyzing with AI…')
+                            : isPipelineRunning && job.match_in_progress
+                              ? 'Analyzing with AI…'
                             : isAdmin
                               ? (jdReady
                                 ? 'Re-extract shared job description (inventory only)'
@@ -2139,15 +2144,14 @@ export function ScraperJobsTable({
                             {isApiCallInFlight         ? 'Starting…'
                               : isPipelineRunning && pipelineStatus === 'pending'    ? 'Queued'
                               : isPipelineRunning && pipelineStatus === 'processing' ? 'Extracting'
-                              : isPipelineRunning && pipelineStatus === 'extracted'
-                                ? (isAdmin ? 'Finalizing' : 'Analyzing')
+                              : isPipelineRunning && job.match_in_progress           ? 'Analyzing'
                               : isAdmin
-                                ? (pipelineStatus === 'completed' ? 'Re-extract' : 'Extract')
+                                ? (jdReady ? 'Re-extract' : 'Extract')
                                 : job.match_overall_score != null ? 'Re-analyze'
                                 : hasExtraction                   ? 'Analyze'
                                 : 'Run'}
                           </span>
-                          {(pipelineStatus === 'completed' || (!isAdmin && hasExtraction)) && !isRerunning && (
+                          {(jdReady || (!isAdmin && hasExtraction)) && !isRerunning && (
                             <CheckCircle2 size={10} className="text-emerald-500 shrink-0" />
                           )}
                         </button>

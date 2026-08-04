@@ -1120,7 +1120,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
           j.id === id
             ? {
                 ...j,
-                extraction_status: 'completed' as const,
+                extraction_status: 'extracted' as const,
                 status: 'active',
               }
             : j,

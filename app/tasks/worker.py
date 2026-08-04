@@ -152,19 +152,9 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                 method=method,
                 content_length=content_length,
             )
-            if not user_id:
-                # Platform / admin extract-only: mark shared JD ready so applicants
-                # can start analysis without re-scraping. Applicant runs stay at
-                # EXTRACTED until Phase A advances them to COMPLETED.
-                from app.models.schemas import ExtractionStatus
-                from app.storage.repository import JobExtractionRepository
-
-                async with get_session() as session:
-                    extraction_repo = JobExtractionRepository(session)
-                    await extraction_repo.update_status(job_id, ExtractionStatus.COMPLETED)
-                    await session.commit()
-                logger.info("worker_extract_job_marked_shared_ready", job_id=job_id)
-
+            # Platform / admin extract-only leaves status at EXTRACTED (shared raw JD
+            # ready). COMPLETED is reserved for Phase A structuring — never promote
+            # scrape-only rows here or the Jobs dots treat structuring as done.
             if user_id:
                 await publish_ws_event({
                     "type": "extraction_completed",
@@ -174,7 +164,6 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                     "method": method,
                 })
 
-            if user_id:
                 async with get_session() as session:
                     job_repo = JobRepository(session)
                     job = await job_repo.get_by_extraction_id(job_id)

@@ -7,8 +7,9 @@ export type JobPipelineVisual =
   | { kind: 'ring'; filled: 1 | 2 | 3; phase: PipelineRingPhase }
   | { kind: 'failed' };
 
-function isExtracted(item: SubmittedUrlItem): boolean {
+function isSharedJdReady(item: SubmittedUrlItem): boolean {
   return (
+    item.extraction_status === 'extracted' ||
     item.extraction_status === 'completed' ||
     (item.scraped_at_ms != null && Boolean(item.extraction_id))
   );
@@ -18,7 +19,7 @@ function isExtracted(item: SubmittedUrlItem): boolean {
  * Maps extraction + match list API fields to a single UI state:
  * - Match score (persisted) replaces all ring visuals.
  * - 1/4 + amber: queued or running page extraction.
- * - 2/4 + blue: posting text extracted; match not running yet.
+ * - 2/4 + blue: posting text extracted (shared JD ready); match not running yet.
  * - 3/4 + amber: AI profile match in progress.
  */
 export function getJobPipelineVisual(item: SubmittedUrlItem): JobPipelineVisual | null {
@@ -33,11 +34,11 @@ export function getJobPipelineVisual(item: SubmittedUrlItem): JobPipelineVisual 
     return { kind: 'score', score: item.match_overall_score };
   }
 
-  if (ext === 'pending' || ext === 'processing' || ext === 'extracted') {
+  if (ext === 'pending' || ext === 'processing') {
     return { kind: 'ring', filled: 1, phase: 'queue' };
   }
 
-  if (!isExtracted(item)) {
+  if (!isSharedJdReady(item)) {
     return { kind: 'ring', filled: 1, phase: 'queue' };
   }
 

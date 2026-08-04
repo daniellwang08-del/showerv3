@@ -11,17 +11,19 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import and_, cast, func, select
+from sqlalchemy import and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Date
 
 from app.models.database import (
     Job,
+    JobExtraction,
     JobMatchResult,
     ResumeBuildResult,
     UserJobStatus,
     ValidJobUserApplication,
 )
+from app.models.schemas import ExtractionStatus
 from app.services.dashboard_stats import (
     BEST_MATCH_SCORE,
     _is_remote_expr,
@@ -182,7 +184,8 @@ async def fetch_board_trend_series(
     * ready     — resumes that became ready (docx completed) that day
     * best      — strong match analyses (score >= 75) completed that day
     * remote    — remote-friendly jobs added that day
-    * available — jobs added that day that are still not marked applied
+    * available — jobs added that day with shared JD that are still not resume-ready
+                  and not marked applied ("available to start")
     """
     start_utc, end_utc, day_list = recent_week_bounds_for_timezone(tz_name, days=days)
     visible = _visible_job_clause(user_id)
@@ -239,15 +242,28 @@ async def fetch_board_trend_series(
         )
     ).all()
 
+    available_from = _dashboard_from(user_id, with_resume=True, with_application=True)
+    available_from = available_from.outerjoin(
+        JobExtraction.__table__,
+        Job.extraction_id == JobExtraction.id,
+    )
     available_rows = (
         await session.execute(
             select(added_day.label("day"), func.count().label("cnt"))
-            .select_from(_dashboard_from(user_id, with_application=True))
+            .select_from(available_from)
             .where(
                 visible,
                 added_at.is_not(None),
                 added_at >= start_utc,
                 added_at < end_utc,
+                JobExtraction.status.in_(
+                    (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+                ),
+                or_(
+                    ResumeBuildResult.id.is_(None),
+                    ResumeBuildResult.resume_docx_status.is_(None),
+                    ResumeBuildResult.resume_docx_status != "completed",
+                ),
                 ValidJobUserApplication.id.is_(None),
             )
             .group_by(added_day)
@@ -274,7 +290,7 @@ async def fetch_admin_board_trend_series(
     """Daily ops series for the admin board side tiles (last *days*).
 
     * fetched       — jobs created that day
-    * extracted     — extractions that reached completed that day
+    * extracted     — extractions that reached EXTRACTED or COMPLETED that day
     * sheet_posted  — jobs that gained sheet_posted_at that day
     * pumble_posted — jobs that gained pumble_posted_at that day
     """
@@ -313,7 +329,9 @@ async def fetch_admin_board_trend_series(
             )
             .where(
                 visible,
-                JobExtraction.status == ExtractionStatus.COMPLETED,
+                JobExtraction.status.in_(
+                    (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+                ),
                 ext_ts.is_not(None),
                 ext_ts >= start_utc,
                 ext_ts < end_utc,

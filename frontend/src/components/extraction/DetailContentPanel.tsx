@@ -496,6 +496,7 @@ export function DetailContentPanel({
       const shouldRefresh =
         (!prev.match && next.match) ||
         (prev.extraction_status !== 'completed' && next.extraction_status === 'completed') ||
+        (prev.extraction_status !== 'extracted' && next.extraction_status === 'extracted') ||
         (!prev.match_in_progress && next.match_in_progress) ||
         (!prev.content_enriched_by_ai && next.content_enriched_by_ai) ||
         resumeChanged;
@@ -644,7 +645,7 @@ export function DetailContentPanel({
           ? {
               ...prev,
               extraction_id: res.extraction_id || prev.extraction_id,
-              extraction_status: 'completed',
+              extraction_status: 'extracted',
               raw_plain_text: res.raw_plain_text,
               content_enriched_by_ai: false,
               is_job_posting: true,
@@ -654,7 +655,7 @@ export function DetailContentPanel({
       snapshotRef.current = {
         ...(snapshotRef.current || analysis)!,
         extraction_id: res.extraction_id,
-        extraction_status: 'completed',
+        extraction_status: 'extracted',
         raw_plain_text: res.raw_plain_text,
         content_enriched_by_ai: false,
         is_job_posting: true,

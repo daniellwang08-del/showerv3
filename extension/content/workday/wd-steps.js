@@ -1068,6 +1068,186 @@
     return ok;
   }
 
+  // ── "How Did You Hear About Us?" (source) — select-and-verify ───────────────
+  //
+  // This is a hierarchical single-select SOURCE prompt. The SAME label (e.g.
+  // "LinkedIn") can appear as several leaves: a plain channel AND a REFERRAL
+  // leaf that, once selected, mounts a NEW required "referred-by name / email"
+  // field we cannot fill - that is the observed "must have a value" error. The
+  // searched leaves are byte-identical (same text + data-automation-*), so the
+  // correct one cannot be chosen up front. Strategy: try each matching leaf (then
+  // follow-up-free fallback sources) and, after each pick, detect whether a NEW
+  // required + empty field appeared. Keep the first pick that produces none. The
+  // prompt is single-select, so choosing another leaf REPLACES the prior one and
+  // unmounts its conditional follow-up - no manual de-select needed.
+
+  // Non-referral fallbacks tried, in order, only when the profile value's leaves
+  // all spawn a follow-up (or none match). pickOption's contains-match absorbs
+  // tenant wording ("Job Board" -> "Job Boards", etc.).
+  const SOURCE_FALLBACKS = [
+    "Indeed",
+    "Glassdoor",
+    "Job Board",
+    "Company Website",
+    "Company Career Site",
+    "Online",
+    "Other",
+  ];
+
+  function isSourceField(container, label) {
+    try {
+      const id = (container.getAttribute && container.getAttribute("data-automation-id")) || "";
+      if (/formField-source\b/i.test(id)) return true;
+    } catch {}
+    return /how did you hear|how.*hear about/i.test(label || "");
+  }
+
+  function sourceCandidates(primary) {
+    const out = [];
+    const seen = new Set();
+    for (const v of [primary, ...SOURCE_FALLBACKS]) {
+      const s = String(v || "").trim();
+      const k = s.toLowerCase();
+      if (s && !seen.has(k)) {
+        seen.add(k);
+        out.push(s);
+      }
+    }
+    return out;
+  }
+
+  // The stable ids of every visible formField wrapper - the baseline a source
+  // pick's conditional follow-up is detected against. Keyed by data-automation-id
+  // (persists across Workday re-renders) so the diff survives a section re-mount.
+  function visibleFormFieldKeys() {
+    const keys = [];
+    for (const ff of D.qa('[data-automation-id^="formField-"]')) {
+      if (!D.isVisible(ff)) continue;
+      keys.push(ff.getAttribute("data-automation-id") || "");
+    }
+    return keys;
+  }
+
+  // formField keys that appeared AFTER a source pick and are required + still
+  // empty - i.e. an unfillable referral follow-up spawned by the selection.
+  function newRequiredEmptyFollowups(beforeKeys) {
+    const before = new Set(beforeKeys);
+    const seen = new Set();
+    const out = [];
+    for (const ff of D.qa('[data-automation-id^="formField-"]')) {
+      if (!D.isVisible(ff)) continue;
+      const key = ff.getAttribute("data-automation-id") || "";
+      if (!key || before.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      if (!isRequired(ff)) continue;
+      if (fieldIsFilled(ff)) continue;
+      out.push(key);
+    }
+    return out;
+  }
+
+  // Commit ONE value into the source prompt using the ONLY sequence this
+  // server-backed hierarchical prompt honors (confirmed on-tenant): open → wait
+  // for the list → type → Enter (runs the search so the matching leaf surfaces &
+  // highlights) → wait until the list filters → Enter again (confirms the
+  // highlighted best match). A plain click on the typed list does NOT commit -
+  // that was the bug that left the field empty while candidates cycled. A click
+  // on the filtered option is kept only as a last-ditch fallback.
+  async function selectSourceValue(multi, value) {
+    const want = D.norm(value);
+    const isChosen = () => {
+      const sel = multi.querySelector(
+        '[data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"]',
+      );
+      return !!(sel && D.norm(sel.textContent).includes(want));
+    };
+    if (isChosen()) return true;
+    const input = multi.querySelector("input");
+    if (!input) return false;
+    const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // 1. Open and WAIT until the prompt genuinely renders its list.
+      D.clickEl(opener);
+      input.focus();
+      await D.waitFor(OPTION_SEL, 4000);
+      await D.delay(200);
+
+      // 2. Clear + type the value (fire input + a trailing keyup so debounced
+      //    search boxes read input.value).
+      input.focus();
+      D.nativeSet(input, "");
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+      await D.delay(80);
+      D.nativeSet(input, String(value));
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: String(value), inputType: "insertText" }));
+      const last = String(value).slice(-1) || "a";
+      pressKey(input, last, "Key" + last.toUpperCase(), last.toUpperCase().charCodeAt(0));
+      await D.delay(150);
+
+      // 3. Enter #1 - run the search so the matching leaf surfaces.
+      input.focus();
+      pressEnter(input);
+
+      // 4. WAIT until the list has filtered to our value, then Enter #2 - confirm
+      //    the highlighted best match.
+      await waitForFilteredOption(value, 3500);
+      await D.delay(150);
+      input.focus();
+      if (document.activeElement !== input) D.clickEl(input);
+      pressEnter(input);
+      await D.delay(450);
+      if (isChosen()) {
+        await closePrompt(multi, input);
+        return true;
+      }
+
+      // 5. Last-ditch fallback: click the exact/closest filtered option.
+      if (await D.waitFor(OPTION_SEL, 1200)) {
+        await D.delay(120);
+        const match = pickOption(value);
+        if (match) {
+          D.clickEl(match);
+          await D.delay(200);
+        }
+      }
+      if (isChosen()) {
+        await closePrompt(multi, input);
+        return true;
+      }
+      await closePrompt(multi, input);
+      await D.delay(200);
+    }
+    return isChosen();
+  }
+
+  async function fillSourcePrompt(multi, primaryValue, container) {
+    // Recovery re-entry: never re-open a committed source prompt - re-opening
+    // clears the prior selection (documented corruption path).
+    if (multiSelectedText(container)) return true;
+
+    const baselineKeys = visibleFormFieldKeys();
+    for (const value of sourceCandidates(primaryValue)) {
+      const chosen = await selectSourceValue(multi, value);
+      if (!chosen) continue; // value not offered by this tenant - try the next
+      await D.delay(200);
+      const followups = newRequiredEmptyFollowups(baselineKeys);
+      if (!followups.length) {
+        try {
+          WD.log(`source: '${value}' selected cleanly (no required follow-up)`);
+        } catch {}
+        return true;
+      }
+      // Referral-type leaf: it spawned an unfillable required "name/email" field.
+      // The next candidate's selection replaces this one (single-select prompt)
+      // and unmounts the follow-up, so just move on to a follow-up-free source.
+      try {
+        WD.log(`source: '${value}' triggered required follow-up ${JSON.stringify(followups)} - trying next`);
+      } catch {}
+    }
+    return false;
+  }
+
   // True once a currently-visible option's text matches `want` (either direction),
   // i.e. the server-backed list has FINISHED filtering to our query. Polls so we
   // never press Enter against a stale, unfiltered list.
@@ -1322,7 +1502,14 @@
       }
     }
     const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
-    if (multi) return await fillMultiselect(multi, value);
+    if (multi) {
+      // "How Did You Hear About Us?" needs the select-and-verify loop so a
+      // referral leaf (which spawns an unfillable required "name/email" field)
+      // is skipped in favor of a follow-up-free source. Other multiselects
+      // (e.g. Country Phone Code) keep the plain path.
+      if (isSourceField(container, label)) return await fillSourcePrompt(multi, value, container);
+      return await fillMultiselect(multi, value);
+    }
     const listbox = listboxTrigger(container);
     if (listbox) return await openAndPick(listbox, value);
     const nativeSel = container.querySelector("select");

@@ -556,7 +556,9 @@ async def match_rerun_data_management_jobs(
 
             extraction_repo = JobExtractionRepository(session)
             extraction = await extraction_repo.get_by_id(job.extraction_id)
-            if not extraction or extraction.status != ExtractionStatus.COMPLETED:
+            from app.services.job_pipeline_mode import extraction_has_shared_jd
+
+            if not extraction_has_shared_jd(extraction):
                 skipped.append({"id": job_id, "reason": "extraction_not_ready"})
                 continue
 

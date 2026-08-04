@@ -269,7 +269,11 @@ def _build_search_query(
     ]
 
     if spec.extraction_completed_only:
-        stmt = stmt.where(JobExtraction.status == ExtractionStatus.COMPLETED)
+        stmt = stmt.where(
+            JobExtraction.status.in_(
+                (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+            )
+        )
 
     if spec.match_only_analyzed:
         stmt = stmt.where(JobMatchResult.overall_score.isnot(None))

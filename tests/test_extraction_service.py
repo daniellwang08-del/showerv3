@@ -185,7 +185,7 @@ async def test_worker_enqueues_analysis_after_extraction(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_worker_skips_analysis_when_no_user_id(monkeypatch):
-    """Admin/platform extract-only: do not chain analyze after shared JD scrape."""
+    """Admin/platform extract-only: do not chain analyze; leave status at EXTRACTED."""
     from app.tasks.worker import extract_job
 
     mock_service = AsyncMock()
@@ -237,8 +237,5 @@ async def test_worker_skips_analysis_when_no_user_id(monkeypatch):
 
     assert result["status"] == "extracted"
     assert enqueued == []
-    assert len(status_updates) == 1
-    assert status_updates[0][0] == "test-job-id"
-    from app.models.schemas import ExtractionStatus
-
-    assert status_updates[0][1] == ExtractionStatus.COMPLETED
+    # Scrape-only must not promote to COMPLETED (that is Phase A only).
+    assert status_updates == []

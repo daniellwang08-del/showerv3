@@ -50,6 +50,11 @@ let state = {
   statsProgress: null, // period-scoped series for Statistics page
   statsLoading: false,
   scraperStats: null, // from /scraper/stats
+  // Ready jobs we optimistically marked applied locally (Complete & Next) since
+  // the last /scraper/stats fetch. Subtracted from the authoritative server
+  // ready_jobs so the "Ready to apply" badge drops instantly, then cleared once
+  // fresh stats (which already exclude them) arrive. See deriveHomeFromCatalog.
+  pendingAppliedIds: [],
   appliedQueue: [], // jobs applied to today (most recent first)
   // Which Jobs list the user opened chat from — Complete & Next advances in this list.
   applyListContext: null, // { key, view?, remote_only?, min_match_score?, jobIds: string[] }
@@ -967,8 +972,17 @@ function deriveHomeFromCatalog(catalog) {
     applied_today: counts.applied_today != null ? counts.applied_today : appliedQueue.length,
   };
   const ss = meta.scraperStats || {};
-  // Prefer server tiles when present, but always derive `ready` from the local
-  // catalog so Complete & Next immediately drops applied jobs from the badge.
+  // `ready` MUST trust the authoritative server stat (ss.ready_jobs) like every
+  // other tile - the local `readyQueue.length` undercounts whenever the cached
+  // catalog's resume_build_status lags server-side resume builds (the "25 on web,
+  // 0 here" bug). To keep Complete & Next instant, subtract ready jobs we just
+  // applied locally but that this (stale) stat snapshot still counts; the set is
+  // cleared in loadQueue once a fresh stat (which already excludes them) arrives.
+  const pendingApplied = (state.pendingAppliedIds || []).filter((id) => {
+    const j = jobsById[id];
+    return j && isJobApplied(j);
+  }).length;
+  const serverReady = ss.ready_jobs;
   const platformCounts = {
     ...(meta.platformCounts || {
       total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
@@ -977,7 +991,10 @@ function deriveHomeFromCatalog(catalog) {
       remote: ss.total_remote != null ? ss.total_remote : remoteQueue.length,
       mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
     }),
-    ready: readyQueue.length,
+    ready:
+      serverReady != null
+        ? Math.max(0, serverReady - pendingApplied)
+        : readyQueue.length,
   };
 
   return {
@@ -1321,6 +1338,11 @@ async function loadQueue({ silent = false } = {}) {
     }
 
     const extras = await fetchHomeExtras({ timezone, score });
+    // Fresh /scraper/stats already excludes jobs we optimistically applied, so
+    // drop the pending set before deriving (else the subtraction double-counts).
+    if (extras && extras.scraperStats && (state.pendingAppliedIds || []).length) {
+      setState({ pendingAppliedIds: [] });
+    }
     const needBootstrap =
       !jobsCatalog ||
       !jobsCatalog.since ||
@@ -1915,11 +1937,22 @@ async function completeJob({ next }) {
     }
     await teardownAutofill();
     try {
+      // Capture readiness BEFORE the patch flips applied_at (isReadyJob excludes
+      // applied jobs). If it was a ready job, track it so the server-backed
+      // "Ready to apply" badge drops by one instantly (cleared on next stats fetch).
+      const wasReady = isReadyJob(
+        jobsCatalog && jobsCatalog.jobsById ? jobsCatalog.jobsById[jobId] : null,
+      );
       const marked = await api.markApplied([jobId]);
       if (!marked || !(Number(marked.marked) > 0)) {
         throw new Error("Could not mark this job as applied. Try again.");
       }
       await api.updateSession(jobId, "completed").catch(() => {});
+      // Track the optimistic apply BEFORE patchCatalogJob (which re-derives the
+      // tiles) so the "Ready to apply" badge drops by one in the same paint.
+      if (wasReady && !(state.pendingAppliedIds || []).includes(jobId)) {
+        setState({ pendingAppliedIds: [...(state.pendingAppliedIds || []), jobId] });
+      }
       // Await so readyQueue / resolveNextJob see applied_at before advancing.
       await patchCatalogJob(jobId, {
         applied_at: marked.applied_at || new Date().toISOString(),

@@ -158,17 +158,14 @@ export function ScraperDashboard() {
   // Poll every 6 s while any job is mid-pipeline so dots/badges update live.
   useEffect(() => {
     const EXTRACTION_IN_PROGRESS = new Set(['pending', 'processing']);
-    const APPLICANT_EXTRACTION_IN_PROGRESS = new Set(['pending', 'processing', 'extracted']);
     const RESUME_IN_PROGRESS     = new Set(['pending', 'processing']);
     const CONTENT_IN_PROGRESS = new Set(['pending', 'processing']);
-    const extractionInProgress = isAdmin
-      ? EXTRACTION_IN_PROGRESS
-      : APPLICANT_EXTRACTION_IN_PROGRESS;
+    // EXTRACTED = shared JD ready (not in-progress). Analysis uses match_in_progress.
     const hasInProgress = jobs.some(
       (j) =>
         (j.match_overall_score == null &&
           j.extraction_status &&
-          extractionInProgress.has(j.extraction_status)) ||
+          EXTRACTION_IN_PROGRESS.has(j.extraction_status)) ||
         (!isAdmin && j.match_in_progress === true) ||
         (j.content_generation_status && CONTENT_IN_PROGRESS.has(j.content_generation_status)) ||
         (j.resume_build_status && RESUME_IN_PROGRESS.has(j.resume_build_status)),

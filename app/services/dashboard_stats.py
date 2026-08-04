@@ -135,7 +135,9 @@ async def fetch_dashboard_stats(
                     )
                 ).label("my_jobs"),
                 func.count().filter(
-                    JobExtraction.status == ExtractionStatus.COMPLETED
+                    JobExtraction.status.in_(
+                        (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+                    )
                 ).label("extracted_jobs"),
                 func.count().filter(
                     and_(
@@ -143,6 +145,30 @@ async def fetch_dashboard_stats(
                         ValidJobUserApplication.id.is_(None),
                     )
                 ).label("ready_jobs"),
+                # Today-scoped funnel for the hero ring (jobs added to the pool today).
+                func.count().filter(
+                    and_(
+                        added_at >= day_start,
+                        added_at < day_end,
+                        ResumeBuildResult.resume_docx_status == "completed",
+                        ValidJobUserApplication.id.is_(None),
+                    )
+                ).label("today_ready_jobs"),
+                func.count().filter(
+                    and_(
+                        added_at >= day_start,
+                        added_at < day_end,
+                        JobExtraction.status.in_(
+                            (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+                        ),
+                        or_(
+                            ResumeBuildResult.id.is_(None),
+                            ResumeBuildResult.resume_docx_status.is_(None),
+                            ResumeBuildResult.resume_docx_status != "completed",
+                        ),
+                        ValidJobUserApplication.id.is_(None),
+                    )
+                ).label("today_available_jobs"),
                 func.count().filter(
                     JobMatchResult.overall_score >= BEST_MATCH_SCORE
                 ).label("best_jobs"),
@@ -159,8 +185,20 @@ async def fetch_dashboard_stats(
                     JobMatchResult.overall_score.is_not(None)
                 ).label("scored_jobs"),
                 func.coalesce(func.avg(JobMatchResult.overall_score), 0).label("avg_match_score"),
+                # Available to start: shared JD scraped, pipeline not finished (no
+                # tailored resume yet), and not marked applied.
                 func.count().filter(
-                    ValidJobUserApplication.id.is_(None)
+                    and_(
+                        JobExtraction.status.in_(
+                            (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+                        ),
+                        or_(
+                            ResumeBuildResult.id.is_(None),
+                            ResumeBuildResult.resume_docx_status.is_(None),
+                            ResumeBuildResult.resume_docx_status != "completed",
+                        ),
+                        ValidJobUserApplication.id.is_(None),
+                    )
                 ).label("available_jobs"),
                 func.count().filter(
                     ValidJobUserApplication.id.is_not(None)
@@ -226,6 +264,8 @@ async def fetch_dashboard_stats(
         "my_jobs": stats_row.my_jobs or 0,
         "extracted_jobs": stats_row.extracted_jobs or 0,
         "ready_jobs": stats_row.ready_jobs or 0,
+        "today_ready_jobs": stats_row.today_ready_jobs or 0,
+        "today_available_jobs": stats_row.today_available_jobs or 0,
         "best_jobs": stats_row.best_jobs or 0,
         "good_jobs": stats_row.good_jobs or 0,
         "qualified_jobs": stats_row.qualified_jobs or 0,
@@ -247,7 +287,10 @@ def _admin_system_visible_clause():
 
 
 def _admin_needs_extraction_expr():
-    """Jobs without a completed JD extraction (excludes hard failures)."""
+    """Jobs without a shared JD scrape (excludes hard failures).
+
+    ``EXTRACTED`` means scrape finished — those are ready, not "needs extraction".
+    """
     return or_(
         Job.extraction_id.is_(None),
         JobExtraction.status.is_(None),
@@ -255,7 +298,6 @@ def _admin_needs_extraction_expr():
             (
                 ExtractionStatus.PENDING,
                 ExtractionStatus.PROCESSING,
-                ExtractionStatus.EXTRACTED,
             )
         ),
     )
@@ -294,7 +336,9 @@ async def fetch_admin_dashboard_stats(
                     )
                 ).label("today_posted"),
                 func.count().filter(
-                    JobExtraction.status == ExtractionStatus.COMPLETED
+                    JobExtraction.status.in_(
+                        (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+                    )
                 ).label("extracted_jobs"),
                 func.count().filter(needs_ext).label("needs_extraction_jobs"),
                 func.count().filter(

@@ -221,14 +221,17 @@ class JobExtractionRepository:
         *,
         metadata: dict | None = None,
     ) -> None:
-        """Force-write pasted JD and mark the shared extraction COMPLETED."""
+        """Force-write pasted JD and mark shared extraction EXTRACTED (raw JD ready).
+
+        COMPLETED is reserved for Phase A structuring — a manual paste is scrape-equivalent.
+        """
         now = _utcnow()
         values: dict = {
             "raw_plain_text": plain_text,
-            "status": ExtractionStatus.COMPLETED,
+            "status": ExtractionStatus.EXTRACTED,
             "error_message": None,
             "is_job_posting": True,
-            "completed_at": now,
+            "completed_at": None,
             "updated_at": now,
             # Manual text replaces prior AI-structured fields until re-analyzed.
             "description": None,

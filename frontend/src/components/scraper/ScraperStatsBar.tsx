@@ -644,6 +644,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const today = safe(view.today_scraped);
   const todayRemote = safe(view.today_remote);
   const ready = safe(view.ready_jobs);
+  const todayReady = safe(view.today_ready_jobs ?? 0);
+  const todayAvailable = safe(view.today_available_jobs ?? 0);
   const best = safe(view.best_jobs ?? 0);
   const good = safe(view.good_jobs ?? 0);
   const qualified = safe(view.qualified_jobs ?? good + best);
@@ -652,14 +654,18 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const remote = safe(view.total_remote);
   const total = safe(view.total_jobs);
   const myJobs = safe(view.my_jobs);
-  const available = safe(
-    view.available_jobs ?? Math.max(0, total - safe(view.applied_jobs ?? 0)),
-  );
-  const applied = safe(view.applied_jobs ?? Math.max(0, total - available));
+  const available = safe(view.available_jobs ?? 0);
+  const applied = safe(view.applied_jobs ?? 0);
   const appliedToday = safe(view.applied_today ?? 0);
   const sheetPosted = safe(view.sheet_posted_jobs ?? 0);
   const pumblePosted = safe(view.pumble_posted_jobs ?? 0);
-  const readyRatio = total > 0 ? ready / total : 0;
+  // Hero ring is today's work only: today ready / today available-to-start.
+  const todayReadyRatio =
+    todayAvailable > 0
+      ? Math.min(1, todayReady / todayAvailable)
+      : todayReady > 0
+        ? 1
+        : 0;
   const appliedRatio = total > 0 ? applied / total : 0;
   const remotePct = total > 0 ? Math.round((remote / total) * 100) : 0;
   const todayBumped = useBumpOnIncrease(today);
@@ -862,7 +868,10 @@ const StatsBoardContent = memo(function StatsBoardContent({
             ].join(' ')}
           >
             <div className="relative flex items-center justify-center">
-              <HeroOrbitRing progress={readyRatio} showShimmer={total > 0 && readyRatio < 1} />
+              <HeroOrbitRing
+                progress={todayReadyRatio}
+                showShimmer={todayAvailable > 0 && todayReadyRatio < 1}
+              />
               <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
                 <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
                 <AnimatedNumber
@@ -876,14 +885,18 @@ const StatsBoardContent = memo(function StatsBoardContent({
             </div>
             <div className="mt-1 flex h-[44px] flex-col justify-center space-y-0.5">
               <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
-                {todayRemote > 0
-                  ? `${fmt(todayRemote)} remote added today`
-                  : total > 0
-                    ? `${Math.round(readyRatio * 100)}% of pool ready to apply`
-                    : 'New jobs added to your board today'}
+                {today > 0
+                  ? `${fmt(todayReady)} ready / ${fmt(todayAvailable)} available to start`
+                  : todayRemote > 0
+                    ? `${fmt(todayRemote)} remote added today`
+                    : 'No jobs added to your board today'}
               </p>
               <p className="truncate text-[12px] font-medium text-slate-500">
-                {fmt(applied)} applied · {Math.round(appliedRatio * 100)}% of pool
+                {today > 0
+                  ? `${Math.round(todayReadyRatio * 100)}% ready vs available to start today`
+                  : appliedToday > 0
+                    ? `${fmt(appliedToday)} applied today · ${fmt(applied)} total`
+                    : `${fmt(applied)} applied · ${Math.round(appliedRatio * 100)}% of pool`}
               </p>
             </div>
           </button>
@@ -909,12 +922,12 @@ const StatsBoardContent = memo(function StatsBoardContent({
               icon={CirclePlay}
               value={available}
               label="Available to start"
-              hint="Still open · not applied yet"
+              hint="JD scraped · pipeline not finished"
               accent="from-violet-400 to-indigo-500"
               iconWrap="from-violet-500 to-indigo-600"
               delay={90}
               onClick={onSelectAvailable}
-              title="Jobs you have not marked as applied"
+              title="Jobs with an extracted job description that still need analyze / tailor / resume build"
               trend={availableTrend}
               trendLabels={trendDayLabels}
               trendColor="#a78bfa"

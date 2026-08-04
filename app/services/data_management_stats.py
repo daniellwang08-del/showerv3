@@ -5,7 +5,7 @@ Vocabulary (platform-wide unless noted):
   * employer_posted — Job.posted_date (employer post date; optional)
   * team_applied   — ValidJobUserApplication across all users
   * remote         — fetched jobs matching the shared remote expression
-  * jd_ready       — JobExtraction reached COMPLETED that day
+  * jd_ready       — JobExtraction reached EXTRACTED or COMPLETED that day
                       (coalesce(completed_at, updated_at))
   * extraction_failed — JobExtraction status FAILED that day (updated_at;
                       failures do not set completed_at)
@@ -230,7 +230,7 @@ async def fetch_pipeline_series(
     """Daily intake + extraction outcomes (platform-wide).
 
     * fetched_count — jobs created that day
-    * jd_ready_count — extractions that reached COMPLETED that day
+    * jd_ready_count — extractions that reached EXTRACTED or COMPLETED that day
     * extraction_failed_count — extractions marked FAILED that day (updated_at)
     * backlog_now — point-in-time unfinished JD pool (not a daily event)
     """
@@ -267,7 +267,9 @@ async def fetch_pipeline_series(
             .select_from(job_ext)
             .where(
                 visible,
-                JobExtraction.status == ExtractionStatus.COMPLETED,
+                JobExtraction.status.in_(
+                    (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+                ),
                 ready_ts.is_not(None),
                 ready_ts >= start_utc,
                 ready_ts < end_utc,

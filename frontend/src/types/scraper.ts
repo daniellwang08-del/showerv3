@@ -1,8 +1,8 @@
 /** Extraction pipeline stages returned by the jobs-list endpoint.
  *  pending    → queued for extraction
  *  processing → extraction worker running
- *  extracted  → raw text captured (admin inventory then advances to completed)
- *  completed  → shared JD ready (admin) / analysis done (applicant)
+ *  extracted  → raw / shared JD scraped and ready (no Phase A yet)
+ *  completed  → Phase A structured the posting (analysis advanced status)
  *  failed     → extraction failed
  */
 export type ExtractionStatus = 'pending' | 'processing' | 'extracted' | 'completed' | 'failed';
@@ -148,6 +148,10 @@ export interface ScraperStats {
   my_jobs: number;
   extracted_jobs: number;
   ready_jobs: number;
+  /** Ready-to-apply among jobs added to the pool today (hero ring numerator). */
+  today_ready_jobs?: number;
+  /** Available-to-start among jobs added today (hero ring denominator). */
+  today_available_jobs?: number;
   /** Match score >= 75 (Strong). Optional for older backends. */
   best_jobs?: number;
   /** Match score 50-74 (Good). Optional for older backends. */
@@ -158,7 +162,7 @@ export interface ScraperStats {
   scored_jobs?: number;
   /** Average match score across scored jobs. Optional for older backends. */
   avg_match_score?: number;
-  /** Visible jobs not yet marked applied. Optional for older backends. */
+  /** Jobs with shared JD scraped but pipeline not finished (not resume-ready, not applied). */
   available_jobs?: number;
   /** Visible jobs marked applied. Optional for older backends. */
   applied_jobs?: number;

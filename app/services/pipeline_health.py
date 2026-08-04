@@ -28,6 +28,7 @@ async def heal_stale_pipeline_state(
     failed_content = 0
     cleared_progress = 0
     completed_extractions = 0
+    demoted_scrape_only = 0
     excluded_zero_scores = 0
 
     async with get_session() as session:
@@ -86,30 +87,37 @@ async def heal_stale_pipeline_state(
         )
         completed_extractions = len(completed_result.fetchall())
 
-        # Platform extract-only leftovers: scraped text exists, no analysis in flight.
-        # Advance to COMPLETED so Jobs UI and prepare treat them as shared-JD ready.
-        shared_ready_result = await session.execute(
+        # Demote scrape-only rows wrongly marked COMPLETED (legacy platform promote).
+        # COMPLETED means Phase A structured the posting; shared raw JD stays EXTRACTED.
+        demote_result = await session.execute(
             text(
                 """
                 UPDATE job_extractions AS je
-                SET status = 'COMPLETED',
-                    completed_at = coalesce(je.completed_at, timezone('UTC', now())),
+                SET status = 'EXTRACTED',
+                    completed_at = NULL,
                     updated_at = timezone('UTC', now())
-                WHERE je.status = 'EXTRACTED'
+                WHERE je.status = 'COMPLETED'
                   AND je.raw_plain_text IS NOT NULL
                   AND length(btrim(je.raw_plain_text)) > 0
+                  AND (
+                      je.description IS NULL
+                      OR length(btrim(je.description)) = 0
+                  )
+                  AND (
+                      je.raw_metadata IS NULL
+                      OR NOT (je.raw_metadata ? 'ai_structured_source')
+                  )
                   AND NOT EXISTS (
                       SELECT 1
                       FROM jobs j
-                      JOIN job_match_in_progress jmp ON jmp.job_id = j.id
+                      JOIN job_match_results jmr ON jmr.job_id = j.id
                       WHERE j.extraction_id = je.id
                   )
                 RETURNING je.id
                 """
             )
         )
-        shared_ready = len(shared_ready_result.fetchall())
-        completed_extractions += shared_ready
+        demoted_scrape_only = len(demote_result.fetchall())
 
         # Remove already-scored 0 Weak jobs that remained active on the Jobs list.
         zero_score_result = await session.execute(
@@ -136,12 +144,19 @@ async def heal_stale_pipeline_state(
         excluded_zero_scores = len(zero_score_result.fetchall())
         await session.commit()
 
-    if failed_content or cleared_progress or completed_extractions or excluded_zero_scores:
+    if (
+        failed_content
+        or cleared_progress
+        or completed_extractions
+        or demoted_scrape_only
+        or excluded_zero_scores
+    ):
         logger.info(
             "pipeline_stale_state_healed",
             failed_content=failed_content,
             cleared_progress=cleared_progress,
             completed_extractions=completed_extractions,
+            demoted_scrape_only=demoted_scrape_only,
             excluded_zero_scores=excluded_zero_scores,
             processing_max_age_seconds=processing_age,
             progress_max_age_seconds=progress_age,
@@ -150,6 +165,7 @@ async def heal_stale_pipeline_state(
         "failed_content": failed_content,
         "cleared_progress": cleared_progress,
         "completed_extractions": completed_extractions,
+        "demoted_scrape_only": demoted_scrape_only,
         "excluded_zero_scores": excluded_zero_scores,
         "processing_max_age_seconds": processing_age,
         "progress_max_age_seconds": progress_age,

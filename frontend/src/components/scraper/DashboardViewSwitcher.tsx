@@ -140,7 +140,7 @@ const BOARD_VIEWS: ViewMeta[] = [
   {
     id: 'available',
     label: 'Available to start',
-    description: 'Jobs not marked applied yet',
+    description: 'JD scraped but pipeline not finished yet',
     icon: CirclePlay,
     accent: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
     active: 'text-violet-700 dark:text-violet-300',

@@ -29,6 +29,12 @@ class ExtractionMethod(str, Enum):
 
 
 class ExtractionStatus(str, Enum):
+    """JD pipeline status.
+
+    ``extracted`` = shared raw JD scraped and ready.
+    ``completed`` = Phase A structured the posting (also implies scrape finished).
+    """
+
     PENDING = "pending"
     PROCESSING = "processing"
     EXTRACTED = "extracted"

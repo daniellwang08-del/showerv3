@@ -1210,16 +1210,9 @@ async def process_extraction_sync(
         service = ExtractionService()
         result = await service.process_job(extraction_id, url)
         if result.get("status") == "extracted":
-            if not user_id:
-                from app.models.schemas import ExtractionStatus
-
-                async with get_session() as session:
-                    extraction_repo = JobExtractionRepository(session)
-                    await extraction_repo.update_status(
-                        extraction_id, ExtractionStatus.COMPLETED
-                    )
-                    await session.commit()
-            elif user_id:
+            # Scrape-only stays EXTRACTED (shared JD ready). Do not promote to
+            # COMPLETED — that status means Phase A structured the posting.
+            if user_id:
                 found_job_id: str | None = None
                 async with get_session() as session:
                     job_repo = JobRepository(session)
@@ -1616,7 +1609,7 @@ async def submit_job(
 
         await session.commit()
 
-        if extraction.status != ExtractionStatus.COMPLETED:
+        if not extraction_has_shared_jd(extraction):
             # Admin: extract-only. Applicant: extract then analyze (chain_user_id set).
             await enqueue_extraction(
                 extraction.id,
@@ -1738,11 +1731,11 @@ DASHBOARD_VIEWS = {
 }
 
 VIEWS_NEEDING_APPLICATION_JOIN = frozenset({"applied_today", "applied", "available", "ready"})
-VIEWS_NEEDING_RESUME_JOIN = frozenset({"ready"})
+VIEWS_NEEDING_RESUME_JOIN = frozenset({"ready", "available"})
 # Extraction is always joined on the dashboard list query; this set documents
-# views whose WHERE clauses depend on JobExtraction columns.
+# views whose WHERE clauses depend on JobExtraction columns (also required on count).
 VIEWS_NEEDING_EXTRACTION_CLAUSE = frozenset(
-    {"needs_extraction", "extracted", "extraction_failed"}
+    {"needs_extraction", "extracted", "extraction_failed", "available"}
 )
 
 
@@ -1806,6 +1799,21 @@ def _dashboard_view_clauses(
     elif view == "applied":
         clauses.append(ValidJobUserApplication.id.is_not(None))
     elif view == "available":
+        from app.models.schemas import ExtractionStatus
+
+        # Available to start: shared JD scraped, not yet resume-ready, not applied.
+        clauses.append(
+            JobExtraction.status.in_(
+                (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+            )
+        )
+        clauses.append(
+            or_(
+                ResumeBuildResult.id.is_(None),
+                ResumeBuildResult.resume_docx_status.is_(None),
+                ResumeBuildResult.resume_docx_status != "completed",
+            )
+        )
         clauses.append(ValidJobUserApplication.id.is_(None))
     elif view == "ready":
         # Tailored resume ready AND not yet applied — "Ready to apply".
@@ -1826,7 +1834,6 @@ def _dashboard_view_clauses(
                     (
                         ExtractionStatus.PENDING,
                         ExtractionStatus.PROCESSING,
-                        ExtractionStatus.EXTRACTED,
                     )
                 ),
             )
@@ -1834,7 +1841,12 @@ def _dashboard_view_clauses(
     elif view == "extracted":
         from app.models.schemas import ExtractionStatus
 
-        clauses.append(JobExtraction.status == ExtractionStatus.COMPLETED)
+        # Shared JD ready (scrape done) and/or Phase A structured.
+        clauses.append(
+            JobExtraction.status.in_(
+                (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
+            )
+        )
     elif view == "extraction_failed":
         from app.models.schemas import ExtractionStatus
 
@@ -3170,7 +3182,7 @@ async def save_manual_job_description(
     return ManualJdResponse(
         job_id=job_id,
         extraction_id=extraction_id,
-        extraction_status=ExtractionStatus.COMPLETED,
+        extraction_status=ExtractionStatus.EXTRACTED,
         raw_plain_text=raw_text,
     )
 

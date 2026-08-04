@@ -169,14 +169,16 @@ class ScraperStatsResponse(BaseModel):
     today_remote: int = 0
     today_posted: int = 0
     my_jobs: int = 0          # jobs I added via submission/attachment
-    extracted_jobs: int = 0   # fully extracted (pipeline completed)
+    extracted_jobs: int = 0   # shared JD ready (extracted or completed)
     ready_jobs: int = 0       # tailored resume ready AND not yet applied
+    today_ready_jobs: int = 0  # ready-to-apply among jobs added today
+    today_available_jobs: int = 0  # available-to-start among jobs added today
     best_jobs: int = 0        # match score >= 75 (Strong)
     good_jobs: int = 0        # match score 50-74 (Good)
     qualified_jobs: int = 0   # match score >= user's preference minimum
     scored_jobs: int = 0      # jobs with any match score
     avg_match_score: int = 0  # average match score across scored jobs
-    available_jobs: int = 0   # not yet marked applied
+    available_jobs: int = 0   # JD scraped, not resume-ready, not applied
     applied_jobs: int = 0     # marked applied
     applied_today: int = 0    # marked applied today
     sheet_posted_jobs: int = 0
@@ -917,6 +919,8 @@ async def get_scraper_stats(
             my_jobs=data["my_jobs"],
             extracted_jobs=data["extracted_jobs"],
             ready_jobs=data["ready_jobs"],
+            today_ready_jobs=data.get("today_ready_jobs", 0),
+            today_available_jobs=data.get("today_available_jobs", 0),
             best_jobs=data["best_jobs"],
             good_jobs=data["good_jobs"],
             qualified_jobs=data["qualified_jobs"],
