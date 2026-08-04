@@ -1,21 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, ChevronDown } from 'lucide-react';
 import {
   fetchAnalysisPlatforms,
   fetchAnalysisUsers,
-  fetchAppliedVsPostedSeries,
+  fetchAppliedVsFetchedSeries,
   fetchDataManagementMonths,
+  fetchDistributionSeries,
+  fetchGrowthSeries,
+  fetchPipelineSeries,
   fetchPlatformVsAppliedSeries,
-  fetchRemoteVsPostedSeries,
+  fetchRemoteVsFetchedSeries,
+  fetchScrapeHealthSeries,
   fetchUserActivitySeries,
   getClientTimezone,
 } from '../../api/dataManagementApi';
 import type {
   AnalysisUser,
-  AppliedVsPostedSeries,
+  AppliedVsFetchedSeries,
   DataManagementMonth,
   MultiSeriesResult,
-  RemoteVsPostedSeries,
+  PipelineSeriesResult,
+  RemoteVsFetchedSeries,
   UserActivityMetric,
 } from '../../types/dataManagement';
 import { BrandedLoader } from '../layout/BrandedLoader';
@@ -26,21 +31,41 @@ import { MultiLineChart, seriesColorAt } from './MultiLineChart';
 const MAX_ACTIVITY_USERS = 25;
 
 const ACTIVITY_METRICS: Array<{ id: UserActivityMetric; label: string }> = [
-  { id: 'jobs_added', label: 'Jobs added' },
+  { id: 'board_added', label: 'Board added' },
   { id: 'applied', label: 'Applied' },
-  { id: 'sheet_posted', label: 'Sheet posted' },
-  { id: 'pumble_posted', label: 'Pumble posted' },
 ];
+
+const PIPELINE_COLORS: Record<string, string> = {
+  fetched_count: '#0f766e',
+  jd_ready_count: '#2563eb',
+  extraction_failed_count: '#be123c',
+};
+
+const DISTRIBUTION_COLORS: Record<string, string> = {
+  sheet_posted_count: '#059669',
+  pumble_posted_count: '#7c3aed',
+};
+
+const GROWTH_COLORS: Record<string, string> = {
+  new_users_count: '#0369a1',
+  team_applied_count: '#2563eb',
+};
 
 function extractErrorMessage(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'response' in err) {
     const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
     if (typeof detail === 'string' && detail.trim()) return detail;
     if (Array.isArray(detail)) {
-      return detail.map((d) => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d))).join('; ');
+      return detail
+        .map((d) => (typeof d === 'object' && d && 'msg' in d ? String((d as { msg: unknown }).msg) : String(d)))
+        .join('; ');
     }
   }
   return fallback;
+}
+
+function fmt(n: number | undefined | null): string {
+  return Number(n || 0).toLocaleString();
 }
 
 function MultiSelectDropdown({
@@ -156,12 +181,71 @@ function MultiSelectDropdown({
   );
 }
 
+function ChartCard({
+  title,
+  summary,
+  loading,
+  empty,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  loading?: boolean;
+  empty?: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h4 className="text-sm font-semibold text-slate-900">{title}</h4>
+        {summary ? <p className="text-xs text-slate-500">{summary}</p> : null}
+      </div>
+      {loading ? (
+        <BrandedLoader compact label="Loading…" />
+      ) : empty ? (
+        <p className="py-12 text-center text-sm text-slate-400">{empty}</p>
+      ) : (
+        <div className="min-w-0 overflow-x-auto">
+          <div className="min-w-[280px]">{children}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KpiStrip({
+  items,
+}: {
+  items: Array<{ label: string; value: string; hint?: string }>;
+}) {
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5"
+          title={item.hint}
+        >
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            {item.label}
+          </p>
+          <p className="mt-0.5 text-lg font-black tabular-nums text-slate-900">{item.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function DataManagementAnalyticsSection() {
   const timezone = getClientTimezone();
   const [months, setMonths] = useState<DataManagementMonth[]>([]);
   const [selectedKey, setSelectedKey] = useState('');
-  const [appliedSeries, setAppliedSeries] = useState<AppliedVsPostedSeries | null>(null);
-  const [remoteSeries, setRemoteSeries] = useState<RemoteVsPostedSeries | null>(null);
+  const [appliedSeries, setAppliedSeries] = useState<AppliedVsFetchedSeries | null>(null);
+  const [remoteSeries, setRemoteSeries] = useState<RemoteVsFetchedSeries | null>(null);
+  const [pipelineSeries, setPipelineSeries] = useState<PipelineSeriesResult | null>(null);
+  const [distributionSeries, setDistributionSeries] = useState<MultiSeriesResult | null>(null);
+  const [growthSeries, setGrowthSeries] = useState<MultiSeriesResult | null>(null);
+  const [scrapeSeries, setScrapeSeries] = useState<MultiSeriesResult | null>(null);
   const [loadingMonths, setLoadingMonths] = useState(true);
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [error, setError] = useState('');
@@ -171,7 +255,7 @@ export function DataManagementAnalyticsSection() {
   const [users, setUsers] = useState<AnalysisUser[]>([]);
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [selectedMetrics, setSelectedMetrics] = useState<Set<UserActivityMetric>>(
-    () => new Set(['jobs_added', 'applied']),
+    () => new Set(['board_added', 'applied']),
   );
   const [userActivity, setUserActivity] = useState<MultiSeriesResult | null>(null);
   const [loadingUserActivity, setLoadingUserActivity] = useState(false);
@@ -197,7 +281,6 @@ export function DataManagementAnalyticsSection() {
           setSelectedKey(`${first.year}-${first.month}`);
         }
         setUsers(userList);
-        // Default to a small set so the month chart loads (API caps user_ids).
         if (userList.length > 0) {
           setSelectedUserIds(new Set(userList.slice(0, Math.min(5, MAX_ACTIVITY_USERS)).map((u) => u.id)));
         }
@@ -229,76 +312,96 @@ export function DataManagementAnalyticsSection() {
     return hit?.label ?? '';
   }, [months, selectedKey]);
 
-  const loadOverview = useCallback(async (year: number, month: number) => {
-    setLoadingOverview(true);
-    setError('');
-    try {
-      const [applied, remote] = await Promise.all([
-        fetchAppliedVsPostedSeries(year, month, timezone),
-        fetchRemoteVsPostedSeries(year, month, timezone),
-      ]);
-      setAppliedSeries(applied);
-      setRemoteSeries(remote);
-    } catch (err: unknown) {
-      setError(extractErrorMessage(err, 'Failed to load overview charts.'));
-      setAppliedSeries(null);
-      setRemoteSeries(null);
-    } finally {
-      setLoadingOverview(false);
-    }
-  }, [timezone]);
+  const loadOverview = useCallback(
+    async (year: number, month: number) => {
+      setLoadingOverview(true);
+      setError('');
+      try {
+        const [applied, remote, pipeline, distribution, growth, scrape] = await Promise.all([
+          fetchAppliedVsFetchedSeries(year, month, timezone),
+          fetchRemoteVsFetchedSeries(year, month, timezone),
+          fetchPipelineSeries(year, month, timezone),
+          fetchDistributionSeries(year, month, timezone),
+          fetchGrowthSeries(year, month, timezone),
+          fetchScrapeHealthSeries(year, month, timezone),
+        ]);
+        setAppliedSeries(applied);
+        setRemoteSeries(remote);
+        setPipelineSeries(pipeline);
+        setDistributionSeries(distribution);
+        setGrowthSeries(growth);
+        setScrapeSeries(scrape);
+      } catch (err: unknown) {
+        setError(extractErrorMessage(err, 'Failed to load platform charts.'));
+        setAppliedSeries(null);
+        setRemoteSeries(null);
+        setPipelineSeries(null);
+        setDistributionSeries(null);
+        setGrowthSeries(null);
+        setScrapeSeries(null);
+      } finally {
+        setLoadingOverview(false);
+      }
+    },
+    [timezone],
+  );
 
-  const loadUserActivity = useCallback(async (year: number, month: number) => {
-    const ids = [...selectedUserIds].slice(0, MAX_ACTIVITY_USERS);
-    const metrics = [...selectedMetrics];
-    if (ids.length === 0 || metrics.length === 0) {
-      setUserActivity(null);
-      setUserActivityError(
-        ids.length === 0
-          ? 'Select at least one user for this month.'
-          : 'Select at least one metric for this month.',
-      );
-      return;
-    }
-    setLoadingUserActivity(true);
-    setUserActivityError('');
-    try {
-      const data = await fetchUserActivitySeries({
-        year,
-        month,
-        timezone,
-        user_ids: ids,
-        metrics,
-      });
-      setUserActivity(data);
-    } catch (err: unknown) {
-      setUserActivityError(extractErrorMessage(err, 'Failed to load user activity for this month.'));
-      setUserActivity(null);
-    } finally {
-      setLoadingUserActivity(false);
-    }
-  }, [selectedMetrics, selectedUserIds, timezone]);
+  const loadUserActivity = useCallback(
+    async (year: number, month: number) => {
+      const ids = [...selectedUserIds].slice(0, MAX_ACTIVITY_USERS);
+      const metrics = [...selectedMetrics];
+      if (ids.length === 0 || metrics.length === 0) {
+        setUserActivity(null);
+        setUserActivityError(
+          ids.length === 0
+            ? 'Select at least one user for this month.'
+            : 'Select at least one metric for this month.',
+        );
+        return;
+      }
+      setLoadingUserActivity(true);
+      setUserActivityError('');
+      try {
+        const data = await fetchUserActivitySeries({
+          year,
+          month,
+          timezone,
+          user_ids: ids,
+          metrics,
+        });
+        setUserActivity(data);
+      } catch (err: unknown) {
+        setUserActivityError(extractErrorMessage(err, 'Failed to load user activity for this month.'));
+        setUserActivity(null);
+      } finally {
+        setLoadingUserActivity(false);
+      }
+    },
+    [selectedMetrics, selectedUserIds, timezone],
+  );
 
-  const loadPlatformSeries = useCallback(async (year: number, month: number) => {
-    setLoadingPlatforms(true);
-    setPlatformError('');
-    try {
-      const data = await fetchPlatformVsAppliedSeries({
-        year,
-        month,
-        timezone,
-        platforms: selectedPlatforms.size > 0 ? [...selectedPlatforms] : null,
-      });
-      setPlatformSeries(data);
-    } catch (err: unknown) {
-      setPlatformError(extractErrorMessage(err, 'Failed to load platform series for this month.'));
-      setPlatformSeries(null);
-    } finally {
-      setLoadingPlatforms(false);
-    }
-  }, [selectedPlatforms, timezone]);
+  const loadPlatformSeries = useCallback(
+    async (year: number, month: number) => {
+      setLoadingPlatforms(true);
+      setPlatformError('');
+      try {
+        const data = await fetchPlatformVsAppliedSeries({
+          year,
+          month,
+          timezone,
+          platforms: selectedPlatforms.size > 0 ? [...selectedPlatforms] : null,
+        });
+        setPlatformSeries(data);
+      } catch (err: unknown) {
+        setPlatformError(extractErrorMessage(err, 'Failed to load platform series for this month.'));
+        setPlatformSeries(null);
+      } finally {
+        setLoadingPlatforms(false);
+      }
+    },
+    [selectedPlatforms, timezone],
+  );
 
-  // Shared month drives all three chart groups.
   useEffect(() => {
     if (!yearMonth) return;
     void loadOverview(yearMonth.year, yearMonth.month);
@@ -318,7 +421,6 @@ export function DataManagementAnalyticsSection() {
     id: u.id,
     label: `${u.name} (${u.email})`,
   }));
-
   const platformOptions = platforms.map((p) => ({ id: p, label: p }));
 
   const userChartSeries = useMemo(() => {
@@ -339,6 +441,48 @@ export function DataManagementAnalyticsSection() {
     }));
   }, [platformSeries]);
 
+  const pipelineChartSeries = useMemo(() => {
+    if (!pipelineSeries) return [];
+    return pipelineSeries.series.map((s) => ({
+      key: s.key,
+      label: s.label,
+      color: PIPELINE_COLORS[s.key] || seriesColorAt(0),
+    }));
+  }, [pipelineSeries]);
+
+  const distributionChartSeries = useMemo(() => {
+    if (!distributionSeries) return [];
+    return distributionSeries.series.map((s) => ({
+      key: s.key,
+      label: s.label,
+      color: DISTRIBUTION_COLORS[s.key] || seriesColorAt(0),
+    }));
+  }, [distributionSeries]);
+
+  const growthChartSeries = useMemo(() => {
+    if (!growthSeries) return [];
+    return growthSeries.series.map((s) => ({
+      key: s.key,
+      label: s.label,
+      color: GROWTH_COLORS[s.key] || seriesColorAt(0),
+    }));
+  }, [growthSeries]);
+
+  const scrapeChartSeries = useMemo(() => {
+    if (!scrapeSeries) return [];
+    // Prefer aggregate lines; spider lines follow with muted palette offset.
+    return scrapeSeries.series.map((s, i) => ({
+      key: s.key,
+      label: s.label,
+      color:
+        s.key === 'items_new'
+          ? '#0f766e'
+          : s.key === 'errors'
+            ? '#be123c'
+            : seriesColorAt(i + 3),
+    }));
+  }, [scrapeSeries]);
+
   const toggleMetric = (id: UserActivityMetric) => {
     setSelectedMetrics((prev) => {
       const next = new Set(prev);
@@ -348,13 +492,53 @@ export function DataManagementAnalyticsSection() {
     });
   };
 
+  const kpiItems = useMemo(() => {
+    const p = pipelineSeries?.totals;
+    const d = distributionSeries?.totals;
+    const g = growthSeries?.totals;
+    const s = scrapeSeries?.totals;
+    return [
+      {
+        label: 'Fetched',
+        value: fmt(p?.fetched_count),
+        hint: 'Jobs created on the platform this month',
+      },
+      {
+        label: 'JD ready',
+        value: fmt(p?.jd_ready_count),
+        hint: 'Extractions that reached completed this month',
+      },
+      {
+        label: 'Ext. failed',
+        value: fmt(p?.extraction_failed_count),
+        hint: 'Extractions marked failed this month',
+      },
+      {
+        label: 'Backlog now',
+        value: fmt(p?.backlog_now),
+        hint: 'Live unfinished JD pool (point-in-time)',
+      },
+      {
+        label: 'Team applied',
+        value: fmt(g?.team_applied_count ?? appliedSeries?.totals.applied_count),
+        hint: 'Applications marked by all users this month',
+      },
+      {
+        label: 'Scrape new',
+        value: fmt(s?.items_new),
+        hint: `Sheet ${fmt(d?.sheet_posted_count)} · Pumble ${fmt(d?.pumble_posted_count)} · Runs ${fmt(s?.runs)}`,
+      },
+    ];
+  }, [appliedSeries, distributionSeries, growthSeries, pipelineSeries, scrapeSeries]);
+
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 md:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-base font-bold text-slate-900">Analysis</h2>
           <p className="mt-0.5 text-sm text-slate-500">
-            All charts below use the same month period ({timezone}).
+            Platform-wide metrics for {timezone}. Fetched means jobs created on Atomspace — not
+            employer post date.
           </p>
         </div>
         <label className="flex w-full flex-col gap-1 text-xs font-semibold text-slate-700 sm:w-auto">
@@ -381,88 +565,251 @@ export function DataManagementAnalyticsSection() {
         </p>
       )}
 
-      {/* Overview dual charts */}
+      {!loadingMonths && !loadingOverview && (pipelineSeries || growthSeries) ? (
+        <KpiStrip items={kpiItems} />
+      ) : null}
+
+      {/* Platform overview */}
       <div className="mt-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="text-sm font-bold text-slate-900">Your overview</h3>
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Platform overview</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Team applications and remote share against platform-wide fetches for the selected
+              month.
+            </p>
+          </div>
           {selectedMonthLabel && (
             <span className="text-xs font-medium text-slate-500">{selectedMonthLabel}</span>
           )}
         </div>
         {loadingMonths || loadingOverview ? (
-          <BrandedLoader compact label="Loading overview…" className="mt-4" />
+          <BrandedLoader compact label="Loading platform overview…" className="mt-4" />
         ) : (
           <div className="mt-3 grid gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
-              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                <h4 className="text-sm font-semibold text-slate-900">Applied vs added</h4>
-                {appliedSeries && (
-                  <p className="text-xs text-slate-500">
-                    {appliedSeries.totals.applied_count} applied ·{' '}
-                    {appliedSeries.totals.posted_count} added
-                  </p>
-                )}
-              </div>
+            <ChartCard
+              title="Team applied vs fetched"
+              summary={
+                appliedSeries
+                  ? `${fmt(appliedSeries.totals.applied_count)} applied · ${fmt(appliedSeries.totals.fetched_count)} fetched`
+                  : undefined
+              }
+              empty={appliedSeries ? null : 'No data'}
+            >
               {appliedSeries ? (
-                <div className="min-w-0 overflow-x-auto">
-                  <div className="min-w-[280px]">
-                    <DualLineChart
-                      data={appliedSeries.days as unknown as Array<Record<string, unknown>>}
-                      xKey="date"
-                      lineAKey="applied_count"
-                      lineBKey="posted_count"
-                      lineAName="Applied"
-                      lineBName="Added to platform"
-                      lineAColor="#2563eb"
-                      lineBColor="#0f766e"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <p className="py-12 text-center text-sm text-slate-400">No data</p>
-              )}
-            </div>
+                <DualLineChart
+                  data={appliedSeries.days as unknown as Array<Record<string, unknown>>}
+                  xKey="date"
+                  lineAKey="applied_count"
+                  lineBKey="fetched_count"
+                  lineAName="Team applied"
+                  lineBName="Fetched"
+                  lineAColor="#2563eb"
+                  lineBColor="#0f766e"
+                />
+              ) : null}
+            </ChartCard>
 
-            <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
-              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                <h4 className="text-sm font-semibold text-slate-900">Remote vs added</h4>
-                {remoteSeries && (
-                  <p className="text-xs text-slate-500">
-                    {remoteSeries.totals.remote_count} remote ·{' '}
-                    {remoteSeries.totals.posted_count} added
-                  </p>
-                )}
-              </div>
+            <ChartCard
+              title="Remote vs fetched"
+              summary={
+                remoteSeries
+                  ? `${fmt(remoteSeries.totals.remote_count)} remote · ${fmt(remoteSeries.totals.fetched_count)} fetched`
+                  : undefined
+              }
+              empty={remoteSeries ? null : 'No data'}
+            >
               {remoteSeries ? (
-                <div className="min-w-0 overflow-x-auto">
-                  <div className="min-w-[280px]">
-                    <DualLineChart
-                      data={remoteSeries.days as unknown as Array<Record<string, unknown>>}
-                      xKey="date"
-                      lineAKey="remote_count"
-                      lineBKey="posted_count"
-                      lineAName="Remote"
-                      lineBName="Added to platform"
-                      lineAColor="#7c3aed"
-                      lineBColor="#0f766e"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <p className="py-12 text-center text-sm text-slate-400">No data</p>
-              )}
-            </div>
+                <DualLineChart
+                  data={remoteSeries.days as unknown as Array<Record<string, unknown>>}
+                  xKey="date"
+                  lineAKey="remote_count"
+                  lineBKey="fetched_count"
+                  lineAName="Remote"
+                  lineBName="Fetched"
+                  lineAColor="#7c3aed"
+                  lineBColor="#0f766e"
+                />
+              ) : null}
+            </ChartCard>
           </div>
         )}
       </div>
 
-      {/* User activity — same month */}
+      {/* Pipeline + scrape */}
+      <div className="mt-8 border-t border-slate-100 pt-6">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Pipeline & scrape health</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Daily extraction outcomes and scrape_runs items/errors. Backlog is live (not
+              historical).
+            </p>
+          </div>
+          {selectedMonthLabel && (
+            <span className="text-xs font-medium text-slate-500">{selectedMonthLabel}</span>
+          )}
+        </div>
+        {loadingOverview ? (
+          <BrandedLoader compact label="Loading pipeline…" className="mt-4" />
+        ) : (
+          <div className="mt-3 grid gap-6 lg:grid-cols-2">
+            <ChartCard
+              title="Extraction pipeline"
+              summary={
+                pipelineSeries
+                  ? `${fmt(pipelineSeries.totals.jd_ready_count)} ready · ${fmt(pipelineSeries.totals.extraction_failed_count)} failed · backlog ${fmt(pipelineSeries.totals.backlog_now)}`
+                  : undefined
+              }
+              empty={pipelineChartSeries.length ? null : 'No extraction events this month'}
+            >
+              <MultiLineChart
+                data={(pipelineSeries?.days ?? []) as Array<Record<string, unknown>>}
+                xKey="date"
+                series={pipelineChartSeries}
+                height={280}
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Scrape health"
+              summary={
+                scrapeSeries
+                  ? `${fmt(scrapeSeries.totals.items_new)} new · ${fmt(scrapeSeries.totals.errors)} errors · ${fmt(scrapeSeries.totals.runs)} runs`
+                  : undefined
+              }
+              empty={scrapeChartSeries.length ? null : 'No scrape runs this month'}
+            >
+              <MultiLineChart
+                data={(scrapeSeries?.days ?? []) as Array<Record<string, unknown>>}
+                xKey="date"
+                series={scrapeChartSeries}
+                height={280}
+              />
+            </ChartCard>
+          </div>
+        )}
+      </div>
+
+      {/* Distribution + growth */}
+      <div className="mt-8 border-t border-slate-100 pt-6">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Distribution & growth</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              System-wide Sheet/Pumble posts, new user signups, and team applications.
+            </p>
+          </div>
+          {selectedMonthLabel && (
+            <span className="text-xs font-medium text-slate-500">{selectedMonthLabel}</span>
+          )}
+        </div>
+        {loadingOverview ? (
+          <BrandedLoader compact label="Loading distribution…" className="mt-4" />
+        ) : (
+          <div className="mt-3 grid gap-6 lg:grid-cols-2">
+            <ChartCard
+              title="Sheet & Pumble"
+              summary={
+                distributionSeries
+                  ? `${fmt(distributionSeries.totals.sheet_posted_count)} sheet · ${fmt(distributionSeries.totals.pumble_posted_count)} pumble`
+                  : undefined
+              }
+              empty={distributionChartSeries.length ? null : 'No distribution events this month'}
+            >
+              <MultiLineChart
+                data={(distributionSeries?.days ?? []) as Array<Record<string, unknown>>}
+                xKey="date"
+                series={distributionChartSeries}
+                height={280}
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="Users & applications"
+              summary={
+                growthSeries
+                  ? `${fmt(growthSeries.totals.new_users_count)} new users · ${fmt(growthSeries.totals.team_applied_count)} applied`
+                  : undefined
+              }
+              empty={growthChartSeries.length ? null : 'No growth events this month'}
+            >
+              <MultiLineChart
+                data={(growthSeries?.days ?? []) as Array<Record<string, unknown>>}
+                xKey="date"
+                series={growthChartSeries}
+                height={280}
+              />
+            </ChartCard>
+          </div>
+        )}
+      </div>
+
+      {/* Platform fetch vs applied */}
+      <div className="mt-8 border-t border-slate-100 pt-6">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">Platform fetch vs applied</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Jobs fetched per scrape source versus applications across all users (same
+              platform-wide scope on both axes).
+            </p>
+          </div>
+          {selectedMonthLabel && (
+            <span className="text-xs font-medium text-slate-500">{selectedMonthLabel}</span>
+          )}
+        </div>
+
+        <div className="mt-4">
+          <MultiSelectDropdown
+            label="Platforms"
+            options={platformOptions}
+            selected={selectedPlatforms}
+            onChange={setSelectedPlatforms}
+            emptyLabel="No platforms found"
+          />
+        </div>
+
+        {platformError && (
+          <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-rose-700">
+            <AlertCircle size={16} />
+            {platformError}
+          </p>
+        )}
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
+          {loadingPlatforms ? (
+            <BrandedLoader
+              compact
+              label={`Loading ${selectedMonthLabel || 'month'} platform series…`}
+            />
+          ) : platformChartSeries.length === 0 ? (
+            <div className="flex items-center justify-center py-16 text-sm text-slate-400">
+              {platformError || 'Select at least one platform for this month.'}
+            </div>
+          ) : (
+            <div className="min-w-0 overflow-x-auto">
+              <div className="min-w-[280px]">
+                <MultiLineChart
+                  data={(platformSeries?.days ?? []) as Array<Record<string, unknown>>}
+                  xKey="date"
+                  series={platformChartSeries}
+                  height={320}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* User activity drill-down */}
       <div className="mt-8 border-t border-slate-100 pt-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <h3 className="text-sm font-bold text-slate-900">User activity</h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              Daily lines for the selected month. Choose users and metrics to compare.
+              Per-user board adds (jobs that appeared on that user&apos;s board) and applications.
+              Sheet/Pumble posts are system-wide — see Distribution above.
             </p>
           </div>
           {selectedMonthLabel && (
@@ -533,63 +880,6 @@ export function DataManagementAnalyticsSection() {
                   data={(userActivity?.days ?? []) as Array<Record<string, unknown>>}
                   xKey="date"
                   series={userChartSeries}
-                  height={320}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Platform scrape vs applied — same month */}
-      <div className="mt-8 border-t border-slate-100 pt-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">Platform scrape vs applied</h3>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Daily jobs added from each scrape platform versus applied jobs for the selected
-              month.
-            </p>
-          </div>
-          {selectedMonthLabel && (
-            <span className="text-xs font-medium text-slate-500">{selectedMonthLabel}</span>
-          )}
-        </div>
-
-        <div className="mt-4">
-          <MultiSelectDropdown
-            label="Platforms"
-            options={platformOptions}
-            selected={selectedPlatforms}
-            onChange={setSelectedPlatforms}
-            emptyLabel="No platforms found"
-          />
-        </div>
-
-        {platformError && (
-          <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-rose-700">
-            <AlertCircle size={16} />
-            {platformError}
-          </p>
-        )}
-
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
-          {loadingPlatforms ? (
-            <BrandedLoader
-              compact
-              label={`Loading ${selectedMonthLabel || 'month'} platform series…`}
-            />
-          ) : platformChartSeries.length === 0 ? (
-            <div className="flex items-center justify-center py-16 text-sm text-slate-400">
-              {platformError || 'Select at least one platform for this month.'}
-            </div>
-          ) : (
-            <div className="min-w-0 overflow-x-auto">
-              <div className="min-w-[280px]">
-                <MultiLineChart
-                  data={(platformSeries?.days ?? []) as Array<Record<string, unknown>>}
-                  xKey="date"
-                  series={platformChartSeries}
                   height={320}
                 />
               </div>

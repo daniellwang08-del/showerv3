@@ -20,8 +20,12 @@ from app.models.database import Job, JobMatchInProgress
 from app.models.schemas import ExtractionStatus
 from app.services.data_management_ops import preview_jobs
 from app.services.data_management_stats import (
-    fetch_applied_vs_posted_series,
-    fetch_remote_vs_posted_series,
+    fetch_distribution_series,
+    fetch_growth_series,
+    fetch_pipeline_series,
+    fetch_remote_vs_fetched_series,
+    fetch_scrape_health_series,
+    fetch_team_applied_vs_fetched_series,
 )
 from app.services.job_exclusion_types import (
     LOCATION_UNKNOWN_EXCLUSION,
@@ -99,18 +103,20 @@ async def get_data_management_months(
     return {"timezone": timezone or "UTC", "months": months}
 
 
+@router.get("/series/applied-vs-fetched", dependencies=[Depends(require_admin)])
 @router.get("/series/applied-vs-posted", dependencies=[Depends(require_admin)])
-async def get_applied_vs_posted_series(
+async def get_applied_vs_fetched_series(
     year: int = Query(..., ge=1970, le=2100),
     month: int = Query(..., ge=1, le=12),
     timezone: str | None = Query(default="UTC"),
     current_user: dict = Depends(require_admin),
 ):
-    user_id = _require_user(current_user)
+    """Platform-wide team applied vs jobs fetched. Old path kept as alias."""
+    _require_user(current_user)
     try:
         async with get_session() as session:
-            return await fetch_applied_vs_posted_series(
-                session, user_id, year=year, month=month, tz_name=timezone
+            return await fetch_team_applied_vs_fetched_series(
+                session, year=year, month=month, tz_name=timezone
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -119,24 +125,106 @@ async def get_applied_vs_posted_series(
         raise HTTPException(status_code=500, detail=f"Failed to load applied series: {e}") from e
 
 
+@router.get("/series/remote-vs-fetched", dependencies=[Depends(require_admin)])
 @router.get("/series/remote-vs-posted", dependencies=[Depends(require_admin)])
-async def get_remote_vs_posted_series(
+async def get_remote_vs_fetched_series(
     year: int = Query(..., ge=1970, le=2100),
     month: int = Query(..., ge=1, le=12),
     timezone: str | None = Query(default="UTC"),
     current_user: dict = Depends(require_admin),
 ):
-    user_id = _require_user(current_user)
+    """Platform-wide remote vs fetched. Old path kept as alias."""
+    _require_user(current_user)
     try:
         async with get_session() as session:
-            return await fetch_remote_vs_posted_series(
-                session, user_id, year=year, month=month, tz_name=timezone
+            return await fetch_remote_vs_fetched_series(
+                session, year=year, month=month, tz_name=timezone
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error("data_mgmt_remote_series_failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to load remote series: {e}") from e
+
+
+@router.get("/series/pipeline", dependencies=[Depends(require_admin)])
+async def get_pipeline_series(
+    year: int = Query(..., ge=1970, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    timezone: str | None = Query(default="UTC"),
+    current_user: dict = Depends(require_admin),
+):
+    _require_user(current_user)
+    try:
+        async with get_session() as session:
+            return await fetch_pipeline_series(
+                session, year=year, month=month, tz_name=timezone
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("data_mgmt_pipeline_series_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to load pipeline series: {e}") from e
+
+
+@router.get("/series/distribution", dependencies=[Depends(require_admin)])
+async def get_distribution_series(
+    year: int = Query(..., ge=1970, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    timezone: str | None = Query(default="UTC"),
+    current_user: dict = Depends(require_admin),
+):
+    _require_user(current_user)
+    try:
+        async with get_session() as session:
+            return await fetch_distribution_series(
+                session, year=year, month=month, tz_name=timezone
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("data_mgmt_distribution_series_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to load distribution series: {e}") from e
+
+
+@router.get("/series/growth", dependencies=[Depends(require_admin)])
+async def get_growth_series(
+    year: int = Query(..., ge=1970, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    timezone: str | None = Query(default="UTC"),
+    current_user: dict = Depends(require_admin),
+):
+    _require_user(current_user)
+    try:
+        async with get_session() as session:
+            return await fetch_growth_series(
+                session, year=year, month=month, tz_name=timezone
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("data_mgmt_growth_series_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to load growth series: {e}") from e
+
+
+@router.get("/series/scrape-health", dependencies=[Depends(require_admin)])
+async def get_scrape_health_series(
+    year: int = Query(..., ge=1970, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    timezone: str | None = Query(default="UTC"),
+    current_user: dict = Depends(require_admin),
+):
+    _require_user(current_user)
+    try:
+        async with get_session() as session:
+            return await fetch_scrape_health_series(
+                session, year=year, month=month, tz_name=timezone
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("data_mgmt_scrape_health_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to load scrape health: {e}") from e
 
 
 class UserActivitySeriesRequest(BaseModel):
@@ -146,7 +234,7 @@ class UserActivitySeriesRequest(BaseModel):
     # Cap keeps charts readable and queries bounded (one series per user × metric).
     user_ids: list[str] = Field(..., min_length=1, max_length=25)
     metrics: list[str] = Field(
-        default_factory=lambda: ["jobs_added", "applied"],
+        default_factory=lambda: ["board_added", "applied"],
         min_length=1,
         max_length=8,
     )
@@ -184,9 +272,9 @@ async def list_analysis_users(current_user: dict = Depends(require_admin)):
 async def list_analysis_platforms(current_user: dict = Depends(require_admin)):
     from app.services.data_management_activity import list_known_platforms
 
-    user_id = _require_user(current_user)
+    _require_user(current_user)
     async with get_session() as session:
-        platforms = await list_known_platforms(session, user_id)
+        platforms = await list_known_platforms(session)
     return {"platforms": platforms}
 
 
@@ -202,11 +290,11 @@ async def post_user_activity_series(
     )
     from app.storage.user_repository import user_applied_by_display_name
 
-    metrics = [m for m in body.metrics if m in USER_ACTIVITY_METRICS]
+    metrics = [m for m in body.metrics if m in USER_ACTIVITY_METRICS or m == "jobs_added"]
     if not metrics:
         raise HTTPException(
             status_code=400,
-            detail=f"metrics must include one of: {', '.join(USER_ACTIVITY_METRICS)}",
+            detail="metrics must include one of: board_added, applied",
         )
 
     try:
@@ -257,7 +345,7 @@ async def post_platform_vs_applied_series(
     body: PlatformSeriesRequest,
     current_user: dict = Depends(require_admin),
 ):
-    user_id = _require_user(current_user)
+    _require_user(current_user)
     from app.services.data_management_activity import fetch_platform_vs_applied_series
 
     try:
@@ -268,7 +356,6 @@ async def post_platform_vs_applied_series(
                 month=body.month,
                 tz_name=body.timezone,
                 platforms=body.platforms,
-                viewer_user_id=user_id,
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

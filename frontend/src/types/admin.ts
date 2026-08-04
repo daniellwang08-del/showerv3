@@ -73,12 +73,45 @@ export interface BlockedDomain {
   created_at?: string | null;
 }
 
+export interface JobCleanupSample {
+  job_id: string;
+  title: string | null;
+  company: string;
+  domain: string;
+  source_url: string;
+  created_at: string | null;
+}
+
+export type JobCleanupMatchField =
+  | 'company'
+  | 'domain'
+  | 'source_url'
+  | 'normalized_url'
+  | 'title';
+
+export type JobCleanupMode = 'age' | 'pattern' | 'combined';
+
+export interface JobCleanupRequest {
+  older_than_days?: number | null;
+  pattern?: string | null;
+  match_fields?: JobCleanupMatchField[];
+  case_insensitive?: boolean;
+  confirm?: boolean;
+  preview_only?: boolean;
+  sample_limit?: number;
+}
+
 export interface JobCleanupResult {
   preview: boolean;
-  older_than_days: number;
-  cutoff: string;
+  mode: JobCleanupMode;
+  older_than_days: number | null;
+  pattern: string | null;
+  match_fields: JobCleanupMatchField[];
+  case_insensitive: boolean | null;
+  cutoff: string | null;
   matching_jobs: number;
   deleted: number;
+  sample: JobCleanupSample[];
 }
 
 export type LlmProvider = 'openai' | 'anthropic' | 'gemini';

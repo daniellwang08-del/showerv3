@@ -2,6 +2,7 @@ import { apiClient } from './client';
 import type {
   AdminUser,
   BlockedDomain,
+  JobCleanupRequest,
   JobCleanupResult,
   LlmBenchmarkResponse,
   LlmJobBinding,
@@ -89,11 +90,7 @@ export async function removeBlockedDomain(domain: string): Promise<void> {
   await apiClient.delete(`/admin/blocked-domains/${encodeURIComponent(domain)}`);
 }
 
-export async function cleanupJobs(body: {
-  older_than_days: number;
-  confirm?: boolean;
-  preview_only?: boolean;
-}): Promise<JobCleanupResult> {
+export async function cleanupJobs(body: JobCleanupRequest): Promise<JobCleanupResult> {
   const { data } = await apiClient.post<JobCleanupResult>('/admin/jobs/cleanup', body);
   return data;
 }

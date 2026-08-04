@@ -2,7 +2,7 @@ import { ChartColumnIncreasing } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { DataManagementAnalyticsSection } from '../components/data-management/DataManagementAnalyticsSection';
-import { DataManagementOpsSection } from '../components/data-management/DataManagementOpsSection';
+import { JobCleanupSection } from '../components/data-management/JobCleanupSection';
 
 export function DataAnalysisManagementPage() {
   return (
@@ -11,13 +11,12 @@ export function DataAnalysisManagementPage() {
         <PageHeader
           icon={ChartColumnIncreasing}
           gradient="from-slate-700 to-slate-900"
-          title="Data Analysis & Management"
-          description="Analyze jobs added to Atomspace, user activity, and scrape platforms - then delete or revalidate by period and filters."
+          title="Data Analysis"
+          description="Review jobs added to Atomspace, user activity, and scrape platforms — then purge stale or unwanted jobs by age or regex pattern."
         />
         <DataManagementAnalyticsSection />
-        <DataManagementOpsSection />
+        <JobCleanupSection />
       </div>
     </PageScrollArea>
   );
 }
-

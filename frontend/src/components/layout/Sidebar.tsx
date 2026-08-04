@@ -117,7 +117,7 @@ export function Sidebar({
             key={to}
             to={to}
             onClick={() => onNavigate?.()}
-            title={label === 'Data Analysis' ? 'Data Analysis & Management' : label}
+            title={label}
             className={({ isActive }) =>
               `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 isActive

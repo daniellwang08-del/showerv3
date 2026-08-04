@@ -1,38 +1,73 @@
-"""Extended analytics series: per-user activity and per-platform scrape vs applied."""
+"""Extended analytics: per-user activity and per-platform fetch vs team applied."""
 
 from __future__ import annotations
 
 from datetime import date
-from typing import Iterable
 
-from sqlalchemy import and_, cast, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.types import Date
 
-from app.models.database import Job, UserJobStatus, ValidJobUserApplication
+from app.models.database import Job, ValidJobUserApplication
 from app.services.dashboard_stats import (
+    _admin_system_visible_clause,
     _dashboard_join,
-    _is_remote_expr,
     _job_added_at_expr,
     _job_source_expr,
     _visible_job_clause,
 )
+from app.services.data_management_stats import local_date_expr
 from app.utils.date_bounds import days_in_month, month_bounds_for_timezone
 
-USER_ACTIVITY_METRICS = ("jobs_added", "applied", "sheet_posted", "pumble_posted")
-
-
-def _local_date_expr(column, tz_name: str | None):
-    tz = (tz_name or "UTC").strip() or "UTC"
-    as_utc = func.timezone("UTC", column)
-    as_local = func.timezone(tz, as_utc)
-    return cast(as_local, Date)
+# board_added = jobs that appeared on that user's board (visibility-scoped).
+# applied = that user's ValidJobUserApplication rows.
+# sheet_posted / pumble_posted are intentionally NOT per-user — those are
+# system-wide Job timestamps and live on the Distribution chart instead.
+USER_ACTIVITY_METRICS = ("board_added", "applied", "jobs_added")
+# jobs_added is a deprecated alias of board_added (same query, honest label).
 
 
 def _series_key(user_id: str, metric: str) -> str:
-    # Recharts-friendly key (no colons).
     safe = user_id.replace("-", "")[:12]
     return f"{metric}_{safe}"
+
+
+def _platform_key(source: str) -> str:
+    return "src_" + "".join(ch if ch.isalnum() else "_" for ch in source.lower())[:40]
+
+
+def _normalize_activity_metrics(metrics: list[str]) -> list[str]:
+    out: list[str] = []
+    for m in metrics:
+        if m == "jobs_added":
+            m = "board_added"
+        if m in ("board_added", "applied") and m not in out:
+            out.append(m)
+    return out
+
+
+async def list_known_platforms(session: AsyncSession, user_id: str | None = None) -> list[str]:
+    """Distinct platform sources from non-blocked jobs.
+
+    ``user_id`` is accepted for back-compat but ignored — admin Analysis always
+    lists system-wide sources so the platform chart matches platform-wide counts.
+    """
+    del user_id  # platform list is admin-wide
+    source_expr = _job_source_expr()
+    rows = (
+        await session.execute(
+            select(source_expr.label("source"))
+            .select_from(Job)
+            .where(Job.status != "blocked")
+            .group_by(source_expr)
+            .order_by(func.count().desc())
+        )
+    ).all()
+    platforms = []
+    for row in rows:
+        src = (row.source or "unknown").strip() or "unknown"
+        if src not in platforms:
+            platforms.append(src)
+    return platforms
 
 
 async def fetch_user_activity_series(
@@ -45,10 +80,16 @@ async def fetch_user_activity_series(
     tz_name: str | None,
     user_labels: dict[str, str],
 ) -> dict:
-    """Daily activity lines for selected users × selected metrics."""
+    """Daily activity lines for selected users × selected metrics.
+
+    Metrics:
+      * board_added — coalesce(UJS.created_at, Job.created_at) for jobs visible
+                      to that user (personal board intake, not system fetch)
+      * applied     — that user's applications
+    """
     start_utc, end_utc = month_bounds_for_timezone(year, month, tz_name)
     day_list = days_in_month(year, month)
-    metrics = [m for m in metrics if m in USER_ACTIVITY_METRICS]
+    metrics = _normalize_activity_metrics(metrics)
     if not user_ids or not metrics:
         return {
             "year": year,
@@ -59,27 +100,26 @@ async def fetch_user_activity_series(
             "totals": {},
         }
 
-    # day -> key -> count
     buckets: dict[date, dict[str, int]] = {d: {} for d in day_list}
     series_meta: list[dict] = []
 
     for uid in user_ids:
         label = user_labels.get(uid) or uid[:8]
 
-        if "jobs_added" in metrics:
-            key = _series_key(uid, "jobs_added")
+        if "board_added" in metrics:
+            key = _series_key(uid, "board_added")
             series_meta.append(
                 {
                     "key": key,
-                    "label": f"{label} · Jobs added",
+                    "label": f"{label} · Board added",
                     "user_id": uid,
-                    "metric": "jobs_added",
+                    "metric": "board_added",
                 }
             )
             join = _dashboard_join(uid)
             visible = _visible_job_clause(uid)
             added_at = _job_added_at_expr()
-            added_day = _local_date_expr(added_at, tz_name)
+            added_day = local_date_expr(added_at, tz_name)
             rows = (
                 await session.execute(
                     select(added_day.label("day"), func.count().label("cnt"))
@@ -110,7 +150,7 @@ async def fetch_user_activity_series(
                     "metric": "applied",
                 }
             )
-            applied_day = _local_date_expr(ValidJobUserApplication.applied_at, tz_name)
+            applied_day = local_date_expr(ValidJobUserApplication.applied_at, tz_name)
             rows = (
                 await session.execute(
                     select(applied_day.label("day"), func.count().label("cnt"))
@@ -120,74 +160,6 @@ async def fetch_user_activity_series(
                         ValidJobUserApplication.applied_at < end_utc,
                     )
                     .group_by(applied_day)
-                )
-            ).all()
-            for row in rows:
-                if row.day is None:
-                    continue
-                d = row.day if isinstance(row.day, date) else date.fromisoformat(str(row.day))
-                if d in buckets:
-                    buckets[d][key] = int(row.cnt)
-
-        if "sheet_posted" in metrics:
-            key = _series_key(uid, "sheet_posted")
-            series_meta.append(
-                {
-                    "key": key,
-                    "label": f"{label} · Sheet posted",
-                    "user_id": uid,
-                    "metric": "sheet_posted",
-                }
-            )
-            join = _dashboard_join(uid)
-            visible = _visible_job_clause(uid)
-            posted_at = Job.sheet_posted_at
-            posted_day = _local_date_expr(posted_at, tz_name)
-            rows = (
-                await session.execute(
-                    select(posted_day.label("day"), func.count().label("cnt"))
-                    .select_from(join)
-                    .where(
-                        visible,
-                        posted_at.is_not(None),
-                        posted_at >= start_utc,
-                        posted_at < end_utc,
-                    )
-                    .group_by(posted_day)
-                )
-            ).all()
-            for row in rows:
-                if row.day is None:
-                    continue
-                d = row.day if isinstance(row.day, date) else date.fromisoformat(str(row.day))
-                if d in buckets:
-                    buckets[d][key] = int(row.cnt)
-
-        if "pumble_posted" in metrics:
-            key = _series_key(uid, "pumble_posted")
-            series_meta.append(
-                {
-                    "key": key,
-                    "label": f"{label} · Pumble posted",
-                    "user_id": uid,
-                    "metric": "pumble_posted",
-                }
-            )
-            join = _dashboard_join(uid)
-            visible = _visible_job_clause(uid)
-            posted_at = Job.pumble_posted_at
-            posted_day = _local_date_expr(posted_at, tz_name)
-            rows = (
-                await session.execute(
-                    select(posted_day.label("day"), func.count().label("cnt"))
-                    .select_from(join)
-                    .where(
-                        visible,
-                        posted_at.is_not(None),
-                        posted_at >= start_utc,
-                        posted_at < end_utc,
-                    )
-                    .group_by(posted_day)
                 )
             ).all()
             for row in rows:
@@ -218,43 +190,6 @@ async def fetch_user_activity_series(
     }
 
 
-def _platform_key(source: str) -> str:
-    return "src_" + "".join(ch if ch.isalnum() else "_" for ch in source.lower())[:40]
-
-
-async def list_known_platforms(session: AsyncSession, user_id: str | None = None) -> list[str]:
-    """Distinct platform sources from jobs (optionally scoped to a user's visible set)."""
-    source_expr = _job_source_expr()
-    if user_id:
-        join = _dashboard_join(user_id)
-        visible = _visible_job_clause(user_id)
-        rows = (
-            await session.execute(
-                select(source_expr.label("source"))
-                .select_from(join)
-                .where(visible)
-                .group_by(source_expr)
-                .order_by(func.count().desc())
-            )
-        ).all()
-    else:
-        rows = (
-            await session.execute(
-                select(source_expr.label("source"))
-                .select_from(Job)
-                .where(Job.status != "blocked")
-                .group_by(source_expr)
-                .order_by(func.count().desc())
-            )
-        ).all()
-    platforms = []
-    for row in rows:
-        src = (row.source or "unknown").strip() or "unknown"
-        if src not in platforms:
-            platforms.append(src)
-    return platforms
-
-
 async def fetch_platform_vs_applied_series(
     session: AsyncSession,
     *,
@@ -262,22 +197,25 @@ async def fetch_platform_vs_applied_series(
     month: int,
     tz_name: str | None,
     platforms: list[str] | None = None,
-    viewer_user_id: str | None = None,
+    viewer_user_id: str | None = None,  # noqa: ARG001 — ignored; always platform-wide
 ) -> dict:
-    """Daily jobs added per scrape platform vs all-users applied count.
+    """Daily jobs fetched per scrape platform vs all-users applied count.
 
-    Platform counts use jobs visible to *viewer_user_id* when provided (same
-    visibility as the dashboard); otherwise all non-blocked jobs.
-    Applied counts are across all users (platform-wide activity).
+    Both axes are platform-wide:
+      * platform lines — non-blocked Job.created_at by source
+      * applied        — ValidJobUserApplication across all users
+
+    No UserJobStatus join — that previously mixed admin-visible subsets with
+    all-user applied counts and could double-count when unscoped.
     """
+    del viewer_user_id
     start_utc, end_utc = month_bounds_for_timezone(year, month, tz_name)
     day_list = days_in_month(year, month)
 
-    known = await list_known_platforms(session, viewer_user_id)
+    known = await list_known_platforms(session)
     if platforms:
         wanted = {p.strip().lower() for p in platforms if p and p.strip()}
         selected = [p for p in known if p.lower() in wanted]
-        # Include explicitly requested platforms even if currently empty.
         for p in platforms:
             pl = (p or "").strip()
             if pl and pl not in selected and pl.lower() in wanted:
@@ -286,46 +224,29 @@ async def fetch_platform_vs_applied_series(
         selected = list(known)
 
     source_expr = _job_source_expr()
-    added_at = _job_added_at_expr() if viewer_user_id else Job.created_at
-    added_day = _local_date_expr(added_at, tz_name)
-
-    if viewer_user_id:
-        join = _dashboard_join(viewer_user_id)
-        visible = _visible_job_clause(viewer_user_id)
-        from_clause = join
-        where_clause = and_(
-            visible,
-            added_at.is_not(None),
-            added_at >= start_utc,
-            added_at < end_utc,
-        )
-    else:
-        from_clause = Job.__table__.outerjoin(
-            UserJobStatus.__table__,
-            UserJobStatus.job_id == Job.id,
-        )
-        where_clause = and_(
-            Job.status != "blocked",
-            Job.created_at >= start_utc,
-            Job.created_at < end_utc,
-        )
-        added_at = Job.created_at
-        added_day = _local_date_expr(Job.created_at, tz_name)
+    visible = _admin_system_visible_clause()
+    fetched_day = local_date_expr(Job.created_at, tz_name)
 
     platform_rows = (
         await session.execute(
             select(
-                added_day.label("day"),
+                fetched_day.label("day"),
                 source_expr.label("source"),
                 func.count().label("cnt"),
             )
-            .select_from(from_clause)
-            .where(where_clause)
-            .group_by(added_day, source_expr)
+            .select_from(Job)
+            .where(
+                and_(
+                    visible,
+                    Job.created_at.is_not(None),
+                    Job.created_at >= start_utc,
+                    Job.created_at < end_utc,
+                )
+            )
+            .group_by(fetched_day, source_expr)
         )
     ).all()
 
-    # day -> platform_key -> count
     buckets: dict[date, dict[str, int]] = {d: {} for d in day_list}
     series_meta: list[dict] = []
     key_by_platform: dict[str, str] = {}
@@ -349,8 +270,7 @@ async def fetch_platform_vs_applied_series(
             key_by_platform[src.lower()] = key
         buckets[d][key] = buckets[d].get(key, 0) + int(row.cnt)
 
-    # Applied across all users
-    applied_day = _local_date_expr(ValidJobUserApplication.applied_at, tz_name)
+    applied_day = local_date_expr(ValidJobUserApplication.applied_at, tz_name)
     applied_rows = (
         await session.execute(
             select(applied_day.label("day"), func.count().label("cnt"))
@@ -393,6 +313,3 @@ async def fetch_platform_vs_applied_series(
         "totals": totals,
     }
 
-
-# Keep remote helper import used by other modules' expectations.
-_ = (_is_remote_expr, or_, Iterable)

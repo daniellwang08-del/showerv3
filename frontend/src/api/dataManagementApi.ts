@@ -1,16 +1,11 @@
 import { apiClient } from './client';
 import type {
   AnalysisUser,
-  AppliedVsPostedSeries,
-  DataManagementDeleteResult,
-  DataManagementFilters,
-  DataManagementMatchRerunResult,
+  AppliedVsFetchedSeries,
   DataManagementMonth,
-  DataManagementPreview,
-  DataManagementReconcileResult,
-  DataManagementRescrapeResult,
   MultiSeriesResult,
-  RemoteVsPostedSeries,
+  PipelineSeriesResult,
+  RemoteVsFetchedSeries,
   UserActivityMetric,
 } from '../types/dataManagement';
 
@@ -36,25 +31,79 @@ export async function fetchDataManagementMonths(
   return data;
 }
 
-export async function fetchAppliedVsPostedSeries(
+export async function fetchAppliedVsFetchedSeries(
   year: number,
   month: number,
   timezone?: string,
-): Promise<AppliedVsPostedSeries> {
-  const { data } = await apiClient.get<AppliedVsPostedSeries>(
-    '/data-management/series/applied-vs-posted',
+): Promise<AppliedVsFetchedSeries> {
+  const { data } = await apiClient.get<AppliedVsFetchedSeries>(
+    '/data-management/series/applied-vs-fetched',
     { params: { year, month, timezone: timezone || localTimezone() } },
   );
   return data;
 }
 
-export async function fetchRemoteVsPostedSeries(
+/** @deprecated use fetchAppliedVsFetchedSeries */
+export const fetchAppliedVsPostedSeries = fetchAppliedVsFetchedSeries;
+
+export async function fetchRemoteVsFetchedSeries(
   year: number,
   month: number,
   timezone?: string,
-): Promise<RemoteVsPostedSeries> {
-  const { data } = await apiClient.get<RemoteVsPostedSeries>(
-    '/data-management/series/remote-vs-posted',
+): Promise<RemoteVsFetchedSeries> {
+  const { data } = await apiClient.get<RemoteVsFetchedSeries>(
+    '/data-management/series/remote-vs-fetched',
+    { params: { year, month, timezone: timezone || localTimezone() } },
+  );
+  return data;
+}
+
+/** @deprecated use fetchRemoteVsFetchedSeries */
+export const fetchRemoteVsPostedSeries = fetchRemoteVsFetchedSeries;
+
+export async function fetchPipelineSeries(
+  year: number,
+  month: number,
+  timezone?: string,
+): Promise<PipelineSeriesResult> {
+  const { data } = await apiClient.get<PipelineSeriesResult>(
+    '/data-management/series/pipeline',
+    { params: { year, month, timezone: timezone || localTimezone() } },
+  );
+  return data;
+}
+
+export async function fetchDistributionSeries(
+  year: number,
+  month: number,
+  timezone?: string,
+): Promise<MultiSeriesResult> {
+  const { data } = await apiClient.get<MultiSeriesResult>(
+    '/data-management/series/distribution',
+    { params: { year, month, timezone: timezone || localTimezone() } },
+  );
+  return data;
+}
+
+export async function fetchGrowthSeries(
+  year: number,
+  month: number,
+  timezone?: string,
+): Promise<MultiSeriesResult> {
+  const { data } = await apiClient.get<MultiSeriesResult>(
+    '/data-management/series/growth',
+    { params: { year, month, timezone: timezone || localTimezone() } },
+  );
+  return data;
+}
+
+export async function fetchScrapeHealthSeries(
+  year: number,
+  month: number,
+  timezone?: string,
+): Promise<MultiSeriesResult> {
+  const { data } = await apiClient.get<MultiSeriesResult>(
+    '/data-management/series/scrape-health',
     { params: { year, month, timezone: timezone || localTimezone() } },
   );
   return data;
@@ -99,64 +148,6 @@ export async function fetchPlatformVsAppliedSeries(body: {
       ...body,
       timezone: body.timezone || localTimezone(),
     },
-  );
-  return data;
-}
-
-function toBody(filters: DataManagementFilters, confirm = false) {
-  return {
-    ...filters,
-    source: filters.source?.trim() || null,
-    confirm,
-  };
-}
-
-export async function previewDataManagement(
-  filters: DataManagementFilters,
-): Promise<DataManagementPreview> {
-  const { data } = await apiClient.post<DataManagementPreview>(
-    '/data-management/preview',
-    toBody(filters, false),
-  );
-  return data;
-}
-
-export async function deleteDataManagementJobs(
-  filters: DataManagementFilters,
-): Promise<DataManagementDeleteResult> {
-  const { data } = await apiClient.post<DataManagementDeleteResult>(
-    '/data-management/delete',
-    toBody(filters, true),
-  );
-  return data;
-}
-
-export async function rescrapeDataManagementJobs(
-  filters: DataManagementFilters,
-): Promise<DataManagementRescrapeResult> {
-  const { data } = await apiClient.post<DataManagementRescrapeResult>(
-    '/data-management/rescrape',
-    toBody(filters, true),
-  );
-  return data;
-}
-
-export async function matchRerunDataManagementJobs(
-  filters: DataManagementFilters,
-): Promise<DataManagementMatchRerunResult> {
-  const { data } = await apiClient.post<DataManagementMatchRerunResult>(
-    '/data-management/match-rerun',
-    toBody(filters, true),
-  );
-  return data;
-}
-
-export async function reconcileLocationsDataManagement(
-  filters: DataManagementFilters,
-): Promise<DataManagementReconcileResult> {
-  const { data } = await apiClient.post<DataManagementReconcileResult>(
-    '/data-management/reconcile-locations',
-    toBody(filters, true),
   );
   return data;
 }

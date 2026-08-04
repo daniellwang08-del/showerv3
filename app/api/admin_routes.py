@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text
+from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy import ColumnElement, and_, func, or_, select, text
 
 from app.api.routes import _purge_job_cascade, health_check, require_admin
 from app.core.logging import get_logger
@@ -697,11 +698,106 @@ async def delete_blocked_domain(
 
 # ── Global job cleanup ─────────────────────────────────────────────────────
 
+CleanupMatchField = Literal[
+    "company", "domain", "source_url", "normalized_url", "title"
+]
+
+_CLEANUP_FIELD_COLUMNS = {
+    "company": Job.company,
+    "domain": Job.domain,
+    "source_url": Job.source_url,
+    "normalized_url": Job.normalized_url,
+    "title": Job.title,
+}
+
 
 class JobCleanupRequest(BaseModel):
-    older_than_days: int = Field(..., ge=1, le=3650)
+    """Age and/or regex pattern purge. At least one criterion is required."""
+
+    older_than_days: int | None = Field(None, ge=1, le=3650)
+    pattern: str | None = Field(None, max_length=500)
+    match_fields: list[CleanupMatchField] = Field(
+        default_factory=lambda: ["company", "domain"]
+    )
+    case_insensitive: bool = True
     confirm: bool = False
     preview_only: bool = False
+    sample_limit: int = Field(20, ge=1, le=50)
+
+    @field_validator("pattern")
+    @classmethod
+    def _strip_pattern(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("match_fields")
+    @classmethod
+    def _dedupe_fields(cls, value: list[CleanupMatchField]) -> list[CleanupMatchField]:
+        seen: set[str] = set()
+        out: list[CleanupMatchField] = []
+        for field in value:
+            if field not in seen:
+                seen.add(field)
+                out.append(field)
+        return out
+
+    @model_validator(mode="after")
+    def _require_criteria(self) -> JobCleanupRequest:
+        if self.older_than_days is None and not self.pattern:
+            raise ValueError("Provide older_than_days and/or a non-empty pattern")
+        if self.pattern and not self.match_fields:
+            raise ValueError("match_fields is required when pattern is set")
+        return self
+
+
+def _cleanup_mode(older_than_days: int | None, pattern: str | None) -> str:
+    if older_than_days is not None and pattern:
+        return "combined"
+    if pattern:
+        return "pattern"
+    return "age"
+
+
+def _cleanup_where(
+    *,
+    older_than_days: int | None,
+    cutoff: datetime | None,
+    pattern: str | None,
+    match_fields: list[CleanupMatchField],
+    case_insensitive: bool,
+) -> list[ColumnElement[bool]]:
+    clauses: list[ColumnElement[bool]] = []
+    if older_than_days is not None and cutoff is not None:
+        clauses.append(Job.created_at < cutoff)
+    if pattern:
+        # Validate with Python re first; Postgres POSIX ~ / ~* runs the query.
+        flags = re.IGNORECASE if case_insensitive else 0
+        try:
+            re.compile(pattern, flags)
+        except re.error as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid regex pattern: {exc}",
+            ) from exc
+        op = "~*" if case_insensitive else "~"
+        field_clauses = [
+            _CLEANUP_FIELD_COLUMNS[field].op(op)(pattern) for field in match_fields
+        ]
+        clauses.append(or_(*field_clauses))
+    return clauses
+
+
+def _cleanup_sample_row(job: Job) -> dict[str, Any]:
+    return {
+        "job_id": job.id,
+        "title": job.title,
+        "company": job.company,
+        "domain": job.domain,
+        "source_url": job.source_url,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+    }
 
 
 @router.post("/jobs/cleanup")
@@ -709,43 +805,75 @@ async def cleanup_old_jobs(
     body: JobCleanupRequest,
     current_user: dict = Depends(require_admin),
 ):
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-        days=body.older_than_days
+    cutoff: datetime | None = None
+    if body.older_than_days is not None:
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            days=body.older_than_days
+        )
+
+    where = _cleanup_where(
+        older_than_days=body.older_than_days,
+        cutoff=cutoff,
+        pattern=body.pattern,
+        match_fields=body.match_fields,
+        case_insensitive=body.case_insensitive,
     )
+    mode = _cleanup_mode(body.older_than_days, body.pattern)
+
     async with get_session() as session:
         count = (
             await session.execute(
-                select(func.count()).select_from(Job).where(Job.created_at < cutoff)
+                select(func.count()).select_from(Job).where(and_(*where))
             )
         ).scalar_one()
         count = int(count or 0)
 
-        if body.preview_only or not body.confirm:
-            return {
-                "preview": True,
-                "older_than_days": body.older_than_days,
-                "cutoff": cutoff.isoformat(),
-                "matching_jobs": count,
-                "deleted": 0,
-            }
+        sample_rows = (
+            await session.execute(
+                select(Job)
+                .where(and_(*where))
+                .order_by(Job.created_at.asc(), Job.id.asc())
+                .limit(body.sample_limit)
+            )
+        ).scalars().all()
+        sample = [_cleanup_sample_row(job) for job in sample_rows]
 
-        old_rows = await session.execute(select(Job.id).where(Job.created_at < cutoff))
-        old_ids = list(old_rows.scalars().all())
+        base_payload = {
+            "preview": True,
+            "mode": mode,
+            "older_than_days": body.older_than_days,
+            "pattern": body.pattern,
+            "match_fields": list(body.match_fields) if body.pattern else [],
+            "case_insensitive": body.case_insensitive if body.pattern else None,
+            "cutoff": cutoff.isoformat() if cutoff else None,
+            "matching_jobs": count,
+            "deleted": 0,
+            "sample": sample,
+        }
+
+        if body.preview_only or not body.confirm:
+            return base_payload
+
+        id_rows = await session.execute(select(Job.id).where(and_(*where)))
+        job_ids = list(id_rows.scalars().all())
         deleted = 0
-        for jid in old_ids:
+        for jid in job_ids:
             if await _purge_job_cascade(session, jid):
                 deleted += 1
         await session.commit()
         logger.info(
             "admin_jobs_cleanup",
             deleted=deleted,
+            mode=mode,
             older_than_days=body.older_than_days,
+            pattern=body.pattern,
+            match_fields=body.match_fields if body.pattern else [],
             by=current_user.get("user_id"),
         )
         return {
+            **base_payload,
             "preview": False,
-            "older_than_days": body.older_than_days,
-            "cutoff": cutoff.isoformat(),
             "matching_jobs": count,
             "deleted": deleted,
+            "sample": sample,
         }
