@@ -67,6 +67,12 @@
         if (/upload profile image|profile image/i.test(al)) return null;
         if (el.closest && el.closest("oc-file-upload-button, oc-apply-with-resume")) return null;
       } catch {}
+      // iCIMS: the resume input's own onchange appends &uploadResume=1 to the
+      // form action and calls form.submit(), so attaching a file NAVIGATES the
+      // page and the server re-renders the form from the parsed resume. It is
+      // uploaded FIRST by the resume prep (content/engine/icims.js), never as a
+      // normal file control mid-fill - that would discard everything written.
+      if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(el)) return null;
       // Lever: skip the LinkedIn AWLI widget row - not an application upload field.
       if (el.closest && el.closest(".awli-application-row, .awli-button-container")) return null;
       // Workable: skip photo upload; claim only data-ui="resume".

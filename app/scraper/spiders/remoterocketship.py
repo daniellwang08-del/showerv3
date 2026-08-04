@@ -33,6 +33,36 @@ JOBS_PER_PAGE = 20
 API_PATH = "/api/fetch_job_openings/"
 MARKER_COUNT = 3
 
+
+def _parse_rrs_created_at(value) -> datetime | None:
+    """Parse RemoteRocketship ``created_at`` into a naive UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        # RRS uses ISO strings in practice; tolerate seconds / ms epochs.
+        if ts > 1e12:
+            ts = ts / 1000.0
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
 DEFAULT_JOB_TITLES = [
     "Software Engineer",
     "Backend Engineer",
@@ -300,6 +330,21 @@ class RemoteRocketshipSpider(BaseJobSpider):
             if page == 1:
                 self._page1_ids = job_ids[:]
 
+            page_posted_dates = [
+                _parse_rrs_created_at(job.get("created_at"))
+                for job in jobs
+                if isinstance(job, dict)
+            ]
+            # DateAdded sort is newest-first. Once an entire page is older than
+            # posted_since, further pages cannot be in-range — stop after this page.
+            page_too_old = self._page_too_old(page_posted_dates)
+            if page_too_old:
+                self.logger.info(
+                    "Page %d jobs are older than posted_since=%s - stopping pagination",
+                    page,
+                    self.posted_since.isoformat() if self.posted_since else None,
+                )
+
             marker_hit_on_page = False
             if not self._fresh_mode and self._marker_ids:
                 for job, jid in zip(jobs, job_ids):
@@ -311,14 +356,14 @@ class RemoteRocketshipSpider(BaseJobSpider):
                         marker_hit_on_page = True
                         self._marker_hit = True
                         break
-                    for item in self._parse_job_data(job):
+                    for item in self._yield_job_if_in_range(job):
                         yield item
             else:
                 for job in jobs:
-                    for item in self._parse_job_data(job):
+                    for item in self._yield_job_if_in_range(job):
                         yield item
 
-            if marker_hit_on_page:
+            if marker_hit_on_page or page_too_old:
                 break
 
             next_page = page + 1
@@ -347,6 +392,14 @@ class RemoteRocketshipSpider(BaseJobSpider):
     # ------------------------------------------------------------------
     # Job data parsing
     # ------------------------------------------------------------------
+
+    def _yield_job_if_in_range(self, job: dict):
+        """Yield parsed items that fall inside the active posted-date window."""
+        for item in self._parse_job_data(job):
+            posted_at = item.get("posted_at") if isinstance(item, dict) else None
+            if not self._posted_in_range(posted_at):
+                continue
+            yield item
 
     def _parse_job_data(self, job: dict):
         if isinstance(job, str):
@@ -421,6 +474,8 @@ class RemoteRocketshipSpider(BaseJobSpider):
             or job.get("description", "")
         )
 
+        posted_at = _parse_rrs_created_at(job.get("created_at"))
+
         yield self.build_job_item(
             source_job_id=source_job_id,
             url=str(url),
@@ -433,4 +488,5 @@ class RemoteRocketshipSpider(BaseJobSpider):
             job_type=job.get("employmentType", job.get("job_type", "full-time")),
             experience_level=str(experience) if experience else None,
             tags=tags,
+            posted_at=posted_at,
         )

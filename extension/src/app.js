@@ -920,8 +920,14 @@ function isRemoteJob(j) {
   return /remote/i.test(String(j.location || ""));
 }
 
+function isJobApplied(j) {
+  return !!(j && j.applied_at);
+}
+
+/** Resume DOCX completed and not yet marked applied — matches "Ready to apply". */
 function isReadyJob(j) {
-  return String((j && (j.resume_build_status || j.resume_docx_status)) || "").toLowerCase() === "completed";
+  if (!j || isJobApplied(j)) return false;
+  return String(j.resume_build_status || j.resume_docx_status || "").toLowerCase() === "completed";
 }
 
 /** Derive all Home queues + count tiles from the canonical jobsById map. */
@@ -961,13 +967,17 @@ function deriveHomeFromCatalog(catalog) {
     applied_today: counts.applied_today != null ? counts.applied_today : appliedQueue.length,
   };
   const ss = meta.scraperStats || {};
-  const platformCounts = meta.platformCounts || {
-    total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
-    ready: ss.ready_jobs != null ? ss.ready_jobs : readyQueue.length,
-    best: ss.best_jobs != null ? ss.best_jobs : bestQueue.length,
-    today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
-    remote: ss.total_remote != null ? ss.total_remote : remoteQueue.length,
-    mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
+  // Prefer server tiles when present, but always derive `ready` from the local
+  // catalog so Complete & Next immediately drops applied jobs from the badge.
+  const platformCounts = {
+    ...(meta.platformCounts || {
+      total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
+      best: ss.best_jobs != null ? ss.best_jobs : bestQueue.length,
+      today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
+      remote: ss.total_remote != null ? ss.total_remote : remoteQueue.length,
+      mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
+    }),
+    ready: readyQueue.length,
   };
 
   return {
@@ -1457,6 +1467,12 @@ function bindApplyListContext(tabId, cards) {
   }));
 }
 
+function catalogJobApplied(jobId) {
+  const id = String(jobId || "");
+  if (!id || !jobsCatalog || !jobsCatalog.jobsById) return false;
+  return isJobApplied(jobsCatalog.jobsById[id]);
+}
+
 /**
  * Resolve the next job after Complete & Next / report-invalid.
  * Prefers the exact list the user opened; falls back to /assistant/next-job
@@ -1467,22 +1483,24 @@ async function resolveNextJob(afterJobId) {
   const after = String(afterJobId || "");
   if (ctx && Array.isArray(ctx.jobIds) && ctx.jobIds.length) {
     const original = ctx.jobIds.map(String).filter(Boolean);
+    const isEligible = (id) => id && id !== after && !catalogJobApplied(id);
     const idxInOriginal = original.indexOf(after);
     let nextId = null;
     if (idxInOriginal >= 0) {
       // Strict forward advance within the opened list (no wrap-around).
+      // Skip jobs already marked applied so Complete & Next never re-opens them.
       for (let i = idxInOriginal + 1; i < original.length; i++) {
-        if (original[i] && original[i] !== after) {
+        if (isEligible(original[i])) {
           nextId = original[i];
           break;
         }
       }
     } else {
       // Current job not in the cached list — take the first remaining entry.
-      nextId = original.find((id) => id !== after) || null;
+      nextId = original.find(isEligible) || null;
     }
     if (nextId) {
-      const nextJobIds = original.filter((id) => id !== after && id !== nextId);
+      const nextJobIds = original.filter((id) => id !== nextId && isEligible(id));
       return {
         job_id: nextId,
         remaining: nextJobIds.length,
@@ -1897,9 +1915,16 @@ async function completeJob({ next }) {
     }
     await teardownAutofill();
     try {
-      await api.markApplied([jobId]);
+      const marked = await api.markApplied([jobId]);
+      if (!marked || !(Number(marked.marked) > 0)) {
+        throw new Error("Could not mark this job as applied. Try again.");
+      }
       await api.updateSession(jobId, "completed").catch(() => {});
-      void patchCatalogJob(jobId, { applied_at: new Date().toISOString() });
+      // Await so readyQueue / resolveNextJob see applied_at before advancing.
+      await patchCatalogJob(jobId, {
+        applied_at: marked.applied_at || new Date().toISOString(),
+        applied_by_name: marked.applied_by_name || null,
+      });
     } catch (err) {
       setState({ error: err.message });
       return;
@@ -1961,6 +1986,10 @@ async function handleApplicationSubmitted(msg) {
     /* ignore */
   }
   if (completeInFlight || autoCompleteFromSubmit) return;
+  // A run in flight is still working through the form - on multi-step platforms
+  // it submits intermediate steps itself. Completing the job here would tear the
+  // session down mid-application and advance to the next job.
+  if (state.autofill && state.autofill.running) return;
   const now = Date.now();
   // After A→B, ignore submit signals for a cooldown regardless of job id.
   if (lastAdvanceCompletedAt && now - lastAdvanceCompletedAt < ADVANCE_COOLDOWN_MS) return;
@@ -2619,6 +2648,313 @@ async function prepareManatal(tabId) {
   await delay(200);
 }
 
+// ── iCIMS ────────────────────────────────────────────────────────────────────
+
+// A password satisfying the rule iCIMS states in the field's own title
+// attribute: "Minimum 8 characters, 1 alphabetic, 1 lowercase, 1 uppercase,
+// 1 numeric, 1 special character(s)". Ambiguous glyphs (l/1/O/0) are left out so
+// the candidate can retype it from the panel without misreading it.
+function generatePortalPassword() {
+  const lower = "abcdefghijkmnpqrstuvwxyz";
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const digits = "23456789";
+  const special = "!@#$%^&*";
+  const all = lower + upper + digits + special;
+  const bytes = new Uint32Array(20);
+  crypto.getRandomValues(bytes);
+  const chars = [
+    upper[bytes[0] % upper.length],
+    lower[bytes[1] % lower.length],
+    digits[bytes[2] % digits.length],
+    special[bytes[3] % special.length],
+  ];
+  for (let i = 4; i < 16; i++) chars.push(all[bytes[i] % all.length]);
+  // Shuffle so the four guaranteed classes are not always in the same slots.
+  const swap = new Uint32Array(chars.length);
+  crypto.getRandomValues(swap);
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = swap[i] % (i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
+async function tabHost(tabId) {
+  if (tabId == null) return "";
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return new URL(tab.url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+// Re-inject the engine bundle after the page navigated under us (iCIMS submits
+// the form to upload a resume, which destroys every content script).
+async function reinjectEngine(tabId, eng) {
+  if (tabId == null) return false;
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: "AUTOFILL_INJECT",
+      tabId,
+      engine: (eng && eng.scripts) || "greenhouse",
+    });
+    return !!(res && res.ok);
+  } catch {
+    return false;
+  }
+}
+
+// Ask every frame whether it hosts the iCIMS resume field; the one that does
+// answers with { present, attached, parsing, needsCredentials }.
+async function icimsResumeState(tabId) {
+  if (tabId == null) return null;
+  let replies = [];
+  try {
+    replies = await tabBroadcast(tabId, { type: "AF_ICIMS_RESUME_STATE" });
+  } catch {
+    return null;
+  }
+  for (const r of replies || []) {
+    if (r && r.ok && r.present) return r;
+  }
+  return null;
+}
+
+// iCIMS uploads the resume FIRST, not last.
+//
+// The resume input's own onchange runs
+//   this.form.action = this.form.action + '&uploadResume=1'; this.form.submit();
+// and the page states "Existing data in the form will be replaced". So the
+// upload navigates the tab and iCIMS re-renders the whole profile server-side,
+// pre-filled from the parsed resume (the fields carrying bgtparse="true").
+// Anything written beforehand is destroyed, which is why this runs before the
+// very first extraction instead of after the last write like Lever/Ashby.
+//
+// Returns true when the caller must re-discover the form (the page reloaded).
+async function uploadIcimsResumeFirst(tabId, eng, ctx) {
+  if (tabId == null || !state.job || !state.job.job_id) return false;
+  const before = await icimsResumeState(tabId);
+  if (!before) return false; // this step has no resume field (later application step)
+  if (before.attached) return false; // already uploaded on an earlier run
+
+  setAutofill({ runStatus: "Uploading your resume…" });
+  const cache = {};
+  const file = await fetchRoleFile(state.job.job_id, "resume", "", cache);
+  if (!file) {
+    ctx.needsUser.push({
+      cid: "icims-resume",
+      label: "Resume",
+      reason:
+        "Upload it yourself before filling anything else - no generated resume exists for this job, and iCIMS reloads the page and replaces the form when a resume is attached.",
+    });
+    return false;
+  }
+
+  try {
+    // Broadcast: the upload navigates the page, so the reply usually never
+    // arrives. A dead message channel here is the expected outcome, not a error.
+    await tabBroadcast(tabId, { type: "AF_ICIMS_UPLOAD_RESUME", file });
+  } catch {
+    /* page is navigating */
+  }
+
+  setAutofill({ runStatus: "Waiting for iCIMS to parse your resume…" });
+  setAutofill({ primaryFrameId: null });
+  await delay(1500);
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    await reinjectEngine(tabId, eng);
+    const st = await icimsResumeState(tabId);
+    if (st && st.attached && !st.parsing) return true;
+    await delay(1200);
+  }
+  // The reload never settled. Re-discovering is still the right move: the page
+  // may be mid-render and the old handles are detached either way.
+  console.warn("[autofill] iCIMS resume upload did not confirm within 45s");
+  return true;
+}
+
+// Ask every frame where this iCIMS page sits in the application itinerary.
+// Only the frame hosting the form answers (portals can be iframed).
+async function icimsStage(tabId) {
+  if (tabId == null) return null;
+  let replies = [];
+  try {
+    replies = await tabBroadcast(tabId, { type: "AF_ICIMS_STAGE" });
+  } catch {
+    return null;
+  }
+  let best = null;
+  let bestScore = -1;
+  for (const r of replies || []) {
+    if (!r || !r.ok || !r.icims) continue;
+    // The frame hosting the live step has both the itinerary and an advance
+    // button; prefer it over portal chrome that happens to carry only one.
+    const score = (r.hasSubmit ? 2 : 0) + (r.stepsPresent ? 1 : 0);
+    if (score > bestScore) {
+      best = r;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+// Advance one iCIMS step: click the step's Submit, ride out the full-document
+// navigation, re-inject the engine into the new page and confirm we actually
+// moved. Unlike SmartRecruiters/Breezy (SPAs that re-render in place), every
+// iCIMS step is a real POST that destroys every content script - so "did it
+// work?" can only be answered by the freshly injected script on the next page,
+// exactly the way uploadIcimsResumeFirst rides out the resume upload.
+//
+// Returns { advanced, stage, errors }.
+async function icimsAdvance(tabId, eng, fromStage) {
+  const before = fromStage || (await icimsStage(tabId));
+  if (!before || !before.hasSubmit) return { advanced: false, stage: before, errors: [] };
+
+  try {
+    // The click navigates, so the reply is expected to be lost, not an error.
+    await tabBroadcast(tabId, { type: "AF_ICIMS_SUBMIT" });
+  } catch {
+    /* page is navigating */
+  }
+
+  // Handles from the old document are dead and frame ids change on reload.
+  setAutofill({ fields: [], primaryFrameId: null });
+  await delay(1200);
+
+  const deadline = Date.now() + 45000;
+  let last = null;
+  while (Date.now() < deadline) {
+    await reinjectEngine(tabId, eng);
+    const st = await icimsStage(tabId);
+    if (st) {
+      last = st;
+      // Moving to a later step is the only proof the POST was accepted; a step
+      // that re-renders in place was rejected and now carries the reasons.
+      if (before.step && st.step && st.step > before.step) return { advanced: true, stage: st, errors: [] };
+      if (st.errors && st.errors.length) return { advanced: false, stage: st, errors: st.errors };
+      // No step indicator to compare: fall back to the page's own identity.
+      if (!before.step && st.heading && st.heading !== before.heading) {
+        return { advanced: true, stage: st, errors: [] };
+      }
+    }
+    await delay(1200);
+  }
+  return {
+    advanced: false,
+    stage: last,
+    errors: (last && last.errors) || [],
+    timedOut: true,
+  };
+}
+
+// iCIMS pre-pass, run after the resume upload and before extraction. Two field
+// groups are written deterministically from the profile because the model
+// provably cannot answer them correctly (see content/engine/icims.js):
+//
+//  * the phone block - Number is autocomplete="tel-national" and iCIMS' own
+//    resume parser pre-fills it with the full international string, which reads
+//    as "filled" so the generic pass never corrects it; Phone Country Code is a
+//    searchable AJAX dropdown offered with no options, which the backend then
+//    answers with a bare dial code that matches nothing in the list.
+//  * the "Create a login" block - the two password boxes must hold the SAME
+//    value and satisfy the complexity rule in their own title attribute.
+//
+// Both need the canonical autofill profile, so it is fetched once here.
+async function prepareIcims(tabId, ctx) {
+  if (tabId == null) return;
+  const host = await tabHost(tabId);
+  if (!host) return;
+  const userId = state.user && state.user.user_id;
+
+  // A multi-step application runs this prep once per step; the profile is the
+  // same every time, so fetch it once per run and reuse it across the steps.
+  let profile = null;
+  if (ctx && "icimsProfile" in ctx) {
+    profile = ctx.icimsProfile;
+  } else if (state.job && state.job.job_id) {
+    const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
+    try {
+      profile = await api.getAutofillProfile(state.job.job_id, resumeSource);
+    } catch {
+      profile = null;
+    }
+    if (ctx) ctx.icimsProfile = profile;
+  }
+  const contact = (profile && profile.contact) || {};
+  const address = (profile && profile.address) || {};
+
+  try {
+    const phoneRes = await tabSend(tabId, {
+      type: "AF_ICIMS_PHONE",
+      phone: contact.phone || "",
+      countryCode: contact.phoneCountryCode || "",
+      country: address.country || "",
+    });
+    if (phoneRes && phoneRes.ok) {
+      console.log("[autofill] iCIMS phone prep:", phoneRes);
+      // The dial-code dropdown is required; if neither the profile nor the
+      // widget search could resolve it, iCIMS rejects the whole phone block on
+      // submit, so say so instead of letting it fail silently.
+      if (phoneRes.codePresent && !phoneRes.code) {
+        ctx.needsUser.push({
+          cid: "icims-phone-country-code",
+          label: "Phones - Phone Country Code",
+          reason: "Pick your dialing code - iCIMS rejects the phone block without it.",
+        });
+      }
+    }
+  } catch {
+    /* no phone block on this page */
+  }
+  await delay(200);
+
+  // The login is the candidate's email (the field is autocomplete="username"),
+  // so it matches the Email field the LLM pass writes.
+  let login = contact.email || "";
+  if (!login) {
+    const cached = state.cache && state.cache.profile;
+    login = (cached && cached.email) || (state.user && state.user.email) || "";
+  }
+
+  let creds = null;
+  try {
+    creds = await store.getAtsCredential(userId, host);
+  } catch {
+    creds = null;
+  }
+  if (!creds) {
+    creds = { login, password: generatePortalPassword() };
+  } else if (login && !creds.login) {
+    creds = { ...creds, login };
+  }
+
+  let res = null;
+  try {
+    res = await tabSend(tabId, { type: "AF_ICIMS_CREDENTIALS", login: creds.login, password: creds.password });
+  } catch {
+    res = null;
+  }
+  await delay(200);
+  // Nothing written means this page has no "Create a login" block (or the
+  // candidate is already signed in), so there is no account to remember.
+  if (!res || !res.ok || !(res.login || res.password)) return;
+
+  try {
+    await store.saveAtsCredential(userId, host, creds);
+  } catch {
+    /* storage is best-effort; the password is still shown below */
+  }
+  if (!ctx.needsUser.some((x) => x.cid === "icims-credentials")) {
+    ctx.needsUser.push({
+      cid: "icims-credentials",
+      label: `${host} account password`,
+      reason: `Save this in your password manager - iCIMS created an account for you. Login: ${creds.login || "(see the form)"} / Password: ${creds.password}`,
+    });
+  }
+}
+
 // RecruiterFlow: add a repeating Experience/Education row per profile entry
 // (Workday-style) and fill Company/Title/School/Degree/dates + Country
 // deterministically, and tick the required consent box, BEFORE the generic fill.
@@ -3032,6 +3368,30 @@ async function uploadBreezyResumeLast(tabId, pending) {
   }
 }
 
+async function uploadAshbyResumeLast(tabId, pending) {
+  if (!pending || !pending.file || tabId == null) return false;
+  try {
+    const res = await tabSend(tabId, { type: "AF_ASHBY_UPLOAD_RESUME", file: pending.file });
+    return !!(res && res.uploaded);
+  } catch {
+    return false;
+  }
+}
+
+// Give the application tab OS focus so React commit-on-blur / focus handlers run
+// (Workday-proven: side panel keeps document.hasFocus() false on the page).
+async function focusApplicationTab(tabId) {
+  if (tabId == null) return;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tabId, { active: true });
+  } catch {
+    /* tab/window may be gone */
+  }
+  await delay(350);
+}
+
 // Send a write pass to the content script and wait until it reports completion
 // (or a generous timeout). Awaiting completion lets us re-scan the DOM for
 // fields that only render after a prior answer commits.
@@ -3066,6 +3426,7 @@ function writeAndWait(tabId, results, files) {
 const AUTOFILL_MAX_PASSES = 4;
 const SR_MAX_PAGES = 8; // SmartRecruiters multi-step applications: hard cap on steps
 const BZY_MAX_PAGES = 6; // Breezy.hr multi-step applications: hard cap on sections
+const ICIMS_MAX_PAGES = 10; // iCIMS itineraries are typically 3-5 steps; cap well above
 
 // Re-run auto-discovery on the current page and wait for the application
 // container to register. Used between SmartRecruiters steps: after clicking
@@ -3117,6 +3478,12 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     setAutofill({ runStatus: "Accepting terms…" });
     await prepareManatal(tabId);
   }
+  // iCIMS: write the phone block and the "Create a login" block before
+  // extraction so those fields already read as filled and never reach the model.
+  if (eng && eng.platform === "icims") {
+    setAutofill({ runStatus: "Filling your phone and portal login…" });
+    await prepareIcims(tabId, ctx);
+  }
   if (eng && eng.platform === "recruiterflow") {
     setAutofill({ runStatus: "Adding your work & education history…" });
     await prepareRecruiterFlow(tabId);
@@ -3153,9 +3520,11 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   const isLever = eng && eng.platform === "lever";
   const isWorkable = eng && eng.platform === "workable";
   const isBreezy = eng && eng.platform === "breezy";
+  const isAshby = eng && eng.platform === "ashby";
   let leverResumePending = null;
   let workableResumePending = null;
   let breezyResumePending = null;
+  let ashbyResumePending = null;
 
   for (let pass = 0; pass < maxPasses; pass++) {
     // Re-extract the live DOM each pass. Already-filled controls report
@@ -3291,6 +3660,16 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       writeFiles = split.files;
       if (split.pending) breezyResumePending = split.pending;
     }
+    // Ashby parses uploaded resumes and overwrites name/email/location (Ashby
+    // product autofill; file.js documents the race). Defer like Lever/Breezy.
+    if (isAshby) {
+      const split = splitLeverResumeWrite(results, files);
+      writeResults = split.results;
+      writeFiles = split.files;
+      if (split.pending) ashbyResumePending = split.pending;
+      // Keep the non-file answers so we can re-apply after resume parse.
+      ctx.ashbyReapply = writeResults;
+    }
     await writeAndWait(tabId, writeResults, writeFiles);
 
     // Drop false "needs you" rows for controls that actually filled/attached.
@@ -3333,12 +3712,46 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   // value can appear after the last write. Let the page settle, then re-commit
   // every text field's CURRENT value through the React-safe path twice so a late
   // browser refill is still caught. It's idempotent (same text).
+  // Ashby: focus the tab (side panel steals OS focus - Workday-proven), commit,
+  // upload resume LAST, wait for Ashby's resume parser, then re-apply text
+  // answers so parse overwrites cannot leave Name/Email empty in React state.
   if (eng && eng.mode === "select") {
+    const ashby = eng.platform === "ashby";
     setAutofill({ runStatus: "Finalizing the form…" });
-    await delay(400);
+    if (ashby) await focusApplicationTab(tabId);
+    await delay(ashby ? 500 : 400);
     await commitPrefilled(tabId);
-    await delay(200);
+    await delay(ashby ? 300 : 200);
     await commitPrefilled(tabId);
+    if (ashby) {
+      await delay(250);
+      await commitPrefilled(tabId);
+    }
+  }
+  if (eng && eng.platform === "ashby" && ashbyResumePending) {
+    setAutofill({ runStatus: "Uploading your resume…" });
+    await focusApplicationTab(tabId);
+    const ok = await uploadAshbyResumeLast(tabId, ashbyResumePending);
+    if (ok) {
+      console.log("[autofill] Ashby resume uploaded last (after text commit)");
+      markFileControlAttached(ctx, ashbyResumePending.cid);
+      // Structured resume parse populates/races name+email asynchronously.
+      setAutofill({ runStatus: "Waiting for Ashby resume parse…" });
+      await delay(1800);
+      if (ctx.ashbyReapply && ctx.ashbyReapply.length) {
+        setAutofill({ runStatus: "Restoring fields after resume parse…" });
+        await focusApplicationTab(tabId);
+        await writeAndWait(tabId, ctx.ashbyReapply, {});
+        await delay(300);
+        await commitPrefilled(tabId);
+        await delay(250);
+        await commitPrefilled(tabId);
+      } else {
+        await commitPrefilled(tabId);
+        await delay(250);
+        await commitPrefilled(tabId);
+      }
+    }
   }
   if (eng && eng.platform === "smartrecruiters") {
     try {
@@ -3446,6 +3859,47 @@ async function runAutofill() {
       }
     }
 
+    // iCIMS: EVERY step is a separate server-rendered document, so a handle
+    // discovered on an earlier step is detached the moment the page moves on -
+    // whether a previous run advanced it or the candidate clicked Submit
+    // themselves. Extraction resolves handles through relocate(), which returns
+    // null for a handle no element carries any more, so the run would read zero
+    // controls and report "Could not read the selected fields" while sitting on a
+    // perfectly fillable step. Re-discover against whatever step is actually open
+    // so the run always starts from there.
+    if (eng && eng.platform === "icims") {
+      setAutofill({ runStatus: "Finding the current step…" });
+      const found = await rediscoverForm(tabId);
+      if (!found || !state.autofill.fields.length) {
+        setAutofill({
+          running: false,
+          runStatus: null,
+          error: "Could not find an iCIMS application form on this page.",
+        });
+        return;
+      }
+    }
+
+    // iCIMS: the resume goes up FIRST. Attaching it submits the form and iCIMS
+    // re-renders the profile pre-filled from the parsed resume, so any value
+    // written beforehand would be thrown away. Re-discover afterwards: the
+    // reload detached every handle we hold.
+    if (eng && eng.platform === "icims") {
+      const reloaded = await uploadIcimsResumeFirst(tabId, eng, ctx);
+      if (reloaded) {
+        setAutofill({ runStatus: "Re-reading the form after the resume upload…" });
+        const ok = await rediscoverForm(tabId);
+        if (!ok || !state.autofill.fields.length) {
+          setAutofill({
+            running: false,
+            runStatus: null,
+            error: "iCIMS reloaded after the resume upload but the profile form could not be found again. Click Start autofill once more.",
+          });
+          return;
+        }
+      }
+    }
+
     let lastSpecs = await fillCurrentPage(tabId, eng, ctx, true);
 
     // SmartRecruiters: longer applications split across steps with a footer
@@ -3489,6 +3943,97 @@ async function runAutofill() {
         const ok = await rediscoverForm(tabId);
         if (!ok) break;
         lastSpecs = await fillCurrentPage(tabId, eng, ctx, false);
+      }
+    }
+
+    // iCIMS: the application spans a variable number of server-rendered steps
+    // ("Candidate Profile -> Candidate Questions -> EEO -> Job Specific
+    // Questions"), each a full POST that reloads the tab. The header lists the
+    // whole itinerary up front (.iCIMS_Steps, "Step 2 of 4"), so we know BEFORE
+    // clicking whether the next Submit is the final one.
+    //
+    // We advance through the middle steps automatically and deliberately stop on
+    // the last one: that Submit files the application, which is the candidate's
+    // call, matching every other engine here.
+    //
+    // Gated on lastSpecs like the loops above: fillCurrentPage assigns lastSpecs
+    // as soon as extraction reads ANY control, before it filters out the ones
+    // already filled - so a step that was fully pre-filled still reports specs,
+    // and an empty result means the step could not be read at all. Submitting a
+    // step we never read would post it blank.
+    if (eng && eng.platform === "icims" && lastSpecs.length) {
+      for (let page = 1; page < ICIMS_MAX_PAGES; page++) {
+        const stage = await icimsStage(tabId);
+        if (!stage) break; // no iCIMS form on this page - nothing left to drive
+        if (!stage.hasSubmit) break;
+
+        // Only ever click when the itinerary PROVES another step follows. An
+        // absent indicator, or one that marks no step current (as the page after
+        // the last step does), means we cannot tell - and a wrong guess files the
+        // application. Hand over in every one of those cases.
+        const positionKnown = stage.stepsPresent && stage.step > 0 && stage.total > 0;
+        if (!positionKnown || stage.last) {
+          ctx.needsUser.push({
+            cid: "icims-submit",
+            label: positionKnown
+              ? `Final step (${stage.step} of ${stage.total}): ${stage.stepTitle || "Submit"}`
+              : stage.stepTitle || "Submit this step",
+            reason: positionKnown
+              ? "Everything is filled. Review it and click Submit to send your application."
+              : "Everything is filled. Review it and click Submit - this page doesn't say whether more steps follow.",
+          });
+          break;
+        }
+
+        setAutofill({
+          runStatus: `Submitting step ${stage.step} of ${stage.total}…`,
+        });
+        const nav = await icimsAdvance(tabId, eng, stage);
+        console.log("[autofill] iCIMS advance:", nav);
+        if (!nav.advanced) {
+          // Rejected by the server: surface the field-level reasons it rendered.
+          for (const msg of nav.errors || []) {
+            ctx.needsUser.push({
+              cid: "icims-block:" + msg,
+              label: stage.stepTitle || `Step ${stage.step}`,
+              reason: msg,
+            });
+          }
+          if (!(nav.errors || []).length) {
+            ctx.needsUser.push({
+              cid: "icims-stuck",
+              label: stage.stepTitle || `Step ${stage.step} of ${stage.total}`,
+              reason: nav.timedOut
+                ? "iCIMS did not finish loading the next step. Continue from the page as it stands."
+                : "iCIMS would not accept this step. Check the highlighted fields and continue manually.",
+            });
+          }
+          break;
+        }
+
+        setAutofill({
+          runStatus: `Reading step ${nav.stage.step} of ${nav.stage.total}…`,
+        });
+        const ok = await rediscoverForm(tabId);
+        if (!ok) {
+          ctx.needsUser.push({
+            cid: "icims-stuck",
+            label: nav.stage.stepTitle || `Step ${nav.stage.step}`,
+            reason: "The next step loaded but its form could not be read. Continue from the page as it stands.",
+          });
+          break;
+        }
+        lastSpecs = await fillCurrentPage(tabId, eng, ctx, false);
+        if (!lastSpecs.length) {
+          // The step loaded but nothing could be read from it - never submit a
+          // step blind.
+          ctx.needsUser.push({
+            cid: "icims-unread",
+            label: nav.stage.stepTitle || `Step ${nav.stage.step} of ${nav.stage.total}`,
+            reason: "This step's fields could not be read. Complete it on the page and continue.",
+          });
+          break;
+        }
       }
     }
 
@@ -4444,7 +4989,7 @@ function renderActiveTab() {
       return renderFilteredJobList(
         "ready",
         (state.readyQueue || []).map((j) => jobToCard(j)),
-        scoreHint || "No ready-to-apply jobs yet (tailored resume DOCX completed).",
+        scoreHint || "No ready-to-apply jobs yet (tailored resume ready, not yet applied).",
         { prepend: renderMinScoreControl() }
       );
     case "best":
@@ -5779,6 +6324,7 @@ const SOURCE_META = {
   pinpoint: { label: "Pinpoint", color: "#E11D48", short: "PP" },
   breezy: { label: "Breezy", color: "#2BB573", short: "BZ" },
   manatal: { label: "Manatal", color: "#2563EB", short: "MN" },
+  icims: { label: "iCIMS", color: "#F26522", short: "IC" },
 };
 
 const DEFAULT_SOURCE_META = { label: null, color: "#3a4150", short: null };
@@ -5798,6 +6344,7 @@ function sourceFromUrl(url) {
   if (u.includes("ashbyhq")) return "ashby";
   if (u.includes("smartrecruiters")) return "smartrecruiters";
   if (u.includes("careers-page.com") || u.includes("manatal.com")) return "manatal";
+  if (u.includes("icims.com")) return "icims";
   if (/^https?:\/\/careers\./.test(u) && /\/postings\/.+\/applications/.test(u)) return "pinpoint";
   if (u.includes("linkedin.")) return "linkedin";
   if (u.includes("dice.com")) return "dice";

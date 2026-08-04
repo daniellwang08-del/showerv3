@@ -55,8 +55,14 @@ class BaseJobSpider(scrapy.Spider):
         self._fresh_mode = str(fresh).lower() in ("1", "true", "yes") if fresh else False
 
     def _posted_in_range(self, posted_at: datetime | None) -> bool:
+        """Return whether *posted_at* falls inside the configured sync window.
+
+        When a date window is active (``posted_since`` / ``posted_until``) and
+        the item has no parseable date, reject it — otherwise date-backfill
+        would silently accept every undated listing.
+        """
         if posted_at is None:
-            return True
+            return not (self.posted_since or self.posted_until)
         dt = posted_at
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)

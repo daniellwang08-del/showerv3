@@ -598,3 +598,38 @@ export async function saveAnswerPairs(userId, platform, pairs) {
 export async function clearAnswerCache(userId, platform) {
   await LOCAL.remove(answerCacheKey(userId, platform));
 }
+
+// Account credentials we had to CREATE on an ATS portal, keyed by (user, host).
+//
+// Some portals (iCIMS) make the candidate register before they can apply: the
+// application form contains a "Create a login" block with a password and a
+// re-enter box that must match and satisfy the portal's own complexity rule.
+// A language model cannot be relied on to produce the same value twice, so the
+// password is generated deterministically by the side panel and stored here -
+// otherwise the candidate could never sign back in to check their application.
+// Scoped per host because each portal (uscareers-yelp.icims.com, ...) is a
+// separate account.
+function atsCredentialKey(userId, host) {
+  return `atscreds_${userId || "anon"}_${String(host || "").toLowerCase()}`;
+}
+
+export async function getAtsCredential(userId, host) {
+  if (!host) return null;
+  const key = atsCredentialKey(userId, host);
+  const obj = await LOCAL.get(key);
+  const v = obj[key];
+  return v && typeof v === "object" && v.password ? v : null;
+}
+
+export async function saveAtsCredential(userId, host, creds) {
+  if (!host || !creds || !creds.password) return null;
+  const key = atsCredentialKey(userId, host);
+  const value = {
+    host: String(host).toLowerCase(),
+    login: String(creds.login || ""),
+    password: String(creds.password),
+    createdAt: creds.createdAt || new Date().toISOString(),
+  };
+  await LOCAL.set({ [key]: value });
+  return value;
+}

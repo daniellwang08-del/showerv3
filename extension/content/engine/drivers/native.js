@@ -5,24 +5,31 @@
 (() => {
   const AF = window.__AF;
   if (!AF) return;
-  const { clean, normText, setNativeValue, fireInput, labelForControl, constraintsOf } = AF.dom;
+  const { clean, normText, setNativeValue, fireInput, setReactTextValue, setReactSelectValue, labelForControl, constraintsOf } =
+    AF.dom;
 
   const SKIP_INPUT_TYPES = ["hidden", "submit", "button", "image", "reset"];
 
-  // Write a value the way a user does: focus → type → blur. The trailing blur is
-  // critical for controlled forms (e.g. Ashby) that only commit a field into
-  // their *validated* state on blur - and React delegates onBlur from the native,
-  // bubbling **focusout** event, NOT "blur" (blur doesn't bubble, so React 17+
-  // never listens to it). A real el.blur() fires that focusout; we fall back to a
-  // dispatched focusout when the element couldn't take focus.
+  // Write a value the way a user does: focus → type → blur, via the React-safe
+  // setter in dom.js. Ashby (and other controlled React forms) only keep the
+  // value in submit state when onChange fires and the field blurs; writing the
+  // DOM alone produces the "Missing entry for required field: Email" error
+  // while the input still looks filled.
   function setTextInput(el, value) {
+    if (typeof setReactTextValue === "function") {
+      return setReactTextValue(el, value == null ? "" : String(value));
+    }
+    // Fallback if an older dom.js is somehow injected without setReactTextValue.
     let focused = false;
     try {
       el.focus({ preventScroll: true });
       focused = document.activeElement === el;
     } catch {}
+    const lastValue = el.value;
     setNativeValue(el, value);
-    fireInput(el);
+    const tracker = el._valueTracker;
+    if (tracker && typeof tracker.setValue === "function") tracker.setValue(lastValue);
+    fireInput(el, value);
     if (focused) {
       try {
         el.blur();
@@ -125,6 +132,12 @@
         const block = el.closest && el.closest(".col-md-1-1, .frow, .pad-v-3");
         if (block && block.querySelector(".react-select, [class*='select__control']")) return null;
       } catch {}
+      // iCIMS: a select with icimsdropdown-enabled="1" holds no real options
+      // (they arrive over AJAX) and is driven through its visible widget by
+      // drivers/icims-dropdown.js. Disabled/dependent selects are skipped until
+      // their parent field is answered.
+      if (AF.icims && AF.icims.dropdownAnchorFor && AF.icims.dropdownAnchorFor(el)) return null;
+      if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(el)) return null;
       return el;
     },
     extract(root) {
@@ -133,7 +146,9 @@
         label: labelForControl(root),
         required:
           !!root.required ||
-          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
+          (root.getAttribute && root.getAttribute("aria-required") === "true") ||
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         multi: !!root.multiple,
         options: [...root.options].map((o) => clean(o.text)).filter(Boolean),
       };
@@ -148,6 +163,9 @@
         Array.isArray(answer.option_values) && answer.option_values.length
           ? answer.option_values
           : [answer.option || answer.value].filter(Boolean);
+      if (!multi && values[0] != null && typeof setReactSelectValue === "function") {
+        if (setReactSelectValue(root, values[0])) return true;
+      }
       return multi ? selectOptionsMulti(root, values) : selectOption(root, answer.option || answer.value);
     },
   });
@@ -165,7 +183,8 @@
         label: labelForControl(root),
         required:
           !!root.required ||
-          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         constraints: constraintsOf(root),
       };
     },
@@ -191,6 +210,9 @@
       if (el.closest && el.closest(".iti")) return null; // intl-tel-input owns it
       if (AF.lever && AF.lever.shouldSkipControl && AF.lever.shouldSkipControl(el)) return null;
       if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(el)) return null;
+      // iCIMS: login/password (written deterministically by the prep), the
+      // dropdown widget's search box, and hidden mirror inputs.
+      if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(el)) return null;
       if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return null;
       if (el.className && /requiredInput/i.test(String(el.className))) return null; // react-select shim
       return el;
@@ -202,7 +224,8 @@
         required:
           !!root.required ||
           (root.getAttribute && root.getAttribute("aria-required") === "true") ||
-          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         constraints: constraintsOf(root),
       };
     },

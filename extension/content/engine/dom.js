@@ -68,62 +68,146 @@
   }
 
   // ── value setters (React-safe) ─────────────────────────────────────────────
-  // Set a control's value via the native prototype setter so React's onChange
-  // (which tracks the value descriptor) actually fires.
-  function setNativeValue(el, value) {
-    const proto =
-      el.tagName === "TEXTAREA"
-        ? window.HTMLTextAreaElement.prototype
-        : el.tagName === "SELECT"
-        ? window.HTMLSelectElement.prototype
-        : window.HTMLInputElement.prototype;
-    const desc = Object.getOwnPropertyDescriptor(proto, "value");
-    if (desc && desc.set) desc.set.call(el, value);
-    else el.value = value;
+  // React 15.6+ installs an instance value setter + `_valueTracker` so it can
+  // de-dupe input/change events (facebook/react#10135, #11488). Setting
+  // `el.value = x` (or only firing Event("input")) often updates the DOM while
+  // leaving React state empty - Ashby then shows "Missing entry for required
+  // field: Email" on submit even though the input still displays the address.
+  // Proven fix used by Workday/Workable in this repo and by the React issue
+  // workarounds: write via the native prototype setter, rewind `_valueTracker`
+  // to the previous value, dispatch InputEvent("input") + change, then blur /
+  // focusout so commit-on-blur forms record the field.
+  function valueProto(el) {
+    if (!el) return null;
+    if (el.tagName === "TEXTAREA") return window.HTMLTextAreaElement.prototype;
+    if (el.tagName === "SELECT") return window.HTMLSelectElement.prototype;
+    return window.HTMLInputElement.prototype;
   }
 
-  function fireInput(el) {
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+  function setNativeValue(el, value) {
+    const valueStr = value == null ? "" : String(value);
+    const proto = valueProto(el);
+    let protoSetter = null;
+    let ownSetter = null;
+    try {
+      const own = Object.getOwnPropertyDescriptor(el, "value");
+      if (own && typeof own.set === "function") ownSetter = own.set;
+    } catch {}
+    try {
+      const desc = proto && Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc && typeof desc.set === "function") protoSetter = desc.set;
+    } catch {}
+    // Prefer the prototype setter when React overrode the instance descriptor
+    // (stackoverflow.com/questions/40894637 / react#10135).
+    if (protoSetter && ownSetter && ownSetter !== protoSetter) {
+      protoSetter.call(el, valueStr);
+    } else if (protoSetter) {
+      protoSetter.call(el, valueStr);
+    } else if (ownSetter) {
+      ownSetter.call(el, valueStr);
+    } else {
+      el.value = valueStr;
+    }
+  }
+
+  function fireInput(el, data) {
+    const v = data != null ? String(data) : el && el.value;
+    try {
+      el.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: v == null ? "" : String(v),
+        })
+      );
+    } catch {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  // Force a controlled-React input to register its CURRENT DOM value, exactly as
-  // a user clicking into the field and back out (focus → blur) would.
-  //
-  // Two things break browser-autofilled / draft-restored values on a controlled
-  // React form (e.g. Ashby):
-  //   1) The value was set WITHOUT React's onChange, so its render state is empty.
-  //      We reset React's value tracker and re-fire input/change so onChange runs.
-  //   2) The form only COMMITS a field into its *validated* state on blur. React
-  //      delegates `onBlur` from the native **focusout** event (blur doesn't
-  //      bubble, so React 17+ never listens to "blur"). A synthetic `blur` Event
-  //      therefore never triggers the onBlur commit, and the field stays "missing"
-  //      on submit even though it shows a value. A genuine focus()+blur() fires a
-  //      native, bubbling `focusout` - the same gesture the user does by hand to
-  //      clear the error. We dispatch `focusout` explicitly as a fallback for
-  //      inputs that can't take focus (disabled/readonly/off-screen).
-  // No-ops when the value is empty. Returns true if it committed a value.
-  function commitReactValue(el) {
+  // Write a text/textarea value so a controlled React form (Ashby, etc.) updates
+  // its state - not just the visible DOM. Prefers the MAIN-world page bridge
+  // (page-bridge.js) so `_valueTracker` / `__reactProps$` are the page's real
+  // React objects; falls back to the isolated-world path when the bridge is
+  // absent. Returns true when a write was attempted.
+  function setReactTextValue(el, value) {
+    if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return false;
+    const v = value == null ? "" : String(value);
+
+    // 1) MAIN-world bridge (synchronous listener during dispatchEvent).
+    try {
+      el.removeAttribute("data-af-page-set");
+      el.dispatchEvent(
+        new CustomEvent("__af_page_set", {
+          bubbles: true,
+          cancelable: true,
+          detail: { value: v, kind: "text" },
+        })
+      );
+      const bridged = el.getAttribute("data-af-page-set");
+      el.removeAttribute("data-af-page-set");
+      if (bridged === "ok") return true;
+    } catch {}
+
+    // 2) Isolated-world fallback (still better than a bare el.value write).
+    let focused = false;
+    try {
+      el.focus({ preventScroll: true });
+      focused = document.activeElement === el;
+    } catch {}
+    const lastValue = el.value;
+    setNativeValue(el, v);
+    const tracker = el._valueTracker;
+    if (tracker && typeof tracker.setValue === "function") {
+      tracker.setValue(lastValue === v ? (v === "" ? "__af__" : "") : lastValue);
+    }
+    fireInput(el, v);
+    if (focused) {
+      try {
+        el.blur();
+      } catch {}
+    } else {
+      try {
+        el.dispatchEvent(new FocusEvent("focusout", { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new FocusEvent("blur", { bubbles: false, cancelable: true }));
+      } catch {}
+    }
+    return true;
+  }
+
+  // SELECT via MAIN-world bridge when available (Ashby EEO / custom selects).
+  function setReactSelectValue(el, value) {
+    if (!el || el.tagName !== "SELECT") return false;
+    const v = value == null ? "" : String(value);
+    try {
+      el.removeAttribute("data-af-page-set");
+      el.dispatchEvent(
+        new CustomEvent("__af_page_set", {
+          bubbles: true,
+          cancelable: true,
+          detail: { value: v, kind: "select" },
+        })
+      );
+      const bridged = el.getAttribute("data-af-page-set");
+      el.removeAttribute("data-af-page-set");
+      if (bridged === "ok") return true;
+    } catch {}
+    return false;
+  }
+
+  // Force a controlled-React input to register its CURRENT DOM value (or an
+  // explicit forcedValue snapshot). Used after browser autofill and as an
+  // Ashby safety net: committing field A can re-render and wipe sibling DOMs
+  // that were only visually filled, so callers should snapshot first.
+  // No-ops when the effective value is empty. Returns true if it committed.
+  function commitReactValue(el, forcedValue) {
     try {
       if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return false;
-      const v = el.value;
+      const v = forcedValue != null ? String(forcedValue) : el.value;
       if (v == null || v === "") return false;
-      let focused = false;
-      try {
-        el.focus({ preventScroll: true });
-        focused = document.activeElement === el;
-      } catch {}
-      const tracker = el._valueTracker;
-      if (tracker && typeof tracker.setValue === "function") tracker.setValue("");
-      setNativeValue(el, v); // prototype setter: leaves the tracker stale -> change detected
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      if (focused) {
-        el.blur(); // native blur fires the bubbling "focusout" React's onBlur needs
-      } else {
-        el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-      }
-      return true;
+      return setReactTextValue(el, v);
     } catch {
       return false;
     }
@@ -191,6 +275,16 @@
       const sr = srLabel(inp);
       if (sr) return sr.slice(0, 200);
     }
+    // iCIMS: label[for] resolves on its own, but repeating collections reuse
+    // plain names - BOTH the Phones and Addresses groups ship a required "Type"
+    // dropdown - so the label must be qualified with its collection to stay
+    // unambiguous. Runs before the generic label[for] lookup for that reason.
+    try {
+      if (AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage()) {
+        const q = AF.icims.questionTitleFor && AF.icims.questionTitleFor(inp);
+        if (q) return q.slice(0, 200);
+      }
+    } catch {}
     if (inp.id) {
       try {
         const l = document.querySelector('label[for="' + CSS.escape(inp.id) + '"]');
@@ -485,6 +579,8 @@
     setNativeValue,
     fireInput,
     commitReactValue,
+    setReactTextValue,
+    setReactSelectValue,
     textOfIds,
     labelForControl,
     labelText,

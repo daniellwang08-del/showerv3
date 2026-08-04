@@ -213,6 +213,9 @@
       if (AF.manatal && AF.manatal.isManatalPage && AF.manatal.isManatalPage()) {
         return "Application form (Manatal)";
       }
+      if (AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage()) {
+        return "Candidate profile (iCIMS)";
+      }
     } catch {}
     return "Application form";
   }
@@ -280,6 +283,14 @@
     "form:has(.btn-apply)",
     "form:has(.custom-file-input)",
     'form:has(input[name="terms_and_condition"])',
+    // iCIMS (*.icims.com): the candidate profile / application is a div "table"
+    // (.iCIMS_ProfileFormTable) inside one <form> that ends with the
+    // "Submit Profile" button. Prefer that form - iCIMS portals also render a
+    // job-search form in the header, which the generic "form" fallback would
+    // otherwise pick.
+    "form:has(#cp_form_submit_i)",
+    "form:has(.iCIMS_ProfileFormTable)",
+    ".iCIMS_CenteredPageContent",
     // Generic fallback
     "form",
   ];
@@ -483,29 +494,35 @@
     return null;
   }
 
-  // Replay remembered identity answers: for each labeled control whose category
-  // we have a cached answer for, write it via its driver, ONE at a time (so any
-  // dropdown menu closes before the next opens). Skips controls already filled
-  // (e.g. by the education prep). Cached answers are exact option text; the
-  // driver fuzzy-matches, and anything that doesn't fit this ATS's phrasing
-  // simply stays unfilled and falls back to the normal LLM pass.
-  // Commit browser-autofilled values into the page's framework state. The
-  // engine skips controls that already hold a value (isFilled), so a value the
-  // browser autofilled WITHOUT firing React's onChange would never get committed
-  // to the controlled component - and a React form (e.g. Ashby) then rejects it
-  // as a missing required field on submit. Re-fire each pre-filled text input's
-  // own value through the React-safe path so the framework records it. We don't
-  // change any text, so this is safe to run on every text field in the form.
+  // Commit browser-autofilled / visually-filled values into the page's framework
+  // state. The engine skips controls that already hold a DOM value (isFilled), so
+  // a value written WITHOUT React's onChange would never get into Ashby's submit
+  // model - submit then reports "Missing entry for required field: Email" while
+  // the input still shows the address.
+  //
+  // CRITICAL: snapshot every non-empty value BEFORE committing any field.
+  // Committing field A triggers a React re-render that resets sibling controlled
+  // inputs whose state is still empty back to "". If we read el.value lazily
+  // inside the loop, Email can be wiped between Name's commit and Email's turn,
+  // and commitReactValue no-ops on the empty DOM - the intermittent Ashby bug.
   async function commitPrefilledInputs() {
     const commit = dom.commitReactValue;
     if (typeof commit !== "function") return 0;
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     let n = 0;
+    const isAshby = (() => {
+      try {
+        return /ashbyhq\.com$/i.test(location.hostname) || !!document.querySelector(".ashby-application-form-container");
+      } catch {
+        return false;
+      }
+    })();
     const nodes = [
       ...document.querySelectorAll(
         'input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="search"], input:not([type]), textarea'
       ),
     ];
+    const snapshots = [];
     for (const el of nodes) {
       try {
         if (!isVisible(el)) continue;
@@ -515,23 +532,32 @@
         // form (Ashby) reads the phone as a missing required field. Re-firing the
         // same value through the React-safe path registers it; intl-tel-input just
         // reformats the identical value, which is a no-op.
-        if (commit(el)) {
+        const v = el.value;
+        if (v == null || v === "") continue;
+        snapshots.push({ el, v });
+      } catch {}
+    }
+    for (const { el, v } of snapshots) {
+      try {
+        // Re-apply the snapshotted value even if a prior sibling commit wiped the DOM.
+        if (commit(el, v)) {
           n++;
-          // CRITICAL: yield a macrotask between fields. Each field commits into
-          // the form's (Apollo) state on blur as an async React update; firing all
-          // our blurs in one synchronous burst lets React 18 batch them into a
-          // single render where the shared form-state merges clobber each other,
-          // so some fields we just committed read back as "missing required
-          // field". A real macrotask gap flushes each field's commit before the
-          // next - exactly what happens when a user clicks in and out one field at
-          // a time (the gesture that reliably fixes it by hand).
-          await wait(16);
+          // Yield a macrotask between fields so React/Apollo flushes each blur
+          // commit before the next (user clicking field-by-field). Ashby needs a
+          // slightly longer gap - its form state merges are easy to clobber.
+          await wait(isAshby ? 40 : 16);
         }
       } catch {}
     }
     return n;
   }
 
+  // Replay remembered identity answers: for each labeled control whose category
+  // we have a cached answer for, write it via its driver, ONE at a time (so any
+  // dropdown menu closes before the next opens). Skips controls already filled
+  // (e.g. by the education prep). Cached answers are exact option text; the
+  // driver fuzzy-matches, and anything that doesn't fit this ATS's phrasing
+  // simply stays unfilled and falls back to the normal LLM pass.
   async function applyCachedAnswers(pairs) {
     if (!pairs || !AF.orderedDrivers) return 0;
     const drivers = AF.orderedDrivers();
@@ -1903,6 +1929,24 @@
       });
       return true;
     }
+    // Ashby: upload resume LAST. Ashby parses the file and overwrites
+    // name/email/location (product autofill + file.js race note). Text fields
+    // must already be committed; the side panel re-applies them after parse.
+    if (msg.type === "AF_ASHBY_UPLOAD_RESUME") {
+      const isAb =
+        !!(AF.ashby && AF.ashby.isAshbyPage && AF.ashby.isAshbyPage()) ||
+        !!document.querySelector(".ashby-application-form-container, #_systemfield_resume");
+      if (!isAb) return false;
+      runExclusive(async () => {
+        const uploaded = AF.ashby && AF.ashby.writeResumeFile ? AF.ashby.writeResumeFile(msg.file) : false;
+        return { uploaded: uploaded ? 1 : 0 };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
     // Breezy: upload resume LAST so any parser does not overwrite filled fields.
     if (msg.type === "AF_BZY_UPLOAD_RESUME") {
       const isBz = !!(AF.breezy && AF.breezy.isBreezyPage && AF.breezy.isBreezyPage());
@@ -1965,6 +2009,101 @@
         } catch {}
       });
       return true;
+    }
+    // iCIMS: report whether this frame owns the resume field and whether a file
+    // is already attached / still being parsed, so the side panel knows if it
+    // must run the resume-first upload (and which frame to send it to).
+    if (msg.type === "AF_ICIMS_RESUME_STATE") {
+      const isIc = !!(AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage());
+      if (!isIc) return false;
+      const st = AF.icims.resumeState ? AF.icims.resumeState() : { present: false };
+      if (!st.present) return false; // not the frame hosting the profile form
+      try {
+        sendResponse({ ok: true, ...st, needsCredentials: !!(AF.icims.needsCredentials && AF.icims.needsCredentials()) });
+      } catch {}
+      return false;
+    }
+    // iCIMS: upload the resume FIRST. The input's own onchange appends
+    // &uploadResume=1 to the form action and calls form.submit(), so this call
+    // NAVIGATES the tab - the response very likely never arrives and the side
+    // panel waits for the reload instead. Nothing may be filled before this.
+    if (msg.type === "AF_ICIMS_UPLOAD_RESUME") {
+      const isIc = !!(AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage());
+      if (!isIc || !AF.icims.resumeInput || !AF.icims.resumeInput()) return false;
+      let uploaded = false;
+      try {
+        uploaded = !!(AF.icims.writeResumeFile && AF.icims.writeResumeFile(msg.file));
+      } catch {
+        uploaded = false;
+      }
+      try {
+        sendResponse({ ok: true, uploaded: uploaded ? 1 : 0 });
+      } catch {}
+      return false;
+    }
+    // iCIMS: fill the phone block deterministically from the profile. Number is
+    // autocomplete="tel-national" (local digits only) and its sibling Phone
+    // Country Code is a searchable AJAX dropdown the model cannot answer with a
+    // searchable term - see the phone section in content/engine/icims.js.
+    if (msg.type === "AF_ICIMS_PHONE") {
+      const isIc = !!(AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage());
+      if (!isIc || !AF.icims.phoneNumberInput || !AF.icims.phoneNumberInput()) return false;
+      runExclusive(async () => (AF.icims.fillPhone ? await AF.icims.fillPhone(msg) : null)).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // iCIMS: write the "Create a login" block deterministically. The two
+    // password boxes must match and satisfy the complexity rule stated in their
+    // own title attribute, so these three fields never go to the model.
+    if (msg.type === "AF_ICIMS_CREDENTIALS") {
+      const isIc = !!(AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage());
+      if (!isIc || !AF.icims.needsCredentials || !AF.icims.needsCredentials()) return false;
+      runExclusive(async () => {
+        const res = AF.icims.fillCredentials
+          ? AF.icims.fillCredentials({ login: msg.login, password: msg.password })
+          : { login: 0, password: 0 };
+        return res;
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // iCIMS: report where this page sits in the application itinerary, whether
+    // an advance button exists and any validation errors the server rendered.
+    // Answered by the frame hosting the iCIMS form (portals can be iframed - the
+    // form action carries in_iframe=1).
+    if (msg.type === "AF_ICIMS_STAGE") {
+      const isIc = !!(AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage());
+      if (!isIc || !AF.icims.stageState) return false;
+      const st = AF.icims.stageState();
+      // A frame with neither steps nor a form is portal chrome, not the app.
+      if (!st.stepsPresent && !st.hasSubmit) return false;
+      try {
+        sendResponse({ ok: true, ...st });
+      } catch {}
+      return false;
+    }
+    // iCIMS: click the step's primary Submit. This is a real form POST, so the
+    // document is replaced and this reply usually never arrives - the side panel
+    // treats a dead channel as "clicked" and waits for the next page instead.
+    if (msg.type === "AF_ICIMS_SUBMIT") {
+      const isIc = !!(AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage());
+      if (!isIc || !AF.icims.submitButton || !AF.icims.submitButton()) return false;
+      let clicked = false;
+      try {
+        clicked = !!(AF.icims.clickSubmit && AF.icims.clickSubmit());
+      } catch {
+        clicked = false;
+      }
+      try {
+        sendResponse({ ok: true, clicked: clicked ? 1 : 0 });
+      } catch {}
+      return false;
     }
     // Fill a cover-letter textarea with the AI-generated cover letter body before
     // extraction. Only the frame that hosts a text/textarea control answers.

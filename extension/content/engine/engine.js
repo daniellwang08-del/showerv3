@@ -104,6 +104,7 @@
             if (n.closest && AF.lever && AF.lever.shouldSkipSubtree && n.closest(".awli-application-row")) return;
             if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(n)) return;
             if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(n)) return;
+            if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(n)) return;
             if (n.closest && AF.workable && AF.workable.shouldSkipSubtree && n.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) return;
           } catch {}
           anchors.push(n);
@@ -144,6 +145,7 @@
         if (AF.lever && AF.lever.shouldSkipControl && AF.lever.shouldSkipControl(anchor)) continue;
         if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(anchor)) continue;
         if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(anchor)) continue;
+        if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(anchor)) continue;
         if (anchor.closest && AF.workable && anchor.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) continue;
       } catch {}
       // Skip hidden helper inputs - EXCEPT file inputs, which are almost always
@@ -381,6 +383,15 @@
 
   async function writeControls(results, files) {
     const report = [];
+    // Ashby Apollo merges form state on blur; a 12ms gap is sometimes too tight
+    // when the side panel holds focus and commits are synthetic - sibling fields
+    // clobber each other and submit reports required fields "missing".
+    let gapMs = 12;
+    try {
+      if (/ashbyhq\.com$/i.test(location.hostname) || document.querySelector(".ashby-application-form-container")) {
+        gapMs = 50;
+      }
+    } catch {}
     for (const r of results || []) {
       for (const c of r.controls || []) {
         const res = await writeOne(c, files);
@@ -391,7 +402,7 @@
         // commits into a single render where shared form-state merges clobber each
         // other, leaving some just-written fields reading as "missing required
         // field". A real gap flushes each commit before the next write.
-        await new Promise((r2) => setTimeout(r2, 12));
+        await new Promise((r2) => setTimeout(r2, gapMs));
       }
     }
     return report;

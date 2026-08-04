@@ -108,7 +108,30 @@
     return null;
   }
 
+  // iCIMS applications span several server-rendered steps ("Step 2 of 4"), each
+  // ending in an identically labelled "Submit" and each a full page load. The
+  // header lists the whole itinerary, so a page whose current step is not the
+  // last one is provably mid-application - it must never be read as a
+  // confirmation, or the side panel marks the job applied and moves on while
+  // steps are still unfilled.
+  function icimsMidApplication() {
+    try {
+      const root = document.querySelector(".iCIMS_Steps");
+      if (!root) return false;
+      const items = Array.from(root.querySelectorAll("li"));
+      if (!items.length) return false;
+      // "iCIMS_Steps_NotCurrent" contains "Current", so this must be an exact
+      // class-token test, never a substring or regex match on className.
+      const idx = items.findIndex((li) => li.classList && li.classList.contains("iCIMS_Steps_Current"));
+      if (idx < 0) return false;
+      return idx + 1 < items.length;
+    } catch {
+      return false;
+    }
+  }
+
   function looksLikeConfirmationPage() {
+    if (icimsMidApplication()) return false;
     try {
       const url = String(location.href || "").toLowerCase();
       if (
@@ -154,6 +177,7 @@
     try {
       // Confirmation pages win over leftover form chrome.
       if (looksLikeConfirmationPage()) return false;
+      if (icimsMidApplication()) return true;
       const nextBtn = document.querySelector(
         'button[data-automation-id="bottom-navigation-next-button"], button[data-automation-id="pageFooterNextButton"]'
       );
@@ -175,6 +199,8 @@
           "oc-button[data-test='footer-submit']",
           ".application--form",
           "#main_fields",
+          // iCIMS renders each step's fields as a div "table".
+          ".iCIMS_ProfileFormTable",
         ].join(",")
       );
     } catch {

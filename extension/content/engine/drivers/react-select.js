@@ -409,6 +409,16 @@
       // intl-tel-input's flag picker is role=combobox but is NOT react-select;
       // claiming it harvests the entire 200-entry country list into options.
       if (el.closest && el.closest(".iti")) return null;
+      // A native <select> is never a react-select, but iCIMS puts role="combobox"
+      // on real ones (rcf3048 "How did you hear about us?" ships five inline
+      // <option>s). Claiming those reports kind:"custom" with no options and
+      // opens a menu that does not exist, so leave every <select> to
+      // native-select / icims-dropdown.
+      if (el.tagName === "SELECT") return null;
+      // The iCIMS AJAX dropdown's search box and result list live inside
+      // .dropdown-container; drivers/icims-dropdown.js owns that whole widget.
+      if (el.closest && el.closest(".dropdown-container")) return null;
+      if (el.id && /_icimsDropdown$/.test(el.id)) return null;
       if (el.tagName === "INPUT" && isComboInput(el)) return comboRoot(el);
       if (el.getAttribute && el.getAttribute("role") === "combobox" && el.tagName !== "INPUT") {
         // A container-level combobox with no inner input.

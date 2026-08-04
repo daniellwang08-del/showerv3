@@ -85,7 +85,10 @@ const ENGINE_SCRIPTS = {
     "content/engine/workable.js",
     "content/engine/breezy.js",
     "content/engine/manatal.js",
+    "content/engine/ashby.js",
+    "content/engine/icims.js",
     "content/engine/drivers/sr-select.js",
+    "content/engine/drivers/icims-dropdown.js",
     "content/engine/drivers/native.js",
     "content/engine/drivers/react-select.js",
     "content/engine/drivers/intl-tel-input.js",
@@ -228,6 +231,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           target: { tabId: msg.tabId, allFrames: true },
           files: ["content/overlay.css"],
         });
+        // MAIN world first: page-bridge can see React `_valueTracker` / `__reactProps$`
+        // that isolated content scripts cannot (Chrome isolated-world boundary).
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: msg.tabId, allFrames: true },
+            files: ["content/engine/page-bridge.js"],
+            world: "MAIN",
+          });
+        } catch (err) {
+          console.warn("page-bridge MAIN inject failed", err);
+        }
         await chrome.scripting.executeScript({
           target: { tabId: msg.tabId, allFrames: true },
           files: scriptsForEngine(msg.engine),

@@ -141,6 +141,9 @@ export const ENGINES = {
   // <label for> + native inputs and Ashby's own combobox/file widgets. Reuses the
   // greenhouse bundle + auto-discover flow; the platform-agnostic component
   // drivers fill text/email/tel/textarea/select/file and the LLM resolves values.
+  // Resume upload is deferred: Ashby parses resumes and overwrites name/email
+  // (see content/engine/ashby.js + file.js race note). Writes go through the
+  // MAIN-world page-bridge so React state commits.
   ashby: {
     id: "ashby",
     label: "Ashby",
@@ -232,6 +235,24 @@ export const ENGINES = {
     available: true,
     autoDiscover: true,
     note: "Finds the application form and fills it automatically.",
+  },
+  // iCIMS (*.icims.com): server-rendered candidate profile built from
+  // .iCIMS_ProfileFormTable rows (native inputs + selects) plus iCIMS' own AJAX
+  // dropdown widget, which hides its <select> behind an <a id="X_icimsDropdown">
+  // and fetches options over the network (drivers/icims-dropdown.js owns those).
+  // Reuses the greenhouse bundle + auto-discover. TWO things are iCIMS-specific
+  // and handled in app.js: the resume is uploaded FIRST (its onchange submits the
+  // form and iCIMS re-renders the page pre-filled from the parsed resume), and
+  // the "Create a login" block is written deterministically with a generated
+  // password saved to extension storage.
+  icims: {
+    id: "icims",
+    label: "iCIMS",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Uploads your resume first, then fills the candidate profile.",
   },
   generic: {
     id: "generic",

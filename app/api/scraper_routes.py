@@ -170,7 +170,7 @@ class ScraperStatsResponse(BaseModel):
     today_posted: int = 0
     my_jobs: int = 0          # jobs I added via submission/attachment
     extracted_jobs: int = 0   # fully extracted (pipeline completed)
-    ready_jobs: int = 0       # tailored resume/cover letter ready
+    ready_jobs: int = 0       # tailored resume ready AND not yet applied
     best_jobs: int = 0        # match score >= 75 (Strong)
     good_jobs: int = 0        # match score 50-74 (Good)
     qualified_jobs: int = 0   # match score >= user's preference minimum

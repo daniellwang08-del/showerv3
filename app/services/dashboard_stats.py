@@ -138,7 +138,10 @@ async def fetch_dashboard_stats(
                     JobExtraction.status == ExtractionStatus.COMPLETED
                 ).label("extracted_jobs"),
                 func.count().filter(
-                    ResumeBuildResult.resume_docx_status == "completed"
+                    and_(
+                        ResumeBuildResult.resume_docx_status == "completed",
+                        ValidJobUserApplication.id.is_(None),
+                    )
                 ).label("ready_jobs"),
                 func.count().filter(
                     JobMatchResult.overall_score >= BEST_MATCH_SCORE

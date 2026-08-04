@@ -91,6 +91,13 @@
         if (q) return q;
       }
     } catch {}
+    // iCIMS: label[for] in the row's .iCIMS_InfoField, qualified by collection.
+    try {
+      if (AF.icims && AF.icims.questionTitleFor) {
+        const q = AF.icims.questionTitleFor(root);
+        if (q) return q;
+      }
+    } catch {}
     return labelForControl(root);
   }
 
@@ -250,7 +257,8 @@
         label: groupLabel(root),
         required:
           group.some((g) => g.required) ||
-          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         multi: t === "checkbox" && group.length > 1,
         options: leverGroupOptions(root, group),
         name: root.name || "",

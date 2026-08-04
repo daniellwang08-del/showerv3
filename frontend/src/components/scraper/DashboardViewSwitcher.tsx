@@ -164,7 +164,7 @@ const BOARD_VIEWS: ViewMeta[] = [
   {
     id: 'ready',
     label: 'Ready to apply',
-    description: 'Jobs with a tailored resume ready',
+    description: 'Tailored resume ready and not yet applied',
     icon: Rocket,
     accent: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
     active: 'text-emerald-700 dark:text-emerald-300',

@@ -1737,7 +1737,7 @@ DASHBOARD_VIEWS = {
     "manual",
 }
 
-VIEWS_NEEDING_APPLICATION_JOIN = frozenset({"applied_today", "applied", "available"})
+VIEWS_NEEDING_APPLICATION_JOIN = frozenset({"applied_today", "applied", "available", "ready"})
 VIEWS_NEEDING_RESUME_JOIN = frozenset({"ready"})
 # Extraction is always joined on the dashboard list query; this set documents
 # views whose WHERE clauses depend on JobExtraction columns.
@@ -1808,7 +1808,9 @@ def _dashboard_view_clauses(
     elif view == "available":
         clauses.append(ValidJobUserApplication.id.is_(None))
     elif view == "ready":
+        # Tailored resume ready AND not yet applied — "Ready to apply".
         clauses.append(ResumeBuildResult.resume_docx_status == "completed")
+        clauses.append(ValidJobUserApplication.id.is_(None))
     elif view == "sheet_posted":
         clauses.append(Job.sheet_posted_at.is_not(None))
     elif view == "pumble_posted":
