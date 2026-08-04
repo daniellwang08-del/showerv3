@@ -24,7 +24,7 @@
 (() => {
   const AF = window.__AF;
   if (!AF) return;
-  const { clean, isVisible, waitUntil } = AF.dom;
+  const { clean, isVisible, waitUntil, setNativeValue, fireInput } = AF.dom;
 
   function isJobviteHost() {
     try {
@@ -332,6 +332,47 @@
     return { advanced: !!advanced && currentStep() > before, final: isFinalStep() };
   }
 
+  // Some Jobvite forms mark a free-text field as required even though it only
+  // applies conditionally - e.g. CMG's "If yes, please describe below…" which is
+  // required regardless of the paired Yes/No answer. When the answer is negative
+  // the model correctly leaves it blank, but Jobvite then blocks "Next" with
+  // "Please provide this information." After the model has had its passes, fill any
+  // still-empty VISIBLE required free-text field with "N/A" so validation passes
+  // and the step can advance (we never auto-submit; the user reviews before
+  // sending). Restricted to <input type="text"> / <textarea>: email/tel/number/url
+  // fields carry patterns that "N/A" would fail, and select/radio/checkbox have
+  // their own handling. Widget-owned controls (paste boxes, reCAPTCHA, LinkedIn)
+  // are excluded via shouldSkipControl.
+  function fillRequiredPlaceholders(placeholder) {
+    const val = placeholder || "N/A";
+    const root = applicationForm() || document;
+    let count = 0;
+    let controls = [];
+    try {
+      controls = [...root.querySelectorAll("input, textarea")];
+    } catch {
+      controls = [];
+    }
+    for (const el of controls) {
+      try {
+        const tag = (el.tagName || "").toLowerCase();
+        if (tag !== "input" && tag !== "textarea") continue;
+        if (tag === "input" && (el.type || "text").toLowerCase() !== "text") continue;
+        if (shouldSkipControl(el)) continue;
+        if (!isVisible(el)) continue;
+        if (!isRequiredControl(el)) continue;
+        if (clean(el.value)) continue; // already answered
+        setNativeValue(el, val);
+        fireInput(el);
+        try {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch {}
+        count++;
+      } catch {}
+    }
+    return count;
+  }
+
   AF.jobvite = {
     isJobviteHost,
     isJobvitePage,
@@ -345,5 +386,6 @@
     uploadResume,
     uploadCoverLetter,
     isAttached,
+    fillRequiredPlaceholders,
   };
 })();

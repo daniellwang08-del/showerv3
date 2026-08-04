@@ -81,21 +81,45 @@
     return /^(united states( of america)?|u\.?s\.?a?\.?)$/i.test(clean(s || ""));
   }
 
-  // Ordered geocoder queries: full "City, Region, Country" first, then shorter
-  // fallbacks, so a value like "Newark, CA" still matches "Newark, California,
-  // United States".
+  // A TRAILING country token the Greenhouse Location combobox does NOT want. The
+  // autofill prompt makes the model output "City, State, Country" (e.g.
+  // "Newark, CA, USA"), but the geocoder (api-geocode-earth-proxy) matches on
+  // "City, Region" - appending the country empties/degrades the suggestion list,
+  // so the dropdown never opens. Only ever tested against the LAST comma part.
+  function isCountryToken(s) {
+    const t = clean(s || "");
+    if (!t) return false;
+    return (
+      isUsCountryToken(t) ||
+      /^(us|usa)$/i.test(t) ||
+      /^(canada|can)$/i.test(t) ||
+      /^(united kingdom|u\.?k\.?|great britain|england|scotland|wales)$/i.test(t) ||
+      /^(australia|aus|new zealand|india|ireland|germany|france|spain|italy|portugal|netherlands|belgium|switzerland|austria|sweden|norway|denmark|finland|poland|mexico|brazil|argentina|japan|china|singapore|philippines|indonesia|malaysia|vietnam|south africa|nigeria|kenya|egypt|uae|united arab emirates|israel|turkey|greece)$/i.test(
+        t
+      )
+    );
+  }
+
+  // Ordered geocoder queries, SHORTEST-useful first. We type "City, State" up
+  // front (what the dropdown matches best) and NEVER lead with the full
+  // country-appended string: typing "Newark, CA, USA" makes the geocoder return
+  // nothing, so the old code wasted the whole 3s dropdown timeout before falling
+  // back. City-only is kept as a last resort.
   function locationQueries(value) {
     const text = clean(value);
     if (!text) return [];
-    const parts = text.split(",").map((x) => clean(x)).filter(Boolean);
+    let parts = text.split(",").map((x) => clean(x)).filter(Boolean);
+    // Drop a trailing country token so we submit "City, State" (per the prompt
+    // the model's 3rd part is the country).
+    if (parts.length >= 3 && isCountryToken(parts[parts.length - 1])) {
+      parts = parts.slice(0, -1);
+    }
     const out = [];
-    if (parts.length >= 3) {
-      out.push(parts.join(", "));
+    if (parts.length >= 2) {
+      // "City, State" - the geocoder's best match; commit on the first attempt.
       out.push(`${parts[0]}, ${parts[1]}`);
-      out.push(parts[0]);
-    } else if (parts.length === 2) {
-      out.push(text);
-      if (/^[A-Za-z]{2}$/.test(parts[1]) && !isUsCountryToken(parts[1])) {
+      // Uppercase a 2-letter state code ("ca" -> "CA") as an equivalent variant.
+      if (/^[A-Za-z]{2}$/.test(parts[1]) && !isCountryToken(parts[1])) {
         out.push(`${parts[0]}, ${parts[1].toUpperCase()}`);
       }
       out.push(parts[0]);
@@ -360,4 +384,95 @@
       return writeLocationInput(root, answer.value || answer.option || "");
     },
   });
+
+  // ── required free-text safety net ───────────────────────────────────────────
+  //
+  // Some Greenhouse questions are REQUIRED free-text (e.g. an open-ended
+  // availability / "describe your upcoming commitments" textarea). When the
+  // profile has no fact for them the model returns needs_user or omits the
+  // control entirely, so the field is left empty - and Greenhouse then blocks the
+  // submit with "This field is required". After the model's passes, this
+  // deterministically fills any still-empty VISIBLE REQUIRED free-text field with
+  // "N/A" (the same convention the server prompt uses for required conditional
+  // follow-ups). Restricted to <input type="text"> / <textarea>: email/tel/
+  // number/url carry patterns "N/A" would fail, and select/radio/checkbox have
+  // their own handling. The Location combobox and any react-select combobox input
+  // are explicitly excluded. We never auto-submit; the user reviews before send.
+
+  function ghApplicationRoot() {
+    try {
+      return (
+        document.querySelector(
+          "form#application-form, form.application--form, .application--container, .application--form"
+        ) || document
+      );
+    } catch {
+      return document;
+    }
+  }
+
+  function isFreeTextFillable(el) {
+    const tag = (el.tagName || "").toLowerCase();
+    if (tag === "textarea") return true;
+    if (tag !== "input") return false;
+    const t = (el.type || "text").toLowerCase();
+    return t === "text" || t === "";
+  }
+
+  function isRequiredField(el) {
+    try {
+      if (el.required || (el.getAttribute && el.getAttribute("aria-required") === "true")) return true;
+      // Greenhouse marks a required question with a trailing "*" in its label.
+      const lbl = labelForControl(el) || "";
+      if (/\*\s*$/.test(lbl) || /\brequired\b/i.test(lbl)) return true;
+    } catch {}
+    return false;
+  }
+
+  function shouldSkipRequiredFill(el) {
+    try {
+      if (el.readOnly || el.disabled) return true;
+      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
+      // The Location combobox commits via geocode, never a free-text "N/A".
+      if (isLocationField(el)) return true;
+      // react-select / combobox inner inputs are filled by their own driver.
+      const role = (el.getAttribute && el.getAttribute("role")) || "";
+      if (role === "combobox") return true;
+      if (el.getAttribute && el.getAttribute("aria-autocomplete") === "list") return true;
+      if (el.getAttribute && el.getAttribute("aria-haspopup") === "listbox") return true;
+      if (el.closest && el.closest('[class*="select__control"], [class*="-control"], [role="combobox"]')) return true;
+    } catch {}
+    return false;
+  }
+
+  function fillRequiredPlaceholders(placeholder) {
+    if (!isApplicationFrame()) return 0;
+    const val = placeholder || "N/A";
+    const root = ghApplicationRoot();
+    let count = 0;
+    let controls = [];
+    try {
+      controls = [...root.querySelectorAll("input, textarea")];
+    } catch {
+      controls = [];
+    }
+    for (const el of controls) {
+      try {
+        if (!isFreeTextFillable(el)) continue;
+        if (shouldSkipRequiredFill(el)) continue;
+        if (!isVisible(el)) continue;
+        if (!isRequiredField(el)) continue;
+        if (clean(el.value)) continue; // already answered
+        setNativeValue(el, val);
+        fireInput(el);
+        try {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch {}
+        count++;
+      } catch {}
+    }
+    return count;
+  }
+
+  AF.greenhouse.fillRequiredPlaceholders = fillRequiredPlaceholders;
 })();

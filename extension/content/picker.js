@@ -1375,6 +1375,11 @@
     if (!e.school) return false;
     const editor = await wbOpenEditor("education");
     if (!editor) return false;
+    // A freshly opened editor for a 2nd+ entry is still settling from the
+    // previous Save's re-render; let it stabilize so the FIRST field write below
+    // is not dropped by React (the reason field_of_study went missing on entry 2
+    // while degree/school - written later - survived).
+    await wbDelay(200);
     let n = 0;
     // Optional fields first; required School last so a later write cannot drop it
     // from React state while the DOM still shows the typed value.
@@ -1382,6 +1387,12 @@
     if (e.degree && (await wbSetField(editor.querySelector('[name="degree"]'), e.degree))) n++;
     if (e.start && (await wbSetField(editor.querySelector('[name="start_date"]'), e.start))) n++;
     if (e.end && (await wbSetField(editor.querySelector('[name="end_date"]'), e.end))) n++;
+    // Re-assert the optional fields from the source data on the now-stable editor
+    // right before save: commitEditorFields only re-commits fields whose DOM value
+    // is still present, so a value React already cleared (field_of_study on a 2nd+
+    // entry) would never be recovered. This is idempotent for entries that stuck.
+    if (e.field_of_study) await wbSetField(editor.querySelector('[name="field_of_study"]'), e.field_of_study);
+    if (e.degree) await wbSetField(editor.querySelector('[name="degree"]'), e.degree);
     if (await wbSetField(editor.querySelector('[name="school"]'), e.school)) n++;
     if (!n) return false;
     return wbSaveEditor("education");
@@ -1392,6 +1403,9 @@
     if (!e.title) return false;
     const editor = await wbOpenEditor("experience");
     if (!editor) return false;
+    // Let a freshly opened 2nd+ editor settle before the first write (see the
+    // education note above - React drops the first field on an unstable editor).
+    await wbDelay(200);
     let n = 0;
     // Optional fields first; required Title last (see education note above).
     if (e.company && (await wbSetField(editor.querySelector('[name="company"]'), e.company))) n++;
@@ -1404,6 +1418,11 @@
       await wbSetCurrent(editor, false);
       if (e.end) await wbSetField(editor.querySelector('[name="end_date"]'), e.end);
     }
+    // Re-assert the optional fields on the now-stable editor before save so a
+    // value React cleared on the first write is recovered (idempotent otherwise).
+    if (e.company) await wbSetField(editor.querySelector('[name="company"]'), e.company);
+    if (e.industry) await wbSetField(editor.querySelector('[name="industry"]'), e.industry);
+    if (e.description) await wbSetField(editor.querySelector('textarea[name="summary"]'), e.description);
     if (await wbSetField(editor.querySelector('[name="title"]'), e.title)) n++;
     if (!n) return false;
     return wbSaveEditor("experience");
@@ -2013,6 +2032,43 @@
       runExclusive(async () => {
         const fn = kind === "cover_letter" ? AF.jobvite.uploadCoverLetter : AF.jobvite.uploadResume;
         return (fn ? await fn(msg.file) : { uploaded: false }) || { uploaded: false };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true; // async sendResponse
+    }
+    // Jobvite: fill still-empty required free-text fields with "N/A" so an
+    // unconditionally-required "If yes, please describe…" field does not block Next.
+    if (msg.type === "AF_JV_FILL_REQUIRED") {
+      const isJv = !!(AF.jobvite && AF.jobvite.isJobvitePage && AF.jobvite.isJobvitePage());
+      if (!isJv) return false; // not this frame
+      runExclusive(async () => {
+        const count =
+          AF.jobvite && AF.jobvite.fillRequiredPlaceholders
+            ? AF.jobvite.fillRequiredPlaceholders(msg.placeholder)
+            : 0;
+        return { count };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true; // async sendResponse
+    }
+    // Greenhouse: fill still-empty required free-text fields (open-ended questions
+    // the model left blank / needs_user) with "N/A" so "This field is required"
+    // does not block the submit. Only the greenhouse application frame answers.
+    if (msg.type === "AF_GH_FILL_REQUIRED") {
+      const isGh = !!(AF.greenhouse && AF.greenhouse.isApplicationFrame && AF.greenhouse.isApplicationFrame());
+      if (!isGh) return false; // not this frame
+      runExclusive(async () => {
+        const count =
+          AF.greenhouse && AF.greenhouse.fillRequiredPlaceholders
+            ? AF.greenhouse.fillRequiredPlaceholders(msg.placeholder)
+            : 0;
+        return { count };
       }).then((res) => {
         try {
           sendResponse({ ok: true, ...(res || {}) });

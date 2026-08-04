@@ -384,7 +384,7 @@ async function handleWorkdayResolve(msg) {
       required: it.required !== false,
       options: Array.isArray(it.options) ? it.options.slice(0, 100) : [],
     }));
-    const resp = await api.autofill(job.job_id, [{ handle: 0, label: "Workday fields", controls }], buildPreferences());
+    const resp = await autofillChunked(job.job_id, [{ handle: 0, label: "Workday fields", controls }], buildPreferences());
     const values = {};
     for (const f of (resp && resp.results) || []) {
       for (const c of f.controls || []) {
@@ -3423,6 +3423,55 @@ async function focusApplicationTab(tabId) {
   await delay(350);
 }
 
+// The autofill API validates each field block at <= MAX_CONTROLS_PER_FIELD (60)
+// controls and <= MAX_AUTOFILL_FIELDS (40) blocks per request (see
+// app/api/assistant_routes.py). A single dense container - e.g. a whole Jobvite
+// application form, which is ONE <form> holding every field - can extract as one
+// block with more controls than that cap, and the server then 422s the ENTIRE
+// request ("List should have at most 60 items after validation, not 70"). Split
+// any oversized block into sub-blocks (same html/label, sliced controls, distinct
+// synthetic handles) and batch the blocks across requests. Every downstream step
+// (file roles, needs_user, writes) keys off the globally-unique cid, never the
+// handle, so the synthetic handles are transparent.
+const AF_MAX_CONTROLS_PER_FIELD = 55; // safety margin below the server's 60
+const AF_MAX_FIELDS_PER_REQUEST = 35; // safety margin below the server's 40
+
+function chunkAutofillSpecs(apiSpecs) {
+  const blocks = [];
+  let synthHandle = 1_000_000; // well above the small real handles (0,1,2,...)
+  for (const f of apiSpecs || []) {
+    const controls = f.controls || [];
+    if (controls.length <= AF_MAX_CONTROLS_PER_FIELD) {
+      blocks.push(f);
+      continue;
+    }
+    for (let i = 0; i < controls.length; i += AF_MAX_CONTROLS_PER_FIELD) {
+      blocks.push({
+        handle: i === 0 ? f.handle : synthHandle++,
+        label: f.label,
+        html: f.html,
+        controls: controls.slice(i, i + AF_MAX_CONTROLS_PER_FIELD),
+      });
+    }
+  }
+  return blocks;
+}
+
+async function autofillChunked(jobId, apiSpecs, prefs) {
+  const blocks = chunkAutofillSpecs(apiSpecs);
+  if (blocks.length <= AF_MAX_FIELDS_PER_REQUEST) {
+    return await api.autofill(jobId, blocks, prefs);
+  }
+  // Too many blocks for one request: send in batches and merge the results.
+  const merged = [];
+  for (let i = 0; i < blocks.length; i += AF_MAX_FIELDS_PER_REQUEST) {
+    const batch = blocks.slice(i, i + AF_MAX_FIELDS_PER_REQUEST);
+    const resp = await api.autofill(jobId, batch, prefs);
+    for (const r of (resp && resp.results) || []) merged.push(r);
+  }
+  return { results: merged };
+}
+
 // Send a write pass to the content script and wait until it reports completion
 // (or a generous timeout). Awaiting completion lets us re-scan the DOM for
 // fields that only render after a prior answer commits.
@@ -3614,7 +3663,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
 
     const freshCount = fresh.reduce((n, f) => n + f.controls.length, 0);
     setAutofill({ runStatus: `Choosing answers for ${freshCount} field${freshCount === 1 ? "" : "s"}…` });
-    const resp = await api.autofill(state.job.job_id, apiSpecs, buildPreferences());
+    const resp = await autofillChunked(state.job.job_id, apiSpecs, buildPreferences());
     const results = (resp && resp.results) || [];
 
     try {
@@ -3814,6 +3863,33 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       const ticked = await tabSend(tabId, { type: "AF_MANATAL_PREP" });
       if (ticked && ticked.ticked) {
         console.log("[autofill] Manatal consent ticked:", ticked.ticked);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (eng && eng.platform === "jobvite") {
+    // Satisfy Jobvite's unconditionally-required "describe" free-text fields (left
+    // blank by the model when their paired Yes/No is negative) so "Next" is not
+    // blocked. Runs after the model passes; only fills empty required text fields.
+    try {
+      const na = await tabSend(tabId, { type: "AF_JV_FILL_REQUIRED" });
+      if (na && na.count) {
+        console.log("[autofill] Jobvite filled", na.count, "required text field(s) with N/A");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (eng && eng.platform === "greenhouse") {
+    // Satisfy Greenhouse's required free-text questions the model left empty
+    // (open-ended availability / "describe" fields with no profile fact) so
+    // "This field is required" does not block the submit. Runs after the model's
+    // passes; only fills empty required <input type=text>/<textarea>.
+    try {
+      const na = await tabSend(tabId, { type: "AF_GH_FILL_REQUIRED" });
+      if (na && na.count) {
+        console.log("[autofill] Greenhouse filled", na.count, "required text field(s) with N/A");
       }
     } catch {
       /* ignore */

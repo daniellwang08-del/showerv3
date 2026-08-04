@@ -195,6 +195,24 @@
     return optionNodes(comboListbox(input, root));
   }
 
+  // Reset any typed-in filter text so the FULL, unfiltered option list mounts,
+  // then return its nodes. Used by the write fallbacks: after a failed
+  // type+Enter the menu is still filtered by the typed text (often to zero
+  // options), so reading scopedOptionNodes directly would see nothing. Clearing
+  // lets our own dash/quote-robust normText matching (pickOption) work over
+  // every real option. Best-effort and awaitable.
+  async function clearedOptionNodes(input, root) {
+    try {
+      if (input && !isDummyInput(input)) {
+        setNativeValue(input, "");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      openCombo(input, root);
+      await waitUntil(() => (scopedOptionNodes(input, root).length ? true : null), 800, 60);
+    } catch {}
+    return scopedOptionNodes(input, root);
+  }
+
   function collectVisibleOptions(scope) {
     if (!scope) return [];
     const opts = [];
@@ -359,8 +377,14 @@
       try {
         await typeAndEnter(input, root, value);
         if (await waitUntil(() => (comboHasSelection(root) ? true : null), 700, 60)) return true;
-        // Fallback for a non-searchable list: click the matching open option.
-        const opt = pickOption(scopedOptionNodes(input, root), value);
+        // Fallback: type+Enter silently no-ops when the model's answer is not a
+        // byte-exact substring react-select's OWN filter accepts (e.g. a long
+        // Greenhouse sentence whose live option uses an em-dash "—" the model
+        // returned as a hyphen). The filter then hides every option, so reading
+        // scopedOptionNodes now yields the EMPTY filtered list. Clear the typed
+        // text first so the FULL list re-renders, then match with our own
+        // dash/quote-robust normText (pickOption) and click.
+        const opt = pickOption(await clearedOptionNodes(input, root), value);
         if (opt) {
           clickOption(opt);
           if (await waitUntil(() => (comboHasSelection(root) ? true : null), 700, 60)) return true;
@@ -390,9 +414,10 @@
       const added = await waitUntil(() => (chipMatches(root, value) ? true : null), 600, 50);
       if (!added) {
         try {
-          openCombo(input, root);
-          await waitUntil(() => (scopedOptionNodes(input, root).length ? true : null), 700, 50);
-          const opt = pickOption(scopedOptionNodes(input, root), value);
+          // Clear the residual typed text first: after a failed type+Enter the
+          // menu is still filtered by it, so the full option list (needed for our
+          // dash/quote-robust match) would otherwise be hidden.
+          const opt = pickOption(await clearedOptionNodes(input, root), value);
           if (opt) clickOption(opt);
           await waitUntil(() => (chipMatches(root, value) ? true : null), 500, 50);
         } catch {}

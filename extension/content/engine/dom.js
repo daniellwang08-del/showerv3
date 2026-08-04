@@ -285,14 +285,22 @@
         if (q) return q.slice(0, 200);
       }
     } catch {}
-    // Jobvite: label[for] resolves on its own, but the label text includes the
-    // required "*" (inside a span) - resolve via questionTitleFor to strip it, and
-    // read radio/checkbox questions from the fieldset <legend>. Runs before the
-    // generic label[for] lookup for that reason.
+    // Jobvite: label[for] resolves on its own, but the single-control label text
+    // includes the required "*" (inside a span) - resolve via questionTitleFor to
+    // strip it. CRITICAL: for radio/checkbox OPTION inputs, questionTitleFor returns
+    // the group's fieldset <legend> (the QUESTION), which must NOT become the
+    // option's label - otherwise every option in the group collapses to the question
+    // text and the group driver mis-selects the first radio (e.g. "Yes"), triggering
+    // required conditional fields. Skip option inputs here so they fall through to
+    // their own label[for]/wrapping-label; the group's question comes from
+    // groupLabel(root) -> questionTitleFor(root) in the group driver.
     try {
       if (AF.jobvite && AF.jobvite.isJobvitePage && AF.jobvite.isJobvitePage()) {
-        const q = AF.jobvite.questionTitleFor && AF.jobvite.questionTitleFor(inp);
-        if (q) return q.slice(0, 200);
+        const t = (inp.type || "").toLowerCase();
+        if (t !== "radio" && t !== "checkbox") {
+          const q = AF.jobvite.questionTitleFor && AF.jobvite.questionTitleFor(inp);
+          if (q) return q.slice(0, 200);
+        }
       }
     } catch {}
     if (inp.id) {
