@@ -65,7 +65,7 @@ def _get_rate_limiter() -> _TokenBucket:
         settings = get_settings()
         _rate_limiter = _TokenBucket(
             rate=settings.rate_limit_requests_per_second,
-            burst=max(1, settings.max_concurrent_requests),
+            burst=max(1, settings.rate_limit_burst),
         )
     return _rate_limiter
 

@@ -34,7 +34,29 @@ def test_token_candidates_url_first():
 
 
 @pytest.mark.asyncio
-async def test_extract_returns_plain_text(monkeypatch):
+async def test_extract_unescapes_entity_encoded_html():
+    """Greenhouse API often returns content as &lt;p&gt;...&lt;/p&gt; entities."""
+    payload = {
+        "id": 5201224007,
+        "title": "DevSecOps Project Lead",
+        "company_name": "Red Cell Partners",
+        "content": (
+            "&lt;div&gt;&lt;h3&gt;About Us&lt;/h3&gt;"
+            "&lt;p&gt;Red Cell Partners builds scalable technology companies.&lt;/p&gt;"
+            "&lt;p&gt;Required: Kubernetes, Terraform, AWS GovCloud.&lt;/p&gt;&lt;/div&gt;"
+        ),
+        "location": {"name": "Remote, USA"},
+    }
+    http = MagicMock()
+    http.fetch_json = AsyncMock(return_value=(json.dumps(payload), 200, {}))
+    ex = GreenhouseBoardExtractor(http_service=http)
+    url = "https://boards.greenhouse.io/redcellpartners/jobs/5201224007"
+    r = await ex.extract(url)
+    assert r.success
+    assert r.raw_content is not None
+    assert "&lt;" not in r.raw_content
+    assert "About Us" in r.raw_content
+    assert "Kubernetes" in r.raw_content
     payload = {
         "id": 7528379003,
         "title": "Security Engineer",

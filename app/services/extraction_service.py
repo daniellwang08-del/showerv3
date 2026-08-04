@@ -6,11 +6,12 @@ plain text from the page, stores it in Redis cache, and the downstream analysis
 engine (LLM) determines the structured content.
 
 Pipeline order:
-  1. Vendor APIs by URL (Ashby / Lever / Workday) - no HTML required
+  1. Vendor APIs by URL (Ashby / Lever / Workday / Greenhouse / WTTJ) - no HTML required
   2. HTTP fetch (httpx, auto-falls-back to curl_cffi Chrome impersonation
      on 401/403 to bypass Lever/Workday/careers anti-bot)
      - SKIPPED for known job-aggregator domains (adzuna.com, etc.) that block
        all programmatic HTTP; browser render is tried directly instead.
+     - SKIPPED when a strong vendor-API candidate already exists (>=500 chars)
   3. Ashby embed (?ashby_jid) / Greenhouse boards API / Lever embed / JSON-LD /
      Static HTML
   4. Browser render (Playwright) when on-page candidates are still thin
@@ -30,7 +31,11 @@ from app.services.extraction_merge import pick_best_text
 from app.services.validator import validate_extracted_text
 from app.extractors.api_detector import APIDetectorExtractor
 from app.extractors.ashby_api_extractor import AshbyApiExtractor, parse_ashby_jid_from_url
-from app.extractors.greenhouse_board_extractor import GreenhouseBoardExtractor
+from app.extractors.greenhouse_board_extractor import (
+    GreenhouseBoardExtractor,
+    greenhouse_board_tokens_from_url,
+    parse_greenhouse_job_id_from_url,
+)
 from app.extractors.lever_api_extractor import LeverApiExtractor, is_lever_job_url
 from app.extractors.workday_extractor import WorkdayExtractor, is_workday_job_url
 from app.extractors.wttj_algolia_extractor import WttjAlgoliaExtractor, is_wttj_job_url
@@ -188,6 +193,37 @@ class ExtractionService:
                 elif wttj_result.error:
                     last_error = wttj_result.error
                     logger.warning("wttj_algolia_extract_failed", job_id=job_id, error=wttj_result.error)
+
+            # 1e. Greenhouse Job Board API for native boards.greenhouse.io URLs
+            # (token + job id already in the URL — no HTML / browser needed).
+            if parse_greenhouse_job_id_from_url(url) and greenhouse_board_tokens_from_url(url):
+                logger.info("greenhouse_api_attempt", job_id=job_id, url=url)
+                gh_early = await self.greenhouse_board_extractor.extract(url)
+                if gh_early.success and gh_early.raw_content:
+                    candidates.append((gh_early.raw_content, ExtractionMethod.API_VENDOR.value))
+                elif gh_early.error:
+                    last_error = gh_early.error
+                    logger.warning("greenhouse_api_extract_failed", job_id=job_id, error=gh_early.error)
+
+            # Strong vendor hit — skip HTTP + browser (avoids repeating slow failures).
+            early_best, early_method = pick_best_text(candidates)
+            if len(early_best) >= 500:
+                logger.info(
+                    "extraction_early_vendor_success",
+                    job_id=job_id,
+                    method=early_method,
+                    content_length=len(early_best),
+                )
+                validation = validate_extracted_text(early_best)
+                if validation.is_valid:
+                    return await self._cache_and_mark_extracted(
+                        job_id, url, early_best, early_method,
+                    )
+                logger.warning(
+                    "extraction_early_vendor_failed_validation",
+                    job_id=job_id,
+                    errors=validation.errors,
+                )
 
             # 2. Fetch HTML (httpx → curl_cffi auto-fallback on 401/403)
             # Skip when WTTJ Algolia already produced a strong candidate, or for

@@ -11,6 +11,7 @@ https://developers.greenhouse.io/job-board-integration.html
 
 from __future__ import annotations
 
+import html as html_lib
 import json
 import re
 from app.extractors.base import BaseExtractor, ExtractionResult
@@ -248,7 +249,14 @@ class GreenhouseBoardExtractor(BaseExtractor):
 
         raw_content = job.get("content") or ""
         if isinstance(raw_content, str) and raw_content.strip():
-            description = plain_text_from_fragment_html(raw_content) if "<" in raw_content else raw_content.strip()
+            # Greenhouse Job Board API often returns HTML escaped as entities
+            # (&lt;div&gt;...), so unescape before stripping tags.
+            decoded = html_lib.unescape(raw_content)
+            description = (
+                plain_text_from_fragment_html(decoded)
+                if "<" in decoded
+                else decoded.strip()
+            )
             if description:
                 parts.append(f"\n{description}")
 
