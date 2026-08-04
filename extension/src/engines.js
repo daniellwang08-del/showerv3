@@ -84,6 +84,7 @@ const PLATFORM_MATCHERS = [
   ["jobvite", (h) => h.includes("jobvite.com")],
   // Manatal white-label careers (careers-page.com / manatal.com).
   ["manatal", (h) => h.includes("careers-page.com") || h.includes("manatal.com")],
+  ["jobdiva", (h) => h.includes("jobdiva.com")],
 ];
 
 // Detect the ATS platform for a job. Prefers the live page URL (the actual
@@ -260,6 +261,19 @@ export const ENGINES = {
     available: true,
     autoDiscover: true,
     note: "Finds the application form and fills it automatically.",
+  },
+  // JobDiva (*.jobdiva.com): job page → Apply Now → Quick Apply (No Account)
+  // modal with native React text/file/checkbox controls (.job-app-main). Reuses
+  // the greenhouse bundle + auto-discover; JobDiva-specific prep (open Quick
+  // Apply), labels, and Submit Application live in content/engine/jobdiva.js.
+  jobdiva: {
+    id: "jobdiva",
+    label: "JobDiva",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Opens Quick Apply, fills the application, and submits.",
   },
   // iCIMS (*.icims.com): server-rendered candidate profile built from
   // .iCIMS_ProfileFormTable rows (native inputs + selects) plus iCIMS' own AJAX

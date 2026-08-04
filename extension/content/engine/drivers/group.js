@@ -100,6 +100,13 @@
         if (q) return q;
       }
     } catch {}
+    // JobDiva: SMS/consent checkbox label from wrapping text.
+    try {
+      if (AF.jobdiva && AF.jobdiva.questionTitleFor) {
+        const q = AF.jobdiva.questionTitleFor(root);
+        if (q) return q;
+      }
+    } catch {}
     // Jobvite: radio/checkbox question text lives in the fieldset <legend>.
     try {
       if (AF.jobvite && AF.jobvite.questionTitleFor) {
@@ -283,6 +290,7 @@
         required:
           group.some((g) => g.required) ||
           !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.jobdiva && AF.jobdiva.isRequiredControl && AF.jobdiva.isRequiredControl(root)) ||
           !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         multi: t === "checkbox" && group.length > 1,
         options: leverGroupOptions(root, group),

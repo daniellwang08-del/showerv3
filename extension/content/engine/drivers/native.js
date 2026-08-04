@@ -148,6 +148,7 @@
           !!root.required ||
           (root.getAttribute && root.getAttribute("aria-required") === "true") ||
           !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.jobdiva && AF.jobdiva.isRequiredControl && AF.jobdiva.isRequiredControl(root)) ||
           !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         multi: !!root.multiple,
         options: [...root.options].map((o) => clean(o.text)).filter(Boolean),
@@ -184,6 +185,7 @@
         required:
           !!root.required ||
           !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.jobdiva && AF.jobdiva.isRequiredControl && AF.jobdiva.isRequiredControl(root)) ||
           !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         constraints: constraintsOf(root),
       };
@@ -213,6 +215,7 @@
       // iCIMS: login/password (written deterministically by the prep), the
       // dropdown widget's search box, and hidden mirror inputs.
       if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(el)) return null;
+      if (AF.jobdiva && AF.jobdiva.shouldSkipControl && AF.jobdiva.shouldSkipControl(el)) return null;
       if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return null;
       if (el.className && /requiredInput/i.test(String(el.className))) return null; // react-select shim
       return el;
@@ -225,6 +228,7 @@
           !!root.required ||
           (root.getAttribute && root.getAttribute("aria-required") === "true") ||
           !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.jobdiva && AF.jobdiva.isRequiredControl && AF.jobdiva.isRequiredControl(root)) ||
           !!(AF.icims && AF.icims.isRequiredControl && AF.icims.isRequiredControl(root)),
         constraints: constraintsOf(root),
       };

@@ -2214,6 +2214,20 @@ async function startAutofill() {
     // container and fill it automatically - no manual field tagging.
     if (engine.autoDiscover) {
       setState({ autofill: { ...emptyAutofill(), active: true, discovering: true, tabId: tab.id, engine } });
+      // JobDiva: open Quick Apply before discovery — the form only mounts after
+      // Apply Now → Quick Apply (~2s), which is longer than AF_AUTOSELECT's retry.
+      if (engine.platform === "jobdiva") {
+        setAutofill({ runStatus: "Opening Quick Apply…" });
+        const prep = await prepareJobDiva(tab.id);
+        if (!prep.ready) {
+          setAutofill({
+            discovering: false,
+            runStatus: null,
+            error: "Could not open JobDiva Quick Apply on this page.",
+          });
+          return;
+        }
+      }
       try {
         await tabMsg.broadcastTabMessage(tab.id, { type: "AF_AUTOSELECT" });
         // Prefer the Greenhouse embed iframe when the career page is only a shell.
@@ -2226,12 +2240,13 @@ async function startAutofill() {
       }
       // Fallback in case no frame reports back (e.g. the form is missing): wait
       // past the in-page discovery retry window, then either fill what we found
-      // or surface an error.
+      // or surface an error. JobDiva gets a longer window for the modal mount.
+      const discoverMs = engine.platform === "jobdiva" ? 16000 : 3500;
       setTimeout(() => {
         if (!state.autofill.active || !state.autofill.discovering) return;
         if (state.autofill.fields.length) maybeAutoRun();
         else setAutofill({ discovering: false, error: "Could not find the application form on this page." });
-      }, 3500);
+      }, discoverMs);
       return;
     }
     await tabMsg.broadcastTabMessage(tab.id, { type: "AF_START" });
@@ -2714,6 +2729,41 @@ async function prepareManatal(tabId) {
   if (tabId == null) return;
   await tabSend(tabId, { type: "AF_MANATAL_PREP" });
   await delay(200);
+}
+
+// JobDiva: Apply Now → Quick Apply (No Account) → wait for My Application modal,
+// then tick SMS/consent checkboxes. Must finish before AF_AUTOSELECT because the
+// form only mounts ~2s after Quick Apply (longer than the in-page retry window).
+async function prepareJobDiva(tabId) {
+  if (tabId == null) return { ready: false };
+  let res = null;
+  try {
+    res = await tabSend(tabId, { type: "AF_JD_PREP" });
+  } catch {
+    res = null;
+  }
+  await delay(400);
+  return {
+    ready: !!(res && res.ready),
+    ticked: (res && res.ticked) || 0,
+    reason: res && res.reason,
+  };
+}
+
+async function submitJobDiva(tabId) {
+  if (tabId == null) return { clicked: 0, submitted: false, errors: [] };
+  let res = null;
+  try {
+    res = await tabSend(tabId, { type: "AF_JD_SUBMIT" });
+  } catch {
+    res = null;
+  }
+  return {
+    clicked: (res && res.clicked) || 0,
+    submitted: !!(res && res.submitted),
+    stillOnForm: !!(res && res.stillOnForm),
+    errors: (res && Array.isArray(res.errors) && res.errors) || [],
+  };
 }
 
 // Jobvite: attach the tailored resume (required) and cover letter (optional)
@@ -3660,6 +3710,10 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     setAutofill({ runStatus: "Accepting terms…" });
     await prepareManatal(tabId);
   }
+  if (eng && eng.platform === "jobdiva") {
+    setAutofill({ runStatus: "Opening Quick Apply…" });
+    await prepareJobDiva(tabId);
+  }
   // iCIMS: write the phone block and the "Create a login" block before
   // extraction so those fields already read as filled and never reach the model.
   if (eng && eng.platform === "icims") {
@@ -4140,6 +4194,31 @@ async function runAutofill() {
       }
     }
 
+    // JobDiva: ensure Quick Apply modal is open and re-discover .job-app-main
+    // (may not have been mounted when Start was clicked).
+    if (eng && eng.platform === "jobdiva") {
+      setAutofill({ runStatus: "Opening Quick Apply…" });
+      const prep = await prepareJobDiva(tabId);
+      if (!prep.ready) {
+        setAutofill({
+          running: false,
+          runStatus: null,
+          error: "Could not open JobDiva Quick Apply on this page.",
+        });
+        return;
+      }
+      setAutofill({ runStatus: "Finding the application form…" });
+      const found = await rediscoverForm(tabId);
+      if (!found || !state.autofill.fields.length) {
+        setAutofill({
+          running: false,
+          runStatus: null,
+          error: "Could not find the JobDiva application form on this page.",
+        });
+        return;
+      }
+    }
+
     // iCIMS: the resume goes up FIRST. Attaching it submits the form and iCIMS
     // re-renders the profile pre-filled from the parsed resume, so any value
     // written beforehand would be thrown away. Re-discover afterwards: the
@@ -4342,6 +4421,46 @@ async function runAutofill() {
       const s = finalStatuses[item.cid];
       return s !== "filled" && s !== "attached";
     });
+
+    // JobDiva: auto-submit then Complete & Next. Other engines never auto-submit;
+    // JobDiva Quick Apply is intentionally one-shot. Do this while running is
+    // still true so submit-watch's APP_SUBMITTED cannot race completeJob.
+    if (eng && eng.platform === "jobdiva" && lastSpecs.length) {
+      if (ctx.needsUser && ctx.needsUser.length) {
+        setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: ctx.needsUser });
+        return;
+      }
+      setAutofill({ runStatus: "Submitting your application…" });
+      const sub = await submitJobDiva(tabId);
+      console.log("[autofill] JobDiva submit result:", sub);
+      if (sub.submitted) {
+        setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: [] });
+        toast("Application submitted — completing & loading next…");
+        await completeJob({ next: true });
+        return;
+      }
+      if (sub.errors && sub.errors.length) {
+        for (const lab of sub.errors) {
+          ctx.needsUser.push({
+            cid: "jd-block:" + lab,
+            label: lab,
+            reason: "Complete this required field to submit",
+          });
+        }
+      } else if (!sub.clicked) {
+        ctx.needsUser.push({
+          cid: "jd-submit",
+          label: "Submit Application",
+          reason: "Could not find or click Submit Application. Submit on the page, then Complete & Next.",
+        });
+      } else {
+        ctx.needsUser.push({
+          cid: "jd-submit-pending",
+          label: "Submit Application",
+          reason: "Submit was clicked but confirmation was not detected. Check the page, then Complete & Next if it succeeded.",
+        });
+      }
+    }
 
     setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: ctx.needsUser });
   } catch (err) {
@@ -6609,6 +6728,7 @@ const SOURCE_META = {
   pinpoint: { label: "Pinpoint", color: "#E11D48", short: "PP" },
   breezy: { label: "Breezy", color: "#2BB573", short: "BZ" },
   manatal: { label: "Manatal", color: "#2563EB", short: "MN" },
+  jobdiva: { label: "JobDiva", color: "#0B5FFF", short: "JD" },
   icims: { label: "iCIMS", color: "#F26522", short: "IC" },
 };
 
@@ -6629,6 +6749,7 @@ function sourceFromUrl(url) {
   if (u.includes("ashbyhq")) return "ashby";
   if (u.includes("smartrecruiters")) return "smartrecruiters";
   if (u.includes("careers-page.com") || u.includes("manatal.com")) return "manatal";
+  if (u.includes("jobdiva.com")) return "jobdiva";
   if (u.includes("icims.com")) return "icims";
   if (/^https?:\/\/careers\./.test(u) && /\/postings\/.+\/applications/.test(u)) return "pinpoint";
   if (u.includes("linkedin.")) return "linkedin";

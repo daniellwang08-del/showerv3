@@ -294,6 +294,12 @@
     "form:has(.btn-apply)",
     "form:has(.custom-file-input)",
     'form:has(input[name="terms_and_condition"])',
+    // JobDiva (*.jobdiva.com): Quick Apply modal — form root is .job-app-main
+    // inside .modal-content (not a native <form>), so the generic "form"
+    // fallback never matches it.
+    ".modal-content:has(.job-app-main)",
+    ".job-app-main",
+    ".modal-content:has(.job-app-title-1)",
     // iCIMS (*.icims.com): the candidate profile / application is a div "table"
     // (.iCIMS_ProfileFormTable) inside one <form> that ends with the
     // "Submit Profile" button. Prefer that form - iCIMS portals also render a
@@ -351,9 +357,21 @@
     } catch {}
   }
 
+  // JobDiva: sync kick to open Apply Now / Quick Apply if the modal form is not
+  // mounted yet. Full wait (including the ~2s post–Quick Apply delay) lives in
+  // AF_JD_PREP via AF.jobdiva.openQuickApply.
+  function ensureJobDivaFormVisible() {
+    try {
+      if (AF.jobdiva && AF.jobdiva.ensureJobDivaFormVisible) {
+        AF.jobdiva.ensureJobDivaFormVisible();
+      }
+    } catch {}
+  }
+
   function findAutoContainer() {
     ensureAshbyFormVisible();
     ensureLeverApplyVisible();
+    ensureJobDivaFormVisible();
     for (const sel of AUTO_CONTAINER_SELECTORS) {
       let node = null;
       try {
@@ -1790,7 +1808,13 @@
       }
     } finally {
       try {
-        if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
+        // JobDiva: closeReactSelectMenus Escape matches .form-control and hides
+        // #quickApplyModal (Bootstrap Modal.hide) — skip menu cleanup there.
+        const jobdiva =
+          (AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) ||
+          /jobdiva\.com$/i.test(location.hostname) ||
+          !!document.querySelector("#quickApplyModal, .job-app-main");
+        if (!jobdiva && AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
       } catch {}
     }
     chrome.runtime.sendMessage({ type: "AF_FIELDS", fields });
@@ -1829,10 +1853,15 @@
       try {
         // Ashby: do NOT run closeReactSelectMenus body-clicks after a successful
         // combobox commit — they can refocus/reopen autocomplete. Collapse with Escape.
+        // JobDiva: same skip — Escape on .form-control hides Bootstrap #quickApplyModal.
         const ashby =
           /ashbyhq\.com$/i.test(location.hostname) || !!document.querySelector(".ashby-application-form-container");
+        const jobdiva =
+          (AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) ||
+          /jobdiva\.com$/i.test(location.hostname) ||
+          !!document.querySelector("#quickApplyModal, .job-app-main");
         if (ashby) collapseAshbyComboboxes();
-        else if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
+        else if (!jobdiva && AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
       } catch {}
     }
     try {
@@ -2159,6 +2188,61 @@
         const ticked =
           AF.manatal && AF.manatal.tickConsent ? AF.manatal.tickConsent() : 0;
         return { ticked };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // JobDiva: open Apply Now → Quick Apply (No Account), wait for My Application
+    // modal, then tick SMS/consent checkboxes before extraction.
+    if (msg.type === "AF_JD_PREP") {
+      const isJd =
+        !!(AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) ||
+        !!document.querySelector("button.jd-btn, .job-app-main, .jd-form");
+      if (!isJd) return false;
+      runExclusive(async () => {
+        const opened =
+          AF.jobdiva && AF.jobdiva.openQuickApply
+            ? await AF.jobdiva.openQuickApply()
+            : { ready: false };
+        let ticked = 0;
+        if (opened && opened.ready && AF.jobdiva && AF.jobdiva.tickSmsConsent) {
+          ticked = AF.jobdiva.tickSmsConsent() || 0;
+        }
+        return { ready: !!(opened && opened.ready), ticked, reason: opened && opened.reason };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // JobDiva: click Submit Application and report confirmation / validation.
+    if (msg.type === "AF_JD_SUBMIT") {
+      const isJd =
+        !!(AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) ||
+        !!document.querySelector(".job-app-main, .job-app-title-1");
+      if (!isJd) return false;
+      runExclusive(async () => {
+        if (!AF.jobdiva || !AF.jobdiva.clickSubmit) {
+          return { clicked: 0, submitted: false, errors: [] };
+        }
+        const clicked = !!AF.jobdiva.clickSubmit();
+        // 20s: JobDiva quickapplyjob POST + "You've applied!" mount is slow.
+        const st =
+          AF.jobdiva.waitAfterSubmit
+            ? await AF.jobdiva.waitAfterSubmit(20000)
+            : AF.jobdiva.submitState
+              ? AF.jobdiva.submitState()
+              : {};
+        return {
+          clicked: clicked ? 1 : 0,
+          submitted: !!st.submitted,
+          stillOnForm: !!st.stillOnForm,
+          errors: Array.isArray(st.errors) ? st.errors : [],
+        };
       }).then((res) => {
         try {
           sendResponse({ ok: true, ...(res || {}) });

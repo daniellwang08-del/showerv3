@@ -85,6 +85,7 @@ const ENGINE_SCRIPTS = {
     "content/engine/workable.js",
     "content/engine/breezy.js",
     "content/engine/manatal.js",
+    "content/engine/jobdiva.js",
     "content/engine/jobvite.js",
     "content/engine/ashby.js",
     "content/engine/icims.js",

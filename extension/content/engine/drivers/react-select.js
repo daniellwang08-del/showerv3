@@ -314,6 +314,13 @@
 
   function closeMenu(input, root) {
     const tgt = input || root;
+    // Escape inside a Bootstrap modal (JobDiva #quickApplyModal, etc.) calls
+    // Modal.hide() — probe-verified stack: closeMenu → bootstrap hide. Never
+    // send Escape / body clicks from within a .modal.
+    try {
+      if (tgt && tgt.closest && tgt.closest(".modal")) return;
+      if (root && root.closest && root.closest(".modal")) return;
+    } catch {}
     try {
       tgt.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape", code: "Escape" }));
     } catch {}
@@ -687,10 +694,32 @@
   // Collapse any react-select menus left open after a long harvest pass (avoids
   // stacked option lists bleeding across unrelated screening questions).
   AF.closeReactSelectMenus = function closeReactSelectMenus(scope) {
+    // JobDiva Quick Apply is a Bootstrap modal with native .form-control inputs
+    // (no react-select). The broad "[class*='-control']" selector matches
+    // "form-control", and closeMenu's Escape then runs Bootstrap Modal.hide()
+    // (stack-verified on www1.jobdiva.com). Skip entirely on JobDiva.
+    try {
+      if (
+        (AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) ||
+        /jobdiva\.com$/i.test(location.hostname) ||
+        document.querySelector("#quickApplyModal.show, .job-app-main")
+      ) {
+        return;
+      }
+    } catch {}
     const root = scope && scope.querySelectorAll ? scope : document;
     try {
       root.querySelectorAll('[class*="select__control"], [class*="-control"]').forEach((ctrl) => {
         try {
+          // "form-control" / "jd-form" contain "-control" as a substring — those
+          // are Bootstrap/JobDiva native inputs, not react-select.
+          const cls = String(
+            (ctrl.className && ctrl.className.baseVal !== undefined
+              ? ctrl.className.baseVal
+              : ctrl.className) || ""
+          );
+          if (/\bform-control\b|\bjd-form\b|\bmodal-?\b/i.test(cls)) return;
+          if (ctrl.closest && ctrl.closest(".modal, .jd-form-layout, .job-app-main")) return;
           const inp = comboInput(ctrl);
           closeMenu(inp, ctrl);
         } catch {}

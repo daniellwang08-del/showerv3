@@ -418,6 +418,13 @@
         if (q) return q.slice(0, 200);
       }
     } catch {}
+    // JobDiva: labels are sibling .jd-label inside .jd-form-layout (no label[for]).
+    try {
+      if (AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) {
+        const q = AF.jobdiva.questionTitleFor && AF.jobdiva.questionTitleFor(inp);
+        if (q) return q.slice(0, 200);
+      }
+    } catch {}
     const wrap = inp.closest && inp.closest("label");
     if (wrap && clean(wrap.innerText)) return clean(wrap.innerText).slice(0, 200);
     const labelledby = inp.getAttribute && inp.getAttribute("aria-labelledby");

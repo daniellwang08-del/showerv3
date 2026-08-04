@@ -106,6 +106,7 @@
             if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(n)) return;
             if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(n)) return;
             if (AF.jobvite && AF.jobvite.shouldSkipControl && AF.jobvite.shouldSkipControl(n)) return;
+            if (AF.jobdiva && AF.jobdiva.shouldSkipControl && AF.jobdiva.shouldSkipControl(n)) return;
             if (n.closest && AF.workable && AF.workable.shouldSkipSubtree && n.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) return;
           } catch {}
           anchors.push(n);
@@ -148,6 +149,7 @@
         if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(anchor)) continue;
         if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(anchor)) continue;
         if (AF.jobvite && AF.jobvite.shouldSkipControl && AF.jobvite.shouldSkipControl(anchor)) continue;
+        if (AF.jobdiva && AF.jobdiva.shouldSkipControl && AF.jobdiva.shouldSkipControl(anchor)) continue;
         if (anchor.closest && AF.workable && anchor.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) continue;
       } catch {}
       // Skip hidden helper inputs - EXCEPT file inputs, which are almost always
@@ -313,7 +315,13 @@
       } catch {}
     }
     try {
-      if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(regionEl);
+      // JobDiva Bootstrap modal: closeReactSelectMenus Escape → Modal.hide.
+      const jobdiva =
+        (AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) ||
+        /jobdiva\.com$/i.test(location.hostname) ||
+        !!(regionEl && regionEl.closest && regionEl.closest("#quickApplyModal, .job-app-main")) ||
+        !!document.querySelector("#quickApplyModal, .job-app-main");
+      if (!jobdiva && AF.closeReactSelectMenus) AF.closeReactSelectMenus(regionEl);
     } catch {}
     diag(
       "extract DOM",

@@ -112,13 +112,18 @@
       if (!label && AF.manatal && AF.manatal.questionTitleFor) {
         label = AF.manatal.questionTitleFor(root);
       }
+      // JobDiva: resume file inside .jd-dropzone / .jd-form-layout.
+      if (!label && AF.jobdiva && AF.jobdiva.questionTitleFor) {
+        label = AF.jobdiva.questionTitleFor(root);
+      }
       return {
         kind: "file",
         label: label || "File",
         required:
           !!root.required ||
           (root.getAttribute && root.getAttribute("aria-required") === "true") ||
-          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)),
+          !!(AF.manatal && AF.manatal.isRequiredControl && AF.manatal.isRequiredControl(root)) ||
+          !!(AF.jobdiva && AF.jobdiva.isRequiredControl && AF.jobdiva.isRequiredControl(root)),
         is_file: true,
         // Cap the accept hint: SmartRecruiters' dropzone lists ~60 extensions
         // (600+ chars), which overflows the backend's accept length cap and 422s

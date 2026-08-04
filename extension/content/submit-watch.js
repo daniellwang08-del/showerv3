@@ -161,11 +161,23 @@
         .slice(0, 5000)
         .toLowerCase();
       if (
-        /thank you for (applying|your application)|application (has been |was )?submitted|we('ve| have) received your application|successfully applied|your application is on its way|you('ve| have) successfully submitted/.test(
+        /thank you for (applying|your application)|application (has been |was )?submitted|we('ve| have) received your application|successfully applied|your application is on its way|you('ve| have) successfully submitted|you('ve| have) applied|good luck/i.test(
           body
         )
       ) {
         return true;
+      }
+      // JobDiva Quick Apply success screen.
+      try {
+        if (
+          document.querySelector(".container-fluid") &&
+          /you('ve| have) applied/i.test(body) &&
+          /return to open jobs/i.test(body)
+        ) {
+          return true;
+        }
+      } catch {
+        /* ignore */
       }
     } catch {
       /* ignore */
