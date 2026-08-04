@@ -50,7 +50,14 @@ export function hasGreenhouseUrlSignals(url) {
 export function autofillPermissionOrigins(pageUrl, platform) {
   const origins = [];
   try {
-    origins.push(new URL(pageUrl).origin + "/*");
+    const u = new URL(pageUrl);
+    // chrome.permissions only accepts http(s) host patterns that are covered by
+    // optional_host_permissions (*://*/*). chrome://, about:, file:, and
+    // chrome-extension: origins throw:
+    //   "Only permissions specified in the manifest may be requested."
+    if (u.protocol === "http:" || u.protocol === "https:") {
+      origins.push(u.origin + "/*");
+    }
   } catch {}
   if (platform === "greenhouse" || hasGreenhouseUrlSignals(pageUrl)) {
     origins.push("https://*.greenhouse.io/*");

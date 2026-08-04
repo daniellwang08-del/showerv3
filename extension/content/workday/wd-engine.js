@@ -186,7 +186,13 @@
     // Application Questions, and any other flat Workday step.
     await S.fillStep(profile, options || {}, rep);
     if (aborted()) return rep;
-    if (step === "experience" && !(options && options.onlyInvalid && options.onlyInvalid.length)) {
+    // fillStep intentionally skips the Work Experience / Education panel fields
+    // (see inExperiencePanel), so fillExperienceExtras is the ONLY thing that fills
+    // them — including on onlyInvalid recovery passes (a still-empty School must be
+    // retried through the correct search-prompt path, never the generic one).
+    // fillExperienceExtras is idempotent and recovery-light (it skips the resume
+    // upload / panel-add / degree-LLM work when onlyInvalid is set).
+    if (step === "experience") {
       await S.fillExperienceExtras(profile, options || {}, rep);
     }
     return rep;

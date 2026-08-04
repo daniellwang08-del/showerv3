@@ -194,13 +194,56 @@
   // box even when a chip (e.g. How Did You Hear → LinkedIn) is selected. Treating
   // that combobox as the listbox trigger made fieldIsFilled always false, so every
   // full fill / recovery pass re-opened the prompt and broke the prior selection.
+  // Live DOM (Siemens Healthineers / myworkdayjobs): a filled prompt has
+  //   <ul data-automation-id="selectedItemList">…<div data-automation-id="selectedItem">…</div>
+  //   and aria "1 item selected, Computer Engineering".
+  // An EMPTY prompt STILL has <div data-automation-id="promptSelectionLabel"></div>
+  // BEFORE selectedItem in document order. querySelector with a comma list returns
+  // the first match in DOCUMENT order, so selecting promptSelectionLabel first
+  // always returned "" even when selectedItem was present — that is the proven
+  // root cause of "Field of Study already filled but engine refills it" and of
+  // fieldHasCommittedValue treating filled prompts as empty on recovery.
+  function promptSelectionNodes(multi) {
+    if (!multi) return [];
+    return [
+      ...multi.querySelectorAll(
+        '[data-automation-id="selectedItem"], [data-automation-id="pill"]',
+      ),
+    ];
+  }
+
   function multiSelectedText(container) {
     const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
     if (!multi) return "";
-    const sel = multi.querySelector(
-      '[data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"], [data-automation-id="pill"]',
-    );
-    return sel ? (sel.textContent || "").replace(/\s+/g, " ").trim() : "";
+    for (const sel of promptSelectionNodes(multi)) {
+      const t = (sel.textContent || "").replace(/\s+/g, " ").trim();
+      if (t) return t;
+    }
+    const aria = multi.querySelector('[data-automation-id="promptAriaInstruction"]');
+    const at = (aria && aria.textContent) || "";
+    // "1 item selected, Computer Engineering" / "0 items selected" / "Minimized"
+    if (/^\s*\d+\s+items?\s+selected/i.test(at) && !/^\s*0\s+items?\s+selected/i.test(at)) {
+      return at.replace(/\s+/g, " ").trim();
+    }
+    return "";
+  }
+
+  // Has this prompt/multiselect committed a selection matching `want`?
+  // Empty want => any committed selection counts (used to skip already-filled).
+  function promptChosen(multi, want) {
+    if (!multi) return false;
+    const w = D.norm(want);
+    for (const sel of promptSelectionNodes(multi)) {
+      const t = D.norm(sel.textContent);
+      if (!t) continue;
+      if (!w) return true;
+      if (t.includes(w) || (w.length > 3 && w.includes(t))) return true;
+    }
+    const aria = multi.querySelector('[data-automation-id="promptAriaInstruction"]');
+    const at = D.norm(aria && aria.textContent);
+    if (!at || /^0 items? selected/.test(at) || at === "minimized") return false;
+    if (!w) return /\d+\s+items?\s+selected/.test(at);
+    return at.includes(w);
   }
 
   // Committed value present (ignores aria-invalid). Used to avoid re-opening
@@ -679,6 +722,63 @@
   function visibleOptions(root) {
     return D.qa(OPTION_SEL, root).filter(D.isVisible);
   }
+
+  // Real, selectable result rows of an OPEN prompt.
+  //
+  // Two DOM facts (from the live Siemens Healthineers page) make a naive
+  // visibleOptions() scan wrong:
+  //   1. A COMMITTED pill contains its own
+  //      <p data-automation-id="promptOption">Computer Engineering</p>, so the
+  //      global scan "finds" an option for a field that has no list open at all.
+  //   2. While a server search is in flight the list renders a literal
+  //      "No Items" row.
+  // Exclude both so we only ever Enter/click against genuine search results.
+  function promptResultOptions(root) {
+    return visibleOptions(root).filter((o) => {
+      if (o.closest('[data-automation-id="selectedItem"], [data-automation-id="pill"]')) return false;
+      const t = D.norm(o.textContent);
+      return !!t && t !== "no items" && t !== "no results";
+    });
+  }
+
+  function pickResultOption(want, root) {
+    const w = D.norm(want);
+    const scored = promptResultOptions(root)
+      .map((o) => ({ o, t: D.norm(o.textContent) }))
+      .filter((x) => x.t);
+    const exact = scored.find((x) => x.t === w);
+    if (exact) return exact.o;
+    const contains = scored.filter((x) => x.t.includes(w)).sort((a, b) => a.t.length - b.t.length);
+    if (contains.length) return contains[0].o;
+    return null;
+  }
+
+  // Workday Canvas prompt rows select on POINTER events. D.clickEl only fires
+  // mousedown/mouseup/click - no pointerdown - which is why clicking a highlighted
+  // search-result row silently did nothing and the School prompt stayed empty.
+  // Fire the full pointer+mouse sequence a real user generates.
+  function firePointerClick(el) {
+    if (!el) return;
+    try {
+      el.scrollIntoView({ block: "center", behavior: "instant" });
+    } catch {}
+    const init = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+      pointerType: "mouse",
+    };
+    for (const type of ["pointerover", "pointerenter", "pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+      try {
+        const Ctor = type.startsWith("pointer") && window.PointerEvent ? PointerEvent : MouseEvent;
+        el.dispatchEvent(new Ctor(type, init));
+      } catch {}
+    }
+  }
   function pickOption(want, root) {
     const w = D.norm(want);
     const scored = visibleOptions(root)
@@ -837,6 +937,14 @@
 
   async function openAndPickInner(trigger, value) {
     const want = D.norm(value);
+    // Picking the placeholder row leaves the field on "Select One" yet the
+    // read-back below would match want === "select one" and report success.
+    if (isPlaceholderOption(want)) {
+      try {
+        WD.warn(`openAndPick refused placeholder value ${JSON.stringify(value)}`);
+      } catch {}
+      return false;
+    }
     const cur = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
     if (cur && valueMatchesWant(cur, want)) return true;
     if (cur && !triggerShowsPlaceholder(trigger) && valueMatchesWant(cur, want)) return true;
@@ -903,38 +1011,116 @@
     }
     await D.delay(120);
     const match = pickOption(value, popup || undefined);
-    if (match) {
-      const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
-      D.clickEl(match);
-      await D.delay(150);
-      if (isInputCombo && chosen) {
-        setReactValue(trigger, chosen);
-        trigger.dispatchEvent(
-          new InputEvent("input", {
-            bubbles: true,
-            data: chosen,
-            inputType: "insertReplacementText",
-          }),
-        );
-        trigger.dispatchEvent(new Event("change", { bubbles: true }));
-        pressEnter(trigger);
-        await D.delay(120);
-      }
-      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
-      if (valueMatchesWant(got, want) || valueMatchesWant(got, chosen)) {
-        await closeListbox(trigger);
-        return true;
-      }
-      // List closed after option click with no readable display value — for short
-      // Yes/No Application Question selects this still means a successful commit
-      // (Workday Canvas Select often keeps input.value empty).
-      if (!openedListbox(trigger) && (want === "yes" || want === "no" || D.norm(chosen) === want)) {
-        return true;
-      }
-      return !triggerShowsPlaceholder(trigger);
+    if (!match) {
+      await closeListbox(trigger);
+      return false;
     }
+    const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
+    const committed = () => {
+      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
+      return valueMatchesWant(got, want) || valueMatchesWant(got, chosen);
+    };
+
+    // Strategy 1: pointer-click the row. Canvas listbox rows select on POINTER
+    // events; D.clickEl's mousedown/mouseup/click triple only DISMISSED the
+    // popup without selecting (the same defect that blocked the School prompt).
+    firePointerClick(match);
+    await D.delay(200);
+
+    if (isInputCombo && chosen && !committed()) {
+      setReactValue(trigger, chosen);
+      trigger.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          data: chosen,
+          inputType: "insertReplacementText",
+        }),
+      );
+      trigger.dispatchEvent(new Event("change", { bubbles: true }));
+      pressEnter(trigger);
+      await D.delay(150);
+    }
+
+    // Strategy 2: keyboard, exactly what the user does by hand - with the list
+    // open, type the option text so ARIA type-ahead moves the active option,
+    // then Enter to commit. Independent of any pointer handling.
+    if (!committed()) await typeAheadCommit(trigger, chosen, committed);
+
+    if (committed()) {
+      await closeListbox(trigger);
+      return true;
+    }
+    // Canvas Select legitimately renders no readable display text for short
+    // Yes/No application answers. Everything else MUST read back a real value:
+    // the old `D.norm(chosen) === want` clause here was a tautology (chosen is
+    // the text of the option we asked for), so a click that merely closed the
+    // popup was reported as a successful fill - which is why Degree stayed on
+    // "Select One" with a required error yet never got retried.
+    if (!openedListbox(trigger) && (want === "yes" || want === "no")) return true;
     await closeListbox(trigger);
+    if (committed()) return true;
+    try {
+      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
+      WD.warn(`openAndPick did not commit ${JSON.stringify(chosen)} - field reads ${JSON.stringify(got)}`);
+    } catch {}
     return false;
+  }
+
+  // ARIA listbox type-ahead: with the list OPEN, printable keys move the active
+  // option and Enter commits it. Keys are sent to the listbox first (Canvas moves
+  // DOM focus there and tracks aria-activedescendant), then to the trigger.
+  // Enter is only sent when the active option actually matches the target text,
+  // so a non-type-ahead widget can never be made to commit the wrong option.
+  async function typeAheadCommit(trigger, text, isCommitted) {
+    const str = String(text || "").trim();
+    if (!str) return;
+    const want = D.norm(str);
+
+    let popup = openedListbox(trigger);
+    if (!popup) {
+      D.clickEl(trigger);
+      await D.delay(220);
+      popup = openedListbox(trigger);
+    }
+    const listbox = popup
+      ? popup.matches('[role="listbox"]')
+        ? popup
+        : popup.querySelector('[role="listbox"]')
+      : null;
+
+    const targets = listbox && listbox !== trigger ? [listbox, trigger] : [trigger];
+    for (const target of targets) {
+      if (!openedListbox(trigger)) {
+        D.clickEl(trigger);
+        await D.delay(220);
+      }
+      try {
+        target.focus({ preventScroll: true });
+      } catch {}
+      for (const ch of str.slice(0, 30)) {
+        const meta = keyMetaForChar(ch);
+        fireKey(target, ch, meta.code, meta.keyCode);
+        await D.delay(50);
+      }
+      await D.delay(250);
+
+      // Only press Enter when the highlighted option is the one we want.
+      const activeId =
+        (target.getAttribute && target.getAttribute("aria-activedescendant")) ||
+        (listbox && listbox.getAttribute("aria-activedescendant")) ||
+        "";
+      const active = activeId ? document.getElementById(activeId) : null;
+      const activeText = D.norm(active && active.textContent);
+      if (activeText && !(activeText === want || activeText.includes(want) || want.includes(activeText))) {
+        try {
+          WD.warn(`type-ahead highlighted ${JSON.stringify(activeText)} - skipping Enter`);
+        } catch {}
+        continue;
+      }
+      pressEnter(target);
+      await D.delay(320);
+      if (isCommitted()) return;
+    }
   }
 
   // Dispatch a full key sequence on a (re)focused element. Workday commits a
@@ -1003,10 +1189,7 @@
   async function fillMultiselect(multi, value) {
     const want = D.norm(value);
     // A committed selection is a pill/label, NOT a dropdown option.
-    const isChosen = () => {
-      const sel = multi.querySelector('[data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"]');
-      return !!(sel && D.norm(sel.textContent).includes(want));
-    };
+    const isChosen = () => promptChosen(multi, want);
     if (isChosen()) return true;
 
     const input = multi.querySelector("input");
@@ -1155,12 +1338,7 @@
   // on the filtered option is kept only as a last-ditch fallback.
   async function selectSourceValue(multi, value) {
     const want = D.norm(value);
-    const isChosen = () => {
-      const sel = multi.querySelector(
-        '[data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"]',
-      );
-      return !!(sel && D.norm(sel.textContent).includes(want));
-    };
+    const isChosen = () => promptChosen(multi, want);
     if (isChosen()) return true;
     const input = multi.querySelector("input");
     if (!input) return false;
@@ -1250,14 +1428,17 @@
 
   // True once a currently-visible option's text matches `want` (either direction),
   // i.e. the server-backed list has FINISHED filtering to our query. Polls so we
-  // never press Enter against a stale, unfiltered list.
+  // never press Enter against a stale, unfiltered list. Ignores the empty-state
+  // "No Items" row (seen on School prompts while the server search is in flight).
   async function waitForFilteredOption(want, ms) {
     const w = D.norm(want);
     const end = Date.now() + ms;
     while (Date.now() < end) {
-      const hit = visibleOptions().some((o) => {
+      // promptResultOptions excludes committed pills (which embed their own
+      // promptOption node) and the transient "No Items" row.
+      const hit = promptResultOptions().some((o) => {
         const t = D.norm(o.textContent);
-        return t && (t === w || t.includes(w) || w.includes(t));
+        return t === w || t.includes(w) || w.includes(t);
       });
       if (hit) return true;
       await D.delay(120);
@@ -1265,78 +1446,86 @@
     return false;
   }
 
-  // Field of Study (and similar large, server-backed search prompts) must be
-  // driven in a strict order, proven by DOM evidence: clicking + typing within
-  // ~150ms loads the prompt's DEFAULT unfiltered list AFTER our text, discarding
-  // the query (search box shows the text, list stays A→Z). So: open → WAIT until
-  // the list actually renders → type so the initialized search filters → WAIT for
-  // the filtered result → press Enter to commit the highlighted best match.
+  // School / Field of Study / other LARGE server-backed search prompts.
+  //
+  // Proven on-tenant (School "University of Wollongong", live screenshots):
+  //   1. Type the school name and KEEP it in the input.
+  //   2. WAIT until "Search Results (N)" appears (list may briefly show "No Items").
+  //   3. Press Enter WHILE the typed text is still present — that commits a unique
+  //      match, or highlights the best of N>1 matches.
+  //   4. If still not committed (N>1), press Enter AGAIN with the text still there.
+  //   5. Last resort: click the EXACT option (pickOption prefers exact text so
+  //      "University of Wollongong" wins over "… in Dubai").
+  //
+  // Anti-pattern that FAILED on this tenant: Enter before matches appear, or
+  // clearing the input after matches appear then pressing Enter on an empty
+  // "Search" placeholder — leaves Search Results open with no selection (and
+  // that open prompt then poisons Degree openAndPick for the same panel).
   async function fillSearchPrompt(multi, value) {
     const want = D.norm(value);
-    const isChosen = () => {
-      const sel = multi.querySelector('[data-automation-id="selectedItem"], [data-automation-id="promptSelectionLabel"]');
-      return !!(sel && D.norm(sel.textContent).includes(want));
-    };
+    const isChosen = () => promptChosen(multi, want);
     if (isChosen()) return true;
     const input = multi.querySelector("input");
     if (!input) return false;
     const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
 
     for (let attempt = 0; attempt < 2; attempt++) {
-      // 1. Open and WAIT until the prompt is genuinely open (its list renders).
+      // 1. Open ONCE. Never click the opener/input again after this — a click on
+      //    an already-open prompt re-runs it and drops the highlighted row (that
+      //    is what produced the "input cleared, Search Results still open" state).
       D.clickEl(opener);
+      await D.delay(220);
       input.focus();
-      await D.waitFor(OPTION_SEL, 4000);
-      await D.delay(250);
+      await D.delay(120);
 
-      // 2. Type into the now-initialized search so it filters. Clear first, then
-      //    set the value and fire input + a trailing keyup (some search debounces
-      //    read input.value on keyup) to trigger the server query.
-      input.focus();
+      // 2. Type the value ONCE. This is the ONLY place the search box is written.
       D.nativeSet(input, "");
       input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
-      await D.delay(80);
+      await D.delay(60);
       D.nativeSet(input, String(value));
       input.dispatchEvent(new InputEvent("input", { bubbles: true, data: String(value), inputType: "insertText" }));
       const last = String(value).slice(-1) || "a";
       pressKey(input, last, "Key" + last.toUpperCase(), last.toUpperCase().charCodeAt(0));
 
-      // 3. WAIT until the list has actually filtered to our value.
-      await waitForFilteredOption(value, 3500);
-      await D.delay(150);
+      // 3. WAIT for genuine server results (skips "No Items" and committed pills)
+      //    with the typed text untouched. Never Enter against a stale list.
+      await waitForFilteredOption(value, 5000);
+      await D.delay(220);
 
-      // 4. Press Enter to select the highlighted best match (search input must be
-      //    focused for Workday to run search-and-select).
-      input.focus();
-      if (document.activeElement !== input) D.clickEl(input);
-      if (D.norm(input.value) !== want) {
-        D.nativeSet(input, String(value));
-        input.dispatchEvent(new InputEvent("input", { bubbles: true, data: String(value) }));
-        await D.delay(250);
+      // 4. Enter, then Enter again — focus PINNED to the input the whole time.
+      //    pressKey re-focuses the input itself, and nothing between the two
+      //    presses clicks, blurs, clears or retypes. Enter #1 commits a unique
+      //    match / highlights the best of N; Enter #2 confirms the highlight.
+      for (let i = 0; i < 2 && !isChosen(); i++) {
+        input.focus();
+        pressEnter(input);
+        await D.delay(500);
       }
-      pressEnter(input);
-      await D.delay(500);
       if (isChosen()) {
         await closePrompt(multi, input);
         return true;
       }
 
-      // 5. Fallback: click the exact/closest filtered option directly.
-      if (await D.waitFor(OPTION_SEL, 1200)) {
-        await D.delay(120);
-        const match = pickOption(value);
-        if (match) {
-          D.clickEl(match);
-          await D.delay(180);
+      // 5. Fallback: pointer-click the exact result row (full pointer sequence —
+      //    plain click events are ignored by Canvas prompt rows).
+      const match = pickResultOption(value);
+      if (match) {
+        firePointerClick(match);
+        await D.delay(320);
+        if (!isChosen()) {
+          const box = match.querySelector('input[type="radio"], input[type="checkbox"]');
+          if (box) {
+            firePointerClick(box);
+            await D.delay(320);
+          }
         }
       }
       if (isChosen()) {
         await closePrompt(multi, input);
         return true;
       }
-      // Not committed - close and retry the whole sequence once.
       await closePrompt(multi, input);
-      await D.delay(200);
+      await D.delay(250);
     }
     return isChosen();
   }
@@ -1648,6 +1837,22 @@
   }
 
   // ── generic step filler (My Information, Voluntary, Questions) ───────────────
+  // Work Experience / Education fields live inside a repeating panel group
+  // ("Work-Experience-<n>-panel" / "Education-<n>-panel"). Those panels are owned
+  // EXCLUSIVELY by fillExperienceExtras, which drives School / Field of Study via
+  // the correct server-search-prompt sequence (open→wait→type→wait→Enter) and the
+  // Degree listbox via harvested options. The generic fillStep pass must NOT also
+  // touch them: it has no value for school/fieldOfStudy in buildValueMap /
+  // resolveByLabel, so it routes them through the fillMultiselect/LLM path. That
+  // (a) DOUBLE-fills Field of Study (fillStep + fillExperienceExtras both open it)
+  // and (b) drives School through fillMultiselect, which never commits the prompt
+  // and leaves it empty+required — the two exact symptoms reported.
+  function inExperiencePanel(container) {
+    const g = container.closest('[role="group"][aria-labelledby$="-panel"]');
+    if (!g) return false;
+    return /^(Work-Experience|Education)-/.test(g.getAttribute("aria-labelledby") || "");
+  }
+
   function matchesOnlyInvalid(container, key, label, onlyInvalid) {
     if (!onlyInvalid || !onlyInvalid.length) return true;
     const labelNorm = (label || fieldLabel(container) || "").toLowerCase().trim();
@@ -1685,6 +1890,8 @@
       const aid = c.getAttribute("data-automation-id") || "";
       const key = aid.replace(/^formField-/, "");
       const label = fieldLabel(c);
+      // Delegate all Work Experience / Education panel fields to fillExperienceExtras.
+      if (inExperiencePanel(c)) continue;
       if (onlyInvalid) {
         if (!matchesOnlyInvalid(c, key, label, onlyInvalid)) continue;
       } else if (fieldIsFilled(c)) {
@@ -1892,7 +2099,13 @@
   async function fillPanelField(root, key, value, rep, label) {
     if (value == null || value === "") return;
     const c = panelField(root, key);
-    if (c) record(rep, label, await writeField(c, value));
+    if (!c) return;
+    // Already committed — do not rewrite (recovery must not re-type work/edu text).
+    if (fieldHasCommittedValue(c)) {
+      record(rep, label, true);
+      return;
+    }
+    record(rep, label, await writeField(c, value));
   }
 
   async function fillWorkPanel(root, entry, n, rep) {
@@ -1983,16 +2196,44 @@
 
   async function fillEducationNonDegree(root, entry, n, rep) {
     if (!entry) return;
-    await fillPanelField(root, "schoolName", entry.school, rep, `Edu ${n} School`);
-    // Field of Study is a large server-backed search prompt that must be driven in
-    // a strict open → wait → type → wait → Enter order (see fillSearchPrompt), so
-    // it bypasses the generic fillMultiselect path. Try primary then CS fallbacks.
+    // Live DOM evidence (Siemens Healthineers applyFlowMyExpPage): the School
+    // wrapper is data-automation-id="formField-school" (NOT "formField-schoolName").
+    // Looking up schoolName returned null, so the engine never typed a university
+    // name at all — while Degree / Field of Study / GPA (correct keys) filled fine.
+    // Some older tenants use schoolName; try both.
+    if (entry.school) {
+      const schoolFF = panelField(root, "school") || panelField(root, "schoolName");
+      if (schoolFF) {
+        const schoolMulti = schoolFF.querySelector('[data-automation-id="multiSelectContainer"]');
+        if (schoolMulti && promptChosen(schoolMulti, "")) {
+          record(rep, `Edu ${n} School`, true); // already committed — do not re-open
+        } else {
+          record(
+            rep,
+            `Edu ${n} School`,
+            schoolMulti
+              ? await fillSearchPrompt(schoolMulti, entry.school)
+              : await writeField(schoolFF, entry.school),
+          );
+        }
+      } else {
+        try {
+          WD.warn(`Edu ${n} School: formField-school/schoolName not found in panel`);
+        } catch {}
+      }
+    }
+    // Field of Study: same search-prompt widget. Skip when any chip is already
+    // committed so recovery never re-types a correct value.
     const fosCandidates = fieldOfStudyCandidates(entry);
     if (fosCandidates.length) {
       const fos = panelField(root, "fieldOfStudy");
       const fosMulti = fos && fos.querySelector('[data-automation-id="multiSelectContainer"]');
       if (fosMulti) {
-        record(rep, `Edu ${n} Field of Study`, await fillSearchPromptAny(fosMulti, fosCandidates));
+        if (promptChosen(fosMulti, "")) {
+          record(rep, `Edu ${n} Field of Study`, true);
+        } else {
+          record(rep, `Edu ${n} Field of Study`, await fillSearchPromptAny(fosMulti, fosCandidates));
+        }
       }
     }
     await fillPanelField(root, "gradeAverage", entry.gpa, rep, `Edu ${n} GPA`);
@@ -2008,6 +2249,60 @@
     const c = panelField(root, "degree");
     return c ? c.querySelector('button[aria-haspopup="listbox"]') : null;
   }
+
+  // Workday Canvas Select listboxes render their placeholder as a real option row
+  // ("Select One"). Every other option consumer in this file strips it; the Degree
+  // path (harvestOptions -> exactOption/bestLocalMatch -> openAndPick) did not, so
+  // a degree with no token overlap fell through to options[0] === "Select One",
+  // "picked" it, and openAndPickInner then read back "Select One" === want and
+  // reported SUCCESS - leaving the field on its placeholder with the required
+  // error and giving recovery nothing to retry.
+  function isPlaceholderOption(text) {
+    const t = D.norm(text);
+    if (!t) return true;
+    return /^(select|choose)(\s+one)?\s*\.{0,3}$/.test(t);
+  }
+
+  // Résumé degree text almost never equals Workday's option text ("Master of
+  // Science in Computer Engineering" vs "Master's Degree"), and raw whole-token
+  // overlap scores ZERO across apostrophes and abbreviations ("master" !=
+  // "master's", "MSc" shares nothing). Match on academic LEVEL first.
+  const DEGREE_LEVELS = [
+    { key: "doctorate", re: /(\bph\.?\s?d\b|\bdoctor(ate|al)?\b|\bd\.?sc\b|\bed\.?d\b|\bdba\b)/ },
+    { key: "master", re: /(\bmaster'?s?\b|\bm\.?sc?\b|\bm\.?eng\b|\bm\.?b\.?a\b|\bm\.?a\b|\bm\.?tech\b|\bpost\s?graduate\b)/ },
+    { key: "bachelor", re: /(\bbachelor'?s?\b|\bb\.?sc?\b|\bb\.?eng\b|\bb\.?a\b|\bb\.?tech\b|\bunder\s?graduate\b|\bhonou?rs\b)/ },
+    { key: "associate", re: /(\bassociate'?s?\b|\ba\.?a\b|\ba\.?s\b|\bfoundation\b)/ },
+    { key: "diploma", re: /(\bdiploma\b|\bcertificate\b)/ },
+    { key: "highschool", re: /(\bhigh school\b|\bsecondary\b|\bged\b|\bmatric)/ },
+  ];
+  function degreeLevel(text) {
+    const t = D.norm(text);
+    for (const l of DEGREE_LEVELS) if (l.re.test(t)) return l.key;
+    return null;
+  }
+  // Resolve a profile degree to real option text, or null when nothing is safe.
+  // NEVER returns a placeholder.
+  function matchDegreeOption(want, options) {
+    const real = (options || []).filter((o) => !isPlaceholderOption(o));
+    if (!real.length) return null;
+    const w = D.norm(want);
+    if (!w) return null;
+    const exact = real.find((o) => D.norm(o) === w);
+    if (exact) return exact;
+    const wantLevel = degreeLevel(w);
+    if (wantLevel) {
+      const sameLevel = real.filter((o) => degreeLevel(o) === wantLevel);
+      // Shortest same-level option is the generic one ("Master's Degree" over
+      // "Master's Degree - Executive"), which is what these lists expect.
+      if (sameLevel.length) return sameLevel.sort((a, b) => a.length - b.length)[0];
+    }
+    const contains = real
+      .filter((o) => D.norm(o).includes(w) || w.includes(D.norm(o)))
+      .sort((a, b) => a.length - b.length);
+    if (contains.length) return contains[0];
+    return null;
+  }
+
   async function harvestOptions(btn) {
     await closeAllListboxes();
     // Only click to OPEN when it isn't already open - clicking an open dropdown
@@ -2033,8 +2328,10 @@
     const seen = new Set();
     const uniq = [];
     for (const o of opts) {
+      // Drop the "Select One" placeholder row - it is never a valid answer.
+      if (isPlaceholderOption(o)) continue;
       const k = o.toLowerCase();
-      if (o && !seen.has(k)) {
+      if (!seen.has(k)) {
         seen.add(k);
         uniq.push(o);
       }
@@ -2045,20 +2342,21 @@
   // or null. An exact match is authoritative - it must NOT be overridden by the LLM.
   function exactOption(want, options) {
     const w = D.norm(want);
-    if (!w || !options) return null;
-    return options.find((o) => D.norm(o) === w) || null;
+    if (!w || !options || isPlaceholderOption(w)) return null;
+    return options.find((o) => !isPlaceholderOption(o) && D.norm(o) === w) || null;
   }
   // Deterministic fallback: prefer exact text, else the option sharing the most
   // word tokens with the candidate's field, else the first candidate.
   function bestLocalMatch(want, options) {
-    if (!options || !options.length) return want;
+    const real = (options || []).filter((o) => !isPlaceholderOption(o));
+    if (!real.length) return want;
     const w = D.norm(want);
-    const exact = options.find((o) => D.norm(o) === w);
+    const exact = real.find((o) => D.norm(o) === w);
     if (exact) return exact;
     const wt = new Set(w.split(/\s+/).filter(Boolean));
     let best = null;
     let bestScore = 0;
-    for (const o of options) {
+    for (const o of real) {
       const ot = D.norm(o).split(/\s+/).filter(Boolean);
       let s = 0;
       for (const t of ot) if (wt.has(t)) s++;
@@ -2067,7 +2365,8 @@
         best = o;
       }
     }
-    return best || options[0];
+    // real[0] as the last resort, never the "Select One" placeholder.
+    return best || real[0];
   }
   function matchOptionFromList(want, options) {
     if (want == null || want === "" || !options || !options.length) return null;
@@ -2425,7 +2724,11 @@
 
   async function fillExperienceExtras(profile, options, rep) {
     throwIfAborted();
-    const resumeFile = options && options.resumeFile;
+    // Recovery pass (onlyInvalid): panels + resume are already in place from the
+    // initial pass, so skip that heavy work and just re-attempt the field fills
+    // (fillSearchPrompt/isChosen short-circuit anything already committed).
+    const recovery = !!(options && options.onlyInvalid && options.onlyInvalid.length);
+    const resumeFile = recovery ? null : options && options.resumeFile;
     try {
       const b = resumeFile && resumeFile.base64 ? resumeFile.base64.length : 0;
       WD.log(`resume upload: file=${resumeFile ? resumeFile.filename || "yes" : "MISSING (none downloaded)"} base64Len=${b}`);
@@ -2462,12 +2765,22 @@
     const edu = Array.isArray(profile.education) ? profile.education : [];
     try {
       WD.log(`experience input: work=${work.length} edu=${edu.length} resumeSource=${profile.resumeSource}`);
+      // Evidence for "2nd School not filled": show which entries actually carry a
+      // school name. "(empty)" here means the profile has no university_name for
+      // that education entry - nothing to type (a profile-data gap, not a bug).
+      WD.log(
+        "education schools: " +
+          edu.map((e, i) => `#${i + 1}:${e && e.school ? JSON.stringify(e.school) : "(empty)"}`).join(" "),
+      );
     } catch {}
 
     // 1. Create exactly the needed panels (idempotent across re-runs). Workday
-    //    allows multiple empty blocks (proven), so add them all up front.
-    if (work.length) await ensurePanels("Work-Experience-section", "Work-Experience", work.length);
-    if (edu.length) await ensurePanels("Education-section", "Education", edu.length);
+    //    allows multiple empty blocks (proven), so add them all up front. On a
+    //    recovery pass the panels already exist — skip the ~1.5s settle/add work.
+    if (!recovery) {
+      if (work.length) await ensurePanels("Work-Experience-section", "Work-Experience", work.length);
+      if (edu.length) await ensurePanels("Education-section", "Education", edu.length);
+    }
     // Re-query live after the adds (the section node may have been replaced).
     const workPanels = panelRoots("Work-Experience").slice(0, work.length);
     const eduPanels = panelRoots("Education").slice(0, edu.length);
@@ -2479,12 +2792,45 @@
     //    NOW (non-blocking) so it resolves while we fill everything else. (Field
     //    of Study is NOT harvested here - it is a free search prompt filled inline
     //    in step 3 by typing the exact value and pressing Enter.)
+    // Recovery: only re-attempt EMPTY education fields (School + Degree). Do NOT
+    // re-walk work panels — that produced the duplicate "My Experience" report.
+    if (recovery) {
+      for (let i = 0; i < eduPanels.length; i++) {
+        await fillEducationNonDegree(eduPanels[i], edu[i], i + 1, rep);
+      }
+      await closeAllListboxes();
+      await D.delay(120);
+      for (let i = 0; i < eduPanels.length; i++) {
+        const e = edu[i] || {};
+        if (!e.degree) continue;
+        const degFF = panelField(eduPanels[i], "degree");
+        if (degFF && fieldHasCommittedValue(degFF)) continue;
+        const btn = degreeButton(eduPanels[i]);
+        if (!btn) continue;
+        const opts = await harvestOptions(btn);
+        const value =
+          exactOption(e.degree, opts) || matchDegreeOption(e.degree, opts) || bestLocalMatch(e.degree, opts);
+        try {
+          WD.log(`Edu ${i + 1} Degree recovery: want=${JSON.stringify(e.degree)} -> ${JSON.stringify(value)} of ${opts.length} options`);
+        } catch {}
+        if (!value || isPlaceholderOption(value)) continue;
+        await closeAllListboxes();
+        record(rep, `Edu ${i + 1} Degree`, await openAndPick(btn, value));
+      }
+      return;
+    }
+
     const matchItems = [];
     for (let i = 0; i < eduPanels.length; i++) {
       const e = edu[i] || {};
       const n = i + 1;
-      // Degree: a fixed dropdown - open it to read every option.
+      // Degree: a fixed dropdown - open it to read every option. Skip a degree
+      // that already shows a committed selection (avoids re-opening a filled
+      // dropdown on recovery passes - the "filling again when already correct"
+      // churn the user reported).
       if (e.degree) {
+        const degFF = panelField(eduPanels[i], "degree");
+        if (degFF && fieldHasCommittedValue(degFF)) continue;
         const btn = degreeButton(eduPanels[i]);
         if (btn && btn.id) {
           const opts = await harvestOptions(btn);
@@ -2494,10 +2840,12 @@
         }
       }
     }
+    // LLM degree matching only on the initial pass; recovery uses local matching
+    // (exact option / token-overlap) so it never blocks on a network round-trip.
     const matchPromise = matchItems.length ? requestOptionMatches(matchItems) : Promise.resolve({});
 
-    // 3. Fill all the plain fields (work history + education text/dates/GPA +
-    //    Field of Study via type-exact-then-Enter inside fillMultiselect).
+    // 3. Fill the panel fields: work history + education School / Field of Study
+    //    (server search prompts driven by fillSearchPrompt) + text/dates/GPA.
     for (let i = 0; i < workPanels.length; i++) await fillWorkPanel(workPanels[i], work[i], i + 1, rep);
     for (let i = 0; i < eduPanels.length; i++) await fillEducationNonDegree(eduPanels[i], edu[i], i + 1, rep);
 
@@ -2505,19 +2853,40 @@
     //    candidate's own value is authoritative (fill it verbatim - never let the
     //    LLM swap it for a merely "relevant" one). Only when there is no exact
     //    option do we defer to the LLM, falling back to local token-overlap.
+    //
+    // CRITICAL: a failed School fill can leave "Search Results (N)" open. That
+    // open prompt's options are what pickOption sees, so Degree openAndPick for
+    // Education 2 then fails ("Select One" + required error) even though harvest
+    // succeeded earlier. Always dismiss open prompts before Degree.
     let chosen = {};
     try {
       chosen = await matchPromise;
     } catch {}
+    await closeAllListboxes();
+    await D.delay(150);
     for (const it of matchItems) {
-      const value = exactOption(it.want, it.options) || chosen[it.cid] || bestLocalMatch(it.want, it.options);
-      if (it.btn.isConnected) record(rep, `Edu ${it.n} Degree`, await openAndPick(it.btn, value));
+      // The LLM answer is only trusted when it is a REAL option; otherwise fall
+      // back to academic-level matching, then token overlap. A placeholder can
+      // never win at any tier.
+      const llm = chosen[it.cid] && !isPlaceholderOption(chosen[it.cid]) ? exactOption(chosen[it.cid], it.options) : null;
+      const value =
+        exactOption(it.want, it.options) || llm || matchDegreeOption(it.want, it.options) || bestLocalMatch(it.want, it.options);
+      try {
+        WD.log(
+          `Edu ${it.n} Degree: want=${JSON.stringify(it.want)} llm=${JSON.stringify(chosen[it.cid] || null)} -> ${JSON.stringify(value)} of ${it.options.length} options ${JSON.stringify(it.options.slice(0, 12))}`,
+        );
+      } catch {}
+      if (!value || isPlaceholderOption(value)) continue;
+      // Re-resolve the live button (panel may have re-rendered during school fill).
+      const liveBtn = it.btn.isConnected ? it.btn : degreeButton(eduPanels[it.n - 1]);
+      if (liveBtn) record(rep, `Edu ${it.n} Degree`, await openAndPick(liveBtn, value));
     }
 
     // 5. Win the race against Workday's résumé parser: it re-fills Role Description
     //    from the uploaded PDF (possibly with markdown) AFTER we set it. Re-assert
-    //    clean text until the parser stops clobbering it.
-    await reassertWorkDescriptions(work);
+    //    clean text until the parser stops clobbering it. Only needed after the
+    //    initial pass (the parser runs once, on upload) - skip it on recovery.
+    if (!recovery) await reassertWorkDescriptions(work);
   }
 
   // flush(): force any deferred text/date commits to run now. Auto-advance focuses
@@ -2526,5 +2895,5 @@
   // Build marker: if this line is NOT in the console on a run, the tab is running
   // a STALE engine (reload the extension at chrome://extensions, then hard-reload
   // the Workday page). markdown-strip is part of this build.
-  try { WD.log("wd-steps build: 2026-06-23-wd-quiet-selfid"); } catch {}
+  try { WD.log("wd-steps build: 2026-08-04-degree-pointer-typeahead"); } catch {}
 })();

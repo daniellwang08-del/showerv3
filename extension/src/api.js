@@ -25,7 +25,9 @@ const API_PREFIX = "/api/v1";
 // extension can call it (and stream SSE) cross-origin. Must run on a user gesture.
 export async function ensureHostPermission(backendUrl) {
   try {
-    const origin = new URL(normalizeBackendUrl(backendUrl)).origin + "/*";
+    const u = new URL(normalizeBackendUrl(backendUrl));
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    const origin = u.origin + "/*";
     const has = await chrome.permissions.contains({ origins: [origin] });
     if (has) return true;
     return await chrome.permissions.request({ origins: [origin] });

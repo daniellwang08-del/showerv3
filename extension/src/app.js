@@ -26,7 +26,13 @@ let state = {
   sync: null, // { changed: string[] }
   sessions: [],
   queue: [], // all jobs (dashboard view=all)
-  readyQueue: [], // ready to apply (resume DOCX completed)
+  readyQueue: [], // ready to apply (resume DOCX completed) — derived from the catalog
+  // Authoritative "Ready to apply" list: server view=ready, fetched WITHOUT the
+  // min_match_score gate so it always matches the ungated ready_jobs tile count.
+  // The catalog (readyQueue) is score-gated and stale-prone, so the ready TAB
+  // renders this instead. See fetchHomeExtras / renderActiveTab("ready").
+  readyList: [],
+  readyListLoaded: false,
   bestQueue: [], // strong matches (score >= 75)
   remoteQueue: [], // remote-only jobs
   mineQueue: [], // jobs posted by me
@@ -739,29 +745,29 @@ async function goHome() {
     homeTab: "hub",
     applyListContext: null,
   });
-  // Paint cached lists immediately, then sync in the background.
+  // Paint cached lists immediately, then sync in the background. refreshReadyList
+  // runs independently of loadQueue's warm-poll skip so the Ready tab always loads.
   const hadCache = await hydrateCatalogFromStorage();
-  await Promise.all([loadQueue({ silent: hadCache }), checkSync()]);
+  await Promise.all([loadQueue({ silent: hadCache }), checkSync(), refreshReadyList()]);
   startHomePolling();
 }
 
 async function ensureAskHotkeyOnActiveTab({ requestPermission = false, jobUrl = null } = {}) {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const pageUrl = (tab && tab.url) || jobUrl || "";
+    const tabUrl = (tab && tab.url) || "";
+    // Prefer a real http(s) application URL. After reloading the extension the
+    // active tab is often chrome://extensions — using that with
+    // chrome.permissions.contains/request throws
+    // "Only permissions specified in the manifest may be requested."
+    const httpUrl = [tabUrl, jobUrl].find((u) => /^https?:\/\//i.test(u || "")) || "";
+    if (!httpUrl) return;
     const engine = resolveEngine({
       snapshot: state.job && state.job.snapshot,
-      pageUrl,
+      pageUrl: httpUrl,
     });
     // Include ATS iframe hosts (e.g. Greenhouse embeds) so selection hotkeys work there.
-    let origins = autofillPermissionOrigins(pageUrl || jobUrl, engine && engine.platform);
-    if (!origins.length && jobUrl) {
-      try {
-        origins = [`${new URL(jobUrl).origin}/*`];
-      } catch {
-        origins = [];
-      }
-    }
+    const origins = autofillPermissionOrigins(httpUrl, engine && engine.platform);
     if (!origins.length) return;
     const has = await chrome.permissions.contains({ origins });
     if (!has) {
@@ -773,7 +779,7 @@ async function ensureAskHotkeyOnActiveTab({ requestPermission = false, jobUrl = 
       }
     }
     await chrome.storage.session.set({ askHotkeyArmed: true });
-    if (tab && tab.id != null && /^https?:/i.test(tab.url || "")) {
+    if (tab && tab.id != null && /^https?:/i.test(tabUrl)) {
       await chrome.runtime.sendMessage({ type: "ASK_HOTKEY_INJECT", tabId: tab.id });
     }
   } catch (err) {
@@ -838,6 +844,9 @@ function openHomeSection(id) {
   }
   setState(patch, { resetScroll: true });
   if (id === "tailor") void loadTailorResumes();
+  // Ready list is fetched on its own (ungated) path; refresh on open so it's
+  // current even when the background poll skipped (revision unchanged).
+  if (id === "ready") void refreshReadyList();
   if (id === "stats") void loadStatsPeriod(state.statsPeriod || "week");
 }
 
@@ -978,10 +987,10 @@ function deriveHomeFromCatalog(catalog) {
   // 0 here" bug). To keep Complete & Next instant, subtract ready jobs we just
   // applied locally but that this (stale) stat snapshot still counts; the set is
   // cleared in loadQueue once a fresh stat (which already excludes them) arrives.
-  const pendingApplied = (state.pendingAppliedIds || []).filter((id) => {
-    const j = jobsById[id];
-    return j && isJobApplied(j);
-  }).length;
+  // Count of ready jobs we optimistically applied since the last stats fetch.
+  // Use the raw set size (not catalog membership) - low-score ready jobs aren't in
+  // the score-gated catalog, and the set is cleared as soon as fresh stats arrive.
+  const pendingApplied = (state.pendingAppliedIds || []).length;
   const serverReady = ss.ready_jobs;
   const platformCounts = {
     ...(meta.platformCounts || {
@@ -1295,6 +1304,25 @@ async function fetchHomeExtras({ timezone, score }) {
     pumbleConfigured,
     pumbleDestinationCount,
   };
+}
+
+// Authoritative "Ready to apply" list: server view=ready, UNGATED by
+// min_match_score so it mirrors the ungated ready_jobs tile (a built resume is
+// actionable at any score). Runs INDEPENDENTLY of loadQueue's warm-poll skip so
+// it always loads even on a stable/cached session, and ALWAYS resolves
+// readyListLoaded (even on empty/failure) so the tab never hangs on "Loading…".
+async function refreshReadyList() {
+  try {
+    const page = await fetchDashboardPages({
+      view: "ready",
+      sort: "match_score",
+      order: "desc",
+    });
+    setState({ readyList: (page && page.items) || [], readyListLoaded: true });
+  } catch (err) {
+    console.warn("refreshReadyList failed", err);
+    setState({ readyListLoaded: true });
+  }
 }
 
 async function bootstrapJobsCatalog({ score, wantScore, timezone, extras }) {
@@ -2162,6 +2190,10 @@ async function startAutofill() {
     }
     // Host permission for the page (and embedded ATS iframe when applicable).
     const permOrigins = autofillPermissionOrigins(tab.url, engine.platform);
+    if (!permOrigins.length) {
+      toast("This page URL cannot be used for autofill (need an http/https application page).");
+      return;
+    }
     const granted = await chrome.permissions.request({ origins: permOrigins });
     if (!granted) {
       toast("Permission to read this page was denied.");
@@ -2271,12 +2303,15 @@ async function startWorkdayAutofill(tab, engine) {
 // (LLM recover + re-flush if needed) → Save & Continue. Stops at Review, when
 // stuck, when errors persist after recovery, or when the user hits Stop.
 const WD_MAX_STEPS = 9;
-// Per step: hard cap on WD_RUN fill passes (initial + recoveries). Default 3 so a
-// stuck My Information page cannot pile up 7 identical reports (old loop ran up
-// to 1 initial + 3 attempts × 2 recoveries).
-const WD_MAX_STEP_FILLS = 3;
-// Per step: how many Save attempts after the initial fill.
-const WD_MAX_SAVE_ATTEMPTS = 3;
+// Per step: hard cap on WD_RUN fill passes (initial + recoveries). 2 = one initial
+// fill + ONE recovery. Workday only surfaces most required-field errors AFTER
+// "Save and Continue", so a single post-save recovery is required; more than that
+// is wasted churn (the user explicitly does not want repeated re-attempts, and
+// with the pill-aware isChosen fix already-filled fields are never re-typed).
+const WD_MAX_STEP_FILLS = 2;
+// Per step: how many Save attempts after the initial fill. 2 is enough once
+// School/FoS commit correctly; a third pass was empty churn on My Experience.
+const WD_MAX_SAVE_ATTEMPTS = 2;
 
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -5145,13 +5180,23 @@ function renderActiveTab() {
         scoreHint || "No jobs in the system yet.",
         { prepend: renderMinScoreControl() }
       );
-    case "ready":
+    case "ready": {
+      // Ready = tailored resume built & not applied; match score is irrelevant, so
+      // this list is the ungated server view (state.readyList), NOT the score-gated
+      // catalog. No min-score control here for the same reason. Filter out jobs we
+      // just applied locally (pending) so Complete & Next drops them instantly.
+      const pendingReady = new Set(state.pendingAppliedIds || []);
+      const readyCards = (state.readyList || [])
+        .filter((j) => j && !isJobApplied(j) && !pendingReady.has(j.id))
+        .map((j) => jobToCard(j));
       return renderFilteredJobList(
         "ready",
-        (state.readyQueue || []).map((j) => jobToCard(j)),
-        scoreHint || "No ready-to-apply jobs yet (tailored resume ready, not yet applied).",
-        { prepend: renderMinScoreControl() }
+        readyCards,
+        state.readyListLoaded
+          ? "No ready-to-apply jobs yet (tailored resume ready, not yet applied)."
+          : "Loading ready-to-apply jobs…"
       );
+    }
     case "best":
       return renderFilteredJobList(
         "best",

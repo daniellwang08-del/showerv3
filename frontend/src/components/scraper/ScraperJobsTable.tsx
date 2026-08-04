@@ -2133,10 +2133,18 @@ export function ScraperJobsTable({
                           className={[
                             'relative inline-flex w-[96px] h-[28px] items-center justify-center gap-1 rounded-md border text-xs font-medium transition-all disabled:cursor-not-allowed',
                             isPipelineRunning
-                              ? 'border-amber-300 bg-amber-50 text-amber-700 opacity-90'
-                              : hasExtraction
-                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300'
-                                : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:border-blue-300',
+                              ? 'border-amber-300 bg-amber-50 text-amber-700 opacity-90 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300'
+                              : isAdmin
+                                ? (jdReady
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300'
+                                  : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:border-blue-300 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-300')
+                                : analysisDone
+                                  // Re-analyze — score already exists
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300'
+                                  : hasExtraction
+                                    // Analyze — JD scraped (yellow status dot), score not run yet
+                                    ? 'border-yellow-300 bg-yellow-50 text-yellow-800 hover:bg-yellow-100 hover:border-yellow-400 dark:border-yellow-500/40 dark:bg-yellow-500/15 dark:text-yellow-300'
+                                    : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:border-blue-300 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-300',
                           ].join(' ')}
                         >
                           {isRerunning ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
@@ -2147,12 +2155,25 @@ export function ScraperJobsTable({
                               : isPipelineRunning && job.match_in_progress           ? 'Analyzing'
                               : isAdmin
                                 ? (jdReady ? 'Re-extract' : 'Extract')
-                                : job.match_overall_score != null ? 'Re-analyze'
-                                : hasExtraction                   ? 'Analyze'
-                                : 'Run'}
+                                : analysisDone
+                                  ? 'Re-analyze'
+                                  : hasExtraction                   ? 'Analyze'
+                                  : 'Run'}
                           </span>
-                          {(jdReady || (!isAdmin && hasExtraction)) && !isRerunning && (
-                            <CheckCircle2 size={10} className="text-emerald-500 shrink-0" />
+                          {!isRerunning && (
+                            isAdmin
+                              ? (jdReady && (
+                                  <CheckCircle2 size={10} className="text-emerald-500 shrink-0 dark:text-emerald-400" />
+                                ))
+                              : analysisDone
+                                ? (
+                                  <CheckCircle2 size={10} className="text-emerald-500 shrink-0 dark:text-emerald-400" />
+                                )
+                                : hasExtraction
+                                  ? (
+                                    <CheckCircle2 size={10} className="text-yellow-500 shrink-0 dark:text-yellow-400" />
+                                  )
+                                  : null
                           )}
                         </button>
 
