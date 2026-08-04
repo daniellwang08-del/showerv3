@@ -73,8 +73,19 @@ class EducationBlock(BaseModel):
     period_end: str | None = Field(default=None, max_length=20)
     location: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
+    # Optional major / FoS for Workday Field of Study prompts. When blank the
+    # autofill profile falls back to settings.autofill_default_field_of_study.
+    field_of_study: str | None = Field(default=None, max_length=200)
 
-    @field_validator("mark", "period_start", "period_end", "location", "description", mode="before")
+    @field_validator(
+        "mark",
+        "period_start",
+        "period_end",
+        "location",
+        "description",
+        "field_of_study",
+        mode="before",
+    )
     @classmethod
     def empty_to_none(cls, v):
         return _empty_to_none(v)

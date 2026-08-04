@@ -1720,26 +1720,85 @@ async def _enrich_work_locations(
     return work, cache
 
 
+def _infer_field_of_study(
+    edu: dict, default_field_of_study: str = ""
+) -> tuple[str, list[str]]:
+    """Pick primary Field of Study + Workday search-prompt fallbacks.
+
+    EducationBlock has no dedicated major column today. Prefer an explicit
+    ``field_of_study`` / ``major`` if present, else the configured default, and
+    always attach CS-adjacent fallbacks so tenants without "Computer Engineering"
+    still match (e.g. "Computer Science").
+    """
+    explicit = str(
+        edu.get("field_of_study") or edu.get("major") or edu.get("fieldOfStudy") or ""
+    ).strip()
+    degree = str(edu.get("degree") or "")
+    description = str(edu.get("description") or "")
+    blob = f"{explicit} {degree} {description}".lower()
+
+    primary = explicit or str(default_field_of_study or "").strip()
+    if not primary:
+        if "computer science" in blob or re.search(r"\bcs\b", blob):
+            primary = "Computer Science"
+        elif "computer engineering" in blob or "software engineering" in blob:
+            primary = "Computer Engineering"
+        elif "information technology" in blob or re.search(r"\bit\b", blob):
+            primary = "Information Technology"
+
+    fallbacks: list[str] = []
+    low = primary.lower()
+
+    def _add(name: str) -> None:
+        n = str(name or "").strip()
+        if not n:
+            return
+        if n.lower() == low:
+            return
+        if any(n.lower() == f.lower() for f in fallbacks):
+            return
+        fallbacks.append(n)
+
+    # User request: if Computer Engineering has no Workday match, use Computer Science.
+    if "computer engineering" in low or ("computer" in low and "engineer" in low):
+        _add("Computer Science")
+        _add("Software Engineering")
+        _add("Electrical Engineering")
+        _add("Information Technology")
+    elif "computer science" in low:
+        _add("Computer Engineering")
+        _add("Software Engineering")
+        _add("Information Technology")
+    elif "software" in low:
+        _add("Computer Science")
+        _add("Computer Engineering")
+        _add("Information Technology")
+    elif primary:
+        # Generic STEM-ish fallbacks when the primary is CS-adjacent free text.
+        if "computer" in low or "software" in low or "electrical" in low:
+            _add("Computer Science")
+            _add("Computer Engineering")
+
+    return primary, fallbacks
+
+
 def _build_education(
     education: list, default_gpa: str = "", default_field_of_study: str = ""
 ) -> list[dict]:
     fallback_gpa = str(default_gpa or "").strip()
-    fallback_field = str(default_field_of_study or "").strip()
     out: list[dict] = []
     for e in education or []:
         if not isinstance(e, dict):
             continue
         degree = str(e.get("degree") or "")
         gpa = str(e.get("mark") or "").strip() or fallback_gpa
+        field, field_fallbacks = _infer_field_of_study(e, default_field_of_study)
         out.append(
             {
                 "school": str(e.get("university_name") or ""),
                 "degree": degree,
-                # ALWAYS the configured standard default - never derived from the
-                # candidate's degree/education text (their stored fields are free-form
-                # and don't match Workday's fixed option list). The candidate can
-                # change it manually on the form. Blank default leaves it empty.
-                "fieldOfStudy": fallback_field,
+                "fieldOfStudy": field,
+                "fieldOfStudyFallbacks": field_fallbacks,
                 "startMMYYYY": _to_mmyyyy(e.get("period_start")),
                 "endMMYYYY": _to_mmyyyy(e.get("period_end")),
                 "gpa": gpa,

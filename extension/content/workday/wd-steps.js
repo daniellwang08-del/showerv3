@@ -249,8 +249,8 @@
     if (/highest degree|degree attained/.test(low)) {
       return /bachelor|master|doctor|associate|diploma|ged|ph\.?d|juris|vocational|coursework/.test(opts);
     }
-    if (/protected veteran|veteran.*categor|belong to any of the categories/.test(low)) {
-      return /veteran|not a veteran|self-identify|protected/.test(opts) && !/asian|african american|hispanic|native hawaiian|two or more races/.test(opts);
+    if (/protected veteran|veteran.*categor|belong to any of the categories|confirm your veteran|veteran status|\bveteran\b/i.test(low)) {
+      return /veteran|not a veteran|self-identify|self-disclose|protected|military/.test(opts) && !/asian|african american|hispanic|native hawaiian|two or more races/.test(opts);
     }
     if (/what is your (sex|gender)|\bsex\b/.test(low)) {
       return /male|female|do not wish/.test(opts) && !/bachelor|master|veteran/.test(opts);
@@ -515,7 +515,9 @@
       [/gender/i, e.gender],
       [/sexual orientation|lgbtq/i, e.sexualOrientation || "I don't wish to answer"],
       [/what is your race|race\/ethnicity|ethnicity|\brace\b/i, e.ethnicity],
-      [/veteran/i, e.veteran ? "I am a veteran" : "I am not a protected veteran"],
+      // Sentinel resolved against the tenant's live options in writeField —
+      // UPS/OFCCP wording varies ("I AM NOT A VETERAN", decline-to-disclose, …).
+      [/veteran/i, e.veteran === true ? "__EEO_VETERAN_TRUE__" : "__EEO_VETERAN_FALSE__"],
       [/disab/i, e.disability ? "Yes" : "No, I do not have a disability"],
     ];
     for (const [re, val] of RULES) {
@@ -695,6 +697,84 @@
     const within = scored.filter((x) => w.includes(x.t)).sort((a, b) => b.t.length - a.t.length);
     if (within.length) return within[0].o;
     return null;
+  }
+
+  // Pick the best Workday/OFCCP veteran-status option for the candidate's EEO flag.
+  // Tenants disagree on wording; UPS uses decline-to-disclose + protected/non-protected
+  // veteran options and often has NO literal "I am not a protected veteran".
+  function pickVeteranOptionText(isVeteran, options) {
+    const norms = (options || [])
+      .map((raw) => ({ raw: String(raw || "").replace(/\s+/g, " ").trim(), t: D.norm(raw) }))
+      .filter((x) => x.t && !/^select(\s+one)?\.?\.?\.?$/.test(x.t));
+    if (!norms.length) return null;
+
+    const isDecline = (t) =>
+      /choose not|decline|do not wish|do not want|prefer not|voluntarily self-disclose|self-disclose whether/.test(t);
+    const isProtectedYes = (t) =>
+      (/identify as one or more|classifications of protected veteran|protected veterans listed/.test(t) ||
+        (/protected veteran/.test(t) && /identify|belong|one or more/.test(t))) &&
+      !/not a protected|but not a protected|non-veteran|not a veteran/.test(t) &&
+      !isDecline(t);
+    const isNotProtectedButVeteran = (t) =>
+      /military veteran.*not a protected|not a protected veteran listed|veteran, but not a protected/.test(t);
+    const isExplicitNotVeteran = (t) =>
+      (/i am not a (protected )?veteran|not a protected veteran|i am not a veteran|non-veteran|i am not a u\.?\s*s\.?\s*military veteran/.test(t) ||
+        (/^no\b/.test(t) && /veteran/.test(t))) &&
+      !isDecline(t) &&
+      !isNotProtectedButVeteran(t) &&
+      !isProtectedYes(t);
+
+    if (isVeteran) {
+      const hit = norms.find((x) => isProtectedYes(x.t)) || norms.find((x) => isNotProtectedButVeteran(x.t));
+      return hit ? hit.raw : null;
+    }
+    const notVet =
+      norms.find((x) => isExplicitNotVeteran(x.t)) ||
+      norms.find((x) => isDecline(x.t)) ||
+      norms.find((x) => isNotProtectedButVeteran(x.t));
+    return notVet ? notVet.raw : null;
+  }
+
+  async function harvestNativeSelectOptions(sel) {
+    for (let i = 0; i < 20 && sel.options.length < 2; i++) await D.delay(100);
+    return [...sel.options]
+      .map((o) => (o.text || "").replace(/\s+/g, " ").trim())
+      .filter((t) => t && !/^select(\s+one)?\.?\.?\.?$/i.test(t));
+  }
+
+  async function fillVeteranField(container, isVeteran) {
+    const nativeSel = container.querySelector("select");
+    if (nativeSel) {
+      const opts = await harvestNativeSelectOptions(nativeSel);
+      const pick = pickVeteranOptionText(isVeteran, opts);
+      if (!pick) return false;
+      return await selectNativeEl(nativeSel, pick);
+    }
+    const listbox = listboxTrigger(container);
+    if (listbox) {
+      const opts = await harvestOptions(listbox);
+      const pick = pickVeteranOptionText(isVeteran, opts);
+      if (!pick) return false;
+      return await openAndPick(listbox, pick);
+    }
+    const radios = [...container.querySelectorAll('input[type="radio"]')];
+    if (radios.length) {
+      const opts = radios.map((r) => labelForInput(r));
+      const pick = pickVeteranOptionText(isVeteran, opts);
+      if (!pick) return false;
+      return pickRadio(radios, pick);
+    }
+    const checks = [...container.querySelectorAll('input[type="checkbox"]')];
+    if (checks.length) {
+      const opts = checks.map((c) => labelForInput(c));
+      const pick = pickVeteranOptionText(isVeteran, opts);
+      if (!pick) return false;
+      const target = pickByLabel(checks, pick);
+      if (!target) return false;
+      if (!target.checked) clickInputOrLabel(target);
+      return true;
+    }
+    return false;
   }
 
   // The overlay a single-select button just opened. Workday renders the popup in
@@ -1131,7 +1211,25 @@
       .map((o, i) => ({ o, t: D.norm(o.text), i }))
       .filter((x) => x.t && !/^select(\s+one)?\.?\.?\.?$/.test(x.t));
     const contains = scored.filter((x) => x.t.includes(want)).sort((a, b) => a.t.length - b.t.length);
-    const hit = scored.find((x) => x.t === want) || contains[0];
+    let hit = scored.find((x) => x.t === want) || contains[0];
+    // Token-overlap fallback for long OFCCP sentences that share key phrases
+    // with a shorter deterministic want string.
+    if (!hit && want) {
+      const wantTokens = want.split(/\s+/).filter((t) => t.length > 2);
+      let best = null;
+      let bestScore = 0;
+      for (const x of scored) {
+        const ot = x.t.split(/\s+/).filter(Boolean);
+        if (!ot.length) continue;
+        const overlap = wantTokens.filter((t) => ot.some((o) => o === t || o.includes(t) || t.includes(o))).length;
+        const score = overlap / Math.max(wantTokens.length, 1);
+        if (score > bestScore) {
+          bestScore = score;
+          best = x;
+        }
+      }
+      if (best && bestScore >= 0.45) hit = best;
+    }
     if (!hit) return false;
     try {
       sel.focus({ preventScroll: true });
@@ -1205,8 +1303,24 @@
   }
 
   // Detect the control inside a formField wrapper and write the value.
-  async function writeField(container, value) {
+  async function writeField(container, value, label) {
     if (value == null || value === "") return null;
+    const raw = String(value);
+    // Veteran EEO tokens must be resolved against THIS tenant's live options.
+    if (raw === "__EEO_VETERAN_TRUE__" || raw === "__EEO_VETERAN_FALSE__") {
+      return await fillVeteranField(container, raw === "__EEO_VETERAN_TRUE__");
+    }
+    // Legacy deterministic veteran strings that no longer match modern UPS wording.
+    if (/veteran/i.test(label || "") || /veteran/i.test(raw)) {
+      if (/__EEO_VETERAN_TRUE|i am a veteran|identify as.*protected veteran/i.test(raw) && !/not a|non-veteran|decline|choose not/i.test(raw)) {
+        const ok = await fillVeteranField(container, true);
+        if (ok) return true;
+      }
+      if (/__EEO_VETERAN_FALSE|i am not a|not a protected veteran|not a veteran|non-veteran|choose not|decline/i.test(raw)) {
+        const ok = await fillVeteranField(container, false);
+        if (ok) return true;
+      }
+    }
     const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
     if (multi) return await fillMultiselect(multi, value);
     const listbox = listboxTrigger(container);
@@ -1422,7 +1536,7 @@
         if (interesting) llmTargets.push({ container: c, key, label: label || fieldLabel(c), required: isRequired(c) });
         continue;
       }
-      const ok = await writeField(c, value);
+      const ok = await writeField(c, value, label || key);
       // A deterministic value that does NOT match this tenant's actual options
       // fails to apply (e.g. veteran "I am not a protected veteran" when the
       // options say "I AM NOT A VETERAN"). Route those to the LLM, which harvests
@@ -1652,17 +1766,46 @@
     try { WD.warn("role descriptions: re-assert loop exhausted (parser still fighting)"); } catch {}
   }
 
+  function fieldOfStudyCandidates(entry) {
+    const out = [];
+    const push = (s) => {
+      const t = String(s || "").trim();
+      if (!t) return;
+      if (out.some((x) => D.norm(x) === D.norm(t))) return;
+      out.push(t);
+    };
+    push(entry && entry.fieldOfStudy);
+    const alts = (entry && entry.fieldOfStudyFallbacks) || [];
+    for (const a of alts) push(a);
+    const primary = String((entry && entry.fieldOfStudy) || "");
+    if (/computer|software|electrical|ece|cse/i.test(primary)) {
+      push("Computer Science");
+      push("Computer Engineering");
+      push("Software Engineering");
+      push("Information Technology");
+    }
+    return out;
+  }
+
+  async function fillSearchPromptAny(multi, candidates) {
+    for (const value of candidates) {
+      if (await fillSearchPrompt(multi, value)) return true;
+    }
+    return false;
+  }
+
   async function fillEducationNonDegree(root, entry, n, rep) {
     if (!entry) return;
     await fillPanelField(root, "schoolName", entry.school, rep, `Edu ${n} School`);
     // Field of Study is a large server-backed search prompt that must be driven in
     // a strict open → wait → type → wait → Enter order (see fillSearchPrompt), so
-    // it bypasses the generic fillMultiselect path. Filled inline per panel.
-    if (entry.fieldOfStudy) {
+    // it bypasses the generic fillMultiselect path. Try primary then CS fallbacks.
+    const fosCandidates = fieldOfStudyCandidates(entry);
+    if (fosCandidates.length) {
       const fos = panelField(root, "fieldOfStudy");
       const fosMulti = fos && fos.querySelector('[data-automation-id="multiSelectContainer"]');
       if (fosMulti) {
-        record(rep, `Edu ${n} Field of Study`, await fillSearchPrompt(fosMulti, entry.fieldOfStudy));
+        record(rep, `Edu ${n} Field of Study`, await fillSearchPromptAny(fosMulti, fosCandidates));
       }
     }
     await fillPanelField(root, "gradeAverage", entry.gpa, rep, `Edu ${n} GPA`);
@@ -2041,7 +2184,7 @@
         rememberFailedField(t.key, t.label);
         continue;
       }
-      const ok = await writeField(t.container, value);
+      const ok = await writeField(t.container, value, t.label || t.key);
       try { WD.log(`LLM fallback apply '${t.label}' result=${ok}`); } catch {}
       if (ok) {
         const cacheKey = (t.label || "").toLowerCase().trim().slice(0, 120);
