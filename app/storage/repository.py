@@ -214,6 +214,35 @@ class JobExtractionRepository:
         )
         logger.debug("repository_save_raw_plain_text", job_id=job_id, length=len(plain_text))
 
+    async def save_manual_raw_jd(
+        self,
+        job_id: str,
+        plain_text: str,
+        *,
+        metadata: dict | None = None,
+    ) -> None:
+        """Force-write pasted JD and mark the shared extraction COMPLETED."""
+        now = _utcnow()
+        values: dict = {
+            "raw_plain_text": plain_text,
+            "status": ExtractionStatus.COMPLETED,
+            "error_message": None,
+            "is_job_posting": True,
+            "completed_at": now,
+            "updated_at": now,
+            # Manual text replaces prior AI-structured fields until re-analyzed.
+            "description": None,
+            "responsibilities": [],
+            "requirements": [],
+            "benefits": [],
+        }
+        if metadata is not None:
+            values["raw_metadata"] = metadata
+        await self._session.execute(
+            update(JobExtraction).where(JobExtraction.id == job_id).values(**values)
+        )
+        logger.debug("repository_save_manual_raw_jd", job_id=job_id, length=len(plain_text))
+
     async def get_pending_jobs(self, limit: int = 100) -> Sequence[JobExtraction]:
         result = await self._session.execute(
             select(JobExtraction)

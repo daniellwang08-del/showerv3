@@ -117,22 +117,6 @@ export const ADMIN_DASHBOARD_VIEWS: ViewMeta[] = [
     accent: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300',
     active: 'text-indigo-700 dark:text-indigo-300',
   },
-  {
-    id: 'sheet_posted',
-    label: 'In Google Sheets',
-    description: 'Jobs posted to Google Sheets',
-    icon: Table2,
-    accent: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
-    active: 'text-emerald-700 dark:text-emerald-300',
-  },
-  {
-    id: 'pumble_posted',
-    label: 'In Pumble',
-    description: 'Jobs posted to Pumble',
-    icon: MessageSquare,
-    accent: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
-    active: 'text-violet-700 dark:text-violet-300',
-  },
 ];
 
 /** Board-driven views — shown in the trigger when active, not always in the dropdown. */
@@ -252,10 +236,6 @@ function adminViewCount(view: DashboardView, adminStats: AdminScraperStats | nul
       return adminStats.extraction_failed_jobs;
     case 'manual':
       return adminStats.manual_jobs;
-    case 'sheet_posted':
-      return adminStats.sheet_posted_jobs;
-    case 'pumble_posted':
-      return adminStats.pumble_posted_jobs;
     case 'applied_today':
       return adminStats.team_applied_today;
     default:

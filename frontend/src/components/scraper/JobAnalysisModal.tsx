@@ -14,9 +14,15 @@ interface JobAnalysisModalProps {
   onClose: () => void;
   /** Admin inventory view emphasizes extracted raw JD. */
   isAdmin?: boolean;
+  onAnalysisUpdated?: () => void;
 }
 
-export function JobAnalysisModal({ validJobId, onClose, isAdmin = false }: JobAnalysisModalProps) {
+export function JobAnalysisModal({
+  validJobId,
+  onClose,
+  isAdmin = false,
+  onAnalysisUpdated,
+}: JobAnalysisModalProps) {
   /* ── Keyboard: Escape to close ─────────────────────────────────────── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -70,7 +76,12 @@ export function JobAnalysisModal({ validJobId, onClose, isAdmin = false }: JobAn
          * fetching.  Passing `onClose` so the panel's "← Back" button also
          * dismisses the modal.
          */}
-        <DetailContentPanel validJobId={validJobId} onClose={onClose} isAdmin={isAdmin} />
+        <DetailContentPanel
+          validJobId={validJobId}
+          onClose={onClose}
+          isAdmin={isAdmin}
+          onAnalysisUpdated={onAnalysisUpdated}
+        />
       </div>
     </div>
   );

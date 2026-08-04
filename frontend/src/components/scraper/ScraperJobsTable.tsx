@@ -2236,6 +2236,13 @@ export function ScraperJobsTable({
           validJobId={viewingJobId}
           onClose={() => setViewingJobId(null)}
           isAdmin={isAdmin}
+          onAnalysisUpdated={() => {
+            void useScraperStore.getState().bgRefreshJobs();
+            void useScraperStore.getState().loadStats({
+              silent: true,
+              isAdmin: useScraperStore.getState().statsRole === 'admin',
+            });
+          }}
         />
       )}
 

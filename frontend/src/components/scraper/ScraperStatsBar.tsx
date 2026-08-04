@@ -25,6 +25,7 @@ import type { AdminScraperStats, PlatformSyncStats, ScraperStats } from '../../t
 import { fetchSheetsConfig } from '../../api/googleSheetsApi';
 import { fetchPumbleConfig } from '../../api/pumbleApi';
 import { TrendSparkline } from './TrendSparkline';
+import { SyncControlBoard } from './SyncControlBoard';
 
 interface RailItem {
   key: string;
@@ -122,10 +123,12 @@ function AnimatedNumber({ value, className }: { value: number; className?: strin
   const displayed = useAnimatedNumber(value);
   const bumped = useBumpOnIncrease(value);
   // Fixed line box + tabular nums so digit/count-up changes never alter tile height.
+  // w-max + shrink-0: when placed beside sync hints, the count never collapses
+  // under neighboring text (which looked like an overlap on platform tiles).
   return (
     <span
       className={[
-        'inline-flex h-[1.05em] max-w-full items-center overflow-hidden tabular-nums',
+        'inline-flex h-[1.05em] w-max max-w-none shrink-0 items-center overflow-hidden tabular-nums',
         className ?? '',
         bumped ? 'stats-num-bump' : '',
       ]
@@ -139,9 +142,16 @@ function AnimatedNumber({ value, className }: { value: number; className?: strin
 
 function HeroOrbitRing({
   progress,
+  failProgress = 0,
+  /** When false, hide the traveling loading highlight — work is settled. Orbit dots keep moving. */
+  showShimmer = true,
   size = 188,
 }: {
+  /** Share of the ring for successful / completed JD (blue). */
   progress: number;
+  /** Share of the ring for extraction-failed jobs (red). */
+  failProgress?: number;
+  showShimmer?: boolean;
   size?: number;
 }) {
   const uid = useId().replace(/:/g, '');
@@ -152,14 +162,29 @@ function HeroOrbitRing({
   const cy = full / 2;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = Math.max(0, Math.min(1, safe(progress)));
-  const offset = circumference * (1 - clamped);
+
+  // Clamp and normalize so blue + red never exceed a full turn.
+  let success = Math.max(0, safe(progress));
+  let fail = Math.max(0, safe(failProgress));
+  const combined = success + fail;
+  if (combined > 1) {
+    success /= combined;
+    fail /= combined;
+  }
+
+  const successLen = circumference * success;
+  const failLen = circumference * fail;
+  const hasFail = failLen > 0.5;
+  const hasSuccess = successLen > 0.5;
+  // Single-arc keeps rounded caps; multi-arc uses butt so segments don't bleed into each other.
+  const cap = hasFail && hasSuccess ? 'butt' : 'round';
   const orbitR = radius + 14;
 
   return (
     <div className="stats-hero-orbit relative" style={{ width: full, height: full }}>
       <div className="stats-hero-aura absolute inset-5 rounded-full" />
       <div className="stats-hero-aura-core absolute inset-11 rounded-full" />
+      {/* Decorative orbit dots — always animate, even when extraction is settled. */}
       <div className="stats-orbit-spin absolute inset-0">
         <span
           className="absolute left-1/2 top-1/2 h-2 w-2 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.85)]"
@@ -183,6 +208,16 @@ function HeroOrbitRing({
             <stop offset="50%" stopColor="#60a5fa" stopOpacity="0.95" />
             <stop offset="100%" stopColor="#a78bfa" stopOpacity="0.2" />
           </linearGradient>
+          <linearGradient id={`stats-ring-fail-${uid}`} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#fb7185" />
+            <stop offset="55%" stopColor="#f43f5e" />
+            <stop offset="100%" stopColor="#e11d48" />
+          </linearGradient>
+          <linearGradient id={`stats-ring-fail-glow-${uid}`} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#fda4af" stopOpacity="0.2" />
+            <stop offset="50%" stopColor="#fb7185" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#e11d48" stopOpacity="0.25" />
+          </linearGradient>
           <filter id={`stats-soft-glow-${uid}`} x="-40%" y="-40%" width="180%" height="180%">
             <feGaussianBlur stdDeviation="3.2" result="blur" />
             <feMerge>
@@ -203,6 +238,7 @@ function HeroOrbitRing({
         />
 
         <g transform={`rotate(-90 ${cx} ${cy})`}>
+          {/* Track = remaining pool (needs extraction / pending). */}
           <circle
             cx={cx}
             cy={cy}
@@ -211,46 +247,84 @@ function HeroOrbitRing({
             strokeWidth={stroke}
             className="stroke-slate-200/90 dark:stroke-slate-700/90"
           />
-          <circle
-            cx={cx}
-            cy={cy}
-            r={radius}
-            fill="none"
-            strokeWidth={stroke + 5}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            stroke={`url(#stats-ring-glow-${uid})`}
-            className="stats-ring-progress opacity-45"
-          />
-          <circle
-            cx={cx}
-            cy={cy}
-            r={radius}
-            fill="none"
-            strokeWidth={stroke}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            stroke={`url(#stats-ring-grad-${uid})`}
-            filter={`url(#stats-soft-glow-${uid})`}
-            className="stats-ring-progress transition-[stroke-dashoffset] duration-700 ease-out"
-          />
-          {/* Loading highlight: pathLength=1 so CSS can loop a full revolution
-              (dashoffset -1). Previously offset was hard-coded to -120px ≈ 20% of
-              the ring, so the white bar only traveled top → left-middle. */}
-          <circle
-            cx={cx}
-            cy={cy}
-            r={radius}
-            fill="none"
-            stroke="white"
-            strokeWidth={stroke - 4}
-            strokeLinecap="round"
-            pathLength={1}
-            strokeDasharray="0.1 0.9"
-            className="stats-ring-shimmer mix-blend-screen"
-          />
+
+          {/* Success (completed JD) — blue, starts at 12 o'clock. */}
+          {hasSuccess && (
+            <>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={radius}
+                fill="none"
+                strokeWidth={stroke + 5}
+                strokeLinecap={cap}
+                strokeDasharray={`${successLen} ${Math.max(0, circumference - successLen)}`}
+                strokeDashoffset={0}
+                stroke={`url(#stats-ring-glow-${uid})`}
+                className="stats-ring-progress opacity-45 transition-[stroke-dasharray] duration-700 ease-out"
+              />
+              <circle
+                cx={cx}
+                cy={cy}
+                r={radius}
+                fill="none"
+                strokeWidth={stroke}
+                strokeLinecap={cap}
+                strokeDasharray={`${successLen} ${Math.max(0, circumference - successLen)}`}
+                strokeDashoffset={0}
+                stroke={`url(#stats-ring-grad-${uid})`}
+                filter={`url(#stats-soft-glow-${uid})`}
+                className="stats-ring-progress transition-[stroke-dasharray] duration-700 ease-out"
+              />
+            </>
+          )}
+
+          {/* Failed extractions — red, continues after the blue arc. */}
+          {hasFail && (
+            <>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={radius}
+                fill="none"
+                strokeWidth={stroke + 5}
+                strokeLinecap={cap}
+                strokeDasharray={`${failLen} ${Math.max(0, circumference - failLen)}`}
+                strokeDashoffset={-successLen}
+                stroke={`url(#stats-ring-fail-glow-${uid})`}
+                className="stats-ring-progress opacity-40 transition-[stroke-dasharray,stroke-dashoffset] duration-700 ease-out"
+              />
+              <circle
+                cx={cx}
+                cy={cy}
+                r={radius}
+                fill="none"
+                strokeWidth={stroke}
+                strokeLinecap={cap}
+                strokeDasharray={`${failLen} ${Math.max(0, circumference - failLen)}`}
+                strokeDashoffset={-successLen}
+                stroke={`url(#stats-ring-fail-${uid})`}
+                filter={`url(#stats-soft-glow-${uid})`}
+                className="stats-ring-progress transition-[stroke-dasharray,stroke-dashoffset] duration-700 ease-out"
+              />
+            </>
+          )}
+
+          {/* Traveling highlight only while extraction backlog remains. */}
+          {showShimmer && (
+            <circle
+              cx={cx}
+              cy={cy}
+              r={radius}
+              fill="none"
+              stroke="white"
+              strokeWidth={stroke - 4}
+              strokeLinecap="round"
+              pathLength={1}
+              strokeDasharray="0.1 0.9"
+              className="stats-ring-shimmer mix-blend-screen"
+            />
+          )}
         </g>
       </svg>
     </div>
@@ -308,10 +382,10 @@ const SideTile = memo(function SideTile({
         <Icon size={20} strokeWidth={2.35} />
       </div>
       <div className="relative min-w-0 flex-[1.05]">
-        <div className="flex min-w-0 items-baseline gap-2">
+        <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3">
           <AnimatedNumber
             value={value}
-            className="shrink-0 text-[1.75rem] font-black leading-none tracking-tight text-slate-900 sm:text-[1.9rem]"
+            className="text-[1.75rem] font-black leading-none tracking-tight text-slate-900 sm:text-[1.9rem]"
           />
           <p
             className="min-w-0 truncate text-[11px] font-medium leading-snug text-slate-500 sm:text-[11.5px]"
@@ -356,6 +430,57 @@ const SideTile = memo(function SideTile({
   return (
     <div title={title} style={{ animationDelay: `${delay}ms` }} className={className}>
       {body}
+    </div>
+  );
+});
+
+/** Narrow metric for admin board — frees horizontal space for the sync control panel. */
+const CompactMetricTile = memo(function CompactMetricTile({
+  icon: Icon,
+  value,
+  label,
+  hint,
+  accent,
+  iconWrap,
+  delay,
+  title,
+}: {
+  icon: LucideIcon;
+  value: number;
+  label: string;
+  hint: string;
+  accent: string;
+  iconWrap: string;
+  delay: number;
+  title?: string;
+}) {
+  return (
+    <div
+      title={title}
+      style={{ animationDelay: `${delay}ms` }}
+      className="stats-side-tile group relative flex min-h-[88px] w-full flex-1 flex-col justify-center overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 px-3 py-2.5 shadow-sm dark:border-slate-700/80 dark:bg-[#141d31]/95"
+    >
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accent} opacity-[0.08]`} />
+      <div className={`absolute inset-y-3 left-0 w-1 rounded-r-full bg-gradient-to-b ${accent}`} />
+      <div className="relative flex min-w-0 items-center gap-2">
+        <div
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${iconWrap} text-white shadow-md`}
+        >
+          <Icon size={15} strokeWidth={2.4} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[11px] font-bold leading-none text-slate-600 dark:text-[#cbd5e1]">
+            {label}
+          </p>
+          <AnimatedNumber
+            value={value}
+            className="mt-1 block text-[1.35rem] font-black leading-none tracking-tight text-slate-900"
+          />
+          <p className="mt-1 truncate text-[10px] font-medium leading-snug text-slate-500" title={hint}>
+            {hint}
+          </p>
+        </div>
+      </div>
     </div>
   );
 });
@@ -736,7 +861,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             ].join(' ')}
           >
             <div className="relative flex items-center justify-center">
-              <HeroOrbitRing progress={readyRatio} />
+              <HeroOrbitRing progress={readyRatio} showShimmer={total > 0 && readyRatio < 1} />
               <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
                 <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
                 <AnimatedNumber
@@ -922,13 +1047,17 @@ const PlatformSyncRail = memo(function PlatformSyncRail({
         <p className="truncate text-[12px] font-bold leading-none text-slate-800">
           {platform.label}
         </p>
-        <div className="mt-1.5 flex min-w-0 items-baseline gap-2">
+        {/*
+          auto | minmax(0,1fr) keeps the job count in its own column so the
+          sync detail can only truncate — never slide under the digits.
+        */}
+        <div className="mt-1.5 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3">
           <AnimatedNumber
             value={jobs}
-            className="shrink-0 text-[1.25rem] font-black leading-none tracking-tight text-slate-900"
+            className="text-[1.25rem] font-black leading-none tracking-tight text-slate-900"
           />
           <p
-            className="min-w-0 truncate text-[11px] font-medium text-slate-500"
+            className="min-w-0 truncate text-[11px] font-medium leading-none text-slate-500"
             title={formatLastSyncAt(platform.last_sync_at)}
           >
             {detail}
@@ -965,26 +1094,18 @@ const PlatformSyncRail = memo(function PlatformSyncRail({
 
 const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   view,
-  sheetsConfigured = false,
-  pumbleConfigured = false,
   onSelectToday,
   onSelectNeedsExtraction,
   onSelectExtracted,
-  onSelectSheet,
-  onSelectPumble,
   onSelectExtractionFailed,
   onSelectManual,
   onSelectAll,
   onSelectPlatform,
 }: {
   view: AdminScraperStats;
-  sheetsConfigured?: boolean;
-  pumbleConfigured?: boolean;
   onSelectToday?: () => void;
   onSelectNeedsExtraction?: () => void;
   onSelectExtracted?: () => void;
-  onSelectSheet?: () => void;
-  onSelectPumble?: () => void;
   onSelectExtractionFailed?: () => void;
   onSelectManual?: () => void;
   onSelectAll?: () => void;
@@ -996,14 +1117,13 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   const needs = safe(view.needs_extraction_jobs);
   const failed = safe(view.extraction_failed_jobs);
   const pending = safe(view.extraction_pending_jobs);
-  const sheetPosted = safe(view.sheet_posted_jobs);
-  const pumblePosted = safe(view.pumble_posted_jobs);
   const manual = safe(view.manual_jobs);
   const lastNew = safe(view.last_sync_items_new);
   const lastScraped = safe(view.last_sync_items_scraped);
   const totalUsers = safe(view.total_users);
   const newUsersWeek = safe(view.new_users_week);
   const extractRatio = total > 0 ? extracted / total : 0;
+  const failRatio = total > 0 ? failed / total : 0;
   const todayBumped = useBumpOnIncrease(today);
   const platforms = Array.isArray(view.platform_sync) ? view.platform_sync : [];
   const lastSyncLabel = formatLastSyncAt(view.last_sync_at);
@@ -1061,45 +1181,15 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         delay: 110,
       },
     ];
-    if (sheetsConfigured) {
-      items.push({
-        key: 'sheets',
-        icon: Table2,
-        value: sheetPosted,
-        label: 'Sheets posted',
-        tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
-        title: 'Jobs posted to Google Sheets',
-        onClick: onSelectSheet,
-        delay: 190,
-      });
-    }
-    if (pumbleConfigured) {
-      items.push({
-        key: 'pumble',
-        icon: MessageSquare,
-        value: pumblePosted,
-        label: 'Pumble posted',
-        tone: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
-        title: 'Jobs posted to Pumble',
-        onClick: onSelectPumble,
-        delay: 230,
-      });
-    }
     return items;
   }, [
     total,
     failed,
     pending,
     manual,
-    sheetPosted,
-    pumblePosted,
-    sheetsConfigured,
-    pumbleConfigured,
     onSelectAll,
     onSelectExtractionFailed,
     onSelectManual,
-    onSelectSheet,
-    onSelectPumble,
   ]);
 
   const platformRails: PlatformRailItem[] = useMemo(
@@ -1116,174 +1206,202 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   );
 
   return (
-    <div
-      className="stats-board-shell relative w-full overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5"
-      style={{ contentVisibility: 'auto' }}
-    >
-      <div className="pointer-events-none absolute -left-20 top-0 h-48 w-48 rounded-full bg-blue-400/10 blur-3xl dark:bg-blue-500/10" />
-      <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
+    <div className="flex w-full flex-col gap-3.5 xl:flex-row xl:items-stretch">
+      {/* ── Main statistics board ─────────────────────────────────────── */}
+      <div
+        className="stats-board-shell relative min-w-0 flex-1 overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5"
+        style={{ contentVisibility: 'auto' }}
+      >
+        <div className="pointer-events-none absolute -left-20 top-0 h-48 w-48 rounded-full bg-blue-400/10 blur-3xl dark:bg-blue-500/10" />
+        <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
 
-      <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)_14.5rem] xl:gap-4">
-        <div
-          className={[
-            'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
-            railGridClass(leftRail.length),
-          ].join(' ')}
-        >
-          {leftRail.map((item) => (
-            <RailStat
-              key={item.key}
-              icon={item.icon}
-              value={item.value}
-              label={item.label}
-              tone={item.tone}
-              title={item.title}
-              onClick={item.onClick}
-              delay={item.delay}
-              modern={item.modern}
-            />
-          ))}
-        </div>
-
-        <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[1fr_auto_1fr] lg:gap-4 xl:order-2">
-          <div className="flex h-full min-h-0 flex-col gap-3.5">
-            <SideTile
-              icon={FileSearch}
-              value={needs}
-              label="Extraction backlog"
-              hint={
-                pending > 0
-                  ? `${fmt(pending)} in progress now · live unfinished pool`
-                  : 'Live unfinished JD pool (not this sync\'s scrape total)'
-              }
-              accent="from-amber-400 to-orange-500"
-              iconWrap="from-amber-500 to-orange-500"
-              delay={40}
-              onClick={onSelectNeedsExtraction}
-              title="Jobs whose job description is still missing, pending, processing, or stuck mid-extract."
-              trend={fetchedTrend}
-              trendLabels={trendDayLabels}
-              trendColor="#fbbf24"
-              trendLabel="Fetched / day"
-              trendMaxScale={trendMaxScale}
-            />
-            <SideTile
-              icon={FileCheck2}
-              value={extracted}
-              label="JD ready"
-              hint={total > 0 ? `${Math.round(extractRatio * 100)}% of pool with completed JD` : 'Completed job descriptions'}
-              accent="from-emerald-400 to-teal-500"
-              iconWrap="from-emerald-500 to-teal-500"
-              delay={90}
-              onClick={onSelectExtracted}
-              title="Jobs with a completed job description ready for applicants"
-              trend={extractedTrend}
-              trendLabels={trendDayLabels}
-              trendColor="#34d399"
-              trendLabel="JD ready / day"
-              trendMaxScale={trendMaxScale}
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={onSelectToday}
-            title="Show today's fetched jobs"
+        <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[12.5rem_minmax(0,1fr)] xl:gap-4">
+          <div
             className={[
-              'stats-hero-tile group relative mx-auto flex h-full min-h-[220px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-3 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
-              'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
-              'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
-              'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
-              'dark:border-blue-500/30 dark:bg-[#152033]/95 dark:shadow-blue-900/25',
-              todayBumped ? 'stats-hero-pulse' : '',
+              'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+              railGridClass(leftRail.length),
             ].join(' ')}
           >
-            <div className="relative flex items-center justify-center">
-              <HeroOrbitRing progress={extractRatio} />
-              <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
-                <CalendarDays size={15} className="mb-1 text-blue-500 stats-hero-icon-float" />
-                <AnimatedNumber
-                  value={today}
-                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
-                />
-                <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600">
-                  Today&apos;s fetched
-                </span>
-              </div>
-            </div>
-            <div className="mt-1 flex h-[44px] flex-col justify-center space-y-0.5">
-              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
-                {lastNew > 0
-                  ? `${fmt(lastNew)} new from last sync`
-                  : platforms.length > 0
-                    ? `${platforms.length} job sites registered`
-                    : 'New jobs added to the platform today'}
-              </p>
-              <p className="truncate text-[12px] font-medium text-slate-500">
-                {fmt(extracted)} JD ready · {Math.round(extractRatio * 100)}% coverage
-              </p>
-            </div>
-          </button>
+            {leftRail.map((item) => (
+              <RailStat
+                key={item.key}
+                icon={item.icon}
+                value={item.value}
+                label={item.label}
+                tone={item.tone}
+                title={item.title}
+                onClick={item.onClick}
+                delay={item.delay}
+                modern={item.modern}
+              />
+            ))}
+          </div>
 
-          <div className="flex h-full min-h-0 flex-col gap-3.5">
-            <SideTile
-              icon={Clock3}
-              value={lastNew}
-              label="Last check"
-              hint={
-                lastScraped > 0
-                  ? `${lastSyncLabel} · ${fmt(lastScraped)} scraped`
-                  : lastSyncLabel
-              }
-              accent="from-sky-400 to-blue-500"
-              iconWrap="from-sky-500 to-blue-600"
-              delay={40}
-              title={
-                lastSyncSpider
-                  ? `Last sync (${lastSyncSpider}): ${fmt(lastNew)} new · ${fmt(lastScraped)} scraped`
-                  : `Last sync: ${fmt(lastNew)} new job(s)`
-              }
-            />
-            <SideTile
-              icon={Users}
-              value={totalUsers}
-              label="Total users"
-              hint={
-                newUsersWeek > 0
-                  ? `${fmt(newUsersWeek)} new this week`
-                  : 'No new signups this week'
-              }
-              accent="from-indigo-400 to-blue-500"
-              iconWrap="from-indigo-500 to-blue-600"
-              delay={90}
-              title={`${fmt(totalUsers)} accounts · ${fmt(newUsersWeek)} created in the last 7 days`}
-            />
+          {/*
+            Backlog/JD keep the previous wide 1fr column; hero stays auto;
+            Last check / Total users stay in the same slot but narrower;
+            job-site rails follow immediately after those metrics.
+          */}
+          <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[minmax(0,1fr)_auto_minmax(8.25rem,9.25rem)_minmax(11.5rem,13.5rem)] lg:gap-3.5 xl:order-2">
+            <div className="flex h-full min-h-0 flex-col gap-3.5">
+              <SideTile
+                icon={FileSearch}
+                value={needs}
+                label="Extraction backlog"
+                hint={
+                  pending > 0
+                    ? `${fmt(pending)} in progress now · live unfinished pool`
+                    : 'Live unfinished JD pool (not this sync\'s scrape total)'
+                }
+                accent="from-amber-400 to-orange-500"
+                iconWrap="from-amber-500 to-orange-500"
+                delay={40}
+                onClick={onSelectNeedsExtraction}
+                title="Jobs whose job description is still missing, pending, processing, or stuck mid-extract."
+                trend={fetchedTrend}
+                trendLabels={trendDayLabels}
+                trendColor="#fbbf24"
+                trendLabel="Fetched / day"
+                trendMaxScale={trendMaxScale}
+              />
+              <SideTile
+                icon={FileCheck2}
+                value={extracted}
+                label="JD ready"
+                hint={total > 0 ? `${Math.round(extractRatio * 100)}% of pool with completed JD` : 'Completed job descriptions'}
+                accent="from-emerald-400 to-teal-500"
+                iconWrap="from-emerald-500 to-teal-500"
+                delay={90}
+                onClick={onSelectExtracted}
+                title="Jobs with a completed job description ready for applicants"
+                trend={extractedTrend}
+                trendLabels={trendDayLabels}
+                trendColor="#34d399"
+                trendLabel="JD ready / day"
+                trendMaxScale={trendMaxScale}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={onSelectToday}
+              title="Show today's fetched jobs"
+              className={[
+                'stats-hero-tile group relative mx-auto flex h-full min-h-[220px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-3 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
+                'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
+                'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
+                'dark:border-blue-500/30 dark:bg-[#152033]/95 dark:shadow-blue-900/25',
+                todayBumped ? 'stats-hero-pulse' : '',
+              ].join(' ')}
+            >
+              <div className="relative flex items-center justify-center">
+                <HeroOrbitRing
+                  progress={extractRatio}
+                  failProgress={failRatio}
+                  showShimmer={needs > 0 || pending > 0}
+                />
+                <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
+                  <CalendarDays size={15} className="mb-1 text-blue-500 stats-hero-icon-float" />
+                  <AnimatedNumber
+                    value={today}
+                    className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
+                  />
+                  <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600">
+                    Today&apos;s fetched
+                  </span>
+                </div>
+              </div>
+              <div className="mt-1 flex h-[44px] flex-col justify-center space-y-0.5">
+                <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
+                  {lastNew > 0
+                    ? `${fmt(lastNew)} new from last sync`
+                    : platforms.length > 0
+                      ? `${platforms.length} job sites registered`
+                      : 'New jobs added to the platform today'}
+                </p>
+                <p
+                  className="truncate text-[12px] font-medium text-slate-500"
+                  title={
+                    failed > 0
+                      ? `${fmt(extracted)} JD ready · ${fmt(failed)} extraction failed · ${fmt(needs)} still need extraction`
+                      : `${fmt(extracted)} JD ready · ${Math.round(extractRatio * 100)}% coverage`
+                  }
+                >
+                  {failed > 0
+                    ? `${fmt(extracted)} ready · ${fmt(failed)} failed`
+                    : `${fmt(extracted)} JD ready · ${Math.round(extractRatio * 100)}% coverage`}
+                </p>
+              </div>
+            </button>
+
+            <div className="flex h-full min-h-0 w-full flex-col gap-2.5">
+              <CompactMetricTile
+                icon={Clock3}
+                value={lastNew}
+                label="Last check"
+                hint={
+                  lastScraped > 0
+                    ? `${lastSyncLabel} · ${fmt(lastScraped)} scraped`
+                    : lastSyncLabel
+                }
+                accent="from-sky-400 to-blue-500"
+                iconWrap="from-sky-500 to-blue-600"
+                delay={40}
+                title={
+                  lastSyncSpider
+                    ? `Last sync (${lastSyncSpider}): ${fmt(lastNew)} new · ${fmt(lastScraped)} scraped`
+                    : `Last sync: ${fmt(lastNew)} new job(s)`
+                }
+              />
+              <CompactMetricTile
+                icon={Users}
+                value={totalUsers}
+                label="Total users"
+                hint={
+                  newUsersWeek > 0
+                    ? `${fmt(newUsersWeek)} new this week`
+                    : 'No new signups this week'
+                }
+                accent="from-indigo-400 to-blue-500"
+                iconWrap="from-indigo-500 to-blue-600"
+                delay={90}
+                title={`${fmt(totalUsers)} accounts · ${fmt(newUsersWeek)} created in the last 7 days`}
+              />
+            </div>
+
+            <div
+              className={[
+                'grid gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+                railGridClass(Math.max(platformRails.length, 1)),
+              ].join(' ')}
+            >
+              {platformRails.length > 0 ? (
+                platformRails.map((item, index) => (
+                  <PlatformSyncRail
+                    key={item.key}
+                    platform={item.platform}
+                    delay={item.delay}
+                    tone={PLATFORM_TONES[index % PLATFORM_TONES.length]}
+                    onClick={item.onClick}
+                  />
+                ))
+              ) : (
+                <div className="flex min-h-[72px] flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-300 px-3 text-center text-xs font-medium text-slate-500 dark:border-slate-600">
+                  No job sites configured in System Settings
+                </div>
+              )}
+            </div>
           </div>
         </div>
-
-        <div
-          className={[
-            'order-3 grid gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:flex-col',
-            railGridClass(Math.max(platformRails.length, 1)),
-          ].join(' ')}
-        >
-          {platformRails.length > 0 ? (
-            platformRails.map((item, index) => (
-              <PlatformSyncRail
-                key={item.key}
-                platform={item.platform}
-                delay={item.delay}
-                tone={PLATFORM_TONES[index % PLATFORM_TONES.length]}
-                onClick={item.onClick}
-              />
-            ))
-          ) : (
-            <div className="flex min-h-[72px] flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-300 px-3 text-center text-xs font-medium text-slate-500 dark:border-slate-600">
-              No job sites configured in System Settings
-            </div>
-          )}
-        </div>
       </div>
+
+      {/* ── Independent job-fetch control board (same row / height) ───── */}
+      <aside className="flex w-full shrink-0 xl:w-[20rem] xl:min-h-0 xl:self-stretch">
+        <div className="flex h-full min-h-[220px] w-full flex-1">
+          <SyncControlBoard />
+        </div>
+      </aside>
     </div>
   );
 });
@@ -1325,8 +1443,9 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
   const [sheetsConfiguredLocal, setSheetsConfiguredLocal] = useState(false);
   const [pumbleConfiguredLocal, setPumbleConfiguredLocal] = useState(false);
 
-  // Resolve optional integrations for both applicant and admin boards.
+  // Resolve optional Sheets/Pumble integrations for the applicant board only.
   useEffect(() => {
+    if (isAdmin) return;
     if (sheetsConfiguredProp !== undefined && pumbleConfiguredProp !== undefined) return;
     let cancelled = false;
     void fetchSheetsConfig()
@@ -1348,7 +1467,7 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
     return () => {
       cancelled = true;
     };
-  }, [sheetsConfiguredProp, pumbleConfiguredProp]);
+  }, [isAdmin, sheetsConfiguredProp, pumbleConfiguredProp]);
 
   const sheetsConfigured = sheetsConfiguredProp ?? sheetsConfiguredLocal;
   const pumbleConfigured = pumbleConfiguredProp ?? pumbleConfiguredLocal;
@@ -1360,13 +1479,9 @@ export const ScraperStatsBar = memo(function ScraperStatsBar({
     return (
       <AdminStatsBoardContent
         view={adminView}
-        sheetsConfigured={sheetsConfigured}
-        pumbleConfigured={pumbleConfigured}
         onSelectToday={onSelectToday}
         onSelectNeedsExtraction={onSelectNeedsExtraction}
         onSelectExtracted={onSelectExtracted}
-        onSelectSheet={onSelectSheet}
-        onSelectPumble={onSelectPumble}
         onSelectExtractionFailed={onSelectExtractionFailed}
         onSelectManual={onSelectManual}
         onSelectAll={onSelectAll}

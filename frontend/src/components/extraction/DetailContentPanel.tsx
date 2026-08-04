@@ -24,12 +24,15 @@ import {
   ListChecks,
   Link2,
   MapPin,
+  Pencil,
+  Plus,
   RefreshCw,
   Sparkles,
   Target,
   ThumbsUp,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
+import { saveManualJobDescription } from '../../api/scraperApi';
 import { useScraperStore } from '../../stores/scraperStore';
 import { namedDownloadFile } from '../../utils/resumeFileName';
 import { BrandedLoader } from '../layout/BrandedLoader';
@@ -458,6 +461,10 @@ export function DetailContentPanel({
   const [initialLoading, setInitialLoading] = useState(false);
   const [retryingBuild, setRetryingBuild] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [editingJd, setEditingJd] = useState(false);
+  const [draftJd, setDraftJd] = useState('');
+  const [savingJd, setSavingJd] = useState(false);
+  const [saveJdError, setSaveJdError] = useState<string | null>(null);
 
   useEffect(() => {
     snapshotRef.current = null;
@@ -465,6 +472,10 @@ export function DetailContentPanel({
     setLoadError(null);
     setRetryError(null);
     setRetryingBuild(false);
+    setEditingJd(false);
+    setDraftJd('');
+    setSavingJd(false);
+    setSaveJdError(null);
   }, [validJobId]);
 
   useEffect(() => {
@@ -594,6 +605,74 @@ export function DetailContentPanel({
 
   const extractionStatus = analysis?.extraction_status;
   const extractionBusy = extractionStatus === 'pending' || extractionStatus === 'processing' || extractionStatus === 'extracted';
+  const adminRawJd = (analysis?.raw_plain_text || analysis?.job_data?.description || '').trim();
+  const hasAdminRawJd = adminRawJd.length > 0;
+  const extractionFailed = extractionStatus === 'failed';
+
+  const startAddJd = () => {
+    setDraftJd('');
+    setSaveJdError(null);
+    setEditingJd(true);
+  };
+
+  const startEditJd = () => {
+    setDraftJd(adminRawJd);
+    setSaveJdError(null);
+    setEditingJd(true);
+  };
+
+  const cancelEditJd = () => {
+    if (savingJd) return;
+    setEditingJd(false);
+    setDraftJd('');
+    setSaveJdError(null);
+  };
+
+  const saveManualJd = async () => {
+    if (!validJobId || savingJd) return;
+    const text = draftJd.trim();
+    if (text.length < 10) {
+      setSaveJdError('Paste at least 10 characters of job description text.');
+      return;
+    }
+    setSavingJd(true);
+    setSaveJdError(null);
+    try {
+      const res = await saveManualJobDescription(validJobId, text);
+      setAnalysis((prev) =>
+        prev
+          ? {
+              ...prev,
+              extraction_id: res.extraction_id || prev.extraction_id,
+              extraction_status: 'completed',
+              raw_plain_text: res.raw_plain_text,
+              content_enriched_by_ai: false,
+              is_job_posting: true,
+            }
+          : prev,
+      );
+      snapshotRef.current = {
+        ...(snapshotRef.current || analysis)!,
+        extraction_id: res.extraction_id,
+        extraction_status: 'completed',
+        raw_plain_text: res.raw_plain_text,
+        content_enriched_by_ai: false,
+        is_job_posting: true,
+      } as JobAnalysisResponse;
+      setEditingJd(false);
+      setDraftJd('');
+      useScraperStore.getState().markJobManualJdSaved(validJobId);
+      onAnalysisUpdatedRef.current?.();
+    } catch (e: unknown) {
+      const detail =
+        typeof e === 'object' && e !== null && 'response' in e
+          ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setSaveJdError(typeof detail === 'string' ? detail : 'Could not save job description');
+    } finally {
+      setSavingJd(false);
+    }
+  };
 
   return (
     <div className="animate-detail-panel-in flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -830,7 +909,7 @@ export function DetailContentPanel({
                 </div>
               )}
 
-              {!analysis.extraction_id && (
+              {!analysis.extraction_id && !isAdmin && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2 text-slate-700">
                   Extraction has not started for this job yet.
                 </div>
@@ -844,34 +923,93 @@ export function DetailContentPanel({
                 </div>
               )}
 
-              {extractionStatus === 'failed' && (
-                <div className="rounded-lg border border-red-200/80 bg-red-50/90 px-3 py-2 text-red-800">
-                  Extraction failed. Try re-scraping from the job row menu.
+              {extractionStatus === 'failed' && !editingJd && (
+                <div className="mb-3 rounded-lg border border-red-200/80 bg-red-50/90 px-3 py-2 text-red-800">
+                  {isAdmin
+                    ? 'Extraction failed. Open the posting URL above, then paste the job description here, or delete the job from the table.'
+                    : 'Extraction failed. Try re-scraping from the job row menu.'}
                 </div>
               )}
 
-              {/* Admin inventory: show raw extracted posting text directly under the URL. */}
-              {isAdmin && !extractionBusy && (analysis.raw_plain_text || analysis.job_data?.description) && (
-                <div>
-                  <SectionLabel icon={FileText}>Raw job description</SectionLabel>
-                  {/*
-                    Do NOT use dark:text-slate-100 — this app inverts the slate
-                    scale in dark mode, so slate-100 becomes a dark navy and
-                    the JD text disappears on the dark panel.
-                  */}
-                  <div className="mt-2 max-h-[min(36rem,55vh)] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner dark:border-[rgba(148,163,184,0.28)] dark:bg-[#0b1220] dark:text-[#e2e8f0]">
-                    {analysis.raw_plain_text || analysis.job_data?.description}
+              {/* Admin inventory: raw JD viewer / manual paste editor */}
+              {isAdmin && !extractionBusy && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <SectionLabel icon={FileText}>
+                      {editingJd
+                        ? (hasAdminRawJd ? 'Edit job description' : 'Add job description')
+                        : 'Raw job description'}
+                    </SectionLabel>
+                    {!editingJd && hasAdminRawJd && (
+                      <button
+                        type="button"
+                        onClick={startEditJd}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-800"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit JD
+                      </button>
+                    )}
                   </div>
-                </div>
-              )}
 
-              {isAdmin &&
-                !extractionBusy &&
-                !analysis.raw_plain_text &&
-                !analysis.job_data?.description &&
-                (extractionStatus === 'completed' || extractionStatus === 'extracted') && (
-                <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-900">
-                  Extraction finished but no posting text was saved. Try Re-extract on this job.
+                  {editingJd ? (
+                    <div className="space-y-3">
+                      <textarea
+                        value={draftJd}
+                        onChange={(e) => setDraftJd(e.target.value)}
+                        rows={16}
+                        placeholder="Paste the full job description text from the posting…"
+                        disabled={savingJd}
+                        className="w-full resize-y rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-inner outline-none ring-blue-500/30 placeholder:text-slate-400 focus:border-blue-300 focus:ring-2 disabled:opacity-60 dark:border-[rgba(148,163,184,0.28)] dark:bg-[#0b1220] dark:text-[#e2e8f0] dark:placeholder:text-[#94a3b8]"
+                      />
+                      {saveJdError && (
+                        <p className="text-sm text-red-600">{saveJdError}</p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={savingJd}
+                          onClick={() => void saveManualJd()}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
+                        >
+                          {savingJd ? 'Saving…' : 'Save JD'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={savingJd}
+                          onClick={cancelEditJd}
+                          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Saving marks this job as extracted. The pasted text is used as the shared raw job description.
+                      </p>
+                    </div>
+                  ) : hasAdminRawJd ? (
+                    <div className="max-h-[min(36rem,55vh)] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner dark:border-[rgba(148,163,184,0.28)] dark:bg-[#0b1220] dark:text-[#e2e8f0]">
+                      {adminRawJd}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-6 text-center dark:border-[rgba(148,163,184,0.35)] dark:bg-[#0b1220]/70">
+                      <p className="text-sm text-slate-600 dark:text-[#cbd5e1]">
+                        {extractionFailed
+                          ? 'No job description was extracted. Paste it manually after checking the posting.'
+                          : extractionStatus === 'completed' || extractionStatus === 'extracted'
+                            ? 'Extraction finished but no posting text was saved.'
+                            : 'No job description text yet.'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={startAddJd}
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add JD
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

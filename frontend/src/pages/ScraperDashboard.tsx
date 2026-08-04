@@ -8,7 +8,6 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { ScraperStatsBar } from '../components/scraper/ScraperStatsBar';
 import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
-import { SyncButton } from '../components/scraper/SyncButton';
 import { SyncResultBanner } from '../components/scraper/SyncResultBanner';
 import { LlmProviderSelector } from '../components/scraper/LlmProviderSelector';
 import { Pagination } from '../components/shared/Pagination';
@@ -30,13 +29,11 @@ export function ScraperDashboard() {
     stats, adminStats, statsLoading,
     spiders,
     syncing,
-    syncProgress,
     syncNotice,
     sortField, sortOrder,
     view, counts,
     titleFilter, companyFilter, remoteOnly, minScore,
-    lastSyncRuns,
-    loadJobs, bgRefreshJobs, loadStats, loadSpiders, loadLastSyncRuns, checkSyncStatus, startSync,
+    loadJobs, bgRefreshJobs, loadStats, loadSpiders, loadLastSyncRuns, checkSyncStatus,
     dismissSyncNotice,
     setPage, setPerPage, setSort, setView,
     setTitleFilter, setCompanyFilter, setRemoteOnly, setMinScore,
@@ -107,8 +104,13 @@ export function ScraperDashboard() {
 
   useEffect(() => {
     // Admin ops views must not inherit applicant list filters (title/company/remote/score).
+    // Sheets / Pumble boards are applicant-only — bounce admin off those views.
     if (isAdmin) {
       const s = useScraperStore.getState();
+      if (s.view === 'sheet_posted' || s.view === 'pumble_posted') {
+        applyAgentDashboard({ reset: true, view: 'today', remote_only: false, min_match_score: 0 });
+        return;
+      }
       if (
         s.titleFilter ||
         s.companyFilter ||
@@ -151,7 +153,7 @@ export function ScraperDashboard() {
         sessionStorage.removeItem(LOCATION_RECONCILE_FLAG);
       });
     }
-  }, [isAdmin]);
+  }, [isAdmin, applyAgentDashboard]);
 
   // Poll every 6 s while any job is mid-pipeline so dots/badges update live.
   useEffect(() => {
@@ -203,10 +205,6 @@ export function ScraperDashboard() {
     return () => window.clearInterval(id);
   }, [syncing, checkSyncStatus, isAdmin, refreshStats]);
 
-  const handleSync = useCallback((options: Parameters<typeof startSync>[0]) => {
-    void startSync(options);
-  }, [startSync]);
-
   const activeBoardCount = (() => {
     if (!isAdmin || !adminStats) {
       if (view === 'applied') return stats?.applied_jobs ?? total;
@@ -225,10 +223,6 @@ export function ScraperDashboard() {
         return adminStats.extraction_failed_jobs;
       case 'manual':
         return adminStats.manual_jobs;
-      case 'sheet_posted':
-        return adminStats.sheet_posted_jobs;
-      case 'pumble_posted':
-        return adminStats.pumble_posted_jobs;
       case 'applied_today':
         return adminStats.team_applied_today;
       case 'today':
@@ -274,9 +268,6 @@ export function ScraperDashboard() {
               </button>
             )}
             <LlmProviderSelector />
-            {isAdmin && (
-              <SyncButton syncing={syncing} syncProgress={syncProgress} spiders={spiders} lastSyncRuns={lastSyncRuns} onSync={handleSync} />
-            )}
           </div>
         }
       />
@@ -420,27 +411,29 @@ export function ScraperDashboard() {
             <div className="min-w-0 flex-1 basis-[min(100%,16rem)]">
               <SubmitForm inline />
             </div>
-            <button
-              type="button"
-              onClick={() => setDupOpen(true)}
-              title="View duplicate jobs"
-              aria-label="Open duplicates panel"
-              className={[
-                'group inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border border-orange-600/20 px-3 sm:px-3.5 text-sm font-bold text-white',
-                'bg-gradient-to-br from-amber-500 to-orange-600 shadow-md shadow-orange-500/25 transition-all',
-                'hover:from-amber-500 hover:to-orange-500 hover:shadow-lg hover:shadow-orange-500/30',
-                'focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:ring-offset-1',
-                dupOpen ? 'from-amber-600 to-orange-700 ring-2 ring-orange-300' : '',
-              ].join(' ')}
-            >
-              <AlertTriangle className="h-4 w-4 shrink-0 drop-shadow-sm" />
-              <span className="hidden sm:inline">Duplicates</span>
-              {duplicateCount > 0 && (
-                <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-white px-1.5 py-0.5 text-xs font-extrabold tabular-nums text-orange-700 shadow-sm">
-                  {duplicateCount}
-                </span>
-              )}
-            </button>
+            {!isAdmin && (
+              <button
+                type="button"
+                onClick={() => setDupOpen(true)}
+                title="View duplicate jobs"
+                aria-label="Open duplicates panel"
+                className={[
+                  'group inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border border-orange-600/20 px-3 sm:px-3.5 text-sm font-bold text-white',
+                  'bg-gradient-to-br from-amber-500 to-orange-600 shadow-md shadow-orange-500/25 transition-all',
+                  'hover:from-amber-500 hover:to-orange-500 hover:shadow-lg hover:shadow-orange-500/30',
+                  'focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:ring-offset-1',
+                  dupOpen ? 'from-amber-600 to-orange-700 ring-2 ring-orange-300' : '',
+                ].join(' ')}
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 drop-shadow-sm" />
+                <span className="hidden sm:inline">Duplicates</span>
+                {duplicateCount > 0 && (
+                  <span className="inline-flex min-w-[1.5rem] items-center justify-center rounded-full bg-white px-1.5 py-0.5 text-xs font-extrabold tabular-nums text-orange-700 shadow-sm">
+                    {duplicateCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -469,7 +462,9 @@ export function ScraperDashboard() {
       )}
 
       {/* ── Duplicates modal ─────────────────────────────────────────────── */}
-      {dupOpen && <DuplicatesModal onClose={() => setDupOpen(false)} isAdmin={isAdmin} />}
+      {!isAdmin && dupOpen && (
+        <DuplicatesModal onClose={() => setDupOpen(false)} isAdmin={false} />
+      )}
     </div>
     </PageScrollArea>
   );

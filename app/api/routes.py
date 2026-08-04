@@ -2954,7 +2954,13 @@ async def get_job_analysis_panel(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     async with get_session() as session:
-        r = await session.execute(select(Job).where(Job.id == job_id, Job.status == "active"))
+        # Include extraction_failed so admins can open the JD modal and paste text.
+        r = await session.execute(
+            select(Job).where(
+                Job.id == job_id,
+                Job.status.in_(("active", "extraction_failed")),
+            )
+        )
         job = r.scalar_one_or_none()
         if not job:
             raise HTTPException(status_code=404, detail="Valid job not found")
@@ -3090,6 +3096,83 @@ async def get_job_analysis_panel(
             promotion=promotion_payload,
             resume_build=resume_build_payload,
         )
+
+
+class ManualJdRequest(BaseModel):
+    plain_text: str = Field(..., min_length=10, max_length=500_000)
+
+
+class ManualJdResponse(BaseModel):
+    job_id: str
+    extraction_id: str
+    extraction_status: ExtractionStatus
+    raw_plain_text: str
+
+
+@router.put(
+    "/jobs/valid/{job_id}/manual-jd",
+    response_model=ManualJdResponse,
+    dependencies=[Depends(require_admin)],
+)
+async def save_manual_job_description(
+    job_id: str,
+    body: ManualJdRequest,
+    current_user: dict = Depends(require_admin),
+) -> ManualJdResponse:
+    """
+    Admin: paste a job description when automatic extraction failed or returned no text.
+    Saves as shared ``raw_plain_text`` and marks the extraction completed (same as a
+    successful platform extract).
+    """
+    from app.services.extraction_cache import invalidate_extraction_cache
+    from app.services.manual_jd import apply_manual_job_description
+
+    user_id = current_user.get("user_id")
+
+    async with get_session() as session:
+        r = await session.execute(
+            select(Job).where(
+                Job.id == job_id,
+                Job.status.in_(("active", "extraction_failed")),
+            )
+        )
+        job = r.scalar_one_or_none()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        try:
+            extraction = await apply_manual_job_description(
+                session,
+                job=job,
+                plain_text=body.plain_text,
+                saved_by_user_id=user_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        await session.commit()
+        extraction_id = extraction.id
+        raw_text = (getattr(extraction, "raw_plain_text", None) or body.plain_text).strip()
+
+    try:
+        await invalidate_extraction_cache(extraction_id)
+    except Exception as e:
+        logger.warning("manual_jd_cache_invalidate_failed", extraction_id=extraction_id, error=str(e))
+
+    await publish_ws_event({
+        "type": "extraction_completed",
+        "job_id": extraction_id,
+        "valid_job_id": job_id,
+        "method": "manual",
+        "manual_jd": True,
+    })
+
+    return ManualJdResponse(
+        job_id=job_id,
+        extraction_id=extraction_id,
+        extraction_status=ExtractionStatus.COMPLETED,
+        raw_plain_text=raw_text,
+    )
 
 
 @router.post("/jobs/valid/{job_id}/match", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(get_current_user)])

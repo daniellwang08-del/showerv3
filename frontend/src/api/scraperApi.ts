@@ -215,6 +215,24 @@ export async function deleteScrapedJob(jobId: string): Promise<DeleteScrapedJobR
   return data;
 }
 
+export interface ManualJdResponse {
+  job_id: string;
+  extraction_id: string;
+  extraction_status: string;
+  raw_plain_text: string;
+}
+
+/** Admin: paste JD for extraction-failed / empty jobs; marks extraction completed. */
+export async function saveManualJobDescription(
+  jobId: string,
+  plainText: string,
+): Promise<ManualJdResponse> {
+  const { data } = await apiClient.put<ManualJdResponse>(`/jobs/valid/${jobId}/manual-jd`, {
+    plain_text: plainText,
+  });
+  return data;
+}
+
 // ---------------------------------------------------------------------------
 // AI search
 // ---------------------------------------------------------------------------

@@ -290,6 +290,8 @@ interface ScraperState {
   deleteJob: (jobId: string) => Promise<{ ok: boolean; message: string }>;
   batchDeleteJobs: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
   batchRerunJobs: (jobIds: string[]) => Promise<{ ok: boolean; partial?: boolean; message: string }>;
+  /** After admin pastes a manual JD: mark row extracted and drop from failed board. */
+  markJobManualJdSaved: (jobId: string) => void;
   /** Instant UI update - call synchronously (e.g. inside flushSync) before persist. */
   optimisticMarkJobsApplied: (jobIds: string[], applied: boolean) => void;
   markJobsApplied: (jobIds: string[]) => Promise<{ ok: boolean; message: string }>;
@@ -1099,6 +1101,33 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     } catch (err) {
       return { ok: false, message: extractErrorMessage(err, 'Batch delete failed.') };
     }
+  },
+
+  markJobManualJdSaved: (jobId: string) => {
+    const id = (jobId || '').trim();
+    if (!id) return;
+    const onFailedBoard = get().view === 'extraction_failed';
+    set((state) => {
+      if (onFailedBoard) {
+        const nextJobs = state.jobs.filter((j) => j.id !== id);
+        return {
+          jobs: nextJobs,
+          total: Math.max(0, state.total - (state.jobs.length - nextJobs.length)),
+        };
+      }
+      return {
+        jobs: state.jobs.map((j) =>
+          j.id === id
+            ? {
+                ...j,
+                extraction_status: 'completed' as const,
+                status: 'active',
+              }
+            : j,
+        ),
+      };
+    });
+    void get().loadStats({ silent: true, isAdmin: get().statsRole === 'admin' });
   },
 
   batchRerunJobs: async (jobIds: string[]) => {
