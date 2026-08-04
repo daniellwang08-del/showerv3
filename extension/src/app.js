@@ -2648,6 +2648,37 @@ async function prepareManatal(tabId) {
   await delay(200);
 }
 
+// Jobvite: attach the tailored resume (required) and cover letter (optional)
+// through the jv-add-attachment widget before extraction. Done first so that if
+// Jobvite parses the resume into any fields, the subsequent LLM text pass still
+// overwrites them with the tailored values. Silently no-ops when a document was
+// never built for this job or the widget is not on this step.
+async function prepareJobvite(tabId) {
+  if (tabId == null || !state.job || !state.job.job_id) return;
+  const jobId = state.job.job_id;
+  const cache = {};
+  try {
+    const resumeFile = await fetchRoleFile(jobId, "resume", "", cache);
+    if (resumeFile) {
+      const r = await tabSend(tabId, { type: "AF_JV_UPLOAD_RESUME", file: resumeFile });
+      if (r && r.uploaded) console.log("[autofill] Jobvite resume attached");
+      else console.warn("[autofill] Jobvite resume attach not confirmed:", r);
+    }
+  } catch (e) {
+    console.warn("[autofill] Jobvite resume attach failed:", (e && e.message) || e);
+  }
+  try {
+    const coverFile = await fetchRoleFile(jobId, "cover_letter", "", cache);
+    if (coverFile) {
+      const c = await tabSend(tabId, { type: "AF_JV_UPLOAD_COVER", file: coverFile });
+      if (c && c.uploaded) console.log("[autofill] Jobvite cover letter attached");
+    }
+  } catch (e) {
+    console.warn("[autofill] Jobvite cover letter attach failed:", (e && e.message) || e);
+  }
+  await delay(300);
+}
+
 // ── iCIMS ────────────────────────────────────────────────────────────────────
 
 // A password satisfying the rule iCIMS states in the field's own title
@@ -3426,6 +3457,7 @@ function writeAndWait(tabId, results, files) {
 const AUTOFILL_MAX_PASSES = 4;
 const SR_MAX_PAGES = 8; // SmartRecruiters multi-step applications: hard cap on steps
 const BZY_MAX_PAGES = 6; // Breezy.hr multi-step applications: hard cap on sections
+const JV_MAX_PAGES = 6; // Jobvite multi-step applications: hard cap on steps
 const ICIMS_MAX_PAGES = 10; // iCIMS itineraries are typically 3-5 steps; cap well above
 
 // Re-run auto-discovery on the current page and wait for the application
@@ -3497,6 +3529,10 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   if (eng && eng.platform === "workable" && isFirstPage) {
     setAutofill({ runStatus: "Adding your work & education history…" });
     await prepareWorkable(tabId);
+  }
+  if (eng && eng.platform === "jobvite" && isFirstPage) {
+    setAutofill({ runStatus: "Attaching your resume…" });
+    await prepareJobvite(tabId);
   }
   // Replay remembered identity answers (EEO/work-auth/consent) before extract
   // so those controls are already filled and skip the harvest + LLM pass.
@@ -4043,6 +4079,21 @@ async function runAutofill() {
       for (let page = 1; page < BZY_MAX_PAGES; page++) {
         setAutofill({ runStatus: "Moving to the next step…" });
         const nav = await tabSend(tabId, { type: "AF_BZY_NEXT" });
+        if (!nav || !nav.advanced) break;
+        const ok = await rediscoverForm(tabId);
+        if (!ok) break;
+        lastSpecs = await fillCurrentPage(tabId, eng, ctx, false);
+      }
+    }
+
+    // Jobvite: the application spans one or more steps behind a footer "Next"
+    // button (the final step shows "Send Application" instead). Fill the visible
+    // step, click Next, re-discover the freshly rendered step, and fill again -
+    // stopping when Next is gone/blocked. We never auto-submit.
+    if (eng && eng.platform === "jobvite" && lastSpecs.length) {
+      for (let page = 1; page < JV_MAX_PAGES; page++) {
+        setAutofill({ runStatus: "Moving to the next step…" });
+        const nav = await tabSend(tabId, { type: "AF_JV_NEXT" });
         if (!nav || !nav.advanced) break;
         const ok = await rediscoverForm(tabId);
         if (!ok) break;

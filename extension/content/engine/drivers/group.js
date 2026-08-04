@@ -91,6 +91,13 @@
         if (q) return q;
       }
     } catch {}
+    // Jobvite: radio/checkbox question text lives in the fieldset <legend>.
+    try {
+      if (AF.jobvite && AF.jobvite.questionTitleFor) {
+        const q = AF.jobvite.questionTitleFor(root);
+        if (q) return q;
+      }
+    } catch {}
     // iCIMS: label[for] in the row's .iCIMS_InfoField, qualified by collection.
     try {
       if (AF.icims && AF.icims.questionTitleFor) {

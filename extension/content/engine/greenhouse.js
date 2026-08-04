@@ -180,9 +180,13 @@
     }
   }
 
-  // Type character-by-character so the debounced geocoder fires like real typing;
-  // a single bulk setNativeValue frequently never opens the suggestion listbox.
-  async function typeLocationQuery(input, text) {
+  // Open/activate the react-aria combobox BEFORE typing. These widgets ignore
+  // programmatic `input` events while the popup is closed, so we must first put
+  // the field into its open state with the full pointer+mouse+click sequence
+  // (libraries disagree on which event opens the menu) plus an ArrowDown fallback,
+  // exactly like the react-select driver's openCombo. Without this, the geocoder
+  // never fires and the suggestion listbox never mounts.
+  function openLocationCombo(input) {
     try {
       input.focus({ preventScroll: true });
     } catch {
@@ -190,15 +194,38 @@
         input.focus();
       } catch {}
     }
+    try {
+      input.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, button: 0 }));
+    } catch {}
+    input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    try {
+      input.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, button: 0 }));
+    } catch {}
+    input.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+    try {
+      input.click();
+    } catch {}
+    pressKey(input, "ArrowDown", 40);
+  }
+
+  // Type character-by-character so the debounced geocoder fires like real typing;
+  // a single bulk setNativeValue frequently never opens the suggestion listbox.
+  // The combobox must already be open (see openLocationCombo) before we type.
+  async function typeLocationQuery(input, text) {
+    openLocationCombo(input);
+    await delay(120);
     setNativeValue(input, "");
     fireInput(input);
     await delay(60);
     let built = "";
     for (const ch of String(text)) {
       built += ch;
+      // Fire a key event pair around each character so react-aria's keyboard
+      // handlers register the interaction and keep the popup open.
+      pressKey(input, ch, ch.charCodeAt(0));
       setNativeValue(input, built);
       fireInput(input);
-      await delay(25);
+      await delay(30);
     }
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }

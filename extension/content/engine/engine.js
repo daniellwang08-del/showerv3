@@ -105,6 +105,7 @@
             if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(n)) return;
             if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(n)) return;
             if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(n)) return;
+            if (AF.jobvite && AF.jobvite.shouldSkipControl && AF.jobvite.shouldSkipControl(n)) return;
             if (n.closest && AF.workable && AF.workable.shouldSkipSubtree && n.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) return;
           } catch {}
           anchors.push(n);
@@ -146,6 +147,7 @@
         if (AF.workable && AF.workable.shouldSkipControl && AF.workable.shouldSkipControl(anchor)) continue;
         if (AF.breezy && AF.breezy.shouldSkipControl && AF.breezy.shouldSkipControl(anchor)) continue;
         if (AF.icims && AF.icims.shouldSkipControl && AF.icims.shouldSkipControl(anchor)) continue;
+        if (AF.jobvite && AF.jobvite.shouldSkipControl && AF.jobvite.shouldSkipControl(anchor)) continue;
         if (anchor.closest && AF.workable && anchor.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) continue;
       } catch {}
       // Skip hidden helper inputs - EXCEPT file inputs, which are almost always

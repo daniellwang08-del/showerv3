@@ -213,6 +213,9 @@
       if (AF.manatal && AF.manatal.isManatalPage && AF.manatal.isManatalPage()) {
         return "Application form (Manatal)";
       }
+      if (AF.jobvite && AF.jobvite.isJobvitePage && AF.jobvite.isJobvitePage()) {
+        return "Application form (Jobvite)";
+      }
       if (AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage()) {
         return "Candidate profile (iCIMS)";
       }
@@ -271,6 +274,14 @@
     '.application-container form[name="form"]',
     'form[ng-controller*="FormWithQuestionnaire"]',
     ".application-container",
+    // Jobvite (jobs.jobvite.com): AngularJS application under
+    // <article ng-controller="JVApply"> → <form name="scopeData.applyForm"> with
+    // one or more steps. Select the form so every jv-form-field in the current
+    // step is filled in one pass; the resume/cover-letter attachment widgets it
+    // contains are skipped by AF.jobvite.shouldSkipControl.
+    'form[name="scopeData.applyForm"]',
+    ".jv-apply-form",
+    'article[ng-controller="JVApply"]',
     // Lever (jobs.lever.co): apply form is a .application-form section (often a
     // <div> inside or instead of a native <form>). Select the whole block so
     // every .application-question is filled in one pass.
@@ -1974,6 +1985,40 @@
         } catch {}
       });
       return true;
+    }
+    // Jobvite multi-step: click the footer "Next" to advance to the next step.
+    // Only the frame hosting the Jobvite form answers, and it never clicks the
+    // final-step "Send Application" submit.
+    if (msg.type === "AF_JV_NEXT") {
+      const isJv = !!(AF.jobvite && AF.jobvite.isJobvitePage && AF.jobvite.isJobvitePage());
+      if (!isJv) return false; // not this frame
+      runExclusive(async () => {
+        const nav = AF.jobvite && AF.jobvite.advanceStep ? await AF.jobvite.advanceStep() : { advanced: false };
+        return nav || { advanced: false };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true; // async sendResponse
+    }
+    // Jobvite: attach resume / cover letter through the jv-add-attachment widget
+    // (opens the "Select" menu, sets the revealed hidden <input type=file>, and
+    // lets Angular's change() handler upload it). Resume is required so this runs
+    // before advancing past the first step.
+    if (msg.type === "AF_JV_UPLOAD_RESUME" || msg.type === "AF_JV_UPLOAD_COVER") {
+      const isJv = !!(AF.jobvite && AF.jobvite.isJobvitePage && AF.jobvite.isJobvitePage());
+      if (!isJv) return false; // not this frame
+      const kind = msg.type === "AF_JV_UPLOAD_COVER" ? "cover_letter" : "resume";
+      runExclusive(async () => {
+        const fn = kind === "cover_letter" ? AF.jobvite.uploadCoverLetter : AF.jobvite.uploadResume;
+        return (fn ? await fn(msg.file) : { uploaded: false }) || { uploaded: false };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true; // async sendResponse
     }
     // ApplyToJob pre-pass: reveal the hidden resume file input before extraction.
     // Only the frame that hosts the resumator form answers.

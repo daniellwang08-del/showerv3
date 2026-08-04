@@ -74,6 +74,7 @@ const PLATFORM_MATCHERS = [
   ["bamboohr", (h) => h.includes("bamboohr.com")],
   ["workable", (h) => h.includes("workable.com")],
   ["breezy", (h) => h.includes("breezy.hr")],
+  ["jobvite", (h) => h.includes("jobvite.com")],
   // Manatal white-label careers (careers-page.com / manatal.com).
   ["manatal", (h) => h.includes("careers-page.com") || h.includes("manatal.com")],
 ];
@@ -223,6 +224,23 @@ export const ENGINES = {
     available: true,
     autoDiscover: true,
     note: "Finds the Breezy application form and fills it automatically.",
+  },
+  // Jobvite (jobs.jobvite.com): AngularJS application under
+  // <article ng-controller="JVApply"> → <form name="scopeData.applyForm"> with one
+  // or more steps. Fields are native <input>/<select ng-options>/<textarea> and
+  // radio/checkbox <fieldset>s carrying a real label[for], so the generic
+  // component drivers fill them (AngularJS ng-model commits on input+change).
+  // Reuses the greenhouse bundle + auto-discover; Jobvite-specific label/required/
+  // skip helpers + multi-step "Next" navigation live in content/engine/jobvite.js.
+  // Resume/cover-letter use a custom jv-add-attachment widget (handled separately).
+  jobvite: {
+    id: "jobvite",
+    label: "Jobvite",
+    mode: "select",
+    scripts: "greenhouse",
+    available: true,
+    autoDiscover: true,
+    note: "Finds the application form and fills it automatically.",
   },
   // Manatal (careers-page.com): single Vue form of native text/textarea/file +
   // terms checkbox. Reuses the greenhouse bundle + auto-discover; Manatal-specific
