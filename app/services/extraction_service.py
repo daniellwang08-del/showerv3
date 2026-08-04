@@ -37,6 +37,11 @@ from app.extractors.greenhouse_board_extractor import (
     parse_greenhouse_job_id_from_url,
 )
 from app.extractors.lever_api_extractor import LeverApiExtractor, is_lever_job_url
+from app.extractors.workable_api_extractor import (
+    WorkableApiExtractor,
+    is_workable_job_url,
+    parse_workable_shortcode_from_url,
+)
 from app.extractors.workday_extractor import WorkdayExtractor, is_workday_job_url
 from app.extractors.wttj_algolia_extractor import WttjAlgoliaExtractor, is_wttj_job_url
 from app.extractors.html_extractor import HTMLExtractor
@@ -95,6 +100,7 @@ class ExtractionService:
         self.http_service = HTTPService()
         self.ashby_api_extractor = AshbyApiExtractor(self.http_service)
         self.lever_api_extractor = LeverApiExtractor(self.http_service)
+        self.workable_api_extractor = WorkableApiExtractor(self.http_service)
         self.workday_extractor = WorkdayExtractor(self.http_service)
         self.api_extractor = APIDetectorExtractor()
         self.html_extractor = HTMLExtractor()
@@ -173,6 +179,16 @@ class ExtractionService:
                 elif result.error:
                     last_error = result.error
                     logger.warning("lever_api_extract_failed", job_id=job_id, error=result.error)
+
+            # 1b2. Workable public job API (native URL - no HTML / API key needed)
+            if is_workable_job_url(url):
+                logger.info("workable_api_attempt", job_id=job_id)
+                result = await self.workable_api_extractor.extract(url)
+                if result.success and result.raw_content:
+                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value))
+                elif result.error:
+                    last_error = result.error
+                    logger.warning("workable_api_extract_failed", job_id=job_id, error=result.error)
 
             # 1c. Workday cxs JSON (native URL - no HTML needed)
             if is_workday_job_url(url):
@@ -279,6 +295,15 @@ class ExtractionService:
                         elif lev_emb.error:
                             logger.debug("lever_embedded_not_used", job_id=job_id, error=lev_emb.error)
 
+                # 4c. Workable embedded (careers page embeds a Workable widget)
+                if not is_workable_job_url(url) and parse_workable_shortcode_from_url(url):
+                    if await self.workable_api_extractor.can_extract(url, html_content):
+                        wk_emb = await self.workable_api_extractor.extract(url, html_content)
+                        if wk_emb.success and wk_emb.raw_content:
+                            candidates.append((wk_emb.raw_content, ExtractionMethod.API_VENDOR.value))
+                        elif wk_emb.error:
+                            logger.debug("workable_embedded_not_used", job_id=job_id, error=wk_emb.error)
+
                 # 5. JSON-LD
                 if await self.api_extractor.can_extract(url, html_content):
                     ld_result = await self.api_extractor.extract(url, html_content)
@@ -324,6 +349,12 @@ class ExtractionService:
                         ash_br = await self.ashby_api_extractor.extract_embedded(url, rendered_html)
                         if ash_br.success and ash_br.raw_content:
                             candidates.append((ash_br.raw_content, ExtractionMethod.API_VENDOR.value))
+
+                    if not is_workable_job_url(url) and parse_workable_shortcode_from_url(url):
+                        if await self.workable_api_extractor.can_extract(url, rendered_html):
+                            wk_br = await self.workable_api_extractor.extract(url, rendered_html)
+                            if wk_br.success and wk_br.raw_content:
+                                candidates.append((wk_br.raw_content, ExtractionMethod.API_VENDOR.value))
 
                     if await self.api_extractor.can_extract(url, rendered_html):
                         ld_br = await self.api_extractor.extract(url, rendered_html)
