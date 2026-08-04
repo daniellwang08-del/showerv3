@@ -88,7 +88,7 @@ export const ADMIN_DASHBOARD_VIEWS: ViewMeta[] = [
   {
     id: 'needs_extraction',
     label: 'Extraction backlog',
-    description: 'Live unfinished JD pool — not the last sync scrape total',
+    description: 'Unfinished JD pool',
     icon: FileSearch,
     accent: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
     active: 'text-amber-700 dark:text-amber-300',
@@ -96,7 +96,7 @@ export const ADMIN_DASHBOARD_VIEWS: ViewMeta[] = [
   {
     id: 'extracted',
     label: 'JD ready',
-    description: 'Jobs with a completed job description',
+    description: 'Completed job descriptions',
     icon: FileCheck2,
     accent: 'bg-teal-50 text-teal-600 dark:bg-teal-500/15 dark:text-teal-300',
     active: 'text-teal-700 dark:text-teal-300',
@@ -172,7 +172,7 @@ const BOARD_VIEWS: ViewMeta[] = [
   {
     id: 'needs_extraction',
     label: 'Extraction backlog',
-    description: 'Live unfinished JD pool — not the last sync scrape total',
+    description: 'Unfinished JD pool',
     icon: FileSearch,
     accent: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
     active: 'text-amber-700 dark:text-amber-300',
@@ -180,7 +180,7 @@ const BOARD_VIEWS: ViewMeta[] = [
   {
     id: 'extracted',
     label: 'JD ready',
-    description: 'Jobs with a completed job description',
+    description: 'Completed job descriptions',
     icon: FileCheck2,
     accent: 'bg-teal-50 text-teal-600 dark:bg-teal-500/15 dark:text-teal-300',
     active: 'text-teal-700 dark:text-teal-300',

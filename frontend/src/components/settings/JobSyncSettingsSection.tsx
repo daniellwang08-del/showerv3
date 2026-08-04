@@ -17,8 +17,10 @@ import {
   saveJobSyncSchedule,
   stopJobFetch,
 } from '../../api/scraperApi';
+import { usePostedSyncWindow } from '../../hooks/usePostedSyncWindow';
 import type { JobSyncSchedule, SyncCheckpoint, SyncPlatform } from '../../types/scraper';
 import { useScraperStore } from '../../stores/scraperStore';
+import { todayIsoDate, JOB_SYNC_SCHEDULE_UPDATED_EVENT } from '../../utils/postedSyncWindow';
 import { BrandedLoader } from '../layout/BrandedLoader';
 import { SettingsToggle } from '../shared/SettingsToggle';
 
@@ -33,16 +35,6 @@ const TIMEZONE_LABELS: Record<string, string> = {
 };
 
 type SyncPanelMode = 'scheduled' | 'manual';
-
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function daysAgoIsoDate(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
 
 function extractErrorMessage(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'response' in err) {
@@ -225,8 +217,13 @@ export function JobSyncSettingsSection() {
   const [panelMode, setPanelMode] = useState<SyncPanelMode>('scheduled');
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
 
-  const [postedSince, setPostedSince] = useState(() => daysAgoIsoDate(30));
-  const [postedUntil, setPostedUntil] = useState(() => todayIsoDate());
+  const {
+    postedSince,
+    postedUntil,
+    windowInvalid,
+    setPostedSince,
+    setPostedUntil,
+  } = usePostedSyncWindow();
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
   const [actionMsg, setActionMsg] = useState('');
@@ -288,7 +285,7 @@ export function JobSyncSettingsSection() {
     postedSince.trim().length > 0 &&
     selectedList.length > 0 &&
     blockedSelection.length === 0 &&
-    (!postedUntil || postedSince <= postedUntil);
+    !windowInvalid;
 
   const canSaveSchedule =
     !schedSaving &&
@@ -428,6 +425,7 @@ export function JobSyncSettingsSection() {
         spider_names: schedulePlatformList,
       });
       applyScheduleToForm(saved, platforms);
+      window.dispatchEvent(new CustomEvent(JOB_SYNC_SCHEDULE_UPDATED_EVENT));
       setSchedOk(true);
       setSchedMsg(
         saved.enabled
@@ -804,6 +802,7 @@ export function JobSyncSettingsSection() {
                           type="date"
                           value={postedUntil}
                           min={postedSince || undefined}
+                          max={todayIsoDate()}
                           onChange={(e) => {
                             setPostedUntil(e.target.value);
                             setActionMsg('');
@@ -811,23 +810,10 @@ export function JobSyncSettingsSection() {
                           className={`mt-1 block ${fieldClass}`}
                         />
                       </div>
-                      <div className="flex flex-wrap gap-1.5 pb-0.5">
-                        {[7, 14, 30, 60].map((days) => (
-                          <button
-                            key={days}
-                            type="button"
-                            onClick={() => {
-                              setPostedSince(daysAgoIsoDate(days));
-                              setPostedUntil(todayIsoDate());
-                              setActionMsg('');
-                            }}
-                            className={chipClass(false)}
-                          >
-                            Last {days}d
-                          </button>
-                        ))}
-                      </div>
                     </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Same Since/Until as the dashboard Job fetch panel — changing either place updates both.
+                    </p>
 
                     {checkpoints.length > 0 && (
                       <div className="rounded-lg border border-slate-200 dark:border-slate-600">

@@ -24,6 +24,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { AdminScraperStats, PlatformSyncStats, ScraperStats } from '../../types/scraper';
 import { fetchSheetsConfig } from '../../api/googleSheetsApi';
 import { fetchPumbleConfig } from '../../api/pumbleApi';
+import { useScraperStore } from '../../stores/scraperStore';
 import { TrendSparkline } from './TrendSparkline';
 import { SyncControlBoard } from './SyncControlBoard';
 
@@ -993,11 +994,14 @@ const PlatformSyncRail = memo(function PlatformSyncRail({
   delay = 0,
   tone,
   onClick,
+  compact = false,
 }: {
   platform: PlatformSyncStats;
   delay?: number;
   tone: string;
   onClick?: () => void;
+  /** Narrow column (~⅓ prior width): stack icon / label / count. */
+  compact?: boolean;
 }) {
   const jobs = safe(platform.job_count);
   const added = safe(platform.last_items_new);
@@ -1025,14 +1029,44 @@ const PlatformSyncRail = memo(function PlatformSyncRail({
           : 'bg-slate-400';
 
   const className = [
-    'stats-rail-stat group flex min-h-[58px] w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-2.5 text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
+    'stats-rail-stat group flex min-h-[58px] w-full min-w-0 flex-1 overflow-hidden rounded-2xl border text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
+    compact ? 'flex-col items-stretch gap-1.5 px-2 py-2' : 'items-center gap-3 px-3 py-2.5',
     'border-slate-200/80 bg-white/85 dark:border-slate-700/70 dark:bg-[#101827]/85',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40 dark:hover:border-slate-500'
       : '',
   ].join(' ');
 
-  const body = (
+  const body = compact ? (
+    <>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <div
+          className={[
+            'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg shadow-sm',
+            tone,
+          ].join(' ')}
+        >
+          <Activity size={13} strokeWidth={2.4} />
+          <span
+            className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2 ring-white dark:ring-[#101827] ${statusDot}`}
+          />
+        </div>
+        <p className="min-w-0 truncate text-[10px] font-bold leading-tight text-slate-800" title={platform.label}>
+          {platform.label}
+        </p>
+      </div>
+      <AnimatedNumber
+        value={jobs}
+        className="block text-[1.15rem] font-black leading-none tracking-tight text-slate-900"
+      />
+      <p
+        className="min-w-0 truncate text-[9px] font-medium leading-none text-slate-500"
+        title={formatLastSyncAt(platform.last_sync_at)}
+      >
+        {detail}
+      </p>
+    </>
+  ) : (
     <>
       <div
         className={[
@@ -1047,10 +1081,6 @@ const PlatformSyncRail = memo(function PlatformSyncRail({
         <p className="truncate text-[12px] font-bold leading-none text-slate-800">
           {platform.label}
         </p>
-        {/*
-          auto | minmax(0,1fr) keeps the job count in its own column so the
-          sync detail can only truncate — never slide under the digits.
-        */}
         <div className="mt-1.5 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3">
           <AnimatedNumber
             value={jobs}
@@ -1128,6 +1158,20 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   const platforms = Array.isArray(view.platform_sync) ? view.platform_sync : [];
   const lastSyncLabel = formatLastSyncAt(view.last_sync_at);
   const lastSyncSpider = view.last_sync_spider ? String(view.last_sync_spider) : null;
+  const syncing = useScraperStore((s) => s.syncing);
+  const syncProgress = useScraperStore((s) => s.syncProgress);
+  const lastCheckHint = syncing
+    ? syncProgress?.total
+      ? `Syncing ${syncProgress.current}/${syncProgress.total} · ${syncProgress.itemsNew} new`
+      : syncProgress?.message || 'Sync in progress…'
+    : lastScraped > 0
+      ? `${lastSyncLabel} · ${fmt(lastScraped)} scraped`
+      : lastSyncLabel;
+  const lastCheckTitle = syncing
+    ? syncProgress?.message || 'Job fetch in progress — same run as Job fetch panel'
+    : lastSyncSpider
+      ? `Last sync (${lastSyncSpider}): ${fmt(lastNew)} new · ${fmt(lastScraped)} scraped`
+      : `Last sync: ${fmt(lastNew)} new job(s)`;
   const trends = view.trends;
   const trendDayLabels = trends?.labels ?? [];
   const fetchedTrend = trends?.fetched ?? [];
@@ -1206,16 +1250,16 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   );
 
   return (
-    <div className="flex w-full flex-col gap-3.5 xl:flex-row xl:items-stretch">
-      {/* ── Main statistics board ─────────────────────────────────────── */}
+    <div className="flex w-full min-w-0 flex-col gap-3.5 xl:flex-row xl:items-stretch">
+      {/* ── Main statistics board (flex-2; shares row, leftover → Job fetch) */}
       <div
-        className="stats-board-shell relative min-w-0 flex-1 overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5"
+        className="stats-board-shell relative flex w-full min-w-0 flex-col overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5 xl:flex-[5] xl:basis-0"
         style={{ contentVisibility: 'auto' }}
       >
         <div className="pointer-events-none absolute -left-20 top-0 h-48 w-48 rounded-full bg-blue-400/10 blur-3xl dark:bg-blue-500/10" />
         <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
 
-        <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[12.5rem_minmax(0,1fr)] xl:gap-4">
+        <div className="relative grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] xl:gap-4">
           <div
             className={[
               'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
@@ -1238,26 +1282,27 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
           </div>
 
           {/*
-            Backlog/JD keep the previous wide 1fr column; hero stays auto;
-            Last check / Total users stay in the same slot but narrower;
-            job-site rails follow immediately after those metrics.
+            Fractional tracks (minmax(0,fr)) + min-w-0 children: columns scale
+            down instead of overflowing the overflow-hidden shell, so the
+            platform rails can never be clipped. Backlog/JD get 1.5fr weight;
+            Last check + platform rails share 1fr each.
           */}
-          <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[minmax(0,1fr)_auto_minmax(8.25rem,9.25rem)_minmax(11.5rem,13.5rem)] lg:gap-3.5 xl:order-2">
-            <div className="flex h-full min-h-0 flex-col gap-3.5">
+          <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[minmax(0,1.5fr)_auto_minmax(0,1fr)_minmax(0,1fr)] lg:gap-3 xl:order-2">
+            <div className="flex h-full min-h-0 min-w-0 flex-col gap-3.5">
               <SideTile
                 icon={FileSearch}
                 value={needs}
                 label="Extraction backlog"
                 hint={
                   pending > 0
-                    ? `${fmt(pending)} in progress now · live unfinished pool`
-                    : 'Live unfinished JD pool (not this sync\'s scrape total)'
+                    ? `${fmt(pending)} extracting now`
+                    : 'Unfinished JD pool'
                 }
                 accent="from-amber-400 to-orange-500"
                 iconWrap="from-amber-500 to-orange-500"
                 delay={40}
                 onClick={onSelectNeedsExtraction}
-                title="Jobs whose job description is still missing, pending, processing, or stuck mid-extract."
+                title="Live unfinished JD pool — jobs still missing, pending, processing, or stuck mid-extract (not this sync's scrape total)."
                 trend={fetchedTrend}
                 trendLabels={trendDayLabels}
                 trendColor="#fbbf24"
@@ -1268,7 +1313,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
                 icon={FileCheck2}
                 value={extracted}
                 label="JD ready"
-                hint={total > 0 ? `${Math.round(extractRatio * 100)}% of pool with completed JD` : 'Completed job descriptions'}
+                hint={total > 0 ? `${Math.round(extractRatio * 100)}% of pool` : 'Completed JDs'}
                 accent="from-emerald-400 to-teal-500"
                 iconWrap="from-emerald-500 to-teal-500"
                 delay={90}
@@ -1335,24 +1380,16 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
               </div>
             </button>
 
-            <div className="flex h-full min-h-0 w-full flex-col gap-2.5">
+            <div className="flex h-full min-h-0 w-full min-w-0 flex-col gap-2.5">
               <CompactMetricTile
                 icon={Clock3}
-                value={lastNew}
+                value={syncing ? (syncProgress?.itemsNew ?? lastNew) : lastNew}
                 label="Last check"
-                hint={
-                  lastScraped > 0
-                    ? `${lastSyncLabel} · ${fmt(lastScraped)} scraped`
-                    : lastSyncLabel
-                }
+                hint={lastCheckHint}
                 accent="from-sky-400 to-blue-500"
                 iconWrap="from-sky-500 to-blue-600"
                 delay={40}
-                title={
-                  lastSyncSpider
-                    ? `Last sync (${lastSyncSpider}): ${fmt(lastNew)} new · ${fmt(lastScraped)} scraped`
-                    : `Last sync: ${fmt(lastNew)} new job(s)`
-                }
+                title={lastCheckTitle}
               />
               <CompactMetricTile
                 icon={Users}
@@ -1372,7 +1409,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
 
             <div
               className={[
-                'grid gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+                'grid min-w-0 gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:w-full xl:flex-col',
                 railGridClass(Math.max(platformRails.length, 1)),
               ].join(' ')}
             >
@@ -1387,8 +1424,8 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
                   />
                 ))
               ) : (
-                <div className="flex min-h-[72px] flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-300 px-3 text-center text-xs font-medium text-slate-500 dark:border-slate-600">
-                  No job sites configured in System Settings
+                <div className="flex min-h-[72px] flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-300 px-2 text-center text-[10px] font-medium text-slate-500 dark:border-slate-600">
+                  No sites
                 </div>
               )}
             </div>
@@ -1396,9 +1433,9 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
         </div>
       </div>
 
-      {/* ── Independent job-fetch control board (same row / height) ───── */}
-      <aside className="flex w-full shrink-0 xl:w-[20rem] xl:min-h-0 xl:self-stretch">
-        <div className="flex h-full min-h-[220px] w-full flex-1">
+      {/* ── Job fetch: takes the remaining screen width ───────────────── */}
+      <aside className="flex w-full min-w-0 flex-[2] basis-0 xl:min-h-0 xl:min-w-[18rem] xl:self-stretch">
+        <div className="flex h-full min-h-[220px] w-full min-w-0 flex-1">
           <SyncControlBoard />
         </div>
       </aside>

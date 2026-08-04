@@ -1,10 +1,10 @@
 /**
  * Permanent job-fetch control board for the admin stats dashboard.
- * Replaces the header Sync All dropdown with an always-visible panel:
- * posted-date window, Sync All, and per-platform pull actions.
+ * Posted window is shared with System Settings → Job Sync.
+ * "Sync all sites" uses the platforms saved in the Job Sync schedule.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CalendarRange,
@@ -15,12 +15,15 @@ import {
   Terminal,
   X,
 } from 'lucide-react';
-import { stopJobFetch } from '../../api/scraperApi';
+import { fetchJobSyncSchedule, stopJobFetch } from '../../api/scraperApi';
+import { usePostedSyncWindow } from '../../hooks/usePostedSyncWindow';
 import { useScraperStore } from '../../stores/scraperStore';
-import type { ScrapeRun, SyncTriggerOptions } from '../../types/scraper';
-
-const WINDOW_STORAGE_KEY = 'scraper_sync_posted_window_v1';
-const LOOKBACK_CHIPS = [7, 14, 30, 90] as const;
+import type { JobSyncSchedule, ScrapeRun, SyncTriggerOptions } from '../../types/scraper';
+import {
+  formatPostedWindowShort,
+  JOB_SYNC_SCHEDULE_UPDATED_EVENT,
+  todayIsoDate,
+} from '../../utils/postedSyncWindow';
 
 function toUtcMs(value: string | null | undefined): number | undefined {
   if (!value) return undefined;
@@ -60,34 +63,14 @@ function statusDot(status: string | null | undefined): string {
   return 'bg-slate-300';
 }
 
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function daysAgoIsoDate(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
-function formatShortDate(iso: string): string {
-  const d = new Date(`${iso}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function readStoredWindow(): { since: string; until: string } {
-  try {
-    const raw = sessionStorage.getItem(WINDOW_STORAGE_KEY);
-    if (!raw) return { since: '', until: '' };
-    const parsed = JSON.parse(raw) as { since?: string; until?: string };
-    return {
-      since: typeof parsed.since === 'string' ? parsed.since : '',
-      until: typeof parsed.until === 'string' ? parsed.until : '',
-    };
-  } catch {
-    return { since: '', until: '' };
-  }
+function spiderRunnable(
+  spider: {
+    requires_auth: boolean;
+    auth_configured: boolean;
+    auth_optional?: boolean;
+  },
+): boolean {
+  return !spider.requires_auth || spider.auth_optional === true || spider.auth_configured;
 }
 
 export function SyncControlBoard() {
@@ -97,34 +80,54 @@ export function SyncControlBoard() {
   const lastSyncRuns = useScraperStore((s) => s.lastSyncRuns);
   const startSync = useScraperStore((s) => s.startSync);
 
-  const stored = useMemo(() => readStoredWindow(), []);
-  const [postedSince, setPostedSince] = useState(stored.since);
-  const [postedUntil, setPostedUntil] = useState(stored.until);
+  const {
+    postedSince,
+    postedUntil,
+    windowActive,
+    windowInvalid,
+    setPostedSince,
+    setPostedUntil,
+    clearPostedWindow,
+  } = usePostedSyncWindow();
+
   const [showCommandFor, setShowCommandFor] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [schedule, setSchedule] = useState<JobSyncSchedule | null>(null);
 
-  const windowActive = Boolean(postedSince.trim());
-  const windowInvalid = windowActive && Boolean(postedUntil) && postedSince > postedUntil;
-
-  const activeChip = useMemo(() => {
-    if (!postedSince) return null;
-    const until = postedUntil || todayIsoDate();
-    for (const days of LOOKBACK_CHIPS) {
-      if (postedSince === daysAgoIsoDate(days) && until === todayIsoDate()) return days;
+  const loadSchedule = useCallback(async () => {
+    try {
+      const row = await fetchJobSyncSchedule();
+      setSchedule(row);
+    } catch {
+      /* keep last known; Sync all falls back to all runnable spiders */
     }
-    return 'custom' as const;
-  }, [postedSince, postedUntil]);
+  }, []);
 
   useEffect(() => {
-    try {
-      sessionStorage.setItem(
-        WINDOW_STORAGE_KEY,
-        JSON.stringify({ since: postedSince, until: postedUntil }),
-      );
-    } catch {
-      /* ignore */
-    }
-  }, [postedSince, postedUntil]);
+    void loadSchedule();
+    const onUpdated = () => void loadSchedule();
+    const onFocus = () => void loadSchedule();
+    window.addEventListener(JOB_SYNC_SCHEDULE_UPDATED_EVENT, onUpdated);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener(JOB_SYNC_SCHEDULE_UPDATED_EVENT, onUpdated);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [loadSchedule]);
+
+  const schedulePlatforms = useMemo(() => {
+    const names = schedule?.spider_names;
+    if (!Array.isArray(names) || names.length === 0) return null;
+    return names.map((n) => n.toLowerCase());
+  }, [schedule]);
+
+  const syncAllTargets = useMemo(() => {
+    const runnable = spiders.filter(spiderRunnable);
+    if (!schedulePlatforms) return runnable;
+    const allowed = new Set(schedulePlatforms);
+    const filtered = runnable.filter((s) => allowed.has(s.name.toLowerCase()));
+    return filtered.length > 0 ? filtered : runnable;
+  }, [spiders, schedulePlatforms]);
 
   const { lastBySpider, overall } = useMemo(() => {
     const map = new Map<string, ScrapeRun>();
@@ -139,7 +142,18 @@ export function SyncControlBoard() {
   }, [lastSyncRuns]);
 
   const buildOptions = (spiderName: string): SyncTriggerOptions => {
-    if (postedSince.trim() && !windowInvalid) {
+    const dated = postedSince.trim() && !windowInvalid;
+    if (spiderName === 'all') {
+      const names = syncAllTargets.map((s) => s.name);
+      return {
+        spider_name: 'all',
+        spider_names: names.length > 0 ? names : undefined,
+        sync_mode: dated ? 'date_backfill' : 'incremental',
+        posted_since: dated ? postedSince.trim() : undefined,
+        posted_until: dated && postedUntil.trim() ? postedUntil.trim() : undefined,
+      };
+    }
+    if (dated) {
       return {
         spider_name: spiderName,
         sync_mode: 'date_backfill',
@@ -148,16 +162,6 @@ export function SyncControlBoard() {
       };
     }
     return { spider_name: spiderName, sync_mode: 'incremental' };
-  };
-
-  const applyLookback = (days: number) => {
-    setPostedSince(daysAgoIsoDate(days));
-    setPostedUntil(todayIsoDate());
-  };
-
-  const clearWindow = () => {
-    setPostedSince('');
-    setPostedUntil('');
   };
 
   const handleStop = async () => {
@@ -176,8 +180,13 @@ export function SyncControlBoard() {
     ? (syncProgress?.message || 'Syncing…')
     : 'Sync all sites';
 
+  const usingScheduleSubset =
+    Boolean(schedulePlatforms) &&
+    syncAllTargets.length > 0 &&
+    syncAllTargets.length < spiders.filter(spiderRunnable).length;
+
   return (
-    <div className="stats-side-tile relative flex h-full min-h-[220px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 shadow-sm dark:border-slate-700/80 dark:bg-[#141d31]/95">
+    <div className="stats-side-tile relative flex h-full min-h-[220px] w-full min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 shadow-sm dark:border-slate-700/80 dark:bg-[#141d31]/95">
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-sky-400/10 via-transparent to-indigo-500/10 opacity-80" />
 
       {/* Header */}
@@ -220,8 +229,13 @@ export function SyncControlBoard() {
           ) : null}
           <button
             type="button"
-            disabled={syncing || windowInvalid || spiders.length === 0}
+            disabled={syncing || windowInvalid || syncAllTargets.length === 0}
             onClick={() => void startSync(buildOptions('all'))}
+            title={
+              usingScheduleSubset
+                ? `Syncs ${syncAllTargets.length} site(s) from Job Sync settings`
+                : 'Sync all runnable sites'
+            }
             className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm shadow-blue-600/25 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} />
@@ -235,7 +249,7 @@ export function SyncControlBoard() {
         </div>
       </div>
 
-      {/* Posted window */}
+      {/* Posted window — shared with System Settings → Job Sync */}
       <div className="relative shrink-0 border-b border-slate-100 bg-gradient-to-br from-sky-50/90 via-white to-indigo-50/40 px-3 py-2.5 dark:border-white/10 dark:from-sky-950/35 dark:via-[#0b1220] dark:to-indigo-950/25">
         <div className="mb-1.5 flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -244,40 +258,22 @@ export function SyncControlBoard() {
               Posted window
             </div>
             <p className="mt-0.5 text-[10px] leading-snug text-slate-500 dark:text-[#94a3b8]">
-              Date range backfill, or leave empty for incremental.
+              Same dates as Job Sync settings. Empty = incremental.
             </p>
           </div>
-          {windowActive ? (
-            <button
-              type="button"
-              onClick={clearWindow}
-              className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-slate-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 transition hover:border-rose-200 hover:text-rose-600 dark:border-white/10 dark:bg-white/5 dark:text-[#94a3b8]"
-              title="Clear date window"
-            >
-              <X size={10} />
-              Clear
-            </button>
-          ) : null}
-        </div>
-
-        <div className="mb-2 flex flex-wrap gap-1">
-          {LOOKBACK_CHIPS.map((days) => {
-            const active = activeChip === days;
-            return (
-              <button
-                key={days}
-                type="button"
-                onClick={() => applyLookback(days)}
-                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
-                  active
-                    ? 'bg-sky-600 text-white shadow-sm shadow-sky-600/30'
-                    : 'border border-slate-200/90 bg-white/90 text-slate-600 hover:border-sky-300 hover:text-sky-700 dark:border-white/10 dark:bg-white/5 dark:text-[#cbd5e1]'
-                }`}
-              >
-                {days}d
-              </button>
-            );
-          })}
+          <button
+            type="button"
+            onClick={clearPostedWindow}
+            aria-hidden={!windowActive}
+            tabIndex={windowActive ? 0 : -1}
+            className={`inline-flex shrink-0 items-center gap-0.5 rounded-full border border-slate-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 transition hover:border-rose-200 hover:text-rose-600 dark:border-white/10 dark:bg-white/5 dark:text-[#94a3b8] ${
+              windowActive ? '' : 'pointer-events-none invisible'
+            }`}
+            title="Clear date window"
+          >
+            <X size={10} />
+            Clear
+          </button>
         </div>
 
         <div className="grid grid-cols-2 gap-1.5">
@@ -308,22 +304,28 @@ export function SyncControlBoard() {
           </label>
         </div>
 
-        {windowInvalid ? (
-          <p className="mt-1.5 text-[10px] font-medium text-rose-600 dark:text-rose-300">
-            “Since” must be on or before “Until”.
-          </p>
-        ) : windowActive ? (
-          <p className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-sky-600/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 dark:bg-sky-400/10 dark:text-sky-200">
-            <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
-            {formatShortDate(postedSince)}
-            {' → '}
-            {postedUntil ? formatShortDate(postedUntil) : 'today'}
-          </p>
-        ) : (
-          <p className="mt-1.5 text-[10px] text-slate-400 dark:text-[#64748b]">
-            Incremental — new listings since checkpoint
-          </p>
-        )}
+        {/* Fixed-height status row so toggling dated/incremental never reflows */}
+        <div className="mt-1.5 flex h-5 items-center">
+          {windowInvalid ? (
+            <p className="truncate text-[10px] font-medium text-rose-600 dark:text-rose-300">
+              “Since” must be on or before “Until”.
+            </p>
+          ) : windowActive ? (
+            <p className="inline-flex max-w-full items-center gap-1 truncate rounded-md bg-sky-600/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 dark:bg-sky-400/10 dark:text-sky-200">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" />
+              {formatPostedWindowShort(postedSince)}
+              {' → '}
+              {postedUntil ? formatPostedWindowShort(postedUntil) : 'today'}
+            </p>
+          ) : (
+            <p className="truncate text-[10px] text-slate-400 dark:text-[#64748b]">
+              Incremental — new since checkpoint
+              {usingScheduleSubset
+                ? ` · ${syncAllTargets.length} site(s)`
+                : ''}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Per-platform actions */}
@@ -342,6 +344,8 @@ export function SyncControlBoard() {
                 spider.requires_auth &&
                 !spider.auth_configured &&
                 spider.auth_optional !== true;
+              const inSchedule =
+                !schedulePlatforms || schedulePlatforms.includes(spider.name.toLowerCase());
               const disabled = needsAuth || syncing || windowInvalid;
               const run = lastBySpider.get(spider.name.toLowerCase());
               const ms = run ? runTimeMs(run) : undefined;
@@ -358,7 +362,12 @@ export function SyncControlBoard() {
                       disabled
                         ? 'cursor-not-allowed text-slate-400'
                         : 'text-slate-700 hover:bg-slate-50 dark:text-[#e2e8f0] dark:hover:bg-white/5'
-                    }`}
+                    } ${!inSchedule && !needsAuth ? 'opacity-55' : ''}`}
+                    title={
+                      !inSchedule
+                        ? 'Not in Job Sync settings platform list — still pullable individually'
+                        : undefined
+                    }
                   >
                     <span className="flex min-w-0 flex-1 flex-col items-start leading-tight">
                       <span className="truncate font-semibold">{spider.label}</span>
