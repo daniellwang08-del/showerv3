@@ -117,15 +117,12 @@
         options: btns.map((b) => clean(b.textContent)).filter(Boolean),
       };
     },
-    // These button groups expose no dependable selected-state class, so we mark
-    // the group once WE click it. Without this, isFilled would always be false
-    // and a SECOND write (cached-answer replay BEFORE extraction, then the LLM
-    // pass) clicks the already-selected button again - and Ashby's buttons
-    // toggle, so the second click DESELECTS it. That is the intermittent
-    // "sometimes didn't select" bug. The marker makes the LLM pass skip a group
-    // the replay already answered (and vice-versa).
+    // Ashby Yes/No buttons TOGGLE: a second click deselects. Live probe showed
+    // data-af-yesno-answered="1" with hiddenChecked=false and both buttons
+    // unselected after a re-write (ashbyReapply / second pass). Never click twice.
     isFilled(root) {
       try {
+        if (yesNoLooksSelected(root)) return true;
         return root.getAttribute("data-af-yesno-answered") === "1";
       } catch {
         return false;
@@ -134,6 +131,13 @@
     async write(root, answer) {
       const btns = buttonsOf(root);
       if (!btns.length) return false;
+      // Already answered this session — re-click would toggle Ashby OFF.
+      try {
+        if (yesNoLooksSelected(root) || root.getAttribute("data-af-yesno-answered") === "1") {
+          root.setAttribute("data-af-yesno-answered", "1");
+          return true;
+        }
+      } catch {}
       const want = answer.option || answer.value || "";
       // 1) Exact / substring text match against a button's visible label.
       const w = normText(want);
@@ -163,4 +167,23 @@
       return true;
     },
   });
+
+  function yesNoLooksSelected(root) {
+    try {
+      const hidden = root.querySelector && root.querySelector('input[type="checkbox"], input[type="radio"]');
+      if (hidden && hidden.checked) return true;
+      const btns = buttonsOf(root);
+      for (const b of btns) {
+        if (b.getAttribute && b.getAttribute("aria-pressed") === "true") return true;
+        if (b.getAttribute && b.getAttribute("aria-checked") === "true") return true;
+        const cls = String((b.className && b.className.baseVal) || b.className || "");
+        if (/selected|is-active|is-checked|_checked_|_selected_|_active_/i.test(cls)) return true;
+      }
+      // Ashby sometimes marks the selected option on a wrapper, not the button.
+      if (root.querySelector && root.querySelector('[class*="_selected_"], [class*="_checked_"], [aria-pressed="true"]')) {
+        return true;
+      }
+    } catch {}
+    return false;
+  }
 })();

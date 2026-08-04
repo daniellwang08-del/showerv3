@@ -224,18 +224,42 @@
     return [...new Set(opts)].slice(0, MAX_HARVEST_OPTIONS);
   }
 
+  function isAshbyValueCombo(root, input) {
+    try {
+      if (!(AF.ashby && AF.ashby.isValueCombobox)) return false;
+      return AF.ashby.isValueCombobox(input || root);
+    } catch {
+      return false;
+    }
+  }
+
   function comboHasSelection(root) {
     const sv =
       root.querySelector &&
       root.querySelector(
         '[class*="singleValue"], [class*="single-value"], [class*="multiValue"], [class*="multi-value"]'
       );
-    return !!(sv && clean(sv.innerText || sv.textContent));
+    if (sv && clean(sv.innerText || sv.textContent)) return true;
+    // Ashby location / "how did you hear" comboboxes store the answer in
+    // input.value (no react-select chip). Probe: hasSingleValueChip=false.
+    const input = comboInput(root);
+    if (isAshbyValueCombo(root, input) && input && clean(input.value)) return true;
+    return false;
   }
 
   function comboSelectionText(root) {
     const sv = root.querySelector && root.querySelector('[class*="singleValue"], [class*="single-value"]');
-    return sv ? clean(sv.innerText || sv.textContent) : "";
+    if (sv) return clean(sv.innerText || sv.textContent);
+    const input = comboInput(root);
+    if (isAshbyValueCombo(root, input) && input && clean(input.value)) return clean(input.value);
+    return "";
+  }
+
+  function valueMatchesWant(got, want) {
+    const g = normText(got);
+    const w = normText(want);
+    if (!g || !w) return false;
+    return g === w || g.includes(w) || w.includes(g);
   }
 
   // Open the widget. Libraries disagree on which event opens the menu
@@ -301,6 +325,10 @@
 
   async function harvestOptions(root) {
     const input = comboInput(root);
+    // Ashby: opening the location combobox clears a committed .value. Preserve
+    // and restore so a harvest (or a missed isFilled) cannot empty the field.
+    const ashbyPreserved =
+      isAshbyValueCombo(root, input) && input ? clean(input.value) : "";
     let options = [];
     try {
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -315,6 +343,14 @@
       options = [];
     } finally {
       closeMenu(input, root);
+      if (ashbyPreserved && input && !clean(input.value)) {
+        try {
+          setNativeValue(input, ashbyPreserved);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          if (AF.dom.commitReactValue) AF.dom.commitReactValue(input, ashbyPreserved);
+        } catch {}
+      }
     }
     if (!options.length && AF.pinpoint && AF.pinpoint.rorOptionsFor) {
       options = AF.pinpoint.rorOptionsFor(input || root);
@@ -350,7 +386,7 @@
     const input = comboInput(root);
     // Already showing the desired value -> nothing to do.
     const cur = comboSelectionText(root);
-    if (cur && normText(cur) === normText(value)) return true;
+    if (cur && valueMatchesWant(cur, value)) return true;
 
     // Pinpoint EEO / equality selects use a read-only dummyInput: open the menu
     // and click the option (typing + Enter is ignored).
@@ -371,6 +407,58 @@
       const mob = pinpointMobileSelect(root);
       if (mob && (await writeNativeSelect(mob, value))) return true;
       return comboHasSelection(root);
+    }
+
+    // Ashby value-combobox: committed answer lives in input.value. Opening or
+    // clearedOptionNodes() wipes it (probe + user report). Never clear; verify
+    // via .value after type+Enter / option click.
+    if (isAshbyValueCombo(root, input)) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await typeAndEnter(input, root, value);
+          if (
+            await waitUntil(
+              () => (input && valueMatchesWant(input.value, value) ? true : null),
+              900,
+              50
+            )
+          ) {
+            closeMenu(input, root);
+            try {
+              input.blur && input.blur();
+            } catch {}
+            try {
+              if (AF.dom.commitReactValue) AF.dom.commitReactValue(input, clean(input.value));
+            } catch {}
+            return true;
+          }
+          // Click a visible filtered option WITHOUT clearing the input (clear
+          // = empty field on Ashby).
+          const opt = pickOption(scopedOptionNodes(input, root), value);
+          if (opt) {
+            clickOption(opt);
+            if (
+              await waitUntil(
+                () => (input && clean(input.value) ? true : null),
+                700,
+                50
+              )
+            ) {
+              closeMenu(input, root);
+              try {
+                input.blur && input.blur();
+              } catch {}
+              try {
+                if (AF.dom.commitReactValue) AF.dom.commitReactValue(input, clean(input.value));
+              } catch {}
+              return true;
+            }
+          }
+        } catch {}
+        closeMenu(input, root);
+        await delay(120);
+      }
+      return !!(input && clean(input.value));
     }
 
     for (let attempt = 0; attempt < 2; attempt++) {

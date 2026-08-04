@@ -87,11 +87,70 @@
     }
   }
 
+  // Ashby "select all that apply" checkboxes put the OPTION TEXT in name= (unique
+  // per box). The shared-name grouper then emits 12 one-option controls and the
+  // backend's len(opts)==1 safety net checks every box. Group by the enclosing
+  // fieldset / data-field-path instead when names diverge inside one question.
+  function checkboxGroupInputs(root) {
+    try {
+      if (!root || (root.type || "").toLowerCase() !== "checkbox") return null;
+      if (!isAshbyPage()) return null;
+      const fs = root.closest && root.closest("fieldset");
+      const entry = root.closest && root.closest("[data-field-path]");
+      const scope = fs || entry;
+      if (!scope || !scope.querySelectorAll) return null;
+      const boxes = [...scope.querySelectorAll('input[type="checkbox"]')];
+      if (boxes.length <= 1) return null;
+      const names = new Set(boxes.map((b) => String(b.name || "")));
+      // Shared name → normal radio/checkbox grouping already works.
+      if (names.size <= 1) return null;
+      return boxes;
+    } catch {
+      return null;
+    }
+  }
+
+  // Ashby location / source pickers keep the committed answer in input.value.
+  // They are NOT react-select (no .singleValue chip); opening the menu clears
+  // a committed value.
+  function isValueCombobox(el) {
+    try {
+      if (!isAshbyPage() || !el) return false;
+      const inp =
+        el.tagName === "INPUT"
+          ? el
+          : el.querySelector && el.querySelector('input[role="combobox"], input[aria-autocomplete="list"]');
+      if (!inp || inp.tagName !== "INPUT") return false;
+      const role = (inp.getAttribute && inp.getAttribute("role")) || "";
+      const auto = (inp.getAttribute && inp.getAttribute("aria-autocomplete")) || "";
+      const popup = (inp.getAttribute && inp.getAttribute("aria-haspopup")) || "";
+      return role === "combobox" || auto === "list" || popup === "listbox";
+    } catch {
+      return false;
+    }
+  }
+
+  function comboboxValue(el) {
+    try {
+      if (!isValueCombobox(el)) return "";
+      const inp =
+        el.tagName === "INPUT"
+          ? el
+          : el.querySelector && el.querySelector('input[role="combobox"], input[aria-autocomplete="list"]');
+      return inp ? clean(inp.value) : "";
+    } catch {
+      return "";
+    }
+  }
+
   AF.ashby = {
     isAshbyHost,
     isAshbyPage,
     resumeInput,
     writeResumeFile,
     fieldEntryLabel,
+    checkboxGroupInputs,
+    isValueCombobox,
+    comboboxValue,
   };
 })();

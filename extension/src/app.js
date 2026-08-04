@@ -3437,6 +3437,25 @@ function splitLeverResumeWrite(results, files) {
   return { results: outResults, files: outFiles, pending };
 }
 
+// Ashby Yes/No is two toggle buttons: re-clicking deselects. Strip those from
+// the post-resume reapply payload so resume parse restore cannot undo them.
+function stripAshbyToggleControls(results) {
+  const out = [];
+  for (const r of results || []) {
+    const controls = (r.controls || []).filter((c) => {
+      const opt = String(c.option || c.value || "").trim().toLowerCase();
+      if (opt === "yes" || opt === "no") {
+        // Keep real text answers that happen to be the words yes/no only when
+        // kind is clearly free text. Yes/No button groups are kind "select".
+        if (String(c.kind || "").toLowerCase() === "select") return false;
+      }
+      return true;
+    });
+    if (controls.length) out.push({ handle: r.handle, controls });
+  }
+  return out;
+}
+
 async function uploadLeverResumeLast(tabId, pending) {
   if (!pending || !pending.file || tabId == null) return false;
   try {
@@ -3668,7 +3687,11 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   const attemptedKeys = new Set(); // stable control keys already sent to the LLM (this step)
   let lastSpecs = [];
 
-  const maxPasses = eng && eng.platform === "pinpoint" ? 5 : AUTOFILL_MAX_PASSES;
+  // Ashby renders the full application + EEO survey in one panel (no progressive
+  // reveal that needs a second LLM pass). Extra passes re-open location
+  // comboboxes (clearing them) and re-click Yes/No toggles (deselecting them).
+  const maxPasses =
+    eng && eng.platform === "pinpoint" ? 5 : eng && eng.platform === "ashby" ? 1 : AUTOFILL_MAX_PASSES;
   const passDelayMs = eng && eng.platform === "pinpoint" ? 750 : 500;
   const isLever = eng && eng.platform === "lever";
   const isWorkable = eng && eng.platform === "workable";
@@ -3820,8 +3843,10 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       writeResults = split.results;
       writeFiles = split.files;
       if (split.pending) ashbyResumePending = split.pending;
-      // Keep the non-file answers so we can re-apply after resume parse.
-      ctx.ashbyReapply = writeResults;
+      // Keep non-file answers so we can re-apply after resume parse — but drop
+      // Yes/No button groups (kind=select with only Yes/No): a second click
+      // toggles Ashby OFF (probe: marker=1, hiddenChecked=false).
+      ctx.ashbyReapply = stripAshbyToggleControls(writeResults);
     }
     await writeAndWait(tabId, writeResults, writeFiles);
 

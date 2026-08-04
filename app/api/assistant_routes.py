@@ -779,6 +779,37 @@ def _pick_option(
 # we force a sensible default from the control's OWN option list in code. This is
 # only applied when the model failed to choose a usable option (empty or
 # needs_user); a real model-chosen option is always preferred.
+def _is_demographic_identity_label(label: str) -> bool:
+    low = (label or "").lower()
+    return any(
+        k in low
+        for k in (
+            "ethnic",
+            "race",
+            "nationalit",
+            "racial",
+            "gender",
+            "lgbtq",
+            "sexual orientation",
+            "veteran",
+            "disab",
+        )
+    ) or bool(re.search(r"\bsex\b", low))
+
+
+def _is_consent_like_option(option: str) -> bool:
+    """Lone consent checkboxes ("I agree") vs a single ethnicity option fragment."""
+    s = (option or "").strip().lower()
+    if not s:
+        return False
+    return bool(
+        re.search(
+            r"\b(i agree|i understand|i consent|i acknowledge|agree|consent|yes)\b",
+            s,
+        )
+    )
+
+
 def _forced_default_option(label: str, options: list[str]) -> str | None:
     opts = [o for o in options if str(o).strip()]
     if not opts:
@@ -786,15 +817,35 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
     low = (label or "").lower()
 
     # A single-option control (e.g. a lone "I agree" consent) has exactly one
-    # valid answer; always select it.
+    # valid answer; always select it. CRITICAL: Ashby race/ethnicity checkboxes
+    # use unique name=optionText, so a buggy extract emits 12 one-option
+    # controls — auto-selecting each sole option checks EVERY ethnicity
+    # (live probe: uniqueNames=12, allChecked=true). Never auto-select a lone
+    # demographic identity option; fall through to race→Asian / decline logic.
     if len(opts) == 1:
-        return opts[0]
+        if _is_demographic_identity_label(label) and not _is_consent_like_option(opts[0]):
+            pass
+        else:
+            return opts[0]
 
     # Lever pronouns: prefer neutral "Use name only" when offered.
     if "pronoun" in low:
         useName = _pick_option(opts, includes=["use name only", "name only"])
         if useName:
             return useName
+
+    # Race / ethnicity: prefer the candidate default (Asian) when present.
+    # Prefer-not must NOT win first here — that ignored saved Race=Asian and,
+    # with the Ashby unique-name split, never ran because len(opts)==1 returned
+    # each option instead.
+    if "race" in low or "ethnic" in low or "nationalit" in low or "racial" in low:
+        asian = _pick_option(opts, includes=["asian"])
+        if asian:
+            return asian
+        pnts = _pick_option(opts, includes=["prefer not to say", "prefer not", "decline to"])
+        if pnts:
+            return pnts
+        return None
 
     # When "Prefer not to say" (or similar) is offered on demographic / EEO
     # questions - common on Pinpoint equality-monitoring forms - pick it over
@@ -803,7 +854,6 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
         k in low
         for k in (
             "gender",
-            "ethnic",
             "veteran",
             "disab",
             "lgbtq",
@@ -811,8 +861,6 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
             "age bracket",
             "equality",
             "diversity",
-            "nationalit",
-            "race",
         )
     ):
         pnts = _pick_option(opts, includes=["prefer not to say", "prefer not", "decline to"])
@@ -847,8 +895,6 @@ def _forced_default_option(label: str, options: list[str]) -> str | None:
             opts,
             includes=["no, i do not", "do not have a disability", "no, i don", "i do not have", "have not had one"],
         ) or _pick_option(opts, equals=["no"], includes=["no"], excludes=["yes"])
-    if "race" in low or "ethnic" in low or "nationalit" in low:
-        return _pick_option(opts, includes=["asian"])
     if "citizen" in low:
         return _pick_option(
             opts, includes=["u.s. citizen", "us citizen", "u.s citizen", "citizen"], excludes=["not", "non-"]
@@ -915,6 +961,8 @@ def _is_eeo_exclusive_label(label: str) -> bool:
     low = (label or "").lower()
     if _is_sexual_orientation_label(label):
         return True
+    # Race/ethnicity multi-selects must also collapse: models (and the old
+    # Ashby unique-name split) otherwise dump every ethnicity option.
     return any(
         k in low
         for k in (
@@ -925,6 +973,10 @@ def _is_eeo_exclusive_label(label: str) -> bool:
             "latino",
             "latina",
             "latinx",
+            "ethnic",
+            "race",
+            "nationalit",
+            "racial",
         )
     ) or bool(re.search(r"\bsex\b", low))
 

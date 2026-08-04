@@ -19,6 +19,15 @@
         if (wb && wb.length) return wb;
       }
     } catch {}
+    // Ashby multi-select checkboxes use a UNIQUE name per option (the option
+    // label). Probe: uniqueNames===count===12 on race/ethnicity. Group by the
+    // enclosing fieldset so we emit one multi=true control, not 12 singles.
+    try {
+      if (AF.ashby && AF.ashby.checkboxGroupInputs) {
+        const ab = AF.ashby.checkboxGroupInputs(root);
+        if (ab && ab.length) return ab;
+      }
+    } catch {}
     const t = (root.type || "radio").toLowerCase();
     const name = root.name || "";
     const scope = scopeOf(root);
@@ -207,6 +216,15 @@
       const bz = AF.breezy.optionLabelFor(inp);
       if (bz) return bz;
     }
+    // Ashby: name= is the visible option text on multi-select checkboxes
+    // (probe: name === optionLabel). Prefer it over labelForControl, which can
+    // climb to the fieldset question title for every box.
+    try {
+      if (AF.ashby && AF.ashby.isAshbyPage && AF.ashby.isAshbyPage() && inp && inp.name) {
+        const n = clean(inp.name);
+        if (n && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(n)) return n;
+      }
+    } catch {}
     return clean(labelForControl(inp)) || clean(inp.value);
   }
 
@@ -304,6 +322,33 @@
         Array.isArray(answer.option_values) && answer.option_values.length
           ? answer.option_values
           : [answer.option || answer.value].filter(Boolean);
+      // Ashby race/ethnicity (and similar): when the answer is a single option,
+      // clear any previously checked siblings first. A prior buggy pass may have
+      // checked every box; choose() alone only adds matches and never unchecks.
+      try {
+        if (
+          multi &&
+          values.length === 1 &&
+          AF.ashby &&
+          AF.ashby.isAshbyPage &&
+          AF.ashby.isAshbyPage()
+        ) {
+          const w = clean(values[0]).toLowerCase();
+          const best = bestOptionFor(group, w);
+          for (const inp of group) {
+            if (inp !== best && inp.checked) {
+              try {
+                inp.click();
+              } catch {}
+            }
+          }
+          if (best) {
+            if (!best.checked) activateOption(best);
+            return !!best.checked;
+          }
+          return false;
+        }
+      } catch {}
       return choose(root, multi ? values : values[0], multi);
     },
   });
