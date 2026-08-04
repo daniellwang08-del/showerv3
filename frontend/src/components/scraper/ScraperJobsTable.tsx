@@ -115,10 +115,13 @@ const ALL_COLUMNS = [
   { key: '__no__',         label: 'No.',        sortable: false },
   { key: 'title',          label: 'Title',      sortable: true  },
   { key: 'company',        label: 'Company',    sortable: true  },
-  { key: 'location',       label: 'Location',   sortable: false },
-  { key: 'work_mode',      label: 'Work mode',  sortable: false },
-  { key: 'salary_raw',     label: 'Salary',     sortable: false },
-  { key: 'job_type',       label: 'Type',       sortable: false },
+  // Admin: raw listing metadata is usually empty — show the posting URL instead.
+  { key: 'source_url',     label: 'URL',        sortable: false, adminOnly: true as const },
+  // Applicant-only listing metadata (admin table uses URL in their place).
+  { key: 'location',       label: 'Location',   sortable: false, applicantOnly: true as const },
+  { key: 'work_mode',      label: 'Work mode',  sortable: false, applicantOnly: true as const },
+  { key: 'salary_raw',     label: 'Salary',     sortable: false, applicantOnly: true as const },
+  { key: 'job_type',       label: 'Type',       sortable: false, applicantOnly: true as const },
   { key: 'source',         label: 'Source',     sortable: false },
   { key: 'posted_date',    label: 'Posted',     sortable: true, applicantOnly: true as const },
   { key: 'added_from',     label: 'Added from', sortable: false },
@@ -134,10 +137,14 @@ type ColumnDef = (typeof ALL_COLUMNS)[number];
 type ColumnKey = ColumnDef['key'];
 
 function visibleColumns(isAdmin: boolean): ColumnDef[] {
-  return ALL_COLUMNS.filter((col) => !('applicantOnly' in col && col.applicantOnly && isAdmin));
+  return ALL_COLUMNS.filter((col) => {
+    if ('applicantOnly' in col && col.applicantOnly && isAdmin) return false;
+    if ('adminOnly' in col && col.adminOnly && !isAdmin) return false;
+    return true;
+  });
 }
 
-/** Left cluster keeps fixed widths; Source (omitted) absorbs remaining table width. */
+/** Left cluster keeps fixed widths; flex column absorbs remaining table width. */
 const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   __check__: '32px',
   __no__: '44px',
@@ -147,6 +154,8 @@ const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   work_mode: '74px',
   salary_raw: '100px',
   job_type: '78px',
+  // Admin source badge is fixed; URL column absorbs remaining width.
+  source: '120px',
   posted_date: '68px',
   // 1.5× prior 130px so labels like "Welcome to the Jungle" fit without clipping.
   added_from: '195px',
@@ -159,6 +168,8 @@ const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
 };
 
 const ADMIN_ACTIONS_WIDTH = '220px';
+const ADMIN_TITLE_WIDTH = '260px';
+const ADMIN_COMPANY_WIDTH = '130px';
 
 /** Columns pinned to the right edge of the table. */
 const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
@@ -171,7 +182,7 @@ const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
   '__actions__',
 ]);
 
-/** Hide Source first when the viewport cannot fit every column comfortably. */
+/** Applicant: hide Source first when the viewport cannot fit every column. */
 const SOURCE_COL_CLASS = 'hidden min-[1600px]:table-column';
 const SOURCE_CELL_CLASS = 'hidden min-[1600px]:table-cell';
 
@@ -1781,19 +1792,22 @@ export function ScraperJobsTable({
         <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
           <table className="w-full table-fixed border-collapse text-sm">
             <colgroup>
-              {columns.map((col) => (
-                <col
-                  key={col.key}
-                  style={
-                    col.key === '__actions__' && isAdmin
-                      ? { width: ADMIN_ACTIONS_WIDTH, minWidth: ADMIN_ACTIONS_WIDTH }
-                      : COLUMN_WIDTHS[col.key]
-                        ? { width: COLUMN_WIDTHS[col.key], minWidth: COLUMN_WIDTHS[col.key] }
-                        : undefined
-                  }
-                  className={col.key === 'source' ? SOURCE_COL_CLASS : undefined}
-                />
-              ))}
+              {columns.map((col) => {
+                let width = COLUMN_WIDTHS[col.key];
+                if (col.key === '__actions__' && isAdmin) width = ADMIN_ACTIONS_WIDTH;
+                if (col.key === 'title' && isAdmin) width = ADMIN_TITLE_WIDTH;
+                if (col.key === 'company' && isAdmin) width = ADMIN_COMPANY_WIDTH;
+                // Admin: URL is the flex column. Applicant: Source stays flex (no fixed width).
+                if (col.key === 'source' && !isAdmin) width = undefined;
+                if (col.key === 'source_url') width = undefined;
+                return (
+                  <col
+                    key={col.key}
+                    style={width ? { width, minWidth: width } : undefined}
+                    className={col.key === 'source' && !isAdmin ? SOURCE_COL_CLASS : undefined}
+                  />
+                );
+              })}
             </colgroup>
 
             {/* ── Header ── */}
@@ -1817,7 +1831,7 @@ export function ScraperJobsTable({
                         ? `sticky right-0 z-20 bg-slate-100 dark:bg-[#1a2438] ${STICKY_SHADOW}`
                         : '',
                       col.key === '__check__' ? 'px-2' : '',
-                      col.key === 'source' ? SOURCE_CELL_CLASS : '',
+                      col.key === 'source' && !isAdmin ? SOURCE_CELL_CLASS : '',
                     ].join(' ')}
                   >
                     {col.key === '__check__' ? (
@@ -1966,28 +1980,42 @@ export function ScraperJobsTable({
                       {job.company || '-'}
                     </td>
 
-                    {/* Location */}
-                    <td className={`${CELL} text-slate-500 text-xs truncate`}>
-                      {job.location || '-'}
-                    </td>
+                    {/* Admin: long posting URL (absorbs width up to Source) */}
+                    {isAdmin && (
+                      <td className={CELL}>
+                        <a
+                          href={job.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="block min-w-0 truncate font-mono text-[11px] leading-snug text-slate-600 hover:text-blue-600 dark:text-[#cbd5e1] dark:hover:text-[#93c5fd]"
+                          title={job.source_url}
+                        >
+                          {job.source_url || <span className="text-slate-400 dark:text-[#64748b]">-</span>}
+                        </a>
+                      </td>
+                    )}
 
-                    {/* Work mode */}
-                    <td className={CELL}>
-                      <WorkModeBadge mode={job.work_mode} isRemoteFallback={job.is_remote} />
-                    </td>
+                    {/* Applicant listing metadata */}
+                    {!isAdmin && (
+                      <>
+                        <td className={`${CELL} text-slate-500 text-xs truncate`}>
+                          {job.location || '-'}
+                        </td>
+                        <td className={CELL}>
+                          <WorkModeBadge mode={job.work_mode} isRemoteFallback={job.is_remote} />
+                        </td>
+                        <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
+                          {job.salary_raw || <span className="text-slate-300">-</span>}
+                        </td>
+                        <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
+                          {job.job_type || <span className="text-slate-300">-</span>}
+                        </td>
+                      </>
+                    )}
 
-                    {/* Salary */}
-                    <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
-                      {job.salary_raw || <span className="text-slate-300">-</span>}
-                    </td>
-
-                    {/* Type */}
-                    <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
-                      {job.job_type || <span className="text-slate-300">-</span>}
-                    </td>
-
-                    {/* Source — flex column; hidden when viewport is too narrow */}
-                    <td className={`${CELL} ${SOURCE_CELL_CLASS}`}>
+                    {/* Source — admin always visible; applicant flex / responsive hide */}
+                    <td className={`${CELL} ${isAdmin ? '' : SOURCE_CELL_CLASS}`}>
                       <Badge variant={SOURCE_BADGE_VARIANT[job.source?.toLowerCase() ?? ''] || 'default'}>
                         {job.source || job.domain}
                       </Badge>

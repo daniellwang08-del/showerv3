@@ -292,9 +292,8 @@ const SideTile = memo(function SideTile({
   trendMaxScale,
 }: SideTileProps) {
   const className = [
-    // flex-1 + min-h only — fixed h/max-h left empty gaps under the main panels
-    // while side rails stretched to the taller hero column.
-    'stats-side-tile group relative flex min-h-[126px] w-full flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left shadow-sm transition-[border-color,box-shadow,transform,background-color] duration-300 sm:gap-4 sm:px-5 sm:py-4',
+    // Compact rail tiles — number + sync detail share one row.
+    'stats-side-tile group relative flex min-h-[92px] w-full flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3 text-left shadow-sm transition-[border-color,box-shadow,transform,background-color] duration-300 sm:gap-4 sm:px-5 sm:py-3.5',
     'border-slate-200/90 bg-white/95 dark:border-slate-700/80 dark:bg-[#141d31]/95',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 dark:hover:border-slate-500'
@@ -305,19 +304,24 @@ const SideTile = memo(function SideTile({
     <>
       <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accent} opacity-[0.08] transition-opacity duration-300 group-hover:opacity-[0.16]`} />
       <div className={`absolute inset-y-4 left-0 w-1 rounded-r-full bg-gradient-to-b ${accent}`} />
-      <div className={`relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${iconWrap} text-white shadow-lg transition-transform duration-300 group-hover:scale-105 sm:h-14 sm:w-14`}>
-        <Icon size={22} strokeWidth={2.35} />
+      <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${iconWrap} text-white shadow-lg transition-transform duration-300 group-hover:scale-105 sm:h-12 sm:w-12`}>
+        <Icon size={20} strokeWidth={2.35} />
       </div>
       <div className="relative min-w-0 flex-[1.05]">
-        <AnimatedNumber
-          value={value}
-          className="text-[2rem] font-black leading-none tracking-tight text-slate-900 sm:text-[2.15rem]"
-        />
-        <p className="mt-2 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <AnimatedNumber
+            value={value}
+            className="shrink-0 text-[1.75rem] font-black leading-none tracking-tight text-slate-900 sm:text-[1.9rem]"
+          />
+          <p
+            className="min-w-0 truncate text-[11px] font-medium leading-snug text-slate-500 sm:text-[11.5px]"
+            title={hint}
+          >
+            {hint}
+          </p>
+        </div>
+        <p className="mt-1.5 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
           {label}
-        </p>
-        <p className="mt-1.5 truncate text-[11.5px] font-medium leading-snug text-slate-500 sm:text-[12px]">
-          {hint}
         </p>
       </div>
       {Array.isArray(trend) && trend.length > 0 ? (
@@ -469,7 +473,7 @@ interface ScraperStatsBarProps {
 
 function StatsBoardSkeleton({ label = 'Loading your job status…' }: { label?: string }) {
   return (
-    <div className="stats-board-shell flex min-h-[280px] w-full items-center justify-center rounded-[1.75rem] border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-[#141d31]" style={{ contentVisibility: 'auto' }}>
+    <div className="stats-board-shell flex min-h-[220px] w-full items-center justify-center rounded-[1.75rem] border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-[#141d31]" style={{ contentVisibility: 'auto' }}>
       <div className="flex items-center gap-3 text-base font-medium text-slate-400">
         <span className="stats-board-pulse inline-block h-3 w-3 rounded-full bg-blue-500" />
         {label}
@@ -723,7 +727,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             onClick={onSelectToday}
             title="Show today's new jobs"
             className={[
-              'stats-hero-tile group relative mx-auto flex h-full min-h-[280px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-4 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
+              'stats-hero-tile group relative mx-auto flex h-full min-h-[220px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-3 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
               'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
               'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
@@ -744,7 +748,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
                 </span>
               </div>
             </div>
-            <div className="mt-1 flex h-[52px] flex-col justify-center space-y-1">
+            <div className="mt-1 flex h-[44px] flex-col justify-center space-y-0.5">
               <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
                 {todayRemote > 0
                   ? `${fmt(todayRemote)} remote added today`
@@ -896,7 +900,7 @@ const PlatformSyncRail = memo(function PlatformSyncRail({
           : 'bg-slate-400';
 
   const className = [
-    'stats-rail-stat group flex min-h-[72px] w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-3 text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
+    'stats-rail-stat group flex min-h-[58px] w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-2.5 text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
     'border-slate-200/80 bg-white/85 dark:border-slate-700/70 dark:bg-[#101827]/85',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40 dark:hover:border-slate-500'
@@ -907,24 +911,29 @@ const PlatformSyncRail = memo(function PlatformSyncRail({
     <>
       <div
         className={[
-          'relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-105',
+          'relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-105',
           tone,
         ].join(' ')}
       >
-        <Activity size={18} strokeWidth={2.4} />
+        <Activity size={17} strokeWidth={2.4} />
         <span className={`absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-[#101827] ${statusDot}`} />
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-bold leading-none text-slate-800">
           {platform.label}
         </p>
-        <AnimatedNumber
-          value={jobs}
-          className="mt-1.5 text-[1.35rem] font-black leading-none tracking-tight text-slate-900"
-        />
-        <p className="mt-1 truncate text-[11px] font-medium text-slate-500" title={formatLastSyncAt(platform.last_sync_at)}>
-          {detail}
-        </p>
+        <div className="mt-1.5 flex min-w-0 items-baseline gap-2">
+          <AnimatedNumber
+            value={jobs}
+            className="shrink-0 text-[1.25rem] font-black leading-none tracking-tight text-slate-900"
+          />
+          <p
+            className="min-w-0 truncate text-[11px] font-medium text-slate-500"
+            title={formatLastSyncAt(platform.last_sync_at)}
+          >
+            {detail}
+          </p>
+        </div>
       </div>
     </>
   );
@@ -1181,7 +1190,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
             onClick={onSelectToday}
             title="Show today's fetched jobs"
             className={[
-              'stats-hero-tile group relative mx-auto flex h-full min-h-[280px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-4 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
+              'stats-hero-tile group relative mx-auto flex h-full min-h-[220px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-3 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
               'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
               'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
@@ -1202,7 +1211,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
                 </span>
               </div>
             </div>
-            <div className="mt-1 flex h-[52px] flex-col justify-center space-y-1">
+            <div className="mt-1 flex h-[44px] flex-col justify-center space-y-0.5">
               <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
                 {lastNew > 0
                   ? `${fmt(lastNew)} new from last sync`

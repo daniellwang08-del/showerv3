@@ -315,8 +315,12 @@ function MetaTile({
         <Icon className="h-4 w-4" strokeWidth={2} />
       </span>
       <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500">{label}</div>
-        <div className="min-w-0 text-sm font-medium leading-snug text-slate-900">{children}</div>
+        <div className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-[#94a3b8]">
+          {label}
+        </div>
+        <div className="min-w-0 text-sm font-medium leading-snug text-slate-800 dark:text-[#e2e8f0]">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -324,8 +328,8 @@ function MetaTile({
 
 function SectionLabel({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-2 font-semibold text-slate-600">
-      <Icon className="h-4 w-4 shrink-0 text-blue-600" strokeWidth={2} aria-hidden />
+    <span className="inline-flex items-center gap-2 font-semibold text-slate-600 dark:text-[#cbd5e1]">
+      <Icon className="h-4 w-4 shrink-0 text-blue-600 dark:text-[#93c5fd]" strokeWidth={2} aria-hidden />
       {children}
     </span>
   );
@@ -341,7 +345,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
               href={sourceUrl}
               target="_blank"
               rel="noreferrer"
-              className="break-all font-medium text-blue-600 hover:text-blue-800 hover:underline"
+              className="break-all font-medium text-blue-600 hover:text-blue-800 hover:underline dark:text-[#93c5fd] dark:hover:text-[#bfdbfe]"
             >
               {sourceUrl}
             </a>
@@ -606,7 +610,7 @@ export function DetailContentPanel({
         <div className="flex min-w-0 flex-1 items-center justify-between gap-2 border-l border-blue-200/60 pl-3">
           <div className="flex min-w-0 items-center gap-2">
             <Target className="h-5 w-5 shrink-0 text-blue-600" />
-            <span className="text-base font-bold text-slate-900">
+            <span className="text-base font-bold text-slate-900 dark:text-[#f8fafc]">
               {isAdmin ? 'Job description' : 'Job match analysis'}
             </span>
           </div>
@@ -799,7 +803,7 @@ export function DetailContentPanel({
                   <FileText className="h-4 w-4" strokeWidth={2} aria-hidden />
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-base font-semibold text-slate-900">
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-[#f8fafc]">
                     {isAdmin ? 'Extracted job description' : 'Job details'}
                   </h3>
                   {analysis.content_enriched_by_ai && (
@@ -818,7 +822,7 @@ export function DetailContentPanel({
                       href={analysis.source_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="break-all font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                      className="break-all font-medium text-blue-600 hover:text-blue-800 hover:underline dark:text-[#93c5fd] dark:hover:text-[#bfdbfe]"
                     >
                       {analysis.source_url}
                     </a>
@@ -850,7 +854,12 @@ export function DetailContentPanel({
               {isAdmin && !extractionBusy && (analysis.raw_plain_text || analysis.job_data?.description) && (
                 <div>
                   <SectionLabel icon={FileText}>Raw job description</SectionLabel>
-                  <div className="mt-2 max-h-[min(36rem,55vh)] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner dark:border-slate-600 dark:bg-[#0b1220] dark:text-slate-100">
+                  {/*
+                    Do NOT use dark:text-slate-100 — this app inverts the slate
+                    scale in dark mode, so slate-100 becomes a dark navy and
+                    the JD text disappears on the dark panel.
+                  */}
+                  <div className="mt-2 max-h-[min(36rem,55vh)] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner dark:border-[rgba(148,163,184,0.28)] dark:bg-[#0b1220] dark:text-[#e2e8f0]">
                     {analysis.raw_plain_text || analysis.job_data?.description}
                   </div>
                 </div>
