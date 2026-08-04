@@ -1,11 +1,10 @@
 // Ashby (jobs.ashbyhq.com) helpers.
 //
 // Ashby parses an uploaded resume and autofills name/email/location/socials
-// (Ashby product feature). This repo's file driver already documents that the
-// convenience "Autofill from resume" zone "parses the resume and overwrites
-// fields". The real Resume input (#_systemfield_resume) triggers the same
-// parse - so resume MUST be attached AFTER text fields are committed, then
-// text values re-applied (mirrors Lever/Breezy/Workable).
+// (Ashby product feature). The convenience "Autofill from resume" zone is never
+// used (file.js). Resume is uploaded EARLY (parallel with the LLM round-trip)
+// so parse settles before the single text/select write pass — avoiding a second
+// ashbyReapply write that re-opened comboboxes and toggled Yes/No.
 (() => {
   const AF = window.__AF;
   if (!AF) return;

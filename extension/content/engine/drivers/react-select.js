@@ -240,10 +240,12 @@
         '[class*="singleValue"], [class*="single-value"], [class*="multiValue"], [class*="multi-value"]'
       );
     if (sv && clean(sv.innerText || sv.textContent)) return true;
-    // Ashby location / "how did you hear" comboboxes store the answer in
-    // input.value (no react-select chip). Probe: hasSingleValueChip=false.
+    // Ashby: only count a CLOSED menu + non-empty value as filled. Open menu
+    // with filter text is not a commit (aria-expanded=true).
     const input = comboInput(root);
-    if (isAshbyValueCombo(root, input) && input && clean(input.value)) return true;
+    if (isAshbyValueCombo(root, input) && input && clean(input.value) && !comboIsExpanded(input)) {
+      return true;
+    }
     return false;
   }
 
@@ -251,7 +253,9 @@
     const sv = root.querySelector && root.querySelector('[class*="singleValue"], [class*="single-value"]');
     if (sv) return clean(sv.innerText || sv.textContent);
     const input = comboInput(root);
-    if (isAshbyValueCombo(root, input) && input && clean(input.value)) return clean(input.value);
+    if (isAshbyValueCombo(root, input) && input && clean(input.value) && !comboIsExpanded(input)) {
+      return clean(input.value);
+    }
     return "";
   }
 
@@ -260,6 +264,30 @@
     const w = normText(want);
     if (!g || !w) return false;
     return g === w || g.includes(w) || w.includes(g);
+  }
+
+  function comboIsExpanded(input) {
+    try {
+      return !!(input && input.getAttribute && input.getAttribute("aria-expanded") === "true");
+    } catch {
+      return false;
+    }
+  }
+
+  // Ashby: typed filter text sits in input.value WHILE the listbox is open
+  // (screenshot: placeholder/empty commit, "LinkedIn Jobs" only highlighted).
+  // That is NOT a committed selection — Enter often only highlights. Require
+  // the menu to be collapsed and the value to still match.
+  function ashbyComboCommitted(input, want) {
+    if (!input || !want) return false;
+    if (comboIsExpanded(input)) return false;
+    return valueMatchesWant(input.value, want);
+  }
+
+  function ashbyDiag(cidHint, msg, extra) {
+    try {
+      console.log("[autofill] ashby-combo", cidHint || "", msg, extra || "");
+    } catch {}
   }
 
   // Open the widget. Libraries disagree on which event opens the menu
@@ -409,56 +437,109 @@
       return comboHasSelection(root);
     }
 
-    // Ashby value-combobox: committed answer lives in input.value. Opening or
-    // clearedOptionNodes() wipes it (probe + user report). Never clear; verify
-    // via .value after type+Enter / option click.
+    // Ashby value-combobox — live probe evidence (jobs.ashbyhq.com):
+    // - Options live in aria-controls listbox (DIV._floatingContainer_d7ago_103).
+    // - Location: aria-selected stays "false"; Enter does NOT commit; option
+    //   mousedown+click commits (ApiSetFormValue, aria-expanded=false).
+    // - How-heard: aria-selected="true" + activedescendant; Enter alone commits.
+    // - Must type via MAIN-world bridge WITHOUT blur (kind:"type"), then click
+    //   the option via MAIN-world __af_page_click. Never commitReactValue after
+    //   (that re-types+blurs and re-opens the menu).
     if (isAshbyValueCombo(root, input)) {
-      for (let attempt = 0; attempt < 2; attempt++) {
+      const hint = (input && (input.getAttribute("data-autofill-cid") || input.id)) || "ashby-combo";
+      if (ashbyComboCommitted(input, value)) {
+        ashbyDiag(hint, "skip already committed", { value: clean(input.value) });
+        return true;
+      }
+      const typeFn = AF.dom.typeReactValue;
+      const clickFn = AF.dom.pageClick;
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          await typeAndEnter(input, root, value);
-          if (
-            await waitUntil(
-              () => (input && valueMatchesWant(input.value, value) ? true : null),
-              900,
-              50
-            )
-          ) {
-            closeMenu(input, root);
+          ashbyDiag(hint, "attempt " + attempt, {
+            want: value,
+            beforeValue: clean(input && input.value),
+            beforeExpanded: comboIsExpanded(input),
+          });
+          try {
+            input.focus({ preventScroll: true });
+          } catch {
+            try {
+              input.focus();
+            } catch {}
+          }
+          // Open if collapsed; avoid toggle-closed when already open.
+          if (!comboIsExpanded(input)) openCombo(input, root);
+          if (typeof typeFn === "function") typeFn(input, value);
+          else {
+            setNativeValue(input, value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          // Location geocode is async — wait longer than static option lists.
+          await waitUntil(() => (scopedOptionNodes(input, root).length ? true : null), 2500, 60);
+          const nodes = scopedOptionNodes(input, root);
+          let opt = pickOption(nodes, value);
+          // Prefer aria-selected / activedescendant when text match is soft.
+          if (!opt) {
+            const activeId = input.getAttribute("aria-activedescendant");
+            if (activeId) {
+              try {
+                opt = document.getElementById(activeId) || null;
+              } catch {
+                opt = null;
+              }
+            }
+          }
+          if (!opt) {
+            opt = nodes.find((o) => (o.getAttribute("aria-selected") || "") === "true") || null;
+          }
+          ashbyDiag(hint, "options", {
+            count: nodes.length,
+            picked: opt ? clean(opt.innerText || opt.textContent) : null,
+            expanded: comboIsExpanded(input),
+            filterValue: clean(input.value),
+            activedescendant: input.getAttribute("aria-activedescendant"),
+            listbox: (input.getAttribute("aria-controls") || "").slice(0, 40),
+          });
+          if (opt) {
+            if (typeof clickFn === "function") clickFn(opt);
+            else clickOption(opt);
+          } else if (input.getAttribute("aria-activedescendant") || nodes.some((o) => o.getAttribute("aria-selected") === "true")) {
+            // Probe: Enter commits when an option is already active/selected.
+            pressEnter(input);
+          } else {
+            ashbyDiag(hint, "no option to click");
+          }
+          const ok = await waitUntil(
+            () => (ashbyComboCommitted(input, value) ? true : null),
+            1500,
+            50
+          );
+          ashbyDiag(hint, ok ? "committed" : "not committed", {
+            value: clean(input && input.value),
+            expanded: comboIsExpanded(input),
+          });
+          if (ok) {
+            // Soft blur only — do NOT re-set the value (reopens autocomplete).
             try {
               input.blur && input.blur();
             } catch {}
-            try {
-              if (AF.dom.commitReactValue) AF.dom.commitReactValue(input, clean(input.value));
-            } catch {}
             return true;
           }
-          // Click a visible filtered option WITHOUT clearing the input (clear
-          // = empty field on Ashby).
-          const opt = pickOption(scopedOptionNodes(input, root), value);
-          if (opt) {
-            clickOption(opt);
-            if (
-              await waitUntil(
-                () => (input && clean(input.value) ? true : null),
-                700,
-                50
-              )
-            ) {
-              closeMenu(input, root);
-              try {
-                input.blur && input.blur();
-              } catch {}
-              try {
-                if (AF.dom.commitReactValue) AF.dom.commitReactValue(input, clean(input.value));
-              } catch {}
-              return true;
-            }
-          }
+        } catch (err) {
+          ashbyDiag(hint, "threw", err && err.message);
+        }
+        try {
+          input && input.blur && input.blur();
         } catch {}
-        closeMenu(input, root);
-        await delay(120);
+        await delay(200);
       }
-      return !!(input && clean(input.value));
+      const finalOk = ashbyComboCommitted(input, value);
+      ashbyDiag(hint, "final", {
+        ok: finalOk,
+        value: clean(input && input.value),
+        expanded: comboIsExpanded(input),
+      });
+      return finalOk;
     }
 
     for (let attempt = 0; attempt < 2; attempt++) {

@@ -74,7 +74,7 @@
     }
   }
 
-  function setTextLike(el, value) {
+  function setTextLike(el, value, { blur = true } = {}) {
     if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return false;
     const v = value == null ? "" : String(value);
     const setter = valueSetter(el);
@@ -104,15 +104,48 @@
       el.dispatchEvent(new Event("input", { bubbles: true }));
     }
     el.dispatchEvent(new Event("change", { bubbles: true }));
-    callReactHandlers(el, ["input", "change", "blur"]);
-    try {
-      el.blur();
-    } catch {}
-    try {
-      el.dispatchEvent(new FocusEvent("focusout", { bubbles: true, cancelable: true }));
-      el.dispatchEvent(new FocusEvent("blur", { bubbles: false, cancelable: true }));
-    } catch {}
+    // Autocomplete filter typing must NOT blur — blur collapses Ashby's listbox
+    // before we can click an option (probe: commit requires option click / Enter
+    // while expanded).
+    callReactHandlers(el, blur ? ["input", "change", "blur"] : ["input", "change"]);
+    if (blur) {
+      try {
+        el.blur();
+      } catch {}
+      try {
+        el.dispatchEvent(new FocusEvent("focusout", { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new FocusEvent("blur", { bubbles: false, cancelable: true }));
+      } catch {}
+    }
     return el.value === v || String(el.value) === v;
+  }
+
+  // Ashby autocomplete options: console probe proved mousedown+mouseup+click in
+  // the PAGE world commits (ApiSetFormValue) and sets aria-expanded=false.
+  // Isolated-world clicks are unreliable against Ashby's React handlers.
+  function clickLike(el) {
+    if (!el || el.nodeType !== 1) return false;
+    try {
+      el.scrollIntoView && el.scrollIntoView({ block: "nearest" });
+    } catch {}
+    try {
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerId: 1, button: 0 }));
+    } catch {}
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    try {
+      el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerId: 1, button: 0 }));
+    } catch {}
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+    try {
+      el.click();
+    } catch {}
+    const props = reactProps(el);
+    if (props && typeof props.onClick === "function") {
+      try {
+        props.onClick(fakeEvent(el, "click"));
+      } catch {}
+    }
+    return true;
   }
 
   function setSelect(el, value) {
@@ -167,12 +200,31 @@
       let ok = false;
       try {
         if (kind === "select") ok = setSelect(el, e.detail.value);
-        else ok = setTextLike(el, e.detail.value);
+        else if (kind === "type") ok = setTextLike(el, e.detail.value, { blur: false });
+        else ok = setTextLike(el, e.detail.value, { blur: true });
       } catch {
         ok = false;
       }
       try {
         el.setAttribute("data-af-page-set", ok ? "ok" : "fail");
+      } catch {}
+    },
+    true
+  );
+
+  document.addEventListener(
+    "__af_page_click",
+    (e) => {
+      const el = e.target;
+      if (!el || el.nodeType !== 1) return;
+      let ok = false;
+      try {
+        ok = clickLike(el);
+      } catch {
+        ok = false;
+      }
+      try {
+        el.setAttribute("data-af-page-click", ok ? "ok" : "fail");
       } catch {}
     },
     true

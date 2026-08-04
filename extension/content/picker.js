@@ -516,6 +516,43 @@
   // inputs whose state is still empty back to "". If we read el.value lazily
   // inside the loop, Email can be wiped between Name's commit and Email's turn,
   // and commitReactValue no-ops on the empty DOM - the intermittent Ashby bug.
+  // Ashby location / how-heard are <input role="combobox"> with NO type=
+  // attribute, so they match input:not([type]). Re-committing them via
+  // commitReactValue focuses + re-types the filter and REOPENS the listbox —
+  // live evidence: ashby-combo logged "committed", then final probe showed
+  // expanded:"true" on both comboboxes after AF_COMMIT_PREFILLED.
+  function isAutocompleteCombobox(el) {
+    try {
+      if (!el || el.tagName !== "INPUT") return false;
+      const role = (el.getAttribute("role") || "").toLowerCase();
+      if (role === "combobox") return true;
+      if ((el.getAttribute("aria-autocomplete") || "") === "list") return true;
+      if ((el.getAttribute("aria-haspopup") || "") === "listbox") return true;
+      if (AF.ashby && AF.ashby.isValueCombobox && AF.ashby.isValueCombobox(el)) return true;
+    } catch {}
+    return false;
+  }
+
+  function collapseAshbyComboboxes() {
+    let n = 0;
+    try {
+      document.querySelectorAll('input[role="combobox"]').forEach((inp) => {
+        try {
+          if (inp.getAttribute("aria-expanded") !== "true") return;
+          // Escape collapses without clearing a committed value (probe-verified path).
+          inp.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape", code: "Escape" }));
+          inp.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Escape", code: "Escape" }));
+          try {
+            inp.blur();
+          } catch {}
+          n++;
+        } catch {}
+      });
+      if (n) console.log("[autofill] collapsed", n, "open Ashby combobox(es)");
+    } catch {}
+    return n;
+  }
+
   async function commitPrefilledInputs() {
     const commit = dom.commitReactValue;
     if (typeof commit !== "function") return 0;
@@ -537,6 +574,16 @@
     for (const el of nodes) {
       try {
         if (!isVisible(el)) continue;
+        // Never re-commit autocomplete comboboxes — ApiSetFormValue already ran
+        // on option click; re-typing reopens the dropdown (Ashby failure mode).
+        if (isAutocompleteCombobox(el)) {
+          console.log("[autofill] commitPrefilled skip combobox", {
+            cid: el.getAttribute("data-autofill-cid"),
+            value: String(el.value || "").slice(0, 80),
+            expanded: el.getAttribute("aria-expanded"),
+          });
+          continue;
+        }
         // NOTE: we deliberately DO commit intl-tel-input (.iti) fields here. The
         // browser autofills phone numbers (often with a "+1" country prefix) into
         // the visible tel input WITHOUT firing React's onChange, so a controlled
@@ -560,6 +607,7 @@
         }
       } catch {}
     }
+    if (isAshby) collapseAshbyComboboxes();
     return n;
   }
 
@@ -1750,7 +1798,8 @@
 
   async function handleWrite(results, files, passId) {
     try {
-      console.groupCollapsed("[autofill] LLM payload (autofill-ready)");
+      // Note: this runs for every writeAndWait (LLM pass AND ashbyReapply).
+      console.groupCollapsed("[autofill] write payload (passId=" + (passId ?? "?") + ")");
       const flat = [];
       for (const r of results || []) {
         for (const c of r.controls || []) {
@@ -1767,6 +1816,7 @@
           });
         }
       }
+      console.log("[autofill] write control count:", flat.length);
       console.table(flat);
       console.groupEnd();
     } catch {}
@@ -1777,7 +1827,12 @@
       report = await AF.engine.writeControls(results, files);
     } finally {
       try {
-        if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
+        // Ashby: do NOT run closeReactSelectMenus body-clicks after a successful
+        // combobox commit — they can refocus/reopen autocomplete. Collapse with Escape.
+        const ashby =
+          /ashbyhq\.com$/i.test(location.hostname) || !!document.querySelector(".ashby-application-form-container");
+        if (ashby) collapseAshbyComboboxes();
+        else if (AF.closeReactSelectMenus) AF.closeReactSelectMenus(document);
       } catch {}
     }
     try {

@@ -3456,6 +3456,20 @@ function stripAshbyToggleControls(results) {
   return out;
 }
 
+// Locate the Ashby Resume file control from extracted specs (before LLM).
+function findAshbyResumeControl(specs) {
+  for (const f of specs || []) {
+    for (const c of f.controls || []) {
+      if (!c || !c.is_file) continue;
+      const label = c.label || f.label || "";
+      if (inferFileRoleFromLabel(label) === "resume") {
+        return { cid: c.cid, accept: c.accept || "", label };
+      }
+    }
+  }
+  return null;
+}
+
 async function uploadLeverResumeLast(tabId, pending) {
   if (!pending || !pending.file || tabId == null) return false;
   try {
@@ -3701,6 +3715,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   let workableResumePending = null;
   let breezyResumePending = null;
   let ashbyResumePending = null;
+  let ashbyResumeUploadedEarly = false;
 
   for (let pass = 0; pass < maxPasses; pass++) {
     // Re-extract the live DOM each pass. Already-filled controls report
@@ -3754,7 +3769,45 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
 
     const freshCount = fresh.reduce((n, f) => n + f.controls.length, 0);
     setAutofill({ runStatus: `Choosing answers for ${freshCount} field${freshCount === 1 ? "" : "s"}…` });
-    const resp = await autofillChunked(state.job.job_id, apiSpecs, buildPreferences());
+
+    // Ashby: upload resume in parallel with the LLM round-trip. Parse finishes
+    // while answers are generated, so we fill text/select fields ONCE afterward
+    // and never need ashbyReapply (logs proved reapply was the 2nd write cycle:
+    // write report 28 → write report 25 with no extract between).
+    let ashbyEarlyResumePromise = null;
+    if (isAshby && pass === 0 && !ashbyResumeUploadedEarly) {
+      const resumeMeta = findAshbyResumeControl(specs);
+      if (resumeMeta) {
+        ashbyEarlyResumePromise = (async () => {
+          try {
+            const file = await fetchRoleFile(state.job.job_id, "resume", resumeMeta.accept, {});
+            if (!file) {
+              console.log("[autofill] Ashby early resume: no file on server");
+              return null;
+            }
+            setAutofill({ runStatus: "Uploading your resume…" });
+            await focusApplicationTab(tabId);
+            const ok = await uploadAshbyResumeLast(tabId, { cid: resumeMeta.cid, file });
+            console.log("[autofill] Ashby resume uploaded early (parallel with LLM):", !!ok);
+            if (!ok) return null;
+            markFileControlAttached(ctx, resumeMeta.cid);
+            setAutofill({ runStatus: "Waiting for Ashby resume parse…" });
+            await delay(1600);
+            return { cid: resumeMeta.cid, file };
+          } catch (err) {
+            console.warn("[autofill] Ashby early resume failed:", err && err.message);
+            return null;
+          }
+        })();
+      }
+    }
+
+    const llmPromise = autofillChunked(state.job.job_id, apiSpecs, buildPreferences());
+    const [resp, earlyResume] = await Promise.all([
+      llmPromise,
+      ashbyEarlyResumePromise || Promise.resolve(null),
+    ]);
+    if (earlyResume) ashbyResumeUploadedEarly = true;
     const results = (resp && resp.results) || [];
 
     try {
@@ -3836,17 +3889,23 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       writeFiles = split.files;
       if (split.pending) breezyResumePending = split.pending;
     }
-    // Ashby parses uploaded resumes and overwrites name/email/location (Ashby
-    // product autofill; file.js documents the race). Defer like Lever/Breezy.
+    // Ashby: resume is uploaded early (parallel with LLM). Strip it from the
+    // write payload and do NOT schedule ashbyReapply — a second write was
+    // re-opening comboboxes and leaving "What brought you" uncommitted.
     if (isAshby) {
       const split = splitLeverResumeWrite(results, files);
       writeResults = split.results;
       writeFiles = split.files;
-      if (split.pending) ashbyResumePending = split.pending;
-      // Keep non-file answers so we can re-apply after resume parse — but drop
-      // Yes/No button groups (kind=select with only Yes/No): a second click
-      // toggles Ashby OFF (probe: marker=1, hiddenChecked=false).
-      ctx.ashbyReapply = stripAshbyToggleControls(writeResults);
+      if (ashbyResumeUploadedEarly) {
+        ashbyResumePending = null;
+        ctx.ashbyReapply = null;
+        console.log("[autofill] Ashby: single write pass (resume already uploaded; no reapply)");
+      } else if (split.pending) {
+        // Fallback: early upload failed — defer resume + reapply (legacy path).
+        ashbyResumePending = split.pending;
+        ctx.ashbyReapply = stripAshbyToggleControls(writeResults);
+        console.log("[autofill] Ashby: early resume missed; falling back to upload-last + reapply");
+      }
     }
     await writeAndWait(tabId, writeResults, writeFiles);
 
@@ -3890,33 +3949,29 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   // value can appear after the last write. Let the page settle, then re-commit
   // every text field's CURRENT value through the React-safe path twice so a late
   // browser refill is still caught. It's idempotent (same text).
-  // Ashby: focus the tab (side panel steals OS focus - Workday-proven), commit,
-  // upload resume LAST, wait for Ashby's resume parser, then re-apply text
-  // answers so parse overwrites cannot leave Name/Email empty in React state.
+  // Final commit of text values into React/Apollo state. Ashby resume is
+  // uploaded early (above); the legacy upload-last + reapply path runs only
+  // when early upload failed.
   if (eng && eng.mode === "select") {
     const ashby = eng.platform === "ashby";
     setAutofill({ runStatus: "Finalizing the form…" });
     if (ashby) await focusApplicationTab(tabId);
-    await delay(ashby ? 500 : 400);
+    await delay(ashby ? 400 : 400);
     await commitPrefilled(tabId);
-    await delay(ashby ? 300 : 200);
+    await delay(ashby ? 200 : 200);
     await commitPrefilled(tabId);
-    if (ashby) {
-      await delay(250);
-      await commitPrefilled(tabId);
-    }
   }
-  if (eng && eng.platform === "ashby" && ashbyResumePending) {
+  if (eng && eng.platform === "ashby" && ashbyResumePending && !ashbyResumeUploadedEarly) {
     setAutofill({ runStatus: "Uploading your resume…" });
     await focusApplicationTab(tabId);
     const ok = await uploadAshbyResumeLast(tabId, ashbyResumePending);
     if (ok) {
-      console.log("[autofill] Ashby resume uploaded last (after text commit)");
+      console.log("[autofill] Ashby resume uploaded last (fallback after text commit)");
       markFileControlAttached(ctx, ashbyResumePending.cid);
-      // Structured resume parse populates/races name+email asynchronously.
       setAutofill({ runStatus: "Waiting for Ashby resume parse…" });
       await delay(1800);
       if (ctx.ashbyReapply && ctx.ashbyReapply.length) {
+        console.log("[autofill] Ashby reapply after fallback resume:", ctx.ashbyReapply);
         setAutofill({ runStatus: "Restoring fields after resume parse…" });
         await focusApplicationTab(tabId);
         await writeAndWait(tabId, ctx.ashbyReapply, {});

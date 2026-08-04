@@ -177,6 +177,54 @@
     return true;
   }
 
+  // Type into a controlled input WITHOUT blur (Ashby autocomplete filter).
+  // kind:"type" on the MAIN-world bridge keeps the listbox open.
+  function typeReactValue(el, value) {
+    if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return false;
+    const v = value == null ? "" : String(value);
+    try {
+      el.removeAttribute("data-af-page-set");
+      el.dispatchEvent(
+        new CustomEvent("__af_page_set", {
+          bubbles: true,
+          cancelable: true,
+          detail: { value: v, kind: "type" },
+        })
+      );
+      const bridged = el.getAttribute("data-af-page-set");
+      el.removeAttribute("data-af-page-set");
+      if (bridged === "ok") return true;
+    } catch {}
+    try {
+      el.focus({ preventScroll: true });
+    } catch {}
+    setNativeValue(el, v);
+    fireInput(el, v);
+    return true;
+  }
+
+  // Click in the PAGE world (Ashby autocomplete options). Console probes showed
+  // isolated-world clicks often leave aria-expanded=true; MAIN-world click
+  // commits ApiSetFormValue and collapses the listbox.
+  function pageClick(el) {
+    if (!el) return false;
+    try {
+      el.removeAttribute("data-af-page-click");
+      el.dispatchEvent(new CustomEvent("__af_page_click", { bubbles: true, cancelable: true }));
+      const bridged = el.getAttribute("data-af-page-click");
+      el.removeAttribute("data-af-page-click");
+      if (bridged === "ok") return true;
+    } catch {}
+    try {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+      el.click();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // SELECT via MAIN-world bridge when available (Ashby EEO / custom selects).
   function setReactSelectValue(el, value) {
     if (!el || el.tagName !== "SELECT") return false;
@@ -598,6 +646,8 @@
     fireInput,
     commitReactValue,
     setReactTextValue,
+    typeReactValue,
+    pageClick,
     setReactSelectValue,
     textOfIds,
     labelForControl,
