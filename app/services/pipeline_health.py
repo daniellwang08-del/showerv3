@@ -104,8 +104,9 @@ async def heal_stale_pipeline_state(
                       OR length(btrim(je.description)) = 0
                   )
                   AND (
+                      -- Column is JSON (not JSONB); "?" exists only for jsonb.
                       je.raw_metadata IS NULL
-                      OR NOT (je.raw_metadata ? 'ai_structured_source')
+                      OR NOT ((je.raw_metadata::jsonb) ? 'ai_structured_source')
                   )
                   AND NOT EXISTS (
                       SELECT 1

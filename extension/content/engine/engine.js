@@ -379,7 +379,15 @@
       "controls,",
       html.length,
       "chars",
-      controlsMeta.map((c) => ({ cid: c.cid, kind: c.kind, opts: (c.options || []).length }))
+      controlsMeta.map((c) => ({
+        cid: c.cid,
+        kind: c.kind,
+        filled: !!c.filled,
+        req: !!c.required,
+        label: String(c.label || "").slice(0, 80),
+        opts: (c.options || []).length,
+        optSample: (c.options || []).slice(0, 2).map((o) => String(o).slice(0, 60)),
+      }))
     );
     return { handle, label: labelText(regionEl), controls: controlsMeta, html };
   }

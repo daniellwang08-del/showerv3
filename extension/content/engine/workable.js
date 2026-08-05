@@ -103,7 +103,21 @@
       if (nm === "current" && el.type === "checkbox") return true;
       // Application screening widgets: aria-hidden native input + visible role=radio/checkbox.
       if (isApplicationWidgetInput(el)) return false;
-      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
+      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") {
+        try {
+          const t = (el.type || "").toLowerCase();
+          if (t === "radio" || t === "checkbox") {
+            const host = el.closest && el.closest("fieldset[data-ui], [role='group'][data-ui], [role='radiogroup'][data-ui]");
+            console.warn("[autofill] WB skip aria-hidden widget (no QA_ host?)", {
+              type: t,
+              name: el.name || "",
+              hostUi: host ? host.getAttribute("data-ui") : null,
+              inGroup: !!(el.closest && el.closest('[data-ui="group"]')),
+            });
+          }
+        } catch {}
+        return true;
+      }
       if (el.closest && el.closest('[data-ui="group"]')) return true;
     } catch {}
     return false;
@@ -478,6 +492,68 @@
     return n;
   }
 
+  // Console probe: paste `__AF.workable.debugDump()` on apply.workable.com.
+  function debugDump(tag) {
+    const out = { tag: tag || "dump", href: "", address: null, qa: [], radios: [], skippedRadios: [], expEditors: [] };
+    try {
+      out.href = String(location.href || "");
+    } catch {}
+    try {
+      const form = document.querySelector('form[data-ui="application-form"]');
+      const addr = form && form.querySelector('input[name="address"], textarea[name="address"]');
+      out.address = addr
+        ? { value: String(addr.value || ""), name: addr.name || "", id: addr.id || "" }
+        : null;
+      const hosts = form ? form.querySelectorAll('[data-ui^="QA_"], [data-ui^="qa_"]') : [];
+      for (const h of hosts) {
+        const ui = h.getAttribute("data-ui") || "";
+        const radios = [...h.querySelectorAll('input[type="radio"]')];
+        const checks = [...h.querySelectorAll('input[type="checkbox"]')];
+        out.qa.push({
+          ui,
+          role: h.getAttribute("role") || h.tagName,
+          label: applicationQuestionTitleFor(radios[0] || checks[0] || h) || "",
+          radios: radios.length,
+          checks: checks.length,
+          filled: applicationGroupFilled(radios.length ? radios : checks),
+          options: (radios.length ? radios : checks).map((inp) => ({
+            value: inp.value,
+            checked: !!inp.checked,
+            opt: optionLabelFor(inp),
+            ariaHidden: inp.getAttribute("aria-hidden"),
+            skip: shouldSkipControl(inp),
+            isWidget: isApplicationWidgetInput(inp),
+          })),
+        });
+      }
+      for (const inp of form ? form.querySelectorAll('input[type="radio"], input[type="checkbox"]') : []) {
+        if (shouldSkipControl(inp) && (inp.type === "radio" || inp.type === "checkbox")) {
+          const host = inp.closest("fieldset[data-ui], [role='group'][data-ui], [role='radiogroup'][data-ui]");
+          out.skippedRadios.push({
+            type: inp.type,
+            name: inp.name || "",
+            hostUi: host ? host.getAttribute("data-ui") : null,
+          });
+        }
+      }
+      for (const ed of document.querySelectorAll('[data-ui="experience"] [data-ui="editor"], [data-ui="education"] [data-ui="editor"]')) {
+        const startEl = ed.querySelector('[name="start_date"]');
+        const endEl = ed.querySelector('[name="end_date"]');
+        out.expEditors.push({
+          start: startEl ? startEl.value : "",
+          end: endEl ? endEl.value : "",
+          title: (ed.querySelector('[name="title"], [name="school"]') || {}).value || "",
+        });
+      }
+    } catch (err) {
+      out.error = String(err && err.message);
+    }
+    try {
+      console.log("[autofill] WB debugDump", out);
+    } catch {}
+    return out;
+  }
+
   AF.workable = {
     isWorkableHost,
     isWorkablePage,
@@ -505,5 +581,6 @@
     setEditorField,
     commitEditorFields,
     editorFieldInvalid,
+    debugDump,
   };
 })();

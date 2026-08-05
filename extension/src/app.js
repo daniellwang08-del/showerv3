@@ -3518,12 +3518,18 @@ async function prepareWorkable(tabId) {
   const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
   let experience = [];
   let education = [];
+  let address = {};
+  let eeo = {};
   try {
     const profile = await api.getAutofillProfile(state.job.job_id, resumeSource);
+    address = (profile && profile.address) || {};
+    eeo = (profile && profile.eeo) || {};
     if (Array.isArray(profile.workExperience)) {
       experience = profile.workExperience.map((w) => ({
         company: (w && w.company) || "",
         title: (w && w.title) || "",
+        // Profile WorkExperienceBlock has no industry field — always "" unless
+        // a future API adds it. Logged in content script when skipped.
         industry: (w && w.industry) || "",
         description: (w && w.description) || "",
         start: (w && w.startMMYYYY) || "",
@@ -3543,8 +3549,45 @@ async function prepareWorkable(tabId) {
   } catch {
     experience = [];
     education = [];
+    address = {};
+    eeo = {};
   }
-  await tabSend(tabId, { type: "AF_WB_PREP", experience, education });
+  try {
+    console.log("[autofill] prepareWorkable payload", {
+      exp: experience.length,
+      edu: education.length,
+      address: {
+        city: address.city || "",
+        state: address.state || "",
+        country: address.country || "",
+      },
+      expDates: experience.map((w, i) => ({
+        i,
+        title: w.title,
+        start: w.start,
+        end: w.end,
+        current: w.current,
+        industry: w.industry,
+      })),
+      sponsorship: eeo.sponsorship,
+    });
+  } catch {}
+  // Seed platform answer-cache from profile EEO so sponsorship radios are
+  // clicked in prepareCachedAnswers before extract (first visit has no store).
+  try {
+    const userId = state.user && state.user.user_id;
+    if (userId != null && typeof eeo.sponsorship === "boolean") {
+      const pairs = (await store.getAnswerCache(userId, "workable")) || {};
+      if (!pairs.sponsorship) {
+        pairs.sponsorship = eeo.sponsorship ? "Yes" : "No";
+        await store.saveAnswerPairs(userId, "workable", { sponsorship: pairs.sponsorship });
+        console.log("[autofill] prepareWorkable seeded sponsorship cache:", pairs.sponsorship);
+      }
+    }
+  } catch (err) {
+    console.warn("[autofill] prepareWorkable sponsorship seed failed", err && err.message);
+  }
+  await tabSend(tabId, { type: "AF_WB_PREP", experience, education, address });
   await delay(600);
 }
 

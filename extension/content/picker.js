@@ -6,7 +6,7 @@
 // drivers. Injected into every frame; idempotent via the guard below.
 (() => {
   try {
-    console.log("[autofill] picker.js build 2026-08-04a (generic: cover letter + consent + custom dropdown)");
+    console.log("[autofill] picker.js build 2026-08-05-wb (workable: dates reassert + address + debug)");
   } catch {}
   if (window.__JOB_AUTOFILL__) return;
   window.__JOB_AUTOFILL__ = true;
@@ -823,6 +823,9 @@
     ];
     const seen = new Set();
     let n = 0;
+    try {
+      console.log("[autofill] AF_APPLY_CACHE cats", Object.keys(pairs || {}));
+    } catch {}
     for (const anchor of anchors) {
       let root = null;
       let driver = null;
@@ -863,7 +866,14 @@
       } catch {}
       if (filled) continue;
       try {
-        if (await driver.write(root, { value: answer, option: answer })) n++;
+        const ok = await driver.write(root, { value: answer, option: answer });
+        console.log("[autofill] AF_APPLY_CACHE write", {
+          cat,
+          answer,
+          label: String((spec && spec.label) || "").slice(0, 100),
+          ok,
+        });
+        if (ok) n++;
       } catch {}
     }
     return n;
@@ -1616,6 +1626,25 @@
     return true;
   }
 
+  function wbDateSnapshot(editor, tag) {
+    try {
+      const startEl = editor && editor.querySelector('[name="start_date"]');
+      const endEl = editor && editor.querySelector('[name="end_date"]');
+      const cur = editor && editor.querySelector('[role="checkbox"]#current, [role="checkbox"][aria-labelledby="checkbox_label_current"]');
+      const snap = {
+        tag,
+        start_dom: startEl ? String(startEl.value || "") : "(missing)",
+        end_dom: endEl ? String(endEl.value || "") : "(missing)",
+        current_aria: cur ? cur.getAttribute("aria-checked") : "(missing)",
+      };
+      console.log("[autofill] WB date snap", snap);
+      return snap;
+    } catch (err) {
+      console.warn("[autofill] WB date snap failed", err && err.message);
+      return null;
+    }
+  }
+
   async function wbFillEducationEntry(entry) {
     const e = entry || {};
     if (!e.school) return false;
@@ -1627,12 +1656,17 @@
     // while degree/school - written later - survived).
     await wbDelay(200);
     let n = 0;
+    console.log("[autofill] WB edu entry payload", {
+      school: e.school || "",
+      degree: e.degree || "",
+      field_of_study: e.field_of_study || "",
+      start: e.start || "",
+      end: e.end || "",
+    });
     // Optional fields first; required School last so a later write cannot drop it
     // from React state while the DOM still shows the typed value.
     if (e.field_of_study && (await wbSetField(editor.querySelector('[name="field_of_study"]'), e.field_of_study))) n++;
     if (e.degree && (await wbSetField(editor.querySelector('[name="degree"]'), e.degree))) n++;
-    if (e.start && (await wbSetField(editor.querySelector('[name="start_date"]'), e.start))) n++;
-    if (e.end && (await wbSetField(editor.querySelector('[name="end_date"]'), e.end))) n++;
     // Re-assert the optional fields from the source data on the now-stable editor
     // right before save: commitEditorFields only re-commits fields whose DOM value
     // is still present, so a value React already cleared (field_of_study on a 2nd+
@@ -1640,6 +1674,21 @@
     if (e.field_of_study) await wbSetField(editor.querySelector('[name="field_of_study"]'), e.field_of_study);
     if (e.degree) await wbSetField(editor.querySelector('[name="degree"]'), e.degree);
     if (await wbSetField(editor.querySelector('[name="school"]'), e.school)) n++;
+    // Dates LAST: earlier writes (esp. required School) can clear MM/YYYY inputs
+    // the same way large textareas clear Experience start_date.
+    if (e.start) {
+      const ok = await wbSetField(editor.querySelector('[name="start_date"]'), e.start);
+      console.log("[autofill] WB edu start_date write", { want: e.start, ok });
+      if (ok) n++;
+    } else {
+      console.warn("[autofill] WB edu start_date SKIPPED — empty payload start");
+    }
+    if (e.end) {
+      const ok = await wbSetField(editor.querySelector('[name="end_date"]'), e.end);
+      console.log("[autofill] WB edu end_date write", { want: e.end, ok });
+      if (ok) n++;
+    }
+    wbDateSnapshot(editor, "edu-pre-save");
     if (!n) return false;
     return wbSaveEditor("education");
   }
@@ -1653,45 +1702,127 @@
     // education note above - React drops the first field on an unstable editor).
     await wbDelay(200);
     let n = 0;
+    console.log("[autofill] WB exp entry payload", {
+      title: e.title || "",
+      company: e.company || "",
+      industry: e.industry || "",
+      start: e.start || "",
+      end: e.end || "",
+      current: !!e.current,
+      descLen: (e.description || "").length,
+    });
     // Optional fields first; required Title last (see education note above).
     if (e.company && (await wbSetField(editor.querySelector('[name="company"]'), e.company))) n++;
     if (e.industry && (await wbSetField(editor.querySelector('[name="industry"]'), e.industry))) n++;
+    else if (!e.industry) console.warn("[autofill] WB industry SKIPPED — empty payload (API has no industry)");
     if (e.description && (await wbSetField(editor.querySelector('textarea[name="summary"]'), e.description))) n++;
-    if (e.start && (await wbSetField(editor.querySelector('[name="start_date"]'), e.start))) n++;
-    if (e.current) {
-      await wbSetCurrent(editor, true);
-    } else {
-      await wbSetCurrent(editor, false);
-      if (e.end) await wbSetField(editor.querySelector('[name="end_date"]'), e.end);
-    }
     // Re-assert the optional fields on the now-stable editor before save so a
     // value React cleared on the first write is recovered (idempotent otherwise).
+    // Do NOT write dates yet — description re-assert / title write clear them
+    // (same React-drop class as field_of_study; dates were previously written
+    // before description re-assert and never restored).
     if (e.company) await wbSetField(editor.querySelector('[name="company"]'), e.company);
     if (e.industry) await wbSetField(editor.querySelector('[name="industry"]'), e.industry);
     if (e.description) await wbSetField(editor.querySelector('textarea[name="summary"]'), e.description);
     if (await wbSetField(editor.querySelector('[name="title"]'), e.title)) n++;
+    // Dates + current LAST so they survive the description/title React commits.
+    if (e.start) {
+      const ok = await wbSetField(editor.querySelector('[name="start_date"]'), e.start);
+      console.log("[autofill] WB exp start_date write", { want: e.start, ok });
+      if (ok) n++;
+    } else {
+      console.warn("[autofill] WB exp start_date SKIPPED — empty payload start (check startMMYYYY)");
+    }
+    if (e.current) {
+      await wbSetCurrent(editor, true);
+      console.log("[autofill] WB exp current=true");
+    } else {
+      await wbSetCurrent(editor, false);
+      if (e.end) {
+        const ok = await wbSetField(editor.querySelector('[name="end_date"]'), e.end);
+        console.log("[autofill] WB exp end_date write", { want: e.end, ok });
+        if (ok) n++;
+      } else {
+        console.warn("[autofill] WB exp end_date SKIPPED — empty payload end");
+      }
+    }
+    // Final date re-assert immediately before Update (commitEditorFields only
+    // re-sends non-empty DOM values and cannot restore a cleared date).
+    if (e.start) await wbSetField(editor.querySelector('[name="start_date"]'), e.start);
+    if (!e.current && e.end) await wbSetField(editor.querySelector('[name="end_date"]'), e.end);
+    wbDateSnapshot(editor, "exp-pre-save");
     if (!n) return false;
     return wbSaveEditor("experience");
   }
 
-  async function fillWorkable(experience, education) {
+  function wbAddressText(addr) {
+    const a = addr || {};
+    const parts = [a.city, a.state, a.country].map((p) => String(p || "").trim()).filter(Boolean);
+    return parts.join(", ");
+  }
+
+  async function wbFillAddress(addr) {
+    const form = document.querySelector('form[data-ui="application-form"]');
+    if (!form) return false;
+    const input =
+      form.querySelector('input[name="address"], textarea[name="address"]') ||
+      form.querySelector('[data-ui="address"] input, [data-ui="address"] textarea');
+    const want = wbAddressText(addr);
+    console.log("[autofill] WB address prep", {
+      want,
+      city: (addr && addr.city) || "",
+      state: (addr && addr.state) || "",
+      country: (addr && addr.country) || "",
+      inputFound: !!input,
+      current: input ? String(input.value || "") : "",
+    });
+    if (!input || !want) return false;
+    const ok = await wbSetField(input, want);
+    console.log("[autofill] WB address write", { ok, after: String(input.value || "") });
+    return ok;
+  }
+
+  async function fillWorkable(experience, education, address) {
     let filledExp = 0;
     let filledEdu = 0;
+    let filledAddress = false;
+    try {
+      filledAddress = await wbFillAddress(address);
+    } catch (err) {
+      console.warn("[autofill] WB address prep threw", err && err.message);
+    }
     const expList = Array.isArray(experience) ? experience : [];
     const eduList = Array.isArray(education) ? education : [];
+    console.log("[autofill] WB prep lists", {
+      edu: eduList.length,
+      exp: expList.length,
+      expDates: expList.map((x, i) => ({
+        i,
+        title: (x && x.title) || "",
+        start: (x && x.start) || "",
+        end: (x && x.end) || "",
+        current: !!(x && x.current),
+        industry: (x && x.industry) || "",
+      })),
+    });
     const eduStart = wbSavedCount("education");
     for (let i = eduStart; i < eduList.length; i++) {
       try {
         if (await wbFillEducationEntry(eduList[i])) filledEdu++;
-      } catch {}
+      } catch (err) {
+        console.warn("[autofill] WB edu entry threw", i, err && err.message);
+      }
     }
     const expStart = wbSavedCount("experience");
     for (let i = expStart; i < expList.length; i++) {
       try {
         if (await wbFillExperienceEntry(expList[i])) filledExp++;
-      } catch {}
+      } catch (err) {
+        console.warn("[autofill] WB exp entry threw", i, err && err.message);
+      }
     }
-    return { filledExp, filledEdu };
+    console.log("[autofill] WB prep done", { filledExp, filledEdu, filledAddress });
+    return { filledExp, filledEdu, filledAddress };
   }
 
   // ── SmartRecruiters multi-page navigation ─────────────────────────────────
@@ -2178,7 +2309,14 @@
       const isWb = !!(AF.workable && AF.workable.isWorkableApplicationPage && AF.workable.isWorkableApplicationPage());
       if (!isWb) return false;
       runExclusive(async () => {
-        return await fillWorkable(msg.experience, msg.education);
+        try {
+          if (AF.workable && AF.workable.debugDump) AF.workable.debugDump("AF_WB_PREP-start");
+        } catch {}
+        const res = await fillWorkable(msg.experience, msg.education, msg.address);
+        try {
+          if (AF.workable && AF.workable.debugDump) AF.workable.debugDump("AF_WB_PREP-end");
+        } catch {}
+        return res;
       }).then((res) => {
         try {
           sendResponse({ ok: true, ...res });
