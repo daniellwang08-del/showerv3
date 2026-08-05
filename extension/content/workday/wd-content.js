@@ -5,9 +5,140 @@
 // silent), and streams progress/done/error back. Also reports the detected
 // step on WD_DETECT so the panel can show what it sees before running.
 (() => {
+  const WD = (window.__WD = window.__WD || {});
+  const BUILD = "2026-08-05-aa-full-trace-v1";
+
+  // Page-console bridge MUST re-bind on every executeScript inject. The rest of
+  // this file early-returns when __WD_CONTENT__ is set, which previously left
+  // stale builds without ACK_A/ACK_B handlers (postMessage probes got silence).
+  function installAckProbeBridge() {
+    if (typeof window.__WD_ACK_PROBE_HANDLER__ === "function") {
+      try {
+        window.removeEventListener("message", window.__WD_ACK_PROBE_HANDLER__);
+      } catch {}
+    }
+    const handler = (ev) => {
+      const data = ev && ev.data;
+      if (!data || data.source !== "af-wd-probe") return;
+      if (data.type !== "ACK_A" && data.type !== "ACK_B") return;
+      (async () => {
+        const reply = (payload) => {
+          const body = { build: BUILD, href: location.href, ...payload };
+          try {
+            WD.log("[ACK probe]", body);
+          } catch {}
+          try {
+            console.log("[ACK probe]", body);
+          } catch {}
+          // Post on this frame AND top so a page Console on `top` always hears it
+          // (form often lives in an iframe content-script world).
+          const msg = { source: "af-wd-probe-result", ...body };
+          try {
+            window.postMessage(msg, "*");
+          } catch {}
+          try {
+            if (window.top && window.top !== window) window.top.postMessage(msg, "*");
+          } catch {}
+        };
+        try {
+          if (!WD || !WD.steps) {
+            reply({
+              ok: false,
+              error: "WD.steps missing — click Start/Again in Atomspace first (injects Workday engine)",
+            });
+            return;
+          }
+          const S = WD.steps;
+          const c = [...document.querySelectorAll('[data-automation-id^="formField-"]')].find((el) =>
+            /acknowledg|generative\s*ai|personally participate|unauthorized assistance/i.test(S.fieldLabel(el)),
+          );
+          if (!c) {
+            reply({
+              ok: false,
+              error: "Acknowledgment formField not found in this frame",
+              formFieldCount: document.querySelectorAll('[data-automation-id^="formField-"]').length,
+            });
+            return;
+          }
+          const label = S.fieldLabel(c);
+          const key = (c.getAttribute("data-automation-id") || "").replace(/^formField-/, "");
+          const trigger = S.listboxTrigger ? S.listboxTrigger(c) : null;
+          if (data.type === "ACK_A") {
+            const resolved = S.resolveByLabel(label, {
+              eeo: { disability: false },
+              name: {},
+              education: [],
+            });
+            reply({
+              ok: true,
+              probe: "A",
+              key,
+              labelLen: (label || "").length,
+              labelHead: (label || "").slice(0, 160),
+              required: S.isRequired(c),
+              filled: S.fieldIsFilled ? S.fieldIsFilled(c) : null,
+              hasCommitted: S.fieldHasCommittedValue ? S.fieldHasCommittedValue(c) : null,
+              shown: ((trigger && (trigger.textContent || trigger.value)) || "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, 120),
+              triggerTag: trigger && trigger.tagName,
+              resolveByLabel: resolved,
+              ruleChecks: {
+                acknowledgmentWord: /acknowledgment/i.test(label),
+                iAcknowledgeThatI: /i acknowledge that i/i.test(label),
+                generativeAI: /generative ai platforms/i.test(label),
+                unauthorizedAssistance: /unauthorized assistance during the interview/i.test(label),
+                bareDisab: /disab/i.test(label),
+                oldAckOnly:
+                  /please enter ["']?yes["']? if you acknowledge|acknowledge that i have read|answered them truthfully and accurately/i.test(
+                    label,
+                  ),
+              },
+              failedFields: WD._failedFields ? [...WD._failedFields] : [],
+            });
+            return;
+          }
+          const value = S.resolveByLabel(label, { eeo: {}, name: {} });
+          const opts = trigger && S.harvestOptions ? await S.harvestOptions(trigger) : [];
+          const expanded = value && S.matchOptionFromList ? S.matchOptionFromList(value, opts) : null;
+          const shownBefore = ((trigger && (trigger.textContent || trigger.value)) || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          const writeOk = S.writeField ? await S.writeField(c, value, label) : null;
+          const shownAfter = ((trigger && (trigger.textContent || trigger.value)) || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          reply({
+            ok: true,
+            probe: "B",
+            value,
+            opts,
+            expanded,
+            shownBefore,
+            writeOk,
+            shownAfter,
+            stillSelectOne: /^select\s*one/i.test(shownAfter),
+          });
+        } catch (e) {
+          reply({ ok: false, error: String((e && e.message) || e) });
+        }
+      })();
+    };
+    window.__WD_ACK_PROBE_HANDLER__ = handler;
+    window.addEventListener("message", handler);
+    try {
+      document.documentElement.setAttribute("data-af-wd-build", BUILD);
+    } catch {}
+    try {
+      WD.log("wd-content probe bridge:", BUILD, location.href);
+    } catch {}
+  }
+  installAckProbeBridge();
+
   if (window.__WD_CONTENT__) return;
   window.__WD_CONTENT__ = true;
-  const WD = window.__WD;
+  // const WD already set above
 
   function send(msg) {
     try {
@@ -52,7 +183,18 @@
 
     if (msg.type === "WD_DETECT") {
       const step = WD && WD.engine ? WD.engine.detectStep() : null;
-      sendResponse({ step, href: location.href });
+      let heading =
+        WD && WD.dom && WD.dom.pageHeadingText ? WD.dom.pageHeadingText() : "";
+      // Prefer the Application Questions title when present (not the job-title h1).
+      if (
+        step &&
+        String(step).indexOf("questions") === 0 &&
+        WD.dom &&
+        WD.dom.pageHeadingContaining
+      ) {
+        heading = WD.dom.pageHeadingContaining("Application Question") || heading;
+      }
+      sendResponse({ step, heading, href: location.href });
       return true;
     }
 
@@ -97,7 +239,19 @@
         if (WD.isAborted && WD.isAborted()) {
           return sendResponse({ ok: false, advanced: false, aborted: true });
         }
+        const stepHeading = (stepHint) => {
+          if (
+            stepHint &&
+            String(stepHint).indexOf("questions") === 0 &&
+            WD.dom &&
+            WD.dom.pageHeadingContaining
+          ) {
+            return WD.dom.pageHeadingContaining("Application Question") || "";
+          }
+          return WD.dom && WD.dom.pageHeadingText ? WD.dom.pageHeadingText() : "";
+        };
         const before = WD.engine.detectStep();
+        const beforeHeading = stepHeading(before);
         const ok = await WD.engine.clickNext();
         // Give Workday time to navigate / re-render the next step.
         for (let i = 0; i < 20; i++) {
@@ -108,18 +262,58 @@
             if (e && e.name === "WDAborted") break;
             throw e;
           }
-          if (WD.engine.detectStep() !== before) break;
+          const now = WD.engine.detectStep();
+          const nowHeading = stepHeading(now) || stepHeading(before);
+          if (now !== before) break;
+          // Application Questions 1 of 2 → 2 of 2 must count even if an older
+          // build collapsed both to "questions" (heading text still changes).
+          if (beforeHeading && nowHeading && nowHeading !== beforeHeading) break;
         }
         const after = WD.engine.detectStep();
+        const afterHeading = stepHeading(after) || stepHeading(before);
         // "generic" is only a detectStep fallback when headings briefly unmount
         // during a validation re-render. Treating myInfo→generic as advanced made
         // the side-panel loop re-run a FULL fill on the same My Information page
         // (seen as many identical step reports, then recovery fills failing).
-        const advanced = !!ok && !!after && after !== before && after !== "generic";
+        const stepChanged = !!after && after !== before && after !== "generic";
+        const headingChanged =
+          !!(beforeHeading && afterHeading && afterHeading !== beforeHeading);
+        const advanced = !!ok && (stepChanged || headingChanged);
+        try {
+          WD.log(
+            "[AA] WD_NEXT " +
+              JSON.stringify({
+                ok,
+                before,
+                after,
+                beforeHeading,
+                afterHeading,
+                stepChanged,
+                headingChanged,
+                advanced,
+              }),
+          );
+        } catch {}
+        try {
+          if (WD.aa) {
+            WD.aa("WD_NEXT", {
+              ok,
+              before,
+              after,
+              beforeHeading: String(beforeHeading || "").slice(0, 100),
+              afterHeading: String(afterHeading || "").slice(0, 100),
+              stepChanged,
+              headingChanged,
+              advanced,
+            });
+          }
+        } catch {}
         sendResponse({
           ok,
           before,
           after,
+          beforeHeading,
+          afterHeading,
           advanced,
           aborted: !!(WD.isAborted && WD.isAborted()),
         });
@@ -160,6 +354,19 @@
     }
     beginRun(runSeq, msg.options || {});
     running = true;
+    try {
+      if (WD.aa) {
+        WD.aa("WD_RUN start", {
+          runSeq,
+          step: WD.engine.detectStep(),
+          newAttempt: !!(msg.options && msg.options.newAttempt),
+          onlyInvalid: msg.options && msg.options.onlyInvalid
+            ? (msg.options.onlyInvalid.length || 0)
+            : 0,
+          build: BUILD,
+        });
+      }
+    } catch {}
 
     (async () => {
       const reports = [];
@@ -191,5 +398,6 @@
 
   try {
     WD.log("engine ready", location.href);
+    WD.log("wd-content build:", BUILD);
   } catch {}
 })();

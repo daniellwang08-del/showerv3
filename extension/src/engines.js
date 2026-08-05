@@ -293,12 +293,17 @@ export const ENGINES = {
     autoDiscover: true,
     note: "Uploads your resume first, then fills the candidate profile.",
   },
+  // Custom company career pages (no known ATS host): auto-discover the richest
+  // form/apply section (no manual region picking). Reuses the greenhouse
+  // driver/LLM bundle; consent "I ACCEPT" prep lives in picker AF_GENERIC_PREP.
   generic: {
     id: "generic",
     label: "Generic (best-effort)",
     mode: "select",
     scripts: "greenhouse",
     available: true,
+    autoDiscover: true,
+    note: "Finds the application form on custom career pages and fills it automatically.",
   },
   // Dedicated, deterministic engine: maps a canonical structured profile to
   // Workday's stable data-automation-id fields. No manual region selection and

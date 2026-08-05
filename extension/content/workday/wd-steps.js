@@ -313,16 +313,20 @@
   async function closeAllListboxes() {
     for (let pass = 0; pass < 3; pass++) {
       let anyOpen = false;
+      // Only form/application triggers — never header Language/Settings buttons
+      // (they also use aria-haspopup=listbox and poisoned openedListbox fallback).
       const triggers = D.qa(
-        'button[aria-haspopup="listbox"], [role="combobox"][aria-haspopup="listbox"], input[aria-haspopup="listbox"]',
+        '[data-automation-id^="formField-"] button[aria-haspopup="listbox"], [data-automation-id^="formField-"] [role="combobox"][aria-haspopup="listbox"], [data-automation-id^="formField-"] input[aria-haspopup="listbox"], [data-automation-id="applyFlowPage"] button[aria-haspopup="listbox"]',
       ).filter(D.isVisible);
       for (const btn of triggers) {
-        if (openedListbox(btn)) {
+        if (btn.getAttribute("aria-expanded") === "true" || openedListbox(btn)) {
           anyOpen = true;
           await closeListbox(btn);
         }
       }
-      const popups = D.qa('[data-automation-id="activeListContainer"], [role="listbox"]').filter(D.isVisible);
+      const popups = D.qa(
+        '[data-behavior-click-outside-close] [role="listbox"], [data-popper-placement] [role="listbox"], [data-automation-id="activeListContainer"], [role="listbox"]',
+      ).filter(D.isVisible);
       if (popups.length) {
         anyOpen = true;
         pressKey(document.body, "Escape", "Escape", 27);
@@ -492,14 +496,26 @@
     return map;
   }
 
-  // Known company / EEO questions resolved by label text (the part of the hybrid
-  // that doesn't depend on a stable key). Returns undefined when no rule matches.
+  // Known company / EEO / screening labels → profile facts as HINTS only.
+  // Option-bearing Workday controls must NOT apply these strings via writeField;
+  // fillStep routes those to harvest → LLM → snapToHarvestedOption. This helper
+  // remains for free-text labels (cover letter, name) and emergency local snap.
   function resolveByLabel(label, p) {
     if (!label) return undefined;
     const e = p.eeo || {};
     const nm = p.name || {};
     const fullName = [nm.first, nm.last].filter(Boolean).join(" ").trim();
     const low = label.toLowerCase();
+    // CrowdStrike / similar: long "Acknowledgment" Canvas Select about generative AI
+    // in interviews. MUST resolve before the disability EEO rule — the same label
+    // contains "disability or other condition" and bare /disability/ would return
+    // the CC-305 EEO string, which is NOT an option (live probe).
+    if (isAcknowledgmentSelectLabel(low)) return "Yes";
+    // CrowdStrike AQ "Do you need a reasonable accommodation due to a disability…"
+    // also contains "disability". Bare /disability/ previously returned the CC-305
+    // string; pickOption then fuzzy-matched option "No" via w.includes("no") so the
+    // UI showed No while resolve/recovery stayed unstable (panel: Couldn't resolve).
+    if (isReasonableAccommodationLabel(low)) return "No";
     if (/highest degree|degree attained/.test(low) && Array.isArray(p.education)) {
       for (let i = p.education.length - 1; i >= 0; i--) {
         const deg = p.education[i] && p.education[i].degree;
@@ -508,7 +524,9 @@
     }
     if (/accept these terms|yes i accept/i.test(low)) return "Yes";
     if (/cover\s*letter/i.test(low) && p.coverLetter) return p.coverLetter;
-    if (/please check one of the boxes|disability|cc-305|self.identif/i.test(low)) {
+    // CC-305 / OFCCP disability self-ID ONLY — never bare /disability/ (hits
+    // Acknowledgment + reasonable-accommodation Application Questions).
+    if (isDisabilitySelfIdLabel(low)) {
       return e.disability
         ? "Yes, I have a disability"
         : "No, I do not have a disability and have not had one in the past";
@@ -550,7 +568,10 @@
       [/related to a current .+ employee|related to.*workday employee|related to a current workday/i, "No"],
       [/related to an employee of a customer|government official.*business interactions|direct business interactions with/i, "No"],
       // Long acknowledgement Canvas Select — must choose Yes (Workday rejects No).
-      [/please enter ["']?yes["']? if you acknowledge|acknowledge that i have read|answered them truthfully and accurately/i, "Yes"],
+      [
+        /please enter ["']?yes["']? if you acknowledge|acknowledge that i have read|answered them truthfully and accurately|acknowledgment|i acknowledge that i|generative ai platforms|unauthorized assistance during the interview|agree to comply with these terms/i,
+        "Yes",
+      ],
       [/accept these terms|yes i accept/i, "Yes"],
       [/at least 18|18 years of age/i, "Yes"],
       [/non-disclosure|non-compete|non-competitive|restrict your employment/i, "No"],
@@ -561,12 +582,63 @@
       // Sentinel resolved against the tenant's live options in writeField —
       // UPS/OFCCP wording varies ("I AM NOT A VETERAN", decline-to-disclose, …).
       [/veteran/i, e.veteran === true ? "__EEO_VETERAN_TRUE__" : "__EEO_VETERAN_FALSE__"],
-      [/disab/i, e.disability ? "Yes" : "No, I do not have a disability"],
+      // EEO disability ONLY — never match interview Acknowledgment (contains "disability").
+      [
+        /(?:do you have a disability|i have a disability|no,? i do not have a disability|cc-305|disability status|self-identif)/i,
+        e.disability ? "Yes" : "No, I do not have a disability",
+      ],
     ];
     for (const [re, val] of RULES) {
       if (re.test(label) && val != null && val !== "") return val;
     }
     return undefined;
+  }
+
+  // Interview / generative-AI Acknowledgment selects (CrowdStrike Application Questions).
+  function isAcknowledgmentSelectLabel(labelOrLow) {
+    const low = String(labelOrLow || "").toLowerCase();
+    if (!low) return false;
+    return (
+      /acknowledgment/.test(low) ||
+      /i acknowledge that i/.test(low) ||
+      /generative ai platforms/.test(low) ||
+      /unauthorized assistance during the interview/.test(low) ||
+      /personally participate in all interviews/.test(low)
+    );
+  }
+
+  // Application-process accommodation asks (not CC-305 disability self-ID).
+  function isReasonableAccommodationLabel(labelOrLow) {
+    const low = String(labelOrLow || "").toLowerCase();
+    if (!low) return false;
+    return (
+      /reasonable accommodation/.test(low) ||
+      /accommodation due to/.test(low) ||
+      /medical need for applying/.test(low) ||
+      /need an accommodation/.test(low) ||
+      /request.*accommodation/.test(low)
+    );
+  }
+
+  // True CC-305 / EEO disability self-identification wording only.
+  function isDisabilitySelfIdLabel(labelOrLow) {
+    const low = String(labelOrLow || "").toLowerCase();
+    if (!low) return false;
+    if (isAcknowledgmentSelectLabel(low) || isReasonableAccommodationLabel(low)) return false;
+    return /please check one of the boxes|cc-305|self.identif|do you have a disability|i have a disability|no,? i do not have a disability|disability status|had one in the past|without a disability/i.test(
+      low,
+    );
+  }
+
+  // Pick the live "Yes, I acknowledge…" option text (proven on CrowdStrike).
+  function acknowledgmentYesOption(options) {
+    const real = (options || []).map((o) => String(o || "").replace(/\s+/g, " ").trim()).filter((t) => t && !isPlaceholderOption(t));
+    return (
+      real.find((t) => /^yes\b/i.test(t) && /acknowledge/i.test(t)) ||
+      real.find((t) => /^yes\b/i.test(t) && /agree/i.test(t)) ||
+      real.find((t) => /^yes\b/i.test(t)) ||
+      null
+    );
   }
 
   // ── control-aware writers ───────────────────────────────────────────────────
@@ -720,7 +792,12 @@
   }
 
   function visibleOptions(root) {
-    return D.qa(OPTION_SEL, root).filter(D.isVisible);
+    return D.qa(OPTION_SEL, root).filter((o) => {
+      if (!D.isVisible(o)) return false;
+      // CrowdStrike portal: placeholder row is aria-disabled + aria-selected.
+      if (o.getAttribute("aria-disabled") === "true" || o.hasAttribute("disabled")) return false;
+      return true;
+    });
   }
 
   // Real, selectable result rows of an OPEN prompt.
@@ -782,8 +859,18 @@
   function pickOption(want, root) {
     const w = D.norm(want);
     const scored = visibleOptions(root)
-      .map((o) => ({ o, t: D.norm(o.textContent) }))
+      .map((o) => ({
+        o,
+        t: D.norm(o.textContent),
+        id: (o.id || "").trim(),
+        val: (o.getAttribute("data-value") || o.getAttribute("value") || "").trim(),
+      }))
       .filter((x) => x.t);
+    // 0. Match by option element id or data-value (CrowdStrike portal proof).
+    if (w) {
+      const byId = scored.find((x) => D.norm(x.id) === w || D.norm(x.val) === w);
+      if (byId) return byId.o;
+    }
     // 1. Exact text match always wins.
     const exact = scored.find((x) => x.t === w);
     if (exact) return exact.o;
@@ -797,6 +884,175 @@
     const within = scored.filter((x) => w.includes(x.t)).sort((a, b) => b.t.length - a.t.length);
     if (within.length) return within[0].o;
     return null;
+  }
+
+  // Read live portal option rows (proven CrowdStrike AQ DOM). Each row has
+  // stable Workday data-value / id plus visible text.
+  function readPortalOptionRows(popup) {
+    if (!popup) return [];
+    const lis = D.qa('[role="option"]', popup).filter((o) => D.isVisible(o));
+    const out = [];
+    for (const li of lis) {
+      const text = (li.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text || isPlaceholderOption(text)) continue;
+      if (li.getAttribute("aria-disabled") === "true") continue;
+      const id = (li.id || "").trim();
+      const value = (li.getAttribute("data-value") || li.getAttribute("value") || id || "").trim();
+      out.push({
+        id: id || value || text,
+        value: value || id || text,
+        text,
+        html: li.outerHTML.slice(0, 400),
+      });
+    }
+    return out;
+  }
+
+  // Build the DOM-with-options payload the backend autofill prompt expects
+  // (<ul data-af-options-for="cid">…), including option id / data-value.
+  function buildPortalOptionsHtml(cid, label, portalOptions, portalHtmlHead) {
+    const esc = (s) =>
+      String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    const lis = (portalOptions || [])
+      .map((o) => {
+        const id = esc(o.id || o.value || "");
+        const val = esc(o.value || o.id || "");
+        const text = esc(o.text || "");
+        return `<li id="${id}" data-value="${val}" data-af-option-id="${id}" data-af-option-value="${val}">${text}</li>`;
+      })
+      .join("");
+    const head = portalHtmlHead ? `<!-- portal:${esc(portalHtmlHead).slice(0, 1200)} -->` : "";
+    return `${head}<div data-af-wd-field><label>${esc(label || "")}</label><ul data-af-options-for="${esc(cid)}">${lis}</ul></div>`;
+  }
+
+  // Map an LLM answer (option id, data-value, exact text, or cached choice
+  // object) onto a harvested portal row.
+  function resolvePortalChoice(answer, portalOptions) {
+    if (answer == null || answer === "" || !portalOptions || !portalOptions.length) return null;
+    if (typeof answer === "object" && !Array.isArray(answer)) {
+      const byId =
+        answer.id &&
+        portalOptions.find((o) => D.norm(o.id) === D.norm(answer.id));
+      if (byId) return byId;
+      const byVal =
+        answer.value &&
+        portalOptions.find((o) => D.norm(o.value) === D.norm(answer.value));
+      if (byVal) return byVal;
+      const byText =
+        answer.text &&
+        portalOptions.find((o) => D.norm(o.text) === D.norm(answer.text));
+      if (byText) return byText;
+      return resolvePortalChoice(answer.value || answer.id || answer.text || "", portalOptions);
+    }
+    const raw = String(answer).replace(/\s+/g, " ").trim();
+    if (!raw || isPlaceholderOption(raw)) return null;
+    const n = D.norm(raw);
+    // Prefer stable Workday data-value / element id (proven portal rows).
+    let hit =
+      portalOptions.find((o) => D.norm(o.value) === n) ||
+      portalOptions.find((o) => D.norm(o.id) === n) ||
+      portalOptions.find((o) => D.norm(o.text) === n);
+    if (hit) return hit;
+    // Encoded forms: "No (value=…)" / "value=…" / "id=…"
+    const mVal = raw.match(/(?:data-)?value\s*[=:]\s*([^\s)|,]+)/i);
+    if (mVal) {
+      hit = portalOptions.find((o) => D.norm(o.value) === D.norm(mVal[1]));
+      if (hit) return hit;
+    }
+    const mId = raw.match(/(?:data-af-option-)?id\s*[=:]\s*([^\s)|,]+)/i);
+    if (mId) {
+      hit = portalOptions.find((o) => D.norm(o.id) === D.norm(mId[1]));
+      if (hit) return hit;
+    }
+    hit = portalOptions.find((o) => D.norm(o.text).includes(n) || n.includes(D.norm(o.text)));
+    return hit || null;
+  }
+
+  // Universal Workday single-select path (ALL Canvas listbox dropdowns):
+  // harvest portal rows → resolve answer to id/data-value/text → pointer-click.
+  // Never invent Yes/No / acknowledgment expansions here — callers must pass
+  // an LLM (or profile) answer that snaps onto harvested options.
+  async function applyListboxPortal(trigger, answer) {
+    if (!trigger || answer == null || answer === "") return false;
+    if (typeof answer === "object" && !Array.isArray(answer) && (answer.id || answer.value || answer.text)) {
+      return await openAndPickPortal(trigger, answer);
+    }
+    const harvested = await harvestPortalOptions(trigger);
+    const choice = resolvePortalChoice(answer, harvested.options);
+    if (choice) return await openAndPickPortal(trigger, choice);
+    // Rare: input combobox with searchable options when portal harvest failed.
+    try {
+      WD.warn("applyListboxPortal: no portal snap, falling back to text pick", answer, harvested.options);
+    } catch {}
+    return await openAndPick(trigger, typeof answer === "object" ? answer.text || answer.value : answer);
+  }
+
+  // Pointer-open portal → click the option by id / data-value / text → verify.
+  async function openAndPickPortal(trigger, choice) {
+    if (!trigger || !choice) return false;
+    const wantText = (choice.text || choice.value || choice.id || "").trim();
+    const want = D.norm(wantText);
+    if (!want || isPlaceholderOption(want)) return false;
+
+    const ff = trigger.closest && trigger.closest('[data-automation-id^="formField-"]');
+    const markedInvalid =
+      trigger.getAttribute("aria-invalid") === "true" || !!(ff && ff.querySelector('[aria-invalid="true"]'));
+    const cur = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
+    if (cur && valueMatchesWant(cur, want) && !markedInvalid) return true;
+
+    const popup = await openListboxForOptions(trigger);
+    if (!popup) {
+      try {
+        WD.warn("openAndPickPortal: portal did not open");
+      } catch {}
+      return false;
+    }
+    await D.delay(80);
+
+    let match = null;
+    // Prefer stable data-value (proven CrowdStrike); option element ids change per open.
+    if (choice.value) {
+      const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/"/g, '\\"'));
+      match =
+        popup.querySelector(`[role="option"][data-value="${esc(choice.value)}"]`) ||
+        popup.querySelector(`[role="option"][id="${esc(choice.value)}"]`);
+    }
+    if ((!match || !popup.contains(match)) && choice.id) {
+      const byId = document.getElementById(choice.id);
+      if (byId && popup.contains(byId)) match = byId;
+      else {
+        const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/"/g, '\\"'));
+        match = popup.querySelector(`[role="option"][id="${esc(choice.id)}"]`) || match;
+      }
+    }
+    if (!match) match = pickOption(choice.value || choice.id || choice.text, popup);
+    if (!match) match = pickOption(choice.text, popup);
+    if (!match) {
+      try {
+        WD.warn("openAndPickPortal: option not found", choice, readPortalOptionRows(popup));
+      } catch {}
+      await closeListbox(trigger);
+      return false;
+    }
+
+    const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
+    firePointerClick(match);
+    await D.delay(220);
+    const committed = () => {
+      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
+      return valueMatchesWant(got, want) || valueMatchesWant(got, chosen) || valueMatchesWant(got, choice.text);
+    };
+    if (!committed()) await typeAheadCommit(trigger, chosen, committed);
+    await closeListbox(trigger);
+    if (committed()) return true;
+    try {
+      WD.warn("openAndPickPortal did not commit", choice, selectDisplayValue(trigger));
+    } catch {}
+    return false;
   }
 
   // Pick the best Workday/OFCCP veteran-status option for the candidate's EEO flag.
@@ -852,10 +1108,11 @@
     }
     const listbox = listboxTrigger(container);
     if (listbox) {
-      const opts = await harvestOptions(listbox);
-      const pick = pickVeteranOptionText(isVeteran, opts);
+      const harvested = await harvestPortalOptions(listbox);
+      const texts = (harvested.options || []).map((o) => o.text);
+      const pick = pickVeteranOptionText(isVeteran, texts);
       if (!pick) return false;
-      return await openAndPick(listbox, pick);
+      return await applyListboxPortal(listbox, resolvePortalChoice(pick, harvested.options) || pick);
     }
     const radios = [...container.querySelectorAll('input[type="radio"]')];
     if (radios.length) {
@@ -877,13 +1134,20 @@
     return false;
   }
 
-  // The overlay a single-select button just opened. Workday renders the popup in
-  // a portal (not inside the field wrapper), so we locate it via the ARIA contract
-  // (aria-controls / aria-owns) and fall back to the visible list container. This
-  // is the anchor that scopes the search box + option lookups - without it, a
-  // document-wide input query grabs the always-present, page-top "How Did You Hear
-  // About Us?" multiselect and types THIS field's value into it.
+  // Workday Canvas Select (CrowdStrike Application Questions 2 of 2, proven DOM):
+  // Closed: <button aria-haspopup=listbox>Select One</button> — NO options in DOM.
+  // Open:   button gets aria-expanded=true aria-controls="<id>", and options render
+  // in a body-level Popper portal OUTSIDE #root / formField:
+  //   <div data-behavior-click-outside-close data-popper-placement>
+  //     <ul role="listbox" id="<id>"><li role="option">Yes|No|…</li></ul>
+  //   </div>
+  // D.clickEl (mouse only) often fails to open / select these; pointer events do.
+  function listboxIsOpen(btn) {
+    return !!(btn && btn.getAttribute("aria-expanded") === "true");
+  }
+
   function openedListbox(btn) {
+    if (!btn) return null;
     let el = null;
     const id = btn.getAttribute("aria-controls") || btn.getAttribute("aria-owns");
     if (id) {
@@ -895,14 +1159,73 @@
         }
       }
     }
+    // Popper portal (CrowdStrike): listbox is not under formField; prefer the
+    // portal that this trigger controls, else the topmost open popper list.
     if (!el) {
-      const lists = D.qa('[data-automation-id="activeListContainer"], [role="listbox"]').filter(D.isVisible);
-      el = lists.length ? lists[lists.length - 1] : null;
+      const portals = D.qa(
+        '[data-behavior-click-outside-close] [role="listbox"], [data-popper-placement] [role="listbox"], [data-automation-id="activeListContainer"], [role="listbox"]',
+      ).filter(D.isVisible);
+      if (portals.length === 1) el = portals[0];
+      else if (portals.length > 1 && id) {
+        el = portals.find((p) => p.id && id.split(/\s+/).includes(p.id)) || portals[portals.length - 1];
+      } else if (portals.length > 1) {
+        // Do NOT attribute a random open listbox to a trigger that has no
+        // aria-controls yet (header Language/Settings also use listbox buttons).
+        el = null;
+      }
     }
     if (!el) return null;
-    // Prefer the overlay container that wraps BOTH the search box and the options.
-    return el.closest('[data-automation-id="activeListContainer"]') || el;
+    return (
+      el.closest("[data-behavior-click-outside-close]") ||
+      el.closest("[data-popper-placement]") ||
+      el.closest('[data-automation-id="activeListContainer"]') ||
+      el
+    );
   }
+
+  // Open a Canvas / Workday listbox and wait until the portal options exist.
+  // Returns the popup root (portal or listbox) or null.
+  async function openListboxForOptions(btn) {
+    if (!btn) return null;
+    // Already open with a resolvable portal — do not pointer-click again (toggles closed).
+    if (listboxIsOpen(btn)) {
+      const existing = openedListbox(btn);
+      if (existing) {
+        await D.waitFor(OPTION_SEL, 1500, existing);
+        return existing;
+      }
+    }
+    firePointerClick(btn);
+    await D.delay(200);
+    let popup = openedListbox(btn);
+    for (let i = 0; i < 20 && !popup; i++) {
+      await D.delay(80);
+      popup = openedListbox(btn);
+    }
+    if (!popup && listboxIsOpen(btn)) {
+      const id = btn.getAttribute("aria-controls");
+      if (id) {
+        const cand = document.getElementById(id.split(/\s+/)[0]);
+        if (cand) popup = cand.closest("[data-behavior-click-outside-close]") || cand;
+      }
+    }
+    if (!popup) {
+      const portals = D.qa(
+        '[data-behavior-click-outside-close] [role="listbox"], [data-popper-placement] [role="listbox"]',
+      ).filter(D.isVisible);
+      popup = portals.length ? portals[portals.length - 1] : null;
+    }
+    if (popup) await D.waitFor(OPTION_SEL, 2000, popup);
+    return popup;
+  }
+
+  // The overlay a single-select button just opened. Workday renders the popup in
+  // a portal (not inside the field wrapper), so we locate it via the ARIA contract
+  // (aria-controls / aria-owns) and fall back to the visible list container. This
+  // is the anchor that scopes the search box + option lookups - without it, a
+  // document-wide input query grabs the always-present, page-top "How Did You Hear
+  // About Us?" multiselect and types THIS field's value into it.
+  // (Implementation: openedListbox / openListboxForOptions above.)
 
   // Close a single-select listbox opened by `btn` and keep it closed. Leaving a
   // popup open corrupts later interactions (a subsequent open-toggle would CLOSE
@@ -945,9 +1268,23 @@
       } catch {}
       return false;
     }
+    const ff = trigger && trigger.closest && trigger.closest('[data-automation-id^="formField-"]');
+    // PROVEN (CrowdStrike AQ accommodation): button text already reads "No" while
+    // aria-invalid="true" remains. Auto-advance's WD_VALIDATE then puts this
+    // label in lastNames → panel "Couldn't resolve on Application Questions: …"
+    // even though the UI looks filled. Early-returning on display match skipped
+    // the pointer-click that actually commits Workday's React model.
+    const markedInvalid =
+      (trigger && trigger.getAttribute("aria-invalid") === "true") ||
+      !!(ff && ff.querySelector('[aria-invalid="true"]'));
     const cur = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
-    if (cur && valueMatchesWant(cur, want)) return true;
-    if (cur && !triggerShowsPlaceholder(trigger) && valueMatchesWant(cur, want)) return true;
+    if (cur && valueMatchesWant(cur, want) && !markedInvalid) return true;
+    if (cur && !triggerShowsPlaceholder(trigger) && valueMatchesWant(cur, want) && !markedInvalid) return true;
+    if (markedInvalid && cur && valueMatchesWant(cur, want)) {
+      try {
+        WD.log("openAndPick forcing re-commit (display matches but aria-invalid)", { cur, want });
+      } catch {}
+    }
 
     // ONLY real <input> Canvas Select supports typeahead + value setter.
     // button[aria-haspopup=listbox] also has aria-haspopup=listbox — treating it
@@ -984,18 +1321,20 @@
       }
     }
 
-    D.clickEl(trigger);
-    await D.delay(150);
-    let popup = openedListbox(trigger);
-    for (let i = 0; i < 12 && !popup; i++) {
-      await D.delay(80);
-      popup = openedListbox(trigger);
+    // Open with POINTER events (proven: Canvas portal listboxes). Never toggle
+    // closed an already-open menu with a second click.
+    let popup = await openListboxForOptions(trigger);
+    if (!popup) {
+      try {
+        WD.warn("openAndPick: listbox portal did not open", trigger && trigger.id);
+      } catch {}
+      return false;
     }
     // Prefer a dedicated search box inside the popup — never type into the
     // page-top How Did You Hear multiselect (same class of bug as openedListbox).
     const search = popup
       ? [...popup.querySelectorAll('input[data-automation-id="searchBox"], input[type="search"], input[type="text"]')]
-          .filter((el) => el !== trigger && D.isVisible(el))[0] || null
+          .filter((el) => el !== trigger && D.isVisible(el) && !el.classList.contains("css-77hcv"))[0] || null
       : null;
     if (search) {
       try {
@@ -1005,13 +1344,20 @@
       search.dispatchEvent(new Event("input", { bubbles: true }));
       await D.delay(400);
     }
-    if (!(await D.waitFor(OPTION_SEL, 2000, popup || undefined))) {
+    if (!(await D.waitFor(OPTION_SEL, 2000, popup))) {
       await closeListbox(trigger);
       return false;
     }
     await D.delay(120);
-    const match = pickOption(value, popup || undefined);
+    const match = pickOption(value, popup);
     if (!match) {
+      try {
+        WD.warn(
+          "openAndPick: no option matched",
+          value,
+          visibleOptions(popup).map((o) => (o.textContent || "").trim()),
+        );
+      } catch {}
       await closeListbox(trigger);
       return false;
     }
@@ -1050,15 +1396,18 @@
       await closeListbox(trigger);
       return true;
     }
-    // Canvas Select legitimately renders no readable display text for short
-    // Yes/No application answers. Everything else MUST read back a real value:
-    // the old `D.norm(chosen) === want` clause here was a tautology (chosen is
-    // the text of the option we asked for), so a click that merely closed the
-    // popup was reported as a successful fill - which is why Degree stayed on
-    // "Select One" with a required error yet never got retried.
-    if (!openedListbox(trigger) && (want === "yes" || want === "no")) return true;
+    // NEVER treat bare yes/no as success just because the listbox closed.
+    // CrowdStrike Acknowledgment options are long ("Yes, I acknowledge and
+    // agree…"); typing/clicking can dismiss the menu while the button still
+    // reads "Select One". Only succeed when the visible selection matches.
     await closeListbox(trigger);
     if (committed()) return true;
+    if (!triggerShowsPlaceholder(trigger)) {
+      const got = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
+      if (got && (want === "yes" || want === "no") && (got.startsWith(want) || valueMatchesWant(got, want))) {
+        return true;
+      }
+    }
     try {
       const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
       WD.warn(`openAndPick did not commit ${JSON.stringify(chosen)} - field reads ${JSON.stringify(got)}`);
@@ -1700,7 +2049,23 @@
       return await fillMultiselect(multi, value);
     }
     const listbox = listboxTrigger(container);
-    if (listbox) return await openAndPick(listbox, value);
+    if (listbox) {
+      // ALL Workday Canvas listbox dropdowns: portal harvest → snap → pointer pick.
+      // Do not expand Yes/No / acknowledgment / EEO strings here — that raced the
+      // LLM portal path and false-matched (e.g. disability sentence → "No").
+      const ok = await applyListboxPortal(listbox, value);
+      try {
+        if (isAcknowledgmentSelectLabel(label) || isReasonableAccommodationLabel(label || "")) {
+          WD.log("ACK TRACE write portal", {
+            value,
+            ok,
+            shown: selectDisplayValue(listbox) || triggerCurrentValue(listbox),
+            placeholder: triggerShowsPlaceholder(listbox),
+          });
+        }
+      } catch {}
+      return ok;
+    }
     const nativeSel = container.querySelector("select");
     if (nativeSel) return await selectNativeEl(nativeSel, value);
     const radios = [...container.querySelectorAll('input[type="radio"]')];
@@ -1817,7 +2182,15 @@
 
   function isDisabilityContainer(container, label) {
     const low = (label || "").toLowerCase();
-    if (/please check one of the boxes|disability|cc-305|self.identif/i.test(low)) return true;
+    // CrowdStrike Application Questions "Acknowledgment" embeds
+    // "If I have a disability or other condition…" — that is a listbox about
+    // generative-AI interview rules, NOT the CC-305 disability self-ID.
+    // Matching /disability/ here made fillStep `continue` before resolveByLabel
+    // AND before LLM (proven: field stayed Select One; raw pointer-click worked).
+    if (isAcknowledgmentSelectLabel(low) || isReasonableAccommodationLabel(low)) return false;
+    if (/please check one of the boxes|cc-305|self.identif/i.test(low)) return true;
+    // Require disability self-ID phrasing — bare "disability" alone is too broad.
+    if (isDisabilitySelfIdLabel(low)) return true;
     const inputs = [...container.querySelectorAll('input[type="radio"], input[type="checkbox"]')];
     if (inputs.length < 2 || inputs.length > 5) return false;
     const blob = inputs.map((el) => labelForInput(el)).join(" ").toLowerCase();
@@ -1865,6 +2238,62 @@
     return false;
   }
 
+  // True when the formField is a choice control with a finite option list.
+  // These MUST go harvest → LLM → exact option text. Never apply resolveByLabel
+  // Yes/No/EEO strings directly (CrowdStrike Acknowledgment / accommodation proved
+  // that predefined answers are not tenant option text).
+  function isOptionBearingContainer(container) {
+    if (!container) return false;
+    if (container.querySelector('[data-automation-id="multiSelectContainer"]')) return true;
+    if (listboxTrigger(container)) return true;
+    if (container.querySelector("select")) return true;
+    if (container.querySelectorAll('input[type="radio"]').length) return true;
+    const checks = container.querySelectorAll('input[type="checkbox"]');
+    return checks.length >= 1;
+  }
+
+  // Snap an LLM (or fallback) answer onto the harvested option list. Prefer exact
+  // tenant text; never return a value that is not in the list.
+  function snapToHarvestedOption(value, options) {
+    if (value == null || value === "" || !options || !options.length) return null;
+    const raw = String(value).replace(/\s+/g, " ").trim();
+    if (!raw || isPlaceholderOption(raw)) return null;
+    const exact = exactOption(raw, options);
+    if (exact) return exact;
+    const listed = matchOptionFromList(raw, options);
+    if (listed) return listed;
+    const soft = (options || []).find((o) => !isPlaceholderOption(o) && valueMatchesWant(o, raw));
+    return soft || null;
+  }
+
+  // Profile fact to hint the LLM (country, phone type, how-did-you-hear, …).
+  // Screening Yes/No is NOT invented here — the model picks from live options.
+  function profileWantForField(key, label, profile, valueByKey) {
+    if (key && Object.prototype.hasOwnProperty.call(valueByKey, key) && valueByKey[key] != null && valueByKey[key] !== "") {
+      return String(valueByKey[key]);
+    }
+    const e = (profile && profile.eeo) || {};
+    const low = (label || "").toLowerCase();
+    if (/hispanic or latino/.test(low) && e.hispanicLatino != null) return e.hispanicLatino ? "Yes" : "No";
+    if (/\bgender\b|\bsex\b/.test(low) && e.gender) return String(e.gender);
+    if (/sexual orientation|lgbtq/.test(low)) return String(e.sexualOrientation || "I don't wish to answer");
+    if (/what is your race|race\/ethnicity|ethnicity|\brace\b/.test(low) && e.ethnicity) return String(e.ethnicity);
+    if (/\bveteran\b/.test(low) && e.veteran != null) return e.veteran ? "veteran" : "not a veteran";
+    if (isDisabilitySelfIdLabel(low) && e.disability != null) {
+      return e.disability ? "I have a disability" : "I do not have a disability";
+    }
+    if (/sponsorship|immigration filing|visa sponsorship|open work permit|permanent residency|do you now or in the future require|will you now or in the future require/.test(low) && e.sponsorship != null) {
+      return e.sponsorship ? "Yes" : "No";
+    }
+    if (/highest degree|degree attained/.test(low) && Array.isArray(profile && profile.education)) {
+      for (let i = profile.education.length - 1; i >= 0; i--) {
+        const deg = profile.education[i] && profile.education[i].degree;
+        if (deg) return String(deg);
+      }
+    }
+    return undefined;
+  }
+
   async function fillStep(profile, options, rep) {
     options = options || {};
     const onlyInvalid = Array.isArray(options.onlyInvalid) ? options.onlyInvalid : null;
@@ -1885,27 +2314,166 @@
     const valueByKey = buildValueMap(profile);
     const containers = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible);
     const llmTargets = [];
+    const decisions = { skip: 0, deferLlm: 0, write: 0, experience: 0 };
+    try {
+      if (WD.aa) {
+        const inventory = containers.slice(0, 40).map((c) => {
+          const aid = c.getAttribute("data-automation-id") || "";
+          const key = aid.replace(/^formField-/, "");
+          const label = fieldLabel(c);
+          const trig = listboxTrigger(c);
+          return {
+            key: key.slice(0, 40),
+            labelHead: String(label || "").slice(0, 70),
+            filled: fieldIsFilled(c),
+            committed: fieldHasCommittedValue(c),
+            invalid: !!c.querySelector('[aria-invalid="true"]'),
+            required: isRequired(c),
+            kind: c.querySelector('[data-automation-id="multiSelectContainer"]')
+              ? "multi"
+              : trig
+                ? "listbox"
+                : c.querySelector("select")
+                  ? "native"
+                  : c.querySelector('input[type="radio"]')
+                    ? "radio"
+                    : c.querySelector("textarea")
+                      ? "textarea"
+                      : "text",
+            shown: trig
+              ? String(selectDisplayValue(trig) || triggerCurrentValue(trig) || "").slice(0, 40)
+              : null,
+            inExp: inExperiencePanel(c),
+          };
+        });
+        WD.aa("fillStep START", {
+          containerCount: containers.length,
+          onlyInvalid: onlyInvalid
+            ? onlyInvalid.map((f) => ({ key: f.key, labelHead: String(f.label || "").slice(0, 80) }))
+            : null,
+          heading: D.pageHeadingContaining
+            ? D.pageHeadingContaining("Application Question") || (D.pageHeadingText && D.pageHeadingText()) || ""
+            : D.pageHeadingText
+              ? D.pageHeadingText()
+              : "",
+          inventory,
+        });
+      }
+    } catch {}
     for (const c of containers) {
       throwIfAborted();
       const aid = c.getAttribute("data-automation-id") || "";
       const key = aid.replace(/^formField-/, "");
       const label = fieldLabel(c);
+      const labelHead = String(label || "").slice(0, 100);
+      const skipLog = (reason, extra) => {
+        decisions.skip += 1;
+        try {
+          if (WD.aa) WD.aa("fillStep SKIP", { reason, key: key.slice(0, 40), labelHead, ...(extra || {}) });
+        } catch {}
+      };
       // Delegate all Work Experience / Education panel fields to fillExperienceExtras.
-      if (inExperiencePanel(c)) continue;
+      if (inExperiencePanel(c)) {
+        decisions.experience += 1;
+        skipLog("inExperiencePanel");
+        continue;
+      }
       if (onlyInvalid) {
-        if (!matchesOnlyInvalid(c, key, label, onlyInvalid)) continue;
+        if (!matchesOnlyInvalid(c, key, label, onlyInvalid)) {
+          skipLog("onlyInvalid-mismatch");
+          continue;
+        }
       } else if (fieldIsFilled(c)) {
+        skipLog("fieldIsFilled", {
+          committed: fieldHasCommittedValue(c),
+          ariaInvalid: !!c.querySelector('[aria-invalid="true"]'),
+          shown: (() => {
+            const t = listboxTrigger(c);
+            return t ? String(selectDisplayValue(t) || triggerCurrentValue(t) || "").slice(0, 40) : null;
+          })(),
+        });
         continue;
       }
       // Already failed this attempt — do not re-open widgets on recovery passes.
+      // EXCEPTION: onlyInvalid + still aria-invalid must be allowed to re-commit.
+      // Otherwise a prior false openAndPick / LLM miss permanently skips the field
+      // while the UI may already show "No" (CrowdStrike accommodation — panel
+      // Couldn't resolve + Application Questions 0 filled).
       if (shouldSkipFailedField(key, label)) {
-        if (!fieldHasCommittedValue(c)) {
-          rep.unmatched.push({ key, label: label || key });
+        const stillInvalid = !!(onlyInvalid && c.querySelector('[aria-invalid="true"]'));
+        if (!stillInvalid) {
+          if (!fieldHasCommittedValue(c)) {
+            rep.unmatched.push({ key, label: label || key });
+          }
+          skipLog("shouldSkipFailedField", { stillInvalid, committed: fieldHasCommittedValue(c) });
+          continue;
         }
-        continue;
+        try {
+          if (WD.aa) {
+            WD.aa("fillStep bypass-failed-skip", { key: key.slice(0, 40), labelHead });
+          }
+        } catch {}
       }
       // CC-305 disability is handled exclusively by fillDisabilitySelfId (label click).
-      if (isDisabilityContainer(c, label)) continue;
+      // Must NOT swallow interview Acknowledgment listboxes (label contains "disability").
+      if (isDisabilityContainer(c, label)) {
+        if (/acknowledg|generative\s*ai|personally participate/i.test(label || "")) {
+          try {
+            WD.warn("ACK TRACE unexpectedly classified as disability container — check isDisabilityContainer", {
+              labelHead: (label || "").slice(0, 120),
+            });
+          } catch {}
+        }
+        skipLog("isDisabilityContainer");
+        continue;
+      }
+
+      // Recovery re-entry: Workday often leaves aria-invalid=true until the next
+      // Save even after a successful write. Re-opening How Did You Hear / State
+      // prompts in that window clears the first good selection. Skip rewrite when
+      // committed — EXCEPT simple listboxes that are STILL aria-invalid.
+      if (onlyInvalid && fieldHasCommittedValue(c)) {
+        const stillInvalid = !!c.querySelector('[aria-invalid="true"]');
+        const simpleList =
+          !!listboxTrigger(c) && !c.querySelector('[data-automation-id="multiSelectContainer"]');
+        if (!(stillInvalid && simpleList)) {
+          record(rep, label || key, true);
+          skipLog("onlyInvalid+committed-skip-rewrite", { stillInvalid, simpleList });
+          continue;
+        }
+      }
+
+      // ── Option controls: ALWAYS harvest options → LLM returns exact option ──
+      // Do NOT apply resolveByLabel predefined Yes/No/EEO strings to listboxes.
+      if (isOptionBearingContainer(c)) {
+        const want = profileWantForField(key, label, profile, valueByKey);
+        llmTargets.push({
+          container: c,
+          key,
+          label: label || fieldLabel(c) || key,
+          required: isRequired(c),
+          want: want || undefined,
+        });
+        decisions.deferLlm += 1;
+        try {
+          if (WD.aa) {
+            WD.aa("fillStep DEFER-LLM", {
+              key: key.slice(0, 40),
+              labelHead,
+              required: isRequired(c),
+              want: want || null,
+              ariaInvalid: !!c.querySelector('[aria-invalid="true"]'),
+              shown: (() => {
+                const t = listboxTrigger(c);
+                return t ? String(selectDisplayValue(t) || triggerCurrentValue(t) || "").slice(0, 40) : null;
+              })(),
+            });
+          }
+        } catch {}
+        continue;
+      }
+
+      // ── Text / date / textarea: profile keys + label rules (not option lists) ──
       let value = key in valueByKey ? valueByKey[key] : undefined;
       if (value === undefined) value = resolveByLabel(label, profile);
       // Any unmapped date widget (e.g. the Self-Identify signature date) defaults
@@ -1913,30 +2481,36 @@
       if ((value === undefined || value === null || value === "") && isDateContainer(c)) {
         value = todayDate();
       }
-      // Recovery re-entry: Workday often leaves aria-invalid=true until the next
-      // Save even after a successful write. Re-opening How Did You Hear / State
-      // prompts in that window clears the first good selection (first pass OK,
-      // recovery pass fails). Skip rewrite when a committed value is already there.
-      if (onlyInvalid && fieldHasCommittedValue(c)) {
-        record(rep, label || key, true);
-        continue;
-      }
-      // Required fields MUST reach the LLM even when fieldLabel() is empty
-      // (Application Questions often label via combobox aria-label only).
       const interesting = isRequired(c) || !!(label && /\?/.test(label));
       if (value === undefined || value === null || value === "") {
-        // Defer to the LLM for things a human should look at: required fields or
-        // actual questions. Skip optional niceties (middle name, extension, …).
-        if (interesting) llmTargets.push({ container: c, key, label: label || fieldLabel(c), required: isRequired(c) });
+        if (interesting) {
+          llmTargets.push({ container: c, key, label: label || fieldLabel(c), required: isRequired(c) });
+          decisions.deferLlm += 1;
+          try {
+            if (WD.aa) WD.aa("fillStep DEFER-LLM text", { key: key.slice(0, 40), labelHead, reason: "no-profile-value" });
+          } catch {}
+        } else {
+          skipLog("no-value-not-interesting");
+        }
         continue;
       }
+      decisions.write += 1;
+      try {
+        if (WD.aa) {
+          WD.aa("fillStep WRITE", {
+            key: key.slice(0, 40),
+            labelHead,
+            valueHead: String(value).slice(0, 60),
+          });
+        }
+      } catch {}
       const ok = await writeField(c, value, label || key);
-      // A deterministic value that does NOT match this tenant's actual options
-      // fails to apply (e.g. veteran "I am not a protected veteran" when the
-      // options say "I AM NOT A VETERAN"). Route those to the LLM, which harvests
-      // the real options and picks the truthful one - rather than leaving it empty.
+      try {
+        if (WD.aa) WD.aa("fillStep WRITE result", { key: key.slice(0, 40), labelHead, ok });
+      } catch {}
       if (ok === false && interesting) {
-        llmTargets.push({ container: c, key, label, required: isRequired(c) });
+        llmTargets.push({ container: c, key, label, required: isRequired(c), want: value });
+        decisions.deferLlm += 1;
       } else {
         record(rep, label || key, ok);
         if (ok === false) rememberFailedField(key, label);
@@ -1947,8 +2521,27 @@
     if (onSelfIdOrVoluntaryPage()) {
       await fillDisabilitySelfId(profile, rep);
     }
-    // Layer 2: resolve everything the deterministic layer missed via the LLM.
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep → LLM", {
+          decisions,
+          count: llmTargets.length,
+          labels: llmTargets.map((t) => String(t.label || t.key || "").slice(0, 80)),
+        });
+      }
+    } catch {}
+    // Layer 2: harvest options + LLM picks exact option text for every target.
     await resolveUnmatchedWithLLM(llmTargets, rep, profile);
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep END", {
+          decisions,
+          filled: (rep.filled || []).length,
+          unmatched: (rep.unmatched || []).length,
+          missed: (rep.missed || []).length,
+        });
+      }
+    } catch {}
     // Disability Self-ID lives outside the formField wrappers - reassert after LLM.
     await fillDisabilitySelfId(profile, rep);
   }
@@ -2303,37 +2896,60 @@
     return null;
   }
 
-  async function harvestOptions(btn) {
+  // Proven CrowdStrike flow: pointer-open → read portal option id/value/text +
+  // portal HTML → close. Returns { options:[{id,value,text}], portalHtml, listboxId }.
+  async function harvestPortalOptions(btn) {
     await closeAllListboxes();
-    // Only click to OPEN when it isn't already open - clicking an open dropdown
-    // toggles it CLOSED, which would harvest zero options.
-    if (!openedListbox(btn)) {
-      D.clickEl(btn);
-      await D.delay(150);
+    const popup = await openListboxForOptions(btn);
+    if (!popup) {
+      try {
+        WD.warn("harvestPortalOptions: portal did not open", btn && (btn.id || btn.getAttribute("aria-label")));
+      } catch {}
+      return { options: [], portalHtml: "", listboxId: null };
     }
-    let popup = openedListbox(btn);
-    for (let i = 0; i < 15 && !popup; i++) {
-      await D.delay(80);
-      popup = openedListbox(btn);
-    }
-    let opts = [];
-    if (popup && (await D.waitFor(OPTION_SEL, 1500, popup))) {
-      opts = visibleOptions(popup).map((o) => (o.textContent || "").replace(/\s+/g, " ").trim());
-    }
-    // Close the listbox (single-selects close on Escape); sink-blur as a backup.
+    await D.delay(100);
+    const listbox =
+      (popup.getAttribute && popup.getAttribute("role") === "listbox" && popup) ||
+      popup.querySelector('[role="listbox"]') ||
+      popup;
+    const listboxId = (listbox && listbox.id) || btn.getAttribute("aria-controls") || null;
+    const portalRoot =
+      (listbox &&
+        (listbox.closest("[data-behavior-click-outside-close]") ||
+          listbox.closest("[data-popper-placement]"))) ||
+      popup;
+    const portalHtml = portalRoot ? String(portalRoot.outerHTML || "").slice(0, 4000) : "";
+    const options = readPortalOptionRows(popup);
     pressKey(btn, "Escape", "Escape", 27);
     await D.delay(120);
-    if (openedListbox(btn)) focusSinkOutside(btn.ownerDocument || document);
-    await D.delay(100);
-    const seen = new Set();
+    if (openedListbox(btn) || btn.getAttribute("aria-expanded") === "true") {
+      focusSinkOutside(btn.ownerDocument || document);
+      await D.delay(100);
+    }
+    try {
+      WD.log(
+        "harvestPortalOptions",
+        btn && (btn.id || "").slice(0, 40),
+        "listboxId=",
+        listboxId,
+        "->",
+        options.map((o) => ({ text: o.text, value: o.value, id: o.id })),
+      );
+    } catch {}
+    return { options, portalHtml, listboxId };
+  }
+
+  async function harvestOptions(btn) {
+    const harvested = await harvestPortalOptions(btn);
     const uniq = [];
-    for (const o of opts) {
-      // Drop the "Select One" placeholder row - it is never a valid answer.
-      if (isPlaceholderOption(o)) continue;
-      const k = o.toLowerCase();
+    const seen = new Set();
+    for (const o of harvested.options || []) {
+      const t = o && o.text;
+      if (!t || isPlaceholderOption(t)) continue;
+      const k = t.toLowerCase();
       if (!seen.has(k)) {
         seen.add(k);
-        uniq.push(o);
+        uniq.push(t);
       }
     }
     return uniq;
@@ -2383,86 +2999,48 @@
     return null;
   }
 
-  // Deterministic screening answers when the LLM round-trip returns nothing
-  // (API error, timeout, truncated JSON, or needs_user). Maps question label →
-  // profile rules → exact option text from the harvested list.
+  // Deterministic LAST RESORT when the LLM round-trip returns nothing
+  // (API error, timeout, truncated JSON, or needs_user). Never used before the
+  // LLM when a harvested option list exists — the model must pick live option text.
   function localScreeningPick(label, profile, options) {
     if (!options || !options.length) return null;
-    const pick = (w) => matchOptionFromList(w, options);
-    const fromRules = resolveByLabel(label, profile || {});
-    if (fromRules) {
-      const m = pick(fromRules);
-      if (m) return m;
-      // Rules may return Yes/No while the tenant uses "YES" / "No " — try again
-      // with normalized casing via contains match.
-      const soft = options.find((o) => valueMatchesWant(o, fromRules));
-      if (soft) return soft;
-    }
+    const pick = (w) => snapToHarvestedOption(w, options);
     const e = (profile && profile.eeo) || {};
     const low = (label || "").toLowerCase();
-    if (/legal right to work|authorized to work|legally eligible/.test(low)) return pick("Yes");
-    if (/sponsorship|immigration filing|visa sponsorship|open work permit|permanent residency/.test(low)) {
+    // Profile facts only — map onto harvested options, do not invent free text.
+    if (/hispanic or latino/.test(low) && e.hispanicLatino != null) return pick(e.hispanicLatino ? "Yes" : "No");
+    if (/\bgender\b|\bsex\b/.test(low) && e.gender) return pick(e.gender);
+    if (/sexual orientation|lgbtq/.test(low)) return pick(e.sexualOrientation || "I don't wish to answer");
+    if (/what is your race|race\/ethnicity|ethnicity|\brace\b/.test(low) && e.ethnicity) return pick(e.ethnicity);
+    if (/sponsorship|immigration filing|visa sponsorship|open work permit|permanent residency|do you now or in the future require|will you now or in the future require|might you in the future require/.test(low) && e.sponsorship != null) {
       return pick(e.sponsorship ? "Yes" : "No");
     }
-    if (/do you now or in the future require|will you now or in the future require|might you in the future require/.test(low)) {
-      return pick(e.sponsorship ? "Yes" : "No");
-    }
-    if (/relocat/.test(low)) return pick("No");
-    if (/use or work on the workday|workday system/.test(low)) return pick("No");
-    if (/united states government|u\.?\s*s\.?\s*government/.test(low)) return pick("No");
-    if (/export control|citizen, national or resident of any of the following countries|iran,\s*cuba|donetsk|luhansk/.test(low)) {
-      return pick("No");
-    }
-    if (/related to a current|related to.*employee|related to an employee of a customer|government official.*business/.test(low)) {
-      return pick("No");
-    }
-    if (/acknowledge|answered them truthfully|please enter ["']?yes["']?/.test(low)) return pick("Yes");
-    if (/relative.*employed|relatives employed/.test(low)) return pick("No");
-    if (/contractual restriction|non-solicitation|outside activities.*competit|in competition with|non-compete/.test(low)) {
-      return pick("No");
-    }
-    if (/government entity|department of defense|procurement|projects.*contracts.*involved/.test(low)) {
-      return pick("No");
-    }
-    if (/years of.*experience|software language|network technologies/.test(low)) return pick("Yes");
-    if (/text messages|agree to receive text/.test(low)) return pick("Yes");
-    if (/ever applied for employment|applied previously/.test(low)) return pick("No");
-    if (/served in the armed forces|reserve component|spouse of someone who has served/.test(low)) {
-      return (
-        pick("No, I have not served") ||
-        pick("I have not served") ||
-        pick("No") ||
-        pick("Never served")
-      );
-    }
-    if (/highest degree/.test(low) && profile && Array.isArray(profile.education)) {
+    if (/highest degree|degree attained/.test(low) && profile && Array.isArray(profile.education)) {
       for (const ed of profile.education) {
         if (ed && ed.degree) {
-          const m = pick(ed.degree);
+          const m = pick(ed.degree) || matchDegreeOption(ed.degree, options);
           if (m) return m;
         }
       }
     }
-    if (/salary|compensation expectation|cash compensation/.test(low)) {
-      const ranged = options.filter((o) => /\d/.test(String(o)));
-      if (ranged.length) return ranged[Math.min(Math.floor(ranged.length * 0.55), ranged.length - 1)];
+    if (isDisabilitySelfIdLabel(low)) {
+      return (
+        pick(e.disability ? "Yes, I have a disability" : "No, I do not have a disability and have not had one in the past") ||
+        pick(e.disability ? "Yes" : "No")
+      );
     }
-    // Last resort for binary Application Question selects.
-    const yn = options
-      .map((o) => String(o || "").trim())
-      .filter((t) => /^(yes|no)$/i.test(t));
-    if (yn.length === 2 && /\?/.test(label || "")) {
-      // Prefer No for "are you / do you / related / require" screening unless
-      // the label is an acknowledgement / authorization affirmative.
-      if (/acknowledge|authorized|eligible|accept|agree|certify/i.test(low)) return pick("Yes") || yn.find((t) => /^yes$/i.test(t));
-      return pick("No") || yn.find((t) => /^no$/i.test(t));
+    // resolveByLabel may return a short hint; only accept if it snaps to a real option.
+    const fromRules = resolveByLabel(label, profile || {});
+    if (fromRules) {
+      const m = pick(fromRules);
+      if (m) return m;
     }
     return null;
   }
 
-  // Round-trip to the side panel (→ backend LLM) to map profile values to the
-  // harvested options. Resolves to {} on any failure/timeout so filling never
-  // blocks. The matching id is the source control's element id.
+  // Round-trip to the side panel (→ backend LLM). Sends portal option DOM
+  // (data-af-options-for + id/data-value) so the model returns an exact option
+  // id, data-value, or text — matching the proven console harvest flow.
   function requestOptionMatches(items) {
     return new Promise((resolve) => {
       let done = false;
@@ -2491,9 +3069,10 @@
             kind: it.kind,
             required: it.required,
             options: it.options,
+            portalOptions: it.portalOptions,
+            portalHtml: it.portalHtml,
           })),
         });
-        // 19+ Application Questions in one batch can exceed LLM latency; 90s headroom.
         setTimeout(() => {
           delete WDw._waiters[requestId];
           finish({});
@@ -2545,17 +3124,32 @@
     const btn = listboxTrigger(container);
     if (btn) {
       await closeAllListboxes();
-      let options = await harvestOptions(btn);
+      let harvested = await harvestPortalOptions(btn);
+      if (!(harvested.options && harvested.options.length)) {
+        try {
+          WD.warn("classifyControl: 0 portal options — retrying", fieldLabel(container));
+        } catch {}
+        await D.delay(250);
+        harvested = await harvestPortalOptions(btn);
+      }
       const label = fieldLabel(container);
-      if (!optionsPlausibleForLabel(label, options)) {
+      let options = (harvested.options || []).map((o) => o.text);
+      if (!optionsPlausibleForLabel(label, options) && options.length) {
         try {
           WD.warn("implausible options for", label, "- re-harvesting", options);
         } catch {}
         await closeAllListboxes();
         await D.delay(200);
-        options = await harvestOptions(btn);
+        harvested = await harvestPortalOptions(btn);
+        options = (harvested.options || []).map((o) => o.text);
       }
-      return { kind: "select", options };
+      return {
+        kind: "select",
+        options,
+        portalOptions: harvested.options || [],
+        portalHtml: harvested.portalHtml || "",
+        listboxId: harvested.listboxId || null,
+      };
     }
     const nativeSel = container.querySelector("select");
     if (nativeSel) {
@@ -2591,21 +3185,40 @@
     return null;
   }
 
-  // LLM fallback for fields the deterministic layer (buildValueMap + resolveByLabel)
-  // could not map. Classify + harvest each control, round-trip ALL of them to the
-  // backend LLM in one batch, then apply each answer with the control-aware
-  // writeField. Anything the LLM declines (needs_user / no answer) stays in
-  // rep.unmatched so the side panel flags it for manual review.
+  // Harvest portal options (id/value/text + HTML) → LLM returns option id or
+  // data-value or text → pointer-select that exact portal row.
   async function resolveUnmatchedWithLLM(targets, rep, profile) {
-    if (!targets || !targets.length) return;
+    if (!targets || !targets.length) {
+      try {
+        if (WD.aa) WD.aa("LLM resolve SKIP", { reason: "no-targets" });
+      } catch {}
+      return;
+    }
     throwIfAborted();
+    try {
+      if (WD.aa) {
+        WD.aa("LLM resolve START", {
+          count: targets.length,
+          labels: targets.map((t) => String(t.label || t.key || "").slice(0, 70)),
+        });
+      }
+    } catch {}
     WD._resolveCache = WD._resolveCache || {};
     const items = [];
     const byCid = new Map();
     let i = 0;
     for (const t of targets) {
       throwIfAborted();
-      if (shouldSkipFailedField(t.key, t.label)) {
+      const stillInvalid = !!(t.container && t.container.querySelector('[aria-invalid="true"]'));
+      if (shouldSkipFailedField(t.key, t.label) && !stillInvalid) {
+        try {
+          if (WD.aa) {
+            WD.aa("LLM target SKIP failed-field", {
+              key: t.key,
+              labelHead: String(t.label || "").slice(0, 70),
+            });
+          }
+        } catch {}
         rep.unmatched.push({ key: t.key, label: t.label });
         continue;
       }
@@ -2621,10 +3234,31 @@
         continue;
       }
       const cid = ((t.key || "field").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "f") + "_" + i++;
-      byCid.set(cid, t);
-      items.push({ cid, label: t.label, kind: info.kind, required: t.required, options: info.options });
+      const portalOptions = info.portalOptions || [];
+      const options = info.options || portalOptions.map((o) => o.text);
+      const portalHtml = buildPortalOptionsHtml(cid, t.label, portalOptions, info.portalHtml || "");
+      byCid.set(cid, {
+        ...t,
+        options,
+        portalOptions,
+        portalHtml,
+        kind: info.kind,
+      });
+      items.push({
+        cid,
+        label: t.label,
+        kind: info.kind,
+        required: t.required,
+        options,
+        portalOptions,
+        portalHtml,
+        want: t.want || undefined,
+      });
       try {
-        WD.log(`LLM fallback target '${t.label}' kind=${info.kind} options=${info.options.length}`, info.options);
+        WD.log(
+          `LLM portal target '${t.label}' kind=${info.kind} options=${options.length}`,
+          portalOptions.slice(0, 8),
+        );
       } catch {}
     }
     if (!items.length) return;
@@ -2634,12 +3268,25 @@
     for (const item of items) {
       const cacheKey = (item.label || "").toLowerCase().trim().slice(0, 120);
       if (cacheKey && WD._resolveCache[cacheKey]) {
-        values[item.cid] = WD._resolveCache[cacheKey];
-        continue;
+        const cached = WD._resolveCache[cacheKey];
+        if (item.portalOptions && item.portalOptions.length) {
+          const choice = resolvePortalChoice(
+            cached && (cached.value || cached.id || cached.text || cached),
+            item.portalOptions,
+          );
+          if (choice) {
+            values[item.cid] = choice;
+            continue;
+          }
+        } else {
+          const snapped = snapToHarvestedOption(cached, item.options);
+          if (snapped) {
+            values[item.cid] = snapped;
+            continue;
+          }
+        }
       }
-      const local = localScreeningPick(item.label, profile, item.options);
-      if (local) values[item.cid] = local;
-      else needLlm.push(item);
+      needLlm.push(item);
     }
     try {
       const BATCH = 8;
@@ -2647,7 +3294,24 @@
         throwIfAborted();
         const chunk = needLlm.slice(b, b + BATCH);
         const part = await requestOptionMatches(chunk);
-        Object.assign(values, part || {});
+        for (const item of chunk) {
+          const raw = part && part[item.cid];
+          if (raw == null || raw === "") continue;
+          if (item.portalOptions && item.portalOptions.length) {
+            const choice = resolvePortalChoice(raw, item.portalOptions);
+            if (choice) values[item.cid] = choice;
+            else {
+              try {
+                WD.warn(`LLM portal answer not in options for '${item.label}':`, raw, item.portalOptions);
+              } catch {}
+            }
+          } else if (item.options && item.options.length) {
+            const snapped = snapToHarvestedOption(raw, item.options);
+            if (snapped) values[item.cid] = snapped;
+          } else {
+            values[item.cid] = raw;
+          }
+        }
       }
     } catch (e) {
       if (e && e.name === "WDAborted") throw e;
@@ -2655,23 +3319,94 @@
 
     for (const item of items) {
       if (values[item.cid]) continue;
-      const local = localScreeningPick(item.label, profile, item.options);
-      if (local) values[item.cid] = local;
+      if (item.want && item.portalOptions && item.portalOptions.length) {
+        const fromWant = resolvePortalChoice(item.want, item.portalOptions);
+        if (fromWant) {
+          values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      if (item.want) {
+        const fromWant = snapToHarvestedOption(item.want, item.options);
+        if (fromWant) {
+          values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      if (item.options && item.options.length) {
+        // Emergency only after LLM + want snap failed. Never invent free text —
+        // localScreeningPick must snap onto harvested options.
+        const local = localScreeningPick(item.label, profile, item.options);
+        if (local) {
+          if (item.portalOptions && item.portalOptions.length) {
+            const snapped = resolvePortalChoice(local, item.portalOptions);
+            if (snapped) values[item.cid] = snapped;
+            else {
+              try {
+                WD.warn(`localScreeningPick did not snap for '${item.label}':`, local);
+              } catch {}
+            }
+          } else {
+            values[item.cid] = local;
+          }
+        }
+      }
     }
 
     for (const [cid, t] of byCid) {
       throwIfAborted();
       const value = values[cid];
       try {
-        WD.log(`LLM fallback apply '${t.label}' <- ${value == null ? "(none)" : JSON.stringify(value)}`);
+        if (WD.aa) {
+          WD.aa("LLM apply", {
+            labelHead: String(t.label || "").slice(0, 80),
+            value: value == null ? null : typeof value === "object" ? value : String(value).slice(0, 80),
+          });
+        }
       } catch {}
       if (value == null || value === "") {
         rep.unmatched.push({ key: t.key, label: t.label });
         rememberFailedField(t.key, t.label);
         continue;
       }
-      const ok = await writeField(t.container, value, t.label || t.key);
-      try { WD.log(`LLM fallback apply '${t.label}' result=${ok}`); } catch {}
+
+      let ok = false;
+      const trigger = listboxTrigger(t.container);
+      const multi = t.container && t.container.querySelector('[data-automation-id="multiSelectContainer"]');
+      if (trigger && !multi) {
+        // Single-select Canvas listbox: always portal id/value click (never text-only writeField).
+        ok = await applyListboxPortal(trigger, value);
+      } else {
+        ok = await writeField(
+          t.container,
+          typeof value === "object" ? value.text || value.value || value.id : value,
+          t.label || t.key,
+        );
+      }
+      try {
+        if (WD.aa) {
+          WD.aa("LLM apply result", {
+            labelHead: String(t.label || "").slice(0, 80),
+            ok,
+            stillInvalid: !!(t.container && t.container.querySelector('[aria-invalid="true"]')),
+            shown: trigger
+              ? String(selectDisplayValue(trigger) || triggerCurrentValue(trigger) || "").slice(0, 40)
+              : null,
+          });
+        }
+      } catch {}
+      if (ok && t.container && t.container.querySelector('[aria-invalid="true"]') && trigger && !multi) {
+        try {
+          WD.log(`LLM portal re-commit '${t.label}' (still aria-invalid)`);
+        } catch {}
+        ok = await applyListboxPortal(trigger, value);
+      } else if (ok && t.container && t.container.querySelector('[aria-invalid="true"]') && multi) {
+        ok = await writeField(
+          t.container,
+          typeof value === "object" ? value.text || value.value || value.id : value,
+          t.label || t.key,
+        );
+      }
       if (ok) {
         const cacheKey = (t.label || "").toLowerCase().trim().slice(0, 120);
         if (cacheKey) WD._resolveCache[cacheKey] = value;
@@ -2807,15 +3542,19 @@
         if (degFF && fieldHasCommittedValue(degFF)) continue;
         const btn = degreeButton(eduPanels[i]);
         if (!btn) continue;
-        const opts = await harvestOptions(btn);
-        const value =
-          exactOption(e.degree, opts) || matchDegreeOption(e.degree, opts) || bestLocalMatch(e.degree, opts);
+        const harvested = await harvestPortalOptions(btn);
+        const texts = (harvested.options || []).map((o) => o.text);
+        const textPick =
+          exactOption(e.degree, texts) || matchDegreeOption(e.degree, texts) || bestLocalMatch(e.degree, texts);
+        const choice = resolvePortalChoice(textPick, harvested.options);
         try {
-          WD.log(`Edu ${i + 1} Degree recovery: want=${JSON.stringify(e.degree)} -> ${JSON.stringify(value)} of ${opts.length} options`);
+          WD.log(
+            `Edu ${i + 1} Degree recovery: want=${JSON.stringify(e.degree)} -> ${JSON.stringify(choice || textPick)} of ${texts.length} options`,
+          );
         } catch {}
-        if (!value || isPlaceholderOption(value)) continue;
+        if (!choice && (!textPick || isPlaceholderOption(textPick))) continue;
         await closeAllListboxes();
-        record(rep, `Edu ${i + 1} Degree`, await openAndPick(btn, value));
+        record(rep, `Edu ${i + 1} Degree`, await applyListboxPortal(btn, choice || textPick));
       }
       return;
     }
@@ -2824,18 +3563,26 @@
     for (let i = 0; i < eduPanels.length; i++) {
       const e = edu[i] || {};
       const n = i + 1;
-      // Degree: a fixed dropdown - open it to read every option. Skip a degree
-      // that already shows a committed selection (avoids re-opening a filled
-      // dropdown on recovery passes - the "filling again when already correct"
-      // churn the user reported).
+      // Degree: Canvas listbox — portal harvest (id/value/text) then LLM.
       if (e.degree) {
         const degFF = panelField(eduPanels[i], "degree");
         if (degFF && fieldHasCommittedValue(degFF)) continue;
         const btn = degreeButton(eduPanels[i]);
         if (btn && btn.id) {
-          const opts = await harvestOptions(btn);
-          if (opts.length) {
-            matchItems.push({ kind: "select", n, cid: btn.id, btn, want: e.degree, label: "Degree", options: opts });
+          const harvested = await harvestPortalOptions(btn);
+          const portalOptions = harvested.options || [];
+          if (portalOptions.length) {
+            matchItems.push({
+              kind: "select",
+              n,
+              cid: btn.id,
+              btn,
+              want: e.degree,
+              label: "Degree",
+              options: portalOptions.map((o) => o.text),
+              portalOptions,
+              portalHtml: buildPortalOptionsHtml(btn.id, "Degree", portalOptions, harvested.portalHtml || ""),
+            });
           }
         }
       }
@@ -2849,10 +3596,7 @@
     for (let i = 0; i < workPanels.length; i++) await fillWorkPanel(workPanels[i], work[i], i + 1, rep);
     for (let i = 0; i < eduPanels.length; i++) await fillEducationNonDegree(eduPanels[i], edu[i], i + 1, rep);
 
-    // 4. Apply the resolved Degree. Precedence: an EXACT option match for the
-    //    candidate's own value is authoritative (fill it verbatim - never let the
-    //    LLM swap it for a merely "relevant" one). Only when there is no exact
-    //    option do we defer to the LLM, falling back to local token-overlap.
+    // 4. Apply Degree via portal id/data-value click (same as Application Questions).
     //
     // CRITICAL: a failed School fill can leave "Search Results (N)" open. That
     // open prompt's options are what pickOption sees, so Degree openAndPick for
@@ -2865,21 +3609,22 @@
     await closeAllListboxes();
     await D.delay(150);
     for (const it of matchItems) {
-      // The LLM answer is only trusted when it is a REAL option; otherwise fall
-      // back to academic-level matching, then token overlap. A placeholder can
-      // never win at any tier.
-      const llm = chosen[it.cid] && !isPlaceholderOption(chosen[it.cid]) ? exactOption(chosen[it.cid], it.options) : null;
-      const value =
-        exactOption(it.want, it.options) || llm || matchDegreeOption(it.want, it.options) || bestLocalMatch(it.want, it.options);
+      const llmRaw = chosen[it.cid];
+      const llmChoice = llmRaw != null ? resolvePortalChoice(llmRaw, it.portalOptions) : null;
+      const textFallback =
+        exactOption(it.want, it.options) ||
+        matchDegreeOption(it.want, it.options) ||
+        bestLocalMatch(it.want, it.options);
+      const choice =
+        llmChoice || resolvePortalChoice(textFallback, it.portalOptions) || (textFallback ? { text: textFallback } : null);
       try {
         WD.log(
-          `Edu ${it.n} Degree: want=${JSON.stringify(it.want)} llm=${JSON.stringify(chosen[it.cid] || null)} -> ${JSON.stringify(value)} of ${it.options.length} options ${JSON.stringify(it.options.slice(0, 12))}`,
+          `Edu ${it.n} Degree: want=${JSON.stringify(it.want)} llm=${JSON.stringify(llmRaw || null)} -> ${JSON.stringify(choice)} of ${it.options.length} options ${JSON.stringify(it.options.slice(0, 12))}`,
         );
       } catch {}
-      if (!value || isPlaceholderOption(value)) continue;
-      // Re-resolve the live button (panel may have re-rendered during school fill).
+      if (!choice || isPlaceholderOption(choice.text || choice.value)) continue;
       const liveBtn = it.btn.isConnected ? it.btn : degreeButton(eduPanels[it.n - 1]);
-      if (liveBtn) record(rep, `Edu ${it.n} Degree`, await openAndPick(liveBtn, value));
+      if (liveBtn) record(rep, `Edu ${it.n} Degree`, await applyListboxPortal(liveBtn, choice));
     }
 
     // 5. Win the race against Workday's résumé parser: it re-fills Role Description
@@ -2891,9 +3636,34 @@
 
   // flush(): force any deferred text/date commits to run now. Auto-advance focuses
   // the page (real OS focus) before calling this so the focus-gated commit can fire.
-  WD.steps = { fillStep, fillExperienceExtras, buildValueMap, resolveByLabel, fieldLabel, AID, isRequired, flush: flushCommits };
+  WD.steps = {
+    fillStep,
+    fillExperienceExtras,
+    buildValueMap,
+    resolveByLabel,
+    fieldLabel,
+    AID,
+    isRequired,
+    flush: flushCommits,
+    // Debug helpers for console probes (Application Questions Acknowledgment).
+    listboxTrigger,
+    harvestOptions,
+    harvestPortalOptions,
+    applyListboxPortal,
+    openAndPickPortal,
+    matchOptionFromList,
+    writeField,
+    openAndPick,
+    fieldIsFilled,
+    fieldHasCommittedValue,
+  };
   // Build marker: if this line is NOT in the console on a run, the tab is running
   // a STALE engine (reload the extension at chrome://extensions, then hard-reload
-  // the Workday page). markdown-strip is part of this build.
-  try { WD.log("wd-steps build: 2026-08-04-degree-pointer-typeahead"); } catch {}
+  // the Workday page).
+  try {
+    WD.log("wd-steps build: 2026-08-05-aa-full-trace-v1");
+    try {
+      if (WD.aa) WD.aa("engine-build", { build: "2026-08-05-aa-full-trace-v1", href: location.href });
+    } catch {}
+  } catch {}
 })();

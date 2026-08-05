@@ -6,7 +6,7 @@
 // drivers. Injected into every frame; idempotent via the guard below.
 (() => {
   try {
-    console.log("[autofill] picker.js build 2026-06-23r (ATJ: no Lever apply click)");
+    console.log("[autofill] picker.js build 2026-08-04a (generic: cover letter + consent + custom dropdown)");
   } catch {}
   if (window.__JOB_AUTOFILL__) return;
   window.__JOB_AUTOFILL__ = true;
@@ -219,6 +219,12 @@
       if (AF.icims && AF.icims.isIcimsPage && AF.icims.isIcimsPage()) {
         return "Candidate profile (iCIMS)";
       }
+      if (AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) {
+        return "Application form (JobDiva)";
+      }
+      if (!isKnownAtsHost()) {
+        return "Application form";
+      }
     } catch {}
     return "Application form";
   }
@@ -308,7 +314,14 @@
     "form:has(#cp_form_submit_i)",
     "form:has(.iCIMS_ProfileFormTable)",
     ".iCIMS_CenteredPageContent",
-    // Generic fallback
+    // Custom career pages (e.g. Grid Dynamics CF7 apply-to-vacancy-form).
+    "#apply-to-vacancy-form form",
+    "#apply-to-vacancy-form",
+    ".apply-to-vacancy-form form",
+    "form.wpcf7-form",
+    // Generic career-page fallback sentinel: findAutoContainer replaces this with
+    // findBestGenericContainer() (richest visible form / apply section). Never
+    // use document.querySelector("form") — header search forms would win.
     "form",
   ];
 
@@ -368,11 +381,74 @@
     } catch {}
   }
 
+  // Count fillable controls inside a root. Used only by the generic career-page
+  // fallback so we pick the application form instead of a tiny header search form.
+  function countFillableControls(root) {
+    if (!root || !root.querySelectorAll) return 0;
+    let n = 0;
+    try {
+      root.querySelectorAll("input, textarea, select").forEach((el) => {
+        const t = (el.type || "text").toLowerCase();
+        if (t === "hidden" || t === "submit" || t === "button" || t === "image" || t === "reset") return;
+        // File inputs are often display:none behind a dropzone — still count them.
+        if (t !== "file" && !isVisible(el)) return;
+        n++;
+      });
+    } catch {}
+    return n;
+  }
+
+  // Custom career pages (generic engine): pick the richest visible application
+  // container. ATS-specific selectors above still win first; this only runs for
+  // the "form" sentinel / final fallback and must not change Greenhouse/etc.
+  function findBestGenericContainer() {
+    let best = null;
+    let bestScore = 0;
+    const consider = (el, minScore) => {
+      if (!el || !isVisible(el)) return;
+      const score = countFillableControls(el);
+      if (score >= minScore && score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    };
+    // Prefer known custom apply shells before scanning every form on the page.
+    try {
+      document
+        .querySelectorAll(
+          "#apply-to-vacancy-form form, #apply-to-vacancy-form, .apply-to-vacancy-form form, form.wpcf7-form"
+        )
+        .forEach((el) => consider(el, 2));
+    } catch {}
+    try {
+      document.querySelectorAll("form").forEach((form) => consider(form, 2));
+    } catch {}
+    if (best && bestScore >= 2) return best;
+    try {
+      document
+        .querySelectorAll(
+          'main, [role="main"], [class*="appl"], [id*="appl"], [class*="apply"], [id*="apply"], section, article, .content, .container, .container-fluid'
+        )
+        .forEach((el) => consider(el, 3));
+    } catch {}
+    if (best && bestScore >= 3) return best;
+    try {
+      if (document.body) consider(document.body, 3);
+    } catch {}
+    return bestScore >= 2 ? best : null;
+  }
+
   function findAutoContainer() {
     ensureAshbyFormVisible();
     ensureLeverApplyVisible();
     ensureJobDivaFormVisible();
     for (const sel of AUTO_CONTAINER_SELECTORS) {
+      // Generic fallback: richest form/section, never the first <form> in the DOM.
+      if (sel === "form") {
+        const best = findBestGenericContainer();
+        if (best) return best;
+        continue;
+      }
       let node = null;
       try {
         node = document.querySelector(sel);
@@ -390,7 +466,111 @@
         if (node) return node;
       }
     }
-    return null;
+    // Last resort for formless custom pages when no ATS selector matched.
+    return findBestGenericContainer();
+  }
+
+  // Known ATS hosts — generic consent prep must never click Accept here (those
+  // engines own their own prep). Guard is belt-and-suspenders; AF_GENERIC_PREP is
+  // only sent when platform === "generic".
+  function isKnownAtsHost() {
+    try {
+      const h = (location.hostname || "").toLowerCase();
+      return /greenhouse|lever\.co|ashbyhq|smartrecruiters|myworkdayjobs|\.workday\.com|icims|jobdiva|manatal|careers-page|workable|breezy\.hr|jobvite|applytojob|recruiterflow|rfcareers/i.test(
+        h
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  // Click visible privacy / terms Accept buttons (e.g. Grid Dynamics "I ACCEPT")
+  // and tick obvious consent checkboxes before extract. cleanForLLM strips
+  // <button>, so the LLM cannot choose these — must be deterministic.
+  function prepareGenericConsent() {
+    if (isKnownAtsHost()) return { clicked: 0, ticked: 0, fileWidgets: 0 };
+    let clicked = 0;
+    let ticked = 0;
+    let fileWidgets = 0;
+    const acceptRe = /^(i\s+)?accept$|^(i\s+)?agree$|i accept|i agree|accept\s+(&|and)\s+continue|agree\s+(&|and)\s+continue/i;
+    const declineRe = /\b(decline|reject|disagree|cancel|close|no thanks)\b/i;
+    try {
+      const buttons = document.querySelectorAll(
+        'button, a[role="button"], input[type="button"], [role="button"]'
+      );
+      for (const btn of buttons) {
+        if (!isVisible(btn)) continue;
+        const t = clean(btn.innerText || btn.textContent || btn.value || "");
+        if (!t || t.length > 80) continue;
+        if (declineRe.test(t)) continue;
+        // Prefer explicit accept class (Grid Dynamics conditions-accept) even when
+        // the button text is short ("I accept").
+        const cls = String(btn.className || "");
+        const forceAccept = /conditions-accept|consent-accept|privacy-accept/i.test(cls);
+        if (!forceAccept && !acceptRe.test(t)) continue;
+        try {
+          btn.click();
+          clicked++;
+        } catch {}
+      }
+    } catch {}
+    try {
+      document.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        if (cb.checked) return;
+        const wrap = cb.closest("label") || cb.closest(".wpcf7-list-item") || cb.parentElement;
+        const labelEl =
+          (wrap && wrap.querySelector(".wpcf7-list-item-label")) ||
+          (wrap && wrap.tagName === "LABEL" ? wrap : null);
+        const t = clean(
+          (labelEl && labelEl.innerText) || (wrap && wrap.innerText) || ""
+        );
+        if (
+          !/\b(terms|privacy|consent|agree|i accept|acknowledge|personal\s+data|future\s+recruitment)\b/i.test(
+            t
+          )
+        )
+          return;
+        // CF7 themes often hide the real checkbox (display:none); click still works,
+        // or click the visible list-item label.
+        try {
+          if (isVisible(cb)) {
+            cb.click();
+          } else if (labelEl) {
+            labelEl.click();
+            if (!cb.checked) cb.click();
+          } else {
+            cb.click();
+          }
+          if (cb.checked) ticked++;
+        } catch {}
+      });
+    } catch {}
+    // Grid Dynamics: open "Add cover letter" so #additional_files-input is armed
+    // before extract/write (popup File option + change listeners).
+    try {
+      document.querySelectorAll(".vacancy-form-file").forEach((widget) => {
+        const input = widget.querySelector('input[type="file"]');
+        if (!input || (input.files && input.files.length)) return;
+        const nameId = `${input.name || ""} ${input.id || ""}`.toLowerCase();
+        const btn = widget.querySelector(
+          ".vacancy-form-file__button:not(.vacancy-form-file__button--hidden)"
+        );
+        if (!btn || !isVisible(btn)) return;
+        const btnText = clean(btn.innerText || btn.textContent || "");
+        if (
+          !/cover\s*letter|additional/i.test(btnText) &&
+          !/additional_files|cover/.test(nameId)
+        )
+          return;
+        const popup = widget.querySelector(".vacancy-form-file__popup");
+        if (popup && popup.classList.contains("vacancy-form-file__popup--open")) return;
+        try {
+          btn.click();
+          fileWidgets++;
+        } catch {}
+      });
+    } catch {}
+    return { clicked, ticked, fileWidgets };
   }
 
   // Register the topmost application container as a single selected block and
@@ -2188,6 +2368,23 @@
         const ticked =
           AF.manatal && AF.manatal.tickConsent ? AF.manatal.tickConsent() : 0;
         return { ticked };
+      }).then((res) => {
+        try {
+          sendResponse({ ok: true, ...(res || {}) });
+        } catch {}
+      });
+      return true;
+    }
+    // Generic custom career pages: click "I ACCEPT" / agree buttons and tick
+    // obvious consent checkboxes before discovery/extract. Skips known ATS hosts.
+    if (msg.type === "AF_GENERIC_PREP") {
+      if (isKnownAtsHost()) return false;
+      runExclusive(async () => {
+        const res = prepareGenericConsent();
+        const wait =
+          (res.clicked || res.ticked || res.fileWidgets ? 600 : 50);
+        await new Promise((r) => setTimeout(r, wait));
+        return res;
       }).then((res) => {
         try {
           sendResponse({ ok: true, ...(res || {}) });

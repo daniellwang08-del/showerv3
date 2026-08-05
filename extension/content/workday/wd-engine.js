@@ -92,10 +92,35 @@
     return false;
   }
 
+  function logDetectStep(step, extra) {
+    try {
+      const now = Date.now();
+      const last = WD._aaLastDetectLog || { step: null, at: 0 };
+      // WD_NEXT polls detectStep many times — only log on change or every ~1.2s.
+      if (step === last.step && now - last.at < 1200 && !(extra && extra.force)) return;
+      WD._aaLastDetectLog = { step, at: now };
+      const firstHeading = D.pageHeadingText ? D.pageHeadingText() : "";
+      const aqHeading =
+        D.pageHeadingContaining && D.pageHeadingContaining("Application Question");
+      if (WD.aa) {
+        WD.aa("detectStep", {
+          step,
+          firstHeading: firstHeading.slice(0, 120),
+          aqHeading: aqHeading ? String(aqHeading).slice(0, 120) : "",
+          fieldCount: D.qa('[data-automation-id^="formField-"]').filter(D.isVisible).length,
+          ...(extra || {}),
+        });
+      }
+    } catch {}
+  }
+
   function detectStep() {
     // Post-submit confirmation must win — leftover progress labels still say
     // "My Information" and used to send auto-advance into a dead end.
-    if (detectSubmittedPage()) return "submitted";
+    if (detectSubmittedPage()) {
+      logDetectStep("submitted");
+      return "submitted";
+    }
 
     // Review before My Information: the progress rail often keeps earlier step
     // names visible as headings. A footer labeled Submit is also Review.
@@ -104,6 +129,7 @@
       pageHeadingHas("Review") ||
       footerLooksLikeSubmit()
     ) {
+      logDetectStep("review");
       return "review";
     }
 
@@ -112,19 +138,57 @@
     // distinct step ids - the auto-advance loop detects "did we move?" by step-id
     // change, so sharing an id makes it think Voluntary→SelfId never happened and
     // skip a dedicated fill pass on Self Identify (leaving Name/Date/box empty).
-    if (pageHeadingHas("Self Identify") || pageHeadingHas("Self-Identify")) return "selfid";
-    if (pageHeadingHas("Voluntary Disclosure")) return "voluntary";
-    if (pageHeadingHas("Application Question")) return "questions";
+    //
+    // Same class of bug for Application Questions 1 of 2 vs 2 of 2: both headings
+    // match "Application Question". Collapsing them to one id made WD_NEXT report
+    // advanced=false after a real Save navigation, so auto-advance never started a
+    // fresh fill on page 2 — it only Save-looped + at most one onlyInvalid recovery
+    // (WD_MAX_STEP_FILLS=2), then panel "Couldn't resolve on Application Questions:
+    // [accommodation…]" while the UI already showed "No".
+    if (pageHeadingHas("Self Identify") || pageHeadingHas("Self-Identify")) {
+      logDetectStep("selfid");
+      return "selfid";
+    }
+    if (pageHeadingHas("Voluntary Disclosure")) {
+      logDetectStep("voluntary");
+      return "voluntary";
+    }
+    if (pageHeadingHas("Application Question")) {
+      // MUST use the heading that contains "Application Question", not the first
+      // page heading (job title). Proven CrowdStrike log: step report stayed
+      // "questions" while UI showed "Application Questions 2 of 2".
+      const heading =
+        (D.pageHeadingContaining && D.pageHeadingContaining("Application Question")) ||
+        (D.pageHeadingText && D.pageHeadingText()) ||
+        "";
+      const m = heading.match(/(\d+)\s+of\s+(\d+)/i);
+      const id = m ? `questions_${m[1]}_of_${m[2]}` : "questions";
+      logDetectStep(id, {
+        force: true,
+        heading: String(heading).slice(0, 120),
+        matchedNofM: !!(m && m[0]),
+        collapsedToQuestions: id === "questions",
+      });
+      return id;
+    }
     if (
       D.exists(S.AID("applyFlowMyExpPage")) ||
       D.exists(S.AID("applyFlowMyExperiencePage")) ||
       pageHeadingHas("My Experience")
     ) {
+      logDetectStep("experience");
       return "experience";
     }
-    if (D.exists(S.AID("applyFlowMyInfoPage")) || pageHeadingHas("My Information")) return "myInfo";
+    if (D.exists(S.AID("applyFlowMyInfoPage")) || pageHeadingHas("My Information")) {
+      logDetectStep("myInfo");
+      return "myInfo";
+    }
     // Fallback: any page that exposes Workday formField wrappers is fillable.
-    if (D.exists('[data-automation-id^="formField-"]')) return "generic";
+    if (D.exists('[data-automation-id^="formField-"]')) {
+      logDetectStep("generic");
+      return "generic";
+    }
+    logDetectStep(null);
     return null;
   }
 
@@ -154,17 +218,19 @@
     const alerts = [...document.querySelectorAll('[role="alert"], [data-automation-id*="error" i], [data-automation-id="errorMessage"]')]
       .filter((n) => D.isVisible(n) && /\b(error|required|must|invalid)\b/i.test(n.textContent || ""));
     const clean = invalidFields.length === 0 && alerts.length === 0;
+    const step = detectStep();
     try {
-      if (!clean && WD.log) {
-        WD.log(
-          "detectValidation:",
-          invalidFields.length,
-          "invalid field(s),",
-          alerts.length,
-          "alert(s) ->",
-          invalidFields.map((f) => f.label || f.key),
-          alerts.map((a) => (a.textContent || "").trim().slice(0, 60))
-        );
+      if (WD.aa) {
+        WD.aa("detectValidation", {
+          step,
+          clean,
+          errorCount: invalidFields.length || alerts.length,
+          invalidFields: invalidFields.map((f) => ({
+            key: f.key,
+            labelHead: String(f.label || "").slice(0, 100),
+          })),
+          alerts: alerts.map((a) => (a.textContent || "").trim().slice(0, 80)),
+        });
       }
     } catch {}
     return { clean, invalidFields, errorCount: invalidFields.length || alerts.length };
@@ -181,7 +247,30 @@
       throw err;
     }
     const step = detectStep();
+    const heading =
+      (step &&
+        String(step).indexOf("questions") === 0 &&
+        D.pageHeadingContaining &&
+        D.pageHeadingContaining("Application Question")) ||
+      (D.pageHeadingText && D.pageHeadingText()) ||
+      "";
     const rep = { step: step || "unknown", filled: [], missed: [], unmatched: [] };
+    try {
+      if (WD.aa) {
+        WD.aa("fillCurrent START", {
+          step,
+          heading: String(heading).slice(0, 140),
+          onlyInvalidCount: options && Array.isArray(options.onlyInvalid) ? options.onlyInvalid.length : 0,
+          onlyInvalid: options && options.onlyInvalid
+            ? options.onlyInvalid.map((f) => ({
+                key: f.key,
+                labelHead: String(f.label || "").slice(0, 60),
+              }))
+            : null,
+          newAttempt: !!(options && options.newAttempt),
+        });
+      }
+    } catch {}
     // The generic formField pass handles My Information, Voluntary Disclosures,
     // Application Questions, and any other flat Workday step.
     await S.fillStep(profile, options || {}, rep);
@@ -193,8 +282,28 @@
     // fillExperienceExtras is idempotent and recovery-light (it skips the resume
     // upload / panel-add / degree-LLM work when onlyInvalid is set).
     if (step === "experience") {
+      try {
+        if (WD.aa) WD.aa("fillExperienceExtras START", { step });
+      } catch {}
       await S.fillExperienceExtras(profile, options || {}, rep);
+      try {
+        if (WD.aa) WD.aa("fillExperienceExtras DONE", { step });
+      } catch {}
     }
+    try {
+      if (WD.aa) {
+        WD.aa("fillCurrent DONE", {
+          step,
+          filled: (rep.filled || []).length,
+          missed: (rep.missed || []).length,
+          unmatched: (rep.unmatched || []).map((u) => String(u.label || u.key || "").slice(0, 80)),
+          filledLabels: (rep.filled || [])
+            .map((f) => (typeof f === "string" ? f : (f && f.label) || f))
+            .map((s) => String(s || "").slice(0, 60))
+            .slice(0, 20),
+        });
+      }
+    } catch {}
     return rep;
   }
 
@@ -209,12 +318,24 @@
     for (const s of cands) {
       const el = D.q(s);
       if (!el || !D.isVisible(el) || isFinalSubmitControl(el)) continue;
+      try {
+        if (WD.aa) {
+          WD.aa("clickNext", {
+            via: s,
+            text: String(el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40),
+          });
+        }
+      } catch {}
       D.clickEl(el);
       return true;
     }
-    return await D.click(
+    const xpathOk = await D.click(
       "//button[contains(.,'Save and Continue') or normalize-space()='Next' or normalize-space()='Continue']"
     );
+    try {
+      if (WD.aa) WD.aa("clickNext", { via: "xpath", ok: !!xpathOk });
+    } catch {}
+    return xpathOk;
   }
 
   async function runAll(profile, options, onReport) {

@@ -102,7 +102,37 @@
     if (!best) return false;
     setNativeValue(sel, best.value);
     fireInput(sel);
+    syncSiblingCustomDropdown(sel, best.value);
     return true;
+  }
+
+  // Grid Dynamics / CF7: native <select> is display:none; a .custom-dropdown
+  // mirrors the value. Click the matching item so their JS + CF7 stay in sync.
+  function syncSiblingCustomDropdown(sel, value) {
+    try {
+      const field =
+        (sel.closest &&
+          sel.closest(".apply-to-vacancy-form__field, .select, .wpcf7-form-control-wrap")) ||
+        sel.parentElement;
+      if (!field) return;
+      const want = clean(value);
+      if (!want) return;
+      const items = field.querySelectorAll(
+        ".custom-dropdown__item, [class*='dropdown__item'][data-value], [class*='dropdown__item']"
+      );
+      for (const item of items) {
+        const v = clean(item.getAttribute("data-value") || item.innerText || "");
+        if (!v) continue;
+        if (v === want || v.toLowerCase() === want.toLowerCase()) {
+          try {
+            item.click();
+          } catch {}
+          return;
+        }
+      }
+      const current = field.querySelector(".custom-dropdown__current, [class*='dropdown__current']");
+      if (current && !clean(current.innerText)) current.textContent = want;
+    } catch {}
   }
 
   function selectOptionsMulti(sel, wants) {

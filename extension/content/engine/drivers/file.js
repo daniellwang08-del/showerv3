@@ -116,6 +116,34 @@
       if (!label && AF.jobdiva && AF.jobdiva.questionTitleFor) {
         label = AF.jobdiva.questionTitleFor(root);
       }
+      // Grid Dynamics / CF7 vacancy-form-file: option label is just "File"; the
+      // section heading ("Resume*" / "Additional files") or name/id is the real role.
+      try {
+        const nameId = `${root.name || ""} ${root.id || ""}`.toLowerCase();
+        if (/additional_files|cover.?letter/.test(nameId)) {
+          label = "Cover Letter";
+        } else if (/(^|\s)resume(\s|$)/.test(nameId) || nameId.includes("resume-input")) {
+          label = label && !/^file$/i.test(label) ? label : "Resume";
+        } else {
+          const field =
+            (root.closest &&
+              root.closest(
+                ".apply-to-vacancy-form__field, .additional-files, .vacancy-form-file"
+              )) ||
+            null;
+          const sectionLab = field
+            ? clean(
+                (
+                  field.querySelector(
+                    ".apply-to-vacancy-form__label--big, .apply-to-vacancy-form__label"
+                  ) || {}
+                ).innerText || ""
+              )
+            : "";
+          if (/additional\s*files|cover\s*letter/i.test(sectionLab)) label = "Cover Letter";
+          else if (/resume/i.test(sectionLab) && (!label || /^file$/i.test(label))) label = sectionLab;
+        }
+      } catch {}
       return {
         kind: "file",
         label: label || "File",
@@ -137,9 +165,46 @@
     async write(root, answer, env) {
       const fd = env && env.file;
       if (!fd) return false;
+      // Grid Dynamics: "Add cover letter" must open before change handlers update UI.
+      try {
+        const widget = root.closest && root.closest(".vacancy-form-file");
+        if (widget) {
+          const btn = widget.querySelector(
+            ".vacancy-form-file__button:not(.vacancy-form-file__button--hidden)"
+          );
+          const popup = widget.querySelector(".vacancy-form-file__popup");
+          if (btn && popup && !popup.classList.contains("vacancy-form-file__popup--open")) {
+            try {
+              btn.click();
+            } catch {}
+          }
+        }
+      } catch {}
       const ok = writeFile(root, fd);
-      if (ok) markFilled(root);
+      if (ok) {
+        markFilled(root);
+        syncVacancyFormFileUI(root);
+      }
       return ok;
     },
   });
+
+  // Custom career pages (Grid Dynamics vacancy-form-file): after DataTransfer
+  // attach, mirror their change handler so the filename chip appears even if
+  // their listener only arms after a user click on "File".
+  function syncVacancyFormFileUI(el) {
+    try {
+      const widget = el.closest && el.closest(".vacancy-form-file");
+      if (!widget || !el.files || !el.files.length) return;
+      const name = el.files[0].name || "";
+      const fileRow = widget.querySelector(".vacancy-form-file__file");
+      const filename = widget.querySelector(".vacancy-form-file__filename");
+      const btn = widget.querySelector(".vacancy-form-file__button");
+      const popup = widget.querySelector(".vacancy-form-file__popup");
+      if (filename) filename.textContent = name;
+      if (fileRow) fileRow.classList.add("vacancy-form-file__file--has-file");
+      if (btn) btn.classList.add("vacancy-form-file__button--hidden");
+      if (popup) popup.classList.remove("vacancy-form-file__popup--open");
+    } catch {}
+  }
 })();

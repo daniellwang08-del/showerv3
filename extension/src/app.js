@@ -141,6 +141,7 @@ function emptyAutofill() {
     loopFinished: null, // "review" | "stuck" | "needs_user" | "error" | null
     loopMessage: null, // human-readable outcome shown when the loop ends
     primaryFrameId: null, // content-script frame that owns the application form (embedded ATS)
+    aaLogs: [], // Workday auto-advance debug lines (page + panel), newest last
   };
 }
 
@@ -315,6 +316,9 @@ function onContentMessage(msg, sender) {
   } else if (msg.type === "WD_PROGRESS") {
     if (!state.autofill.active) return;
     if (msg.report) setAutofill({ reports: [...state.autofill.reports, msg.report] });
+  } else if (msg.type === "WD_AA_LOG") {
+    if (!state.autofill.active) return;
+    if (msg.line) pushAaLog("[page] " + msg.line);
   } else if (msg.type === "WD_DONE") {
     if (!state.autofill.active) return;
     // In auto-advance mode the loop awaits each fill; hand the report to it and
@@ -378,6 +382,28 @@ async function handleWorkdayResolve(msg) {
       /* tab may be gone */
     }
   };
+  // Backend AutofillControlIn.label / AutofillFieldIn.label max_length=600
+  // (app/api/assistant_routes.py). Stuffing portal option keys into the label
+  // (race/ethnicity, long Acknowledgment) caused string_too_long and empty
+  // WD_RESOLVE replies — fields never filled, auto-advance then Save'd blank.
+  const CONTROL_LABEL_MAX = 600;
+  const clip = (s, n) => {
+    const t = String(s || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (t.length <= n) return t;
+    return t.slice(0, Math.max(0, n - 1)) + "…";
+  };
+  const buildControlLabel = (rawLabel, want, hasOptions) => {
+    // Options + data-values live in portal HTML / options[]; keep label short.
+    const suffix = hasOptions
+      ? " [Reply with option data-value OR exact option text from the list/HTML]"
+      : "";
+    const wantPart = want ? ` (candidate: ${clip(want, 80)})` : "";
+    const budget = CONTROL_LABEL_MAX - suffix.length - wantPart.length;
+    const head = clip(rawLabel || "Field", Math.max(40, budget));
+    return clip(head + wantPart + suffix, CONTROL_LABEL_MAX);
+  };
   try {
     const items = Array.isArray(msg.items) ? msg.items : [];
     if (!job || !job.job_id || !items.length) {
@@ -388,20 +414,124 @@ async function handleWorkdayResolve(msg) {
       });
       return reply({});
     }
-    const controls = items.map((it) => ({
-      cid: String(it.cid),
-      kind: it.kind || "select",
-      label: (it.label || "Field") + (it.want ? ` (candidate's value: ${it.want})` : ""),
-      required: it.required !== false,
-      options: Array.isArray(it.options) ? it.options.slice(0, 100) : [],
-    }));
-    const resp = await autofillChunked(job.job_id, [{ handle: 0, label: "Workday fields", controls }], buildPreferences());
+    const norm = (s) =>
+      String(s || "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+
+    // Build DOM-with-options html (same contract as Greenhouse extractRegionDom):
+    // <ul data-af-options-for="cid"><li id data-value>text</li>…
+    // Full question text + option ids/values go HERE (html max 200000), not in label.
+    const htmlParts = [];
+    const controls = items.map((it) => {
+      const portalOptions = Array.isArray(it.portalOptions) ? it.portalOptions : [];
+      const optionTexts = (
+        Array.isArray(it.options)
+          ? it.options
+          : portalOptions.map((o) => o.text).filter(Boolean)
+      )
+        .map((t) => clip(t, 500))
+        .slice(0, 100);
+      let portalHtml = it.portalHtml || "";
+      if (!portalHtml && portalOptions.length) {
+        const lis = portalOptions
+          .map((o) => {
+            const id = String(o.id || o.value || "").replace(/"/g, "");
+            const val = String(o.value || o.id || "").replace(/"/g, "");
+            const text = String(o.text || "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;");
+            return `<li id="${id}" data-value="${val}" data-af-option-id="${id}" data-af-option-value="${val}">${text}</li>`;
+          })
+          .join("");
+        portalHtml = `<div data-af-wd-field><label>${String(it.label || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")}</label><ul data-af-options-for="${it.cid}">${lis}</ul></div>`;
+      } else if (portalHtml && it.label && !/<label[\s>]/i.test(portalHtml)) {
+        // Ensure the full (uncapped) question is available in HTML for the model.
+        const esc = String(it.label || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;");
+        portalHtml = `<div data-af-wd-field><label>${esc}</label>${portalHtml}</div>`;
+      }
+      if (portalHtml) htmlParts.push(portalHtml);
+      const label = buildControlLabel(it.label, it.want, optionTexts.length > 0 || portalOptions.length > 0);
+      if (label.length > CONTROL_LABEL_MAX) {
+        console.warn("[workday] WD_RESOLVE label still over cap after clip", label.length, it.cid);
+      }
+      return {
+        cid: String(it.cid).slice(0, 256),
+        kind: String(it.kind || "select").slice(0, 30),
+        label,
+        required: it.required !== false,
+        options: optionTexts,
+      };
+    });
+
+    const resp = await autofillChunked(
+      job.job_id,
+      [
+        {
+          handle: 0,
+          label: clip("Workday fields", CONTROL_LABEL_MAX),
+          html: htmlParts.join("\n").slice(0, 180000),
+          controls,
+        },
+      ],
+      buildPreferences(),
+    );
     const values = {};
     for (const f of (resp && resp.results) || []) {
       for (const c of f.controls || []) {
         if (c.needs_user) continue;
         const v = c.option || c.value;
-        if (c.cid && v) values[c.cid] = v;
+        if (!c.cid || !v) continue;
+        const src = items.find((it) => String(it.cid) === String(c.cid));
+        const portalOptions = (src && src.portalOptions) || [];
+        const opts = src && Array.isArray(src.options) ? src.options : portalOptions.map((o) => o.text);
+        const want = norm(v);
+
+        // Prefer portal id / data-value (stable Workday keys from live DOM).
+        if (portalOptions.length) {
+          const byVal = portalOptions.find((o) => norm(o.value) === want || norm(o.id) === want);
+          if (byVal) {
+            values[c.cid] = byVal.value || byVal.id || byVal.text;
+            continue;
+          }
+          const byText = portalOptions.find((o) => norm(o.text) === want);
+          if (byText) {
+            values[c.cid] = byText.value || byText.id || byText.text;
+            continue;
+          }
+          const soft = portalOptions.find((o) => norm(o.text).includes(want) || want.includes(norm(o.text)));
+          if (soft) {
+            values[c.cid] = soft.value || soft.id || soft.text;
+            continue;
+          }
+        }
+
+        if (opts.length) {
+          const exact = opts.find((o) => norm(o) === want);
+          if (exact) {
+            values[c.cid] = exact;
+            continue;
+          }
+          const contains = opts
+            .filter((o) => {
+              const t = norm(o);
+              return t.includes(want) || want.includes(t);
+            })
+            .sort((a, b) => a.length - b.length);
+          if (contains.length) {
+            values[c.cid] = contains[0];
+            continue;
+          }
+          console.debug("[workday] WD_RESOLVE answer not in options", c.cid, v, opts.slice(0, 6));
+          continue;
+        }
+        values[c.cid] = v;
       }
     }
     console.debug(
@@ -411,9 +541,15 @@ async function handleWorkdayResolve(msg) {
       items.length,
       "controls",
     );
+    try {
+      aaLog("WD_RESOLVE answered", { answered: Object.keys(values).length, total: items.length });
+    } catch {}
     reply(values);
   } catch (err) {
     console.warn("[workday] WD_RESOLVE failed:", (err && err.message) || err);
+    try {
+      aaLog("WD_RESOLVE FAILED", { error: String((err && err.message) || err).slice(0, 400) });
+    } catch {}
     reply({});
   }
 }
@@ -2228,6 +2364,12 @@ async function startAutofill() {
           return;
         }
       }
+      // Generic custom career pages: accept privacy/terms overlays before scan so
+      // the full application form is visible to AF_AUTOSELECT.
+      if (engine.platform === "generic") {
+        setAutofill({ runStatus: "Accepting terms…" });
+        await prepareGeneric(tab.id);
+      }
       try {
         await tabMsg.broadcastTabMessage(tab.id, { type: "AF_AUTOSELECT" });
         // Prefer the Greenhouse embed iframe when the career page is only a shell.
@@ -2411,20 +2553,71 @@ async function fillCurrentStep(tabId, profile, resumeFile, extraOptions) {
 function workdayReallyAdvanced(fromStep, next) {
   if (!next || !next.advanced || (next && next.aborted)) return false;
   const after = next.after;
-  if (!after || after === fromStep || after === "generic") return false;
-  return true;
+  // Prefer distinct step ids (questions_1_of_2 → questions_2_of_2).
+  if (after && after !== fromStep && after !== "generic") return true;
+  // Fallback: page title changed while step id stayed collapsed (legacy "questions").
+  if (next.beforeHeading && next.afterHeading && next.afterHeading !== next.beforeHeading) {
+    return true;
+  }
+  return false;
+}
+
+function aaLog(...args) {
+  try {
+    console.info("[workday][AA]", ...args);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const line = args
+      .map((a) => {
+        try {
+          return typeof a === "string" ? a : JSON.stringify(a);
+        } catch {
+          return String(a);
+        }
+      })
+      .join(" ");
+    pushAaLog("[panel] " + line);
+  } catch {
+    /* ignore */
+  }
+}
+
+let aaLogBuffer = [];
+let aaLogFlushTimer = null;
+
+function pushAaLog(line) {
+  if (!state.autofill || !state.autofill.active) return;
+  aaLogBuffer.push({ t: Date.now(), line: String(line || "").slice(0, 1000) });
+  if (aaLogFlushTimer) return;
+  aaLogFlushTimer = setTimeout(() => {
+    aaLogFlushTimer = null;
+    const prev = Array.isArray(state.autofill.aaLogs) ? state.autofill.aaLogs : [];
+    const next = [...prev, ...aaLogBuffer].slice(-400);
+    aaLogBuffer = [];
+    setAutofill({ aaLogs: next });
+  }, 120);
 }
 
 async function autoAdvanceWorkday(tabId, profile, resumeFile) {
   const loopStopped = () => state.autofill.loopStop || !state.autofill.active;
   // First WD_RUN of this session clears the failed-field skip set; recoveries keep it.
   let sessionFresh = true;
+  aaLog("loop start", { tabId, WD_MAX_STEPS, WD_MAX_STEP_FILLS, WD_MAX_SAVE_ATTEMPTS });
   try {
     for (let i = 0; i < WD_MAX_STEPS; i++) {
       if (loopStopped()) return finishLoop("stopped");
 
       const det = await tabSend(tabId, { type: "WD_DETECT" }, 0);
       const step = det && det.step;
+      aaLog("outer detect", {
+        i,
+        step,
+        heading: det && det.heading,
+        href: det && det.href,
+        label: wdStepLabel(step),
+      });
       if (step === "submitted") {
         finishLoop("submitted");
         await handleApplicationSubmitted({
@@ -2436,19 +2629,47 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
       if (!step) return finishLoop(state.autofill.reports.length ? "done" : "none");
       if (step === "review") return finishLoop("review");
 
-      const label = WD_STEP_LABELS[step] || step;
+      const label = wdStepLabel(step);
       let fillsUsed = 0;
       const runFill = async (extraOptions) => {
         if (loopStopped()) return { aborted: true };
-        if (fillsUsed >= WD_MAX_STEP_FILLS) return { skipped: true };
+        if (fillsUsed >= WD_MAX_STEP_FILLS) {
+          aaLog("runFill SKIPPED — fill budget exhausted", {
+            label,
+            step,
+            fillsUsed,
+            WD_MAX_STEP_FILLS,
+            onlyInvalid: extraOptions && extraOptions.onlyInvalid,
+          });
+          return { skipped: true };
+        }
         fillsUsed += 1;
         const opts = { ...(extraOptions || {}), newAttempt: sessionFresh };
         sessionFresh = false;
-        return fillCurrentStep(tabId, profile, resumeFile, opts);
+        aaLog("runFill START", {
+          label,
+          step,
+          fillsUsed,
+          newAttempt: opts.newAttempt,
+          onlyInvalidCount: Array.isArray(opts.onlyInvalid) ? opts.onlyInvalid.length : 0,
+          onlyInvalid: opts.onlyInvalid,
+        });
+        const result = await fillCurrentStep(tabId, profile, resumeFile, opts);
+        aaLog("runFill DONE", {
+          label,
+          step,
+          fillsUsed,
+          aborted: !!(result && result.aborted),
+          skipped: !!(result && result.skipped),
+          error: result && result.error,
+          reports: (result && result.reports) || [],
+        });
+        return result;
       };
 
       // Initial fill of the step.
       setAutofill({ loopStatus: `Filling ${label}…` });
+      aaLog("phase: INITIAL FILL", { label, step, heading: det && det.heading });
       const fill = await runFill();
       if (fill.aborted || loopStopped()) return finishLoop("stopped");
       if (fill.error) return finishLoop("error", fill.error);
@@ -2467,55 +2688,127 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
 
         // Fix anything already flagged before saving (if we still have fill budget).
         let v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
+        aaLog("pre-save VALIDATE", {
+          attempt: attempt + 1,
+          label,
+          step,
+          fillsUsed,
+          clean: v && v.clean,
+          errorCount: v && v.errorCount,
+          invalidFields: v && v.invalidFields,
+          willRecover: !!(v && !v.clean && fillsUsed < WD_MAX_STEP_FILLS),
+          willSkipRecoverBecauseBudget: !!(v && !v.clean && fillsUsed >= WD_MAX_STEP_FILLS),
+        });
         if (v && !v.clean && fillsUsed < WD_MAX_STEP_FILLS) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
           console.debug(`[workday] auto-advance: ${label} pre-save errors`, v.invalidFields);
           setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
+          aaLog("phase: PRE-SAVE RECOVERY fill", { label, lastNames });
           const rec = await runFill({ onlyInvalid: v.invalidFields });
           if (rec.aborted || loopStopped()) return finishLoop("stopped");
           if (rec.error) return finishLoop("error", rec.error);
           await focusPageAndFlush(tabId);
           if (loopStopped()) return finishLoop("stopped");
+          const vAfter = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
+          aaLog("post-recovery VALIDATE (before advance)", {
+            clean: vAfter && vAfter.clean,
+            invalidFields: vAfter && vAfter.invalidFields,
+          });
+          v = vAfter || v;
+        } else if (v && !v.clean && fillsUsed >= WD_MAX_STEP_FILLS) {
+          lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
+          aaLog("WARN: dirty validation but fill budget exhausted — will ADVANCE anyway", {
+            label,
+            fillsUsed,
+            lastNames,
+          });
         }
 
         // Try to advance.
+        aaLog("phase: ADVANCE click Save/Continue", {
+          attempt: attempt + 1,
+          label,
+          step,
+          fillsUsed,
+          validateClean: v && v.clean,
+          invalidStill: v && v.invalidFields,
+        });
         setAutofill({ loopStatus: `Advancing from ${label}…` });
         const next = await tabSend(tabId, { type: "WD_NEXT" }, 0);
+        aaLog("WD_NEXT result", {
+          ok: next && next.ok,
+          advancedFlag: next && next.advanced,
+          before: next && next.before,
+          after: next && next.after,
+          beforeHeading: next && next.beforeHeading,
+          afterHeading: next && next.afterHeading,
+          reallyAdvanced: workdayReallyAdvanced(step, next),
+        });
         if (loopStopped() || (next && next.aborted)) return finishLoop("stopped");
         if (workdayReallyAdvanced(step, next)) {
           // Re-detect: reject false positives from transient detectStep flips.
           const confirm = await tabSend(tabId, { type: "WD_DETECT" }, 0);
-          if (confirm && confirm.step && confirm.step !== step && confirm.step !== "generic") {
+          const confirmStepOk =
+            confirm && confirm.step && confirm.step !== step && confirm.step !== "generic";
+          const confirmHeadingOk =
+            next.afterHeading &&
+            confirm &&
+            confirm.heading &&
+            confirm.heading === next.afterHeading &&
+            next.beforeHeading &&
+            confirm.heading !== next.beforeHeading;
+          aaLog("advance confirm", {
+            confirmStep: confirm && confirm.step,
+            confirmHeading: confirm && confirm.heading,
+            confirmStepOk,
+            confirmHeadingOk,
+          });
+          if (confirmStepOk || confirmHeadingOk) {
             advanced = true;
+            aaLog("ADVANCED OK → next outer step", { from: step, to: confirm && confirm.step });
             break;
           }
           console.debug(`[workday] auto-advance: ${label} false advance ignored`, next, confirm);
+          aaLog("false advance ignored", { next, confirm });
         }
 
         // Didn't advance - re-validate; Workday likely just revealed errors on Save.
         await focusPageAndFlush(tabId);
         if (loopStopped()) return finishLoop("stopped");
         v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
+        aaLog("post-save VALIDATE", {
+          attempt: attempt + 1,
+          clean: v && v.clean,
+          errorCount: v && v.errorCount,
+          invalidFields: v && v.invalidFields,
+          willRecover: !!(v && !v.clean && fillsUsed < WD_MAX_STEP_FILLS),
+          willSkipRecoverBecauseBudget: !!(v && !v.clean && fillsUsed >= WD_MAX_STEP_FILLS),
+        });
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
           console.debug(`[workday] auto-advance: ${label} post-save errors`, v.invalidFields);
           if (fillsUsed < WD_MAX_STEP_FILLS) {
             setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
+            aaLog("phase: POST-SAVE RECOVERY fill", { label, lastNames });
             const rec = await runFill({ onlyInvalid: v.invalidFields });
             if (rec.aborted || loopStopped()) return finishLoop("stopped");
             if (rec.error) return finishLoop("error", rec.error);
             // next save attempt uses the freshly filled values
+          } else {
+            aaLog("WARN: post-save dirty but no fill budget left", { lastNames, fillsUsed });
           }
         } else {
           // No detectable error but it didn't move - maybe a slow navigation.
           await delay(1600);
           if (loopStopped()) return finishLoop("stopped");
           const d2 = await tabSend(tabId, { type: "WD_DETECT" }, 0);
+          aaLog("slow-nav redetect", { d2 });
           if (d2 && d2.step && d2.step !== step && d2.step !== "generic") {
             advanced = true;
             break;
           }
           console.debug(`[workday] auto-advance: ${label} did not advance and no errors detected (attempt ${attempt + 1})`);
+          aaLog("stuck: no advance, no errors", { attempt: attempt + 1, label, step });
         }
       }
 
@@ -2523,6 +2816,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
       if (!advanced) {
         // Post-submit confirmation can look like a dead-end step; Complete & Next.
         const recheck = await tabSend(tabId, { type: "WD_DETECT" }, 0);
+        aaLog("step FAILED to advance", { label, step, lastNames, recheck });
         if (recheck && recheck.step === "submitted") {
           finishLoop("submitted");
           await handleApplicationSubmitted({
@@ -2538,6 +2832,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         );
       }
       const afterStep = await tabSend(tabId, { type: "WD_DETECT" }, 0);
+      aaLog("outer loop continuing after advance", { afterStep });
       if (afterStep && afterStep.step === "submitted") {
         finishLoop("submitted");
         await handleApplicationSubmitted({
@@ -2552,6 +2847,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
     return finishLoop("guard");
   } catch (err) {
     if (loopStopped()) return finishLoop("stopped");
+    aaLog("loop ERROR", (err && err.message) || String(err));
     return finishLoop("error", (err && err.message) || String(err));
   }
 }
@@ -2729,6 +3025,25 @@ async function prepareManatal(tabId) {
   if (tabId == null) return;
   await tabSend(tabId, { type: "AF_MANATAL_PREP" });
   await delay(200);
+}
+
+// Generic custom career pages: click privacy/terms Accept buttons (e.g. "I ACCEPT")
+// and tick consent checkboxes before discovery/extract. cleanForLLM strips
+// <button>, so this cannot be left to the LLM. No-op on known ATS hosts.
+async function prepareGeneric(tabId) {
+  if (tabId == null) return { clicked: 0, ticked: 0, fileWidgets: 0 };
+  let res = null;
+  try {
+    res = await tabSend(tabId, { type: "AF_GENERIC_PREP" });
+  } catch {
+    res = null;
+  }
+  await delay(300);
+  return {
+    clicked: (res && res.clicked) || 0,
+    ticked: (res && res.ticked) || 0,
+    fileWidgets: (res && res.fileWidgets) || 0,
+  };
 }
 
 // JobDiva: Apply Now → Quick Apply (No Account) → wait for My Application modal,
@@ -3373,12 +3688,15 @@ function looksLikeResumeOrCoverLabel(label) {
   const t = String(label || "").toLowerCase();
   if (!t) return false;
   if (/\bcover\s*letter\b/.test(t)) return true;
+  if (/\badditional\s*files?\b/.test(t)) return true;
   return /\b(resume|cv|curriculum\s*vitae)\b/.test(t);
 }
 
 function inferFileRoleFromLabel(label) {
   const t = String(label || "").toLowerCase();
   if (/\bcover\s*letter\b/.test(t)) return "cover_letter";
+  // Grid Dynamics / CF7: section is "Additional files" with Add cover letter.
+  if (/\badditional\s*files?\b/.test(t)) return "cover_letter";
   if (/\b(resume|cv|curriculum\s*vitae)\b/.test(t)) return "resume";
   return null;
 }
@@ -3709,6 +4027,10 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   if (eng && eng.platform === "manatal") {
     setAutofill({ runStatus: "Accepting terms…" });
     await prepareManatal(tabId);
+  }
+  if (eng && eng.platform === "generic") {
+    setAutofill({ runStatus: "Accepting terms…" });
+    await prepareGeneric(tabId);
   }
   if (eng && eng.platform === "jobdiva") {
     setAutofill({ runStatus: "Opening Quick Apply…" });
@@ -7884,6 +8206,15 @@ const WD_STEP_LABELS = {
   unknown: "Current step",
 };
 
+// questions_1_of_2 → "Application Questions 1 of 2" (distinct auto-advance step ids).
+function wdStepLabel(step) {
+  if (!step) return "Current step";
+  if (WD_STEP_LABELS[step]) return WD_STEP_LABELS[step];
+  const m = /^questions_(\d+)_of_(\d+)$/i.exec(String(step));
+  if (m) return `Application Questions ${m[1]} of ${m[2]}`;
+  return String(step);
+}
+
 function renderWorkdayPanel(af) {
   const wrap = el("div", { class: "autofill" });
   const busy = !!af.running;
@@ -7941,6 +8272,52 @@ function renderWorkdayPanel(af) {
     sideKids.push(el("div", { class: "af-side-text muted" }, "Starting…"));
   }
 
+  // Auto-advance debug trail — full step-by-step trace from My Information onward.
+  if (af.aaLogs && af.aaLogs.length) {
+    const lines = af.aaLogs
+      .slice(-200)
+      .map((row) => {
+        const ts = row && row.t ? new Date(row.t).toLocaleTimeString() : "";
+        return `${ts} ${row && row.line ? row.line : ""}`;
+      })
+      .join("\n");
+    const fullText = af.aaLogs
+      .map((row) => {
+        const ts = row && row.t ? new Date(row.t).toISOString() : "";
+        return `${ts} ${row && row.line ? row.line : ""}`;
+      })
+      .join("\n");
+    sideKids.push(
+      el("details", { class: "af-aa-log", open: true }, [
+        el("summary", {}, `Debug log (${af.aaLogs.length}) — copy & paste for investigation`),
+        el(
+          "button",
+          {
+            class: "btn link af-aa-copy",
+            type: "button",
+            onclick: async (ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              try {
+                await navigator.clipboard.writeText(fullText);
+                const btn = ev.currentTarget;
+                const prev = btn.textContent;
+                btn.textContent = "Copied";
+                setTimeout(() => {
+                  btn.textContent = prev;
+                }, 1200);
+              } catch {
+                /* ignore */
+              }
+            },
+          },
+          "Copy all"
+        ),
+        el("pre", { class: "af-aa-log-pre" }, lines),
+      ])
+    );
+  }
+
   if (af.error) {
     sideKids.push(
       el("div", { class: "af-alert danger" }, [
@@ -7956,7 +8333,7 @@ function renderWorkdayPanel(af) {
       const toCheck = [...(r.missed || []), ...((r.unmatched || []).map((u) => u.label || u.key))];
       list.appendChild(
         el("div", { class: "af-item af-step" }, [
-          el("span", { class: "af-label" }, WD_STEP_LABELS[r.step] || r.step),
+          el("span", { class: "af-label" }, wdStepLabel(r.step)),
           el("span", { class: "af-status filled" }, `${(r.filled || []).length} filled`),
           toCheck.length
             ? el("span", { class: "af-status not_found", title: toCheck.join(", ") }, `${toCheck.length} to check`)

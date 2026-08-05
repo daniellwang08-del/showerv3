@@ -273,52 +273,138 @@
   }
   // Progress-rail / stepper labels often use role="heading" and still say
   // "My Information" on later pages — that must not win step detection.
-  function pageHeadingHas(text) {
-    const t = norm(text);
-    if (!t) return false;
-    const root =
+  function inProgressChrome(el) {
+    return !!(
+      el &&
+      el.closest &&
+      el.closest(
+        [
+          '[data-automation-id*="progress" i]',
+          '[data-automation-id*="stepper" i]',
+          '[data-automation-id*="Progress" i]',
+          "nav",
+          '[role="navigation"]',
+          '[aria-label*="progress" i]',
+        ].join(",")
+      )
+    );
+  }
+
+  function applyFlowRoot() {
+    return (
       q('[data-automation-id="applyFlowPage"]') ||
       q("main") ||
       q('[role="main"]') ||
-      document.body;
-    if (!root) return false;
-    const inChrome = (el) =>
-      !!(
-        el.closest &&
-        el.closest(
-          [
-            '[data-automation-id*="progress" i]',
-            '[data-automation-id*="stepper" i]',
-            '[data-automation-id*="Progress" i]',
-            "nav",
-            '[role="navigation"]',
-            '[aria-label*="progress" i]',
-          ].join(",")
-        )
-      );
-    const match = (h) => isVisible(h) && !inChrome(h) && norm(h.textContent).includes(t);
-    if ([...root.querySelectorAll("h1, h2, h3")].some(match)) return true;
-    return [...root.querySelectorAll('[role="heading"]')].some(match);
+      document.body
+    );
   }
 
-  // Informational traces use console.debug so chrome://extensions → Errors stays
-  // clean. Reserve console.warn for attach failures and other real problems.
+  // Visible page title outside the progress rail (e.g. "Application Questions 2 of 2").
+  function pageHeadingText() {
+    const root = applyFlowRoot();
+    if (!root) return "";
+    const pick = (sel) => {
+      for (const h of root.querySelectorAll(sel)) {
+        if (!isVisible(h) || inProgressChrome(h)) continue;
+        const t = (h.textContent || "").replace(/\s+/g, " ").trim();
+        if (t) return t;
+      }
+      return "";
+    };
+    return pick("h1, h2, h3") || pick('[role="heading"]') || "";
+  }
+
+  // Text of the heading that CONTAINS `needle` (not merely the first heading on
+  // the page). CrowdStrike puts the job title in an earlier h1/h2; the step title
+  // "Application Questions 2 of 2" is a later heading. Using pageHeadingText() for
+  // N-of-M parsing therefore collapsed both AQ pages to step id "questions".
+  function pageHeadingContaining(needle) {
+    const t = norm(needle);
+    if (!t) return "";
+    const root = applyFlowRoot();
+    if (!root) return "";
+    const find = (sel) => {
+      for (const h of root.querySelectorAll(sel)) {
+        if (!isVisible(h) || inProgressChrome(h)) continue;
+        const raw = (h.textContent || "").replace(/\s+/g, " ").trim();
+        if (raw && norm(raw).includes(t)) return raw;
+      }
+      return "";
+    };
+    return find("h1, h2, h3") || find('[role="heading"]') || "";
+  }
+
+  function pageHeadingHas(text) {
+    return !!pageHeadingContaining(text);
+  }
+
+  // Use console.info (not console.debug): Chrome DevTools hides Verbose/Debug by
+  // default. WD.aa() is the auto-advance step tracer — always stringified + mirrored
+  // to the Atomspace Debug log so investigation does not depend on page DevTools.
+  let aaSeq = 0;
+  let lastDetectLog = { step: null, at: 0 };
+
+  function safeJson(v) {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      try {
+        return String(v);
+      } catch {
+        return "[unserializable]";
+      }
+    }
+  }
+
+  function mirrorAaLine(line) {
+    try {
+      chrome.runtime.sendMessage({ type: "WD_AA_LOG", line: String(line || "").slice(0, 1200), t: Date.now() });
+    } catch {}
+  }
+
+  /** Auto-advance / fill step tracer. Always visible in console + side-panel Debug log. */
+  function aa(tag, data) {
+    aaSeq += 1;
+    const payload = data === undefined ? undefined : data;
+    const line =
+      `[AA] #${aaSeq} ${tag}` + (payload !== undefined ? " " + safeJson(payload) : "");
+    try {
+      console.info("[workday]", line);
+    } catch {}
+    mirrorAaLine(line);
+    return aaSeq;
+  }
+
   function wdLog(...args) {
     try {
-      console.debug("[workday]", ...args);
+      const line = args
+        .map((a) => (typeof a === "string" ? a : safeJson(a)))
+        .join(" ");
+      console.info("[workday]", line);
+      // Mirror anything tagged [AA] (legacy call sites) into the panel Debug log.
+      if (typeof args[0] === "string" && args[0].indexOf("[AA]") !== -1) {
+        mirrorAaLine(line);
+      }
     } catch {}
   }
   function wdWarn(...args) {
     try {
-      console.warn("[workday]", ...args);
+      const line = args
+        .map((a) => (typeof a === "string" ? a : safeJson(a)))
+        .join(" ");
+      console.warn("[workday]", line);
+      mirrorAaLine("[WARN] " + line);
     } catch {}
   }
 
   WD.dom = {
     delay, xpath, xpathAll, q, qa, isVisible, waitFor, nativeSet,
     setText, click, clickEl, toggle, selectDropdown, selectNative, attachFile,
-    exists, headingHas, pageHeadingHas, norm,
+    exists, headingHas, pageHeadingHas, pageHeadingText, pageHeadingContaining, norm,
   };
   WD.log = wdLog;
   WD.warn = wdWarn;
+  WD.aa = aa;
+  WD._aaSeq = () => aaSeq;
+  WD._aaLastDetectLog = lastDetectLog;
 })();

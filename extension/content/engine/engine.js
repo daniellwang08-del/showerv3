@@ -50,6 +50,48 @@
     }
   }
 
+  // Custom career pages hide the real control (CF7 select / checkbox) and show a
+  // styled widget. Claim the native control when its visible UI sibling is laid out.
+  function hasVisibleCustomUi(el) {
+    if (!el) return false;
+    try {
+      if (el.tagName === "SELECT") {
+        const field =
+          (el.closest &&
+            el.closest(
+              ".apply-to-vacancy-form__field, .wpcf7-form-control-wrap, .select"
+            )) ||
+          el.parentElement;
+        const current =
+          field &&
+          field.querySelector(
+            ".custom-dropdown__current, .custom-dropdown, [class*='dropdown__current']"
+          );
+        if (current) {
+          const r = current.getBoundingClientRect();
+          if (r.width > 0 || r.height > 0) return true;
+        }
+      }
+      const t = (el.type || "").toLowerCase();
+      if (t === "checkbox" || t === "radio") {
+        const wrap =
+          (el.closest &&
+            el.closest(
+              ".wpcf7-list-item, label, .apply-to-vacancy-form__field.checkbox"
+            )) ||
+          el.parentElement;
+        const lab =
+          (wrap && wrap.querySelector(".wpcf7-list-item-label")) ||
+          (wrap && wrap.tagName === "LABEL" ? wrap : null);
+        if (lab) {
+          const r = lab.getBoundingClientRect();
+          if (r.width > 0 || r.height > 0) return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
   function uniqueCid(base) {
     if (!controls.has(base)) return base;
     let i = 2;
@@ -160,7 +202,14 @@
         AF.workable && AF.workable.isSurveyRadioInput && AF.workable.isSurveyRadioInput(anchor);
       const wbAppWidget =
         AF.workable && AF.workable.isApplicationWidgetInput && AF.workable.isApplicationWidgetInput(anchor);
-      if (!isFileInput && !wbSurveyRadio && !wbAppWidget && !isRendered(anchor)) continue;
+      if (
+        !isFileInput &&
+        !wbSurveyRadio &&
+        !wbAppWidget &&
+        !hasVisibleCustomUi(anchor) &&
+        !isRendered(anchor)
+      )
+        continue;
       for (const driver of drivers) {
         let root = null;
         try {
