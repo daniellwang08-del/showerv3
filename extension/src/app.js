@@ -316,6 +316,9 @@ function onContentMessage(msg, sender) {
   } else if (msg.type === "WD_PROGRESS") {
     if (!state.autofill.active) return;
     if (msg.report) setAutofill({ reports: [...state.autofill.reports, msg.report] });
+  } else if (msg.type === "WD_PHASE") {
+    if (!state.autofill.active) return;
+    if (msg.status) setAutofill({ loopStatus: String(msg.status) });
   } else if (msg.type === "WD_AA_LOG") {
     if (!state.autofill.active) return;
     if (msg.line) pushAaLog("[page] " + msg.line);
@@ -561,6 +564,7 @@ async function handleWorkdayResolve(msg) {
           /^skills$/i.test(String((src && src.key) || ""));
 
         // Skills: prefer option_values[] (multi typeahead — no harvested list).
+        // Cap at 10 — job needs a focused set, not the full profile dump (Fiserv AA).
         if (isSkillsCtrl) {
           const fromArr = Array.isArray(c.option_values)
             ? c.option_values.map((x) => String(x || "").trim()).filter(Boolean)
@@ -573,7 +577,7 @@ async function handleWorkdayResolve(msg) {
               .map((x) => x.trim())
               .filter(Boolean);
           }
-          if (tokens.length) values[c.cid] = tokens.slice(0, 40);
+          if (tokens.length) values[c.cid] = tokens.slice(0, 10);
           continue;
         }
 
@@ -2897,7 +2901,8 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
           break;
         } else {
           // No detectable error but it didn't move - maybe a slow navigation.
-          await delay(1600);
+          // WD_NEXT now keeps polling through step:null; this is only a short backup.
+          await delay(700);
           if (loopStopped()) return finishLoop("stopped");
           const d2 = await tabSend(tabId, { type: "WD_DETECT" }, 0);
           aaLog("slow-nav redetect", { d2 });

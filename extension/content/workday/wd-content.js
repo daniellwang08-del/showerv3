@@ -6,7 +6,7 @@
 // step on WD_DETECT so the panel can show what it sees before running.
 (() => {
   const WD = (window.__WD = window.__WD || {});
-  const BUILD = "2026-08-06-resume-skills-v6";
+  const BUILD = "2026-08-07-lazy-mount-rescan-v23";
 
   // Page-console bridge MUST re-bind on every executeScript inject. The rest of
   // this file early-returns when __WD_CONTENT__ is set, which previously left
@@ -159,6 +159,16 @@
 
   WD.isAborted = () => !!WD.aborted;
 
+  // Human-readable phase status for the side panel (not only end-of-step reports).
+  WD.reportPhase = (status, detail) => {
+    const text = String(status || "").trim();
+    if (!text) return;
+    try {
+      if (WD.aa) WD.aa("phase", { status: text, detail: detail || null });
+    } catch {}
+    send({ type: "WD_PHASE", status: text, detail: detail || null });
+  };
+
   function clearResolveWaiters() {
     const waiters = WD && WD._waiters;
     if (!waiters) return;
@@ -256,17 +266,21 @@
         const before = WD.engine.detectStep();
         const beforeHeading = stepHeading(before);
         const ok = await WD.engine.clickNext();
-        // Give Workday time to navigate / re-render the next step.
-        for (let i = 0; i < 20; i++) {
+        // Poll for real next step. Mid-nav often returns step:null briefly —
+        // do NOT treat that as advanced=false and stop (DraftKings logs: myInfo→null
+        // then experience ~600ms later; panel then burned 1600ms on slow-nav).
+        for (let i = 0; i < 22; i++) {
           if (WD.isAborted && WD.isAborted()) break;
           try {
-            await WD.dom.delay(300);
+            await WD.dom.delay(i < 8 ? 100 : 150);
           } catch (e) {
             if (e && e.name === "WDAborted") break;
             throw e;
           }
           const now = WD.engine.detectStep();
           const nowHeading = stepHeading(now) || stepHeading(before);
+          // Still unmounting / generic flash — keep polling.
+          if (!now || now === "generic") continue;
           if (now !== before) break;
           // Application Questions 1 of 2 → 2 of 2 must count even if an older
           // build collapsed both to "questions" (heading text still changes).

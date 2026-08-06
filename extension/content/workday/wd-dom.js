@@ -115,8 +115,14 @@
     if (value == null || value === "") return false;
     const el = await waitFor(selector, 3000, root);
     if (!el) return false;
-    el.scrollIntoView({ block: "center", behavior: "instant" });
-    el.focus();
+    try {
+      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+    } catch {}
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      el.focus();
+    }
     nativeSet(el, "");
     el.dispatchEvent(new Event("input", { bubbles: true }));
     nativeSet(el, String(value));
@@ -133,7 +139,9 @@
     return true;
   }
   function clickEl(el) {
-    el.scrollIntoView({ block: "center", behavior: "instant" });
+    try {
+      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+    } catch {}
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     try {

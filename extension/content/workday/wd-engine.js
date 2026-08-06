@@ -274,6 +274,48 @@
     // Application Questions, and any other flat Workday step.
     await S.fillStep(profile, options || {}, rep);
     if (aborted()) return rep;
+
+    // Lazy-mount rescan. Some Workday steps mount required controls AFTER the
+    // first control renders. Proven Fiserv 2026-08-07 (skills-idempotent-v22
+    // log): Voluntary Disclosures fillStep saw containerCount:1 (only the
+    // "acceptTermsAndAgreements" consent checkbox); the required Gender /
+    // Ethnicity / Veteran selects mounted a beat later (pre-save detectStep
+    // fieldCount:4) so they were NEVER collected → Save rejected with 3
+    // required errors (#280). The field-stabilizer had already settled on the
+    // checkbox because it was present + stable for the short settle window.
+    // fillStep is idempotent (it SKIPs fieldIsFilled controls), so re-run it
+    // while required controls remain unfilled and a pass still fills something.
+    // Bounded so a genuinely complete step can't loop, and experience keeps its
+    // own extras path below.
+    if (step !== "experience" && !aborted()) {
+      const countUnfilledRequired = () =>
+        D.qa('[data-automation-id^="formField-"]')
+          .filter(D.isVisible)
+          .filter((c) => {
+            try {
+              return S.isRequired(c) && !S.fieldIsFilled(c);
+            } catch {
+              return false;
+            }
+          }).length;
+      for (let pass = 0; pass < 3; pass++) {
+        if (aborted()) return rep;
+        // Give any late-mounting controls a beat to appear before deciding.
+        await D.delay(500);
+        if (aborted()) return rep;
+        const pending = countUnfilledRequired();
+        if (!pending) break;
+        try {
+          if (WD.aa) WD.aa("fillCurrent rescan", { pass: pass + 1, pendingRequired: pending, step });
+        } catch {}
+        const filledBefore = (rep.filled || []).length;
+        await S.fillStep(profile, options || {}, rep);
+        if (aborted()) return rep;
+        // Nothing new got filled this pass → stop (avoid churning on a control
+        // the model genuinely can't answer / the user must complete manually).
+        if ((rep.filled || []).length === filledBefore) break;
+      }
+    }
     // fillStep intentionally skips the Work Experience / Education panel fields
     // (see inExperiencePanel), so fillExperienceExtras is the ONLY thing that fills
     // them — including on onlyInvalid recovery passes (a still-empty School must be

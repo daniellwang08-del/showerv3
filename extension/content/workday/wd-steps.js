@@ -296,8 +296,10 @@
     if (/protected veteran|veteran.*categor|belong to any of the categories|confirm your veteran|veteran status|\bveteran\b/i.test(low)) {
       return /veteran|not a veteran|self-identify|self-disclose|protected|military/.test(opts) && !/asian|african american|hispanic|native hawaiian|two or more races/.test(opts);
     }
-    if (/what is your (sex|gender)|\bsex\b/.test(low)) {
-      return /male|female|do not wish/.test(opts) && !/bachelor|master|veteran/.test(opts);
+    if (/what is your (sex|gender)|please select your gender|\bgender\b|\bsex\b/.test(low)) {
+      // Classic EEO: Male/Female; DraftKings AQ: Man/Woman/Non-binary.
+      return /male|female|\bman\b|\bwoman\b|non-binary|prefer not|do not wish/.test(opts) &&
+        !/bachelor|master|veteran/.test(opts);
     }
     if (/race|ethnicity/.test(low) && !/veteran/.test(low)) {
       return /asian|african|hispanic|white|native|two or more|do not wish/.test(opts);
@@ -311,11 +313,13 @@
     return true;
   }
 
-  async function closeAllListboxes(exceptMulti) {
-    for (let pass = 0; pass < 3; pass++) {
+  async function closeAllListboxes(exceptMulti, opts) {
+    // soft: Escape only — never focusSinkOutside body-clicks (those jump the page;
+    // proven GDIT harvest stack: focusSinkOutside ← closeListbox ← closeAllListboxes
+    // ← harvestPortalOptions, with uxInsights clickListener firing on each close).
+    const soft = !!(opts && opts.soft);
+    for (let pass = 0; pass < (soft ? 2 : 3); pass++) {
       let anyOpen = false;
-      // Only form/application triggers — never header Language/Settings buttons
-      // (they also use aria-haspopup=listbox and poisoned openedListbox fallback).
       const triggers = D.qa(
         '[data-automation-id^="formField-"] button[aria-haspopup="listbox"], [data-automation-id^="formField-"] [role="combobox"][aria-haspopup="listbox"], [data-automation-id^="formField-"] input[aria-haspopup="listbox"], [data-automation-id="applyFlowPage"] button[aria-haspopup="listbox"]',
       ).filter(D.isVisible);
@@ -323,7 +327,7 @@
         if (exceptMulti && exceptMulti.contains(btn)) continue;
         if (btn.getAttribute("aria-expanded") === "true" || openedListbox(btn)) {
           anyOpen = true;
-          await closeListbox(btn);
+          await closeListbox(btn, { soft: true });
         }
       }
       const popups = D.qa(
@@ -333,14 +337,28 @@
       if (foreign.length) {
         anyOpen = true;
         pressKey(document.body, "Escape", "Escape", 27);
-        await D.delay(80);
-        if (!(exceptMulti && isMultiListOpen(exceptMulti))) {
-          focusSinkOutside(document);
+        await D.delay(50);
+        if (!soft && !(exceptMulti && isMultiListOpen(exceptMulti))) {
+          focusSinkOutside(document, { noBodyClick: true });
         }
       }
       if (!anyOpen) break;
-      await D.delay(100);
+      await D.delay(40);
     }
+  }
+
+  // True when any form listbox / portal is open (skip closeAll when already clean).
+  function anyFormListboxOpen(exceptBtn) {
+    const triggers = D.qa(
+      '[data-automation-id^="formField-"] button[aria-haspopup="listbox"], [data-automation-id^="formField-"] [role="combobox"][aria-haspopup="listbox"], [data-automation-id^="formField-"] input[aria-haspopup="listbox"], [data-automation-id="applyFlowPage"] button[aria-haspopup="listbox"]',
+    ).filter(D.isVisible);
+    for (const btn of triggers) {
+      if (exceptBtn && (btn === exceptBtn || (exceptBtn.contains && exceptBtn.contains(btn)))) continue;
+      if (btn.getAttribute("aria-expanded") === "true" || openedListbox(btn)) return true;
+    }
+    return D.qa(
+      '[data-behavior-click-outside-close] [role="listbox"], [data-popper-placement] [role="listbox"], [data-automation-id="activeListContainer"]',
+    ).some(D.isVisible);
   }
   function labelForInput(input) {
     if (input.id) {
@@ -613,6 +631,9 @@
       countryPhoneCode: PHONE_CC_LABEL[cc] || (cc === "1" ? USA_PHONE_CC : undefined),
       // National digits only (no country code) — Workday validates format separately.
       phoneNumber: nationalPhoneDigits(c.phone),
+      // Workday My Information often uses formField-emailAddress (DraftKings proof:
+      // v12 skipped LLM for free-text without want → Email APPLY no-value).
+      emailAddress: c.email,
       // Stable Workday key for "Have you been employed by <Company> previously?".
       // A fresh applicant has not worked there before → default No (independent of
       // the company name in the label, so it never relies on label keyword rules).
@@ -649,6 +670,12 @@
     }
     if (/accept these terms|yes i accept/i.test(low)) return "Yes";
     if (/cover\s*letter/i.test(low) && p.coverLetter) return p.coverLetter;
+    // Email — buildValueMap keys emailAddress; label-only "Email" still needs this.
+    const contactEmail = (p.contact && p.contact.email) || p.email;
+    if (/^e-?mail(\s*address)?$/i.test(low.trim()) && contactEmail) return contactEmail;
+    if (/\bemail\b/i.test(low) && !/employee|employer|manager|referr/i.test(low) && contactEmail) {
+      return contactEmail;
+    }
     // CC-305 / OFCCP disability self-ID ONLY — never bare /disability/ (hits
     // Acknowledgment + reasonable-accommodation Application Questions).
     if (isDisabilitySelfIdLabel(low)) {
@@ -912,7 +939,10 @@
   }
 
   async function writeTextEl(el, value) {
-    el.scrollIntoView({ block: "center", behavior: "instant" });
+    // Do not center the page on every text field — that recreated harvest scroll thrash on APPLY.
+    try {
+      el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+    } catch {}
     const str = String(value);
     const retryValues = new Map([[el, str]]);
     const applyValue = () => {
@@ -1323,11 +1353,24 @@
   // mousedown/mouseup/click - no pointerdown - which is why clicking a highlighted
   // search-result row silently did nothing and the School prompt stayed empty.
   // Fire the full pointer+mouse sequence a real user generates.
-  function firePointerClick(el) {
+  //
+  // NEVER scroll the page to center the trigger (block:"center") — that caused
+  // the GDIT My Info harvest thrash (open source → scroll, open suffix → scroll,
+  // open state → scroll, …). Portals float; triggers do not need to be centered.
+  // Options inside an open list may use scroll:"nearest" only.
+  function firePointerClick(el, opts) {
     if (!el) return;
-    try {
-      el.scrollIntoView({ block: "center", behavior: "instant" });
-    } catch {}
+    const mode = opts && opts.scroll;
+    if (mode === "center" || mode === true) {
+      try {
+        el.scrollIntoView({ block: "center", behavior: "instant" });
+      } catch {}
+    } else if (mode === "nearest") {
+      try {
+        el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+      } catch {}
+    }
+    // mode falsy / "none": no scroll — open dropdowns in place.
     const init = {
       bubbles: true,
       cancelable: true,
@@ -1418,6 +1461,38 @@
     return `${head}<div data-af-wd-field><label>${esc(label || "")}</label><ul data-af-options-for="${esc(cid)}">${lis}</ul></div>`;
   }
 
+  // Profile/LLM wording → alternate strings that may appear on tenant option lists.
+  // DraftKings AQ proof (2026-08-06): want "Male" vs live ["Man","Woman","Non-binary",…];
+  // resolvePortalChoice includes() cannot bridge Male↔Man (neither substring).
+  function optionAnswerAliases(raw) {
+    const s = String(raw || "").replace(/\s+/g, " ").trim();
+    if (!s || isPlaceholderOption(s)) return [];
+    const n = D.norm(s);
+    const out = [s];
+    const add = (x) => {
+      const t = String(x || "").trim();
+      if (t && !out.some((o) => D.norm(o) === D.norm(t))) out.push(t);
+    };
+    if (n === "male" || n === "m") {
+      add("Man");
+      add("Male");
+    } else if (n === "female" || n === "f") {
+      add("Woman");
+      add("Female");
+    } else if (n === "man") {
+      add("Male");
+    } else if (n === "woman") {
+      add("Female");
+    }
+    if (/prefer not|do not wish|decline to|not disclose|no response|not to say/.test(n)) {
+      add("I prefer not to disclose");
+      add("I do not wish to answer");
+      add("Prefer not to say");
+      add("Decline to self-identify");
+    }
+    return out;
+  }
+
   // Map an LLM answer (option id, data-value, exact text, or cached choice
   // object) onto a harvested portal row.
   function resolvePortalChoice(answer, portalOptions) {
@@ -1439,50 +1514,209 @@
     }
     const raw = String(answer).replace(/\s+/g, " ").trim();
     if (!raw || isPlaceholderOption(raw)) return null;
-    const n = D.norm(raw);
-    // Prefer stable Workday data-value / element id (proven portal rows).
-    let hit =
-      portalOptions.find((o) => D.norm(o.value) === n) ||
-      portalOptions.find((o) => D.norm(o.id) === n) ||
-      portalOptions.find((o) => D.norm(o.text) === n);
-    if (hit) return hit;
-    // Encoded forms: "No (value=…)" / "value=…" / "id=…"
+    // Encoded forms: "No (value=…)" / "value=…" / "id=…" — try once on original.
     const mVal = raw.match(/(?:data-)?value\s*[=:]\s*([^\s)|,]+)/i);
     if (mVal) {
-      hit = portalOptions.find((o) => D.norm(o.value) === D.norm(mVal[1]));
+      const hit = portalOptions.find((o) => D.norm(o.value) === D.norm(mVal[1]));
       if (hit) return hit;
     }
     const mId = raw.match(/(?:data-af-option-)?id\s*[=:]\s*([^\s)|,]+)/i);
     if (mId) {
-      hit = portalOptions.find((o) => D.norm(o.id) === D.norm(mId[1]));
+      const hit = portalOptions.find((o) => D.norm(o.id) === D.norm(mId[1]));
       if (hit) return hit;
     }
-    hit = portalOptions.find((o) => D.norm(o.text).includes(n) || n.includes(D.norm(o.text)));
-    return hit || null;
+    // Exact id/value/text for every alias first (Male→Man), then includes fuzzy.
+    // Includes must not run early: "man" ⊂ "woman" would mis-snap Male→Woman.
+    for (const cand of optionAnswerAliases(raw)) {
+      const n = D.norm(cand);
+      if (!n) continue;
+      const hit =
+        portalOptions.find((o) => D.norm(o.value) === n) ||
+        portalOptions.find((o) => D.norm(o.id) === n) ||
+        portalOptions.find((o) => D.norm(o.text) === n);
+      if (hit) return hit;
+    }
+    for (const cand of optionAnswerAliases(raw)) {
+      const n = D.norm(cand);
+      if (!n || n.length < 3) continue;
+      const hit = portalOptions.find((o) => {
+        const t = D.norm(o.text);
+        if (!t) return false;
+        // Require the shorter side to be a whole-token-ish match (≥3 chars) to
+        // avoid man⊂woman.
+        if (t === n) return true;
+        if (t.includes(n) && n.length >= 4) return true;
+        if (n.includes(t) && t.length >= 4) return true;
+        return false;
+      });
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  // Wait until a single-select portal has stable [role=option] rows.
+  // waitForOptionsSettled uses multi-select row readers and can miss listbox portals.
+  // Small AQ lists (Yes/No, Man/Woman, …) settle in tens of ms — keep settle/poll short.
+  async function waitForPortalOptionRows(popup, opts) {
+    const timeout = (opts && opts.timeout) || 1600;
+    const settleMs = opts && opts.settleMs != null ? opts.settleMs : 60;
+    const minCount = (opts && opts.minCount) || 1;
+    const poll = (opts && opts.poll) || 40;
+    const end = Date.now() + timeout;
+    let lastCount = -1;
+    let stableSince = 0;
+    while (Date.now() < end) {
+      throwIfAborted();
+      const rows = readPortalOptionRows(popup);
+      const n = rows.length;
+      if (n >= minCount) {
+        if (n === lastCount) {
+          if (!stableSince) stableSince = Date.now();
+          // Large remote lists (phone CC / long source) need a bit more stability.
+          const need = n > 40 ? Math.max(settleMs, 120) : settleMs;
+          if (Date.now() - stableSince >= need) return rows;
+        } else {
+          lastCount = n;
+          stableSince = Date.now();
+        }
+      } else {
+        lastCount = n;
+        stableSince = 0;
+      }
+      await D.delay(poll);
+    }
+    return readPortalOptionRows(popup);
+  }
+
+  // Find a harvested choice's live DOM node inside an open portal.
+  function findPortalOptionEl(popup, choice) {
+    if (!popup || !choice) return null;
+    const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/"/g, '\\"'));
+    let match = null;
+    // Prefer stable data-value (proven CrowdStrike); option element ids can remount.
+    if (choice.value) {
+      match =
+        popup.querySelector(`[role="option"][data-value="${esc(choice.value)}"]`) ||
+        popup.querySelector(`[role="option"][id="${esc(choice.value)}"]`);
+    }
+    if ((!match || !popup.contains(match)) && choice.id) {
+      const byId = document.getElementById(choice.id);
+      if (byId && popup.contains(byId)) match = byId;
+      else match = popup.querySelector(`[role="option"][id="${esc(choice.id)}"]`) || match;
+    }
+    if (!match) match = pickOption(choice.value || choice.id || choice.text, popup);
+    if (!match) match = pickOption(choice.text, popup);
+    return match && popup.contains(match) ? match : match || null;
   }
 
   // Universal Workday single-select path (ALL Canvas listbox dropdowns):
-  // harvest portal rows → resolve answer to id/data-value/text → pointer-click.
+  // ONE open → read/snap → pointer-click → close.
   // Never invent Yes/No / acknowledgment expansions here — callers must pass
   // an LLM (or profile) answer that snaps onto harvested options.
-  async function applyListboxPortal(trigger, answer) {
+  //
+  // CRITICAL: do NOT harvestPortalOptions (open→close) then openAndPickPortal
+  // (open again). GDIT source proof 2026-08-06: harvest saw 70 options, immediate
+  // reopen read [] ("option not found") because aria-expanded/stale empty portal
+  // short-circuited openListboxForOptions. Capture once, pick in the same open.
+  async function applyListboxPortal(trigger, answer, prePortalOptions) {
     if (!trigger || answer == null || answer === "") return false;
+
+    // Already a snapped {id,value,text} from phase-2 harvest — open once and click.
     if (typeof answer === "object" && !Array.isArray(answer) && (answer.id || answer.value || answer.text)) {
       return await openAndPickPortal(trigger, answer);
     }
-    let harvested = await harvestPortalOptions(trigger);
-    let choice = resolvePortalChoice(answer, harvested.options);
-    if (!choice) {
-      // Retry once after settle — never fall back to legacy type+Enter openAndPick.
-      await D.delay(200);
-      harvested = await harvestPortalOptions(trigger);
-      choice = resolvePortalChoice(answer, harvested.options);
+
+    const pre = Array.isArray(prePortalOptions) ? prePortalOptions : [];
+    let choice = pre.length ? resolvePortalChoice(answer, pre) : null;
+
+    // Prefer open-once when we still need to read the live portal.
+    if (anyFormListboxOpen(trigger)) {
+      await closeAllListboxes();
+      await D.delay(30);
     }
-    if (choice) return await openAndPickPortal(trigger, choice);
+    const popup = await openListboxForOptions(trigger, { fast: true });
+    if (!popup) {
+      try {
+        WD.warn("applyListboxPortal: portal did not open", answer);
+      } catch {}
+      return false;
+    }
+    // openListboxForOptions already settled — only re-read if snap still missing.
+    let liveRows = readPortalOptionRows(popup);
+    if (!choice) choice = resolvePortalChoice(answer, liveRows);
+    if (!choice && pre.length) choice = resolvePortalChoice(answer, pre);
+    if (!choice) {
+      liveRows = await waitForPortalOptionRows(popup, { timeout: 900, settleMs: 50, poll: 40 });
+      choice = resolvePortalChoice(answer, liveRows) || (pre.length ? resolvePortalChoice(answer, pre) : null);
+    }
+    if (!choice) {
+      try {
+        WD.warn("applyListboxPortal: no portal snap (legacy text pick removed)", answer, liveRows.slice(0, 12));
+      } catch {}
+      await closeListbox(trigger);
+      return false;
+    }
+
+    let match = findPortalOptionEl(popup, choice);
+    // Long lists / remount: type-filter then re-query (same open session).
+    if (!match && (choice.text || choice.value)) {
+      const filter = String(choice.text || choice.value || "").trim();
+      if (filter) {
+        await typeAheadFilterPortal(trigger, popup, filter);
+        match = findPortalOptionEl(popup, choice) || pickOption(filter, popup);
+      }
+    }
+    if (!match) {
+      try {
+        WD.warn("applyListboxPortal: option not found in open portal", choice, readPortalOptionRows(popup).slice(0, 8));
+      } catch {}
+      await closeListbox(trigger);
+      return false;
+    }
+
+    const wantText = (choice.text || choice.value || choice.id || "").trim();
+    const want = D.norm(wantText);
+    const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
+    firePointerClick(match, { scroll: "nearest" });
+    const committed = () => {
+      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
+      return valueMatchesWant(got, want) || valueMatchesWant(got, chosen) || valueMatchesWant(got, choice.text);
+    };
+    for (let i = 0; i < 6 && !committed(); i++) await D.delay(40);
+    if (!committed()) await typeAheadCommit(trigger, chosen, committed);
+    await closeListbox(trigger);
+    if (committed()) return true;
     try {
-      WD.warn("applyListboxPortal: no portal snap (legacy text pick removed)", answer, harvested.options);
+      WD.warn("applyListboxPortal did not commit", choice, selectDisplayValue(trigger));
     } catch {}
     return false;
+  }
+
+  // Type into the open listbox search/typeahead so remote options mount.
+  async function typeAheadFilterPortal(trigger, popup, text) {
+    const str = String(text || "").trim();
+    if (!str) return;
+    const root = popup || openedListbox(trigger);
+    const input =
+      (root && root.querySelector("input:not([type='hidden'])")) ||
+      (trigger && trigger.tagName === "INPUT" ? trigger : null) ||
+      (trigger && trigger.querySelector && trigger.querySelector("input"));
+    if (!input) return;
+    try {
+      input.focus({ preventScroll: true });
+    } catch {
+      try {
+        input.focus();
+      } catch {}
+    }
+    setReactValue(input, "");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    setReactValue(input, str.slice(0, 48));
+    input.dispatchEvent(
+      new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str.slice(0, 48) }),
+    );
+    await D.delay(120);
+    if (root) await waitForPortalOptionRows(root, { timeout: 900, settleMs: 50, poll: 40, minCount: 1 });
   }
 
   // Pointer-open portal → click the option by id / data-value / text → verify.
@@ -1498,33 +1732,28 @@
     const cur = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
     if (cur && valueMatchesWant(cur, want) && !markedInvalid) return true;
 
-    const popup = await openListboxForOptions(trigger);
+    // Force a clean open — stale aria-expanded + empty portal was the GDIT miss.
+    if (listboxIsOpen(trigger) || openedListbox(trigger)) {
+      await closeListbox(trigger, { soft: true });
+      await D.delay(40);
+    }
+    const popup = await openListboxForOptions(trigger, { fast: true });
     if (!popup) {
       try {
         WD.warn("openAndPickPortal: portal did not open");
       } catch {}
       return false;
     }
-    await D.delay(80);
-
-    let match = null;
-    // Prefer stable data-value (proven CrowdStrike); option element ids change per open.
-    if (choice.value) {
-      const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/"/g, '\\"'));
-      match =
-        popup.querySelector(`[role="option"][data-value="${esc(choice.value)}"]`) ||
-        popup.querySelector(`[role="option"][id="${esc(choice.value)}"]`);
+    // openListboxForOptions already settled — find immediately; brief poll on remount.
+    let match = findPortalOptionEl(popup, choice);
+    for (let i = 0; !match && i < 6; i++) {
+      await D.delay(40);
+      match = findPortalOptionEl(popup, choice);
     }
-    if ((!match || !popup.contains(match)) && choice.id) {
-      const byId = document.getElementById(choice.id);
-      if (byId && popup.contains(byId)) match = byId;
-      else {
-        const esc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/"/g, '\\"'));
-        match = popup.querySelector(`[role="option"][id="${esc(choice.id)}"]`) || match;
-      }
+    if (!match) {
+      await typeAheadFilterPortal(trigger, popup, choice.text || choice.value || "");
+      match = findPortalOptionEl(popup, choice);
     }
-    if (!match) match = pickOption(choice.value || choice.id || choice.text, popup);
-    if (!match) match = pickOption(choice.text, popup);
     if (!match) {
       try {
         WD.warn("openAndPickPortal: option not found", choice, readPortalOptionRows(popup));
@@ -1534,12 +1763,12 @@
     }
 
     const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
-    firePointerClick(match);
-    await D.delay(220);
+    firePointerClick(match, { scroll: "nearest" });
     const committed = () => {
       const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
       return valueMatchesWant(got, want) || valueMatchesWant(got, chosen) || valueMatchesWant(got, choice.text);
     };
+    for (let i = 0; i < 6 && !committed(); i++) await D.delay(40);
     if (!committed()) await typeAheadCommit(trigger, chosen, committed);
     await closeListbox(trigger);
     if (committed()) return true;
@@ -1620,10 +1849,7 @@
       const opts = checks.map((c) => labelForInput(c));
       const pick = pickVeteranOptionText(isVeteran, opts);
       if (!pick) return false;
-      const target = pickByLabel(checks, pick);
-      if (!target) return false;
-      if (!target.checked) clickInputOrLabel(target);
-      return true;
+      return await applyCheckboxGroup(checks, pick);
     }
     return false;
   }
@@ -1679,21 +1905,41 @@
 
   // Open a Canvas / Workday listbox and wait until the portal options exist.
   // Returns the popup root (portal or listbox) or null.
-  async function openListboxForOptions(btn) {
+  // opts.fast: shorter open/settle for typical small AQ lists (Yes/No, gender, …).
+  // Callers must NOT re-settle after this returns — options are already stable.
+  async function openListboxForOptions(btn, opts) {
     if (!btn) return null;
-    // Already open with a resolvable portal — do not pointer-click again (toggles closed).
+    opts = opts || {};
+    const fast = !!opts.fast;
+    const openDelay = opts.openDelay != null ? opts.openDelay : fast ? 80 : 120;
+    const settle = {
+      timeout: opts.timeout != null ? opts.timeout : fast ? 1000 : 1800,
+      settleMs: opts.settleMs != null ? opts.settleMs : fast ? 40 : 70,
+      poll: opts.poll != null ? opts.poll : 40,
+      minCount: opts.minCount != null ? opts.minCount : 1,
+    };
+    // Already open with real options — do not pointer-click again (toggles closed).
+    // GDIT proof: after harvest Escape, aria-expanded can stay true while the
+    // portal is EMPTY. Returning that empty root made openAndPickPortal miss.
     if (listboxIsOpen(btn)) {
       const existing = openedListbox(btn);
       if (existing) {
-        await D.waitFor(OPTION_SEL, 1500, existing);
-        return existing;
+        const rows = await waitForPortalOptionRows(existing, {
+          timeout: fast ? 500 : 900,
+          settleMs: settle.settleMs,
+          poll: settle.poll,
+          minCount: 1,
+        });
+        if (rows.length) return existing;
+        await closeListbox(btn, { soft: true });
+        await D.delay(40);
       }
     }
     firePointerClick(btn);
-    await D.delay(200);
+    await D.delay(openDelay);
     let popup = openedListbox(btn);
-    for (let i = 0; i < 20 && !popup; i++) {
-      await D.delay(80);
+    for (let i = 0; i < (fast ? 12 : 18) && !popup; i++) {
+      await D.delay(40);
       popup = openedListbox(btn);
     }
     if (!popup && listboxIsOpen(btn)) {
@@ -1710,8 +1956,8 @@
       popup = portals.length ? portals[portals.length - 1] : null;
     }
     if (popup) {
-      await D.waitFor(OPTION_SEL, 2500, popup);
-      await waitForOptionsSettled({ root: popup, timeout: 2500, settleMs: 220 });
+      // Single settle only (was: waitFor OPTION_SEL + waitForPortalOptionRows).
+      await waitForPortalOptionRows(popup, settle);
     }
     return popup;
   }
@@ -1727,13 +1973,21 @@
   // Close a single-select listbox opened by `btn` and keep it closed. Leaving a
   // popup open corrupts later interactions (a subsequent open-toggle would CLOSE
   // it, and option harvesting would read nothing).
-  async function closeListbox(btn) {
-    if (!openedListbox(btn)) return;
+  // soft: Escape + preventScroll focus only — no body clicks (harvest path).
+  async function closeListbox(btn, opts) {
+    if (!btn) return;
+    const soft = !!(opts && opts.soft);
+    if (!openedListbox(btn) && btn.getAttribute("aria-expanded") !== "true") return;
     pressKey(btn, "Escape", "Escape", 27);
-    await D.delay(100);
-    if (openedListbox(btn)) {
-      focusSinkOutside(btn.ownerDocument || document);
-      await D.delay(100);
+    await D.delay(40);
+    if (openedListbox(btn) || btn.getAttribute("aria-expanded") === "true") {
+      if (soft) {
+        pressKey(btn, "Escape", "Escape", 27);
+        await D.delay(40);
+      } else {
+        focusSinkOutside(btn.ownerDocument || document, { noBodyClick: false });
+        await D.delay(50);
+      }
     }
   }
 
@@ -1800,10 +2054,17 @@
   // Dispatch a full key sequence on a (re)focused element. Workday commits a
   // hierarchical-prompt search only when Enter fires while the search input holds
   // focus, so focus is asserted before the keys are sent.
+  //
+  // ALWAYS preventScroll — focus() without it scrolled each harvest field into
+  // view on Escape close (source top → state mid → phone bottom = up/down thrash).
   function pressKey(el, key, code, keyCode) {
     try {
-      el.focus();
-    } catch {}
+      el.focus({ preventScroll: true });
+    } catch {
+      try {
+        el.focus();
+      } catch {}
+    }
     for (const type of ["keydown", "keypress", "keyup"]) {
       el.dispatchEvent(
         new KeyboardEvent(type, { bubbles: true, cancelable: true, key, code, keyCode, which: keyCode }),
@@ -1814,9 +2075,13 @@
 
   // Move focus to a throwaway off-screen sink so a genuine focusout (with a
   // non-null relatedTarget) fires - a bare input.blur() (relatedTarget=null) is
-  // ignored by the widget. An outside click-away is dispatched as a backup for
-  // widgets that dismiss on document click rather than focusout.
-  function focusSinkOutside(doc) {
+  // ignored by the widget.
+  //
+  // Body pointer/click events are OPTIONAL. Harvest must NOT fire them — GDIT
+  // console proved: focusSinkOutside body click → uxInsights clickListener →
+  // visible page jump on every listbox close during HARVEST.
+  function focusSinkOutside(doc, opts) {
+    const noBodyClick = !!(opts && opts.noBodyClick);
     try {
       const sink = doc.createElement("button");
       sink.type = "button";
@@ -1828,6 +2093,7 @@
       sink.blur();
       sink.remove();
     } catch {}
+    if (noBodyClick) return;
     const outside = doc.body || doc.documentElement;
     for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
       try {
@@ -2304,7 +2570,7 @@
       el;
     const promptOpt = row.querySelector('[data-automation-id="promptOption"]') || row;
     try {
-      promptOpt.scrollIntoView({ block: "center", behavior: "instant" });
+      promptOpt.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     } catch {}
     firePointerClick(promptOpt);
     await D.delay(220);
@@ -2728,9 +2994,12 @@
   // populate until Enter is pressed IN the search input. Closed-list harvest also
   // returns options:0 (nothing to list before typing).
   //
-  // Required workflow (per skill, Enter ALWAYS on the input, never document.body):
-  //   open → type skill → Enter (start search) → wait for results → Enter (top match)
-  //   → clear typed text → next skill → … → close when all done.
+  // Fiserv 2026-08-06 AA: search mounted related rows but EVERY token ok:false
+  // chips:0. Root cause: focus input + firePointerClick only — Canvas multi needs
+  // clickMultiOptionRow. LLM prompt asked for ALL skills; cap was 40.
+  // Workflow: type → related results → clickMultiOptionRow(best) → verify chip.
+  const SKILLS_MAX = 10;
+
   function isSkillsField(key, label) {
     const k = String(key || "");
     const low = String(label || "").toLowerCase();
@@ -2738,16 +3007,18 @@
     return /type to add skills|add skills|^skills$|skills\s*:/.test(low);
   }
 
-  function parseSkillTokens(raw) {
+  function parseSkillTokens(raw, maxCount) {
+    const cap = maxCount != null ? maxCount : SKILLS_MAX;
     if (raw == null || raw === "") return [];
     if (Array.isArray(raw)) {
       return raw
-        .flatMap((x) => parseSkillTokens(x))
-        .filter(Boolean);
+        .flatMap((x) => parseSkillTokens(x, cap))
+        .filter(Boolean)
+        .slice(0, cap);
     }
     if (typeof raw === "object") {
       const t = valueText(raw);
-      return t ? parseSkillTokens(t) : [];
+      return t ? parseSkillTokens(t, cap) : [];
     }
     const s = String(raw).replace(/\s+/g, " ").trim();
     if (!s) return [];
@@ -2761,17 +3032,56 @@
       seen.add(n);
       out.push(p);
     }
-    return out.slice(0, 40);
+    return out.slice(0, cap);
   }
 
   function multiChipCount(multi) {
     return promptSelectionNodes(multi).length;
   }
 
+  // Relatedness — NEVER bare w.includes(t) (Fiserv: "fastapi".includes("fasta"),
+  // "go"→Go-Carts). Exact / prefix / token-boundary only.
+  function skillTextRelated(rowText, token) {
+    const t = D.norm(rowText);
+    const w = D.norm(token);
+    if (!t || !w) return false;
+    if (t === w) return true;
+    if (w === "c#" || w === "c sharp") return /c\s*sharp|\bc#\b|unity c#/.test(t);
+    if (w === "c++" || w === "cpp") return /c\+\+|cpp|c plus plus/.test(t);
+    if (w.length <= 3) {
+      const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return (
+        t === w ||
+        t.startsWith(w + " (") ||
+        t.startsWith(w + " programming") ||
+        new RegExp("(^|[^a-z0-9])" + esc + "(\\s|\\(|$)").test(t)
+      );
+    }
+    if (t.startsWith(w + " ") || t.startsWith(w + "(") || t.startsWith(w + " -")) return true;
+    if (t.includes(w)) {
+      const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp("(^|[^a-z0-9.])" + esc + "([^a-z0-9.]|$)").test(t);
+    }
+    return false;
+  }
+
+  function pickBestSkillOption(token, root) {
+    const w = D.norm(token);
+    if (!w || !root) return null;
+    const scored = promptResultOptions(root)
+      .map((o) => ({ o, t: D.norm(o.textContent) }))
+      .filter((x) => x.t && skillTextRelated(x.t, w));
+    if (!scored.length) return null;
+    const exact = scored.find((x) => x.t === w);
+    if (exact) return exact.o;
+    const prefixed = scored
+      .filter((x) => x.t.startsWith(w + " ") || x.t.startsWith(w + "("))
+      .sort((a, b) => a.t.length - b.t.length);
+    if (prefixed.length) return prefixed[0].o;
+    return scored.sort((a, b) => a.t.length - b.t.length)[0].o;
+  }
+
   // True only when the open list shows a row related to the typed skill.
-  // Zillow evidence: after Enter-search, the list often still shows the stale
-  // unfiltered catalog (Accounting / Actuarial / Advertising) — that must NOT
-  // count as search success (old wait returned true via rows.length > 0).
   async function waitForSkillsSearchResults(ownerMulti, typed, ms) {
     const w = D.norm(typed);
     if (!w) return false;
@@ -2780,22 +3090,63 @@
       throwIfAborted();
       const root = activeMultiListRoot(ownerMulti);
       const rows = promptResultOptions(root);
-      const related = rows.some((o) => {
-        const t = D.norm(o.textContent);
-        return t === w || t.includes(w) || w.includes(t);
-      });
-      if (related) return true;
-      await D.delay(150);
+      if (rows.some((o) => skillTextRelated(o.textContent, typed))) return true;
+      await D.delay(100);
     }
     return false;
   }
 
   async function clearSkillsSearchInput(input) {
     if (!input) return;
-    input.focus();
+    try {
+      input.focus({ preventScroll: true });
+    } catch {
+      try {
+        input.focus();
+      } catch {}
+    }
     D.nativeSet(input, "");
     input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
-    await D.delay(80);
+    await D.delay(50);
+  }
+
+  // Select a skill row IDEMPOTENTLY.
+  //
+  // US LBM 2026-08-07 skills-diag-v21 proof: the skills typeahead commits the
+  // pill from the search itself (chips=1 BEFORE any click), and its result rows
+  // are TOGGLES — so clickMultiOptionRow's extra clicks (row + promptOption +
+  // checkbox) re-clicked the already-selected row and fired PILL-REMOVED twice,
+  // ending at chips=0. Fix: if the skill is already committed, DO NOT click; if
+  // not, click ONE target and stop the instant a chip appears (never a 2nd click
+  // on a selected row). "Committed" = chip count grew past chipsBefore or the
+  // exact token/row text is chosen — never promptChosen(multi,"") (that is true
+  // whenever ANY earlier skill is present and would false-positive later tokens).
+  async function commitSkillRow(multi, match, token, chipsBefore) {
+    const added = () =>
+      multiChipCount(multi) > chipsBefore ||
+      promptChosen(multi, token) ||
+      (match && match.textContent && promptChosen(multi, match.textContent));
+    if (added()) return true;
+    const row =
+      (match.closest &&
+        (match.closest('[data-automation-id="menuItem"]') || match.closest('[role="option"]'))) ||
+      match;
+    const targets = [
+      row.querySelector && row.querySelector('[data-automation-id="promptLeafNode"]'),
+      row.querySelector && row.querySelector('[data-automation-id="promptOption"]'),
+      row,
+    ].filter(Boolean);
+    for (const t of targets) {
+      firePointerClick(t, { scroll: "nearest" });
+      // Verify with a real wait so a slow async commit is seen BEFORE we would
+      // click another target — a 2nd click on a now-selected row toggles it off.
+      const end = Date.now() + 700;
+      while (Date.now() < end) {
+        if (added()) return true;
+        await D.delay(80);
+      }
+    }
+    return added();
   }
 
   async function fillOneSkillToken(multi, input, skill) {
@@ -2803,65 +3154,94 @@
     if (!token) return false;
     if (promptChosen(multi, token)) return true;
 
-    input.focus();
+    const chipsBefore = multiChipCount(multi);
+    // DIAG (v21): tag every risky sub-step so the pill-removal observer in
+    // fillSkillsPrompt reports WHICH action deleted a committed chip.
+    WD._skillsStage = "clear-before:" + token.slice(0, 24) + " chips=" + chipsBefore;
+    try {
+      input.focus({ preventScroll: true });
+    } catch {
+      try {
+        input.focus();
+      } catch {}
+    }
     await clearSkillsSearchInput(input);
+    WD._skillsStage = "type:" + token.slice(0, 24) + " chips=" + multiChipCount(multi);
     D.nativeSet(input, token);
     input.dispatchEvent(new InputEvent("input", { bubbles: true, data: token, inputType: "insertText" }));
     const last = token.slice(-1) || "a";
     pressKey(input, last, "Key" + (/[a-z]/i.test(last) ? last.toUpperCase() : "A"), last.charCodeAt(0) || 65);
-    await D.delay(80);
+    await D.delay(60);
 
-    // Some tenants filter as you type; others need Enter to kick off server search.
-    let gotResults = await waitForSkillsSearchResults(multi, token, 1200);
+    let gotResults = await waitForSkillsSearchResults(multi, token, 1000);
     if (!gotResults) {
-      input.focus();
+      WD._skillsStage = "enter-for-results:" + token.slice(0, 24);
+      try {
+        input.focus({ preventScroll: true });
+      } catch {}
       pressEnter(input);
-      gotResults = await waitForSkillsSearchResults(multi, token, 5500);
+      gotResults = await waitForSkillsSearchResults(multi, token, 4500);
     }
-    await D.delay(220);
+    let root = activeMultiListRoot(multi);
+    const mounted = promptResultOptions(root)
+      .slice(0, 6)
+      .map((o) => String(o.textContent || "").replace(/\s+/g, " ").trim().slice(0, 48));
     try {
       if (WD.aa) {
         WD.aa("fillSkills search", {
           skill: token.slice(0, 40),
           gotResults,
-          mounted: promptResultOptions(activeMultiListRoot(multi))
-            .slice(0, 5)
-            .map((o) => String(o.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40)),
+          mounted,
         });
       }
     } catch {}
 
-    // No related row → do not Enter/click (would commit Accounting etc. from stale list).
     if (!gotResults) {
       await clearSkillsSearchInput(input);
       return false;
     }
 
-    // Enter #2 — commits the highlighted RELATED match.
-    input.focus();
-    pressEnter(input);
-    await D.delay(450);
-
-    // Only count a chip that matches this skill — chip-count alone falsely
-    // credited Accounting/etc. when Enter hit the stale catalog (Zillow log).
-    if (promptChosen(multi, token)) {
+    // Pointer-select best RELATED row. Do NOT focus input first (Fiserv chips:0).
+    // Do NOT rely on Enter#2 alone (often re-submits search).
+    root = activeMultiListRoot(multi);
+    let match = pickBestSkillOption(token, root);
+    if (!match) {
+      await D.delay(150);
+      root = activeMultiListRoot(multi);
+      match = pickBestSkillOption(token, root);
+    }
+    if (!match) {
+      try {
+        if (WD.aa) WD.aa("fillSkills no-row", { skill: token.slice(0, 40), mounted });
+      } catch {}
       await clearSkillsSearchInput(input);
-      return true;
+      return false;
     }
 
-    const match = pickResultOption(token, activeMultiListRoot(multi));
-    if (match) {
-      input.focus();
-      firePointerClick(match);
-      await D.delay(350);
+    WD._skillsStage = "click-row:" + token.slice(0, 24) + " chips=" + multiChipCount(multi);
+    // Idempotent select — never re-click a selected (toggle) row.
+    let ok = await commitSkillRow(multi, match, token, chipsBefore);
+    WD._skillsStage = "post-click-verify:" + token.slice(0, 24) + " chips=" + multiChipCount(multi);
+
+    if (!ok) {
+      WD._skillsStage = "arrowdown-enter:" + token.slice(0, 24);
+      try {
+        input.focus({ preventScroll: true });
+      } catch {}
+      pressKey(input, "ArrowDown", "ArrowDown", 40);
+      await D.delay(80);
+      pressEnter(input);
+      ok = multiChipCount(multi) > chipsBefore || promptChosen(multi, token);
     }
-    const ok = promptChosen(multi, token);
+
+    WD._skillsStage = "clear-after:" + token.slice(0, 24) + " chips=" + multiChipCount(multi);
     await clearSkillsSearchInput(input);
-    return ok;
+    WD._skillsStage = "token-done:" + token.slice(0, 24) + " chips=" + multiChipCount(multi);
+    return !!ok;
   }
 
   async function fillSkillsPrompt(multi, skillsRaw) {
-    const tokens = parseSkillTokens(skillsRaw);
+    const tokens = parseSkillTokens(skillsRaw, SKILLS_MAX);
     if (!multi || !tokens.length) return false;
     const input = await openMultiPrompt(multi);
     if (!input) {
@@ -2870,6 +3250,41 @@
       } catch {}
       return false;
     }
+    // DIAG (v21): the reported bug is "chip is added then automatically
+    // deselected". Watch the multiselect subtree for pill REMOVALS and log the
+    // current WD._skillsStage marker (set in fillOneSkillToken) so the console
+    // proves EXACTLY which sub-step deletes a committed chip — no guessing.
+    const chipTexts = () =>
+      promptSelectionNodes(multi).map((n) => (n.textContent || "").replace(/\s+/g, " ").trim().slice(0, 32));
+    const isPill = (n) =>
+      n &&
+      n.nodeType === 1 &&
+      ((n.matches && n.matches('[data-automation-id="selectedItem"],[data-automation-id="pill"]')) ||
+        (n.querySelector && !!n.querySelector('[data-automation-id="selectedItem"],[data-automation-id="pill"]')));
+    let pillObserver = null;
+    try {
+      pillObserver = new MutationObserver((muts) => {
+        for (const m of muts) {
+          const removed = [...m.removedNodes].filter(isPill);
+          if (!removed.length) continue;
+          const removedText = removed
+            .map((n) => (n.textContent || "").replace(/\s+/g, " ").trim().slice(0, 32))
+            .filter(Boolean);
+          try {
+            if (WD.aa) {
+              WD.aa("fillSkills PILL-REMOVED", {
+                stage: WD._skillsStage || "unknown",
+                removed: removedText,
+                chipsNow: multiChipCount(multi),
+                chips: chipTexts(),
+              });
+            }
+          } catch {}
+        }
+      });
+      pillObserver.observe(multi, { childList: true, subtree: true });
+    } catch {}
+    WD._skillsStage = "prompt-open";
     let added = 0;
     const misses = [];
     for (const skill of tokens) {
@@ -2891,8 +3306,15 @@
           });
         }
       } catch {}
+      WD._skillsStage = "between-tokens chips=" + multiChipCount(multi);
+      if (added >= SKILLS_MAX) break;
     }
+    WD._skillsStage = "close-prompt chips=" + multiChipCount(multi);
     await closePrompt(multi, input);
+    WD._skillsStage = "closed chips=" + multiChipCount(multi);
+    try {
+      if (pillObserver) pillObserver.disconnect();
+    } catch {}
     try {
       if (WD.aa) {
         WD.aa("fillSkills DONE", {
@@ -2903,12 +3325,11 @@
         });
       }
     } catch {}
-    // Success if we committed at least one skill (optional field; partial OK).
-    return added > 0;
+    return added > 0 || multiChipCount(multi) > 0;
   }
 
-  function clickInputOrLabel(input) {
-    if (!input) return;
+  function labelElForInput(input) {
+    if (!input) return null;
     let lbl = null;
     if (input.id) {
       try {
@@ -2916,7 +3337,170 @@
       } catch {}
     }
     if (!lbl) lbl = input.closest("label");
-    D.clickEl(lbl || input);
+    if (!lbl && input.parentElement) {
+      lbl = input.parentElement.querySelector("label");
+    }
+    return lbl;
+  }
+
+  function clickInputOrLabel(input) {
+    if (!input) return;
+    // Prefer native HTMLElement.click on the input so React's delegated
+    // onChange sees the event (label pointer-only can flip .checked without
+    // updating Workday's model — Fiserv military group proof).
+    try {
+      input.focus({ preventScroll: true });
+    } catch {}
+    try {
+      input.click();
+    } catch {
+      const lbl = labelElForInput(input);
+      firePointerClick(lbl || input, { scroll: "nearest" });
+    }
+  }
+
+  // Set native checked via the prototype setter (same idea as setReactValue for
+  // text), then fire the events Workday/React bind for checkbox groups.
+  function setNativeChecked(input, on) {
+    if (!input) return;
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked");
+    const prev = !!input.checked;
+    if (desc && typeof desc.set === "function") desc.set.call(input, !!on);
+    else input.checked = !!on;
+    try {
+      if (input._valueTracker) input._valueTracker.setValue(prev ? "true" : "false");
+    } catch {}
+  }
+
+  function notifyCheckboxReact(input, opts) {
+    if (!input) return;
+    // Do NOT dispatch a bubbling click here after setNativeChecked — the
+    // checkbox's default click action toggles .checked and undoes the setter.
+    if (opts && opts.withClick) {
+      try {
+        input.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      } catch {}
+    }
+    try {
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
+    } catch {
+      input.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    }
+    input.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+  }
+
+  // Commit a checkbox/radio into Workday's React model.
+  //
+  // Proven Fiserv chain:
+  //   v17: APPLY ok:true with zero boxes checked (unverified click)
+  //   v18: applyCheckboxGroup checked:true ok:true, then Save still required
+  // Root cause: label pointer-click flips native .checked WITHOUT React's
+  // onChange (React maps checkbox onChange → click). Returning on .checked
+  // alone is a phantom success — same class as text "visible but model empty".
+  //
+  // Fix: rising-edge native input.click() so React hears click with checked=true.
+  async function commitCheckable(input, wantChecked) {
+    if (!input) return false;
+    const desired = wantChecked !== false;
+    const before = !!input.checked;
+    let method = "none";
+
+    const matches = () => !!input.checked === desired;
+
+    const nativeClick = () => {
+      try {
+        input.focus({ preventScroll: true });
+      } catch {}
+      try {
+        input.click();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (desired) {
+      // Ensure we start unchecked (silently), then click → checked=true + React.
+      if (input.checked) {
+        setNativeChecked(input, false);
+        await D.delay(20);
+      }
+      if (nativeClick()) {
+        method = "rising-edge-click";
+        await D.delay(50);
+      }
+      // If still unchecked, label pointer then re-assert with rising-edge click.
+      if (!matches()) {
+        const lbl = labelElForInput(input);
+        firePointerClick(lbl || input, { scroll: "nearest" });
+        method = "label-then-rising";
+        await D.delay(50);
+        // Label may have phantom-checked without React — force rising edge.
+        if (input.checked) {
+          setNativeChecked(input, false);
+          await D.delay(20);
+          nativeClick();
+          await D.delay(50);
+        } else {
+          nativeClick();
+          await D.delay(50);
+        }
+      }
+      // Last resort: setter + synthetic click (testing-library style).
+      if (!matches()) {
+        setNativeChecked(input, false);
+        setNativeChecked(input, true);
+        notifyCheckboxReact(input, { withClick: true });
+        method = "setter+synth-click";
+        await D.delay(50);
+      }
+    } else {
+      // Uncheck path.
+      if (input.checked && nativeClick()) {
+        method = "uncheck-click";
+        await D.delay(50);
+      }
+      if (matches() === false && input.checked) {
+        const lbl = labelElForInput(input);
+        firePointerClick(lbl || input, { scroll: "nearest" });
+        method = "uncheck-label";
+        await D.delay(50);
+      }
+      if (input.checked) {
+        setNativeChecked(input, false);
+        notifyCheckboxReact(input, { withClick: true });
+        method = "uncheck-setter";
+        await D.delay(40);
+      }
+    }
+
+    // Settle: React re-render must keep the desired state.
+    await D.delay(150);
+    if (desired && !input.checked) {
+      setNativeChecked(input, false);
+      nativeClick();
+      await D.delay(80);
+      if (!input.checked) {
+        setNativeChecked(input, true);
+        notifyCheckboxReact(input, { withClick: true });
+      }
+    }
+
+    const ok = matches();
+    try {
+      if (WD.aa) {
+        WD.aa("commitCheckable", {
+          labelHead: String(labelForInput(input) || "").slice(0, 50),
+          desired,
+          before,
+          afterSettle: !!input.checked,
+          method,
+          reactCleared: desired && !input.checked,
+          ok,
+        });
+      }
+    } catch {}
+    return ok;
   }
 
   function pickRadio(radios, value) {
@@ -2948,6 +3532,91 @@
       return true;
     }
     return false;
+  }
+
+  // Snapshot a checkbox-group formField for console / AA diagnosis.
+  function probeCheckboxGroup(container, value) {
+    const checks = [...(container || document).querySelectorAll('input[type="checkbox"]')];
+    return {
+      wantHead: value != null ? String(value).slice(0, 60) : null,
+      count: checks.length,
+      boxes: checks.map((c) => ({
+        id: c.id || "",
+        name: c.name || "",
+        value: c.value || "",
+        checked: !!c.checked,
+        disabled: !!c.disabled,
+        labelHead: String(labelForInput(c) || "").slice(0, 60),
+        ariaChecked: c.getAttribute("aria-checked"),
+        roleParent: (c.closest('[role="checkbox"], [role="group"], fieldset') || {}).tagName || null,
+      })),
+      anyChecked: checks.some((c) => c.checked),
+    };
+  }
+
+  // One-of / "select all that apply" checkbox group: pick by LLM option text,
+  // clear other checked boxes, verify the target stays checked after React settle.
+  async function applyCheckboxGroup(checks, value) {
+    if (!checks || !checks.length) return false;
+    if (checks.length === 1 && /^(yes|no|true|false|on|off|1|0)$/i.test(String(value))) {
+      const on = value === true || /^(yes|true|on|1)$/i.test(String(value));
+      return await commitCheckable(checks[0], on);
+    }
+    const target = pickByLabel(checks, value);
+    if (!target) {
+      try {
+        if (WD.aa) {
+          WD.aa("applyCheckboxGroup", {
+            wantHead: String(value).slice(0, 60),
+            ok: false,
+            reason: "no-pick",
+            probe: {
+              count: checks.length,
+              labels: checks.map((c) => String(labelForInput(c) || "").slice(0, 40)),
+            },
+          });
+        }
+      } catch {}
+      return false;
+    }
+    for (const c of checks) {
+      if (c !== target && c.checked) {
+        const cleared = await commitCheckable(c, false);
+        if (!cleared) {
+          try {
+            WD.warn("checkbox group: failed to clear sibling", labelForInput(c));
+          } catch {}
+        }
+      }
+    }
+    const ok = await commitCheckable(target, true);
+    // Final model check: at least one box in the group must remain checked.
+    const groupOk = ok && checks.some((c) => c.checked);
+    try {
+      if (WD.aa) {
+        WD.aa("applyCheckboxGroup", {
+          wantHead: String(value).slice(0, 60),
+          pickedHead: String(labelForInput(target) || "").slice(0, 60),
+          checked: !!target.checked,
+          groupAnyChecked: checks.some((c) => c.checked),
+          ok: groupOk,
+          probe: probeCheckboxGroup(target.closest('[data-automation-id^="formField-"]') || target.parentElement, value),
+        });
+      }
+    } catch {}
+    return groupOk;
+  }
+
+  async function applyRadioGroup(radios, value) {
+    if (!radios || !radios.length) return false;
+    const hit = pickByLabel(radios, value);
+    if (!hit) {
+      // Heuristic match (yes/no / "I am not…"), then verify something is checked.
+      pickRadio(radios, value);
+      await D.delay(80);
+      return !!radios.find((r) => r.checked);
+    }
+    return await commitCheckable(hit, true);
   }
 
   async function selectNativeEl(sel, value) {
@@ -3110,8 +3779,13 @@
     }
     const nativeSel = container.querySelector("select");
     if (nativeSel) return await selectNativeEl(nativeSel, value);
+    // Radio / checkbox BEFORE text: formFields can embed hidden/ancillary inputs;
+    // writing the option sentence into a text node returned ok:true while the
+    // real checkboxes stayed empty (Fiserv military status).
     const radios = [...container.querySelectorAll('input[type="radio"]')];
-    if (radios.length) return pickRadio(radios, value);
+    if (radios.length) return await applyRadioGroup(radios, value);
+    const checks = [...container.querySelectorAll('input[type="checkbox"]')];
+    if (checks.length) return await applyCheckboxGroup(checks, value);
     if (isDateContainer(container)) {
       return await fillDateContainer(container, value);
     }
@@ -3125,23 +3799,6 @@
       // point every text write passes through, so stripping here is authoritative.
       const v = text.tagName === "TEXTAREA" ? stripMarkdown(value) : value;
       return writeTextEl(text, v);
-    }
-    const checks = [...container.querySelectorAll('input[type="checkbox"]')];
-    if (checks.length) {
-      // A single boolean checkbox ("I agree", "I certify") toggles by yes/no/true.
-      if (checks.length === 1 && /^(yes|no|true|false|on|off|1|0)$/i.test(String(value))) {
-        const on = value === true || /^(yes|true|on|1)$/i.test(String(value));
-        if (!!checks[0].checked !== on) clickInputOrLabel(checks[0]);
-        return true;
-      }
-      // A checkbox GROUP (pick one, e.g. disability self-ID) - check the box whose
-      // label matches the resolved value and leave the others unchecked.
-      const target = pickByLabel(checks, value);
-      if (target) {
-        if (!target.checked) clickInputOrLabel(target);
-      return true;
-      }
-      return false;
     }
     return false;
   }
@@ -3304,12 +3961,15 @@
     if (value == null || value === "" || !options || !options.length) return null;
     const raw = String(value).replace(/\s+/g, " ").trim();
     if (!raw || isPlaceholderOption(raw)) return null;
-    const exact = exactOption(raw, options);
-    if (exact) return exact;
-    const listed = matchOptionFromList(raw, options);
-    if (listed) return listed;
-    const soft = (options || []).find((o) => !isPlaceholderOption(o) && valueMatchesWant(o, raw));
-    return soft || null;
+    for (const cand of optionAnswerAliases(raw)) {
+      const exact = exactOption(cand, options);
+      if (exact) return exact;
+      const listed = matchOptionFromList(cand, options);
+      if (listed) return listed;
+      const soft = (options || []).find((o) => !isPlaceholderOption(o) && valueMatchesWant(o, cand));
+      if (soft) return soft;
+    }
+    return null;
   }
 
   // Profile fact to hint the LLM (country, phone type, how-did-you-hear, …).
@@ -3322,6 +3982,10 @@
     const low = (label || "").toLowerCase();
     if (/how did you hear|how.*hear about/.test(low) && profile && profile.howDidYouHear) {
       return String(profile.howDidYouHear);
+    }
+    if (/^e-?mail(\s*address)?$|\bemail\b/.test(low) && !/employee|employer|manager|referr/i.test(low)) {
+      const em = (profile && profile.contact && profile.contact.email) || (profile && profile.email);
+      if (em) return String(em);
     }
     if (/hispanic or latino/.test(low) && e.hispanicLatino != null) return e.hispanicLatino ? "Yes" : "No";
     if (/\bgender\b|\bsex\b/.test(low) && e.gender) return String(e.gender);
@@ -3376,10 +4040,46 @@
           }
         }
       }
-      // Phone CC + Phone Number: always ask LLM (design: model picks exact option /
-      // 10 digits from harvested list + candidate hint). No local override.
-      if (phoneCc || phoneNum) {
+      // Phone CC: always ask LLM when options were harvested (exact option text).
+      // Phone Number: use profile digits when present — no LLM round-trip needed
+      // (DraftKings proof: LLM batch was ~5.4s for mostly profile text fields).
+      if (phoneNum) {
+        const digits = nationalPhoneDigits(item.want);
+        if (digits && digits.length >= 10) {
+          values[item.cid] = digits;
+          continue;
+        }
         needLlm.push(item);
+        continue;
+      }
+      if (phoneCc) {
+        needLlm.push(item);
+        continue;
+      }
+      // Free-text / email / tel with a profile value and no option list: use want
+      // locally. Sending First Name/City/Email through WD_RESOLVE only added wait.
+      const kind = String(item.kind || "text").toLowerCase();
+      const hasOpts = !!(item.options && item.options.length) || !!(item.portalOptions && item.portalOptions.length);
+      const isChoice =
+        hasOpts ||
+        item.isSource ||
+        item.isSkills ||
+        kind === "select" ||
+        kind === "radio" ||
+        kind === "checkbox" ||
+        kind === "multiselect";
+      if (!isChoice) {
+        if (item.want != null && String(item.want).trim() !== "") {
+          values[item.cid] = item.want;
+          continue;
+        }
+        // Required free-text with no profile want: still ask LLM (DraftKings Email
+        // was required + want missing before emailAddress was mapped → no-value).
+        if (item.required) {
+          needLlm.push(item);
+          continue;
+        }
+        // Empty optional free-text — do not spend an LLM slot.
         continue;
       }
       if (item.want && item.portalOptions && item.portalOptions.length) {
@@ -3411,10 +4111,26 @@
       needLlm.push(item);
     }
     try {
+      if (WD.aa) {
+        WD.aa("LLM resolve queue", {
+          needLlm: needLlm.length,
+          local: Object.keys(values).length,
+          total: items.length,
+        });
+      }
+    } catch {}
+    try {
       const BATCH = 8;
+      const totalChunks = Math.max(1, Math.ceil(needLlm.length / BATCH) || 1);
       for (let b = 0; b < needLlm.length; b += BATCH) {
         throwIfAborted();
         const chunk = needLlm.slice(b, b + BATCH);
+        const chunkIdx = Math.floor(b / BATCH) + 1;
+        try {
+          if (WD.reportPhase) {
+            WD.reportPhase(`Asking AI for answers (${chunkIdx}/${totalChunks})…`);
+          }
+        } catch {}
         const part = await requestOptionMatches(chunk);
         for (const item of chunk) {
           const raw = part && part[item.cid];
@@ -3533,6 +4249,65 @@
         values[item.cid] = item.want;
       }
     }
+
+    // Retry pass: the batch LLM response is non-deterministic and can OMIT a
+    // control (Fiserv 2026-08-07 v19: "Do you have any relatives currently
+    // employed at Fiserv?" came back with no value → APPLY no-value → Save
+    // rejected, even though the identical question was answered "No" the run
+    // before). There is no profile `want` for these Yes/No screeners, so none of
+    // the want/local fallbacks above can fill them. Re-ask ONLY the required
+    // option controls the model dropped, once, before giving up.
+    const missingRequired = items.filter(
+      (it) =>
+        !values[it.cid] &&
+        it.required &&
+        !it.isSkills &&
+        !isSkillsField(it.key, it.label) &&
+        ((it.options && it.options.length) || (it.portalOptions && it.portalOptions.length)),
+    );
+    if (missingRequired.length) {
+      try {
+        if (WD.aa) {
+          WD.aa("LLM resolve retry", {
+            count: missingRequired.length,
+            labels: missingRequired.map((it) => String(it.label || "").slice(0, 50)),
+          });
+        }
+      } catch {}
+      try {
+        const retry = await requestOptionMatches(missingRequired);
+        for (const item of missingRequired) {
+          const raw = retry && retry[item.cid];
+          if (raw == null || raw === "") continue;
+          if (item.portalOptions && item.portalOptions.length) {
+            const choice =
+              portalChoiceExact(raw, item.portalOptions) || resolvePortalChoice(raw, item.portalOptions);
+            if (choice) values[item.cid] = choice;
+            else {
+              const snapped = snapToHarvestedOption(raw, item.options);
+              if (snapped) values[item.cid] = snapped;
+            }
+          } else if (item.options && item.options.length) {
+            const snapped = snapToHarvestedOption(raw, item.options);
+            if (snapped) values[item.cid] = snapped;
+          } else {
+            values[item.cid] = raw;
+          }
+        }
+      } catch (e) {
+        if (e && e.name === "WDAborted") throw e;
+      }
+      try {
+        if (WD.aa) {
+          const still = missingRequired.filter((it) => !values[it.cid]);
+          WD.aa("LLM resolve retry DONE", {
+            recovered: missingRequired.length - still.length,
+            stillMissing: still.map((it) => String(it.label || "").slice(0, 50)),
+          });
+        }
+      } catch {}
+    }
+
     return values;
   }
 
@@ -3556,7 +4331,7 @@
       D.qa('input[type="checkbox"], input[type="radio"]').filter(D.isVisible).length === 0;
       i++
     ) {
-      await D.delay(250);
+      await D.delay(150);
     }
     // 2) Stabilize count. Proven Zillow Voluntary Disclosures failure
     // (2026-08-06 listbox-source-v2 logs): fillStep START saw containerCount:1
@@ -3567,16 +4342,17 @@
     let last = -1;
     let stableHits = 0;
     let finalCount = 0;
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 20; i++) {
       finalCount = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible).length;
       if (finalCount === last && finalCount > 0) {
         stableHits += 1;
-        if (stableHits >= 3) break; // ~750ms unchanged
+        // 2×150ms ≈ 300ms unchanged (was 3×250ms ≈ 750ms).
+        if (stableHits >= 2) break;
       } else {
         stableHits = 0;
         last = finalCount;
       }
-      await D.delay(250);
+      await D.delay(150);
     }
     try {
       if (WD.aa) {
@@ -3622,9 +4398,13 @@
                   ? "native"
                   : c.querySelector('input[type="radio"]')
                     ? "radio"
-                    : c.querySelector("textarea")
-                      ? "textarea"
-                      : "text",
+                    : c.querySelectorAll('input[type="checkbox"]').length > 1
+                      ? "checkbox-group"
+                      : c.querySelector('input[type="checkbox"]')
+                        ? "checkbox"
+                        : c.querySelector("textarea")
+                          ? "textarea"
+                          : "text",
             shown: trig
               ? String(selectDisplayValue(trig) || triggerCurrentValue(trig) || "").slice(0, 40)
               : null,
@@ -3810,6 +4590,9 @@
     // ── Phase 2: HARVEST option lists ──
     // Non-phone-CC first (each prompt closed). Phone CC last: scroll-harvest,
     // leave list OPEN near the bottom across the LLM wait, apply immediately after.
+    try {
+      if (WD.reportPhase) WD.reportPhase("Scanning fields…");
+    } catch {}
     let cidSeq = 0;
     const harvestSummary = [];
     let keepOpenPhoneTarget = null;
@@ -3825,6 +4608,18 @@
         return;
       }
       assignCid(t);
+      try {
+        if (WD.aa) {
+          WD.aa("fillStep HARVEST field", {
+            key: t.key,
+            labelHead: String(t.label || "").slice(0, 50),
+            isOption: !!t.isOption,
+            isSource: !!t.isSource,
+            hasListbox: !!listboxTrigger(t.container),
+            hasMulti: !!t.multi,
+          });
+        }
+      } catch {}
       if (t.isSkills || isSkillsField(t.key, t.label)) {
         // Type-to-add skills: no options until you type+Enter. Skip empty harvest
         // (proven options:0) and ask the LLM for ALL skill tokens via multi.
@@ -3836,10 +4631,11 @@
         t.portalHtml = "";
         t.llmLabel =
           `${t.label} — Type-to-add skills multi-select. There is NO pre-harvested option list. ` +
-          `Return ALL applicable technical skills from the candidate profile in option_values ` +
-          `(one skill per entry, e.g. TypeScript, Node.js, AWS). Also put a comma-separated copy in value.`;
+          `Return ONLY the 7–10 skills MOST relevant to THIS job from the candidate profile ` +
+          `(languages/frameworks named in the job first). Do NOT dump the full skill inventory. ` +
+          `Put each skill in option_values (one per entry) and a comma-separated copy in value.`;
         if (!t.want && Array.isArray(profile && profile.skills) && profile.skills.length) {
-          t.want = profile.skills.slice(0, 40).join(", ");
+          t.want = profile.skills.slice(0, 24).join(", ");
         }
         decisions.harvest += 1;
         harvestSummary.push({
@@ -3852,6 +4648,9 @@
         return;
       }
       if (t.isSource && t.multi) {
+        try {
+          if (WD.reportPhase) WD.reportPhase("Reading “How Did You Hear” categories…");
+        } catch {}
         const l1 = await harvestSourceL1(t.multi);
         t.hierarchical = l1.hierarchical;
         t.options = l1.texts;
@@ -3903,6 +4702,75 @@
           // Do NOT closeAllListboxes — phone list must stay open for APPLY.
           return;
         }
+
+        // ── Flat Canvas listbox (State / gender / race / Yes-No / Source listbox) ──
+        // Ideal pattern (required): harvest live options → send list to LLM →
+        // LLM returns exact option text → APPLY opens once and picks that option.
+        // Do NOT skip harvest (deferred empty options caused Male≠Man on DraftKings).
+        const listTrigger = listboxTrigger(t.container);
+        if (listTrigger && !t.multi) {
+          try {
+            if (WD.reportPhase) {
+              WD.reportPhase(`Reading options for “${String(t.label || t.key || "field").slice(0, 42)}”…`);
+            }
+          } catch {}
+          let harvested = { options: [], portalHtml: "", listboxId: null };
+          try {
+            harvested = await harvestPortalOptions(listTrigger);
+          } catch (e) {
+            if (e && e.name === "WDAborted") throw e;
+          }
+          if (!(harvested.options && harvested.options.length)) {
+            try {
+              WD.warn("flat listbox harvest: 0 options — retrying", t.label || t.key);
+            } catch {}
+            await D.delay(80);
+            try {
+              harvested = await harvestPortalOptions(listTrigger);
+            } catch (e) {
+              if (e && e.name === "WDAborted") throw e;
+            }
+          }
+          t.kind = "select";
+          t.portalOptions = harvested.options || [];
+          t.options = (t.portalOptions || [])
+            .map((o) => (o && o.text) || "")
+            .filter((x) => x && !isPlaceholderOption(x));
+          t.listboxId = harvested.listboxId || null;
+          t.hierarchical = false;
+          if (t.isSource) {
+            t.llmLabel = `${t.label} — ${sourceFlatHint(t.want)} Return the exact option text from the list.`;
+          } else {
+            t.llmLabel = t.label;
+          }
+          t.portalHtml = buildPortalOptionsHtml(t.cid, t.llmLabel, t.portalOptions, "");
+          if (!optionsPlausibleForLabel(t.label, t.options) && t.options.length) {
+            try {
+              WD.warn("implausible options for", t.label, "- keeping harvest", t.options.slice(0, 8));
+            } catch {}
+          }
+          decisions.harvest += 1;
+          harvestSummary.push({
+            key: t.key,
+            labelHead: String(t.label).slice(0, 50),
+            options: (t.options || []).length,
+            kind: "select",
+            widget: "listbox",
+          });
+          try {
+            if (WD.aa) {
+              WD.aa("fillStep HARVEST listbox", {
+                key: t.key,
+                labelHead: String(t.label).slice(0, 50),
+                options: (t.options || []).length,
+                sample: (t.options || []).slice(0, 8),
+              });
+            }
+          } catch {}
+          return;
+        }
+
+        // Checkbox / radio / multi — classifyControl harvests those widgets.
         let info = null;
         try {
           info = await classifyControl(t.container);
@@ -3920,14 +4788,6 @@
           t.portalHtml = info.portalHtml || "";
         }
         t.llmLabel = t.label;
-        // Listbox "How Did You Hear" (Zillow): same flat-source hint as multi path.
-        if (t.isSource) {
-          t.hierarchical = false;
-          t.llmLabel = `${t.label} — ${sourceFlatHint(t.want)}`;
-          if (t.portalOptions && t.portalOptions.length) {
-            t.portalHtml = buildPortalOptionsHtml(t.cid, t.llmLabel, t.portalOptions, "");
-          }
-        }
         if (isCountryPhoneCodeField(t.key, t.label)) {
           const usa = exactUsaPhoneCcOption(t.options || []);
           if (usa) t.want = usa;
@@ -3943,27 +4803,25 @@
           labelHead: String(t.label).slice(0, 50),
           options: (t.options || []).length,
           kind: t.kind,
-          widget: t.isSource ? "listbox" : undefined,
         });
-        await closeAllListboxes();
         return;
       }
-      // Text / textarea / tel / email
-      let info = null;
-      try {
-        info = await classifyControl(t.container);
-      } catch (e) {
-        if (e && e.name === "WDAborted") throw e;
-      }
-      if (!info) {
-        t.kind = t.container.querySelector("textarea") ? "textarea" : "text";
-        t.options = [];
-        t.portalOptions = [];
+      // Text / textarea / tel / email — NEVER open a dropdown. classifyControl can
+      // hit listboxTrigger on mis-scoped containers; keep this path DOM-only.
+      const ta = t.container.querySelector("textarea");
+      const text = t.container.querySelector(
+        'input[type="text"], input[type="tel"], input[type="number"], input[type="email"], input[type="url"], input:not([type])',
+      );
+      if (ta) {
+        t.kind = "textarea";
+      } else if (text) {
+        const typ = (text.getAttribute("type") || "text").toLowerCase();
+        t.kind = ["tel", "number", "email", "url"].includes(typ) ? typ : "text";
       } else {
-        t.kind = info.kind || "text";
-        t.options = info.options || [];
-        t.portalOptions = info.portalOptions || [];
+        t.kind = "text";
       }
+      t.options = [];
+      t.portalOptions = [];
       t.llmLabel = isPhoneNumberField(t.key, t.label)
         ? phoneNumberLlmHint(t.want)
         : t.label;
@@ -4025,6 +4883,9 @@
           keepOpenPhone: !!(keepOpenPhoneTarget && isMultiListOpen(keepOpenPhoneTarget.multi)),
         });
       }
+    } catch {}
+    try {
+      if (WD.reportPhase) WD.reportPhase("Asking AI for answers…");
     } catch {}
     // Side-panel messaging can steal focus and dismiss the keep-open phone list.
     // Soft-refocus the search input while we wait on WD_RESOLVE.
@@ -4133,6 +4994,9 @@
     for (const t of targets) {
       throwIfAborted();
       if (!t.isSource || !t.multi || !t.hierarchical) continue;
+      try {
+        if (WD.reportPhase) WD.reportPhase("Selecting How Did You Hear source…");
+      } catch {}
       const raw = batchValues[t.cid];
       // LLM category first (exact snap). Local folder guess only if LLM empty.
       let category =
@@ -4192,6 +5056,9 @@
 
     // ── Phase 4: APPLY remaining answers (fast DOM writes; no LLM) ──
     try {
+      if (WD.reportPhase) WD.reportPhase("Writing answers into the form…");
+    } catch {}
+    try {
       if (WD.aa) {
         WD.aa("fillStep APPLY START", {
           count: targets.length,
@@ -4238,13 +5105,20 @@
             ok = await fillSourcePrompt(t.multi, t.want || "Indeed", t.container);
           }
         } else if (!ok && trigger) {
-          // Flat listbox source (Zillow): apply via portal listbox click.
-          const pick = chooseSourceLeaf(t.want, t.options || [], batchValues[t.cid]);
+          // Flat listbox source: options were harvested pre-LLM; APPLY opens once
+          // and picks the exact LLM/portal choice (no second harvest).
+          const llmText = valueText(batchValues[t.cid]);
+          let pick = chooseSourceLeaf(t.want, t.options || [], batchValues[t.cid]);
+          if (!pick) pick = llmText || t.want || sourcePreferredChannel(t.want) || "LinkedIn";
           if (pick) {
-            ok = await applyListboxPortal(trigger, pick);
+            const choice =
+              resolvePortalChoice(pick, t.portalOptions || []) ||
+              resolvePortalChoice(llmText, t.portalOptions || []) ||
+              pick;
+            ok = await applyListboxPortal(trigger, choice, t.portalOptions || []);
             try {
               WD.log(
-                `source flat APPLY (listbox) pick=${JSON.stringify(pick)} llm=${JSON.stringify(valueText(batchValues[t.cid]) || null)} ok=${!!ok}`
+                `source flat APPLY (listbox) pick=${JSON.stringify(pick)} llm=${JSON.stringify(llmText || null)} options=${(t.options || []).length} ok=${!!ok}`
               );
             } catch {}
             try {
@@ -4252,8 +5126,9 @@
                 WD.aa("fillStep APPLY source-listbox", {
                   key: t.key,
                   pick: String(pick).slice(0, 60),
-                  llm: valueText(batchValues[t.cid]).slice(0, 60) || null,
+                  llm: (llmText || "").slice(0, 60) || null,
                   options: (t.options || []).length,
+                  portals: (t.portalOptions || []).length,
                   ok,
                 });
               }
@@ -4262,7 +5137,7 @@
             try {
               WD.warn(
                 "source flat APPLY (listbox) no pick from LLM/peers",
-                valueText(batchValues[t.cid]),
+                llmText,
                 (t.options || []).slice(0, 12)
               );
             } catch {}
@@ -4271,7 +5146,7 @@
                 WD.aa("fillStep APPLY source-listbox", {
                   key: t.key,
                   pick: null,
-                  llm: valueText(batchValues[t.cid]).slice(0, 60) || null,
+                  llm: (llmText || "").slice(0, 60) || null,
                   options: (t.options || []).length,
                   ok: false,
                   reason: "no-pick",
@@ -4359,7 +5234,10 @@
       const multi = t.container.querySelector('[data-automation-id="multiSelectContainer"]');
       try {
         if (trigger && !multi) {
-          ok = await applyListboxPortal(trigger, value);
+          const choice =
+            resolvePortalChoice(value, t.portalOptions || []) ||
+            value;
+          ok = await applyListboxPortal(trigger, choice, t.portalOptions || []);
         } else if (multi && isCountryPhoneCodeField(t.key, t.label)) {
           ok = await fillMultiselect(multi, valueText(value) || value, {
             alreadyOpen: isMultiListOpen(multi),
@@ -4764,17 +5642,28 @@
 
   // Proven CrowdStrike flow: pointer-open → read portal option id/value/text +
   // portal HTML → close. Returns { options:[{id,value,text}], portalHtml, listboxId }.
+  //
+  // Soft close only (Escape, no body-click). Do NOT force window.scrollTo — if the
+  // page jumps, that means this open/close harvest path is the wrong behavior to
+  // remove, not something to mask.
   async function harvestPortalOptions(btn) {
-    await closeAllListboxes();
-    const popup = await openListboxForOptions(btn);
+    // Skip closeAll when nothing is open (saves Escape passes between sequential harvests).
+    if (anyFormListboxOpen(btn)) {
+      await closeAllListboxes(null, { soft: true });
+      await D.delay(20);
+    }
+    const popup = await openListboxForOptions(btn, { fast: true });
     if (!popup) {
       try {
         WD.warn("harvestPortalOptions: portal did not open", btn && (btn.id || btn.getAttribute("aria-label")));
       } catch {}
       return { options: [], portalHtml: "", listboxId: null };
     }
-    await D.delay(100);
-    await waitForOptionsSettled({ root: popup, timeout: 2500, settleMs: 220 });
+    // openListboxForOptions already settled options — read once (no second settle).
+    let options = readPortalOptionRows(popup);
+    if (!options.length) {
+      options = await waitForPortalOptionRows(popup, { timeout: 600, settleMs: 40, poll: 40, minCount: 1 });
+    }
     const listbox =
       (popup.getAttribute && popup.getAttribute("role") === "listbox" && popup) ||
       popup.querySelector('[role="listbox"]') ||
@@ -4786,13 +5675,7 @@
           listbox.closest("[data-popper-placement]"))) ||
       popup;
     const portalHtml = portalRoot ? String(portalRoot.outerHTML || "").slice(0, 4000) : "";
-    const options = readPortalOptionRows(popup);
-    pressKey(btn, "Escape", "Escape", 27);
-    await D.delay(120);
-    if (openedListbox(btn) || btn.getAttribute("aria-expanded") === "true") {
-      focusSinkOutside(btn.ownerDocument || document);
-      await D.delay(100);
-    }
+    await closeListbox(btn, { soft: true });
     try {
       WD.log(
         "harvestPortalOptions",
@@ -5033,25 +5916,24 @@
     }
     const btn = listboxTrigger(container);
     if (btn) {
-      await closeAllListboxes();
+      // harvestPortalOptions already closeAllListboxes — do not nest another full
+      // close pass before every open (that amplified Escape/focus churn on GDIT).
       let harvested = await harvestPortalOptions(btn);
       if (!(harvested.options && harvested.options.length)) {
         try {
           WD.warn("classifyControl: 0 portal options — retrying", fieldLabel(container));
         } catch {}
-        await D.delay(250);
+        await D.delay(80);
         harvested = await harvestPortalOptions(btn);
       }
       const label = fieldLabel(container);
       let options = (harvested.options || []).map((o) => o.text);
+      // Do not third-open on "implausible" — that caused extra scroll/open cycles.
+      // Prefer empty options over thrashing the page; LLM / APPLY can recover.
       if (!optionsPlausibleForLabel(label, options) && options.length) {
         try {
-          WD.warn("implausible options for", label, "- re-harvesting", options);
+          WD.warn("implausible options for", label, "- keeping first harvest", options.slice(0, 8));
         } catch {}
-        await closeAllListboxes();
-        await D.delay(200);
-        harvested = await harvestPortalOptions(btn);
-        options = (harvested.options || []).map((o) => o.text);
       }
       return {
         kind: "select",
@@ -5647,14 +6529,17 @@
     openAndPick,
     fieldIsFilled,
     fieldHasCommittedValue,
+    probeCheckboxGroup,
+    commitCheckable,
+    applyCheckboxGroup,
   };
   // Build marker: if this line is NOT in the console on a run, the tab is running
   // a STALE engine (reload the extension at chrome://extensions, then hard-reload
   // the Workday page).
   try {
-    WD.log("wd-steps build: 2026-08-06-resume-skills-v6");
+    WD.log("wd-steps build: 2026-08-07-lazy-mount-rescan-v23");
     try {
-      if (WD.aa) WD.aa("engine-build", { build: "2026-08-06-resume-skills-v6", href: location.href });
+      if (WD.aa) WD.aa("engine-build", { build: "2026-08-07-lazy-mount-rescan-v23", href: location.href });
     } catch {}
   } catch {}
 })();
