@@ -990,7 +990,11 @@ async def run_scraper_task(
                 "user_id": user_id,
                 "spider_name": spider_name,
                 "error": error,
-                "message": "Job fetching was stopped." if stopped else None,
+                "message": (
+                    "Job fetching was stopped."
+                    if stopped
+                    else summary.get("message")
+                ),
                 "sync_mode": sync_mode,
                 "posted_since": posted_since,
                 "posted_until": posted_until,

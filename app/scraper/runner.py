@@ -449,6 +449,12 @@ async def run_spider(
                     "Configure residential proxies via SCRAPER_PROXY_LIST_PATH "
                     "for durable recovery, then retry."
                 )
+            elif run_status == "error":
+                result["message"] = (
+                    "Scrape finished but some listings failed to save "
+                    f"({result['items_new']} new, {result['items_updated']} updated, "
+                    f"{int((scrape_run or {}).get('errors') or 0)} write errors)."
+                )
 
         if success:
             logger.info(
