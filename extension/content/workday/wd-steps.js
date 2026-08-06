@@ -12,11 +12,10 @@
 //   - checkbox
 //   - Workday date group (dateSectionMonth-input / dateSectionYear-input)
 //
-// Strategy (the hybrid): discover every formField, resolve its value from a
-// static key map (instant, deterministic) or a label-keyword rule, write it with
-// the control-aware writer, and collect anything still unanswered (required
-// fields / questions) into rep.unmatched for the LLM phase. Namespaced under
-// window.__WD.steps.
+// Strategy (batch harvest → LLM → apply): discover every formField on the step,
+// harvest option lists into memory, resolve nearly all answers in one WD_RESOLVE
+// (plus source L2 follow-up when hierarchical), then apply DOM writes quickly.
+// Namespaced under window.__WD.steps.
 (() => {
   // Always (re)install so an updated extension takes effect on the next Start
   // without a manual page reload (executeScript re-runs this file each Start).
@@ -310,7 +309,7 @@
     return true;
   }
 
-  async function closeAllListboxes() {
+  async function closeAllListboxes(exceptMulti) {
     for (let pass = 0; pass < 3; pass++) {
       let anyOpen = false;
       // Only form/application triggers — never header Language/Settings buttons
@@ -319,6 +318,7 @@
         '[data-automation-id^="formField-"] button[aria-haspopup="listbox"], [data-automation-id^="formField-"] [role="combobox"][aria-haspopup="listbox"], [data-automation-id^="formField-"] input[aria-haspopup="listbox"], [data-automation-id="applyFlowPage"] button[aria-haspopup="listbox"]',
       ).filter(D.isVisible);
       for (const btn of triggers) {
+        if (exceptMulti && exceptMulti.contains(btn)) continue;
         if (btn.getAttribute("aria-expanded") === "true" || openedListbox(btn)) {
           anyOpen = true;
           await closeListbox(btn);
@@ -327,11 +327,14 @@
       const popups = D.qa(
         '[data-behavior-click-outside-close] [role="listbox"], [data-popper-placement] [role="listbox"], [data-automation-id="activeListContainer"], [role="listbox"]',
       ).filter(D.isVisible);
-      if (popups.length) {
+      const foreign = popups.filter((p) => !listRootBelongsToMulti(p, exceptMulti));
+      if (foreign.length) {
         anyOpen = true;
         pressKey(document.body, "Escape", "Escape", 27);
         await D.delay(80);
-        focusSinkOutside(document);
+        if (!(exceptMulti && isMultiListOpen(exceptMulti))) {
+          focusSinkOutside(document);
+        }
       }
       if (!anyOpen) break;
       await D.delay(100);
@@ -348,8 +351,126 @@
     return (sib && (sib.innerText || sib.textContent)) || input.getAttribute("aria-label") || "";
   }
 
-  // Phone country code: the multiselect needs the full label, not the digits.
+  // Phone country code: full option label (LLM + apply). +1 is shared by many
+  // NANP territories — prompts must prefer United States of America (+1).
   const PHONE_CC_LABEL = { "1": "United States of America (+1)" };
+  const USA_PHONE_CC = "United States of America (+1)";
+
+  // Thin digit cleanup after LLM (prompt asks for exactly 10 national digits).
+  function nationalPhoneDigits(phone) {
+    let d = String(phone || "").replace(/\D/g, "");
+    if (!d) return "";
+    if (d.length === 10) return d;
+    if (d.length === 11 && d.charAt(0) === "1") return d.slice(1);
+    if (d.charAt(0) === "1" && d.length > 11) return d.slice(1, 11);
+    if (d.length > 10) return d.slice(0, 10);
+    return d;
+  }
+
+  function isPhoneNumberField(key, label) {
+    return /^phoneNumber$/i.test(key || "") || /^phone number$/i.test(String(label || "").trim());
+  }
+
+  function isCountryPhoneCodeField(key, label) {
+    return /^countryPhoneCode$/i.test(key || "") || /country phone code/i.test(label || "");
+  }
+
+  // Exact USA (+1) row from a harvested option list (no soft +1 → Anguilla).
+  function exactUsaPhoneCcOption(optionTexts) {
+    const texts = (optionTexts || []).filter((t) => t && !isPlaceholderOption(t));
+    return (
+      texts.find((t) => D.norm(t) === D.norm(USA_PHONE_CC)) ||
+      texts.find((t) => /united states of america/i.test(t) && /\(\+\s*1\s*\)/.test(t)) ||
+      null
+    );
+  }
+
+  // LLM prompts — primary way we get correct phone CC / phone number values.
+  function phoneCountryCodeLlmHint(want) {
+    const pref = String(want || USA_PHONE_CC).replace(/\s+/g, " ").trim() || USA_PHONE_CC;
+    return (
+      `Country Phone Code. Reply with ONE exact option text from the harvested list. ` +
+      `Preferred: "${pref}". If the candidate uses +1 / US, you MUST pick ` +
+      `"United States of America (+1)" (or the closest United States (+1) wording) — ` +
+      `NEVER Anguilla, Jamaica, Barbados, Canada, or any other +1 territory when ` +
+      `United States of America (+1) is in the list.`
+    );
+  }
+
+  function phoneNumberLlmHint(want) {
+    const digits = nationalPhoneDigits(want);
+    return (
+      `Phone Number field ONLY (Country Phone Code is a separate control). ` +
+      `Reply with exactly 10 digits for a US number` +
+      (digits ? ` (candidate: ${digits})` : "") +
+      `. Do NOT include +, country code, spaces, dashes, or parentheses. Example: 8143133369.`
+    );
+  }
+
+  // Put preferred dial-code first so it survives options[] caps (~120). This only
+  // affects what the LLM *sees* in the truncated options array — not the answer.
+  function prioritizeUsaPhoneCcTexts(texts) {
+    const list = (texts || []).filter((t) => t && !isPlaceholderOption(t));
+    const usa = exactUsaPhoneCcOption(list);
+    if (!usa) return list;
+    return [usa].concat(list.filter((t) => D.norm(t) !== D.norm(usa)));
+  }
+
+  function prioritizeUsaPhoneCcPortals(portalOptions) {
+    const list = portalOptions || [];
+    const usa = exactUsaPhoneCcOption(list.map((o) => o && o.text));
+    if (!usa) return list;
+    const hit = list.find((o) => o && D.norm(o.text) === D.norm(usa));
+    if (!hit) return list;
+    return [hit].concat(list.filter((o) => o && D.norm(o.text) !== D.norm(usa)));
+  }
+
+  // Exact snap of LLM/profile answer onto harvested phone-CC options.
+  // NO override to USA — if the model returned an exact list row, use it.
+  // Soft "+1" / substring matches are rejected (they falsely hit Anguilla).
+  function snapExactPhoneCcAnswer(answer, options, portalOptions) {
+    const texts = options && options.length
+      ? options
+      : (portalOptions || []).map((o) => o && o.text).filter(Boolean);
+    const raw = typeof answer === "object" && answer
+      ? String(answer.text || answer.value || answer.id || "")
+      : String(answer || "");
+    const n = D.norm(raw);
+    if (!n || n === "1" || n === "+1") return null;
+    if (portalOptions && portalOptions.length) {
+      const exact =
+        portalOptions.find((o) => D.norm(o.text) === n) ||
+        portalOptions.find((o) => D.norm(o.value) === n) ||
+        portalOptions.find((o) => D.norm(o.id) === n);
+      if (exact && exact.text) return exact.text;
+    }
+    return exactOption(raw, texts) || null;
+  }
+
+  function portalChoiceExact(answer, portalOptions) {
+    if (answer == null || answer === "" || !portalOptions || !portalOptions.length) return null;
+    if (typeof answer === "object" && !Array.isArray(answer)) {
+      const byId =
+        answer.id && portalOptions.find((o) => D.norm(o.id) === D.norm(answer.id));
+      if (byId) return byId;
+      const byVal =
+        answer.value && portalOptions.find((o) => D.norm(o.value) === D.norm(answer.value));
+      if (byVal) return byVal;
+      const byText =
+        answer.text && portalOptions.find((o) => D.norm(o.text) === D.norm(answer.text));
+      if (byText) return byText;
+      return portalChoiceExact(answer.value || answer.id || answer.text || "", portalOptions);
+    }
+    const raw = String(answer).replace(/\s+/g, " ").trim();
+    const n = D.norm(raw);
+    if (!n || isPlaceholderOption(raw)) return null;
+    return (
+      portalOptions.find((o) => D.norm(o.text) === n) ||
+      portalOptions.find((o) => D.norm(o.value) === n) ||
+      portalOptions.find((o) => D.norm(o.id) === n) ||
+      null
+    );
+  }
 
   // Workday's State/Province dropdown lists full names ("California"), but the
   // profile stores the postal abbreviation ("CA"). Expand known US codes so the
@@ -468,7 +589,7 @@
     const c = p.contact || {};
     const a = p.address || {};
     const w = p.websites || {};
-    const cc = String(c.phoneCountryCode || "").replace(/\D/g, "");
+    const cc = String(c.phoneCountryCode || "").replace(/\D/g, "") || "1";
     const map = {
       source: p.howDidYouHear,
       country: canonCountry(a.country),
@@ -486,8 +607,10 @@
       countryRegion: expandState(a.state),
       postalCode: a.postalCode,
       phoneType: c.phoneDeviceType,
-      countryPhoneCode: PHONE_CC_LABEL[cc],
-      phoneNumber: String(c.phone || "").replace(/\D/g, ""),
+      // Prefer full USA label — never a bare "+1" that snaps to Anguilla.
+      countryPhoneCode: PHONE_CC_LABEL[cc] || (cc === "1" ? USA_PHONE_CC : undefined),
+      // National digits only (no country code) — Workday validates format separately.
+      phoneNumber: nationalPhoneDigits(c.phone),
       // Stable Workday key for "Have you been employed by <Company> previously?".
       // A fresh applicant has not worked there before → default No (independent of
       // the company name in the label, so it never relies on label keyword rules).
@@ -800,6 +923,359 @@
     });
   }
 
+  function optionTextClean(el) {
+    return ((el && el.textContent) || "").replace(/\s+/g, " ").trim();
+  }
+
+  // True empty-state rows — including "No Items." with trailing punct.
+  function isEmptyPromptRow(text) {
+    const t = D.norm(text);
+    return !t || /^(no items|no results)\.?$/.test(t);
+  }
+
+  // Option nodes inside a formField's committed display (selected LinkedIn chip,
+  // etc.) must NEVER be harvested as another field's open-list options.
+  // Live proof: Country Phone Code harvest returned [{"text":"LinkedIn"}].
+  function isCommittedFieldOption(el) {
+    if (!el) return false;
+    if (el.closest('[data-automation-id="selectedItem"], [data-automation-id="pill"]')) return true;
+    const inOpenList = el.closest(
+      '[data-automation-id="activeListContainer"], [data-automation-id="promptOptionList"], .ReactVirtualized__List, [data-behavior-click-outside-close], [data-popper-placement]',
+    );
+    if (inOpenList) return false;
+    if (el.closest('[data-automation-id^="formField-"]')) return true;
+    return false;
+  }
+
+  // Open multi-select list portal. NEVER fall back to document (cross-field leak).
+  function activeMultiListRoot(ownerMulti) {
+    if (ownerMulti) {
+      const input = ownerMulti.querySelector("input");
+      const controls = (input && input.getAttribute("aria-controls")) || "";
+      for (const id of controls.split(/\s+/).filter(Boolean)) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const root =
+          el.closest('[data-automation-id="activeListContainer"]') ||
+          el.closest('[data-automation-id="promptOptionList"]') ||
+          el.closest(".ReactVirtualized__List") ||
+          el.closest("[data-behavior-click-outside-close]") ||
+          el;
+        if (root && D.isVisible(root)) return root;
+      }
+    }
+    const portals = D.qa(
+      '[data-automation-id="activeListContainer"], [data-automation-id="promptOptionList"], .ReactVirtualized__List, [data-behavior-click-outside-close] [role="listbox"]',
+    ).filter((p) => D.isVisible(p) && !p.closest('[data-automation-id^="formField-"]'));
+    return portals.length ? portals[portals.length - 1] : null;
+  }
+
+  // Folder vs leaf in hierarchical How-Did-You-Hear prompts (Allstate DOM).
+  function isHierarchicalMultiOption(el) {
+    if (!el) return false;
+    const type = el.getAttribute("data-uxi-multiselectlistitem-type") || "";
+    if (type === "2") return true;
+    if ((el.getAttribute("hassidecharm") || "").toLowerCase() === "true") return true;
+    if (el.querySelector('[data-automation-id="promptOptionChevron"], [data-automation-id="chevron"]')) return true;
+    return false;
+  }
+
+  function looksLikeSourceCategory(text) {
+    return /job\s*boards?|referral|career\s*site|company\s*(web)?site|social\s*media|recruiter|agency|staffing|advertisement|campus|event|job\s*fair|\bother\b|internal/i.test(
+      text || "",
+    );
+  }
+
+  // Read currently-visible multi/prompt option rows with hierarchy metadata.
+  // Pass the open list portal as `root`; never use document.
+  function readMultiOptionRows(root) {
+    const scope = root || activeMultiListRoot();
+    if (!scope) return [];
+    const nodes = D.qa(
+      '[data-automation-id="menuItem"], [role="option"], [data-automation-id="promptOption"]',
+      scope,
+    ).filter((o) => {
+      if (!D.isVisible(o)) return false;
+      if (isCommittedFieldOption(o)) return false;
+      if (o.getAttribute("aria-disabled") === "true" || o.hasAttribute("disabled")) return false;
+      return true;
+    });
+    const out = [];
+    const seen = new Set();
+    for (const el of nodes) {
+      const row =
+        el.closest('[data-automation-id="menuItem"]') ||
+        el.closest('[role="option"]') ||
+        el;
+      const text = optionTextClean(
+        row.querySelector('[data-automation-id="promptOption"]') || row,
+      );
+      if (!text || isPlaceholderOption(text) || isEmptyPromptRow(text)) continue;
+      const k = D.norm(text);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const id = (row.id || "").trim();
+      const value = (row.getAttribute("data-value") || row.getAttribute("value") || id || text).trim();
+      out.push({
+        el: row,
+        id: id || value || text,
+        value: value || id || text,
+        text,
+        hierarchical: isHierarchicalMultiOption(row),
+      });
+    }
+    return out;
+  }
+
+  // Options appear hundreds of ms after open/select. Wait until the visible
+  // count is stable (not just the first matching OPTION_SEL node).
+  async function waitForOptionsSettled(opts) {
+    const timeout = (opts && opts.timeout) || 4000;
+    const settleMs = (opts && opts.settleMs) || 280;
+    const root = opts && opts.root;
+    const ownerMulti = opts && opts.ownerMulti;
+    const minCount = (opts && opts.minCount) || 1;
+    const end = Date.now() + timeout;
+    let lastCount = -1;
+    let stableSince = 0;
+    while (Date.now() < end) {
+      throwIfAborted();
+      const listRoot = root || activeMultiListRoot(ownerMulti);
+      const rows = listRoot ? readMultiOptionRows(listRoot) : [];
+      const n = rows.length;
+      if (n >= minCount) {
+        if (n === lastCount) {
+          if (!stableSince) stableSince = Date.now();
+          if (Date.now() - stableSince >= settleMs) return rows;
+        } else {
+          lastCount = n;
+          stableSince = Date.now();
+        }
+      } else {
+        lastCount = n;
+        stableSince = 0;
+      }
+      await D.delay(80);
+    }
+    const listRoot = root || activeMultiListRoot(ownerMulti);
+    return listRoot ? readMultiOptionRows(listRoot) : [];
+  }
+
+  // After clicking an L1 category, wait for drill-down UI (header/back) or a
+  // leaf-only list — prompt must stay open.
+  async function waitForSourceDrillDown(ms, ownerMulti) {
+    const end = Date.now() + (ms || 4000);
+    while (Date.now() < end) {
+      throwIfAborted();
+      if (
+        D.q('[data-automation-id="multiSelectHeader"]') ||
+        D.q('[data-automation-id="promptTitle"]') ||
+        D.q('[data-automation-id="backButton"]')
+      ) {
+        await waitForOptionsSettled({ timeout: 2500, settleMs: 220, ownerMulti });
+        return true;
+      }
+      const rows = readMultiOptionRows(activeMultiListRoot(ownerMulti));
+      if (rows.length && rows.every((r) => !r.hierarchical)) {
+        await D.delay(180);
+        return true;
+      }
+      await D.delay(100);
+    }
+    return false;
+  }
+
+  function multiListScroller(ownerMulti) {
+    const root0 = activeMultiListRoot(ownerMulti);
+    return (
+      (root0 &&
+        (root0.querySelector(".ReactVirtualized__List") ||
+          (root0.classList && root0.classList.contains("ReactVirtualized__List") && root0) ||
+          root0)) ||
+      D.q('[data-automation-id="activeListContainer"]') ||
+      D.q(".ReactVirtualized__List") ||
+      null
+    );
+  }
+
+  function multiListNeedsScroll(ownerMulti) {
+    const scroller = multiListScroller(ownerMulti);
+    if (!scroller) return false;
+    return (scroller.scrollHeight || 0) > (scroller.clientHeight || 0) + 40;
+  }
+
+  function isMultiListOpen(ownerMulti) {
+    return !!(ownerMulti && activeMultiListRoot(ownerMulti));
+  }
+
+  // Scroll a virtualized multi list so off-DOM rows enter the harvest set.
+  // resetToTop:false keeps the viewport at the bottom (USA dial codes live near
+  // the end) so a keep-open APPLY can click without scrolling the list again.
+  async function scrollCollectMultiOptions(ownerMulti, opts) {
+    const resetToTop = !(opts && opts.resetToTop === false);
+    const seen = new Map();
+    const ingest = () => {
+      const root = activeMultiListRoot(ownerMulti);
+      if (!root) return;
+      for (const row of readMultiOptionRows(root)) {
+        const k = D.norm(row.text);
+        if (!seen.has(k)) seen.set(k, { id: row.id, value: row.value, text: row.text, hierarchical: row.hierarchical });
+      }
+    };
+    ingest();
+    const scroller = multiListScroller(ownerMulti);
+    if (scroller) {
+      let lastSize = seen.size;
+      let stable = 0;
+      for (let i = 0; i < 90; i++) {
+        throwIfAborted();
+        const maxScroll = Math.max(0, (scroller.scrollHeight || 0) - (scroller.clientHeight || 0));
+        const next = Math.min((scroller.scrollTop || 0) + Math.max(40, (scroller.clientHeight || 120) * 0.85), maxScroll);
+        scroller.scrollTop = next;
+        scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+        await D.delay(80);
+        ingest();
+        if (seen.size === lastSize) {
+          stable++;
+          if (stable >= 4) break;
+        } else {
+          stable = 0;
+          lastSize = seen.size;
+        }
+        if (next >= maxScroll - 1) {
+          await D.delay(100);
+          ingest();
+          break;
+        }
+      }
+      if (resetToTop) {
+        try {
+          scroller.scrollTop = 0;
+          scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+        } catch {}
+        await D.delay(80);
+        ingest();
+      }
+    }
+    return [...seen.values()];
+  }
+
+  function listRootBelongsToMulti(listEl, multi) {
+    if (!listEl || !multi) return false;
+    const exceptRoot = activeMultiListRoot(multi);
+    if (!exceptRoot) return false;
+    return listEl === exceptRoot || exceptRoot.contains(listEl) || listEl.contains(exceptRoot);
+  }
+
+  async function closeForeignPrompts(exceptMulti) {
+    const openList = D.q(
+      '[data-automation-id="activeListContainer"], [data-behavior-click-outside-close] [role="listbox"]',
+    );
+    if (openList && D.isVisible(openList) && !listRootBelongsToMulti(openList, exceptMulti)) {
+      pressKey(document.body, "Escape", "Escape", 27);
+      await D.delay(120);
+    }
+    for (const multi of D.qa('[data-automation-id="multiSelectContainer"]')) {
+      if (exceptMulti && multi === exceptMulti) continue;
+      const input = multi.querySelector("input");
+      if (!input) continue;
+      const ae = document.activeElement;
+      if (ae === input || (ae && multi.contains(ae))) {
+        await closePrompt(multi, input);
+      }
+    }
+    // focusSinkOutside closes keep-open lists via outside click — skip when protecting one.
+    if (!(exceptMulti && isMultiListOpen(exceptMulti))) {
+      focusSinkOutside(document);
+      await D.delay(80);
+    }
+  }
+
+  async function openMultiPrompt(multi) {
+    if (!multi) return null;
+    await closeForeignPrompts(multi);
+    const input = multi.querySelector("input");
+    if (!input) return null;
+    const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
+    D.clickEl(opener);
+    input.focus();
+    await D.delay(150);
+    return input;
+  }
+
+  function findMultiOptionByText(want, ownerMulti) {
+    const w = D.norm(want);
+    if (!w) return null;
+    const rows = readMultiOptionRows(activeMultiListRoot(ownerMulti));
+    const exact = rows.find((r) => D.norm(r.text) === w);
+    if (exact) return exact.el;
+    const contains = rows
+      .filter((r) => D.norm(r.text).includes(w) || w.includes(D.norm(r.text)))
+      .sort((a, b) => a.text.length - b.text.length);
+    return contains.length ? contains[0].el : null;
+  }
+
+  // Canvas multi/prompt rows often ignore a plain row click — same defect as School.
+  // Proven fix: pointer-click the row, then promptOption text, then any checkbox/radio.
+  async function clickMultiOptionRow(el) {
+    if (!el) return false;
+    const row =
+      el.closest('[data-automation-id="menuItem"]') ||
+      el.closest('[role="option"]') ||
+      el;
+    // Allstate Country Phone Code: promptLeafNode (no native checkbox inputs).
+    const leaf = row.querySelector('[data-automation-id="promptLeafNode"]');
+    const promptOpt = row.querySelector('[data-automation-id="promptOption"]') || row;
+    if (leaf) {
+      firePointerClick(leaf);
+      await D.delay(120);
+    }
+    firePointerClick(row);
+    await D.delay(120);
+    if (promptOpt && promptOpt !== row && promptOpt !== leaf) {
+      firePointerClick(promptOpt);
+      await D.delay(120);
+    }
+    const box = row.querySelector('input[type="checkbox"], input[type="radio"]');
+    if (box) {
+      firePointerClick(box);
+      await D.delay(150);
+    }
+    return true;
+  }
+
+  // Poll until this multi shows a committed selection (chip / aria count).
+  async function waitUntilMultiCommitted(multi, want, ms) {
+    const end = Date.now() + (ms || 1500);
+    while (Date.now() < end) {
+      if (promptChosen(multi, want) || promptChosen(multi, "")) return true;
+      await D.delay(100);
+    }
+    return promptChosen(multi, want) || promptChosen(multi, "");
+  }
+
+  // Type queries for virtualized Country Phone Code (full label often filters poorly).
+  // Never lead with bare "+1" — that surfaces Anguilla before United States.
+  function multiTypeQueries(value) {
+    const v = String(value || "").replace(/\s+/g, " ").trim();
+    const out = [];
+    const push = (s) => {
+      const t = String(s || "").replace(/\s+/g, " ").trim();
+      if (t && !out.some((x) => D.norm(x) === D.norm(t))) out.push(t);
+    };
+    push(v);
+    if (/united states|\(\+\s*1\s*\)/i.test(v) || D.norm(v) === "+1" || D.norm(v) === "1") {
+      push(USA_PHONE_CC);
+      push("United States of America");
+      push("United States");
+    }
+    push(v.replace(/\s*\(\+\d+\)\s*$/, "").trim());
+    const cc = v.match(/\(\+(\d+)\)/);
+    // Digits-only filter last (many +1 territories); click path prefers USA.
+    if (cc) push("+" + cc[1]);
+    return out;
+  }
+
   // Real, selectable result rows of an OPEN prompt.
   //
   // Two DOM facts (from the live Siemens Healthineers page) make a naive
@@ -865,7 +1341,7 @@
         id: (o.id || "").trim(),
         val: (o.getAttribute("data-value") || o.getAttribute("value") || "").trim(),
       }))
-      .filter((x) => x.t);
+      .filter((x) => x.t && !isCommittedFieldOption(x.o) && !isEmptyPromptRow(x.t));
     // 0. Match by option element id or data-value (CrowdStrike portal proof).
     if (w) {
       const byId = scored.find((x) => D.norm(x.id) === w || D.norm(x.val) === w);
@@ -981,14 +1457,19 @@
     if (typeof answer === "object" && !Array.isArray(answer) && (answer.id || answer.value || answer.text)) {
       return await openAndPickPortal(trigger, answer);
     }
-    const harvested = await harvestPortalOptions(trigger);
-    const choice = resolvePortalChoice(answer, harvested.options);
+    let harvested = await harvestPortalOptions(trigger);
+    let choice = resolvePortalChoice(answer, harvested.options);
+    if (!choice) {
+      // Retry once after settle — never fall back to legacy type+Enter openAndPick.
+      await D.delay(200);
+      harvested = await harvestPortalOptions(trigger);
+      choice = resolvePortalChoice(answer, harvested.options);
+    }
     if (choice) return await openAndPickPortal(trigger, choice);
-    // Rare: input combobox with searchable options when portal harvest failed.
     try {
-      WD.warn("applyListboxPortal: no portal snap, falling back to text pick", answer, harvested.options);
+      WD.warn("applyListboxPortal: no portal snap (legacy text pick removed)", answer, harvested.options);
     } catch {}
-    return await openAndPick(trigger, typeof answer === "object" ? answer.text || answer.value : answer);
+    return false;
   }
 
   // Pointer-open portal → click the option by id / data-value / text → verify.
@@ -1215,7 +1696,10 @@
       ).filter(D.isVisible);
       popup = portals.length ? portals[portals.length - 1] : null;
     }
-    if (popup) await D.waitFor(OPTION_SEL, 2000, popup);
+    if (popup) {
+      await D.waitFor(OPTION_SEL, 2500, popup);
+      await waitForOptionsSettled({ root: popup, timeout: 2500, settleMs: 220 });
+    }
     return popup;
   }
 
@@ -1240,186 +1724,14 @@
     }
   }
 
-  // Single-select: click the listbox trigger (button OR Canvas Select combobox
-  // input), type into the search box scoped to the popup it opened, then click
-  // the matching promptOption. All lookups are confined to that popup.
+  // Legacy openAndPick (type+Enter / typeahead spam) REMOVED for all Workday
+  // tenants. Public alias routes to the design path: harvest → snap → pointer.
   async function openAndPick(trigger, value) {
-    try {
-      return await openAndPickInner(trigger, value);
-    } catch (e) {
-      if (e && e.name === "WDAborted") throw e;
-      try {
-        WD.warn("openAndPick failed", (e && e.message) || e);
-      } catch {}
-      try {
-        await closeListbox(trigger);
-      } catch {}
-      return false;
-    }
+    return await applyListboxPortal(trigger, value);
   }
 
-  async function openAndPickInner(trigger, value) {
-    const want = D.norm(value);
-    // Picking the placeholder row leaves the field on "Select One" yet the
-    // read-back below would match want === "select one" and report success.
-    if (isPlaceholderOption(want)) {
-      try {
-        WD.warn(`openAndPick refused placeholder value ${JSON.stringify(value)}`);
-      } catch {}
-      return false;
-    }
-    const ff = trigger && trigger.closest && trigger.closest('[data-automation-id^="formField-"]');
-    // PROVEN (CrowdStrike AQ accommodation): button text already reads "No" while
-    // aria-invalid="true" remains. Auto-advance's WD_VALIDATE then puts this
-    // label in lastNames → panel "Couldn't resolve on Application Questions: …"
-    // even though the UI looks filled. Early-returning on display match skipped
-    // the pointer-click that actually commits Workday's React model.
-    const markedInvalid =
-      (trigger && trigger.getAttribute("aria-invalid") === "true") ||
-      !!(ff && ff.querySelector('[aria-invalid="true"]'));
-    const cur = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
-    if (cur && valueMatchesWant(cur, want) && !markedInvalid) return true;
-    if (cur && !triggerShowsPlaceholder(trigger) && valueMatchesWant(cur, want) && !markedInvalid) return true;
-    if (markedInvalid && cur && valueMatchesWant(cur, want)) {
-      try {
-        WD.log("openAndPick forcing re-commit (display matches but aria-invalid)", { cur, want });
-      } catch {}
-    }
-
-    // ONLY real <input> Canvas Select supports typeahead + value setter.
-    // button[aria-haspopup=listbox] also has aria-haspopup=listbox — treating it
-    // as a combobox and calling setReactValue caused "Illegal invocation".
-    const isInputCombo =
-      trigger.tagName === "INPUT" &&
-      (trigger.getAttribute("role") === "combobox" || trigger.getAttribute("aria-haspopup") === "listbox");
-
-    // Canvas Select input: type the option then Enter (WAI select pattern).
-    if (isInputCombo) {
-      D.clickEl(trigger);
-      await D.delay(120);
-      try {
-        trigger.focus();
-      } catch {}
-      const str = String(value);
-      setReactValue(trigger, "");
-      trigger.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
-      await D.delay(40);
-      setReactValue(trigger, str);
-      trigger.dispatchEvent(
-        new InputEvent("input", { bubbles: true, data: str, inputType: "insertText" }),
-      );
-      const last = str.slice(-1) || "a";
-      const meta = keyMetaForChar(last);
-      fireKey(trigger, last, meta.code, meta.keyCode);
-      await D.delay(220);
-      pressEnter(trigger);
-      await D.delay(200);
-      const typed = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
-      if (valueMatchesWant(typed, want) || (!triggerShowsPlaceholder(trigger) && D.norm(typed))) {
-        await closeListbox(trigger);
-        return true;
-      }
-    }
-
-    // Open with POINTER events (proven: Canvas portal listboxes). Never toggle
-    // closed an already-open menu with a second click.
-    let popup = await openListboxForOptions(trigger);
-    if (!popup) {
-      try {
-        WD.warn("openAndPick: listbox portal did not open", trigger && trigger.id);
-      } catch {}
-      return false;
-    }
-    // Prefer a dedicated search box inside the popup — never type into the
-    // page-top How Did You Hear multiselect (same class of bug as openedListbox).
-    const search = popup
-      ? [...popup.querySelectorAll('input[data-automation-id="searchBox"], input[type="search"], input[type="text"]')]
-          .filter((el) => el !== trigger && D.isVisible(el) && !el.classList.contains("css-77hcv"))[0] || null
-      : null;
-    if (search) {
-      try {
-        search.focus();
-      } catch {}
-      D.nativeSet(search, value);
-      search.dispatchEvent(new Event("input", { bubbles: true }));
-      await D.delay(400);
-    }
-    if (!(await D.waitFor(OPTION_SEL, 2000, popup))) {
-      await closeListbox(trigger);
-      return false;
-    }
-    await D.delay(120);
-    const match = pickOption(value, popup);
-    if (!match) {
-      try {
-        WD.warn(
-          "openAndPick: no option matched",
-          value,
-          visibleOptions(popup).map((o) => (o.textContent || "").trim()),
-        );
-      } catch {}
-      await closeListbox(trigger);
-      return false;
-    }
-    const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
-    const committed = () => {
-      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
-      return valueMatchesWant(got, want) || valueMatchesWant(got, chosen);
-    };
-
-    // Strategy 1: pointer-click the row. Canvas listbox rows select on POINTER
-    // events; D.clickEl's mousedown/mouseup/click triple only DISMISSED the
-    // popup without selecting (the same defect that blocked the School prompt).
-    firePointerClick(match);
-    await D.delay(200);
-
-    if (isInputCombo && chosen && !committed()) {
-      setReactValue(trigger, chosen);
-      trigger.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          data: chosen,
-          inputType: "insertReplacementText",
-        }),
-      );
-      trigger.dispatchEvent(new Event("change", { bubbles: true }));
-      pressEnter(trigger);
-      await D.delay(150);
-    }
-
-    // Strategy 2: keyboard, exactly what the user does by hand - with the list
-    // open, type the option text so ARIA type-ahead moves the active option,
-    // then Enter to commit. Independent of any pointer handling.
-    if (!committed()) await typeAheadCommit(trigger, chosen, committed);
-
-    if (committed()) {
-      await closeListbox(trigger);
-      return true;
-    }
-    // NEVER treat bare yes/no as success just because the listbox closed.
-    // CrowdStrike Acknowledgment options are long ("Yes, I acknowledge and
-    // agree…"); typing/clicking can dismiss the menu while the button still
-    // reads "Select One". Only succeed when the visible selection matches.
-    await closeListbox(trigger);
-    if (committed()) return true;
-    if (!triggerShowsPlaceholder(trigger)) {
-      const got = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
-      if (got && (want === "yes" || want === "no") && (got.startsWith(want) || valueMatchesWant(got, want))) {
-        return true;
-      }
-    }
-    try {
-      const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
-      WD.warn(`openAndPick did not commit ${JSON.stringify(chosen)} - field reads ${JSON.stringify(got)}`);
-    } catch {}
-    return false;
-  }
-
-  // ARIA listbox type-ahead: with the list OPEN, printable keys move the active
-  // option and Enter commits it. Keys are sent to the listbox first (Canvas moves
-  // DOM focus there and tracks aria-activedescendant), then to the trigger.
-  // Enter is only sent when the active option actually matches the target text,
-  // so a non-type-ahead widget can never be made to commit the wrong option.
+  // ARIA listbox type-ahead: used only AFTER a portal option click failed to
+  // commit (openAndPickPortal). Not a primary fill strategy.
   async function typeAheadCommit(trigger, text, isCommitted) {
     const str = String(text || "").trim();
     if (!str) return;
@@ -1535,96 +1847,217 @@
     }
   }
 
-  async function fillMultiselect(multi, value) {
-    const want = D.norm(value);
-    // A committed selection is a pill/label, NOT a dropdown option.
-    const isChosen = () => promptChosen(multi, want);
-    if (isChosen()) return true;
-
-    const input = multi.querySelector("input");
-    if (!input) return false;
-
-    // Open the prompt - the search box is minimized until the field is activated.
-    const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
-    D.clickEl(opener);
-    await D.delay(150);
-    input.focus();
-    D.nativeSet(input, "");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    D.nativeSet(input, String(value));
-    input.dispatchEvent(new InputEvent("input", { bubbles: true, data: String(value) }));
-    await D.delay(450);
-
-    // Path A: a flat multiselect (e.g. Country Phone Code) surfaces the matching
-    // leaf as a clickable option - click it, then close the still-open list.
-    let match = pickOption(value);
-    if (match) {
-      D.clickEl(match);
-      await D.delay(150);
-      await closePrompt(multi, input);
+  // Universal Workday multiSelect fill (Country Phone Code and similar).
+  //
+  // Allstate Country Phone Code evidence (open portal DOM):
+  //   - ReactVirtualized list, aria-setsize=249, ~15 rows mounted
+  //   - Top viewport = Afghanistan…Azerbaijan (USA not mounted)
+  //   - No data-value attrs; no <input type=checkbox>; promptLeafNode + promptOption
+  //   - Search input has enterkeyhint="search"
+  // So APPLY must type-filter (or scroll-until-found and click WITHOUT resetting
+  // scrollTop). Full scrollCollect→scrollTop=0 before click cannot see USA.
+  async function fillMultiselect(multi, value, opts) {
+    const alreadyOpen = !!(opts && opts.alreadyOpen && isMultiListOpen(multi));
+    const preferUsaCc =
+      /united states|\(\+\s*1\s*\)/i.test(String(value || "")) ||
+      D.norm(value) === "+1" ||
+      D.norm(value) === "1";
+    const effectiveValue = preferUsaCc ? USA_PHONE_CC : value;
+    const want = D.norm(effectiveValue);
+    const usaAlreadyChosen = () =>
+      preferUsaCc &&
+      (promptChosen(multi, USA_PHONE_CC) ||
+        promptChosen(multi, "United States of America") ||
+        promptChosen(multi, "United States"));
+    const isChosen = () => promptChosen(multi, want) || usaAlreadyChosen() || promptChosen(multi, "");
+    if (promptChosen(multi, want) || usaAlreadyChosen()) {
       return true;
     }
 
-    // Path B: a hierarchical search prompt (e.g. "How Did You Hear About Us?")
-    // keeps showing parent categories; typing never exposes a clickable "LinkedIn"
-    // leaf. Enter runs Workday's search-and-select, but ONLY when the search input
-    // itself is focused - so refocus it (and re-assert the typed value) first.
-    input.focus();
-    if (document.activeElement !== input) D.clickEl(input);
-    if (D.norm(input.value) !== want) {
-      D.nativeSet(input, String(value));
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: String(value) }));
-      await D.delay(250);
+    // Keep-open path: list already scrolled near USA — click without reopen/reset.
+    let input = alreadyOpen ? multi.querySelector("input") : null;
+    if (!input) {
+      input = await openMultiPrompt(multi);
     }
-    pressEnter(input);
-    await D.delay(500);
-    if (isChosen()) {
-      await closePrompt(multi, input);
-      return true;
+    if (!input) {
+      try {
+        if (WD.aa) WD.aa("fillMultiselect FAIL", { reason: "no-input", want: String(effectiveValue).slice(0, 60) });
+      } catch {}
+      return false;
     }
 
-    // After Enter the matching leaf may render as a result - click it as a fallback.
-    if (await D.waitFor(OPTION_SEL, 1500)) {
-      await D.delay(120);
-      match = pickOption(value);
-      if (match) {
-        D.clickEl(match);
+    if (!alreadyOpen) {
+      await waitForOptionsSettled({ timeout: 3000, settleMs: 220, ownerMulti: multi, minCount: 0 });
+    }
+
+    const findUsaRow = () => {
+      const rows = readMultiOptionRows(activeMultiListRoot(multi));
+      const hit =
+        rows.find((r) => /united states of america/i.test(r.text) && /\(\+\s*1\s*\)/.test(r.text)) ||
+        rows.find((r) => /^united states\b/i.test(r.text) && !/minor outlying/i.test(r.text) && /\(\+\s*1\s*\)/.test(r.text));
+      return hit ? hit.el : null;
+    };
+
+    const findWantRow = (query) => {
+      const listRoot = activeMultiListRoot(multi);
+      let match =
+        (preferUsaCc ? findUsaRow() : null) ||
+        findMultiOptionByText(effectiveValue, multi) ||
+        findMultiOptionByText(value, multi) ||
+        (query && query !== "+1" && query !== "1" ? findMultiOptionByText(query, multi) : null) ||
+        (listRoot ? pickOption(effectiveValue, listRoot) || pickOption(value, listRoot) : null);
+      if (!match && preferUsaCc) match = findUsaRow();
+      if (!match || isCommittedFieldOption(match)) return null;
+      return match;
+    };
+
+    const tryClickWant = async (query, via) => {
+      const match = findWantRow(query);
+      if (!match) {
+        try {
+          if (WD.aa) {
+            WD.aa("fillMultiselect no-row", {
+              via: via || "click",
+              query: String(query || "").slice(0, 40),
+              mounted: readMultiOptionRows(activeMultiListRoot(multi))
+                .slice(0, 8)
+                .map((r) => String(r.text || "").slice(0, 40)),
+            });
+          }
+        } catch {}
+        return false;
+      }
+      // Prefer promptLeafNode (Allstate phone CC has no checkbox inputs).
+      const leaf = match.querySelector('[data-automation-id="promptLeafNode"]');
+      if (leaf) {
+        firePointerClick(leaf);
         await D.delay(150);
       }
+      await clickMultiOptionRow(match);
+      const ok =
+        (await waitUntilMultiCommitted(multi, want, 1800)) ||
+        (preferUsaCc && promptChosen(multi, "United States"));
+      try {
+        if (WD.aa) {
+          WD.aa("fillMultiselect click", {
+            via: via || "click",
+            ok,
+            aria: String(
+              (multi.querySelector('[data-automation-id="promptAriaInstruction"]') || {}).textContent || "",
+            ).slice(0, 80),
+          });
+        }
+      } catch {}
+      return ok;
+    };
+
+    // Keep-open harvest left the viewport near the bottom — try click first
+    // before any type/scroll that would remount from the top.
+    if (alreadyOpen && (await tryClickWant(null, "keep-open-mounted"))) {
+      await closePrompt(multi, input);
+      return true;
     }
-    // ALWAYS dismiss the prompt - leaving it open (even on failure) lets the
-    // page-top "How Did You Hear About Us?" search steal later field typing
-    // (see openedListbox comment). Proven corruption path for State/etc.
-    const ok = isChosen();
+
+    // Allstate Country Phone Code: type-filter is proven broken in AA logs —
+    // typing "United States…" leaves Afghanistan…Anguilla mounted, then Enter
+    // clears the list (mounted:[]). Skip that waste; scroll-until-found works.
+    // Other multiselects still try a short type path first.
+    const isPhoneCcMulti = preferUsaCc || /\(\+\s*\d+\s*\)/.test(String(effectiveValue || ""));
+    if (!isPhoneCcMulti && !alreadyOpen) {
+      const typeFilter = async (query) => {
+        const q = String(query || "");
+        if (!q) return;
+        input.focus();
+        D.nativeSet(input, "");
+        input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+        await D.delay(40);
+        D.nativeSet(input, q);
+        input.dispatchEvent(new InputEvent("input", { bubbles: true, data: q, inputType: "insertText" }));
+        const last = q.slice(-1) || "a";
+        pressKey(input, last, "Key" + (/[a-z]/i.test(last) ? last.toUpperCase() : "A"), last.charCodeAt(0) || 65);
+        await waitForOptionsSettled({ timeout: 2500, settleMs: 200, ownerMulti: multi, minCount: 0 });
+      };
+      for (const query of multiTypeQueries(effectiveValue).slice(0, 2)) {
+        await typeFilter(query);
+        if (await tryClickWant(query, "type:" + String(query).slice(0, 30))) {
+          await closePrompt(multi, input);
+          return true;
+        }
+      }
+    }
+
+    // Scroll until the target row mounts, then click immediately (do NOT
+    // reset scrollTop to 0 first — that unmounts USA on a 249-row list).
+    // Keep-open path: do not clear the search input (would jump the list).
+    if (!alreadyOpen) {
+      try {
+        D.nativeSet(input, "");
+        input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+      } catch {}
+      await waitForOptionsSettled({ timeout: 2000, settleMs: 180, ownerMulti: multi, minCount: 0 });
+    }
+    if (await tryClickWant(null, alreadyOpen ? "keep-open-retry" : "mounted")) {
+      await closePrompt(multi, input);
+      return true;
+    }
+    const scroller = multiListScroller(multi);
+    if (scroller) {
+      // Keep-open at bottom: USA may be just above the fold — scroll up a little first.
+      if (alreadyOpen && (scroller.scrollTop || 0) > 0) {
+        for (let i = 0; i < 12; i++) {
+          throwIfAborted();
+          if (await tryClickWant(null, "keep-open-up:" + i)) {
+            await closePrompt(multi, input);
+            return true;
+          }
+          const prev = Math.max(0, (scroller.scrollTop || 0) - Math.max(40, (scroller.clientHeight || 120) * 0.7));
+          if (prev === (scroller.scrollTop || 0)) break;
+          scroller.scrollTop = prev;
+          scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+          await D.delay(70);
+        }
+      }
+      for (let i = 0; i < 100; i++) {
+        throwIfAborted();
+        if (await tryClickWant(null, "scroll:" + i)) {
+          await closePrompt(multi, input);
+          return true;
+        }
+        const maxScroll = Math.max(0, (scroller.scrollHeight || 0) - (scroller.clientHeight || 0));
+        const next = Math.min((scroller.scrollTop || 0) + Math.max(40, (scroller.clientHeight || 120) * 0.85), maxScroll);
+        scroller.scrollTop = next;
+        scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+        await D.delay(70);
+        if (next >= maxScroll - 1) break;
+      }
+    } else if (await tryClickWant(null, "no-scroller")) {
+      await closePrompt(multi, input);
+      return true;
+    }
+
+    try {
+      if (WD.aa) {
+        WD.aa("fillMultiselect FAIL", {
+          want: String(effectiveValue).slice(0, 60),
+          chosen: isChosen(),
+          aria: String(
+            (multi.querySelector('[data-automation-id="promptAriaInstruction"]') || {}).textContent || "",
+          ).slice(0, 80),
+        });
+      }
+    } catch {}
     await closePrompt(multi, input);
-    return ok;
+    return isChosen();
   }
 
-  // ── "How Did You Hear About Us?" (source) — select-and-verify ───────────────
+  // ── "How Did You Hear About Us?" (source) ─────────────────────────────────
   //
-  // This is a hierarchical single-select SOURCE prompt. The SAME label (e.g.
-  // "LinkedIn") can appear as several leaves: a plain channel AND a REFERRAL
-  // leaf that, once selected, mounts a NEW required "referred-by name / email"
-  // field we cannot fill - that is the observed "must have a value" error. The
-  // searched leaves are byte-identical (same text + data-automation-*), so the
-  // correct one cannot be chosen up front. Strategy: try each matching leaf (then
-  // follow-up-free fallback sources) and, after each pick, detect whether a NEW
-  // required + empty field appeared. Keep the first pick that produces none. The
-  // prompt is single-select, so choosing another leaf REPLACES the prior one and
-  // unmounts its conditional follow-up - no manual de-select needed.
-
-  // Non-referral fallbacks tried, in order, only when the profile value's leaves
-  // all spawn a follow-up (or none match). pickOption's contains-match absorbs
-  // tenant wording ("Job Board" -> "Job Boards", etc.).
-  const SOURCE_FALLBACKS = [
-    "Indeed",
-    "Glassdoor",
-    "Job Board",
-    "Company Website",
-    "Company Career Site",
-    "Online",
-    "Other",
-  ];
+  // ALL Workday tenants — design path only:
+  //   open → harvest visible options → LLM returns exact option text → select it.
+  // Hierarchical (2-step):
+  //   L1 harvest → LLM picks category (e.g. Job Boards for LinkedIn) → KEEP OPEN
+  //   → L2 harvest → LLM picks leaf → select → verify no referral follow-up.
+  // Never hardcode Job Boards / Indeed / Website / random first leaves.
 
   function isSourceField(container, label) {
     try {
@@ -1632,20 +2065,6 @@
       if (/formField-source\b/i.test(id)) return true;
     } catch {}
     return /how did you hear|how.*hear about/i.test(label || "");
-  }
-
-  function sourceCandidates(primary) {
-    const out = [];
-    const seen = new Set();
-    for (const v of [primary, ...SOURCE_FALLBACKS]) {
-      const s = String(v || "").trim();
-      const k = s.toLowerCase();
-      if (s && !seen.has(k)) {
-        seen.add(k);
-        out.push(s);
-      }
-    }
-    return out;
   }
 
   // The stable ids of every visible formField wrapper - the baseline a source
@@ -1678,99 +2097,509 @@
     return out;
   }
 
-  // Commit ONE value into the source prompt using the ONLY sequence this
-  // server-backed hierarchical prompt honors (confirmed on-tenant): open → wait
-  // for the list → type → Enter (runs the search so the matching leaf surfaces &
-  // highlights) → wait until the list filters → Enter again (confirms the
-  // highlighted best match). A plain click on the typed list does NOT commit -
-  // that was the bug that left the field empty while candidates cycled. A click
-  // on the filtered option is kept only as a last-ditch fallback.
-  async function selectSourceValue(multi, value) {
-    const want = D.norm(value);
-    const isChosen = () => promptChosen(multi, want);
-    if (isChosen()) return true;
-    const input = multi.querySelector("input");
-    if (!input) return false;
-    const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
+  // Peer professional job boards / career sites. Preferred profile channel first,
+  // then nearest peer present in the harvested L2/flat list (not LinkedIn-only).
+  const SOURCE_JOB_BOARD_PEERS = [
+    "linkedin",
+    "indeed",
+    "glassdoor",
+    "ziprecruiter",
+    "monster",
+    "dice",
+    "careerbuilder",
+    "simplyhired",
+    "wellfound",
+    "angellist",
+    "otta",
+    "builtin",
+    "handshake",
+    "hired",
+    "flexjobs",
+    "remote ok",
+    "we work remotely",
+  ];
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      // 1. Open and WAIT until the prompt genuinely renders its list.
-      D.clickEl(opener);
-      input.focus();
-      await D.waitFor(OPTION_SEL, 4000);
-      await D.delay(200);
+  function sourcePreferredChannel(want) {
+    const w = String(want || "").replace(/\s+/g, " ").trim();
+    return w || "LinkedIn";
+  }
 
-      // 2. Clear + type the value (fire input + a trailing keyup so debounced
-      //    search boxes read input.value).
-      input.focus();
-      D.nativeSet(input, "");
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
-      await D.delay(80);
-      D.nativeSet(input, String(value));
-      input.dispatchEvent(new InputEvent("input", { bubbles: true, data: String(value), inputType: "insertText" }));
-      const last = String(value).slice(-1) || "a";
-      pressKey(input, last, "Key" + last.toUpperCase(), last.toUpperCase().charCodeAt(0));
-      await D.delay(150);
+  function sourceL1CategoryHint(want) {
+    const pref = sourcePreferredChannel(want);
+    const linkedIn = /linkedin/i.test(pref);
+    return (
+      `Step 1/2: CATEGORIES (folders) only. Preferred channel "${pref}". ` +
+      (linkedIn
+        ? `For LinkedIn, prefer "Social Media" when that folder exists (LinkedIn is often NOT under Job Boards). `
+        : "") +
+      `Otherwise pick the folder that would contain professional job boards / career platforms ` +
+      `(Indeed, Glassdoor, ZipRecruiter, Monster, Dice, LinkedIn, etc.) — often ` +
+      `"Job Boards", "Job Platforms", or "Social Media". Return exact category text from the list.`
+    );
+  }
 
-      // 3. Enter #1 - run the search so the matching leaf surfaces.
-      input.focus();
-      pressEnter(input);
+  function sourceL2LeafHint(want) {
+    const pref = sourcePreferredChannel(want);
+    return (
+      `Step 2/2: pick ONE leaf from THIS list. Preferred exact match: "${pref}". ` +
+      `If "${pref}" is not listed, you MUST pick a real named board that IS listed ` +
+      `(Indeed, Glassdoor, ZipRecruiter/Zip Recruiter, Monster, Dice, CareerBuilder, LinkedIn, etc.). ` +
+      `NEVER pick "Job Board Not Listed", "Other", "None", or similar catch-alls when any named ` +
+      `professional board is in the list. Return the exact option text from the list.`
+    );
+  }
 
-      // 4. WAIT until the list has filtered to our value, then Enter #2 - confirm
-      //    the highlighted best match.
-      await waitForFilteredOption(value, 3500);
-      await D.delay(150);
-      input.focus();
-      if (document.activeElement !== input) D.clickEl(input);
-      pressEnter(input);
-      await D.delay(450);
-      if (isChosen()) {
-        await closePrompt(multi, input);
-        return true;
+  function isSourceCatchAllLeaf(text) {
+    return /not listed|none of the|prefer not|decline|other\b|n\/?a\b|not applicable|unlisted/i.test(
+      String(text || ""),
+    );
+  }
+
+  // L1 folder when profile channel is LinkedIn: Social Media before Job Boards.
+  function pickSourceCategoryLocal(want, categories) {
+    const real = (categories || []).filter((o) => o && !isPlaceholderOption(o));
+    if (!real.length) return null;
+    const pref = sourcePreferredChannel(want);
+    const exact = exactOption(pref, real) || snapToHarvestedOption(pref, real);
+    if (exact && !isSourceCatchAllLeaf(exact)) return exact;
+    if (/linkedin|facebook|twitter|instagram|social/i.test(pref)) {
+      const social = real.find((o) => /social\s*media/i.test(o));
+      if (social) return social;
+    }
+    const boards = real.find((o) => /job\s*boards?|job\s*platforms?/i.test(o));
+    if (boards) return boards;
+    return null;
+  }
+
+  function sourceFlatHint(want) {
+    const pref = sourcePreferredChannel(want);
+    return (
+      `Pick ONE option from THIS list. Preferred: "${pref}". ` +
+      `If missing, pick the closest major professional job board present ` +
+      `(LinkedIn, Indeed, Glassdoor, ZipRecruiter, Monster, Dice, etc.). ` +
+      `Avoid referral variants when a direct board exists. Return exact option text.`
+    );
+  }
+
+  // Local safety after LLM: preferred channel, then peer job boards in priority order.
+  // Never returns catch-alls like "Job Board Not Listed" when a named peer exists.
+  function pickSourceLeafLocal(want, options) {
+    const real = (options || []).filter((o) => o && !isPlaceholderOption(o) && !isEmptyPromptRow(o));
+    if (!real.length) return null;
+    const named = real.filter((o) => !isSourceCatchAllLeaf(o));
+    const pool = named.length ? named : real;
+    const pref = sourcePreferredChannel(want);
+    const exact = exactOption(pref, pool) || snapToHarvestedOption(pref, pool);
+    if (exact && !isSourceCatchAllLeaf(exact)) return exact;
+    const ranked = [];
+    const prefNorm = D.norm(pref);
+    if (prefNorm && !SOURCE_JOB_BOARD_PEERS.includes(prefNorm)) ranked.push(prefNorm);
+    for (const p of SOURCE_JOB_BOARD_PEERS) {
+      if (!ranked.includes(p)) ranked.push(p);
+    }
+    // Also match "Zip Recruiter" ↔ ziprecruiter
+    const normPeer = (s) => D.norm(s).replace(/\s+/g, "");
+    for (const peer of ranked) {
+      const hit = pool.find((o) => {
+        const t = D.norm(o);
+        const tn = normPeer(o);
+        const pn = normPeer(peer);
+        return (
+          t === peer ||
+          t.includes(peer) ||
+          peer.includes(t) ||
+          tn === pn ||
+          tn.includes(pn) ||
+          pn.includes(tn)
+        );
+      });
+      if (hit && !/referr|employee name|who referred/i.test(hit) && !isSourceCatchAllLeaf(hit)) {
+        return hit;
       }
+    }
+    return null;
+  }
 
-      // 5. Last-ditch fallback: click the exact/closest filtered option.
-      if (await D.waitFor(OPTION_SEL, 1200)) {
-        await D.delay(120);
-        const match = pickOption(value);
-        if (match) {
-          D.clickEl(match);
-          await D.delay(200);
+  // LLM answer first (exact snap onto harvested list). Local peers only if LLM empty.
+  function chooseSourceLeaf(want, options, llmRaw) {
+    const fromLlm = snapToHarvestedOption(valueText(llmRaw) || llmRaw, options);
+    if (fromLlm) return fromLlm;
+    return pickSourceLeafLocal(want, options);
+  }
+
+  // Ask the options LLM for one pick snapped onto the live harvested list.
+  // `hint` steers category vs leaf selection; the model must return exact list text.
+  async function askLlmForOptionPick(label, want, options, portalOptions, hint) {
+    const texts = (options || []).filter((o) => o && !isPlaceholderOption(o) && !isEmptyPromptRow(o));
+    if (!texts.length) return null;
+    const portals =
+      portalOptions && portalOptions.length
+        ? portalOptions
+        : texts.map((t) => ({ id: t, value: t, text: t }));
+    const cid = "srcpick_" + Date.now() + "_" + Math.floor(Math.random() * 1e4);
+    const portalHtml = buildPortalOptionsHtml(cid, label, portals, "");
+    // Hint already carries preferred + peer guidance; do not force LinkedIn-only wording.
+    const fullLabel = hint
+      ? `${label} — ${hint} Reply with ONE exact option text from the list.`
+      : label;
+    try {
+      WD.log(`source LLM ask: want='${want}' options=${texts.length}`, texts.slice(0, 15));
+    } catch {}
+    try {
+      const part = await requestOptionMatches([
+        {
+          cid,
+          label: fullLabel,
+          want: want || undefined,
+          kind: "select",
+          required: true,
+          options: texts,
+          portalOptions: portals,
+          portalHtml,
+        },
+      ]);
+      const raw = part && part[cid];
+      if (raw == null || raw === "") {
+        try {
+          WD.warn("source LLM returned empty", fullLabel.slice(0, 80));
+        } catch {}
+        return null;
+      }
+      let picked = null;
+      if (portals.length) {
+        const choice = resolvePortalChoice(raw, portals);
+        if (choice) picked = choice.text || choice.value || null;
+      }
+      if (!picked) picked = snapToHarvestedOption(raw, texts);
+      try {
+        WD.log(`source LLM pick: raw=${JSON.stringify(raw)} → '${picked}'`);
+      } catch {}
+      return picked;
+    } catch (e) {
+      if (e && e.name === "WDAborted") throw e;
+      return null;
+    }
+  }
+
+  // Click a SOURCE list row. Prefer promptOption text — checkbox click can fail
+  // to commit single-select source leaves (log: Website / Direct Source no commit).
+  async function clickSourceListOption(el) {
+    if (!el) return false;
+    const row =
+      el.closest('[data-automation-id="menuItem"]') ||
+      el.closest('[role="option"]') ||
+      el;
+    const promptOpt = row.querySelector('[data-automation-id="promptOption"]') || row;
+    try {
+      promptOpt.scrollIntoView({ block: "center", behavior: "instant" });
+    } catch {}
+    firePointerClick(promptOpt);
+    await D.delay(220);
+    // If still not selected, try the outer menuItem once (no checkbox).
+    firePointerClick(row);
+    await D.delay(180);
+    return true;
+  }
+
+  // Drill into an L1/L2 folder (chevron category) — never checkbox.
+  async function clickSourceFolder(el) {
+    if (!el) return false;
+    const row =
+      el.closest('[data-automation-id="menuItem"]') ||
+      el.closest('[role="option"]') ||
+      el;
+    const promptOpt = row.querySelector('[data-automation-id="promptOption"]') || row;
+    firePointerClick(promptOpt);
+    await D.delay(150);
+    const chevron = row.querySelector(
+      '[data-automation-id="promptOptionChevron"], [data-automation-id="chevron"]',
+    );
+    if (chevron) {
+      firePointerClick(chevron);
+      await D.delay(120);
+    }
+    return true;
+  }
+
+  // Source helpers for batch harvest → LLM → apply (and thin recovery fallback).
+  // NO hardcoded Job Boards / Indeed / random Website clicks.
+
+  async function harvestSourceLiveRows(multi) {
+    await waitForOptionsSettled({ timeout: 3500, settleMs: 280, ownerMulti: multi });
+    // Short lists (Allstate L1=4 folders, Social Media L2=7) fit the viewport —
+    // skip scrollCollect. Long virtualized L2 still needs a full scroll pass.
+    if (!multiListNeedsScroll(multi)) {
+      return readMultiOptionRows(activeMultiListRoot(multi));
+    }
+    const collected = await scrollCollectMultiOptions(multi, { resetToTop: true });
+    if (collected && collected.length) {
+      return collected.map((o) => ({
+        el: null,
+        id: o.id,
+        value: o.value,
+        text: o.text,
+        hierarchical: !!o.hierarchical,
+      }));
+    }
+    return readMultiOptionRows(activeMultiListRoot(multi));
+  }
+
+  function sourceFolderRows(live) {
+    let folders = (live || []).filter((r) => r.hierarchical);
+    if (!folders.length) {
+      const guessed = (live || []).filter((r) => looksLikeSourceCategory(r.text));
+      if (guessed.length >= 2) folders = guessed;
+    }
+    return folders;
+  }
+
+  function rowsToPortals(rows) {
+    return (rows || [])
+      .filter((r) => r && r.text && !isPlaceholderOption(r.text) && !isEmptyPromptRow(r.text))
+      .map((r) => ({
+        id: r.id || r.text,
+        value: r.value || r.id || r.text,
+        text: r.text,
+        hierarchical: !!r.hierarchical,
+      }));
+  }
+
+  // Open → harvest L1 (categories or flat list) → close. Does not select.
+  async function harvestSourceL1(multi) {
+    const input = multi && multi.querySelector("input");
+    if (!input) return { hierarchical: false, texts: [], portals: [], rows: [] };
+    await openMultiPrompt(multi);
+    const live = await harvestSourceLiveRows(multi);
+    if (!live.length) {
+      await closePrompt(multi, input);
+      return { hierarchical: false, texts: [], portals: [], rows: [] };
+    }
+    const folders = sourceFolderRows(live);
+    const hierarchical = folders.length > 0;
+    const rows = hierarchical ? folders : live;
+    const portals = rowsToPortals(rows);
+    const texts = portals.map((p) => p.text);
+    try {
+      WD.log(
+        hierarchical ? "source L1 harvest (categories)" : "source flat harvest",
+        texts.slice(0, 20),
+      );
+    } catch {}
+    await closePrompt(multi, input);
+    return { hierarchical, texts, portals, rows };
+  }
+
+  // Re-open, select L1 category, keep prompt open for L2 harvest.
+  // L1 is usually a short non-virtualized folder list (Allstate: 4 categories) —
+  // do NOT full scrollCollect again (that re-did HARVEST work every run).
+  async function applySourceL1KeepOpen(multi, category) {
+    const input = multi && multi.querySelector("input");
+    if (!input || !category) return false;
+    await openMultiPrompt(multi);
+    await waitForOptionsSettled({ timeout: 3000, settleMs: 220, ownerMulti: multi, minCount: 1 });
+    let folderEl = findMultiOptionByText(category, multi);
+    if (!folderEl) {
+      // Rare: long L1 list — only then scroll-hunt.
+      await harvestSourceLiveRows(multi);
+      folderEl = findMultiOptionByText(category, multi);
+    }
+    if (!folderEl) {
+      try {
+        WD.warn(`source: L1 category '${category}' not in DOM`);
+      } catch {}
+      await closePrompt(multi, input);
+      return false;
+    }
+    try {
+      WD.log(`source: selecting L1 category '${category}' (keep-open)`);
+    } catch {}
+    await clickSourceFolder(folderEl);
+    await waitForSourceDrillDown(4500, multi);
+    return true;
+  }
+
+  // Prompt must already be drilled to L2. Returns leaf rows (non-folders).
+  async function harvestSourceL2(multi) {
+    const live = await harvestSourceLiveRows(multi);
+    const l2 = live.filter((r) => !r.hierarchical);
+    const portals = rowsToPortals(l2);
+    try {
+      WD.log(
+        `source L2 harvest count=${portals.length}`,
+        portals.map((r) => r.text).slice(0, 20),
+      );
+    } catch {}
+    return { texts: portals.map((p) => p.text), portals, rows: l2 };
+  }
+
+  async function applySourceLeaf(multi, leafText, baselineKeys) {
+    const input = multi && multi.querySelector("input");
+    if (!input || !leafText) return false;
+    let leafEl = findMultiOptionByText(leafText, multi);
+    if (!leafEl) {
+      const listRoot = activeMultiListRoot(multi);
+      leafEl = listRoot ? pickOption(leafText, listRoot) : null;
+    }
+    // Virtualized L2: leaf may be below the fold after harvest scrollTop reset.
+    if (!leafEl) {
+      const root0 = activeMultiListRoot(multi);
+      const scroller =
+        (root0 &&
+          (root0.querySelector(".ReactVirtualized__List") ||
+            (root0.classList && root0.classList.contains("ReactVirtualized__List") && root0) ||
+            root0)) ||
+        null;
+      if (scroller) {
+        for (let i = 0; i < 80 && !leafEl; i++) {
+          throwIfAborted();
+          leafEl = findMultiOptionByText(leafText, multi);
+          if (leafEl) break;
+          const maxScroll = Math.max(0, (scroller.scrollHeight || 0) - (scroller.clientHeight || 0));
+          const next = Math.min(
+            (scroller.scrollTop || 0) + Math.max(40, (scroller.clientHeight || 120) * 0.85),
+            maxScroll,
+          );
+          scroller.scrollTop = next;
+          scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+          await D.delay(70);
+          if (next >= maxScroll - 1) break;
         }
       }
-      if (isChosen()) {
-        await closePrompt(multi, input);
-        return true;
-      }
-      await closePrompt(multi, input);
-      await D.delay(200);
     }
-    return isChosen();
+    if (!leafEl) {
+      try {
+        WD.warn(`source: leaf '${leafText}' not in DOM`);
+      } catch {}
+      await closePrompt(multi, input);
+      return false;
+    }
+    try {
+      WD.log(`source: selecting leaf '${leafText}'`);
+    } catch {}
+    await clickSourceListOption(leafEl);
+    const committed = await waitUntilMultiCommitted(multi, leafText, 2000);
+    if (!committed) {
+      const after = readMultiOptionRows(activeMultiListRoot(multi));
+      try {
+        WD.warn(
+          `source leaf '${leafText}' did not commit`,
+          after.slice(0, 8).map((r) => r.text),
+        );
+      } catch {}
+      await closePrompt(multi, input);
+      return false;
+    }
+    await closePrompt(multi, input);
+    await D.delay(250);
+    const followups = newRequiredEmptyFollowups(baselineKeys);
+    if (followups.length) {
+      try {
+        WD.log(`source: '${leafText}' triggered follow-up ${JSON.stringify(followups)}`);
+      } catch {}
+      return false;
+    }
+    return true;
+  }
+
+  // Fallback for recovery/recheck when batch path did not pre-resolve source.
+  async function fillSourceHierarchical(multi, want, container, baselineKeys) {
+    const input = multi.querySelector("input");
+    if (!input) return false;
+    if (promptChosen(multi, want) && !newRequiredEmptyFollowups(baselineKeys).length) {
+      return true;
+    }
+    const l1 = await harvestSourceL1(multi);
+    if (!l1.texts.length) return false;
+
+    if (!l1.hierarchical) {
+      let pick = exactOption(want, l1.texts);
+      if (!pick) {
+        pick = await askLlmForOptionPick(
+          "How Did You Hear About Us?",
+          want,
+          l1.texts,
+          l1.portals,
+          sourceFlatHint(want),
+        );
+      }
+      pick = snapToHarvestedOption(pick, l1.texts) || pickSourceLeafLocal(want, l1.texts);
+      if (!pick) return false;
+      await openMultiPrompt(multi);
+      await harvestSourceLiveRows(multi);
+      return applySourceLeaf(multi, pick, baselineKeys);
+    }
+
+    let category = await askLlmForOptionPick(
+      "How Did You Hear About Us? (category)",
+      want,
+      l1.texts,
+      l1.portals,
+      sourceL1CategoryHint(want),
+    );
+    category =
+      snapToHarvestedOption(category, l1.texts) ||
+      pickSourceCategoryLocal(want, l1.texts);
+    if (!category) {
+      try {
+        WD.warn("source: LLM/exact did not pick an L1 category from harvested list");
+      } catch {}
+      return false;
+    }
+    if (!(await applySourceL1KeepOpen(multi, category))) return false;
+    const l2 = await harvestSourceL2(multi);
+    if (!l2.texts.length) {
+      await closePrompt(multi, input);
+      return false;
+    }
+    let leaf = await askLlmForOptionPick(
+      "How Did You Hear About Us? (specific source)",
+      want,
+      l2.texts,
+      l2.portals,
+      sourceL2LeafHint(want),
+    );
+    leaf = chooseSourceLeaf(want, l2.texts, leaf);
+    if (!leaf) {
+      try {
+        WD.warn("source: LLM/peer did not pick an L2 leaf from harvested list");
+      } catch {}
+      await closePrompt(multi, input);
+      return false;
+    }
+    return applySourceLeaf(multi, leaf, baselineKeys);
   }
 
   async function fillSourcePrompt(multi, primaryValue, container) {
-    // Recovery re-entry: never re-open a committed source prompt - re-opening
-    // clears the prior selection (documented corruption path).
-    if (multiSelectedText(container)) return true;
+    // Recovery: skip rewrite when already committed with no referral follow-up.
+    if (multiSelectedText(container)) {
+      const hasReferralFollowup = D.qa('[data-automation-id^="formField-"]').some((ff) => {
+        if (!D.isVisible(ff)) return false;
+        if (!isRequired(ff)) return false;
+        if (fieldIsFilled(ff)) return false;
+        const lab = (fieldLabel(ff) || "").toLowerCase();
+        return /referr|who referred|employee name|referrer/.test(lab);
+      });
+      if (!hasReferralFollowup) return true;
+    }
 
     const baselineKeys = visibleFormFieldKeys();
-    for (const value of sourceCandidates(primaryValue)) {
-      const chosen = await selectSourceValue(multi, value);
-      if (!chosen) continue; // value not offered by this tenant - try the next
-      await D.delay(200);
-      const followups = newRequiredEmptyFollowups(baselineKeys);
-      if (!followups.length) {
+    const want = String(primaryValue || "").trim();
+    if (!want) return false;
+    try {
+      const ok = await fillSourceHierarchical(multi, want, container, baselineKeys);
+      if (ok) {
         try {
-          WD.log(`source: '${value}' selected cleanly (no required follow-up)`);
+          WD.log(`source: '${want}' filled via harvest→LLM→select`);
         } catch {}
         return true;
       }
-      // Referral-type leaf: it spawned an unfillable required "name/email" field.
-      // The next candidate's selection replaces this one (single-select prompt)
-      // and unmounts the follow-up, so just move on to a follow-up-free source.
+    } catch (e) {
+      if (e && e.name === "WDAborted") throw e;
       try {
-        WD.log(`source: '${value}' triggered required follow-up ${JSON.stringify(followups)} - trying next`);
+        WD.warn("fillSourceHierarchical error", e && e.message);
       } catch {}
+      const input = multi.querySelector("input");
+      if (input) await closePrompt(multi, input);
     }
     return false;
   }
@@ -2023,7 +2852,15 @@
   // Detect the control inside a formField wrapper and write the value.
   async function writeField(container, value, label) {
     if (value == null || value === "") return null;
-    const raw = String(value);
+    let raw = String(value);
+    // Phone Number: national digits only — never write "+1…" into this field.
+    try {
+      const aid = (container.getAttribute && container.getAttribute("data-automation-id")) || "";
+      if (/formField-phoneNumber\b/i.test(aid) || isPhoneNumberField("", label)) {
+        raw = nationalPhoneDigits(raw);
+        if (!raw) return null;
+      }
+    } catch {}
     // Veteran EEO tokens must be resolved against THIS tenant's live options.
     if (raw === "__EEO_VETERAN_TRUE__" || raw === "__EEO_VETERAN_FALSE__") {
       return await fillVeteranField(container, raw === "__EEO_VETERAN_TRUE__");
@@ -2274,6 +3111,9 @@
     }
     const e = (profile && profile.eeo) || {};
     const low = (label || "").toLowerCase();
+    if (/how did you hear|how.*hear about/.test(low) && profile && profile.howDidYouHear) {
+      return String(profile.howDidYouHear);
+    }
     if (/hispanic or latino/.test(low) && e.hispanicLatino != null) return e.hispanicLatino ? "Yes" : "No";
     if (/\bgender\b|\bsex\b/.test(low) && e.gender) return String(e.gender);
     if (/sexual orientation|lgbtq/.test(low)) return String(e.sexualOrientation || "I don't wish to answer");
@@ -2294,6 +3134,178 @@
     return undefined;
   }
 
+  // Batch resolve: one (chunked) WD_RESOLVE for pre-harvested items. Does not write DOM.
+  async function resolveItemsWithLLM(items, profile) {
+    const values = {};
+    if (!items || !items.length) return values;
+    WD._resolveCache = WD._resolveCache || {};
+    const needLlm = [];
+    for (const item of items) {
+      throwIfAborted();
+      const phoneCc = isCountryPhoneCodeField(item.key, item.label) || /country phone code/i.test(item.label || "");
+      const phoneNum = isPhoneNumberField(item.key, item.label) || (/^phone number$/i.test(String(item.label || "").trim()) && !(item.options && item.options.length));
+      const cacheKey = (item.label || "").toLowerCase().trim().slice(0, 120);
+      if (cacheKey && WD._resolveCache[cacheKey] && !phoneCc && !phoneNum) {
+        const cached = WD._resolveCache[cacheKey];
+        if (item.portalOptions && item.portalOptions.length) {
+          const choice = resolvePortalChoice(
+            cached && (cached.value || cached.id || cached.text || cached),
+            item.portalOptions,
+          );
+          if (choice) {
+            values[item.cid] = choice;
+            continue;
+          }
+        } else {
+          const snapped = snapToHarvestedOption(cached, item.options);
+          if (snapped) {
+            values[item.cid] = snapped;
+            continue;
+          }
+        }
+      }
+      // Phone CC + Phone Number: always ask LLM (design: model picks exact option /
+      // 10 digits from harvested list + candidate hint). No local override.
+      if (phoneCc || phoneNum) {
+        needLlm.push(item);
+        continue;
+      }
+      if (item.want && item.portalOptions && item.portalOptions.length) {
+        // Exact match only for pre-LLM want snap — soft resolvePortalChoice can
+        // mis-pick (e.g. bare "+1" → Anguilla). Hierarchical source L1 never snaps want.
+        if (item.sourceHierarchical) {
+          if (exactOption(item.want, item.options)) {
+            const fromWant = portalChoiceExact(item.want, item.portalOptions);
+            if (fromWant) {
+              values[item.cid] = fromWant;
+              continue;
+            }
+          }
+        } else {
+          const fromWant = portalChoiceExact(item.want, item.portalOptions);
+          if (fromWant) {
+            values[item.cid] = fromWant;
+            continue;
+          }
+        }
+      }
+      if (item.want && item.options && item.options.length && !item.sourceHierarchical) {
+        const fromWant = exactOption(item.want, item.options);
+        if (fromWant) {
+          values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      needLlm.push(item);
+    }
+    try {
+      const BATCH = 8;
+      for (let b = 0; b < needLlm.length; b += BATCH) {
+        throwIfAborted();
+        const chunk = needLlm.slice(b, b + BATCH);
+        const part = await requestOptionMatches(chunk);
+        for (const item of chunk) {
+          const raw = part && part[item.cid];
+          if (raw == null || raw === "") continue;
+          const phoneCc = isCountryPhoneCodeField(item.key, item.label) || /country phone code/i.test(item.label || "");
+          const phoneNum = isPhoneNumberField(item.key, item.label) || (/phone number/i.test(item.label || "") && !(item.options && item.options.length));
+          if (phoneCc) {
+            // Exact LLM option text only — never force USA over the model.
+            const text = snapExactPhoneCcAnswer(raw, item.options, item.portalOptions);
+            if (text) {
+              const hit =
+                (item.portalOptions || []).find((o) => D.norm(o.text) === D.norm(text)) ||
+                { id: text, value: text, text };
+              values[item.cid] = hit;
+            }
+            continue;
+          }
+          if (phoneNum) {
+            // Format cleanup only (strip +1 / punctuation) — not a different answer.
+            values[item.cid] = nationalPhoneDigits(raw) || nationalPhoneDigits(item.want);
+            continue;
+          }
+          if (item.portalOptions && item.portalOptions.length) {
+            const choice = portalChoiceExact(raw, item.portalOptions) || resolvePortalChoice(raw, item.portalOptions);
+            if (choice) values[item.cid] = choice;
+            else {
+              const snapped = snapToHarvestedOption(raw, item.options);
+              if (snapped) values[item.cid] = snapped;
+            }
+          } else if (item.options && item.options.length) {
+            const snapped = snapToHarvestedOption(raw, item.options);
+            if (snapped) values[item.cid] = snapped;
+          } else {
+            values[item.cid] = raw;
+          }
+        }
+      }
+    } catch (e) {
+      if (e && e.name === "WDAborted") throw e;
+    }
+    for (const item of items) {
+      if (values[item.cid]) continue;
+      const phoneCc = isCountryPhoneCodeField(item.key, item.label) || /country phone code/i.test(item.label || "");
+      const phoneNum = isPhoneNumberField(item.key, item.label) || (/phone number/i.test(item.label || "") && !(item.options && item.options.length));
+      if (phoneCc) {
+        // LLM empty only: exact snap of profile want onto harvested list.
+        const text = snapExactPhoneCcAnswer(item.want, item.options, item.portalOptions);
+        if (text) {
+          values[item.cid] =
+            (item.portalOptions || []).find((o) => D.norm(o.text) === D.norm(text)) ||
+            { id: text, value: text, text };
+        }
+        continue;
+      }
+      if (phoneNum) {
+        const digits = nationalPhoneDigits(item.want);
+        if (digits) values[item.cid] = digits;
+        continue;
+      }
+      if (item.want && item.portalOptions && item.portalOptions.length && !item.sourceHierarchical) {
+        const fromWant = resolvePortalChoice(item.want, item.portalOptions);
+        if (fromWant) {
+          values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      if (item.want && !item.sourceHierarchical) {
+        const fromWant = snapToHarvestedOption(item.want, item.options);
+        if (fromWant) {
+          values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      if (item.options && item.options.length) {
+        const local = localScreeningPick(item.label, profile, item.options);
+        if (local) {
+          if (item.portalOptions && item.portalOptions.length) {
+            const snapped = resolvePortalChoice(local, item.portalOptions);
+            if (snapped) values[item.cid] = snapped;
+          } else {
+            values[item.cid] = local;
+          }
+        }
+      }
+      // Text fields: fall back to profile want when LLM returned empty.
+      if (!values[item.cid] && item.want && !(item.options && item.options.length)) {
+        values[item.cid] = item.want;
+      }
+    }
+    return values;
+  }
+
+  function valueText(value) {
+    if (value == null) return "";
+    if (typeof value === "object") return String(value.text || value.value || value.id || "").trim();
+    return String(value).trim();
+  }
+
+  // Shared by every flat Workday step (My Information, Application Questions,
+  // Voluntary Disclosures, Self Identify, …): collect → harvest → one LLM batch
+  // → apply. The ONLY extra round-trip is How Did You Hear L2 when that field is
+  // hierarchical (category folders). Experience work/edu panels stay in
+  // fillExperienceExtras (search prompts + resume), not this path.
   async function fillStep(profile, options, rep) {
     options = options || {};
     const onlyInvalid = Array.isArray(options.onlyInvalid) ? options.onlyInvalid : null;
@@ -2313,8 +3325,8 @@
     }
     const valueByKey = buildValueMap(profile);
     const containers = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible);
-    const llmTargets = [];
-    const decisions = { skip: 0, deferLlm: 0, write: 0, experience: 0 };
+    const decisions = { skip: 0, collect: 0, harvest: 0, write: 0, experience: 0 };
+    const targets = [];
     try {
       if (WD.aa) {
         const inventory = containers.slice(0, 40).map((c) => {
@@ -2360,6 +3372,8 @@
         });
       }
     } catch {}
+
+    // ── Phase 1: COLLECT (no DOM writes, no per-field LLM) ──
     for (const c of containers) {
       throwIfAborted();
       const aid = c.getAttribute("data-automation-id") || "";
@@ -2372,7 +3386,13 @@
           if (WD.aa) WD.aa("fillStep SKIP", { reason, key: key.slice(0, 40), labelHead, ...(extra || {}) });
         } catch {}
       };
-      // Delegate all Work Experience / Education panel fields to fillExperienceExtras.
+      if (
+        c.querySelector('input[type="file"]') ||
+        /upload a file|attach.*resume|drop files here/i.test(label || "")
+      ) {
+        skipLog("file-upload-delegated");
+        continue;
+      }
       if (inExperiencePanel(c)) {
         decisions.experience += 1;
         skipLog("inExperiencePanel");
@@ -2394,11 +3414,6 @@
         });
         continue;
       }
-      // Already failed this attempt — do not re-open widgets on recovery passes.
-      // EXCEPTION: onlyInvalid + still aria-invalid must be allowed to re-commit.
-      // Otherwise a prior false openAndPick / LLM miss permanently skips the field
-      // while the UI may already show "No" (CrowdStrike accommodation — panel
-      // Couldn't resolve + Application Questions 0 filled).
       if (shouldSkipFailedField(key, label)) {
         const stillInvalid = !!(onlyInvalid && c.querySelector('[aria-invalid="true"]'));
         if (!stillInvalid) {
@@ -2409,29 +3424,13 @@
           continue;
         }
         try {
-          if (WD.aa) {
-            WD.aa("fillStep bypass-failed-skip", { key: key.slice(0, 40), labelHead });
-          }
+          if (WD.aa) WD.aa("fillStep bypass-failed-skip", { key: key.slice(0, 40), labelHead });
         } catch {}
       }
-      // CC-305 disability is handled exclusively by fillDisabilitySelfId (label click).
-      // Must NOT swallow interview Acknowledgment listboxes (label contains "disability").
       if (isDisabilityContainer(c, label)) {
-        if (/acknowledg|generative\s*ai|personally participate/i.test(label || "")) {
-          try {
-            WD.warn("ACK TRACE unexpectedly classified as disability container — check isDisabilityContainer", {
-              labelHead: (label || "").slice(0, 120),
-            });
-          } catch {}
-        }
         skipLog("isDisabilityContainer");
         continue;
       }
-
-      // Recovery re-entry: Workday often leaves aria-invalid=true until the next
-      // Save even after a successful write. Re-opening How Did You Hear / State
-      // prompts in that window clears the first good selection. Skip rewrite when
-      // committed — EXCEPT simple listboxes that are STILL aria-invalid.
       if (onlyInvalid && fieldHasCommittedValue(c)) {
         const stillInvalid = !!c.querySelector('[aria-invalid="true"]');
         const simpleList =
@@ -2443,95 +3442,544 @@
         }
       }
 
-      // ── Option controls: ALWAYS harvest options → LLM returns exact option ──
-      // Do NOT apply resolveByLabel predefined Yes/No/EEO strings to listboxes.
-      if (isOptionBearingContainer(c)) {
-        const want = profileWantForField(key, label, profile, valueByKey);
-        llmTargets.push({
+      const want = profileWantForField(key, label, profile, valueByKey);
+      const isOption = isOptionBearingContainer(c);
+      const isSource = isSourceField(c, label);
+      const multi = c.querySelector('[data-automation-id="multiSelectContainer"]');
+
+      if (isOption) {
+        // Always collect option-bearing controls (required or optional). The
+        // shared autofill LLM fills answerable optional checkboxes / skills /
+        // dropdowns; do not pre-filter on required.
+        decisions.collect += 1;
+        let optionWant = want || undefined;
+        // Country Phone Code: prefer full USA label as candidate hint for the LLM.
+        if (isCountryPhoneCodeField(key, label)) {
+          optionWant = USA_PHONE_CC;
+        }
+        targets.push({
           container: c,
           key,
-          label: label || fieldLabel(c) || key,
+          label: label || key,
           required: isRequired(c),
-          want: want || undefined,
+          want: optionWant,
+          isOption: true,
+          isSource,
+          multi,
+          localOnly: false,
         });
-        decisions.deferLlm += 1;
-        try {
-          if (WD.aa) {
-            WD.aa("fillStep DEFER-LLM", {
-              key: key.slice(0, 40),
-              labelHead,
-              required: isRequired(c),
-              want: want || null,
-              ariaInvalid: !!c.querySelector('[aria-invalid="true"]'),
-              shown: (() => {
-                const t = listboxTrigger(c);
-                return t ? String(selectDisplayValue(t) || triggerCurrentValue(t) || "").slice(0, 40) : null;
-              })(),
-            });
+        continue;
+      }
+
+      // Text / date / textarea
+      let value = key in valueByKey ? valueByKey[key] : undefined;
+      if (value === undefined) value = resolveByLabel(label, profile);
+      // Phone Number: candidate digits for the LLM prompt (exact 10-digit reply).
+      if (isPhoneNumberField(key, label)) {
+        value = nationalPhoneDigits(value != null ? value : want);
+      }
+      if ((value === undefined || value === null || value === "") && isDateContainer(c)) {
+        value = todayDate();
+      }
+      // Collect every text field (required or optional). The LLM leaves value
+      // empty only when unanswerable or a negative conditional follow-up.
+      // Dates stay local (no LLM); everything else joins the batch.
+      if (isDateContainer(c) && value != null && value !== "") {
+        decisions.collect += 1;
+        targets.push({
+          container: c,
+          key,
+          label: label || key,
+          required: isRequired(c),
+          want: String(value),
+          isOption: false,
+          isSource: false,
+          localOnly: true,
+          kind: "date",
+          options: [],
+          portalOptions: [],
+        });
+        continue;
+      }
+      decisions.collect += 1;
+      targets.push({
+        container: c,
+        key,
+        label: label || key,
+        required: isRequired(c),
+        want: value != null && value !== "" ? String(value) : want || undefined,
+        isOption: false,
+        isSource: false,
+        localOnly: false,
+      });
+    }
+
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep COLLECT", {
+          count: targets.length,
+          labels: targets.map((t) => String(t.label || t.key || "").slice(0, 60)),
+          decisions,
+        });
+      }
+    } catch {}
+
+    if (onSelfIdOrVoluntaryPage()) {
+      await fillDisabilitySelfId(profile, rep);
+    }
+
+    // ── Phase 2: HARVEST option lists ──
+    // Non-phone-CC first (each prompt closed). Phone CC last: scroll-harvest,
+    // leave list OPEN near the bottom across the LLM wait, apply immediately after.
+    let cidSeq = 0;
+    const harvestSummary = [];
+    let keepOpenPhoneTarget = null;
+
+    const assignCid = (t) => {
+      t.cid = ((t.key || "field").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "f") + "_" + cidSeq++;
+    };
+
+    const harvestOneTarget = async (t, phoneKeepOpen) => {
+      throwIfAborted();
+      if (t.localOnly) {
+        assignCid(t);
+        return;
+      }
+      assignCid(t);
+      if (t.isSource && t.multi) {
+        const l1 = await harvestSourceL1(t.multi);
+        t.hierarchical = l1.hierarchical;
+        t.options = l1.texts;
+        t.portalOptions = l1.portals;
+        t.kind = "select";
+        t.llmLabel = t.hierarchical
+          ? `${t.label} (category) — ${sourceL1CategoryHint(t.want)}`
+          : `${t.label} — ${sourceFlatHint(t.want)}`;
+        decisions.harvest += 1;
+        harvestSummary.push({
+          key: t.key,
+          labelHead: String(t.label).slice(0, 50),
+          options: t.options.length,
+          hierarchical: !!t.hierarchical,
+        });
+        await closeAllListboxes();
+        return;
+      }
+      if (t.isOption) {
+        if (phoneKeepOpen && t.multi) {
+          // Full 249-list harvest; stay at bottom for post-LLM click.
+          let harvested = { options: [], portalOptions: [] };
+          try {
+            harvested = await harvestMultiOptions(t.multi, { keepOpen: true, resetToTop: false });
+          } catch (e) {
+            if (e && e.name === "WDAborted") throw e;
           }
+          t.kind = "select";
+          t.options = harvested.options || [];
+          t.portalOptions = harvested.portalOptions || [];
+          t.keepOpenMulti = true;
+          keepOpenPhoneTarget = t;
+          const usa = exactUsaPhoneCcOption(t.options || []);
+          if (usa) t.want = usa;
+          else if (!t.want) t.want = USA_PHONE_CC;
+          t.options = prioritizeUsaPhoneCcTexts(t.options || []);
+          t.portalOptions = prioritizeUsaPhoneCcPortals(t.portalOptions || []);
+          t.llmLabel = phoneCountryCodeLlmHint(t.want);
+          t.portalHtml = buildPortalOptionsHtml(t.cid, t.llmLabel, t.portalOptions, "");
+          decisions.harvest += 1;
+          harvestSummary.push({
+            key: t.key,
+            labelHead: String(t.label).slice(0, 50),
+            options: (t.options || []).length,
+            kind: t.kind,
+            keepOpen: true,
+          });
+          // Do NOT closeAllListboxes — phone list must stay open for APPLY.
+          return;
+        }
+        let info = null;
+        try {
+          info = await classifyControl(t.container);
+        } catch (e) {
+          if (e && e.name === "WDAborted") throw e;
+        }
+        if (!info) {
+          t.kind = "select";
+          t.options = [];
+          t.portalOptions = [];
+        } else {
+          t.kind = info.kind || "select";
+          t.options = info.options || [];
+          t.portalOptions = info.portalOptions || [];
+          t.portalHtml = info.portalHtml || "";
+        }
+        t.llmLabel = t.label;
+        if (isCountryPhoneCodeField(t.key, t.label)) {
+          const usa = exactUsaPhoneCcOption(t.options || []);
+          if (usa) t.want = usa;
+          else if (!t.want) t.want = USA_PHONE_CC;
+          t.options = prioritizeUsaPhoneCcTexts(t.options || []);
+          t.portalOptions = prioritizeUsaPhoneCcPortals(t.portalOptions || []);
+          t.llmLabel = phoneCountryCodeLlmHint(t.want);
+          t.portalHtml = buildPortalOptionsHtml(t.cid, t.llmLabel, t.portalOptions, "");
+        }
+        decisions.harvest += 1;
+        harvestSummary.push({
+          key: t.key,
+          labelHead: String(t.label).slice(0, 50),
+          options: (t.options || []).length,
+          kind: t.kind,
+        });
+        await closeAllListboxes();
+        return;
+      }
+      // Text / textarea / tel / email
+      let info = null;
+      try {
+        info = await classifyControl(t.container);
+      } catch (e) {
+        if (e && e.name === "WDAborted") throw e;
+      }
+      if (!info) {
+        t.kind = t.container.querySelector("textarea") ? "textarea" : "text";
+        t.options = [];
+        t.portalOptions = [];
+      } else {
+        t.kind = info.kind || "text";
+        t.options = info.options || [];
+        t.portalOptions = info.portalOptions || [];
+      }
+      t.llmLabel = isPhoneNumberField(t.key, t.label)
+        ? phoneNumberLlmHint(t.want)
+        : t.label;
+    };
+
+    const phoneCcTargets = [];
+    const otherTargets = [];
+    for (const t of targets) {
+      if (t.isOption && !t.isSource && isCountryPhoneCodeField(t.key, t.label) && t.multi) {
+        phoneCcTargets.push(t);
+      } else {
+        otherTargets.push(t);
+      }
+    }
+    for (const t of otherTargets) await harvestOneTarget(t, false);
+    for (const t of phoneCcTargets) await harvestOneTarget(t, true);
+
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep HARVEST", {
+          count: harvestSummary.length,
+          fields: harvestSummary,
+          keepOpenPhone: !!(keepOpenPhoneTarget && isMultiListOpen(keepOpenPhoneTarget.multi)),
+        });
+      }
+    } catch {}
+
+    // ── Phase 3: one LLM batch for all non-local targets ──
+    // Phone CC list stays open (keepOpen) during this wait when harvest succeeded.
+    const batchItems = [];
+    for (const t of targets) {
+      if (t.localOnly) continue;
+      const portals = t.portalOptions || [];
+      const opts = t.options || portals.map((o) => o.text);
+      const portalHtml =
+        t.portalHtml ||
+        (portals.length ? buildPortalOptionsHtml(t.cid, t.llmLabel || t.label, portals, "") : "");
+      batchItems.push({
+        cid: t.cid,
+        key: t.key,
+        label: t.llmLabel || t.label,
+        kind: t.kind || "text",
+        required: t.required,
+        options: opts,
+        portalOptions: portals,
+        portalHtml,
+        want: t.want || undefined,
+        sourceHierarchical: !!t.hierarchical,
+      });
+    }
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep → LLM batch", {
+          count: batchItems.length,
+          labels: batchItems.map((it) => String(it.label || "").slice(0, 70)),
+          keepOpenPhone: !!(keepOpenPhoneTarget && isMultiListOpen(keepOpenPhoneTarget.multi)),
+        });
+      }
+    } catch {}
+    // Side-panel messaging can steal focus and dismiss the keep-open phone list.
+    // Soft-refocus the search input while we wait on WD_RESOLVE.
+    let phoneKeepAlive = null;
+    if (keepOpenPhoneTarget && keepOpenPhoneTarget.multi) {
+      const holdMulti = keepOpenPhoneTarget.multi;
+      phoneKeepAlive = setInterval(() => {
+        try {
+          if (!isMultiListOpen(holdMulti)) return;
+          const inp = holdMulti.querySelector("input");
+          if (inp && document.activeElement !== inp) inp.focus({ preventScroll: true });
+        } catch {}
+      }, 700);
+    }
+    let batchValues = {};
+    try {
+      batchValues = await resolveItemsWithLLM(batchItems, profile);
+    } finally {
+      if (phoneKeepAlive) {
+        try {
+          clearInterval(phoneKeepAlive);
+        } catch {}
+      }
+    }
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep LLM batch DONE", {
+          answered: Object.keys(batchValues).length,
+          total: batchItems.length,
+          keepOpenPhone: !!(keepOpenPhoneTarget && isMultiListOpen(keepOpenPhoneTarget.multi)),
+        });
+      }
+    } catch {}
+
+    // ── Phase 3a: APPLY keep-open phone CC BEFORE source L2 / other fields ──
+    // Source L1 reopen would Escape the phone list; click while still mounted.
+    const applyPhoneCcTarget = async (t) => {
+      throwIfAborted();
+      const labelHead = String(t.label || t.key || "").slice(0, 80);
+      let value =
+        snapExactPhoneCcAnswer(batchValues[t.cid], t.options || [], t.portalOptions || []) ||
+        valueText(batchValues[t.cid]) ||
+        null;
+      if (value == null || value === "") {
+        if (t.required) {
+          rep.unmatched.push({ key: t.key, label: t.label });
+          rememberFailedField(t.key, t.label);
+        }
+        try {
+          if (WD.aa) WD.aa("fillStep APPLY", { key: t.key, labelHead, ok: false, reason: "no-value", phase: "keep-open" });
+        } catch {}
+        t.phoneCcApplied = false;
+        return;
+      }
+      const stillOpen = !!(t.multi && isMultiListOpen(t.multi));
+      let ok = false;
+      try {
+        if (WD.aa) {
+          WD.aa("fillStep APPLY phone-cc-first", {
+            key: t.key,
+            stillOpen,
+            valueHead: String(value).slice(0, 60),
+          });
+        }
+        ok = await fillMultiselect(t.multi, valueText(value) || value, { alreadyOpen: stillOpen });
+      } catch (e) {
+        if (e && e.name === "WDAborted") throw e;
+      }
+      t.phoneCcApplied = !!ok;
+      t.phoneCcValue = value;
+      if (ok) {
+        const cacheKey = (t.label || "").toLowerCase().trim().slice(0, 120);
+        if (cacheKey) {
+          WD._resolveCache = WD._resolveCache || {};
+          WD._resolveCache[cacheKey] = value;
+        }
+      } else {
+        rememberFailedField(t.key, t.label);
+      }
+      record(rep, t.label || t.key, ok);
+      decisions.write += 1;
+      try {
+        if (WD.aa) {
+          WD.aa("fillStep APPLY", {
+            key: t.key,
+            labelHead,
+            ok,
+            valueHead: valueText(value).slice(0, 60),
+            phase: stillOpen ? "keep-open" : "reopen-fallback",
+          });
+        }
+      } catch {}
+    };
+    for (const t of phoneCcTargets) {
+      if (t.keepOpenMulti || (t.multi && isMultiListOpen(t.multi))) {
+        await applyPhoneCcTarget(t);
+      }
+    }
+    // If keep-open was lost during LLM, still apply phone CC before source.
+    for (const t of phoneCcTargets) {
+      if (t.phoneCcApplied == null) await applyPhoneCcTarget(t);
+    }
+
+    // ── Phase 3b: source L2 (hierarchical only) — keep-open harvest → small LLM ──
+    const baselineKeys = visibleFormFieldKeys();
+    for (const t of targets) {
+      throwIfAborted();
+      if (!t.isSource || !t.multi || !t.hierarchical) continue;
+      const raw = batchValues[t.cid];
+      // LLM category first (exact snap). Local folder guess only if LLM empty.
+      let category =
+        snapToHarvestedOption(valueText(raw), t.options || []) ||
+        pickSourceCategoryLocal(t.want, t.options || []);
+      if (!category) {
+        try {
+          WD.warn("source batch: no L1 category from LLM", t.want, t.options);
+        } catch {}
+        continue;
+      }
+      t.sourceCategory = category;
+      if (!(await applySourceL1KeepOpen(t.multi, category))) continue;
+      const l2 = await harvestSourceL2(t.multi);
+      if (!l2.texts.length) {
+        await closePrompt(t.multi, t.multi.querySelector("input"));
+        continue;
+      }
+      t.l2Options = l2.texts;
+      t.l2Portals = l2.portals;
+      const leafCid = t.cid + "_l2";
+      const leafItems = [
+        {
+          cid: leafCid,
+          label: `${t.label} (specific source) — ${sourceL2LeafHint(t.want)}`,
+          kind: "select",
+          required: true,
+          options: l2.texts,
+          portalOptions: l2.portals,
+          portalHtml: buildPortalOptionsHtml(leafCid, t.label, l2.portals, ""),
+          want: t.want || undefined,
+        },
+      ];
+      const leafVals = await resolveItemsWithLLM(leafItems, profile);
+      // LLM leaf first; local peers only if model returned nothing usable.
+      let leaf = chooseSourceLeaf(t.want, l2.texts, leafVals[leafCid]);
+      if (!leaf) {
+        try {
+          WD.warn("source batch: no L2 leaf from LLM/peers", t.want, l2.texts.slice(0, 12));
+        } catch {}
+        await closePrompt(t.multi, t.multi.querySelector("input"));
+        continue;
+      }
+      t.sourceLeaf = leaf;
+      t.sourceApplied = await applySourceLeaf(t.multi, leaf, baselineKeys);
+      try {
+        if (WD.aa) {
+          WD.aa("fillStep SOURCE L2", {
+            category,
+            leaf,
+            ok: !!t.sourceApplied,
+            want: t.want || null,
+          });
+        }
+      } catch {}
+    }
+
+    // ── Phase 4: APPLY remaining answers (fast DOM writes; no LLM) ──
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep APPLY START", {
+          count: targets.length,
+          labels: targets.map((t) => String(t.label || t.key || "").slice(0, 50)),
+        });
+      }
+    } catch {}
+    for (const t of targets) {
+      throwIfAborted();
+      const labelHead = String(t.label || t.key || "").slice(0, 80);
+      // Already applied in phase 3a.
+      if (t.phoneCcApplied != null) continue;
+      if (t.isSource) {
+        let ok = !!t.sourceApplied;
+        if (!ok && t.multi) {
+          // Flat source: apply batch pick; hierarchical without L2: recovery path.
+          if (!t.hierarchical) {
+            const pick = snapToHarvestedOption(valueText(batchValues[t.cid]), t.options || []);
+            if (pick) {
+              await openMultiPrompt(t.multi);
+              await harvestSourceLiveRows(t.multi);
+              ok = await applySourceLeaf(t.multi, pick, baselineKeys);
+            }
+          } else if (!t.sourceLeaf) {
+            ok = await fillSourcePrompt(t.multi, t.want || "Indeed", t.container);
+          }
+        }
+        record(rep, t.label || t.key, ok);
+        if (!ok) rememberFailedField(t.key, t.label);
+        decisions.write += 1;
+        try {
+          if (WD.aa) WD.aa("fillStep APPLY", { key: t.key, labelHead, kind: "source", ok });
         } catch {}
         continue;
       }
 
-      // ── Text / date / textarea: profile keys + label rules (not option lists) ──
-      let value = key in valueByKey ? valueByKey[key] : undefined;
-      if (value === undefined) value = resolveByLabel(label, profile);
-      // Any unmapped date widget (e.g. the Self-Identify signature date) defaults
-      // to today - the form expects the current date, never a profile value.
-      if ((value === undefined || value === null || value === "") && isDateContainer(c)) {
-        value = todayDate();
+      let value = t.localOnly ? t.want : batchValues[t.cid];
+      if (value == null || value === "") {
+        if (t.want) value = t.want;
       }
-      const interesting = isRequired(c) || !!(label && /\?/.test(label));
-      if (value === undefined || value === null || value === "") {
-        if (interesting) {
-          llmTargets.push({ container: c, key, label: label || fieldLabel(c), required: isRequired(c) });
-          decisions.deferLlm += 1;
-          try {
-            if (WD.aa) WD.aa("fillStep DEFER-LLM text", { key: key.slice(0, 40), labelHead, reason: "no-profile-value" });
-          } catch {}
-        } else {
-          skipLog("no-value-not-interesting");
+      // Phone Number: thin digit cleanup of LLM answer (not a different value).
+      if (isPhoneNumberField(t.key, t.label)) {
+        const fromVal = nationalPhoneDigits(valueText(value) || value);
+        const fromWant = nationalPhoneDigits(t.want);
+        value = fromVal || fromWant;
+      }
+      // Country Phone Code: exact LLM option text only (no USA force).
+      if (isCountryPhoneCodeField(t.key, t.label)) {
+        value =
+          snapExactPhoneCcAnswer(value, t.options || [], t.portalOptions || []) ||
+          valueText(value) ||
+          null;
+      }
+      if (value == null || value === "") {
+        if (t.required || (t.label && /\?/.test(t.label))) {
+          rep.unmatched.push({ key: t.key, label: t.label });
+          rememberFailedField(t.key, t.label);
         }
+        try {
+          if (WD.aa) WD.aa("fillStep APPLY", { key: t.key, labelHead, ok: false, reason: "no-value" });
+        } catch {}
         continue;
       }
+
+      let ok = false;
+      const trigger = listboxTrigger(t.container);
+      const multi = t.container.querySelector('[data-automation-id="multiSelectContainer"]');
+      try {
+        if (trigger && !multi) {
+          ok = await applyListboxPortal(trigger, value);
+        } else if (multi && isCountryPhoneCodeField(t.key, t.label)) {
+          ok = await fillMultiselect(multi, valueText(value) || value, {
+            alreadyOpen: isMultiListOpen(multi),
+          });
+        } else {
+          ok = await writeField(t.container, valueText(value) || value, t.label || t.key);
+        }
+      } catch (e) {
+        if (e && e.name === "WDAborted") throw e;
+      }
+      if (ok) {
+        const cacheKey = (t.label || "").toLowerCase().trim().slice(0, 120);
+        if (cacheKey) {
+          WD._resolveCache = WD._resolveCache || {};
+          WD._resolveCache[cacheKey] = value;
+        }
+      } else {
+        rememberFailedField(t.key, t.label);
+      }
+      record(rep, t.label || t.key, ok);
       decisions.write += 1;
       try {
         if (WD.aa) {
-          WD.aa("fillStep WRITE", {
-            key: key.slice(0, 40),
+          WD.aa("fillStep APPLY", {
+            key: t.key,
             labelHead,
-            valueHead: String(value).slice(0, 60),
+            ok,
+            valueHead: valueText(value).slice(0, 60),
           });
         }
       } catch {}
-      const ok = await writeField(c, value, label || key);
-      try {
-        if (WD.aa) WD.aa("fillStep WRITE result", { key: key.slice(0, 40), labelHead, ok });
-      } catch {}
-      if (ok === false && interesting) {
-        llmTargets.push({ container: c, key, label, required: isRequired(c), want: value });
-        decisions.deferLlm += 1;
-      } else {
-        record(rep, label || key, ok);
-        if (ok === false) rememberFailedField(key, label);
-      }
-      await D.delay(60);
+      await D.delay(40);
     }
-    // Self-ID / voluntary: fill disability before LLM so we never round-trip for it.
-    if (onSelfIdOrVoluntaryPage()) {
-      await fillDisabilitySelfId(profile, rep);
-    }
-    try {
-      if (WD.aa) {
-        WD.aa("fillStep → LLM", {
-          decisions,
-          count: llmTargets.length,
-          labels: llmTargets.map((t) => String(t.label || t.key || "").slice(0, 80)),
-        });
-      }
-    } catch {}
-    // Layer 2: harvest options + LLM picks exact option text for every target.
-    await resolveUnmatchedWithLLM(llmTargets, rep, profile);
+
+    // Safety net for any required option still empty (rare).
+    await recheckUncommittedOptionFields(profile, valueByKey, rep);
     try {
       if (WD.aa) {
         WD.aa("fillStep END", {
@@ -2542,8 +3990,58 @@
         });
       }
     } catch {}
-    // Disability Self-ID lives outside the formField wrappers - reassert after LLM.
     await fillDisabilitySelfId(profile, rep);
+  }
+
+  // After the main + LLM passes, finish any option field still empty
+  // (hierarchical source that stopped after L1, virtualized phone code miss,
+  // optional dropdowns the first pass missed when a profile hint exists, etc.).
+  async function recheckUncommittedOptionFields(profile, valueByKey, rep) {
+    const containers = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible);
+    for (const c of containers) {
+      throwIfAborted();
+      if (inExperiencePanel(c)) continue;
+      if (!isOptionBearingContainer(c)) continue;
+      if (fieldHasCommittedValue(c)) continue;
+      const aid = c.getAttribute("data-automation-id") || "";
+      const key = aid.replace(/^formField-/, "");
+      const label = fieldLabel(c);
+      const want = profileWantForField(key, label, profile, valueByKey);
+      // Retry required fields, the source field, and any optional field that
+      // has a profile hint — optional blanks with no hint were already sent
+      // through the LLM in the main pass.
+      if (!isRequired(c) && !isSourceField(c, label) && !want) continue;
+      if (shouldSkipFailedField(key, label) && !c.querySelector('[aria-invalid="true"]')) continue;
+      const multi = c.querySelector('[data-automation-id="multiSelectContainer"]');
+      let ok = false;
+      try {
+        if (isSourceField(c, label) && multi) {
+          ok = await fillSourcePrompt(multi, want || "Indeed", c);
+        } else if (want) {
+          ok = await writeField(c, want, label || key);
+        }
+      } catch (e) {
+        if (e && e.name === "WDAborted") throw e;
+      }
+      try {
+        if (WD.aa) {
+          WD.aa("fillStep RECHECK-OPTION", {
+            key: key.slice(0, 40),
+            labelHead: String(label || "").slice(0, 70),
+            want: want || null,
+            ok,
+          });
+        }
+      } catch {}
+      if (ok) record(rep, label || key, true);
+      else if (isRequired(c)) {
+        rememberFailedField(key, label);
+        if (!(rep.unmatched || []).some((u) => u.key === key || u.label === label)) {
+          rep.unmatched.push({ key, label });
+        }
+      }
+      await D.delay(60);
+    }
   }
 
   // ── My Experience: repeating Work Experience + Education panels ──────────────
@@ -2853,6 +4351,7 @@
   function isPlaceholderOption(text) {
     const t = D.norm(text);
     if (!t) return true;
+    if (/^(no items|no results)\.?$/.test(t)) return true;
     return /^(select|choose)(\s+one)?\s*\.{0,3}$/.test(t);
   }
 
@@ -2908,6 +4407,7 @@
       return { options: [], portalHtml: "", listboxId: null };
     }
     await D.delay(100);
+    await waitForOptionsSettled({ root: popup, timeout: 2500, settleMs: 220 });
     const listbox =
       (popup.getAttribute && popup.getAttribute("role") === "listbox" && popup) ||
       popup.querySelector('[role="listbox"]') ||
@@ -3083,30 +4583,55 @@
     });
   }
 
-  // Open a multiselect search prompt, read its currently-visible options, close.
-  // Used to hand the LLM a candidate list for an unmatched prompt field.
-  async function harvestMultiOptions(multi) {
-    const input = multi.querySelector("input");
-    if (!input) return [];
-    const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
-    D.clickEl(opener);
-    input.focus();
-    let opts = [];
-    if (await D.waitFor(OPTION_SEL, 1500)) {
-      await D.delay(120);
-      opts = visibleOptions().map((o) => (o.textContent || "").replace(/\s+/g, " ").trim());
+  // Open a multiselect prompt, wait for a stable list, scroll-harvest virtualized
+  // rows (phone codes ~249), then close unless keepOpen. Returns portal rows for LLM.
+  // keepOpen + resetToTop:false = phone CC path (stay near bottom across LLM).
+  async function harvestMultiOptions(multi, opts) {
+    const keepOpen = !!(opts && opts.keepOpen);
+    const resetToTop = !(opts && opts.resetToTop === false);
+    const input = multi && multi.querySelector("input");
+    if (!input) return { options: [], portalOptions: [] };
+    await openMultiPrompt(multi);
+    await waitForOptionsSettled({ timeout: 3500, settleMs: 280, ownerMulti: multi });
+    let portalOptions = await scrollCollectMultiOptions(multi, { resetToTop });
+    if (!portalOptions.length) {
+      const root = activeMultiListRoot(multi);
+      portalOptions = (root ? readMultiOptionRows(root) : []).map((r) => ({
+        id: r.id,
+        value: r.value,
+        text: r.text,
+        hierarchical: r.hierarchical,
+      }));
     }
-    await closePrompt(multi, input);
+    if (!keepOpen) await closePrompt(multi, input);
+    else {
+      try {
+        if (WD.aa) {
+          WD.aa("harvestMultiOptions keepOpen", {
+            count: portalOptions.length,
+            resetToTop,
+            scrollTop: (multiListScroller(multi) || {}).scrollTop || 0,
+          });
+        }
+      } catch {}
+    }
     const seen = new Set();
     const uniq = [];
-    for (const o of opts) {
-      const k = o.toLowerCase();
-      if (o && !seen.has(k)) {
-        seen.add(k);
-        uniq.push(o);
-      }
+    for (const o of portalOptions) {
+      const t = o && o.text;
+      if (!t || isPlaceholderOption(t) || isEmptyPromptRow(t)) continue;
+      const k = t.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push({
+        id: o.id || t,
+        value: o.value || o.id || t,
+        text: t,
+        hierarchical: !!o.hierarchical,
+      });
     }
-    return uniq.slice(0, 60);
+    const capped = uniq.slice(0, 280);
+    return { options: capped.map((o) => o.text), portalOptions: capped };
   }
 
   // Inspect a formField wrapper and describe its control for the LLM: { kind,
@@ -3120,7 +4645,20 @@
     // role=combobox[aria-haspopup=listbox]; harvesting it as a listbox opens the
     // wrong widget path and leaves the prompt dirty for the next recovery fill.
     const multi = container.querySelector('[data-automation-id="multiSelectContainer"]');
-    if (multi) return { kind: "select", options: await harvestMultiOptions(multi) };
+    if (multi) {
+      const harvested = await harvestMultiOptions(multi);
+      return {
+        kind: "select",
+        options: harvested.options || [],
+        portalOptions: harvested.portalOptions || [],
+        portalHtml: buildPortalOptionsHtml(
+          "multi",
+          fieldLabel(container),
+          harvested.portalOptions || [],
+          "",
+        ),
+      };
+    }
     const btn = listboxTrigger(container);
     if (btn) {
       await closeAllListboxes();
@@ -3222,6 +4760,29 @@
         rep.unmatched.push({ key: t.key, label: t.label });
         continue;
       }
+      // Multi + known want (Country Phone Code): skip harvest/LLM entirely —
+      // fillMultiselect type-to-select is authoritative. Contaminated harvest
+      // previously returned LinkedIn from the source field.
+      const multiEarly =
+        t.container && t.container.querySelector('[data-automation-id="multiSelectContainer"]');
+      if (multiEarly && t.want) {
+        const cid = ((t.key || "field").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40) || "f") + "_" + i++;
+        byCid.set(cid, { ...t, options: [], portalOptions: [], portalHtml: "", kind: "select" });
+        items.push({
+          cid,
+          label: t.label,
+          kind: "select",
+          required: t.required,
+          options: [],
+          portalOptions: [],
+          portalHtml: "",
+          want: t.want,
+        });
+        try {
+          WD.log(`LLM skip-harvest multi want '${t.label}' → apply locally`, String(t.want).slice(0, 60));
+        } catch {}
+        continue;
+      }
       let info = null;
       try {
         info = await classifyControl(t.container);
@@ -3264,8 +4825,18 @@
     if (!items.length) return;
 
     const values = {};
+    // Apply multi+want items immediately (no LLM).
+    for (const item of items) {
+      if (item.want && !(item.options && item.options.length) && !(item.portalOptions && item.portalOptions.length)) {
+        const meta = byCid.get(item.cid);
+        if (meta && meta.container && meta.container.querySelector('[data-automation-id="multiSelectContainer"]')) {
+          values[item.cid] = item.want;
+        }
+      }
+    }
     const needLlm = [];
     for (const item of items) {
+      if (values[item.cid]) continue;
       const cacheKey = (item.label || "").toLowerCase().trim().slice(0, 120);
       if (cacheKey && WD._resolveCache[cacheKey]) {
         const cached = WD._resolveCache[cacheKey];
@@ -3284,6 +4855,30 @@
             values[item.cid] = snapped;
             continue;
           }
+        }
+      }
+      // Local profile want snap BEFORE LLM — State/California, phone CC, etc.
+      if (item.want && item.portalOptions && item.portalOptions.length) {
+        const fromWant = resolvePortalChoice(item.want, item.portalOptions);
+        if (fromWant) {
+          values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      if (item.want && item.options && item.options.length) {
+        const fromWant = snapToHarvestedOption(item.want, item.options);
+        if (fromWant) {
+          values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      // Multi with known want but empty/contaminated harvest (e.g. LinkedIn leaked
+      // into Country Phone Code) — apply want via fillMultiselect type path.
+      if (item.want) {
+        const meta = byCid.get(item.cid);
+        if (meta && meta.container && meta.container.querySelector('[data-automation-id="multiSelectContainer"]')) {
+          values[item.cid] = item.want;
+          continue;
         }
       }
       needLlm.push(item);
@@ -3661,9 +5256,9 @@
   // a STALE engine (reload the extension at chrome://extensions, then hard-reload
   // the Workday page).
   try {
-    WD.log("wd-steps build: 2026-08-05-aa-full-trace-v1");
+    WD.log("wd-steps build: 2026-08-05-batch-harvest-v9");
     try {
-      if (WD.aa) WD.aa("engine-build", { build: "2026-08-05-aa-full-trace-v1", href: location.href });
+      if (WD.aa) WD.aa("engine-build", { build: "2026-08-05-batch-harvest-v9", href: location.href });
     } catch {}
   } catch {}
 })();

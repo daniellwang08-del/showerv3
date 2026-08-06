@@ -132,7 +132,7 @@ class Settings(BaseSettings):
     # Default chat model when a job binding does not select one. GPT-5 reasoning
     # models (e.g. gpt-5.1) use max_completion_tokens and ignore custom
     # temperature; the LLM client normalizes API kwargs automatically.
-    openai_model: str = "gpt-5-nano-2025-08-07"
+    openai_model: str = "gpt-5.6-luna"
     openai_max_tokens: int = 4096
     openai_temperature: float = 0.1
     # Reasoning depth for o-series / GPT-5 non-chat models (low | medium | high).

@@ -321,6 +321,14 @@ function onContentMessage(msg, sender) {
     if (msg.line) pushAaLog("[page] " + msg.line);
   } else if (msg.type === "WD_DONE") {
     if (!state.autofill.active) return;
+    // Ignore stale DONE from a superseded page run (wrong/missing runSeq).
+    // Otherwise a raced abort after myInfo→experience can finish the waiter early.
+    if (msg.runSeq != null && Number(msg.runSeq) !== wdRunSeq) {
+      try {
+        console.debug("[workday] ignore stale WD_DONE", msg.runSeq, "expected", wdRunSeq);
+      } catch {}
+      return;
+    }
     // In auto-advance mode the loop awaits each fill; hand the report to it and
     // keep `running` true (the loop, not this message, decides when we're done).
     // The per-step report was already appended via WD_PROGRESS, so don't re-add it.
@@ -344,6 +352,12 @@ function onContentMessage(msg, sender) {
     setAutofill({ running: false, done: true, reports: msg.reports || state.autofill.reports });
   } else if (msg.type === "WD_ERROR") {
     if (!state.autofill.active) return;
+    if (msg.runSeq != null && Number(msg.runSeq) !== wdRunSeq) {
+      try {
+        console.debug("[workday] ignore stale WD_ERROR", msg.runSeq, "expected", wdRunSeq);
+      } catch {}
+      return;
+    }
     if (wdStepWaiter) {
       wdStepWaiter({ error: msg.error || "Autofill failed" });
       return;
@@ -426,13 +440,16 @@ async function handleWorkdayResolve(msg) {
     const htmlParts = [];
     const controls = items.map((it) => {
       const portalOptions = Array.isArray(it.portalOptions) ? it.portalOptions : [];
+      // Country Phone Code ~249 rows; send as many as the API allows. Full list
+      // also lives in portalHtml (source of truth for the model).
+      const optCap = /country phone code/i.test(it.label || "") ? 280 : 100;
       const optionTexts = (
         Array.isArray(it.options)
           ? it.options
           : portalOptions.map((o) => o.text).filter(Boolean)
       )
         .map((t) => clip(t, 500))
-        .slice(0, 100);
+        .slice(0, optCap);
       let portalHtml = it.portalHtml || "";
       if (!portalHtml && portalOptions.length) {
         const lis = portalOptions
@@ -465,7 +482,9 @@ async function handleWorkdayResolve(msg) {
         cid: String(it.cid).slice(0, 256),
         kind: String(it.kind || "select").slice(0, 30),
         label,
-        required: it.required !== false,
+        // Pass through the real required flag. Optional fields must still be
+        // answered by the shared autofill prompt when answerable.
+        required: !!it.required,
         options: optionTexts,
       };
     });
@@ -482,18 +501,49 @@ async function handleWorkdayResolve(msg) {
       ],
       buildPreferences(),
     );
+    const isPhoneCcItem = (src, label) =>
+      /country phone code/i.test((src && src.label) || "") || /country phone code/i.test(label || "");
+    const isPhoneNumItem = (src, label) => {
+      const L = `${(src && src.label) || ""} ${label || ""}`;
+      return /phone number/i.test(L) && !/country phone code/i.test(L);
+    };
+    const nationalPhoneDigits = (phone) => {
+      let d = String(phone || "").replace(/\D/g, "");
+      if (!d) return "";
+      if (d.length === 10) return d;
+      if (d.length === 11 && d.charAt(0) === "1") return d.slice(1);
+      if (d.charAt(0) === "1" && d.length > 11) return d.slice(1, 11);
+      if (d.length > 10) return d.slice(0, 10);
+      return d;
+    };
+
     const values = {};
     for (const f of (resp && resp.results) || []) {
       for (const c of f.controls || []) {
         if (c.needs_user) continue;
-        const v = c.option || c.value;
+        let v = c.option || c.value;
         if (!c.cid || !v) continue;
         const src = items.find((it) => String(it.cid) === String(c.cid));
         const portalOptions = (src && src.portalOptions) || [];
         const opts = src && Array.isArray(src.options) ? src.options : portalOptions.map((o) => o.text);
-        const want = norm(v);
+        const phoneCc = isPhoneCcItem(src, c.label);
+        const phoneNum = isPhoneNumItem(src, c.label);
 
-        // Prefer portal id / data-value (stable Workday keys from live DOM).
+        // Phone Number: format cleanup only (10 national digits).
+        if (phoneNum) {
+          const digits = nationalPhoneDigits(v);
+          if (digits) values[c.cid] = digits;
+          continue;
+        }
+
+        const want = norm(v);
+        // Bare "+1"/"1" is not an exact option — do not soft-snap to Anguilla.
+        if (phoneCc && (want === "1" || want === "+1")) {
+          console.debug("[workday] WD_RESOLVE phone CC not exact option", c.cid, v);
+          continue;
+        }
+
+        // Exact portal id / data-value / text only for phone CC (LLM returns exact row).
         if (portalOptions.length) {
           const byVal = portalOptions.find((o) => norm(o.value) === want || norm(o.id) === want);
           if (byVal) {
@@ -503,6 +553,10 @@ async function handleWorkdayResolve(msg) {
           const byText = portalOptions.find((o) => norm(o.text) === want);
           if (byText) {
             values[c.cid] = byText.value || byText.id || byText.text;
+            continue;
+          }
+          if (phoneCc) {
+            console.debug("[workday] WD_RESOLVE phone CC no exact match", c.cid, v);
             continue;
           }
           const soft = portalOptions.find((o) => norm(o.text).includes(want) || want.includes(norm(o.text)));
@@ -516,6 +570,10 @@ async function handleWorkdayResolve(msg) {
           const exact = opts.find((o) => norm(o) === want);
           if (exact) {
             values[c.cid] = exact;
+            continue;
+          }
+          if (phoneCc) {
+            console.debug("[workday] WD_RESOLVE phone CC not in options", c.cid, v);
             continue;
           }
           const contains = opts

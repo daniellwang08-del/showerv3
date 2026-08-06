@@ -6,7 +6,7 @@
 // step on WD_DETECT so the panel can show what it sees before running.
 (() => {
   const WD = (window.__WD = window.__WD || {});
-  const BUILD = "2026-08-05-aa-full-trace-v1";
+  const BUILD = "2026-08-05-batch-harvest-v9";
 
   // Page-console bridge MUST re-bind on every executeScript inject. The rest of
   // this file early-returns when __WD_CONTENT__ is set, which previously left
@@ -147,6 +147,9 @@
   }
 
   let running = false;
+  // Monotonic id so a superseded run's `finally` cannot clear `running` for the
+  // active fill (race after myInfo→experience advance caused false WD_ABORTED).
+  let activeRunId = 0;
   // runSeq from the side panel; Stop bumps minRunSeq so late WD_RUN / in-flight
   // work from the cancelled attempt is ignored immediately.
   WD.minRunSeq = WD.minRunSeq || 0;
@@ -348,10 +351,13 @@
     const step = WD.engine.detectStep();
     if (!step) return;
     if (running) {
-      // A new explicit run replaces an orphan; abort the prior cooperative loops.
+      // A new explicit run replaces an orphan; abort the prior cooperative loops
+      // and bump epoch so in-flight D.delay from the old run rejects cleanly.
       WD.aborted = true;
+      WD.epoch = (WD.epoch || 0) + 1;
       clearResolveWaiters();
     }
+    const runId = ++activeRunId;
     beginRun(runSeq, msg.options || {});
     running = true;
     try {
@@ -378,6 +384,8 @@
           } catch {}
           send({ type: "WD_PROGRESS", report: r });
         });
+        // Superseded by a newer WD_RUN — do not resolve the panel waiter.
+        if (runId !== activeRunId) return;
         send({
           type: "WD_DONE",
           reports,
@@ -385,13 +393,14 @@
           runSeq,
         });
       } catch (e) {
+        if (runId !== activeRunId) return;
         if (e && e.name === "WDAborted") {
           send({ type: "WD_DONE", reports, aborted: true, runSeq });
         } else {
-          send({ type: "WD_ERROR", error: String((e && e.message) || e), reports });
+          send({ type: "WD_ERROR", error: String((e && e.message) || e), reports, runSeq });
         }
       } finally {
-        running = false;
+        if (runId === activeRunId) running = false;
       }
     })();
   });
