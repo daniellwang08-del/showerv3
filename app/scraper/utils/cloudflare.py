@@ -1,7 +1,8 @@
 """Authenticated HTTP session for RemoteRocketship.
 
-Fetches via curl_cffi with pinned Chrome TLS fingerprints and optional
-residential proxies (``SCRAPER_PROXY_LIST_PATH``).
+Fetches via curl_cffi with pinned Chrome TLS fingerprints and residential
+proxies resolved via ``app.scraper.utils.proxies`` (``SCRAPER_PROXY_*`` /
+``SCRAPER_PROXY_LIST_PATH`` / ``PROXY_URL``).
 
 Evidence (2026-08-03):
   - Floating ``impersonate="chrome"`` → chrome146 → Cloudflare 403 challenge.
@@ -17,13 +18,17 @@ from __future__ import annotations
 import logging
 import random
 import time
-from pathlib import Path
 from typing import Optional
-from urllib.parse import quote
 
 from curl_cffi import requests as cffi_requests
 
 from app.scraper.auth import load_session
+from app.scraper.utils.proxies import (
+    _load_proxies_from_file as _load_proxies,
+    _parse_proxy_line,
+    proxy_egress_label,
+    resolve_scraper_proxies_from_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,67 +61,6 @@ _CF_TEXT_HINTS = (
 )
 
 
-def _load_proxies(proxy_path: str) -> list[str]:
-    """Load proxy URLs from a text file (one per line).
-
-    Accepted line formats:
-      - http://user:pass@host:port
-      - host:port:user:pass
-      - host:port user pass   (whitespace / tab separated)
-      - host:port            (no auth)
-    """
-    if not proxy_path:
-        return []
-    p = Path(proxy_path)
-    if not p.is_absolute():
-        from app.scraper.config import PROJECT_ROOT
-        p = PROJECT_ROOT / p
-    if not p.exists():
-        logger.warning("Proxy list file not found: %s", p)
-        return []
-    lines = p.read_text(encoding="utf-8").strip().splitlines()
-    out: list[str] = []
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        parsed = _parse_proxy_line(line)
-        if parsed:
-            out.append(parsed)
-    return out
-
-
-def _parse_proxy_line(line: str) -> Optional[str]:
-    """Normalize a single proxy line into ``http://user:pass@host:port``."""
-    if "://" in line:
-        return line
-
-    # host:port:user:pass
-    parts_colon = line.split(":")
-    if len(parts_colon) == 4 and parts_colon[1].isdigit():
-        host, port, user, password = parts_colon
-        return (
-            f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
-        )
-
-    # host:port<whitespace>user<whitespace>pass
-    tokens = line.replace("\t", " ").split()
-    if len(tokens) == 3 and ":" in tokens[0]:
-        hostport, user, password = tokens
-        host, _, port = hostport.partition(":")
-        if host and port.isdigit():
-            return (
-                f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
-            )
-
-    # host:port (no auth)
-    if len(parts_colon) == 2 and parts_colon[1].isdigit():
-        return f"http://{line}"
-
-    logger.warning("Unrecognized proxy line format: %s", line[:60])
-    return None
-
-
 def is_cloudflare_challenge_response(
     status_code: int | None,
     body: str | None,
@@ -141,14 +85,29 @@ class CloudflareSession:
     """HTTP session for RRS: proxy + rotating Chrome TLS fingerprints.
 
     Complete reliability against remoterocketship Cloudflare requires:
-      1. Residential proxies via ``SCRAPER_PROXY_LIST_PATH``
+      1. Residential proxies via ``SCRAPER_PROXY_*`` / list file / ``PROXY_URL``
       2. Fingerprint rotation (chrome123/124/…) — CF blocks specific JA3s per IP
       3. Never using the floating ``chrome`` alias
     """
 
-    def __init__(self, proxy_path: str = "", timeout: int = 25):
+    def __init__(
+        self,
+        proxy_path: str = "",
+        timeout: int = 25,
+        proxies: list[str] | None = None,
+    ):
         self.timeout = timeout
-        self.proxies_list = _load_proxies(proxy_path)
+        explicit = [p for p in (proxies or []) if p]
+        from_file = _load_proxies(proxy_path) if proxy_path else []
+        resolved = explicit or from_file or resolve_scraper_proxies_from_settings()
+        # Preserve order, drop empties / dupes.
+        seen: set[str] = set()
+        self.proxies_list: list[str] = []
+        for url in resolved:
+            if url and url not in seen:
+                seen.add(url)
+                self.proxies_list.append(url)
+
         self._proxy_index = 0
         self._current_proxy: Optional[str] = None
         self._impersonate_index = 0
@@ -160,16 +119,20 @@ class CloudflareSession:
         self.last_failure_reason: Optional[str] = None
         self._cookies: list[dict] = []
         if self.proxies_list:
-            logger.info(
-                "RRS CloudflareSession loaded %d proxies from %s",
-                len(self.proxies_list),
-                proxy_path,
-            )
             self._current_proxy = self.proxies_list[0]
+            logger.info(
+                "RRS CloudflareSession loaded %d residential prox%s (egress=%s)",
+                len(self.proxies_list),
+                "y" if len(self.proxies_list) == 1 else "ies",
+                proxy_egress_label(self._current_proxy),
+            )
         else:
-            logger.warning(
-                "RRS CloudflareSession has no proxies configured "
-                "(SCRAPER_PROXY_LIST_PATH). Cloudflare blocks are much more likely."
+            logger.error(
+                "RRS CloudflareSession has no residential proxies configured. "
+                "Set SCRAPER_PROXY_URL=http://user:pass@host:port "
+                "or SCRAPER_PROXY_LIST_PATH=/path/to/proxies.txt "
+                "(or PROXY_ENABLED=true + PROXY_URL). "
+                "Without this, Cloudflare will block the VPS IP."
             )
         self._create_session(self._impersonate)
         self._load_saved_session()
@@ -242,8 +205,10 @@ class CloudflareSession:
             return
         self._proxy_index = (self._proxy_index + 1) % len(self.proxies_list)
         self._current_proxy = self.proxies_list[self._proxy_index]
-        host = self._current_proxy.split("@")[-1]
-        logger.info("Rotated RRS proxy egress → %s", host)
+        logger.info(
+            "Rotated RRS proxy egress → %s",
+            proxy_egress_label(self._current_proxy),
+        )
 
     def _rotate_impersonate(self) -> str:
         self._impersonate_index = (self._impersonate_index + 1) % len(IMPERSONATE_CANDIDATES)
@@ -281,20 +246,23 @@ class CloudflareSession:
 
                 if reason == "cloudflare_blocked":
                     self._cf_hits_on_fingerprint += 1
+                    # With a proxy pool, rotate egress immediately — CF burns per IP.
+                    if self.proxies_list and len(self.proxies_list) > 1:
+                        self._rotate_proxy()
+                        self._create_session(self._impersonate)
                     # Evidence: after a cool-down, retrying the SAME fingerprint
                     # (chrome123) succeeded; rotating before the wait burned attempts
                     # on chrome124 which still failed on this proxy.
-                    if self._cf_hits_on_fingerprint >= 2:
+                    elif self._cf_hits_on_fingerprint >= 2:
                         self._rotate_impersonate()
                         self._cf_hits_on_fingerprint = 0
-                        if self.proxies_list and len(self.proxies_list) > 1:
-                            self._rotate_proxy()
 
-                    if self.proxies_list and len(self.proxies_list) > 1:
+                    if self.proxies_list:
                         delay = 2.0 + random.uniform(0, 2.0)
                     else:
-                        # Single/no proxy: CF burns the egress IP if we hammer it.
-                        delay = 55.0 + random.uniform(0, 25.0)
+                        # No proxy: CF burns the VPS IP if we hammer it. Keep cool-down
+                        # short enough that systemd TimeoutStopSec can still exit.
+                        delay = 12.0 + random.uniform(0, 6.0)
                     logger.warning(
                         "Cloudflare challenge — retry %d/%d in %.0fs "
                         "(impersonate=%s, proxy=%s)",
@@ -302,7 +270,7 @@ class CloudflareSession:
                         attempts,
                         delay,
                         self._impersonate,
-                        "yes" if self._current_proxy else "none",
+                        proxy_egress_label(self._current_proxy),
                     )
                     time.sleep(delay)
                     continue
@@ -332,7 +300,7 @@ class CloudflareSession:
             self.last_failure_reason,
             self.last_status_code,
             self._impersonate,
-            "yes" if self._current_proxy else "none",
+            proxy_egress_label(self._current_proxy),
         )
         return None
 
@@ -348,7 +316,7 @@ class CloudflareSession:
                 url[:80],
                 resp.status_code,
                 len(resp.content),
-                " via proxy" if proxy_dict else "",
+                f" via {proxy_egress_label(self._current_proxy)}" if proxy_dict else "",
             )
 
             if is_cloudflare_challenge_response(

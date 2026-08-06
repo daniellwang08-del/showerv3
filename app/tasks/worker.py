@@ -806,7 +806,7 @@ async def run_scraper_task(
     extraction queue.  From that point on, scraped jobs flow through the
     same pipeline as manually submitted URLs.
     """
-    from datetime import date
+    from datetime import date, datetime, timezone
 
     from app.scraper.runner import check_spider_auth, run_spiders_from_plan
     from app.services.scraper_sync_service import build_run_plan
@@ -877,6 +877,8 @@ async def run_scraper_task(
         "total": len(plan),
         "platforms": [name for name, _ in plan],
     })
+
+    task_started_at = datetime.now(timezone.utc)
 
     try:
         promotions: dict[str, dict | None] = {}
@@ -1013,13 +1015,137 @@ async def run_scraper_task(
         return summary
 
     except asyncio.CancelledError:
+        # Deploy / systemd restart cancels the arq task (SIGTERM). The Scrapy
+        # subprocess may already have flushed jobs + finalized scrape_runs.
+        # Never tell the UI "Cancelled or timed out" when the DB shows a
+        # completed scrape — that was the false-red RemoteRocketship banner.
+        from app.scraper.runner import _latest_scrape_run
+
+        platform_names = [name for name, _ in plan]
+        recovered: list[dict] = []
+        for name, _ in plan:
+            row = await asyncio.to_thread(
+                _latest_scrape_run,
+                name,
+                task_started_at,
+            )
+            if not row:
+                continue
+            status = (row.get("status") or "").lower()
+            scraped = int(row.get("items_scraped") or 0)
+            if status == "success" and scraped > 0:
+                recovered.append({
+                    "spider": name,
+                    "success": True,
+                    "items_scraped": scraped,
+                    "items_new": int(row.get("items_new") or 0),
+                    "items_updated": int(row.get("items_updated") or 0),
+                    "scrape_run_id": row.get("id"),
+                    "message": "Scrape finished before worker restart",
+                })
+            elif scraped > 0 and status in {"interrupted", "shutdown", "running", "error"}:
+                recovered.append({
+                    "spider": name,
+                    "success": False,
+                    "items_scraped": scraped,
+                    "items_new": int(row.get("items_new") or 0),
+                    "items_updated": int(row.get("items_updated") or 0),
+                    "scrape_run_id": row.get("id"),
+                    "error": "service_restarted",
+                    "message": (
+                        "Service restarted mid-sync. "
+                        f"{scraped} jobs already saved — run Sync again to finish."
+                    ),
+                })
+
+        if recovered and all(r.get("success") for r in recovered):
+            for row in recovered:
+                if row.get("scrape_run_id") and row.get("spider"):
+                    promotions_map = await _promote_and_publish(
+                        spider_name=row["spider"],
+                        scrape_run_id=row.get("scrape_run_id"),
+                        user_id=user_id,
+                    )
+                    if promotions_map is not None:
+                        row["promotion"] = promotions_map
+            summary = _build_sync_summary(
+                spider_name=spider_name,
+                sync_mode=sync_mode,
+                posted_since=posted_since,
+                posted_until=posted_until,
+                platforms=platform_names,
+                results=recovered,
+            )
+            await publish_ws_event({
+                "type": "sync_completed",
+                "user_id": user_id,
+                "spider_name": spider_name,
+                "sync_mode": sync_mode,
+                "posted_since": posted_since,
+                "posted_until": posted_until,
+                "platforms": platform_names,
+                "items_scraped": summary.get("items_scraped", 0),
+                "items_new": summary.get("items_new", 0),
+                "items_updated": summary.get("items_updated", 0),
+                "promotion": summary.get("promotion"),
+                "summary": summary,
+                "message": "Scrape completed; worker restarted after finalize",
+            })
+            logger.info(
+                "worker_scraper_completed_after_cancel",
+                spider_name=spider_name,
+                items_scraped=summary.get("items_scraped", 0),
+            )
+            # Return (do not re-raise) so arq does not retry / max-retries-fail
+            # a sync that already persisted successfully.
+            return summary
+
+        # Partial progress: still promote whatever was flushed so jobs are not stuck.
+        for row in recovered:
+            if row.get("scrape_run_id") and row.get("spider") and int(row.get("items_scraped") or 0) > 0:
+                try:
+                    promotions_map = await _promote_and_publish(
+                        spider_name=row["spider"],
+                        scrape_run_id=row.get("scrape_run_id"),
+                        user_id=user_id,
+                    )
+                    if promotions_map is not None:
+                        row["promotion"] = promotions_map
+                except Exception:
+                    logger.exception(
+                        "worker_scraper_promote_after_cancel_failed",
+                        spider_name=row.get("spider"),
+                    )
+
+        error_msg = (
+            recovered[0].get("message")
+            if recovered
+            else "Service restarted mid-sync. Run Sync again."
+        )
         await publish_ws_event({
             "type": "sync_failed",
             "user_id": user_id,
             "spider_name": spider_name,
-            "error": "Cancelled or timed out",
+            "error": "service_restarted",
+            "message": error_msg,
+            "items_scraped": sum(int(r.get("items_scraped") or 0) for r in recovered),
+            "items_new": sum(int(r.get("items_new") or 0) for r in recovered),
+            "items_updated": sum(int(r.get("items_updated") or 0) for r in recovered),
         })
-        raise
+        logger.warning(
+            "worker_scraper_cancelled_by_restart",
+            spider_name=spider_name,
+            recovered=len(recovered),
+        )
+        # Return failure instead of re-raising CancelledError so arq does not
+        # immediately retry into "max retries exceeded" during rolling deploys.
+        return {
+            "spider": spider_name,
+            "success": False,
+            "error": "service_restarted",
+            "message": error_msg,
+            "results": recovered,
+        }
     except Exception as e:
         logger.exception("worker_scraper_failed", spider_name=spider_name, error=str(e))
         await publish_ws_event({

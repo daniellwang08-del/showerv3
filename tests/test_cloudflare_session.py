@@ -77,3 +77,12 @@ def test_loads_host_port_user_pass_proxy_file(tmp_path):
     assert session.proxies_list[0].startswith("http://andreballard1106:secret@151.247.185.166:50100")
     assert session._current_proxy == session.proxies_list[0]
     session.close()
+
+
+def test_loads_explicit_proxies_list():
+    session = CloudflareSession(
+        proxies=["http://u:p@1.2.3.4:8080"],
+        timeout=5,
+    )
+    assert session.proxies_list == ["http://u:p@1.2.3.4:8080"]
+    session.close()

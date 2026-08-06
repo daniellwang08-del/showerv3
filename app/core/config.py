@@ -248,7 +248,15 @@ class Settings(BaseSettings):
     adzuna_app_key: str = Field(default="")
     # Kept for optional manual scrapy crawl ziprecruiter (not in sync platform list).
     ziprecruiter_api_key: str = Field(default="")
+    # Residential proxies for RemoteRocketship Cloudflare bypass.
+    # Prefer SCRAPER_PROXY_URL (or HOST/PORT/USER/PASSWORD). File path still supported.
     scraper_proxy_list_path: str = Field(default="")
+    scraper_proxy_url: str = Field(default="")
+    scraper_proxy_urls: str = Field(default="")
+    scraper_proxy_host: str = Field(default="")
+    scraper_proxy_port: str = Field(default="")
+    scraper_proxy_user: str = Field(default="")
+    scraper_proxy_password: str = Field(default="")
 
 
 @lru_cache

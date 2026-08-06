@@ -198,8 +198,22 @@ class RemoteRocketshipSpider(BaseJobSpider):
 
     def _get_session(self) -> CloudflareSession:
         if self._cf_session is None:
-            proxy_path = self.settings.get("PROXY_LIST_PATH", "")
-            self._cf_session = CloudflareSession(proxy_path=proxy_path)
+            proxy_path = self.settings.get("PROXY_LIST_PATH", "") or ""
+            raw = self.settings.get("SCRAPER_PROXIES") or []
+            if isinstance(raw, str):
+                proxies = [p.strip() for p in raw.split(",") if p.strip()]
+            else:
+                proxies = [str(p) for p in raw if p]
+            self._cf_session = CloudflareSession(
+                proxy_path=proxy_path,
+                proxies=proxies or None,
+            )
+            if not self._cf_session.proxies_list:
+                self.logger.error(
+                    "No residential proxies loaded — RemoteRocketship will likely "
+                    "hit Cloudflare 403 on the VPS IP. Set SCRAPER_PROXY_URL or "
+                    "SCRAPER_PROXY_LIST_PATH in .env and restart the scraper worker."
+                )
         return self._cf_session
 
     # ------------------------------------------------------------------

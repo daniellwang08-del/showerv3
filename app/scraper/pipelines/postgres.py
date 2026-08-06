@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 # Matches scraped_jobs.salary_*_cents Integer columns (Postgres INT4).
 _PG_INT_MAX = 2_147_483_647
 
+# Scrapy close reasons that mean the process was killed / stopped mid-crawl,
+# not a clean completion. Mapped to scrape_runs.status = "interrupted".
+_INTERRUPT_REASONS = frozenset({"shutdown", "sigterm", "cancelled", "cancel"})
+
 
 class PostgresPipeline:
     def __init__(self, crawler):
@@ -30,7 +34,41 @@ class PostgresPipeline:
 
     @classmethod
     def from_crawler(cls, crawler):
-        return cls(crawler)
+        pipe = cls(crawler)
+        # ItemPipeline.close_spider() runs BEFORE stats finish_reason is written.
+        # Stash Scrapy's close reason on the spider as soon as the engine starts
+        # closing so finalize does not default SIGTERM/shutdown to "success".
+        pipe._patch_engine_close_reason(crawler)
+        return pipe
+
+    def _patch_engine_close_reason(self, crawler) -> None:
+        engine = getattr(crawler, "engine", None)
+        if engine is None or getattr(engine, "_postgres_close_reason_patched", False):
+            return
+
+        def _stash(spider, reason: str) -> None:
+            if spider is not None and reason:
+                setattr(spider, "_close_reason", reason)
+
+        if hasattr(engine, "close_spider_async"):
+            orig_async = engine.close_spider_async
+
+            async def _close_spider_async(spider, reason="cancelled", *args, **kwargs):
+                _stash(spider, reason)
+                return await orig_async(spider, reason, *args, **kwargs)
+
+            engine.close_spider_async = _close_spider_async  # type: ignore[method-assign]
+
+        if hasattr(engine, "close_spider"):
+            orig = engine.close_spider
+
+            def _close_spider(spider, reason="cancelled", *args, **kwargs):
+                _stash(spider, reason)
+                return orig(spider, reason, *args, **kwargs)
+
+            engine.close_spider = _close_spider  # type: ignore[method-assign]
+
+        engine._postgres_close_reason_patched = True
 
     def _spider(self):
         return self.crawler.spider
@@ -113,14 +151,25 @@ class PostgresPipeline:
             # be recorded as success — that caused false-green sync runs.
             #
             # Pipeline close_spider often runs BEFORE stats finish_reason is
-            # set, so also honor spider._close_reason when present.
+            # set, so honor spider._close_reason (stashed by engine patch).
             finish_reason = (
                 getattr(spider, "_close_reason", None)
                 or self.crawler.stats.get_value("finish_reason")
                 or "finished"
             )
 
-            if finish_reason == "finished" and self.items_failed == 0:
+            if finish_reason in _INTERRUPT_REASONS:
+                # SIGTERM / deploy restart mid-crawl — jobs already flushed
+                # stay saved; status must not read as a clean success.
+                self.scrape_run.status = "interrupted"
+                spider.logger.warning(
+                    "ScrapeRun %s interrupted (reason=%s): %d new, %d updated",
+                    self.scrape_run.id,
+                    finish_reason,
+                    self.items_new,
+                    self.items_updated,
+                )
+            elif finish_reason == "finished" and self.items_failed == 0:
                 self.scrape_run.status = "success"
                 spider.logger.info(
                     "ScrapeRun %s finished: %d new, %d updated",

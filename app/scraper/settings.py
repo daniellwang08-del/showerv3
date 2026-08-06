@@ -104,7 +104,17 @@ def _get_proxy_list_path() -> str:
     return str(p) if p.exists() else str(p)
 
 
-# Imported by remoterocketship spider → CloudflareSession(proxy_path=...).
+def _get_scraper_proxies() -> list[str]:
+    """Inline + file proxies resolved at settings import (also re-resolved in session)."""
+    try:
+        from app.scraper.utils.proxies import resolve_scraper_proxies_from_settings
+        return resolve_scraper_proxies_from_settings()
+    except Exception:
+        return []
+
+
+# Imported by remoterocketship spider → CloudflareSession(proxy_path=..., proxies=...).
 PROXY_LIST_PATH = _get_proxy_list_path()
+SCRAPER_PROXIES = _get_scraper_proxies()
 
 REQUEST_FINGERPRINTER_IMPLEMENTATION = "2.7"
