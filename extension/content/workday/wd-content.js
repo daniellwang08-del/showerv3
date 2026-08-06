@@ -6,7 +6,7 @@
 // step on WD_DETECT so the panel can show what it sees before running.
 (() => {
   const WD = (window.__WD = window.__WD || {});
-  const BUILD = "2026-08-05-batch-harvest-v9";
+  const BUILD = "2026-08-06-resume-skills-v6";
 
   // Page-console bridge MUST re-bind on every executeScript inject. The rest of
   // this file early-returns when __WD_CONTENT__ is set, which previously left

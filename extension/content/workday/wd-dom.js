@@ -213,6 +213,12 @@
   }
 
   // Attach a downloaded file (base64) to an <input type=file> via DataTransfer.
+  //
+  // Success must be judged BEFORE Workday's change handlers run (and/or by the
+  // caller waiting for a file-upload-item). Proven false-negative: Zillow WD
+  // clears input.files synchronously inside the change handler after accepting
+  // the File, so reading el.files AFTER dispatch reported "none" while the
+  // resume row was already on screen → "1 to check" / missed Resume upload.
   async function attachFile(selector, file, root) {
     if (!file || !file.base64) {
       try { WD.warn("attachFile: no file/base64 provided"); } catch {}
@@ -245,16 +251,38 @@
       const f = new File([bytes], name, { type: mime });
       const dt = new DataTransfer();
       dt.items.add(f);
-      el.files = dt.files;
+      try {
+        el.files = dt.files;
+      } catch {}
+      // Some hosts reject direct assignment; defineProperty still sticks a FileList.
+      if (!(el.files && el.files.length)) {
+        try {
+          Object.defineProperty(el, "files", { value: dt.files, configurable: true });
+        } catch {}
+      }
+      // Ground truth: assignment stuck BEFORE events (handlers often clear files).
+      const assigned = !!(el.files && el.files.length);
+      const assignedName = assigned ? el.files[0].name : "";
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
       // Some Workday tenants only commit after a bubbling InputEvent as well.
       try {
         el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertFromPaste" }));
       } catch {}
-      const ok = !!(el.files && el.files.length);
-      try { WD.log("attachFile: set files=", ok ? el.files[0].name : "none", "mime=", mime, "bytes=", bytes.length); } catch {}
-      return ok;
+      const after = !!(el.files && el.files.length);
+      try {
+        WD.log(
+          "attachFile: set files=",
+          assigned ? assignedName : "none",
+          "afterEvents=",
+          after ? el.files[0].name : "cleared",
+          "mime=",
+          mime,
+          "bytes=",
+          bytes.length,
+        );
+      } catch {}
+      return assigned;
     } catch (e) {
       try { WD.warn("attachFile: exception", (e && e.message) || e); } catch {}
       return false;

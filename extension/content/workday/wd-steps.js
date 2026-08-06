@@ -177,7 +177,9 @@
 
   function triggerShowsPlaceholder(trigger) {
     const t = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
-    return !t || /^select(\s+one)?\.?\.?\.?$/.test(t);
+    // Workday Voluntary EEO defaults to "No Response" (Review screenshot) — that is
+    // NOT a real filled answer; treat as empty so harvest→LLM still runs.
+    return !t || /^select(\s+one)?\.?\.?\.?$/.test(t) || /^no response\.?$/.test(t);
   }
 
   function valueMatchesWant(got, want) {
@@ -706,8 +708,9 @@
       // UPS/OFCCP wording varies ("I AM NOT A VETERAN", decline-to-disclose, …).
       [/veteran/i, e.veteran === true ? "__EEO_VETERAN_TRUE__" : "__EEO_VETERAN_FALSE__"],
       // EEO disability ONLY — never match interview Acknowledgment (contains "disability").
+      // Never match Voluntary "Self-Identification of Ethnicity/Gender/Veteran" (no disability).
       [
-        /(?:do you have a disability|i have a disability|no,? i do not have a disability|cc-305|disability status|self-identif)/i,
+        /(?:do you have a disability|i have a disability|no,? i do not have a disability|cc-305|disability status)|(?:self.identif.*disability|disability.*self.identif)/i,
         e.disability ? "Yes" : "No, I do not have a disability",
       ],
     ];
@@ -744,11 +747,20 @@
   }
 
   // True CC-305 / EEO disability self-identification wording only.
+  // CRITICAL: Zillow Voluntary Disclosures uses labels
+  //   "Self-Identification of Ethnicity / Gender / Veteran…"
+  // Bare /self.identif/ matched those and (via isDisabilityContainer) diverted them
+  // OUT of harvest→LLM→apply into fillDisabilitySelfId, which only clicks CC-305
+  // disability checkboxes — so Ethnicity/Gender/Veteran never reached the LLM and
+  // Review kept "No Response".
   function isDisabilitySelfIdLabel(labelOrLow) {
     const low = String(labelOrLow || "").toLowerCase();
     if (!low) return false;
     if (isAcknowledgmentSelectLabel(low) || isReasonableAccommodationLabel(low)) return false;
-    return /please check one of the boxes|cc-305|self.identif|do you have a disability|i have a disability|no,? i do not have a disability|disability status|had one in the past|without a disability/i.test(
+    // "Self-Identification of Ethnicity/Gender/Veteran" ≠ CC-305 disability.
+    if (/self.identif/i.test(low) && !/disability/i.test(low)) return false;
+    if (/self.identif/i.test(low) && /disability/i.test(low)) return true;
+    return /please check one of the boxes|cc-305|do you have a disability|i have a disability|no,? i do not have a disability|disability status|had one in the past|without a disability/i.test(
       low,
     );
   }
@@ -1289,8 +1301,9 @@
   function promptResultOptions(root) {
     return visibleOptions(root).filter((o) => {
       if (o.closest('[data-automation-id="selectedItem"], [data-automation-id="pill"]')) return false;
-      const t = D.norm(o.textContent);
-      return !!t && t !== "no items" && t !== "no results";
+      // Use isEmptyPromptRow — plain "no items" miss rejects "No Items." (period),
+      // which Zillow skills typeahead shows while search is in flight.
+      return !isEmptyPromptRow(o.textContent);
     });
   }
 
@@ -2708,6 +2721,192 @@
     return isChosen();
   }
 
+  // ── Skills ("Type to Add Skills") — multi typeahead, empty until you type ──
+  //
+  // Proven failure (Zillow 2026-08-06 eeo-llm-v4 logs): fillMultiselect typed
+  // "Python" then looked for mounted rows (mounted:[]) — skills search does NOT
+  // populate until Enter is pressed IN the search input. Closed-list harvest also
+  // returns options:0 (nothing to list before typing).
+  //
+  // Required workflow (per skill, Enter ALWAYS on the input, never document.body):
+  //   open → type skill → Enter (start search) → wait for results → Enter (top match)
+  //   → clear typed text → next skill → … → close when all done.
+  function isSkillsField(key, label) {
+    const k = String(key || "");
+    const low = String(label || "").toLowerCase();
+    if (/^skills$/i.test(k)) return true;
+    return /type to add skills|add skills|^skills$|skills\s*:/.test(low);
+  }
+
+  function parseSkillTokens(raw) {
+    if (raw == null || raw === "") return [];
+    if (Array.isArray(raw)) {
+      return raw
+        .flatMap((x) => parseSkillTokens(x))
+        .filter(Boolean);
+    }
+    if (typeof raw === "object") {
+      const t = valueText(raw);
+      return t ? parseSkillTokens(t) : [];
+    }
+    const s = String(raw).replace(/\s+/g, " ").trim();
+    if (!s) return [];
+    // Prefer comma / semicolon / newline splits; keep "Node.js" / "C++" intact.
+    const parts = s.split(/[,;\n|/]+/).map((p) => p.trim()).filter(Boolean);
+    const out = [];
+    const seen = new Set();
+    for (const p of parts.length > 1 ? parts : [s]) {
+      const n = D.norm(p);
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      out.push(p);
+    }
+    return out.slice(0, 40);
+  }
+
+  function multiChipCount(multi) {
+    return promptSelectionNodes(multi).length;
+  }
+
+  // True only when the open list shows a row related to the typed skill.
+  // Zillow evidence: after Enter-search, the list often still shows the stale
+  // unfiltered catalog (Accounting / Actuarial / Advertising) — that must NOT
+  // count as search success (old wait returned true via rows.length > 0).
+  async function waitForSkillsSearchResults(ownerMulti, typed, ms) {
+    const w = D.norm(typed);
+    if (!w) return false;
+    const end = Date.now() + (ms || 5000);
+    while (Date.now() < end) {
+      throwIfAborted();
+      const root = activeMultiListRoot(ownerMulti);
+      const rows = promptResultOptions(root);
+      const related = rows.some((o) => {
+        const t = D.norm(o.textContent);
+        return t === w || t.includes(w) || w.includes(t);
+      });
+      if (related) return true;
+      await D.delay(150);
+    }
+    return false;
+  }
+
+  async function clearSkillsSearchInput(input) {
+    if (!input) return;
+    input.focus();
+    D.nativeSet(input, "");
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+    await D.delay(80);
+  }
+
+  async function fillOneSkillToken(multi, input, skill) {
+    const token = String(skill || "").replace(/\s+/g, " ").trim();
+    if (!token) return false;
+    if (promptChosen(multi, token)) return true;
+
+    input.focus();
+    await clearSkillsSearchInput(input);
+    D.nativeSet(input, token);
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, data: token, inputType: "insertText" }));
+    const last = token.slice(-1) || "a";
+    pressKey(input, last, "Key" + (/[a-z]/i.test(last) ? last.toUpperCase() : "A"), last.charCodeAt(0) || 65);
+    await D.delay(80);
+
+    // Some tenants filter as you type; others need Enter to kick off server search.
+    let gotResults = await waitForSkillsSearchResults(multi, token, 1200);
+    if (!gotResults) {
+      input.focus();
+      pressEnter(input);
+      gotResults = await waitForSkillsSearchResults(multi, token, 5500);
+    }
+    await D.delay(220);
+    try {
+      if (WD.aa) {
+        WD.aa("fillSkills search", {
+          skill: token.slice(0, 40),
+          gotResults,
+          mounted: promptResultOptions(activeMultiListRoot(multi))
+            .slice(0, 5)
+            .map((o) => String(o.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40)),
+        });
+      }
+    } catch {}
+
+    // No related row → do not Enter/click (would commit Accounting etc. from stale list).
+    if (!gotResults) {
+      await clearSkillsSearchInput(input);
+      return false;
+    }
+
+    // Enter #2 — commits the highlighted RELATED match.
+    input.focus();
+    pressEnter(input);
+    await D.delay(450);
+
+    // Only count a chip that matches this skill — chip-count alone falsely
+    // credited Accounting/etc. when Enter hit the stale catalog (Zillow log).
+    if (promptChosen(multi, token)) {
+      await clearSkillsSearchInput(input);
+      return true;
+    }
+
+    const match = pickResultOption(token, activeMultiListRoot(multi));
+    if (match) {
+      input.focus();
+      firePointerClick(match);
+      await D.delay(350);
+    }
+    const ok = promptChosen(multi, token);
+    await clearSkillsSearchInput(input);
+    return ok;
+  }
+
+  async function fillSkillsPrompt(multi, skillsRaw) {
+    const tokens = parseSkillTokens(skillsRaw);
+    if (!multi || !tokens.length) return false;
+    const input = await openMultiPrompt(multi);
+    if (!input) {
+      try {
+        if (WD.aa) WD.aa("fillSkills FAIL", { reason: "no-input", count: tokens.length });
+      } catch {}
+      return false;
+    }
+    let added = 0;
+    const misses = [];
+    for (const skill of tokens) {
+      throwIfAborted();
+      let ok = false;
+      try {
+        ok = await fillOneSkillToken(multi, input, skill);
+      } catch (e) {
+        if (e && e.name === "WDAborted") throw e;
+      }
+      if (ok) added += 1;
+      else misses.push(String(skill).slice(0, 40));
+      try {
+        if (WD.aa) {
+          WD.aa("fillSkills token", {
+            skill: String(skill).slice(0, 40),
+            ok,
+            chips: multiChipCount(multi),
+          });
+        }
+      } catch {}
+    }
+    await closePrompt(multi, input);
+    try {
+      if (WD.aa) {
+        WD.aa("fillSkills DONE", {
+          added,
+          total: tokens.length,
+          misses: misses.slice(0, 12),
+          chips: multiChipCount(multi),
+        });
+      }
+    } catch {}
+    // Success if we committed at least one skill (optional field; partial OK).
+    return added > 0;
+  }
+
   function clickInputOrLabel(input) {
     if (!input) return;
     let lbl = null;
@@ -2883,6 +3082,12 @@
       // is skipped in favor of a follow-up-free source. Other multiselects
       // (e.g. Country Phone Code) keep the plain path.
       if (isSourceField(container, label)) return await fillSourcePrompt(multi, value, container);
+      if (isSkillsField("", label) || isSkillsField(
+        (container.getAttribute("data-automation-id") || "").replace(/^formField-/, ""),
+        label,
+      )) {
+        return await fillSkillsPrompt(multi, value);
+      }
       return await fillMultiselect(multi, value);
     }
     const listbox = listboxTrigger(container);
@@ -3025,13 +3230,17 @@
     // Matching /disability/ here made fillStep `continue` before resolveByLabel
     // AND before LLM (proven: field stayed Select One; raw pointer-click worked).
     if (isAcknowledgmentSelectLabel(low) || isReasonableAccommodationLabel(low)) return false;
-    if (/please check one of the boxes|cc-305|self.identif/i.test(low)) return true;
+    // Demographics "Self-Identification of Ethnicity/Gender/Veteran" must go through
+    // harvest → LLM → apply — never the hardcoded disability checkbox path.
+    if (/self.identif/i.test(low) && !/disability/i.test(low)) return false;
+    if (/please check one of the boxes|cc-305/i.test(low)) return true;
+    if (/self.identif/i.test(low) && /disability/i.test(low)) return true;
     // Require disability self-ID phrasing — bare "disability" alone is too broad.
     if (isDisabilitySelfIdLabel(low)) return true;
     const inputs = [...container.querySelectorAll('input[type="radio"], input[type="checkbox"]')];
     if (inputs.length < 2 || inputs.length > 5) return false;
     const blob = inputs.map((el) => labelForInput(el)).join(" ").toLowerCase();
-    return /disability|do not want to answer/.test(blob);
+    return /disability|do not want to answer/.test(blob) && /disability/.test(blob);
   }
 
   function isTermsAcceptField(label) {
@@ -3119,6 +3328,9 @@
     if (/sexual orientation|lgbtq/.test(low)) return String(e.sexualOrientation || "I don't wish to answer");
     if (/what is your race|race\/ethnicity|ethnicity|\brace\b/.test(low) && e.ethnicity) return String(e.ethnicity);
     if (/\bveteran\b/.test(low) && e.veteran != null) return e.veteran ? "veteran" : "not a veteran";
+    if (isSkillsField(key, label) && Array.isArray(profile && profile.skills) && profile.skills.length) {
+      return profile.skills.slice(0, 40).join(", ");
+    }
     if (isDisabilitySelfIdLabel(low) && e.disability != null) {
       return e.disability ? "I have a disability" : "I do not have a disability";
     }
@@ -3145,7 +3357,7 @@
       const phoneCc = isCountryPhoneCodeField(item.key, item.label) || /country phone code/i.test(item.label || "");
       const phoneNum = isPhoneNumberField(item.key, item.label) || (/^phone number$/i.test(String(item.label || "").trim()) && !(item.options && item.options.length));
       const cacheKey = (item.label || "").toLowerCase().trim().slice(0, 120);
-      if (cacheKey && WD._resolveCache[cacheKey] && !phoneCc && !phoneNum) {
+      if (cacheKey && WD._resolveCache[cacheKey] && !phoneCc && !phoneNum && !item.isSkills && !isSkillsField(item.key, item.label)) {
         const cached = WD._resolveCache[cacheKey];
         if (item.portalOptions && item.portalOptions.length) {
           const choice = resolvePortalChoice(
@@ -3225,6 +3437,11 @@
             values[item.cid] = nationalPhoneDigits(raw) || nationalPhoneDigits(item.want);
             continue;
           }
+          if (item.isSkills || isSkillsField(item.key, item.label)) {
+            const tokens = parseSkillTokens(raw);
+            if (tokens.length) values[item.cid] = tokens;
+            continue;
+          }
           if (item.portalOptions && item.portalOptions.length) {
             const choice = portalChoiceExact(raw, item.portalOptions) || resolvePortalChoice(raw, item.portalOptions);
             if (choice) values[item.cid] = choice;
@@ -3262,6 +3479,11 @@
         if (digits) values[item.cid] = digits;
         continue;
       }
+      if ((item.isSkills || isSkillsField(item.key, item.label)) && item.want) {
+        const tokens = parseSkillTokens(item.want);
+        if (tokens.length) values[item.cid] = tokens;
+        continue;
+      }
       if (item.want && item.portalOptions && item.portalOptions.length && !item.sourceHierarchical) {
         const fromWant = resolvePortalChoice(item.want, item.portalOptions);
         if (fromWant) {
@@ -3273,6 +3495,25 @@
         const fromWant = snapToHarvestedOption(item.want, item.options);
         if (fromWant) {
           values[item.cid] = fromWant;
+          continue;
+        }
+      }
+      // How Did You Hear (flat or any source with a harvested list): if the
+      // model left this cid empty, pick LinkedIn / peer board from the SAME
+      // list that was sent to the LLM — one-pass fill, no second WD_RUN.
+      if (
+        !values[item.cid] &&
+        item.isSource &&
+        item.options &&
+        item.options.length &&
+        !item.sourceHierarchical
+      ) {
+        const local = pickSourceLeafLocal(item.want, item.options);
+        if (local) {
+          values[item.cid] = local;
+          try {
+            WD.log(`source batch fallback local pick → ${local}`);
+          } catch {}
           continue;
         }
       }
@@ -3306,14 +3547,8 @@
   // → apply. The ONLY extra round-trip is How Did You Hear L2 when that field is
   // hierarchical (category folders). Experience work/edu panels stay in
   // fillExperienceExtras (search prompts + resume), not this path.
-  async function fillStep(profile, options, rep) {
-    options = options || {};
-    const onlyInvalid = Array.isArray(options.onlyInvalid) ? options.onlyInvalid : null;
-    throwIfAborted();
-    // Wait briefly for the step to render its controls. After navigation (e.g.
-    // Voluntary Disclosures → Self Identify), filling too early finds nothing -
-    // which is exactly how Self Identify ended up blank. Skip the wait the instant
-    // any formField / checkbox / radio is present (so populated steps aren't slowed).
+  async function waitForStepFormFieldsReady() {
+    // 1) Wait until ANY formField / checkbox / radio is present (nav transition).
     for (
       let i = 0;
       i < 16 &&
@@ -3323,6 +3558,44 @@
     ) {
       await D.delay(250);
     }
+    // 2) Stabilize count. Proven Zillow Voluntary Disclosures failure
+    // (2026-08-06 listbox-source-v2 logs): fillStep START saw containerCount:1
+    // (only acceptTermsAndAgreements / Acknowledged), then ~3s later pre-save
+    // detectStep reported fieldCount:4 — Ethnicity / Gender / Veteran had mounted
+    // AFTER the collect snapshot, so Review kept "No Response". Exiting on the
+    // first formField was too early.
+    let last = -1;
+    let stableHits = 0;
+    let finalCount = 0;
+    for (let i = 0; i < 24; i++) {
+      finalCount = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible).length;
+      if (finalCount === last && finalCount > 0) {
+        stableHits += 1;
+        if (stableHits >= 3) break; // ~750ms unchanged
+      } else {
+        stableHits = 0;
+        last = finalCount;
+      }
+      await D.delay(250);
+    }
+    try {
+      if (WD.aa) {
+        WD.aa("fillStep waitFormFields", {
+          fieldCount: finalCount,
+          stableHits,
+          voluntaryLike: onSelfIdOrVoluntaryPage(),
+        });
+      }
+    } catch {}
+    return finalCount;
+  }
+
+  async function fillStep(profile, options, rep) {
+    options = options || {};
+    const onlyInvalid = Array.isArray(options.onlyInvalid) ? options.onlyInvalid : null;
+    throwIfAborted();
+    // Wait for the step to finish mounting controls (not merely the first one).
+    await waitForStepFormFieldsReady();
     const valueByKey = buildValueMap(profile);
     const containers = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible);
     const decisions = { skip: 0, collect: 0, harvest: 0, write: 0, experience: 0 };
@@ -3445,6 +3718,7 @@
       const want = profileWantForField(key, label, profile, valueByKey);
       const isOption = isOptionBearingContainer(c);
       const isSource = isSourceField(c, label);
+      const isSkills = isSkillsField(key, label);
       const multi = c.querySelector('[data-automation-id="multiSelectContainer"]');
 
       if (isOption) {
@@ -3457,6 +3731,10 @@
         if (isCountryPhoneCodeField(key, label)) {
           optionWant = USA_PHONE_CC;
         }
+        // Skills: prefer profile.skills list as candidate hint (comma-joined).
+        if (isSkills && Array.isArray(profile && profile.skills) && profile.skills.length) {
+          optionWant = profile.skills.slice(0, 40).join(", ");
+        }
         targets.push({
           container: c,
           key,
@@ -3465,6 +3743,7 @@
           want: optionWant,
           isOption: true,
           isSource,
+          isSkills,
           multi,
           localOnly: false,
         });
@@ -3546,6 +3825,32 @@
         return;
       }
       assignCid(t);
+      if (t.isSkills || isSkillsField(t.key, t.label)) {
+        // Type-to-add skills: no options until you type+Enter. Skip empty harvest
+        // (proven options:0) and ask the LLM for ALL skill tokens via multi.
+        t.isSkills = true;
+        t.hierarchical = false;
+        t.kind = "select";
+        t.options = [];
+        t.portalOptions = [];
+        t.portalHtml = "";
+        t.llmLabel =
+          `${t.label} — Type-to-add skills multi-select. There is NO pre-harvested option list. ` +
+          `Return ALL applicable technical skills from the candidate profile in option_values ` +
+          `(one skill per entry, e.g. TypeScript, Node.js, AWS). Also put a comma-separated copy in value.`;
+        if (!t.want && Array.isArray(profile && profile.skills) && profile.skills.length) {
+          t.want = profile.skills.slice(0, 40).join(", ");
+        }
+        decisions.harvest += 1;
+        harvestSummary.push({
+          key: t.key,
+          labelHead: String(t.label).slice(0, 50),
+          options: 0,
+          kind: "skills-typeahead",
+          widget: "multi",
+        });
+        return;
+      }
       if (t.isSource && t.multi) {
         const l1 = await harvestSourceL1(t.multi);
         t.hierarchical = l1.hierarchical;
@@ -3561,6 +3866,7 @@
           labelHead: String(t.label).slice(0, 50),
           options: t.options.length,
           hierarchical: !!t.hierarchical,
+          widget: "multi",
         });
         await closeAllListboxes();
         return;
@@ -3614,6 +3920,14 @@
           t.portalHtml = info.portalHtml || "";
         }
         t.llmLabel = t.label;
+        // Listbox "How Did You Hear" (Zillow): same flat-source hint as multi path.
+        if (t.isSource) {
+          t.hierarchical = false;
+          t.llmLabel = `${t.label} — ${sourceFlatHint(t.want)}`;
+          if (t.portalOptions && t.portalOptions.length) {
+            t.portalHtml = buildPortalOptionsHtml(t.cid, t.llmLabel, t.portalOptions, "");
+          }
+        }
         if (isCountryPhoneCodeField(t.key, t.label)) {
           const usa = exactUsaPhoneCcOption(t.options || []);
           if (usa) t.want = usa;
@@ -3629,6 +3943,7 @@
           labelHead: String(t.label).slice(0, 50),
           options: (t.options || []).length,
           kind: t.kind,
+          widget: t.isSource ? "listbox" : undefined,
         });
         await closeAllListboxes();
         return;
@@ -3696,6 +4011,9 @@
         portalOptions: portals,
         portalHtml,
         want: t.want || undefined,
+        isSource: !!t.isSource,
+        isSkills: !!t.isSkills,
+        multi: !!t.isSkills,
         sourceHierarchical: !!t.hierarchical,
       });
     }
@@ -3888,18 +4206,90 @@
       if (t.phoneCcApplied != null) continue;
       if (t.isSource) {
         let ok = !!t.sourceApplied;
+        const trigger = listboxTrigger(t.container);
+        // Zillow (and some tenants): How Did You Hear is a single listbox, NOT
+        // multiSelectContainer. Inventory logged kind:"listbox" — the old
+        // `if (!ok && t.multi)` gate skipped APPLY entirely (ok:false with no pick log).
         if (!ok && t.multi) {
-          // Flat source: apply batch pick; hierarchical without L2: recovery path.
+          // Flat multi source: LLM pick first, then local peer boards from the harvested
+          // list (same chooseSourceLeaf used for hierarchical L2). Hierarchical
+          // without L2 leaf: fillSourcePrompt recovery within THIS pass only.
           if (!t.hierarchical) {
-            const pick = snapToHarvestedOption(valueText(batchValues[t.cid]), t.options || []);
+            const pick = chooseSourceLeaf(t.want, t.options || [], batchValues[t.cid]);
             if (pick) {
               await openMultiPrompt(t.multi);
               await harvestSourceLiveRows(t.multi);
               ok = await applySourceLeaf(t.multi, pick, baselineKeys);
+              try {
+                WD.log(
+                  `source flat APPLY (multi) pick=${JSON.stringify(pick)} llm=${JSON.stringify(valueText(batchValues[t.cid]) || null)} ok=${!!ok}`
+                );
+              } catch {}
+            } else {
+              try {
+                WD.warn(
+                  "source flat APPLY (multi) no pick from LLM/peers",
+                  valueText(batchValues[t.cid]),
+                  (t.options || []).slice(0, 12)
+                );
+              } catch {}
             }
           } else if (!t.sourceLeaf) {
             ok = await fillSourcePrompt(t.multi, t.want || "Indeed", t.container);
           }
+        } else if (!ok && trigger) {
+          // Flat listbox source (Zillow): apply via portal listbox click.
+          const pick = chooseSourceLeaf(t.want, t.options || [], batchValues[t.cid]);
+          if (pick) {
+            ok = await applyListboxPortal(trigger, pick);
+            try {
+              WD.log(
+                `source flat APPLY (listbox) pick=${JSON.stringify(pick)} llm=${JSON.stringify(valueText(batchValues[t.cid]) || null)} ok=${!!ok}`
+              );
+            } catch {}
+            try {
+              if (WD.aa) {
+                WD.aa("fillStep APPLY source-listbox", {
+                  key: t.key,
+                  pick: String(pick).slice(0, 60),
+                  llm: valueText(batchValues[t.cid]).slice(0, 60) || null,
+                  options: (t.options || []).length,
+                  ok,
+                });
+              }
+            } catch {}
+          } else {
+            try {
+              WD.warn(
+                "source flat APPLY (listbox) no pick from LLM/peers",
+                valueText(batchValues[t.cid]),
+                (t.options || []).slice(0, 12)
+              );
+            } catch {}
+            try {
+              if (WD.aa) {
+                WD.aa("fillStep APPLY source-listbox", {
+                  key: t.key,
+                  pick: null,
+                  llm: valueText(batchValues[t.cid]).slice(0, 60) || null,
+                  options: (t.options || []).length,
+                  ok: false,
+                  reason: "no-pick",
+                });
+              }
+            } catch {}
+          }
+        } else if (!ok) {
+          try {
+            if (WD.aa) {
+              WD.aa("fillStep APPLY source-skip", {
+                key: t.key,
+                reason: "no-multi-no-listbox",
+                hasMulti: !!t.multi,
+                hasTrigger: !!trigger,
+              });
+            }
+          } catch {}
         }
         record(rep, t.label || t.key, ok);
         if (!ok) rememberFailedField(t.key, t.label);
@@ -3913,6 +4303,32 @@
       let value = t.localOnly ? t.want : batchValues[t.cid];
       if (value == null || value === "") {
         if (t.want) value = t.want;
+      }
+      // Skills typeahead: LLM returns multiple tokens (array or comma string).
+      if (t.isSkills || isSkillsField(t.key, t.label)) {
+        const tokens = parseSkillTokens(value != null && value !== "" ? value : t.want);
+        let ok = false;
+        const multiEl = t.multi || t.container.querySelector('[data-automation-id="multiSelectContainer"]');
+        try {
+          ok = multiEl ? await fillSkillsPrompt(multiEl, tokens) : false;
+        } catch (e) {
+          if (e && e.name === "WDAborted") throw e;
+        }
+        record(rep, t.label || t.key, ok);
+        if (!ok) rememberFailedField(t.key, t.label);
+        decisions.write += 1;
+        try {
+          if (WD.aa) {
+            WD.aa("fillStep APPLY", {
+              key: t.key,
+              labelHead,
+              kind: "skills",
+              ok,
+              tokens: tokens.slice(0, 12),
+            });
+          }
+        } catch {}
+        continue;
       }
       // Phone Number: thin digit cleanup of LLM answer (not a different value).
       if (isPhoneNumberField(t.key, t.label)) {
@@ -3978,8 +4394,7 @@
       await D.delay(40);
     }
 
-    // Safety net for any required option still empty (rare).
-    await recheckUncommittedOptionFields(profile, valueByKey, rep);
+    // One-pass design: no second option recheck / refill after APPLY.
     try {
       if (WD.aa) {
         WD.aa("fillStep END", {
@@ -3993,56 +4408,7 @@
     await fillDisabilitySelfId(profile, rep);
   }
 
-  // After the main + LLM passes, finish any option field still empty
-  // (hierarchical source that stopped after L1, virtualized phone code miss,
-  // optional dropdowns the first pass missed when a profile hint exists, etc.).
-  async function recheckUncommittedOptionFields(profile, valueByKey, rep) {
-    const containers = D.qa('[data-automation-id^="formField-"]').filter(D.isVisible);
-    for (const c of containers) {
-      throwIfAborted();
-      if (inExperiencePanel(c)) continue;
-      if (!isOptionBearingContainer(c)) continue;
-      if (fieldHasCommittedValue(c)) continue;
-      const aid = c.getAttribute("data-automation-id") || "";
-      const key = aid.replace(/^formField-/, "");
-      const label = fieldLabel(c);
-      const want = profileWantForField(key, label, profile, valueByKey);
-      // Retry required fields, the source field, and any optional field that
-      // has a profile hint — optional blanks with no hint were already sent
-      // through the LLM in the main pass.
-      if (!isRequired(c) && !isSourceField(c, label) && !want) continue;
-      if (shouldSkipFailedField(key, label) && !c.querySelector('[aria-invalid="true"]')) continue;
-      const multi = c.querySelector('[data-automation-id="multiSelectContainer"]');
-      let ok = false;
-      try {
-        if (isSourceField(c, label) && multi) {
-          ok = await fillSourcePrompt(multi, want || "Indeed", c);
-        } else if (want) {
-          ok = await writeField(c, want, label || key);
-        }
-      } catch (e) {
-        if (e && e.name === "WDAborted") throw e;
-      }
-      try {
-        if (WD.aa) {
-          WD.aa("fillStep RECHECK-OPTION", {
-            key: key.slice(0, 40),
-            labelHead: String(label || "").slice(0, 70),
-            want: want || null,
-            ok,
-          });
-        }
-      } catch {}
-      if (ok) record(rep, label || key, true);
-      else if (isRequired(c)) {
-        rememberFailedField(key, label);
-        if (!(rep.unmatched || []).some((u) => u.key === key || u.label === label)) {
-          rep.unmatched.push({ key, label });
-        }
-      }
-      await D.delay(60);
-    }
-  }
+  // (recheckUncommittedOptionFields removed — one-pass harvest→LLM→apply only)
 
   // ── My Experience: repeating Work Experience + Education panels ──────────────
   // Panels do not exist until "Add" is clicked, so the generic formField pass
@@ -4352,6 +4718,7 @@
     const t = D.norm(text);
     if (!t) return true;
     if (/^(no items|no results)\.?$/.test(t)) return true;
+    if (/^no response\.?$/.test(t)) return true;
     return /^(select|choose)(\s+one)?\s*\.{0,3}$/.test(t);
   }
 
@@ -4564,10 +4931,15 @@
           kind: "options",
           items: items.map((it) => ({
             cid: it.cid,
+            key: it.key,
             label: it.label,
             want: it.want,
             kind: it.kind,
             required: it.required,
+            isSource: !!it.isSource,
+            isSkills: !!it.isSkills || isSkillsField(it.key, it.label),
+            multi: !!it.multi || !!it.isSkills || isSkillsField(it.key, it.label),
+            sourceHierarchical: !!it.sourceHierarchical,
             options: it.options,
             portalOptions: it.portalOptions,
             portalHtml: it.portalHtml,
@@ -5074,6 +5446,20 @@
           null
         );
       };
+      const uploadItemCount = () => {
+        const scope = getScope();
+        return (scope ? D.qa('[data-automation-id="file-upload-item"]', scope) : D.qa('[data-automation-id="file-upload-item"]'))
+          .length;
+      };
+      const waitForUploadItem = async (ms) => {
+        const end = Date.now() + (ms || 8000);
+        while (Date.now() < end) {
+          throwIfAborted();
+          if (uploadItemCount() > 0) return true;
+          await D.delay(150);
+        }
+        return uploadItemCount() > 0;
+      };
       // The widget renders slowly; wait for it (or an existing uploaded item)
       // BEFORE clearing, otherwise we'd clear nothing and then add a duplicate
       // (root cause of the lingering multiples: scope was null at clear time).
@@ -5084,9 +5470,19 @@
       // Remove ALL previously-uploaded resume(s) so only the current one remains.
       const removed = await clearUploadedFiles(getScope);
       const inputPresent = !!D.q(AID("file-upload-input-ref"));
-      const ok = await D.attachFile(AID("file-upload-input-ref"), resumeFile);
+      let assigned = await D.attachFile(AID("file-upload-input-ref"), resumeFile);
+      // UI row is the real commit signal — Workday often clears input.files after
+      // accepting the File (see attachFile). Wait for the row; retry once if absent.
+      let uiOk = await waitForUploadItem(assigned ? 6000 : 2500);
+      if (!uiOk) {
+        assigned = await D.attachFile(AID("file-upload-input-ref"), resumeFile);
+        uiOk = await waitForUploadItem(8000);
+      }
+      const ok = uiOk || assigned;
       try {
-        WD.log(`resume upload result: attached=${ok} removedExisting=${removed} inputPresentAtStart=${inputPresent}`);
+        WD.log(
+          `resume upload result: attached=${ok} assigned=${assigned} uiItem=${uiOk} removedExisting=${removed} inputPresentAtStart=${inputPresent} items=${uploadItemCount()}`,
+        );
       } catch {}
       record(rep, "Resume upload", ok);
     }
@@ -5256,9 +5652,9 @@
   // a STALE engine (reload the extension at chrome://extensions, then hard-reload
   // the Workday page).
   try {
-    WD.log("wd-steps build: 2026-08-05-batch-harvest-v9");
+    WD.log("wd-steps build: 2026-08-06-resume-skills-v6");
     try {
-      if (WD.aa) WD.aa("engine-build", { build: "2026-08-05-batch-harvest-v9", href: location.href });
+      if (WD.aa) WD.aa("engine-build", { build: "2026-08-06-resume-skills-v6", href: location.href });
     } catch {}
   } catch {}
 })();

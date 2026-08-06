@@ -392,6 +392,40 @@
     return { handle, label: labelText(regionEl), controls: controlsMeta, html };
   }
 
+  // Cheap post-pass check: detect + isFilled only (no option harvest, no LLM
+  // html). Used to skip a full re-extract when progressive reveal produced
+  // nothing new (e.g. Greenhouse Hispanic→Race already filled).
+  async function countUnfilledInRegion(regionEl, consumed, handle, attemptedKeys) {
+    const claims = detect(regionEl, consumed);
+    const attempted =
+      attemptedKeys instanceof Set
+        ? attemptedKeys
+        : new Set(Array.isArray(attemptedKeys) ? attemptedKeys : []);
+    let n = 0;
+    for (const { driver, root } of claims) {
+      let spec;
+      try {
+        spec = driver.extract(root);
+      } catch {
+        continue;
+      }
+      const idEl = driver.cidEl ? driver.cidEl(root) : root;
+      const cid = uniqueCid(cidFor(idEl || root));
+      try {
+        root.setAttribute("data-autofill-cid", cid);
+      } catch {}
+      controls.set(cid, { driver, root, spec, handle });
+      let filled = false;
+      try {
+        filled = driver.isFilled(root);
+      } catch {}
+      if (filled) continue;
+      if (attempted.has(cid)) continue;
+      n += 1;
+    }
+    return n;
+  }
+
   function relocate(cid) {
     const entry = controls.get(cid);
     // isConnected (not document.contains) so a control living in a shadow root -
@@ -491,5 +525,14 @@
     return report;
   }
 
-  AF.engine = { reset, detect, extractRegion, extractRegionDom, relocate, writeControls, controls };
+  AF.engine = {
+    reset,
+    detect,
+    extractRegion,
+    extractRegionDom,
+    countUnfilledInRegion,
+    relocate,
+    writeControls,
+    controls,
+  };
 })();

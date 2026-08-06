@@ -142,9 +142,8 @@
     // Same class of bug for Application Questions 1 of 2 vs 2 of 2: both headings
     // match "Application Question". Collapsing them to one id made WD_NEXT report
     // advanced=false after a real Save navigation, so auto-advance never started a
-    // fresh fill on page 2 — it only Save-looped + at most one onlyInvalid recovery
-    // (WD_MAX_STEP_FILLS=2), then panel "Couldn't resolve on Application Questions:
-    // [accommodation…]" while the UI already showed "No".
+    // fresh fill on page 2 — one harvest→LLM→apply pass only (WD_MAX_STEP_FILLS=1);
+    // no onlyInvalid recovery refill.
     if (pageHeadingHas("Self Identify") || pageHeadingHas("Self-Identify")) {
       logDetectStep("selfid");
       return "selfid";

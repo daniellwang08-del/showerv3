@@ -5,11 +5,24 @@
 // the modular engine (window.__AF.engine), which dispatches to per-component
 // drivers. Injected into every frame; idempotent via the guard below.
 (() => {
-  try {
-    console.log("[autofill] picker.js build 2026-08-05-wb (workable: dates reassert + address + debug)");
-  } catch {}
   if (window.__JOB_AUTOFILL__) return;
   window.__JOB_AUTOFILL__ = true;
+  try {
+    // Greenhouse career-page shells also inject (allFrames). Skip the build log
+    // there — the real form lives in the embed iframe.
+    const embedParent =
+      typeof window !== "undefined" &&
+      window.top === window &&
+      !!document.querySelector(
+        'iframe[src*="greenhouse.io"][src*="embed/job_app"], iframe[src*="greenhouse.io/embed/job_app"], iframe[src*="greenhouse.io"][src*="job_app"]'
+      );
+    if (!embedParent) {
+      console.log(
+        "[autofill] picker.js build 2026-08-05-gh-fast (greenhouse: skip empty pass + commit spam)",
+        location.hostname || ""
+      );
+    }
+  } catch {}
 
   const AF = window.__AF || {};
   const dom = AF.dom || {};
@@ -769,17 +782,14 @@
       ),
     ];
     const snapshots = [];
+    let skippedCombobox = 0;
     for (const el of nodes) {
       try {
         if (!isVisible(el)) continue;
         // Never re-commit autocomplete comboboxes — ApiSetFormValue already ran
         // on option click; re-typing reopens the dropdown (Ashby failure mode).
         if (isAutocompleteCombobox(el)) {
-          console.log("[autofill] commitPrefilled skip combobox", {
-            cid: el.getAttribute("data-autofill-cid"),
-            value: String(el.value || "").slice(0, 80),
-            expanded: el.getAttribute("aria-expanded"),
-          });
+          skippedCombobox += 1;
           continue;
         }
         // NOTE: we deliberately DO commit intl-tel-input (.iti) fields here. The
@@ -791,6 +801,11 @@
         const v = el.value;
         if (v == null || v === "") continue;
         snapshots.push({ el, v });
+      } catch {}
+    }
+    if (skippedCombobox) {
+      try {
+        console.log("[autofill] commitPrefilled skipped", skippedCombobox, "combobox(es)");
       } catch {}
     }
     for (const { el, v } of snapshots) {
@@ -2131,6 +2146,28 @@
     chrome.runtime.sendMessage({ type: "AF_FIELDS", fields });
   }
 
+  // Fast progressive-reveal probe: count unfilled controls without opening
+  // dropdowns or building the LLM html snapshot.
+  async function handleCountUnfilled(requestedHandles, attemptedKeys) {
+    if (!AF.engine || !AF.engine.countUnfilledInRegion) return 0;
+    AF.engine.reset();
+    const consumed = new WeakSet();
+    const handleList =
+      Array.isArray(requestedHandles) && requestedHandles.length
+        ? requestedHandles
+        : [...state.selected.keys()];
+    const attempted = new Set(Array.isArray(attemptedKeys) ? attemptedKeys : []);
+    let total = 0;
+    for (const handle of handleList) {
+      const el = relocate(handle);
+      if (!el) continue;
+      try {
+        total += await AF.engine.countUnfilledInRegion(el, consumed, handle, attempted);
+      } catch {}
+    }
+    return total;
+  }
+
   async function handleWrite(results, files, passId) {
     try {
       // Note: this runs for every writeAndWait (LLM pass AND ashbyReapply).
@@ -2722,6 +2759,20 @@
         // Retry briefly so a form that renders just after Start is still caught.
         runExclusive(async () => {
           let count = 0;
+          // Greenhouse career-page shell: the form lives in the embed iframe.
+          // Do not burn ~2.4s retrying selectors that only exist in the iframe.
+          try {
+            if (AF.greenhouse && AF.greenhouse.isEmbedParent && AF.greenhouse.isEmbedParent()) {
+              console.log(
+                "[autofill] AF_AUTOSELECT -> skip embed parent; host =",
+                location.hostname
+              );
+              try {
+                chrome.runtime.sendMessage({ type: "AF_AUTOSELECT_DONE", count: 0 });
+              } catch {}
+              return;
+            }
+          } catch {}
           for (let i = 0; i < 12; i++) {
             count = autoSelect();
             if (count) break;
@@ -2758,6 +2809,19 @@
       case "AF_EXTRACT":
         runExclusive(() => handleExtract(msg.handles));
         break;
+      case "AF_COUNT_UNFILLED":
+        runExclusive(async () => {
+          try {
+            const count = await handleCountUnfilled(msg.handles, msg.attemptedKeys);
+            sendResponse({ ok: true, count: count || 0 });
+          } catch (err) {
+            try {
+              // Signal failure so the side panel keeps a full extract pass.
+              sendResponse({ ok: false, count: 1, error: String((err && err.message) || err || "") });
+            } catch {}
+          }
+        });
+        return true; // async sendResponse
       case "AF_WRITE":
         runExclusive(() => handleWrite(msg.results, msg.files, msg.passId));
         break;

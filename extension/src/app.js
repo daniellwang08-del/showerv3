@@ -440,19 +440,28 @@ async function handleWorkdayResolve(msg) {
     const htmlParts = [];
     const controls = items.map((it) => {
       const portalOptions = Array.isArray(it.portalOptions) ? it.portalOptions : [];
-      // Country Phone Code ~249 rows; send as many as the API allows. Full list
-      // also lives in portalHtml (source of truth for the model).
-      const optCap = /country phone code/i.test(it.label || "") ? 280 : 100;
-      const optionTexts = (
-        Array.isArray(it.options)
-          ? it.options
-          : portalOptions.map((o) => o.text).filter(Boolean)
-      )
-        .map((t) => clip(t, 500))
-        .slice(0, optCap);
+      // Country Phone Code ~249 rows; How Did You Hear can be 50–100+ leaves.
+      // Keep headroom so the full harvested list reaches the model.
+      const isPhoneCc = /country phone code/i.test(it.label || "");
+      const isSource =
+        !!(it.isSource || it.sourceHierarchical) ||
+        /how did you hear|how.*hear about/i.test(it.label || "") ||
+        /^source$/i.test(String(it.key || ""));
+      const isSkills =
+        !!it.isSkills ||
+        /type to add skills|add skills|^skills$/i.test(it.label || "") ||
+        /^skills$/i.test(String(it.key || ""));
+      const optCap = isPhoneCc || isSource ? 280 : 120;
+      const rawOptions = Array.isArray(it.options)
+        ? it.options
+        : portalOptions.map((o) => o.text).filter(Boolean);
+      const optionTexts = rawOptions.map((t) => clip(t, 500)).slice(0, optCap);
+      // Prefer full portal list in HTML (source of truth for the model).
+      const portalForHtml =
+        portalOptions.length > optCap ? portalOptions.slice(0, optCap) : portalOptions;
       let portalHtml = it.portalHtml || "";
-      if (!portalHtml && portalOptions.length) {
-        const lis = portalOptions
+      if (!portalHtml && portalForHtml.length) {
+        const lis = portalForHtml
           .map((o) => {
             const id = String(o.id || o.value || "").replace(/"/g, "");
             const val = String(o.value || o.id || "").replace(/"/g, "");
@@ -478,6 +487,20 @@ async function handleWorkdayResolve(msg) {
       if (label.length > CONTROL_LABEL_MAX) {
         console.warn("[workday] WD_RESOLVE label still over cap after clip", label.length, it.cid);
       }
+      try {
+        console.log("[workday] WD_RESOLVE → LLM control", {
+          cid: it.cid,
+          key: it.key || null,
+          isSource: !!isSource,
+          want: it.want || null,
+          optionsSent: optionTexts.length,
+          optionsHarvested: rawOptions.length,
+          portalSent: portalForHtml.length,
+          truncated: rawOptions.length > optionTexts.length || portalOptions.length > portalForHtml.length,
+          optionSample: optionTexts.slice(0, 8),
+          labelHead: String(label || "").slice(0, 100),
+        });
+      } catch {}
       return {
         cid: String(it.cid).slice(0, 256),
         kind: String(it.kind || "select").slice(0, 30),
@@ -485,6 +508,8 @@ async function handleWorkdayResolve(msg) {
         // Pass through the real required flag. Optional fields must still be
         // answered by the shared autofill prompt when answerable.
         required: !!it.required,
+        // Skills typeahead: multi=true so the model returns option_values[].
+        multi: !!isSkills,
         options: optionTexts,
       };
     });
@@ -518,12 +543,42 @@ async function handleWorkdayResolve(msg) {
     };
 
     const values = {};
+    const rawByCid = {};
     for (const f of (resp && resp.results) || []) {
       for (const c of f.controls || []) {
+        rawByCid[c.cid] = {
+          value: c.value || null,
+          option: c.option || null,
+          needs_user: !!c.needs_user,
+          reason: c.reason || null,
+        };
         if (c.needs_user) continue;
+        const src = items.find((it) => String(it.cid) === String(c.cid));
+        const isSkillsCtrl =
+          !!(src && src.isSkills) ||
+          /type to add skills|add skills|^skills$/i.test((src && src.label) || "") ||
+          /type to add skills|add skills|^skills$/i.test(c.label || "") ||
+          /^skills$/i.test(String((src && src.key) || ""));
+
+        // Skills: prefer option_values[] (multi typeahead — no harvested list).
+        if (isSkillsCtrl) {
+          const fromArr = Array.isArray(c.option_values)
+            ? c.option_values.map((x) => String(x || "").trim()).filter(Boolean)
+            : [];
+          let tokens = fromArr;
+          if (!tokens.length) {
+            const blob = c.option || c.value || "";
+            tokens = String(blob)
+              .split(/[,;\n|/]+/)
+              .map((x) => x.trim())
+              .filter(Boolean);
+          }
+          if (tokens.length) values[c.cid] = tokens.slice(0, 40);
+          continue;
+        }
+
         let v = c.option || c.value;
         if (!c.cid || !v) continue;
-        const src = items.find((it) => String(it.cid) === String(c.cid));
         const portalOptions = (src && src.portalOptions) || [];
         const opts = src && Array.isArray(src.options) ? src.options : portalOptions.map((o) => o.text);
         const phoneCc = isPhoneCcItem(src, c.label);
@@ -543,16 +598,21 @@ async function handleWorkdayResolve(msg) {
           continue;
         }
 
-        // Exact portal id / data-value / text only for phone CC (LLM returns exact row).
+        // Exact portal id / data-value / text. Prefer visible TEXT for non-phone
+        // so page-side snapToHarvestedOption matches option labels (LinkedIn).
         if (portalOptions.length) {
           const byVal = portalOptions.find((o) => norm(o.value) === want || norm(o.id) === want);
           if (byVal) {
-            values[c.cid] = byVal.value || byVal.id || byVal.text;
+            values[c.cid] = phoneCc
+              ? byVal.value || byVal.id || byVal.text
+              : byVal.text || byVal.value || byVal.id;
             continue;
           }
           const byText = portalOptions.find((o) => norm(o.text) === want);
           if (byText) {
-            values[c.cid] = byText.value || byText.id || byText.text;
+            values[c.cid] = phoneCc
+              ? byText.value || byText.id || byText.text
+              : byText.text || byText.value || byText.id;
             continue;
           }
           if (phoneCc) {
@@ -561,7 +621,7 @@ async function handleWorkdayResolve(msg) {
           }
           const soft = portalOptions.find((o) => norm(o.text).includes(want) || want.includes(norm(o.text)));
           if (soft) {
-            values[c.cid] = soft.value || soft.id || soft.text;
+            values[c.cid] = soft.text || soft.value || soft.id;
             continue;
           }
         }
@@ -592,13 +652,17 @@ async function handleWorkdayResolve(msg) {
         values[c.cid] = v;
       }
     }
-    console.debug(
-      "[workday] WD_RESOLVE answered",
-      Object.keys(values).length,
-      "/",
-      items.length,
-      "controls",
-    );
+    try {
+      console.log("[workday] WD_RESOLVE ← LLM raw controls", rawByCid);
+      console.log(
+        "[workday] WD_RESOLVE answered",
+        Object.keys(values).length,
+        "/",
+        items.length,
+        "controls",
+        values
+      );
+    } catch {}
     try {
       aaLog("WD_RESOLVE answered", { answered: Object.keys(values).length, total: items.length });
     } catch {}
@@ -2429,11 +2493,15 @@ async function startAutofill() {
         await prepareGeneric(tab.id);
       }
       try {
-        await tabMsg.broadcastTabMessage(tab.id, { type: "AF_AUTOSELECT" });
         // Prefer the Greenhouse embed iframe when the career page is only a shell.
-        const ghFrame = tabMsg.pickGreenhouseFrame(await tabMsg.getTabFrames(tab.id));
+        // Send AF_AUTOSELECT only there so the parent never runs a useless retry loop.
+        const frames = await tabMsg.getTabFrames(tab.id);
+        const ghFrame = tabMsg.pickGreenhouseFrame(frames);
         if (ghFrame && ghFrame.frameId != null) {
           setAutofill({ primaryFrameId: ghFrame.frameId });
+          await tabMsg.sendTabMessage(tab.id, { type: "AF_AUTOSELECT" }, ghFrame.frameId);
+        } else {
+          await tabMsg.broadcastTabMessage(tab.id, { type: "AF_AUTOSELECT" });
         }
       } catch {
         /* ignore */
@@ -2523,9 +2591,10 @@ const WD_MAX_STEPS = 9;
 // "Save and Continue", so a single post-save recovery is required; more than that
 // is wasted churn (the user explicitly does not want repeated re-attempts, and
 // with the pill-aware isChosen fix already-filled fields are never re-typed).
-const WD_MAX_STEP_FILLS = 2;
-// Per step: how many Save attempts after the initial fill. 2 is enough once
-// School/FoS commit correctly; a third pass was empty churn on My Experience.
+const WD_MAX_STEP_FILLS = 1;
+// Per step: how many Save attempts after the initial fill. No refill between
+// attempts — one harvest→LLM→apply pass only (design). Save is retried only to
+// wait out slow navigation / late validation UI.
 const WD_MAX_SAVE_ATTEMPTS = 2;
 
 function delay(ms) {
@@ -2732,10 +2801,9 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
       if (fill.aborted || loopStopped()) return finishLoop("stopped");
       if (fill.error) return finishLoop("error", fill.error);
 
-      // Clear validation and advance. CRITICAL: Workday surfaces most required-
-      // field errors only AFTER clicking "Save and Continue", so a clean pre-save
-      // check is not enough. Cap fills at WD_MAX_STEP_FILLS (default 3) so recovery
-      // cannot re-drive the same prompts indefinitely.
+      // Clear validation and advance. ONE fill pass only (harvest → LLM → apply).
+      // Do not re-run fill on pre/post-save errors — that violated the one-attempt
+      // design and re-harvested How Did You Hear after a missed LLM answer.
       let advanced = false;
       let lastNames = [];
       for (let attempt = 0; attempt < WD_MAX_SAVE_ATTEMPTS && !advanced; attempt++) {
@@ -2744,7 +2812,6 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         await focusPageAndFlush(tabId);
         if (loopStopped()) return finishLoop("stopped");
 
-        // Fix anything already flagged before saving (if we still have fill budget).
         let v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
         aaLog("pre-save VALIDATE", {
           attempt: attempt + 1,
@@ -2754,30 +2821,12 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
           clean: v && v.clean,
           errorCount: v && v.errorCount,
           invalidFields: v && v.invalidFields,
-          willRecover: !!(v && !v.clean && fillsUsed < WD_MAX_STEP_FILLS),
-          willSkipRecoverBecauseBudget: !!(v && !v.clean && fillsUsed >= WD_MAX_STEP_FILLS),
         });
-        if (v && !v.clean && fillsUsed < WD_MAX_STEP_FILLS) {
+        if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
-          console.debug(`[workday] auto-advance: ${label} pre-save errors`, v.invalidFields);
-          setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
-          aaLog("phase: PRE-SAVE RECOVERY fill", { label, lastNames });
-          const rec = await runFill({ onlyInvalid: v.invalidFields });
-          if (rec.aborted || loopStopped()) return finishLoop("stopped");
-          if (rec.error) return finishLoop("error", rec.error);
-          await focusPageAndFlush(tabId);
-          if (loopStopped()) return finishLoop("stopped");
-          const vAfter = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
-          aaLog("post-recovery VALIDATE (before advance)", {
-            clean: vAfter && vAfter.clean,
-            invalidFields: vAfter && vAfter.invalidFields,
-          });
-          v = vAfter || v;
-        } else if (v && !v.clean && fillsUsed >= WD_MAX_STEP_FILLS) {
-          lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
-          aaLog("WARN: dirty validation but fill budget exhausted — will ADVANCE anyway", {
+          console.debug(`[workday] auto-advance: ${label} pre-save errors (no refill)`, v.invalidFields);
+          aaLog("WARN: dirty validation before Save — one-pass fill already done, advancing", {
             label,
-            fillsUsed,
             lastNames,
           });
         }
@@ -2839,22 +2888,13 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
           clean: v && v.clean,
           errorCount: v && v.errorCount,
           invalidFields: v && v.invalidFields,
-          willRecover: !!(v && !v.clean && fillsUsed < WD_MAX_STEP_FILLS),
-          willSkipRecoverBecauseBudget: !!(v && !v.clean && fillsUsed >= WD_MAX_STEP_FILLS),
         });
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
-          console.debug(`[workday] auto-advance: ${label} post-save errors`, v.invalidFields);
-          if (fillsUsed < WD_MAX_STEP_FILLS) {
-            setAutofill({ loopStatus: `Resolving ${v.errorCount || ""} issue(s) on ${label}…` });
-            aaLog("phase: POST-SAVE RECOVERY fill", { label, lastNames });
-            const rec = await runFill({ onlyInvalid: v.invalidFields });
-            if (rec.aborted || loopStopped()) return finishLoop("stopped");
-            if (rec.error) return finishLoop("error", rec.error);
-            // next save attempt uses the freshly filled values
-          } else {
-            aaLog("WARN: post-save dirty but no fill budget left", { lastNames, fillsUsed });
-          }
+          console.debug(`[workday] auto-advance: ${label} post-save errors (no refill)`, v.invalidFields);
+          aaLog("WARN: post-save dirty — stopping refill; surface to user", { lastNames, fillsUsed });
+          // Do not runFill again. Break save loop so needs_user reports the fields.
+          break;
         } else {
           // No detectable error but it didn't move - maybe a slow navigation.
           await delay(1600);
@@ -3785,6 +3825,24 @@ function extractSpecs(tabId, handles) {
   });
 }
 
+// Cheap progressive-reveal probe (no option harvest / LLM html). Returns how
+// many controls are still unfilled and not yet attempted. On messaging failure
+// returns 1 so the caller still runs a full extract instead of stopping early.
+async function countUnfilledControls(tabId, handles, attemptedKeys) {
+  if (tabId == null) return 1;
+  try {
+    const resp = await tabSend(tabId, {
+      type: "AF_COUNT_UNFILLED",
+      handles,
+      attemptedKeys: [...(attemptedKeys || [])],
+    });
+    if (!resp || resp.ok === false || typeof resp.count !== "number") return 1;
+    return resp.count;
+  } catch {
+    return 1;
+  }
+}
+
 function looksLikeResumeOrCoverLabel(label) {
   const t = String(label || "").toLowerCase();
   if (!t) return false;
@@ -4168,11 +4226,12 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     await prepareCoverLetter(tabId);
     setAutofill({ runStatus: "Filling your saved answers…" });
     await prepareCachedAnswers(tabId, eng.platform);
-    // Commit any values the browser autofilled into the form's framework state.
-    // The engine skips already-filled controls, so a browser-autofilled value
-    // that never fired React's onChange would otherwise stay invisible to a
-    // controlled form (e.g. Ashby) and be rejected as "missing" on submit.
-    await commitPrefilled(tabId);
+    // Commit browser-autofilled values into controlled React forms. Greenhouse
+    // writes through dedicated drivers; commitPrefilled there only scans
+    // comboboxes it must skip — so skip the call on Greenhouse only.
+    if (eng.platform !== "greenhouse") {
+      await commitPrefilled(tabId);
+    }
   }
   const handles = state.autofill.fields.map((f) => f.handle);
   const attemptedKeys = new Set(); // stable control keys already sent to the LLM (this step)
@@ -4413,8 +4472,24 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       } catch {}
     }
 
-    // Give conditionally rendered fields a moment to mount before re-scanning.
+    // Give conditionally rendered fields a moment to mount, then cheap-peek
+    // for anything still unfilled. Avoids a full harvest extract when nothing
+    // new appeared (Greenhouse: Hispanic→Race was the last reveal).
+    if (pass + 1 >= maxPasses) break;
     await new Promise((r) => setTimeout(r, passDelayMs));
+    let stillOpen = await countUnfilledControls(tabId, handles, attemptedKeys);
+    // After the first write pass, progressive fields can mount slightly after
+    // the settle delay — re-peek once before declaring the page done.
+    if (!stillOpen && pass === 0) {
+      await delay(250);
+      stillOpen = await countUnfilledControls(tabId, handles, attemptedKeys);
+    }
+    if (!stillOpen) {
+      try {
+        console.log("[autofill] no unfilled controls after pass", pass + 1, "— skipping further extracts");
+      } catch {}
+      break;
+    }
   }
 
   // Final reconciliation for controlled forms (e.g. Ashby): a value can sit in
@@ -4429,13 +4504,20 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   // Final commit of text values into React/Apollo state. Ashby resume is
   // uploaded early (above); the legacy upload-last + reapply path runs only
   // when early upload failed.
-  if (eng && eng.mode === "select") {
-    const ashby = eng.platform === "ashby";
+  // Greenhouse: skip — drivers already commit via React-safe writes; the double
+  // commit only re-scans comboboxes and adds ~600ms of idle delay.
+  if (eng && eng.mode === "select" && eng.platform === "ashby") {
     setAutofill({ runStatus: "Finalizing the form…" });
-    if (ashby) await focusApplicationTab(tabId);
-    await delay(ashby ? 400 : 400);
+    await focusApplicationTab(tabId);
+    await delay(400);
     await commitPrefilled(tabId);
-    await delay(ashby ? 200 : 200);
+    await delay(200);
+    await commitPrefilled(tabId);
+  } else if (eng && eng.mode === "select" && eng.platform !== "greenhouse") {
+    // Other select engines: one settle + commit (enough for browser autofill
+    // without Greenhouse's empty combobox scan spam ×2).
+    setAutofill({ runStatus: "Finalizing the form…" });
+    await delay(250);
     await commitPrefilled(tabId);
   }
   if (eng && eng.platform === "ashby" && ashbyResumePending && !ashbyResumeUploadedEarly) {
