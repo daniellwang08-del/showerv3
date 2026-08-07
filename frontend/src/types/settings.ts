@@ -40,6 +40,14 @@ export interface UserSettings {
   min_match_score: number;
   min_match_score_custom: number;
   default_min_match_score: number;
+  dedup_applied_company_mode: SettingsMode;
+  dedup_applied_company_enabled: boolean;
+  dedup_applied_company_enabled_custom: boolean;
+  default_dedup_applied_company_enabled: boolean;
+  dedup_score_comparison_mode: SettingsMode;
+  dedup_score_comparison_enabled: boolean;
+  dedup_score_comparison_enabled_custom: boolean;
+  default_dedup_score_comparison_enabled: boolean;
   resume_tailoring_prompt_mode: SettingsMode;
   resume_tailoring_prompt_instructions: string;
   resume_tailoring_prompt_instructions_custom: string;
@@ -85,6 +93,10 @@ export interface UserSettingsUpdate {
   dedup_recycle_days?: number;
   min_match_score_mode?: SettingsMode;
   min_match_score?: number;
+  dedup_applied_company_mode?: SettingsMode;
+  dedup_applied_company_enabled?: boolean;
+  dedup_score_comparison_mode?: SettingsMode;
+  dedup_score_comparison_enabled?: boolean;
   resume_tailoring_prompt_mode?: SettingsMode;
   resume_tailoring_prompt_custom?: string;
   cover_letter_prompt_mode?: SettingsMode;

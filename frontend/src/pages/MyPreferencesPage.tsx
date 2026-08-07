@@ -20,7 +20,10 @@ import {
   fetchCoverLetterPromptDefaults,
   previewMinMatchScore,
   applyMinMatchScore,
+  previewDedupRules,
+  applyDedupRules,
   type MinMatchScorePreview,
+  type DedupRulesPreview,
 } from '../api/settingsApi';
 import type { SettingsMode, UserSettings } from '../types/settings';
 import { RESUME_TAILORING_PROMPT_MIN_LENGTH, COVER_LETTER_PROMPT_MIN_LENGTH } from '../types/settings';
@@ -37,6 +40,7 @@ import { AddressPreferencesSection } from '../components/preferences/AddressPref
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
+import { SettingsToggle } from '../components/shared/SettingsToggle';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
 
@@ -111,12 +115,18 @@ export function MyPreferencesPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
-  // Dedup section state
-  const [dedupMode, setDedupMode] = useState<SettingsMode>('default');
+  // Dedup section state — direct controls (no default/custom mode tabs)
   const [dedupDays, setDedupDays] = useState(60);
+  const [appliedEnabled, setAppliedEnabled] = useState(false);
+  const [scoreCmpEnabled, setScoreCmpEnabled] = useState(false);
   const [dedupSaving, setDedupSaving] = useState(false);
   const [dedupSaveMsg, setDedupSaveMsg] = useState('');
   const [dedupSaveOk, setDedupSaveOk] = useState(false);
+  const [dedupChecking, setDedupChecking] = useState(false);
+  const [dedupCheckResult, setDedupCheckResult] = useState<DedupRulesPreview | null>(null);
+  const [dedupCheckMsg, setDedupCheckMsg] = useState('');
+  const [dedupCheckOk, setDedupCheckOk] = useState(false);
+  const [dedupApplying, setDedupApplying] = useState(false);
 
   // Min match score section state
   const [minScoreMode, setMinScoreMode] = useState<SettingsMode>('default');
@@ -152,8 +162,9 @@ export function MyPreferencesPage() {
 
   const applySettings = useCallback((data: UserSettings) => {
     setSettings(data);
-    setDedupMode(data.dedup_recycle_mode);
-    setDedupDays(data.dedup_recycle_days_custom);
+    setDedupDays(data.dedup_recycle_days);
+    setAppliedEnabled(Boolean(data.dedup_applied_company_enabled));
+    setScoreCmpEnabled(Boolean(data.dedup_score_comparison_enabled));
     setMinScoreMode(data.min_match_score_mode);
     setMinScore(data.min_match_score_custom);
     setPromptMode(data.resume_tailoring_prompt_mode ?? 'default');
@@ -203,7 +214,10 @@ export function MyPreferencesPage() {
 
   useEffect(() => {
     if (!dedupSaveOk) return;
-    const t = window.setTimeout(() => setDedupSaveOk(false), 3000);
+    const t = window.setTimeout(() => {
+      setDedupSaveOk(false);
+      setDedupSaveMsg('');
+    }, 3000);
     return () => window.clearTimeout(t);
   }, [dedupSaveOk]);
 
@@ -233,8 +247,9 @@ export function MyPreferencesPage() {
 
   const defaultDedup = settings?.default_dedup_recycle_days ?? 60;
   const defaultMinScore = settings?.default_min_match_score ?? 0;
-  const savedDedupMode = settings?.dedup_recycle_mode ?? 'default';
-  const savedDedupDays = settings?.dedup_recycle_days_custom ?? 60;
+  const savedDedupDays = settings?.dedup_recycle_days ?? 60;
+  const savedAppliedEnabled = Boolean(settings?.dedup_applied_company_enabled);
+  const savedScoreCmpEnabled = Boolean(settings?.dedup_score_comparison_enabled);
   const savedMinScoreMode = settings?.min_match_score_mode ?? 'default';
   const savedMinScore = settings?.min_match_score_custom ?? 0;
   const savedPromptMode = settings?.resume_tailoring_prompt_mode ?? 'default';
@@ -265,18 +280,32 @@ export function MyPreferencesPage() {
   const matchPreferencesChanged = matchPreferences.trim() !== savedMatchPreferences.trim();
 
   const dedupChanged =
-    dedupMode !== savedDedupMode ||
-    (dedupMode === 'custom' && dedupDays !== savedDedupDays);
+    dedupDays !== savedDedupDays ||
+    appliedEnabled !== savedAppliedEnabled ||
+    scoreCmpEnabled !== savedScoreCmpEnabled;
 
-  const dedupSaveEnabled =
-    dedupMode === 'default'
-      ? savedDedupMode !== 'default'
-      : dedupChanged && dedupDays >= 1 && dedupDays <= 3650;
+  const dedupSaveEnabled = dedupChanged && dedupDays >= 1 && dedupDays <= 3650;
 
   const handleDedupDaysChange = (value: number) => {
     const clamped = Math.max(1, Math.min(3650, value));
     setDedupDays(clamped);
     setDedupSaveMsg('');
+    setDedupCheckResult(null);
+    setDedupCheckMsg('');
+  };
+
+  const handleAppliedToggle = (next: boolean) => {
+    setAppliedEnabled(next);
+    setDedupSaveMsg('');
+    setDedupCheckResult(null);
+    setDedupCheckMsg('');
+  };
+
+  const handleScoreCmpToggle = (next: boolean) => {
+    setScoreCmpEnabled(next);
+    setDedupSaveMsg('');
+    setDedupCheckResult(null);
+    setDedupCheckMsg('');
   };
 
   const handleSaveDedup = async () => {
@@ -284,29 +313,97 @@ export function MyPreferencesPage() {
     setDedupSaving(true);
     setDedupSaveMsg('');
     try {
-      const data =
-        dedupMode === 'default'
-          ? await saveDedupSettings({ dedup_recycle_mode: 'default' })
-          : await saveDedupSettings({
-              dedup_recycle_mode: 'custom',
-              dedup_recycle_days: dedupDays,
-            });
+      const data = await saveDedupSettings({
+        dedup_recycle_mode: 'custom',
+        dedup_recycle_days: dedupDays,
+        dedup_applied_company_mode: 'custom',
+        dedup_applied_company_enabled: appliedEnabled,
+        dedup_score_comparison_mode: 'custom',
+        dedup_score_comparison_enabled: scoreCmpEnabled,
+      });
       applySettings(data);
+      setDedupCheckResult(null);
+      setDedupCheckMsg('');
       setDedupSaveOk(true);
-      setDedupSaveMsg(
-        dedupMode === 'default'
-          ? `Using system default (${defaultDedup} days).`
-          : `Custom check cycle saved (${dedupDays} days).`,
-      );
+      setDedupSaveMsg('Dedup preferences saved. Preview or apply to update existing jobs.');
     } catch (err: unknown) {
       setDedupSaveOk(false);
       const msg =
         err && typeof err === 'object' && 'response' in err
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
           : null;
-      setDedupSaveMsg(typeof msg === 'string' ? msg : 'Failed to save check cycle.');
+      setDedupSaveMsg(typeof msg === 'string' ? msg : 'Failed to save dedup preferences.');
     } finally {
       setDedupSaving(false);
+    }
+  };
+
+  const handlePreviewDedupRules = async () => {
+    if (!settings || dedupChanged) {
+      setDedupCheckOk(false);
+      setDedupCheckMsg('Save dedup preferences first, then preview.');
+      return;
+    }
+    setDedupChecking(true);
+    setDedupCheckMsg('');
+    try {
+      const result = await previewDedupRules();
+      setDedupCheckResult(result);
+      setDedupCheckOk(true);
+      const parts = [
+        `Restore ${result.would_restore_count}`,
+        `Hide applied-company ${result.would_hide_applied_company_count}`,
+        `Hide score-cmp ${result.would_hide_score_comparison_count}`,
+      ];
+      setDedupCheckMsg(parts.join(' · '));
+    } catch (err: unknown) {
+      setDedupCheckResult(null);
+      setDedupCheckOk(false);
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setDedupCheckMsg(typeof msg === 'string' ? msg : 'Failed to preview dedup rules.');
+    } finally {
+      setDedupChecking(false);
+    }
+  };
+
+  const handleApplyDedupRules = async () => {
+    if (!settings || dedupChanged) {
+      setDedupSaveMsg('Save dedup preferences first, then apply.');
+      setDedupSaveOk(false);
+      return;
+    }
+    setDedupApplying(true);
+    setDedupSaveMsg('');
+    try {
+      const result = await applyDedupRules();
+      applySettings(result.settings);
+      setDedupCheckResult(null);
+      const parts = [
+        result.restored ? `restored ${result.restored}` : null,
+        result.hidden_applied_company ? `hid ${result.hidden_applied_company} applied-company` : null,
+        result.hidden_score_comparison ? `hid ${result.hidden_score_comparison} score-cmp` : null,
+        result.restored_location_unknown
+          ? `cleared ${result.restored_location_unknown} unknown-loc`
+          : null,
+      ].filter(Boolean);
+      setDedupSaveOk(true);
+      setDedupSaveMsg(
+        parts.length ? `Applied (${parts.join('; ')}).` : 'Applied — no status changes needed.',
+      );
+      void useJobsStore.getState().refreshLists({ showLoading: false, reset: true });
+      void useScraperStore.getState().loadJobs();
+    } catch (err: unknown) {
+      setDedupSaveOk(false);
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setDedupSaveMsg(typeof msg === 'string' ? msg : 'Failed to apply dedup rules.');
+    } finally {
+      setDedupApplying(false);
     }
   };
 
@@ -722,29 +819,27 @@ export function MyPreferencesPage() {
                 {minScoreSaveMsg && <SectionMessage ok={minScoreSaveOk} text={minScoreSaveMsg} />}
               </SettingsCard>
 
-              {/* Company check cycle */}
+              {/* Dedup Preferences */}
               <SettingsCard
                 icon={RefreshCw}
                 iconClass="bg-gradient-to-br from-indigo-500 to-purple-600"
-                title="Company check cycle"
-                description="Days before a repeat posting counts as fresh."
-                actions={
-                  <ModeToggle
-                    value={dedupMode}
-                    onChange={(m) => {
-                      setDedupMode(m);
-                      setDedupSaveMsg('');
-                    }}
-                    disabled={dedupSaving}
-                  />
-                }
+                title="Dedup Preferences"
+                description="Recycle window and optional same-company hide rules."
               >
-                {dedupMode === 'default' ? (
-                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-sm text-indigo-900">
-                    System default: <strong>{defaultDedup} days</strong>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-800 dark:text-[#e2e8f0]">
+                        Company check cycle
+                      </p>
+                      <span className="text-xs tabular-nums text-slate-500 dark:text-[#94a3b8]">
+                        {dedupDays} day{dedupDays === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-[#94a3b8]">
+                      Days before a company you applied to counts as fresh again.
+                      {defaultDedup > 0 ? ` Platform default is ${defaultDedup}d.` : null}
+                    </p>
                     <div className="flex items-center gap-3">
                       <input
                         id="dedup-slider"
@@ -753,6 +848,7 @@ export function MyPreferencesPage() {
                         max={DEDUP_SLIDER_MAX}
                         value={sliderValue}
                         onChange={(e) => handleDedupDaysChange(Number(e.target.value))}
+                        disabled={dedupSaving || dedupApplying}
                         className="h-5 flex-1 cursor-pointer accent-indigo-600 text-indigo-600"
                       />
                       <input
@@ -761,7 +857,8 @@ export function MyPreferencesPage() {
                         max={3650}
                         value={dedupDays}
                         onChange={(e) => handleDedupDaysChange(Number(e.target.value) || 1)}
-                        className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center text-sm font-semibold text-slate-800 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        disabled={dedupSaving || dedupApplying}
+                        className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-center text-sm font-semibold text-slate-800 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-500/40 dark:bg-[#0b1220] dark:text-[#e2e8f0]"
                       />
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -770,10 +867,11 @@ export function MyPreferencesPage() {
                           key={preset}
                           type="button"
                           onClick={() => handleDedupDaysChange(preset)}
+                          disabled={dedupSaving || dedupApplying}
                           className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition ${
                             dedupDays === preset
-                              ? 'border-indigo-400 bg-indigo-100 text-indigo-800'
-                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                              ? 'border-indigo-400 bg-indigo-100 text-indigo-800 dark:border-indigo-400/50 dark:bg-indigo-500/20 dark:text-indigo-200'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-500/40 dark:bg-[#0b1220] dark:text-[#94a3b8]'
                           }`}
                         >
                           {preset}d
@@ -781,18 +879,110 @@ export function MyPreferencesPage() {
                       ))}
                     </div>
                   </div>
-                )}
 
-                <div className="mt-3 flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3 dark:border-slate-500/30">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 dark:text-[#e2e8f0]">
+                        Hide applied companies
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-[#94a3b8]">
+                        Hide jobs at companies you already applied to within the recycle window.
+                      </p>
+                    </div>
+                    <SettingsToggle
+                      checked={appliedEnabled}
+                      onChange={handleAppliedToggle}
+                      disabled={dedupSaving || dedupApplying}
+                      aria-label="Hide applied companies"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3 dark:border-slate-500/30">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 dark:text-[#e2e8f0]">
+                        Score comparison
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-[#94a3b8]">
+                        Keep only the higher-scoring job at the same company.
+                      </p>
+                    </div>
+                    <SettingsToggle
+                      checked={scoreCmpEnabled}
+                      onChange={handleScoreCmpToggle}
+                      disabled={dedupSaving || dedupApplying}
+                      aria-label="Score comparison"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handlePreviewDedupRules()}
+                    disabled={dedupChecking || dedupApplying || dedupSaving || dedupChanged}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-400/40 dark:bg-indigo-500/10 dark:text-indigo-200"
+                  >
+                    {dedupChecking ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                    {dedupChecking ? 'Checking…' : 'Preview'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleApplyDedupRules()}
+                    disabled={
+                      dedupApplying ||
+                      dedupChecking ||
+                      dedupSaving ||
+                      dedupChanged ||
+                      !dedupCheckResult
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-500/40 dark:bg-[#0b1220] dark:text-[#e2e8f0]"
+                  >
+                    {dedupApplying ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {dedupApplying ? 'Applying…' : 'Apply to existing jobs'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => void handleSaveDedup()}
-                    disabled={!dedupSaveEnabled || dedupSaving}
+                    disabled={!dedupSaveEnabled || dedupSaving || dedupApplying}
                     className={`ml-auto ${prefsSaveBtnClass(dedupSaveEnabled)}`}
                   >
                     {dedupSaving ? 'Saving…' : 'Save'}
                   </button>
                 </div>
+
+                {dedupCheckMsg && (
+                  <div
+                    className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+                      dedupCheckOk
+                        ? 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-500/40 dark:bg-[#0b1220] dark:text-[#cbd5e1]'
+                        : 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200'
+                    }`}
+                  >
+                    {dedupCheckMsg}
+                  </div>
+                )}
+
+                {dedupCheckResult && (
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {[
+                      ['Restore', dedupCheckResult.would_restore_count],
+                      ['Hide applied', dedupCheckResult.would_hide_applied_company_count],
+                      ['Hide score', dedupCheckResult.would_hide_score_comparison_count],
+                    ].map(([label, value]) => (
+                      <div
+                        key={String(label)}
+                        className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center dark:border-slate-500/40 dark:bg-[#0b1220]"
+                      >
+                        <div className="text-base font-bold tabular-nums text-slate-900 dark:text-[#e2e8f0]">
+                          {value}
+                        </div>
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-slate-500 dark:text-[#94a3b8]">
+                          {label}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {dedupSaveMsg && <SectionMessage ok={dedupSaveOk} text={dedupSaveMsg} />}
               </SettingsCard>

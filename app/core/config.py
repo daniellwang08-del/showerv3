@@ -202,12 +202,11 @@ class Settings(BaseSettings):
     default_dedup_recycle_days: int = Field(default=60, ge=1, le=3650)
     default_min_match_score: int = Field(default=0, ge=0, le=100)
 
-    # Post-analysis dedup rule toggles (see app/services/post_analysis_dedup.py).
-    # Disabled by default for maximum dashboard visibility. Set the matching env
-    # var to true to re-enable a rule. Always-on rules (below_min_score, non_us,
-    # same_url, strict_similarity) are not toggleable here.
-    # Unknown/missing locations are kept by default (treated as US); this toggle
-    # is the optional strict mode that still hides them for Duplicates review.
+    # Post-analysis dedup rule toggles — platform defaults for per-user prefs
+    # (applied company / score comparison). Always-on rules (below_min_score,
+    # non_us, same_url, strict_similarity) are not toggleable here.
+    # Unknown/missing locations are always kept (treated as US).
+    # Legacy unused key kept for env/back-compat only; never read at runtime.
     dedup_rule_location_unknown_enabled: bool = False
     dedup_rule_applied_company_enabled: bool = False
     dedup_rule_score_comparison_enabled: bool = False

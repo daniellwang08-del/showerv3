@@ -8,13 +8,13 @@ Rules (applied in order):
   0a. Security clearance / not-a-job → duplicated (removed from Jobs list).
   0b. Score 0 or below user's min threshold → duplicated (below_min_score).
   1. US location filter - only explicit non-US structured locations are dropped
-     (non_us_location). Missing/ambiguous locations are kept (treated as US);
-     the optional dedup_rule_location_unknown_enabled toggle can still hide them
-     for review when an admin turns it on.
+     (non_us_location). Missing/ambiguous locations are kept (treated as US).
   2. Same URL - another active job with identical normalized_url → duplicated (same_url).
   3. Strict similarity - same title + same company → duplicated.
-  4. Applied at same company - user already applied within recycle window → duplicated.
-  5. Score comparison - keep the higher-scoring job active; mark the other duplicated.
+  4. Applied at same company - user already applied within recycle window → duplicated
+     (per-user effective preference; platform default fallback).
+  5. Score comparison - keep the higher-scoring job active; mark the other duplicated
+     (per-user effective preference; platform default fallback).
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from app.models.database import Job, JobMatchResult, ValidJobUserApplication, Us
 from app.services.job_exclusion_types import (
     APPLIED_COMPANY_EXCLUSION,
     BELOW_MIN_SCORE_EXCLUSION,
-    LOCATION_UNKNOWN_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
     NON_US_LOCATION_EXCLUSION,
     NOT_A_JOB_POSTING_EXCLUSION,
@@ -223,21 +222,25 @@ async def run_post_analysis_dedup(
 ) -> dict:
     """Returns {"action": "saved_active"|"saved_duplicated"|"skipped", ...}"""
 
-    from app.services.system_settings_service import get_effective_value_sync
-
     try:
         overall_score = int(match_data.get("overall_score", 0) or 0)
     except (TypeError, ValueError):
         overall_score = 0
 
     async with get_session() as session:
-        if recycle_days is None or min_match_score is None:
-            from app.storage.user_repository import UserRepository
-            user_repo = UserRepository(session)
-            if recycle_days is None:
-                recycle_days = await user_repo.get_dedup_recycle_days(user_id)
-            if min_match_score is None:
-                min_match_score = await user_repo.get_effective_min_match_score(user_id)
+        from app.storage.user_repository import UserRepository
+
+        user_repo = UserRepository(session)
+        if recycle_days is None:
+            recycle_days = await user_repo.get_dedup_recycle_days(user_id)
+        if min_match_score is None:
+            min_match_score = await user_repo.get_effective_min_match_score(user_id)
+        applied_company_enabled = await user_repo.get_effective_dedup_applied_company_enabled(
+            user_id
+        )
+        score_comparison_enabled = await user_repo.get_effective_dedup_score_comparison_enabled(
+            user_id
+        )
         row = await session.execute(select(Job).where(Job.id == job_id))
         current_job = row.scalar_one_or_none()
         if not current_job:
@@ -339,28 +342,7 @@ async def run_post_analysis_dedup(
                 exclusion_type=NON_US_LOCATION_EXCLUSION,
                 reason=f"Non-US job location ({location_detail}).",
             )
-        if location_verdict == LocationVerdict.UNKNOWN and bool(
-            get_effective_value_sync("dedup_rule_location_unknown_enabled")
-        ):
-            logger.info(
-                "post_analysis_dedup_location_unknown",
-                job_id=job_id,
-                user_id=user_id,
-                location=current_job.location,
-            )
-            return await _save_duplicated(
-                session,
-                job_id=job_id,
-                user_id=user_id,
-                match_data=match_data,
-                overall_score=overall_score,
-                duplicated_because_id=None,
-                exclusion_type=LOCATION_UNKNOWN_EXCLUSION,
-                reason=(
-                    f"Job location could not be verified as US ({location_detail}). "
-                    "Review in Duplicates."
-                ),
-            )
+        # UNKNOWN / missing locations are treated as US and stay visible.
 
         url_duplicate = await _find_same_url_active_duplicate(
             session,
@@ -442,7 +424,7 @@ async def run_post_analysis_dedup(
                 reason="Same title and company as an existing active posting.",
             )
 
-        if bool(get_effective_value_sync("dedup_rule_applied_company_enabled")):
+        if applied_company_enabled:
             applied_result = await session.execute(
                 select(ValidJobUserApplication).where(
                     ValidJobUserApplication.user_id == user_id,
@@ -466,7 +448,7 @@ async def run_post_analysis_dedup(
                     ),
                 )
 
-        if not bool(get_effective_value_sync("dedup_rule_score_comparison_enabled")):
+        if not score_comparison_enabled:
             return await _save_active(session, job_id, user_id, match_data, overall_score)
 
         # Reuse the peer match batch loaded before the strict-similarity scan.

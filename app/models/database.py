@@ -62,6 +62,12 @@ class User(Base):
     dedup_recycle_days = Column(Integer, default=60, nullable=False, server_default="60")
     dedup_recycle_mode = Column(String(20), default="default", nullable=False, server_default="default")
 
+    # Optional dedup rules (platform default → user custom), same pattern as recycle days.
+    dedup_applied_company_mode = Column(String(20), default="default", nullable=False, server_default="default")
+    dedup_applied_company_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    dedup_score_comparison_mode = Column(String(20), default="default", nullable=False, server_default="default")
+    dedup_score_comparison_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+
     # OpenAI: "default" uses server OPENAI_API_KEY; "custom" uses encrypted user key.
     openai_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
     openai_api_key_encrypted = deferred(Column(Text, nullable=True))

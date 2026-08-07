@@ -66,6 +66,14 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     min_match_score: Number(data.min_match_score ?? 0),
     min_match_score_custom: Number(data.min_match_score_custom ?? 0),
     default_min_match_score: Number(data.default_min_match_score ?? 0),
+    dedup_applied_company_mode: (data.dedup_applied_company_mode as SettingsMode) ?? 'default',
+    dedup_applied_company_enabled: Boolean(data.dedup_applied_company_enabled),
+    dedup_applied_company_enabled_custom: Boolean(data.dedup_applied_company_enabled_custom),
+    default_dedup_applied_company_enabled: Boolean(data.default_dedup_applied_company_enabled),
+    dedup_score_comparison_mode: (data.dedup_score_comparison_mode as SettingsMode) ?? 'default',
+    dedup_score_comparison_enabled: Boolean(data.dedup_score_comparison_enabled),
+    dedup_score_comparison_enabled_custom: Boolean(data.dedup_score_comparison_enabled_custom),
+    default_dedup_score_comparison_enabled: Boolean(data.default_dedup_score_comparison_enabled),
     resume_tailoring_prompt_mode: (data.resume_tailoring_prompt_mode as SettingsMode) ?? 'default',
     resume_tailoring_prompt_instructions: String(data.resume_tailoring_prompt_instructions ?? ''),
     resume_tailoring_prompt_instructions_custom: String(data.resume_tailoring_prompt_instructions_custom ?? ''),
@@ -172,7 +180,15 @@ export async function saveOpenAiSettings(
 }
 
 export async function saveDedupSettings(
-  body: Pick<UserSettingsUpdate, 'dedup_recycle_mode' | 'dedup_recycle_days'>,
+  body: Pick<
+    UserSettingsUpdate,
+    | 'dedup_recycle_mode'
+    | 'dedup_recycle_days'
+    | 'dedup_applied_company_mode'
+    | 'dedup_applied_company_enabled'
+    | 'dedup_score_comparison_mode'
+    | 'dedup_score_comparison_enabled'
+  >,
 ) {
   return updateUserSettings(body);
 }
@@ -223,6 +239,54 @@ export async function previewMinMatchScore(body: MinMatchScoreDraft): Promise<Mi
 
 export async function applyMinMatchScore(body: MinMatchScoreDraft): Promise<MinMatchScoreApplyResult> {
   const { data } = await apiClient.post<MinMatchScoreApplyResult>('/settings/min-match-score/apply', body);
+  return {
+    ...data,
+    settings: normalizeUserSettings(data.settings ?? {}),
+  };
+}
+
+export interface DedupRulesPreviewSample {
+  job_id: string;
+  title?: string | null;
+  company?: string | null;
+  exclusion_type?: string | null;
+  action?: string | null;
+  duplicated_because_id?: string | null;
+  match_score?: number | null;
+  best_score?: number | null;
+}
+
+export interface DedupRulesPreview {
+  applied_company_enabled: boolean;
+  score_comparison_enabled: boolean;
+  recycle_days: number;
+  would_restore_count: number;
+  would_hide_applied_company_count: number;
+  would_hide_score_comparison_count: number;
+  already_hidden_applied_company_count: number;
+  already_hidden_score_comparison_count: number;
+  samples: DedupRulesPreviewSample[];
+}
+
+export interface DedupRulesApplyResult {
+  success: boolean;
+  restored: number;
+  restored_location_unknown: number;
+  hidden_applied_company: number;
+  hidden_score_comparison: number;
+  applied_company_enabled: boolean;
+  score_comparison_enabled: boolean;
+  recycle_days: number;
+  settings: UserSettings;
+}
+
+export async function previewDedupRules(): Promise<DedupRulesPreview> {
+  const { data } = await apiClient.post<DedupRulesPreview>('/settings/dedup-rules/preview');
+  return data;
+}
+
+export async function applyDedupRules(): Promise<DedupRulesApplyResult> {
+  const { data } = await apiClient.post<DedupRulesApplyResult>('/settings/dedup-rules/apply');
   return {
     ...data,
     settings: normalizeUserSettings(data.settings ?? {}),

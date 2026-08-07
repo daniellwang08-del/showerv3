@@ -4006,6 +4006,14 @@ class UserSettingsResponse(BaseModel):
     min_match_score: int
     min_match_score_custom: int
     default_min_match_score: int
+    dedup_applied_company_mode: str = "default"
+    dedup_applied_company_enabled: bool = False
+    dedup_applied_company_enabled_custom: bool = False
+    default_dedup_applied_company_enabled: bool = False
+    dedup_score_comparison_mode: str = "default"
+    dedup_score_comparison_enabled: bool = False
+    dedup_score_comparison_enabled_custom: bool = False
+    default_dedup_score_comparison_enabled: bool = False
     resume_tailoring_prompt_mode: str
     resume_tailoring_prompt_instructions: str
     resume_tailoring_prompt_instructions_custom: str
@@ -4051,6 +4059,10 @@ class UserSettingsUpdateRequest(BaseModel):
     dedup_recycle_days: int | None = Field(default=None, ge=1, le=3650)
     min_match_score_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     min_match_score: int | None = Field(default=None, ge=0, le=100)
+    dedup_applied_company_mode: str | None = Field(default=None, pattern="^(default|custom)$")
+    dedup_applied_company_enabled: bool | None = None
+    dedup_score_comparison_mode: str | None = Field(default=None, pattern="^(default|custom)$")
+    dedup_score_comparison_enabled: bool | None = None
     resume_tailoring_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     resume_tailoring_prompt_custom: str | None = Field(default=None, max_length=12000)
     cover_letter_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
@@ -4195,6 +4207,123 @@ async def apply_min_match_score(
         hidden=result["hidden"],
         restored=result["restored"],
         settings=UserSettingsResponse(**settings_data),
+    )
+
+
+class DedupRulesPreviewSample(BaseModel):
+    job_id: str
+    title: str | None = None
+    company: str | None = None
+    exclusion_type: str | None = None
+    action: str | None = None
+    duplicated_because_id: str | None = None
+    match_score: int | None = None
+    best_score: int | None = None
+
+
+class DedupRulesPreviewResponse(BaseModel):
+    applied_company_enabled: bool
+    score_comparison_enabled: bool
+    recycle_days: int
+    would_restore_count: int
+    would_hide_applied_company_count: int
+    would_hide_score_comparison_count: int
+    already_hidden_applied_company_count: int
+    already_hidden_score_comparison_count: int
+    samples: list[DedupRulesPreviewSample]
+
+
+class DedupRulesApplyResponse(BaseModel):
+    success: bool
+    restored: int
+    restored_location_unknown: int
+    hidden_applied_company: int
+    hidden_score_comparison: int
+    applied_company_enabled: bool
+    score_comparison_enabled: bool
+    recycle_days: int
+    settings: UserSettingsResponse
+
+
+@router.post(
+    "/settings/dedup-rules/preview",
+    response_model=DedupRulesPreviewResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def preview_dedup_rules(
+    current_user: dict = Depends(get_current_user),
+) -> DedupRulesPreviewResponse:
+    """Preview restore/hide impact using the user's saved effective dedup prefs."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        applied = await user_repo.get_effective_dedup_applied_company_enabled(user_id)
+        score_cmp = await user_repo.get_effective_dedup_score_comparison_enabled(user_id)
+        recycle_days = await user_repo.get_effective_dedup_recycle_days(user_id)
+
+    from app.services.dedup_rules_reconcile import preview_dedup_rules_for_user
+
+    data = await preview_dedup_rules_for_user(
+        user_id,
+        applied_company_enabled=applied,
+        score_comparison_enabled=score_cmp,
+        recycle_days=recycle_days,
+    )
+    return DedupRulesPreviewResponse(**data)
+
+
+@router.post(
+    "/settings/dedup-rules/apply",
+    response_model=DedupRulesApplyResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def apply_dedup_rules(
+    current_user: dict = Depends(get_current_user),
+) -> DedupRulesApplyResponse:
+    """Apply saved effective dedup prefs to existing user_job_status rows."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        settings_data = await user_repo.get_user_settings(user_id)
+        if not settings_data:
+            raise HTTPException(status_code=404, detail="User not found")
+        applied = await user_repo.get_effective_dedup_applied_company_enabled(user_id)
+        score_cmp = await user_repo.get_effective_dedup_score_comparison_enabled(user_id)
+        recycle_days = await user_repo.get_effective_dedup_recycle_days(user_id)
+
+    from app.services.dedup_rules_reconcile import reconcile_dedup_rules_for_user
+
+    result = await reconcile_dedup_rules_for_user(
+        user_id,
+        applied_company_enabled=applied,
+        score_comparison_enabled=score_cmp,
+        recycle_days=recycle_days,
+    )
+    logger.info(
+        "dedup_rules_applied",
+        user_id=user_id,
+        restored=result["restored"],
+        hidden_applied=result["hidden_applied_company"],
+        hidden_score=result["hidden_score_comparison"],
+    )
+    return DedupRulesApplyResponse(
+        success=True,
+        settings=UserSettingsResponse(**settings_data),
+        **{k: result[k] for k in (
+            "restored",
+            "restored_location_unknown",
+            "hidden_applied_company",
+            "hidden_score_comparison",
+            "applied_company_enabled",
+            "score_comparison_enabled",
+            "recycle_days",
+        )},
     )
 
 
@@ -4358,6 +4487,10 @@ async def update_user_settings(
                 dedup_recycle_days=body.dedup_recycle_days,
                 min_match_score_mode=body.min_match_score_mode,
                 min_match_score=body.min_match_score,
+                dedup_applied_company_mode=body.dedup_applied_company_mode,
+                dedup_applied_company_enabled=body.dedup_applied_company_enabled,
+                dedup_score_comparison_mode=body.dedup_score_comparison_mode,
+                dedup_score_comparison_enabled=body.dedup_score_comparison_enabled,
                 resume_tailoring_prompt_mode=body.resume_tailoring_prompt_mode,
                 resume_tailoring_prompt_custom=body.resume_tailoring_prompt_custom,
                 cover_letter_prompt_mode=body.cover_letter_prompt_mode,

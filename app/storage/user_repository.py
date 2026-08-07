@@ -290,6 +290,36 @@ class UserRepository:
             return self._clamp_min_match_score(getattr(user, "min_match_score", None), fallback=default_score)
         return default_score
 
+    async def get_effective_dedup_applied_company_enabled(self, user_id: str) -> bool:
+        """Return whether applied-company dedup is on for this user."""
+        from app.services.system_settings_service import get_effective_value
+
+        default_enabled = bool(
+            await get_effective_value("dedup_rule_applied_company_enabled", self.session)
+        )
+        user = await self.get_by_id(user_id)
+        if not user:
+            return default_enabled
+        mode = getattr(user, "dedup_applied_company_mode", None) or "default"
+        if mode == "custom":
+            return bool(getattr(user, "dedup_applied_company_enabled", False))
+        return default_enabled
+
+    async def get_effective_dedup_score_comparison_enabled(self, user_id: str) -> bool:
+        """Return whether same-company score comparison is on for this user."""
+        from app.services.system_settings_service import get_effective_value
+
+        default_enabled = bool(
+            await get_effective_value("dedup_rule_score_comparison_enabled", self.session)
+        )
+        user = await self.get_by_id(user_id)
+        if not user:
+            return default_enabled
+        mode = getattr(user, "dedup_score_comparison_mode", None) or "default"
+        if mode == "custom":
+            return bool(getattr(user, "dedup_score_comparison_enabled", False))
+        return default_enabled
+
     @staticmethod
     def _validate_resume_tailoring_instructions(text: str) -> str:
         cleaned = text.strip()
@@ -403,6 +433,20 @@ class UserRepository:
         effective_min_score = (
             custom_min_score if min_score_mode == "custom" else default_min_score
         )
+        applied_mode = getattr(user, "dedup_applied_company_mode", None) or "default"
+        default_applied = bool(
+            await get_effective_value("dedup_rule_applied_company_enabled", self.session)
+        )
+        custom_applied = bool(getattr(user, "dedup_applied_company_enabled", False))
+        effective_applied = custom_applied if applied_mode == "custom" else default_applied
+        score_cmp_mode = getattr(user, "dedup_score_comparison_mode", None) or "default"
+        default_score_cmp = bool(
+            await get_effective_value("dedup_rule_score_comparison_enabled", self.session)
+        )
+        custom_score_cmp = bool(getattr(user, "dedup_score_comparison_enabled", False))
+        effective_score_cmp = (
+            custom_score_cmp if score_cmp_mode == "custom" else default_score_cmp
+        )
         prompt_mode = getattr(user, "resume_tailoring_prompt_mode", None) or "default"
         stored_custom_prompt = (getattr(user, "resume_tailoring_prompt_custom", None) or "").strip()
         effective_instructions = self._resume_tailoring_instructions_for_user(user)
@@ -437,6 +481,14 @@ class UserRepository:
             "min_match_score": effective_min_score,
             "min_match_score_custom": custom_min_score,
             "default_min_match_score": default_min_score,
+            "dedup_applied_company_mode": applied_mode,
+            "dedup_applied_company_enabled": effective_applied,
+            "dedup_applied_company_enabled_custom": custom_applied,
+            "default_dedup_applied_company_enabled": default_applied,
+            "dedup_score_comparison_mode": score_cmp_mode,
+            "dedup_score_comparison_enabled": effective_score_cmp,
+            "dedup_score_comparison_enabled_custom": custom_score_cmp,
+            "default_dedup_score_comparison_enabled": default_score_cmp,
             "resume_tailoring_prompt_mode": prompt_mode,
             "resume_tailoring_prompt_instructions": effective_instructions,
             "resume_tailoring_prompt_instructions_custom": stored_custom_prompt,
@@ -474,6 +526,10 @@ class UserRepository:
         dedup_recycle_days: int | None = None,
         min_match_score_mode: str | None = None,
         min_match_score: int | None = None,
+        dedup_applied_company_mode: str | None = None,
+        dedup_applied_company_enabled: bool | None = None,
+        dedup_score_comparison_mode: str | None = None,
+        dedup_score_comparison_enabled: bool | None = None,
         resume_tailoring_prompt_mode: str | None = None,
         resume_tailoring_prompt_custom: str | None = None,
         cover_letter_prompt_mode: str | None = None,
@@ -553,6 +609,26 @@ class UserRepository:
         if min_match_score is not None:
             user.min_match_score = self._clamp_min_match_score(min_match_score)
             user.min_match_score_mode = "custom"
+
+        if dedup_applied_company_mode is not None:
+            if dedup_applied_company_mode not in ("default", "custom"):
+                raise ValueError("dedup_applied_company_mode must be 'default' or 'custom'")
+            user.dedup_applied_company_mode = dedup_applied_company_mode
+
+        if dedup_applied_company_enabled is not None:
+            user.dedup_applied_company_enabled = bool(dedup_applied_company_enabled)
+            if dedup_applied_company_mode is None:
+                user.dedup_applied_company_mode = "custom"
+
+        if dedup_score_comparison_mode is not None:
+            if dedup_score_comparison_mode not in ("default", "custom"):
+                raise ValueError("dedup_score_comparison_mode must be 'default' or 'custom'")
+            user.dedup_score_comparison_mode = dedup_score_comparison_mode
+
+        if dedup_score_comparison_enabled is not None:
+            user.dedup_score_comparison_enabled = bool(dedup_score_comparison_enabled)
+            if dedup_score_comparison_mode is None:
+                user.dedup_score_comparison_mode = "custom"
 
         if resume_tailoring_prompt_mode is not None:
             if resume_tailoring_prompt_mode not in ("default", "custom"):

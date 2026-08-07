@@ -43,8 +43,7 @@ ALLOWLISTED_KEYS: frozenset[str] = frozenset(
         # Defaults
         "default_min_match_score",
         "default_dedup_recycle_days",
-        # Dedup toggles
-        "dedup_rule_location_unknown_enabled",
+        # Dedup toggles (platform defaults for user preferences)
         "dedup_rule_applied_company_enabled",
         "dedup_rule_score_comparison_enabled",
         # Auth gate
@@ -69,7 +68,6 @@ _BOOL_KEYS = frozenset(
     {
         "llm_fallback_enabled",
         "auto_generate_tailored_content",
-        "dedup_rule_location_unknown_enabled",
         "dedup_rule_applied_company_enabled",
         "dedup_rule_score_comparison_enabled",
     }

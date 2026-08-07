@@ -30,6 +30,7 @@ async def heal_stale_pipeline_state(
     completed_extractions = 0
     demoted_scrape_only = 0
     excluded_zero_scores = 0
+    restored_location_unknown = 0
 
     async with get_session() as session:
         content_result = await session.execute(
@@ -143,6 +144,24 @@ async def heal_stale_pipeline_state(
             )
         )
         excluded_zero_scores = len(zero_score_result.fetchall())
+
+        # Unknown locations are treated as US — clear legacy location_unknown hides.
+        location_unknown_result = await session.execute(
+            text(
+                """
+                UPDATE user_job_status AS ujs
+                SET status = 'active',
+                    exclusion_type = NULL,
+                    duplicated_because_id = NULL,
+                    reason = NULL,
+                    updated_at = timezone('UTC', now())
+                WHERE ujs.status = 'duplicated'
+                  AND ujs.exclusion_type = 'location_unknown'
+                RETURNING ujs.id
+                """
+            )
+        )
+        restored_location_unknown = len(location_unknown_result.fetchall())
         await session.commit()
 
     if (
@@ -151,6 +170,7 @@ async def heal_stale_pipeline_state(
         or completed_extractions
         or demoted_scrape_only
         or excluded_zero_scores
+        or restored_location_unknown
     ):
         logger.info(
             "pipeline_stale_state_healed",
@@ -159,6 +179,7 @@ async def heal_stale_pipeline_state(
             completed_extractions=completed_extractions,
             demoted_scrape_only=demoted_scrape_only,
             excluded_zero_scores=excluded_zero_scores,
+            restored_location_unknown=restored_location_unknown,
             processing_max_age_seconds=processing_age,
             progress_max_age_seconds=progress_age,
         )
@@ -168,6 +189,7 @@ async def heal_stale_pipeline_state(
         "completed_extractions": completed_extractions,
         "demoted_scrape_only": demoted_scrape_only,
         "excluded_zero_scores": excluded_zero_scores,
+        "restored_location_unknown": restored_location_unknown,
         "processing_max_age_seconds": processing_age,
         "progress_max_age_seconds": progress_age,
     }

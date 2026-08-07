@@ -12,16 +12,22 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           # Default is 10m; pip + npm + vite on the CPX21 often exceeds that.
           command_timeout: 30m
+          # Pass token so the VPS can fetch a private HTTPS remote without prompts.
+          envs: GITHUB_TOKEN
 
           script: |
             set -e
@@ -29,7 +35,9 @@ jobs:
             cd /opt/showerv3
 
             echo "Pulling latest code..."
-            git fetch origin
+            # Repo remote is HTTPS with no stored credentials; authenticate via Actions token.
+            REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/daniellwang08-del/showerv3.git"
+            git fetch --force "$REPO_URL" "+refs/heads/main:refs/remotes/origin/main"
             git reset --hard origin/main
 
             echo "Activating virtual environment..."

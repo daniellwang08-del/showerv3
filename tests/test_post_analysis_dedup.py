@@ -8,7 +8,6 @@ from sqlalchemy import select
 from app.models.database import Job, JobMatchResult, User, UserJobStatus
 from app.services.job_exclusion_types import (
     BELOW_MIN_SCORE_EXCLUSION,
-    LOCATION_UNKNOWN_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
     NON_US_LOCATION_EXCLUSION,
     SAME_URL_EXCLUSION,
@@ -21,14 +20,16 @@ from app.storage.database import close_database, get_session, init_database
 
 @pytest.fixture
 def enable_all_dedup_rules():
-    """Re-enable the optional dedup rules (disabled by default) for rule-logic tests."""
+    """Re-enable the optional dedup rules (disabled by default) for rule-logic tests.
+
+    Applied-company / score-comparison still fall back to platform defaults when
+    the user is on mode=default. Location-unknown is never excluded.
+    """
     settings = get_settings()
     originals = {
-        "dedup_rule_location_unknown_enabled": settings.dedup_rule_location_unknown_enabled,
         "dedup_rule_applied_company_enabled": settings.dedup_rule_applied_company_enabled,
         "dedup_rule_score_comparison_enabled": settings.dedup_rule_score_comparison_enabled,
     }
-    settings.dedup_rule_location_unknown_enabled = True
     settings.dedup_rule_applied_company_enabled = True
     settings.dedup_rule_score_comparison_enabled = True
     yield
@@ -370,7 +371,8 @@ async def test_non_us_location_is_hidden_in_non_us_tab():
 
 
 @pytest.mark.asyncio
-async def test_unknown_location_is_hidden_in_duplicates_tab(enable_all_dedup_rules):
+async def test_unknown_location_is_kept_as_us(enable_all_dedup_rules):
+    """Unknown/ambiguous locations stay visible even when platform toggles are on."""
     async with get_session() as session:
         user_id = await _seed_user(session)
         job = await _add_job(
@@ -389,8 +391,7 @@ async def test_unknown_location_is_hidden_in_duplicates_tab(enable_all_dedup_rul
         _match_data(82),
         extraction_id=None,
     )
-    assert result["action"] == "saved_duplicated"
-    assert result["exclusion_type"] == LOCATION_UNKNOWN_EXCLUSION
+    assert result["action"] == "saved_active"
 
 
 @pytest.mark.asyncio
