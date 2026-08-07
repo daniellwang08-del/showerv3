@@ -605,7 +605,13 @@ export function DetailContentPanel({
   if (!validJobId) return null;
 
   const extractionStatus = analysis?.extraction_status;
-  const extractionBusy = extractionStatus === 'pending' || extractionStatus === 'processing' || extractionStatus === 'extracted';
+  // Only pending/processing are in-flight. `extracted` means shared raw JD is ready
+  // (admin inventory + Analyze); treating it as busy hid the JD and showed a false
+  // "queued" banner while the table correctly offered Analyze / No score.
+  const extractionBusy =
+    extractionStatus === 'pending' || extractionStatus === 'processing';
+  const jdReady =
+    extractionStatus === 'extracted' || extractionStatus === 'completed';
   const adminRawJd = (analysis?.raw_plain_text || analysis?.job_data?.description || '').trim();
   const hasAdminRawJd = adminRawJd.length > 0;
   const extractionFailed = extractionStatus === 'failed';
@@ -763,11 +769,11 @@ export function DetailContentPanel({
                 </div>
               )}
 
-              {!analysis.match_in_progress && !analysis.match && extractionStatus === 'completed' && (
+              {!analysis.match_in_progress && !analysis.match && jdReady && (
                 <p className="flex items-start gap-2 text-slate-600">
                   <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" aria-hidden />
                   <span>
-                    No match score yet. Use the match badge on this job in the list to start analysis.
+                    No match score yet. Use Analyze on this job in the list to start analysis.
                   </span>
                 </p>
               )}
@@ -1014,10 +1020,10 @@ export function DetailContentPanel({
                 </div>
               )}
 
-              {/* Applicant / structured view */}
-              {!isAdmin && analysis.job_data && !extractionBusy && postingBody(analysis.job_data, null)}
+              {/* Applicant / structured view — show once scrape finished (extracted) or structured (completed) */}
+              {!isAdmin && analysis.job_data && jdReady && postingBody(analysis.job_data, null)}
 
-              {!isAdmin && !analysis.job_data && extractionStatus === 'completed' && (
+              {!isAdmin && !analysis.job_data && jdReady && (
                 <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-900">
                   {analysis.raw_plain_text ? (
                     <div>
