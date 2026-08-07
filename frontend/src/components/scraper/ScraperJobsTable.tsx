@@ -120,7 +120,7 @@ const ALL_COLUMNS = [
   { key: 'source_url',     label: 'URL',        sortable: false, adminOnly: true as const },
   // Applicant-only listing metadata (admin table uses URL in their place).
   { key: 'location',       label: 'Location',   sortable: false, applicantOnly: true as const },
-  { key: 'work_mode',      label: 'Work mode',  sortable: false, applicantOnly: true as const },
+  { key: 'work_mode',      label: 'Mode',       sortable: false, applicantOnly: true as const },
   { key: 'salary_raw',     label: 'Salary',     sortable: false, applicantOnly: true as const },
   { key: 'job_type',       label: 'Type',       sortable: false, applicantOnly: true as const },
   { key: 'source',         label: 'Source',     sortable: false },
@@ -145,34 +145,59 @@ function visibleColumns(isAdmin: boolean): ColumnDef[] {
   });
 }
 
-/** Left cluster keeps fixed widths; flex column absorbs remaining table width. */
+/** Left cluster keeps fixed widths; title alone absorbs leftover table width. */
 const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
-  __check__: '32px',
-  __no__: '44px',
-  title: '220px',
-  company: '118px',
-  location: '108px',
-  work_mode: '74px',
-  salary_raw: '100px',
-  job_type: '78px',
-  // Admin source badge is fixed; URL column absorbs remaining width.
-  source: '120px',
-  posted_date: '68px',
-  // 1.5× prior 130px so labels like "Welcome to the Jungle" fit without clipping.
-  added_from: '195px',
-  created_at: '68px',
-  // Fixed match pill (~116px) + cell padding — was 120px and clipped into Added.
-  __processing__: '152px',
-  __resume__: '108px',
-  __cover__: '108px',
-  __status__: '128px',
-  // Apply + Run/Analyze + Delete (row click opens the job modal — no View button).
-  __actions__: '220px',
+  __check__: '28px',
+  __no__: '36px',
+  title: '160px',
+  company: '100px',
+  location: '96px',
+  work_mode: '72px',
+  salary_raw: '92px',
+  job_type: '72px',
+  source: '110px',
+  posted_date: '56px',
+  added_from: '140px',
+  created_at: '56px',
+  // Match pill is ~6.75rem; keep column snug so Resume sits next to it.
+  __processing__: '118px',
+  // Icon-only doc actions (view + download).
+  __resume__: '64px',
+  __cover__: '64px',
+  // Overridden dynamically from integration count (Applied ± Sheets ± Pumble).
+  __status__: '40px',
+  // Apply + Analyze + Delete — compact buttons.
+  __actions__: '176px',
 };
 
-const ADMIN_ACTIONS_WIDTH = '150px';
-const ADMIN_TITLE_WIDTH = '260px';
-const ADMIN_COMPANY_WIDTH = '130px';
+const ADMIN_ACTIONS_WIDTH = '132px';
+const ADMIN_TITLE_WIDTH = '240px';
+const ADMIN_COMPANY_WIDTH = '120px';
+
+/** Applicant Status column: one 28px square per integration + gaps + slim padding. */
+function applicantStatusColumnWidth(sheetsConfigured: boolean, pumbleConfigured: boolean): string {
+  const squares = 1 + (sheetsConfigured ? 1 : 0) + (pumbleConfigured ? 1 : 0);
+  const content = squares * 28 + Math.max(0, squares - 1) * 6;
+  return `${content + 8}px`;
+}
+
+/** Sum of applicant must-column floors (optional cols add on top when visible). */
+function applicantTableMinWidth(sheetsConfigured: boolean, pumbleConfigured: boolean): number {
+  const statusPx = parseInt(applicantStatusColumnWidth(sheetsConfigured, pumbleConfigured), 10) || 40;
+  return (
+    28 + // check
+    36 + // no
+    140 + // title min
+    100 + // company
+    72 + // work mode
+    56 + // posted
+    118 + // match
+    64 + // resume
+    64 + // cover
+    statusPx +
+    176 // actions
+  );
+}
 
 /** Columns pinned to the right edge of the table. */
 const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
@@ -205,33 +230,33 @@ const APPLICANT_MUST_KEYS = new Set<ColumnKey>([
 ]);
 
 /**
- * Optional applicant columns — hide below the listed viewport width so must
- * columns keep usable space. Class strings are complete for Tailwind JIT.
+ * Optional applicant columns — hide early so must columns (title → actions)
+ * always remain visible without crushing or inventing a mid-table gap.
  */
 const APPLICANT_OPTIONAL_VIS: Partial<Record<ColumnKey, { col: string; cell: string }>> = {
   created_at: {
-    col: 'hidden min-[1400px]:table-column',
-    cell: 'hidden min-[1400px]:table-cell',
+    col: 'hidden min-[1280px]:table-column',
+    cell: 'hidden min-[1280px]:table-cell',
   },
   added_from: {
-    col: 'hidden min-[1480px]:table-column',
-    cell: 'hidden min-[1480px]:table-cell',
+    col: 'hidden min-[1360px]:table-column',
+    cell: 'hidden min-[1360px]:table-cell',
   },
   location: {
-    col: 'hidden min-[1560px]:table-column',
-    cell: 'hidden min-[1560px]:table-cell',
+    col: 'hidden min-[1440px]:table-column',
+    cell: 'hidden min-[1440px]:table-cell',
   },
   job_type: {
-    col: 'hidden min-[1640px]:table-column',
-    cell: 'hidden min-[1640px]:table-cell',
+    col: 'hidden min-[1520px]:table-column',
+    cell: 'hidden min-[1520px]:table-cell',
   },
   salary_raw: {
-    col: 'hidden min-[1640px]:table-column',
-    cell: 'hidden min-[1640px]:table-cell',
+    col: 'hidden min-[1520px]:table-column',
+    cell: 'hidden min-[1520px]:table-cell',
   },
   source: {
-    col: 'hidden min-[1760px]:table-column',
-    cell: 'hidden min-[1760px]:table-cell',
+    col: 'hidden min-[1600px]:table-column',
+    cell: 'hidden min-[1600px]:table-cell',
   },
 };
 
@@ -262,26 +287,13 @@ function columnVisibilityClass(
 }
 
 /** Floor width so must columns are not crushed inside `table-fixed` (horizontal scroll instead). */
-const APPLICANT_TABLE_MIN_WIDTH =
-  32 + // check
-  44 + // no
-  180 + // title min
-  118 + // company
-  74 + // work mode
-  68 + // posted
-  152 + // match
-  108 + // resume
-  108 + // cover
-  128 + // status
-  220; // actions
-
 const ADMIN_TABLE_MIN_WIDTH =
   32 + // check
   44 + // no
   200 + // title min
   130 + // company
   160 + // url min
-  128 + // status
+  100 + // status / extraction
   150; // actions
 
 /** Shared height with MatchScoreBadge so status squares align visually. */
@@ -289,6 +301,8 @@ const MATCH_BADGE_H = 28;
 
 const ROW_H = 'h-[52px] max-h-[52px]';
 const CELL = 'px-3 py-0 align-middle overflow-hidden';
+/** Slimmer padding for Resume / Cover / Status / Actions so those columns pack tightly. */
+const CELL_COMPACT = 'px-1.5 py-0 align-middle overflow-hidden';
 
 // ---------------------------------------------------------------------------
 // Resume / Cover letter column helpers
@@ -322,7 +336,6 @@ function isJobApplyReady(job: DashboardJob): boolean {
 }
 
 const DocActionPair = memo(function DocActionPair({
-  shortLabel,
   fullLabel,
   jobId,
   filePath,
@@ -330,7 +343,6 @@ const DocActionPair = memo(function DocActionPair({
   docTitle,
   accent,
 }: {
-  shortLabel: string;
   fullLabel: string;
   jobId: string;
   filePath: string | null;
@@ -376,10 +388,6 @@ const DocActionPair = memo(function DocActionPair({
     }
   };
 
-  const labelTone =
-    accent === 'violet'
-      ? 'text-violet-700 dark:text-violet-300'
-      : 'text-sky-700 dark:text-sky-300';
   const viewTone =
     accent === 'violet'
       ? 'border-violet-200 bg-violet-50 text-violet-700 hover:border-violet-300 hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-200 dark:hover:bg-violet-500/25'
@@ -389,24 +397,15 @@ const DocActionPair = memo(function DocActionPair({
 
   return (
     <>
-      <div className="inline-flex items-center gap-1.5" style={{ height: MATCH_BADGE_H }}>
-        {/* Plain type label — not a chip/button, so users don't click it by mistake */}
-        <span
-          title={fullLabel}
-          aria-hidden
-          className={`pointer-events-none select-none inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide ${labelTone}`}
-        >
-          <FileText size={11} strokeWidth={2.2} className="opacity-70" />
-          {shortLabel}
-        </span>
+      <div className="inline-flex items-center gap-1" style={{ height: MATCH_BADGE_H }}>
         <button
           type="button"
           onClick={handleOpen}
           title={`View ${fullLabel}`}
           aria-label={`View ${fullLabel}`}
-          className={`inline-flex h-full w-[28px] items-center justify-center rounded-lg border shadow-sm transition ${viewTone}`}
+          className={`inline-flex h-full w-[26px] items-center justify-center rounded-md border shadow-sm transition ${viewTone}`}
         >
-          <Eye size={14} strokeWidth={2.35} />
+          <Eye size={13} strokeWidth={2.35} />
         </button>
         <button
           type="button"
@@ -414,9 +413,9 @@ const DocActionPair = memo(function DocActionPair({
           disabled={downloading}
           title={`Download ${fullLabel}`}
           aria-label={`Download ${fullLabel}`}
-          className={`inline-flex h-full w-[28px] items-center justify-center rounded-lg border shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${downloadTone}`}
+          className={`inline-flex h-full w-[26px] items-center justify-center rounded-md border shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${downloadTone}`}
         >
-          {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} strokeWidth={2.35} />}
+          {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} strokeWidth={2.35} />}
         </button>
       </div>
       {previewOpen && (
@@ -445,10 +444,9 @@ function ResumeDocCell({ job }: { job: DashboardJob }) {
   }
 
   return (
-    <div className="inline-flex items-center gap-1.5">
+    <div className="inline-flex items-center gap-1">
       {building && <DocsProcessingRing compact />}
       <DocActionPair
-        shortLabel="R"
         fullLabel="Resume"
         jobId={job.id}
         filePath={job.resume_pdf_path}
@@ -474,7 +472,6 @@ function CoverDocCell({ job }: { job: DashboardJob }) {
 
   return (
     <DocActionPair
-      shortLabel="CL"
       fullLabel="Cover letter"
       jobId={job.id}
       filePath={job.cover_letter_pdf_path}
@@ -671,9 +668,9 @@ function scoreLabel(score: number): string {
   return 'Weak';
 }
 
-/** Shared Match column shell — fixed size so Good/Strong/No score all align. */
+/** Shared Match column shell — compact fixed size so Match sits flush with Resume. */
 const MATCH_PILL_BASE =
-  'inline-flex h-[28px] w-[7.5rem] shrink-0 items-center justify-center gap-1 rounded-lg border px-2 shadow-sm';
+  'inline-flex h-[28px] w-[6.75rem] shrink-0 items-center justify-center gap-0.5 rounded-lg border px-1.5 shadow-sm';
 
 /** Match score pill — fixed width/height for every band label. */
 const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number }) {
@@ -683,8 +680,8 @@ const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number
       className={`${MATCH_PILL_BASE} ${scoreColors(score)}`}
     >
       <Sparkles size={11} className="shrink-0 opacity-75" aria-hidden />
-      <span className="w-6 shrink-0 text-right text-sm font-bold tabular-nums leading-none">{score}</span>
-      <span className="w-11 shrink-0 whitespace-nowrap text-left text-[10px] font-medium leading-none opacity-70">
+      <span className="w-5 shrink-0 text-right text-sm font-bold tabular-nums leading-none">{score}</span>
+      <span className="min-w-0 shrink truncate text-left text-[10px] font-medium leading-none opacity-70">
         {scoreLabel(score)}
       </span>
     </div>
@@ -2215,7 +2212,11 @@ export function ScraperJobsTable({
         <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
           <table
             className="w-full table-fixed border-collapse text-sm"
-            style={{ minWidth: isAdmin ? ADMIN_TABLE_MIN_WIDTH : APPLICANT_TABLE_MIN_WIDTH }}
+            style={{
+              minWidth: isAdmin
+                ? ADMIN_TABLE_MIN_WIDTH
+                : applicantTableMinWidth(sheetsConfigured, pumbleConfigured),
+            }}
           >
             <colgroup>
               {columns.map((col) => {
@@ -2223,22 +2224,31 @@ export function ScraperJobsTable({
                 if (col.key === '__actions__' && isAdmin) width = ADMIN_ACTIONS_WIDTH;
                 if (col.key === 'title' && isAdmin) width = ADMIN_TITLE_WIDTH;
                 if (col.key === 'company' && isAdmin) width = ADMIN_COMPANY_WIDTH;
-                // Flex absorbers: title (applicant) / URL (admin) take leftover width.
-                // Source is optional and no longer the flex column for applicants.
-                if (col.key === 'title' && !isAdmin) width = undefined;
-                if (col.key === 'source_url') width = undefined;
+                if (col.key === '__status__' && !isAdmin) {
+                  width = applicantStatusColumnWidth(sheetsConfigured, pumbleConfigured);
+                }
+                if (col.key === '__status__' && isAdmin) width = '118px';
+                // Title (applicant) / URL (admin) must claim ALL leftover width via 100%.
+                // Without this, table-fixed distributes slack into Match and opens a gap
+                // before Resume while clipping Actions down to the delete icon.
+                if (col.key === 'title' && !isAdmin) width = '100%';
+                if (col.key === 'source_url') width = '100%';
                 const vis = columnVisibilityClass(col.key, isAdmin, 'col');
                 return (
                   <col
                     key={col.key}
                     style={
                       width
-                        ? { width, minWidth: width }
-                        : col.key === 'title' && !isAdmin
-                          ? { minWidth: '180px' }
-                          : col.key === 'source_url'
-                            ? { minWidth: '160px' }
-                            : undefined
+                        ? {
+                            width,
+                            minWidth:
+                              col.key === 'title' && !isAdmin
+                                ? '140px'
+                                : col.key === 'source_url'
+                                  ? '140px'
+                                  : width,
+                          }
+                        : undefined
                     }
                     className={vis}
                   />
@@ -2257,7 +2267,13 @@ export function ScraperJobsTable({
                       if (col.sortable) onSort(sortKey);
                     }}
                     className={[
-                      'px-3 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden',
+                      col.key === '__processing__' ||
+                      col.key === '__resume__' ||
+                      col.key === '__cover__' ||
+                      col.key === '__status__' ||
+                      col.key === '__actions__'
+                        ? 'px-1.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden'
+                        : 'px-2.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden',
                       'text-slate-600 dark:text-slate-200',
                       RIGHT_ALIGN_KEYS.has(col.key) ? 'text-right' : 'text-left',
                       col.sortable
@@ -2476,18 +2492,18 @@ export function ScraperJobsTable({
                     {/* Match / Resume / Cover — applicant only */}
                     {!isAdmin && (
                       <>
-                        <td className={`${CELL} text-right`}>
-                          <div className="flex h-[28px] w-full items-center justify-end">
+                        <td className={`${CELL_COMPACT} text-right`}>
+                          <div className="flex h-[28px] items-center justify-end">
                             <MatchCell job={job} />
                           </div>
                         </td>
-                        <td className={`${CELL} text-right`} onClick={(e) => e.stopPropagation()}>
-                          <div className="flex h-[28px] w-full items-center justify-end">
+                        <td className={`${CELL_COMPACT} text-right`} onClick={(e) => e.stopPropagation()}>
+                          <div className="flex h-[28px] items-center justify-end">
                             <ResumeDocCell job={job} />
                           </div>
                         </td>
-                        <td className={`${CELL} text-right`} onClick={(e) => e.stopPropagation()}>
-                          <div className="flex h-[28px] w-full items-center justify-end">
+                        <td className={`${CELL_COMPACT} text-right`} onClick={(e) => e.stopPropagation()}>
+                          <div className="flex h-[28px] items-center justify-end">
                             <CoverDocCell job={job} />
                           </div>
                         </td>
@@ -2495,8 +2511,8 @@ export function ScraperJobsTable({
                     )}
 
                     {/* Status: extraction progress (admin) or apply/sheet/pumble squares (applicant) */}
-                    <td className={`${CELL} text-right`}>
-                      <div className="flex h-[28px] w-full items-center justify-end">
+                    <td className={`${CELL_COMPACT} text-right`}>
+                      <div className="flex h-[28px] items-center justify-end">
                         {isAdmin ? (
                           <AdminExtractionStatusCell
                             job={job}
@@ -2517,12 +2533,12 @@ export function ScraperJobsTable({
                       </div>
                     </td>
 
-                    {/* Actions — same table-cell layout as other columns (not sticky) */}
+                    {/* Actions — overflow visible so Analyze is never clipped to Delete-only */}
                     <td
                       onClick={(e) => e.stopPropagation()}
-                      className={`${CELL} whitespace-nowrap text-right`}
+                      className="px-1.5 py-0 align-middle whitespace-nowrap overflow-visible text-right"
                     >
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="inline-flex items-center justify-end gap-1">
                         {/* Apply with Assistant — only when match + resume + cover are done */}
                         {!isAdmin && isJobApplyReady(job) && (
                           <button
@@ -2534,7 +2550,7 @@ export function ScraperJobsTable({
                               void handleApply(job);
                             }}
                             title="Apply with the Job Application Assistant extension"
-                            className="inline-flex w-[72px] h-[28px] items-center justify-center gap-1 rounded-md border border-blue-200 bg-blue-50 text-xs font-medium text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            className="inline-flex h-[28px] min-w-[64px] items-center justify-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-1.5 text-[11px] font-medium text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
                           >
                             {applyChecking === job.id
                               ? <Loader2 size={12} className="animate-spin" />
@@ -2565,7 +2581,7 @@ export function ScraperJobsTable({
                                   : 'Extract job description then analyze'
                           }
                           className={[
-                            'relative inline-flex w-[96px] h-[28px] items-center justify-center gap-1 rounded-md border text-xs font-medium transition-all disabled:cursor-not-allowed',
+                            'relative inline-flex h-[28px] min-w-[78px] items-center justify-center gap-1 rounded-md border px-1.5 text-[11px] font-medium transition-all disabled:cursor-not-allowed',
                             isPipelineRunning
                               ? 'border-amber-300 bg-amber-50 text-amber-700 opacity-90 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300'
                               : isAdmin
@@ -2616,7 +2632,7 @@ export function ScraperJobsTable({
                           type="button"
                           onClick={() => { setDeleteError(null); setDeleting([job]); }}
                           title="Delete"
-                          className="inline-flex w-[28px] h-[28px] items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 transition-all hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                          className="inline-flex h-[28px] w-[28px] items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 transition-all hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                         >
                           <Trash2 size={13} />
                         </button>
