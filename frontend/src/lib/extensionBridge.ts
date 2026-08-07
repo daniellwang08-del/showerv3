@@ -118,6 +118,7 @@ export async function detectExtension(timeoutMs = 1000, force = false): Promise<
 }
 
 const APPLY_EVENT = 'atomspace-apply';
+const ACK_ATTR = 'data-atomspace-apply-ack';
 
 /**
  * Hand a specific job to the extension AND open its side panel.
@@ -130,10 +131,22 @@ const APPLY_EVENT = 'atomspace-apply';
  * Returns a promise that resolves `true` once the in-page bridge acknowledges
  * receipt, or `false` if no bridge answered in time (e.g. the dashboard tab
  * predates the extension and hasn't been reloaded) so the caller can fall back.
+ *
+ * ACK is primarily a synchronous DOM attribute set by the content script during
+ * the CustomEvent dispatch. postMessage is only a backup — relying on it alone
+ * caused a double-tab bug when the page ignored CS postMessage (`event.source`
+ * checks) and then `window.open`'d after the background had already opened the
+ * application URL.
  */
 export function applyViaExtension(jobId: string, url: string | null, timeoutMs = 1200): Promise<boolean> {
   if (typeof window === 'undefined' || typeof document === 'undefined') return Promise.resolve(false);
   const requestId = randomId();
+
+  try {
+    document.documentElement.removeAttribute(ACK_ATTR);
+  } catch {
+    /* ignore */
+  }
 
   const ack = new Promise<boolean>((resolve) => {
     let settled = false;
@@ -145,7 +158,8 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
       resolve(v);
     };
     const onMessage = (event: MessageEvent) => {
-      if (event.source !== window) return;
+      // Do NOT require event.source === window: content-script postMessage
+      // source handling differs across Chrome builds and was rejecting valid ACKs.
       const data = event.data as ExtMessage | undefined;
       if (!data || data.source !== EXT_SOURCE) return;
       if (data.type === 'APPLY_ACK' && data.requestId === requestId) finish(true);
@@ -161,6 +175,15 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
         detail: JSON.stringify({ jobId: String(jobId), url: url ?? null, requestId }),
       }),
     );
+  } catch {
+    /* ignore */
+  }
+
+  // Preferred ACK: content script sets this attribute inside the same turn.
+  try {
+    if (document.documentElement.getAttribute(ACK_ATTR) === requestId) {
+      return Promise.resolve(true);
+    }
   } catch {
     /* ignore */
   }

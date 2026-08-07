@@ -118,6 +118,7 @@ export async function logout() {
 export const getProfile = () => apiFetch("/profile");
 export const getProfileText = () => apiFetch("/profile/openai-text");
 export const getSettings = () => apiFetch("/settings");
+export const updateSettings = (body) => apiFetch("/settings", { method: "PUT", body });
 export const getDataVersion = () => apiFetch("/me/data-version");
 
 export const getDashboard = (params = {}) => {

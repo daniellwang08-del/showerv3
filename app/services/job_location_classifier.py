@@ -226,3 +226,17 @@ def classify_job_location(
     if LocationVerdict.US in verdicts and LocationVerdict.UNKNOWN in verdicts:
         return LocationVerdict.US, f"US location with unspecified segments: {combined[:120]}"
     return LocationVerdict.UNKNOWN, f"location needs review: {combined[:120]}"
+
+
+def keeps_us_job_pool(
+    location: str | None,
+    *,
+    remote_policy: str | None = None,
+) -> tuple[bool, LocationVerdict, str]:
+    """Whether a job should stay in the visible US-focused pool.
+
+    Only explicit non-US locations are dropped. Missing / ambiguous locations are
+    kept (treated as US) so users can filter them later themselves.
+    """
+    verdict, detail = classify_job_location(location, remote_policy=remote_policy)
+    return verdict != LocationVerdict.NON_US, verdict, detail

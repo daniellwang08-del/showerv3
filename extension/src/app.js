@@ -97,8 +97,10 @@ let state = {
   modal: null, // { title, message, confirmLabel, tone, onConfirm, busy }
   minScore: store.DEFAULT_MIN_SCORE,
   autoAdvance: true, // Workday: fill + advance each step until Review (user submits)
+  autoSubmit: false, // Workday only: click Submit on Review when the loop reaches it
   resumeSource: store.DEFAULT_RESUME_SOURCE, // "tailored" | "original"
   answerStrategy: "", // optional free-text for autofill LLM
+  dailyApplyTarget: store.DEFAULT_DAILY_APPLY_TARGET, // chart goal line; 0 = hide
   askHotkey: store.DEFAULT_ASK_HOTKEY, // page selection → assistant chat
   askHotkeyRecording: false,
   job: null, // { job_id, url, title, company, score, snapshot, messages, ready }
@@ -890,26 +892,34 @@ async function copyAnswer(text, btn) {
 
 async function init() {
   await store.syncBackendFromOpenTabs();
-  const [user, token, minScore, autoAdvance, resumeSource, answerStrategy, pageSize, askHotkey] =
+  const [user, token, minScore, autoAdvance, autoSubmit, resumeSource, answerStrategy, pageSize, dailyApplyTarget, askHotkey] =
     await Promise.all([
       store.getCurrentUser(),
       store.getToken(),
       store.getMinScore(),
       store.getAutoAdvance(),
+      store.getAutoSubmit(),
       store.getResumeSource(),
       store.getAnswerStrategy(),
       store.getPageSize(),
+      store.getDailyApplyTarget(),
       store.getAskHotkey(),
     ]);
   state.minScore = minScore;
   state.autoAdvance = autoAdvance !== false;
+  state.autoSubmit = autoSubmit === true;
   state.resumeSource = resumeSource === "original" ? "original" : "tailored";
   state.answerStrategy = answerStrategy || "";
   state.pageSize = pageSize;
+  state.dailyApplyTarget = dailyApplyTarget;
   state.askHotkey = askHotkey;
   if (user && token) {
     state.user = user;
     state.cache = await store.getCache(user.user_id);
+    // Align list filter with last-known account preference before home paints.
+    if (state.cache && state.cache.settings) {
+      await applyPreferredMinScoreLocally(state.cache.settings);
+    }
     await goHome();
     await consumePendingWebappJob();
     await consumePendingAskSelection();
@@ -937,8 +947,7 @@ async function doLogin(email, password) {
     if (loginDraft.remember) await store.setRememberedEmail(email);
     else await store.setRememberedEmail("");
     state.user = user;
-    state.minScore = await store.getMinScore();
-    await syncNow(); // first load populates the cache
+    await syncNow(); // first load populates the cache + preferred min score
     await goHome();
     await consumePendingWebappJob();
   } catch (err) {
@@ -960,6 +969,21 @@ async function doLogout() {
 
 // ── data / sync ──────────────────────────────────────────────────────────────
 
+/** Effective preference threshold from /settings (0 = show all / system default). */
+function resolvePreferredMinScore(settings) {
+  if (!settings) return store.DEFAULT_MIN_SCORE;
+  const n = Number(settings.min_match_score);
+  if (!Number.isFinite(n)) return store.DEFAULT_MIN_SCORE;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+async function applyPreferredMinScoreLocally(settings) {
+  const n = resolvePreferredMinScore(settings);
+  await store.setMinScore(n);
+  state.minScore = n;
+  return n;
+}
+
 async function syncNow() {
   const [profile, profileText, settings, version] = await Promise.all([
     api.getProfile().catch(() => null),
@@ -976,6 +1000,8 @@ async function syncNow() {
   await store.setCache(state.user.user_id, cache);
   state.cache = await store.getCache(state.user.user_id);
   state.sync = null;
+  // Keep extension list filter aligned with account preference (My Preferences).
+  if (settings) await applyPreferredMinScoreLocally(settings);
 }
 
 async function checkSync() {
@@ -1709,8 +1735,29 @@ function syncTailorRunsFromJobs(jobs) {
 }
 
 async function applyMinScore(value) {
-  const n = await store.setMinScore(value);
+  let n = Number(value);
+  if (!Number.isFinite(n)) n = store.DEFAULT_MIN_SCORE;
+  n = Math.max(0, Math.min(100, Math.round(n)));
+  await store.setMinScore(n);
   setState({ minScore: n });
+
+  // Persist as the account preference so web + extension stay in sync.
+  // Always custom: user's explicit choice (including 0) is not tied to admin default.
+  try {
+    const updated = await api.updateSettings({
+      min_match_score_mode: "custom",
+      min_match_score: n,
+    });
+    if (state.user && state.cache) {
+      state.cache.settings = updated;
+      await store.setCache(state.user.user_id, state.cache);
+    } else if (updated) {
+      await applyPreferredMinScoreLocally(updated);
+    }
+  } catch (err) {
+    toast((err && err.message) || "Saved locally; could not sync preference to the server.");
+  }
+
   await loadQueue();
 }
 
@@ -2591,15 +2638,16 @@ async function startWorkdayAutofill(tab, engine) {
 // stuck, when errors persist after recovery, or when the user hits Stop.
 const WD_MAX_STEPS = 9;
 // Per step: hard cap on WD_RUN fill passes (initial + recoveries). 2 = one initial
-// fill + ONE recovery. Workday only surfaces most required-field errors AFTER
-// "Save and Continue", so a single post-save recovery is required; more than that
-// is wasted churn (the user explicitly does not want repeated re-attempts, and
-// with the pill-aware isChosen fix already-filled fields are never re-typed).
-const WD_MAX_STEP_FILLS = 1;
-// Per step: how many Save attempts after the initial fill. No refill between
-// attempts — one harvest→LLM→apply pass only (design). Save is retried only to
-// wait out slow navigation / late validation UI.
-const WD_MAX_SAVE_ATTEMPTS = 2;
+// full fill + ONE targeted recovery. Workday only surfaces most required-field
+// errors AFTER "Save and Continue", so a single recovery pass is required to fix
+// them. The recovery re-fills ONLY the fields Workday flagged (options.onlyInvalid),
+// never the whole step — already-committed fields are left untouched, so this is
+// not the "re-type everything" churn the one-pass design guarded against.
+const WD_MAX_STEP_FILLS = 2;
+// Per step: how many Save attempts. One targeted onlyInvalid recovery may run
+// between attempts (see the loop). 3 = initial Save → recover+Save → one buffer
+// Save (slow-nav / late validation UI).
+const WD_MAX_SAVE_ATTEMPTS = 3;
 
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -2735,7 +2783,42 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
   const loopStopped = () => state.autofill.loopStop || !state.autofill.active;
   // First WD_RUN of this session clears the failed-field skip set; recoveries keep it.
   let sessionFresh = true;
-  aaLog("loop start", { tabId, WD_MAX_STEPS, WD_MAX_STEP_FILLS, WD_MAX_SAVE_ATTEMPTS });
+  aaLog("loop start", {
+    tabId,
+    WD_MAX_STEPS,
+    WD_MAX_STEP_FILLS,
+    WD_MAX_SAVE_ATTEMPTS,
+    autoSubmit: !!state.autoSubmit,
+  });
+
+  // Reached the Review step. If the user enabled auto-submit (Workday only),
+  // click the final Submit and confirm the thank-you page; otherwise stop at
+  // Review so the user submits manually. Always ends the loop.
+  const finishAtReview = async () => {
+    if (!state.autoSubmit) return finishLoop("review");
+    if (loopStopped()) return finishLoop("stopped");
+    setAutofill({ loopStatus: "Submitting application…" });
+    aaLog("phase: AUTO-SUBMIT — clicking Submit on Review", {});
+    const res = await tabSend(tabId, { type: "WD_SUBMIT" }, 0);
+    aaLog("WD_SUBMIT result", res || {});
+    if (loopStopped() || (res && res.aborted)) return finishLoop("stopped");
+    // Confirm the submission actually landed (thank-you / submitted page).
+    await delay(900);
+    if (loopStopped()) return finishLoop("stopped");
+    const d = await tabSend(tabId, { type: "WD_DETECT" }, 0);
+    const submitted = !!(res && res.submitted) || (d && d.step === "submitted");
+    if (submitted) {
+      finishLoop("submitted");
+      await handleApplicationSubmitted({
+        reason: "wd-auto-submit",
+        jobId: state.job && state.job.job_id,
+      });
+      return;
+    }
+    // Submit didn't confirm — leave the user on Review to finish manually.
+    aaLog("auto-submit did not confirm — leaving at Review", { res, detect: d });
+    return finishLoop("review");
+  };
   try {
     for (let i = 0; i < WD_MAX_STEPS; i++) {
       if (loopStopped()) return finishLoop("stopped");
@@ -2758,7 +2841,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         return;
       }
       if (!step) return finishLoop(state.autofill.reports.length ? "done" : "none");
-      if (step === "review") return finishLoop("review");
+      if (step === "review") return finishAtReview();
 
       const label = wdStepLabel(step);
       let fillsUsed = 0;
@@ -2805,11 +2888,32 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
       if (fill.aborted || loopStopped()) return finishLoop("stopped");
       if (fill.error) return finishLoop("error", fill.error);
 
-      // Clear validation and advance. ONE fill pass only (harvest → LLM → apply).
-      // Do not re-run fill on pre/post-save errors — that violated the one-attempt
-      // design and re-harvested How Did You Hear after a missed LLM answer.
+      // Clear validation and advance. If validation is dirty (pre-save OR after
+      // Save reveals required errors), re-fill ONLY the flagged fields
+      // (options.onlyInvalid) once — bounded by WD_MAX_STEP_FILLS — then Save
+      // again. Committed fields are never re-touched, so this recovers a genuinely
+      // failed field without re-harvesting the whole step.
       let advanced = false;
       let lastNames = [];
+      // Re-fill just the fields Workday flagged. Returns "ok" | "aborted" | "error"
+      // | "skipped" (budget exhausted). Callers decide how to proceed.
+      const recoverInvalid = async (invalidFields, at) => {
+        if (fillsUsed >= WD_MAX_STEP_FILLS) return { status: "skipped" };
+        if (!Array.isArray(invalidFields) || !invalidFields.length) return { status: "skipped" };
+        aaLog("phase: RECOVERY refill invalid fields", {
+          at,
+          label,
+          step,
+          fillsUsed,
+          onlyInvalid: invalidFields,
+        });
+        setAutofill({ loopStatus: `Fixing ${label}…` });
+        const rec = await runFill({ onlyInvalid: invalidFields });
+        if (rec.aborted || loopStopped()) return { status: "aborted" };
+        if (rec.error) return { status: "error", error: rec.error };
+        if (rec.skipped) return { status: "skipped" };
+        return { status: "ok" };
+      };
       for (let attempt = 0; attempt < WD_MAX_SAVE_ATTEMPTS && !advanced; attempt++) {
         if (loopStopped()) return finishLoop("stopped");
         setAutofill({ loopStatus: `Committing ${label}…` });
@@ -2828,11 +2932,26 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         });
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
-          console.debug(`[workday] auto-advance: ${label} pre-save errors (no refill)`, v.invalidFields);
-          aaLog("WARN: dirty validation before Save — one-pass fill already done, advancing", {
-            label,
-            lastNames,
-          });
+          console.debug(`[workday] auto-advance: ${label} pre-save errors`, v.invalidFields);
+          aaLog("WARN: dirty validation before Save — retrying failed fields", { label, lastNames });
+          const rec = await recoverInvalid(v.invalidFields, "pre-save");
+          if (rec.status === "aborted") return finishLoop("stopped");
+          if (rec.status === "error") return finishLoop("error", rec.error);
+          if (rec.status === "ok") {
+            // Re-flush and re-validate before deciding to Save.
+            await focusPageAndFlush(tabId);
+            if (loopStopped()) return finishLoop("stopped");
+            v = await tabSend(tabId, { type: "WD_VALIDATE" }, 0);
+            aaLog("post-recovery VALIDATE (pre-save)", {
+              attempt: attempt + 1,
+              clean: v && v.clean,
+              errorCount: v && v.errorCount,
+              invalidFields: v && v.invalidFields,
+            });
+            if (v && !v.clean) {
+              lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
+            }
+          }
         }
 
         // Try to advance.
@@ -2895,9 +3014,21 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         });
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
-          console.debug(`[workday] auto-advance: ${label} post-save errors (no refill)`, v.invalidFields);
-          aaLog("WARN: post-save dirty — stopping refill; surface to user", { lastNames, fillsUsed });
-          // Do not runFill again. Break save loop so needs_user reports the fields.
+          console.debug(`[workday] auto-advance: ${label} post-save errors`, v.invalidFields);
+          const rec = await recoverInvalid(v.invalidFields, "post-save");
+          if (rec.status === "aborted") return finishLoop("stopped");
+          if (rec.status === "error") return finishLoop("error", rec.error);
+          if (rec.status === "ok") {
+            // Recovery filled the flagged fields — let the next attempt re-flush,
+            // re-validate, and Save again.
+            aaLog("post-save recovery done — retrying Save", { lastNames, fillsUsed });
+            continue;
+          }
+          // No budget left (or nothing to retry) — surface the fields to the user.
+          aaLog("WARN: post-save dirty — recovery budget exhausted; surface to user", {
+            lastNames,
+            fillsUsed,
+          });
           break;
         } else {
           // No detectable error but it didn't move - maybe a slow navigation.
@@ -2928,7 +3059,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
           });
           return;
         }
-        if (recheck && recheck.step === "review") return finishLoop("review");
+        if (recheck && recheck.step === "review") return finishAtReview();
         return finishLoop(
           "needs_user",
           lastNames.length ? `Couldn't resolve on ${label}: ${lastNames.join(", ")}` : `Couldn't advance past ${label} (no fixable errors detected).`
@@ -2944,7 +3075,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         });
         return;
       }
-      if (afterStep && afterStep.step === "review") return finishLoop("review");
+      if (afterStep && afterStep.step === "review") return finishAtReview();
       await delay(600);
     }
     return finishLoop("guard");
@@ -5206,6 +5337,8 @@ function renderWeeklyProgress() {
   const series = (wp && wp.series) || [];
   const totals = (wp && wp.totals) || { posted: 0, recommended: 0, applied: 0 };
   const minScore = wp && wp.min_match_score != null ? wp.min_match_score : null;
+  const applyTarget = Math.max(0, Number(state.dailyApplyTarget) || 0);
+  const todayApplied = series.length ? Number(series[series.length - 1].applied) || 0 : 0;
 
   const wrap = el("div", { class: "weekly-progress" });
   wrap.appendChild(
@@ -5221,13 +5354,15 @@ function renderWeeklyProgress() {
     ])
   );
 
-  wrap.appendChild(
-    el("div", { class: "weekly-legend" }, [
-      legendSwatch("posted", "Posted", totals.posted),
-      legendSwatch("recommended", "Recommended", totals.recommended),
-      legendSwatch("applied", "Applied", totals.applied),
-    ])
-  );
+  const legendItems = [
+    legendSwatch("posted", "Posted", totals.posted),
+    legendSwatch("recommended", "Recommended", totals.recommended),
+    legendSwatch("applied", "Applied", totals.applied),
+  ];
+  if (applyTarget > 0) {
+    legendItems.push(legendSwatch("target", "Daily goal", applyTarget));
+  }
+  wrap.appendChild(el("div", { class: "weekly-legend" }, legendItems));
 
   if (!series.length) {
     wrap.appendChild(
@@ -5240,7 +5375,20 @@ function renderWeeklyProgress() {
     return wrap;
   }
 
-  wrap.appendChild(buildWeeklyChartSvg(series));
+  wrap.appendChild(buildWeeklyChartSvg(series, { applyTarget }));
+
+  if (applyTarget > 0) {
+    const met = todayApplied >= applyTarget;
+    wrap.appendChild(
+      el(
+        "div",
+        { class: "weekly-target-foot muted small" + (met ? " is-met" : "") },
+        met
+          ? `Daily apply goal met · Today ${todayApplied} / ${applyTarget}`
+          : `Daily apply goal · Today ${todayApplied} / ${applyTarget}`
+      )
+    );
+  }
   return wrap;
 }
 
@@ -5252,55 +5400,165 @@ function legendSwatch(key, label, total) {
   ]);
 }
 
+function niceChartScale(rawMax, tickCount = 4) {
+  const max = Math.max(0, Number(rawMax) || 0);
+  if (max <= 0) return { max: 1, ticks: [0, 1] };
+  const rough = max / tickCount;
+  const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+  const n = rough / pow;
+  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  const step = nice * pow;
+  const top = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = 0; v <= top + step * 0.001; v += step) ticks.push(Math.round(v));
+  return { max: top, ticks };
+}
+
 function buildWeeklyChartSvg(series, opts = {}) {
   const dense = !!opts.dense || (series && series.length > 10);
-  const W = 320;
-  const H = opts.tall ? 176 : 148;
-  const pad = { t: 12, r: 8, b: dense ? 26 : 28, l: 28 };
+  const applyTarget = Math.max(0, Number(opts.applyTarget != null ? opts.applyTarget : state.dailyApplyTarget) || 0);
+  const showValues = opts.showValues === true;
+  const W = 420;
+  const H = opts.tall ? 190 : 148;
+  const pad = {
+    t: showValues ? 18 : 10,
+    r: applyTarget > 0 ? 28 : 10,
+    b: dense ? 20 : 22,
+    l: 30,
+  };
   const innerW = W - pad.l - pad.r;
   const innerH = H - pad.t - pad.b;
   const keys = ["posted", "recommended", "applied"];
-  const maxVal = Math.max(1, ...series.flatMap((d) => keys.map((k) => Number(d[k]) || 0)));
+  const keyLabel = { posted: "Posted", recommended: "Recommended", applied: "Applied" };
+  const dataMax = Math.max(0, ...series.flatMap((d) => keys.map((k) => Number(d[k]) || 0)));
+  const { max: maxVal, ticks } = niceChartScale(Math.max(dataMax, applyTarget), 4);
   const n = Math.max(1, series.length);
   const groupW = innerW / n;
-  const gap = dense ? 2 : 8;
-  const barW = Math.max(dense ? 2 : 4, (groupW - gap) / keys.length);
-  const labelStep = dense ? Math.max(1, Math.ceil(n / 6)) : 1;
+  // Thin clustered bars — never fill the whole day slot.
+  const barW = Math.min(dense ? 4.5 : 6.5, Math.max(2.5, groupW * (dense ? 0.14 : 0.18)));
+  const barGap = dense ? 1.2 : 2;
+  const clusterW = keys.length * barW + (keys.length - 1) * barGap;
+  const labelStep = dense ? Math.max(1, Math.ceil(n / 7)) : 1;
+  const baseline = pad.t + innerH;
+  const yScale = (v) => baseline - (v / maxVal) * innerH;
+  // Minimum visible height only when non-zero — still seated on the baseline.
+  const minBarH = dense ? 1.25 : 1.75;
 
-  const yScale = (v) => pad.t + innerH - (v / maxVal) * innerH;
-  const gridSteps = 3;
-  let grid = "";
-  for (let i = 0; i <= gridSteps; i++) {
-    const v = Math.round((maxVal * i) / gridSteps);
+  let grid = `<line x1="${pad.l}" y1="${baseline}" x2="${W - pad.r}" y2="${baseline}" class="weekly-baseline"/>`;
+  for (const v of ticks) {
     const y = yScale(v);
-    grid += `<line x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" class="weekly-grid"/>`;
-    grid += `<text x="${pad.l - 4}" y="${y + 3}" text-anchor="end" class="weekly-axis">${v}</text>`;
+    if (v > 0) {
+      grid += `<line x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" class="weekly-grid"/>`;
+    }
+    grid += `<text x="${pad.l - 5}" y="${y + 2.5}" text-anchor="end" class="weekly-axis">${v}</text>`;
+  }
+
+  let targetLayer = "";
+  if (applyTarget > 0) {
+    const y = yScale(applyTarget);
+    targetLayer += `<line x1="${pad.l}" y1="${y}" x2="${W - pad.r}" y2="${y}" class="weekly-target-line"/>`;
+    targetLayer += `<text x="${W - pad.r + 3}" y="${y + 2.5}" text-anchor="start" class="weekly-target-label">${applyTarget}</text>`;
   }
 
   let bars = "";
+  let values = "";
   let labels = "";
+  const tipMeta = [];
   series.forEach((d, i) => {
-    const gx = pad.l + i * groupW + (dense ? 1 : 4);
+    const gx = pad.l + i * groupW;
+    const clusterX = gx + (groupW - clusterW) / 2;
+    const tipDate = d.date || d.label || "";
+    const tipDay = d.label || tipDate;
     keys.forEach((k, ki) => {
       const val = Number(d[k]) || 0;
-      const h = (val / maxVal) * innerH;
-      const x = gx + ki * barW;
-      const y = pad.t + innerH - h;
-      const tipDate = d.date || d.label || "";
-      bars += `<rect x="${x}" y="${y}" width="${Math.max(barW - (dense ? 0.5 : 1), 1.5)}" height="${Math.max(h, val > 0 ? 2 : 0)}" rx="${dense ? 1 : 2}" class="weekly-bar weekly-bar-${k}"><title>${escapeHtml(String(tipDate))} · ${k} ${val}</title></rect>`;
+      const hRaw = (val / maxVal) * innerH;
+      const h = val > 0 ? Math.max(hRaw, minBarH) : 0;
+      const x = clusterX + ki * (barW + barGap);
+      const y = baseline - h;
+      const tipId = tipMeta.length;
+      tipMeta.push({
+        day: tipDay,
+        date: tipDate,
+        series: keyLabel[k],
+        value: val,
+        key: k,
+      });
+      // Bars always grow up from the baseline (y = baseline - h).
+      bars += `<rect data-tip="${tipId}" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barW.toFixed(2)}" height="${h.toFixed(2)}" rx="${Math.min(2.5, barW / 2)}" class="weekly-bar weekly-bar-${k}"/>`;
+      if (showValues && val > 0 && barW >= 7) {
+        values += `<text x="${x + barW / 2}" y="${Math.max(pad.t + 7, y - 2)}" text-anchor="middle" class="weekly-bar-value">${val}</text>`;
+      }
     });
     if (i === 0 || i === n - 1 || i % labelStep === 0) {
-      labels += `<text x="${gx + groupW / 2 - (dense ? 0 : 4)}" y="${H - 8}" text-anchor="middle" class="weekly-axis">${escapeHtml(d.label || "")}</text>`;
+      labels += `<text x="${gx + groupW / 2}" y="${H - 6}" text-anchor="middle" class="weekly-axis weekly-axis-x">${escapeHtml(d.label || "")}</text>`;
     }
   });
 
-  const svg = `<svg viewBox="0 0 ${W} ${H}" class="weekly-chart-svg" role="img" aria-label="Activity chart">${grid}${bars}${labels}</svg>`;
-  return el("div", { class: "weekly-chart", html: svg });
+  const svgHtml = `<svg viewBox="0 0 ${W} ${H}" class="weekly-chart-svg" role="img" aria-label="Activity chart">${grid}${targetLayer}${bars}${values}${labels}</svg>`;
+  const root = el("div", { class: "weekly-chart" });
+  root.appendChild(el("div", { class: "weekly-chart-svg-wrap", html: svgHtml }));
+  const tip = el("div", {
+    class: "weekly-chart-tip",
+    role: "tooltip",
+    "aria-hidden": "true",
+  });
+  tip.hidden = true;
+  root.appendChild(tip);
+
+  const svg = root.querySelector("svg");
+  const hideTip = () => {
+    tip.hidden = true;
+    tip.setAttribute("aria-hidden", "true");
+    tip.classList.remove("is-visible");
+  };
+  const showTip = (meta, clientX, clientY) => {
+    tip.innerHTML = "";
+    tip.appendChild(el("div", { class: "weekly-chart-tip-day" }, meta.day + (meta.date && meta.date !== meta.day ? ` · ${meta.date}` : "")));
+    tip.appendChild(
+      el("div", { class: `weekly-chart-tip-row weekly-chart-tip-${meta.key}` }, [
+        el("span", { class: "weekly-chart-tip-dot" }),
+        el("span", { class: "weekly-chart-tip-label" }, meta.series),
+        el("span", { class: "weekly-chart-tip-val" }, String(meta.value)),
+      ])
+    );
+    tip.hidden = false;
+    tip.setAttribute("aria-hidden", "false");
+    tip.classList.add("is-visible");
+    const rect = root.getBoundingClientRect();
+    const tw = tip.offsetWidth || 120;
+    const th = tip.offsetHeight || 44;
+    let left = clientX - rect.left + 12;
+    let top = clientY - rect.top - th - 10;
+    if (left + tw > rect.width - 4) left = clientX - rect.left - tw - 12;
+    if (top < 4) top = clientY - rect.top + 14;
+    tip.style.transform = `translate(${Math.max(4, left)}px, ${Math.max(4, top)}px)`;
+  };
+
+  if (svg) {
+    svg.querySelectorAll(".weekly-bar").forEach((bar) => {
+      const idx = Number(bar.getAttribute("data-tip"));
+      const meta = tipMeta[idx];
+      if (!meta) return;
+      bar.addEventListener("pointerenter", (e) => {
+        bar.classList.add("is-hot");
+        showTip(meta, e.clientX, e.clientY);
+      });
+      bar.addEventListener("pointermove", (e) => {
+        showTip(meta, e.clientX, e.clientY);
+      });
+      bar.addEventListener("pointerleave", () => {
+        bar.classList.remove("is-hot");
+        hideTip();
+      });
+    });
+    svg.addEventListener("pointerleave", hideTip);
+  }
+
+  return root;
 }
 
 function renderHomeTiles() {
   const loading = !!state.queueLoading;
-  const pc = state.platformCounts || {};
   const count = (n) =>
     loading
       ? el("span", { class: "home-tile-count loading" }, el("span", { class: "spinner-sm" }))
@@ -5321,18 +5579,53 @@ function renderHomeTiles() {
       ]
     );
 
+  const toolBadge = (n) => {
+    if (loading) {
+      return el("span", { class: "home-tool-badge is-loading", "aria-hidden": "true" }, el("span", { class: "spinner-sm" }));
+    }
+    const num = Number(n) || 0;
+    if (num <= 0) return null;
+    return el(
+      "span",
+      {
+        class: "home-tool-badge",
+        "aria-label": `${num} item${num === 1 ? "" : "s"}`,
+      },
+      num > 99 ? "99+" : String(num)
+    );
+  };
+
+  const toolBtn = ({ id, label, iconSvg, badgeCount }) => {
+    const badge = toolBadge(badgeCount);
+    return el(
+      "button",
+      {
+        type: "button",
+        class: `home-tool home-tool-${id}`,
+        title: label,
+        "aria-label":
+          badgeCount != null && Number(badgeCount) > 0
+            ? `${label}, ${Number(badgeCount)}`
+            : label,
+        onclick: () => openHomeSection(id),
+      },
+      [
+        el("span", { class: "home-tool-ico-wrap" }, [
+          el("span", { class: "home-tool-ico", html: iconSvg }),
+          badge,
+        ]),
+        el("span", { class: "home-tool-label" }, label),
+      ]
+    );
+  };
+
+  const pc = state.platformCounts || {};
   const wrap = el("div", { class: "home-board", "aria-label": "Home" });
   wrap.appendChild(
     el("div", { class: "home-board-label muted small" }, "Platform dashboard")
   );
   wrap.appendChild(
     el("div", { class: "home-tiles home-tiles-platform", "aria-label": "Job lists" }, [
-      tile({
-        id: "all",
-        label: "Total jobs",
-        countNode: count(pc.total),
-        iconSvg: ICON_BRIEFCASE,
-      }),
       tile({
         id: "ready",
         label: "Ready to apply",
@@ -5341,17 +5634,17 @@ function renderHomeTiles() {
         featured: true,
       }),
       tile({
+        id: "today",
+        label: "Today's jobs",
+        countNode: count(pc.today),
+        iconSvg: ICON_BOLT,
+      }),
+      tile({
         id: "best",
         label: "Best jobs",
         countNode: count(pc.best),
         iconSvg: ICON_STAR,
         featured: true,
-      }),
-      tile({
-        id: "today",
-        label: "Today's jobs",
-        countNode: count(pc.today),
-        iconSvg: ICON_BOLT,
       }),
       tile({
         id: "remote",
@@ -5365,29 +5658,35 @@ function renderHomeTiles() {
         countNode: count(pc.mine),
         iconSvg: ICON_LIST,
       }),
+      tile({
+        id: "all",
+        label: "Total jobs",
+        countNode: count(pc.total),
+        iconSvg: ICON_BRIEFCASE,
+      }),
     ])
   );
   wrap.appendChild(el("div", { class: "home-board-label muted small" }, "Tools"));
   wrap.appendChild(
     el("div", { class: "home-tiles home-tiles-tools", "aria-label": "Tools" }, [
-      tile({
+      toolBtn({
         id: "progress",
         label: "In progress",
-        countNode: count(state.sessions.length),
         iconSvg: ICON_LIST,
+        badgeCount: state.sessions.length,
       }),
-      tile({
+      toolBtn({
         id: "tailor",
         label: "Tailor resume",
-        countNode: count(tailorInProgressJobs().length),
         iconSvg: ICON_DOC,
+        badgeCount: tailorInProgressJobs().length,
       }),
-      tile({
+      toolBtn({
         id: "stats",
         label: "Statistics",
         iconSvg: ICON_CHART,
       }),
-      tile({
+      toolBtn({
         id: "settings",
         label: "Settings",
         iconSvg: ICON_GEAR,
@@ -6786,6 +7085,9 @@ function renderStatistics() {
       legendSwatch("posted", "Posted", posted),
       legendSwatch("recommended", "Recommended", recommended),
       legendSwatch("applied", "Applied", applied),
+      ...(Math.max(0, Number(state.dailyApplyTarget) || 0) > 0
+        ? [legendSwatch("target", "Daily goal", state.dailyApplyTarget)]
+        : []),
     ])
   );
   if (!series.length) {
@@ -6797,7 +7099,13 @@ function renderStatistics() {
       )
     );
   } else {
-    chartCard.appendChild(buildWeeklyChartSvg(series, { tall: true, dense: series.length > 10 }));
+    chartCard.appendChild(
+      buildWeeklyChartSvg(series, {
+        tall: true,
+        dense: series.length > 10,
+        applyTarget: state.dailyApplyTarget,
+      })
+    );
   }
   if (bestDay && (bestDay.applied > 0 || bestDay.recommended > 0)) {
     chartCard.appendChild(
@@ -6960,7 +7268,7 @@ function renderSettings() {
       el(
         "p",
         { class: "muted small settings-hint" },
-        "Filters jobs while the extension polls the dashboard. 0 shows everything (same as the web app)."
+        "Your account minimum match score (My Preferences). 0 shows all scores; higher values filter the list and auto-hide lower-scoring analyses. Synced with the web app."
       ),
       renderMinScoreControl({ compact: false }),
       el("div", { class: "settings-presets" }, [
@@ -6969,6 +7277,86 @@ function renderSettings() {
         settingsPreset(70, "70+"),
         settingsPreset(80, "80+"),
         settingsPreset(90, "90+"),
+      ]),
+    ]),
+
+    el("div", { class: "settings-block" }, [
+      el("div", { class: "settings-block-title" }, "Progress goals"),
+      el(
+        "p",
+        { class: "muted small settings-hint" },
+        "Shown as a target line on the weekly progress chart (Home) and Statistics. Set 0 to hide the line."
+      ),
+      el("div", { class: "settings-field" }, [
+        el("label", { class: "settings-field-label", for: "settings-daily-apply-target" }, "Daily apply goal"),
+        (() => {
+          const min = 0;
+          const max = 200;
+          const input = el("input", {
+            id: "settings-daily-apply-target",
+            class: "settings-input num-stepper-input",
+            type: "number",
+            min: String(min),
+            max: String(max),
+            step: "1",
+            value: String(state.dailyApplyTarget ?? store.DEFAULT_DAILY_APPLY_TARGET),
+            inputmode: "numeric",
+            "aria-label": "Daily apply goal",
+          });
+
+          const commit = async (raw) => {
+            const next = await store.setDailyApplyTarget(raw);
+            input.value = String(next);
+            setState({ dailyApplyTarget: next });
+            toast(next > 0 ? `Daily apply goal set to ${next}.` : "Daily apply goal hidden.");
+            return next;
+          };
+
+          const nudge = async (delta) => {
+            const cur = Number(input.value);
+            const base = Number.isFinite(cur) ? cur : Number(state.dailyApplyTarget) || 0;
+            await commit(base + delta);
+          };
+
+          input.addEventListener("change", () => {
+            void commit(input.value);
+          });
+          input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              input.blur();
+            }
+          });
+
+          const dec = el(
+            "button",
+            {
+              type: "button",
+              class: "num-stepper-btn",
+              "aria-label": "Decrease daily apply goal",
+              title: "Decrease",
+            },
+            icon(ICON_MINUS, "num-stepper-ico")
+          );
+          const inc = el(
+            "button",
+            {
+              type: "button",
+              class: "num-stepper-btn",
+              "aria-label": "Increase daily apply goal",
+              title: "Increase",
+            },
+            icon(ICON_PLUS, "num-stepper-ico")
+          );
+          dec.addEventListener("click", () => {
+            void nudge(-1);
+          });
+          inc.addEventListener("click", () => {
+            void nudge(1);
+          });
+
+          return el("div", { class: "num-stepper" }, [dec, input, inc]);
+        })(),
       ]),
     ]),
 
@@ -6983,6 +7371,17 @@ function renderSettings() {
           await store.setAutoAdvance(next);
           setState({ autoAdvance: next });
           toast(next ? "Auto-advance on." : "Auto-advance off.");
+        },
+      }),
+      settingsToggleRow({
+        title: "Auto-submit (Workday)",
+        hint: "When on, the assistant clicks Submit on the Review step. Off by default — also toggleable from the header.",
+        on: !!state.autoSubmit,
+        onToggle: async () => {
+          const next = !state.autoSubmit;
+          await store.setAutoSubmit(next);
+          setState({ autoSubmit: next });
+          toast(next ? "Auto-submit on (Workday)." : "Auto-submit off.");
         },
       }),
       el("div", { class: "settings-field" }, [
@@ -7558,9 +7957,43 @@ function renderHeader() {
   return el("div", { class: "header" }, [
     el("div", { class: "header-title" }, "Atomspace"),
     el("div", { class: "header-right" }, [
+      renderAutoSubmitToggle(),
       el("span", { class: "muted small" }, state.user ? state.user.email : ""),
     ]),
   ]);
+}
+
+// Compact Workday auto-submit switch shown in the app header. When on, the
+// auto-advance loop clicks Submit on the Review step instead of stopping there.
+function renderAutoSubmitToggle() {
+  const on = !!state.autoSubmit;
+  return el(
+    "div",
+    {
+      class: "header-toggle",
+      title: "Workday only: when on, the assistant clicks Submit after the last step.",
+    },
+    [
+      el("span", { class: "header-toggle-label" }, "Auto-submit"),
+      el(
+        "button",
+        {
+          type: "button",
+          class: "switch" + (on ? " on" : ""),
+          role: "switch",
+          "aria-checked": on ? "true" : "false",
+          "aria-label": "Auto-submit Workday applications",
+          onclick: async () => {
+            const next = !state.autoSubmit;
+            await store.setAutoSubmit(next);
+            setState({ autoSubmit: next });
+            toast(next ? "Auto-submit on (Workday)." : "Auto-submit off.");
+          },
+        },
+        el("span", { class: "switch-knob" })
+      ),
+    ]
+  );
 }
 
 // Small inline SVG icons (stroke-based, inherit currentColor).
@@ -7600,6 +8033,10 @@ const ICON_CHIP =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>';
 const ICON_BACK =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+const ICON_MINUS =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>';
+const ICON_PLUS =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
 const ICON_CHART =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16v-5"/><path d="M17 16V6"/></svg>';
 const ICON_GEAR =
@@ -7723,6 +8160,7 @@ function renderJob() {
     el("div", { class: "header job-header" }, [
       el("button", { class: "btn link", onclick: () => goHome() }, "Back"),
       el("div", { class: "header-right" }, [
+        renderAutoSubmitToggle(),
         state.job && state.job.score != null ? el("span", { class: "score" }, `${state.job.score}`) : null,
       ]),
     ])

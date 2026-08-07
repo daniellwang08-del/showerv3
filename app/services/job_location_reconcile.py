@@ -1,4 +1,8 @@
-"""Reconcile already-active jobs against US location rules."""
+"""Reconcile already-active jobs against US location rules.
+
+Policy: drop only explicit non-US locations. Missing / ambiguous locations stay
+visible (treated as US) so users can filter them themselves.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from app.services.job_exclusion_types import (
     LOCATION_UNKNOWN_EXCLUSION,
     NON_US_LOCATION_EXCLUSION,
 )
-from app.services.job_location_classifier import LocationVerdict, classify_job_location
+from app.services.job_location_classifier import keeps_us_job_pool
 from app.storage.database import get_session
 from app.storage.repository import UserJobStatusRepository
 
@@ -29,10 +33,9 @@ def _visible_active_filter(user_id: str):
 
 
 async def _restore_us_location_exclusions(user_id: str) -> int:
-    """Bring back jobs previously auto-hidden by the location rules whose location
-    now classifies as US (e.g. after a classifier fix for US-inclusive postings
-    such as "US or Canada"). Only location-based auto-exclusions are touched -
-    manual hides, dedup, and score exclusions are left untouched."""
+    """Bring back jobs previously auto-hidden by location rules that should stay
+    in the US pool (US or unknown/missing). Only location-based auto-exclusions
+    are touched - manual hides, dedup, and score exclusions are left untouched."""
     restored = 0
     async with get_session() as session:
         stmt = (
@@ -52,11 +55,11 @@ async def _restore_us_location_exclusions(user_id: str) -> int:
         rows = (await session.execute(stmt)).all()
         ujs_repo = UserJobStatusRepository(session)
         for job, extraction, _ujs_id in rows:
-            verdict, _detail = classify_job_location(
+            keep, _verdict, _detail = keeps_us_job_pool(
                 job.location,
                 remote_policy=extraction.remote_policy if extraction else None,
             )
-            if verdict != LocationVerdict.US:
+            if not keep:
                 continue
             await ujs_repo.upsert(
                 user_id=user_id,
@@ -77,16 +80,14 @@ async def _restore_us_location_exclusions(user_id: str) -> int:
 
 
 async def reconcile_job_locations_for_user(user_id: str, *, batch_size: int = 500) -> dict:
-    """Move visible active jobs with non-US or unknown locations into hidden lists,
-    and restore any location-hidden jobs that now classify as US."""
+    """Move visible active jobs with explicit non-US locations into the Non-US list,
+    and restore any location-hidden jobs that belong in the US pool (including unknown)."""
     restored = await _restore_us_location_exclusions(user_id)
     moved_non_us = 0
-    moved_unknown = 0
     scanned = 0
 
     while True:
         batch_moved_non_us = 0
-        batch_moved_unknown = 0
         batch_scanned = 0
 
         async with get_session() as session:
@@ -115,21 +116,16 @@ async def reconcile_job_locations_for_user(user_id: str, *, batch_size: int = 50
             ujs_repo = UserJobStatusRepository(session)
             for job, extraction, overall_score in rows:
                 batch_scanned += 1
-                verdict, detail = classify_job_location(
+                keep, _verdict, detail = keeps_us_job_pool(
                     job.location,
                     remote_policy=extraction.remote_policy if extraction else None,
                 )
-                if verdict == LocationVerdict.US:
+                if keep:
                     continue
 
-                if verdict == LocationVerdict.NON_US:
-                    exclusion_type = NON_US_LOCATION_EXCLUSION
-                    reason = f"Non-US job location ({detail})."
-                    batch_moved_non_us += 1
-                else:
-                    exclusion_type = LOCATION_UNKNOWN_EXCLUSION
-                    reason = f"Job location could not be verified as US ({detail}). Review in Duplicates."
-                    batch_moved_unknown += 1
+                exclusion_type = NON_US_LOCATION_EXCLUSION
+                reason = f"Non-US job location ({detail})."
+                batch_moved_non_us += 1
 
                 await ujs_repo.upsert(
                     user_id=user_id,
@@ -149,24 +145,23 @@ async def reconcile_job_locations_for_user(user_id: str, *, batch_size: int = 50
 
         scanned += batch_scanned
         moved_non_us += batch_moved_non_us
-        moved_unknown += batch_moved_unknown
 
-        if batch_moved_non_us == 0 and batch_moved_unknown == 0:
+        if batch_moved_non_us == 0:
             break
 
-    if moved_non_us or moved_unknown or restored:
+    if moved_non_us or restored:
         logger.info(
             "job_location_reconcile_completed",
             user_id=user_id,
             scanned=scanned,
             moved_non_us=moved_non_us,
-            moved_unknown=moved_unknown,
+            moved_unknown=0,
             restored=restored,
         )
 
     return {
         "scanned": scanned,
         "moved_non_us": moved_non_us,
-        "moved_unknown": moved_unknown,
+        "moved_unknown": 0,
         "restored": restored,
     }

@@ -40,9 +40,14 @@ html,
 body,
 #root {
   height: 100%;
-  /* App scrolls only inside .page-scroll-y (custom bar). Never show a native
-     document scrollbar — chart tooltips / portals must not grow the page. */
-  overflow: hidden;
+  /* Floor for the web platform when the browser (or extension side panel)
+     shrinks the tab. Below this width the page scrolls horizontally instead
+     of crushing the jobs dashboard layout without limit. */
+  min-width: 1400px;
+  /* Vertical scroll lives in .page-scroll-y. Horizontal scroll unlocks the
+     min-width floor when the viewport is narrower (e.g. side panel open). */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 body {

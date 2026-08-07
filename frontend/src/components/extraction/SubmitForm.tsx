@@ -128,7 +128,9 @@ function PasteUrlsModal({
             setText(e.target.value);
             if (localError) setLocalError('');
           }}
-          placeholder={'https://boards.greenhouse.io/...\nhttps://jobs.lever.co/...'}
+          placeholder={
+            'Paste one or more job links (any text).\nWe’ll pick out the http(s) URLs and submit them.'
+          }
           className="mt-5 min-h-0 w-full flex-1 resize-none rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 py-4 text-base leading-relaxed text-slate-900 outline-none ring-0 placeholder:text-slate-500 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-200/60 disabled:opacity-60"
         />
 
@@ -304,7 +306,13 @@ export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
 
   const formBody = (
     <>
-      <div className="flex min-w-0 flex-col gap-0 sm:flex-row sm:items-stretch">
+      <div
+        className={
+          inline
+            ? 'flex min-w-0 flex-row items-stretch'
+            : 'flex min-w-0 flex-col gap-0 sm:flex-row sm:items-stretch'
+        }
+      >
         <input
           ref={fileRef}
           type="file"
@@ -319,7 +327,14 @@ export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
             e.target.value = '';
           }}
         />
-        <div className="flex h-11 min-w-0 flex-1 overflow-hidden rounded-t-lg border border-[rgba(147,197,253,0.8)] bg-[rgba(255,255,255,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] transition-[border-color,box-shadow,background-color] duration-[180ms] focus-within:border-[rgba(59,130,246,0.95)] focus-within:bg-white focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.85)] dark:border-[rgba(59,130,246,0.4)] dark:bg-[rgba(20,29,49,0.85)] dark:shadow-none dark:focus-within:bg-slate-900 sm:rounded-l-lg sm:rounded-r-none">
+        <div
+          className={[
+            'flex h-11 min-w-0 flex-1 overflow-hidden border border-[rgba(147,197,253,0.8)] bg-[rgba(255,255,255,0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] transition-[border-color,box-shadow,background-color] duration-[180ms] focus-within:border-[rgba(59,130,246,0.95)] focus-within:bg-white focus-within:shadow-[0_0_0_3px_rgba(59,130,246,0.2),inset_0_1px_0_rgba(255,255,255,0.85)] dark:border-[rgba(59,130,246,0.4)] dark:bg-[rgba(20,29,49,0.85)] dark:shadow-none dark:focus-within:bg-slate-900',
+            inline
+              ? 'rounded-l-lg rounded-r-none'
+              : 'rounded-t-lg sm:rounded-l-lg sm:rounded-r-none',
+          ].join(' ')}
+        >
           <button
             ref={attachBtnRef}
             type="button"
@@ -377,7 +392,7 @@ export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
               onChange={(e) => setUrl(e.target.value)}
               disabled={busy}
               className="h-full min-w-0 flex-1 border-0 bg-transparent py-0 pl-2 pr-3 text-sm text-slate-900 outline-none ring-0 placeholder:text-slate-500 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
-              placeholder="https://boards.greenhouse.io/..."
+              placeholder="Paste a job posting URL"
               required
               autoComplete="off"
               inputMode="url"
@@ -397,7 +412,12 @@ export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
                 : 'Submit job URL'
           }
           title={busy ? 'Working\u2026' : hasPendingAttachment ? 'Submit attachment' : 'Submit'}
-          className="btn-blue-neon btn-submit-icon inline-flex h-11 w-full shrink-0 items-center justify-center rounded-b-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70 sm:w-[3.25rem] sm:min-w-[4.25rem] sm:max-w-[3.25rem] sm:rounded-l-none sm:rounded-r-lg"
+          className={[
+            'btn-blue-neon btn-submit-icon inline-flex h-11 shrink-0 items-center justify-center text-white focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70',
+            inline
+              ? 'w-11 min-w-11 max-w-11 rounded-l-none rounded-r-lg sm:w-[3.25rem] sm:min-w-[3.25rem] sm:max-w-[3.25rem]'
+              : 'w-full rounded-b-lg sm:w-[3.25rem] sm:min-w-[3.25rem] sm:max-w-[3.25rem] sm:rounded-l-none sm:rounded-r-lg',
+          ].join(' ')}
         >
           {busy ? (
             <Loader2 className="h-5 w-5 shrink-0 animate-spin" strokeWidth={2.25} aria-hidden />

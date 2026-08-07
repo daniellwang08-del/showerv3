@@ -20,14 +20,31 @@
 //   APPLY (open):  page document.dispatchEvent(new CustomEvent("atomspace-apply",
 //                    { detail: JSON.stringify({ jobId, url, requestId }) }))
 //                  bridge -> worker chrome.runtime.sendMessage {type:"WEBAPP_APPLY_JOB", jobId, url, openPanel:true}
-//                  bridge -> page  window.postMessage {source:"atomspace-extension",type:"APPLY_ACK",jobId,requestId}
+//                  bridge -> page  data-atomspace-apply-ack="<requestId>" (sync) + APPLY_ACK postMessage
+//
+// IDEMPOTENCY (critical):
+//   background.js also executeScript-injects this file on install/startup.
+//   Without a guard, each inject adds another APPLY_EVENT listener → N× tabs.
+//   sendMessage is also deduped via a shared globalThis slot so stacked
+//   listeners from older builds cannot enqueue multiple WEBAPP_APPLY_JOB msgs.
 
 (function () {
   "use strict";
 
+  // Same isolated world for this extension — survives repeated executeScript.
+  if (globalThis.__ATOMSPACE_WEBAPP_BRIDGE_INSTALLED__) return;
+  globalThis.__ATOMSPACE_WEBAPP_BRIDGE_INSTALLED__ = true;
+
   const WEBAPP_SOURCE = "atomspace-webapp";
   const EXT_SOURCE = "atomspace-extension";
   const APPLY_EVENT = "atomspace-apply";
+  const ACK_ATTR = "data-atomspace-apply-ack";
+  const APPLY_DEDUPE_MS = 2500;
+
+  // Shared across any bridge copies that somehow still share this world.
+  const applyDedupe =
+    globalThis.__ATOMSPACE_APPLY_DEDUPE__ ||
+    (globalThis.__ATOMSPACE_APPLY_DEDUPE__ = { jobId: null, at: 0 });
 
   let version = "";
   try {
@@ -45,6 +62,15 @@
     } catch (_e) {
       /* page navigated away */
     }
+  }
+
+  function ackPage(requestId) {
+    try {
+      if (requestId) document.documentElement.setAttribute(ACK_ATTR, String(requestId));
+    } catch (_e) {
+      /* ignore */
+    }
+    reply("APPLY_ACK", { requestId: requestId || null }, "*");
   }
 
   // Detection handshake (async is fine here; no user gesture involved).
@@ -68,32 +94,42 @@
     }
     if (!detail || !detail.jobId) return;
 
-    try {
-      chrome.runtime.sendMessage(
-        {
-          type: "WEBAPP_APPLY_JOB",
-          jobId: String(detail.jobId),
-          url: detail.url || null,
-          openPanel: true,
-        },
-        function () {
-          // Swallow "receiving end does not exist" when the worker is asleep.
-          void chrome.runtime.lastError;
-        },
-      );
-    } catch (_e) {
-      /* extension context invalidated (e.g. just updated) */
+    const jobId = String(detail.jobId);
+    const requestId = detail.requestId || null;
+    const now = Date.now();
+    const isDupe =
+      applyDedupe.jobId === jobId && now - applyDedupe.at < APPLY_DEDUPE_MS;
+
+    // Always ACK so the page never falls back to window.open (that was the
+    // second tab when postMessage ACK was missed). Only the first handler in
+    // the dedupe window sends WEBAPP_APPLY_JOB.
+    if (!isDupe) {
+      applyDedupe.jobId = jobId;
+      applyDedupe.at = now;
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: "WEBAPP_APPLY_JOB",
+            jobId: jobId,
+            url: detail.url || null,
+            openPanel: true,
+          },
+          function () {
+            void chrome.runtime.lastError;
+          },
+        );
+      } catch (_e) {
+        /* extension context invalidated (e.g. just updated) */
+      }
     }
 
-    reply("APPLY_ACK", { jobId: detail.jobId, requestId: detail.requestId || null }, "*");
+    ackPage(requestId);
   });
 
   // Proactively announce presence for listeners that attach before their PING.
   reply("READY", {}, "*");
 
-  // Sync backend URL from the dashboard origin. This script only runs on
-  // dashboard match patterns (prod + localhost) and via background inject for
-  // private-LAN Vite URLs. Same-origin /api/v1 (nginx or Vite proxy).
+  // Sync backend URL from the dashboard origin.
   try {
     chrome.runtime.sendMessage(
       { type: "SYNC_BACKEND_URL", backendUrl: location.origin },

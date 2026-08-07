@@ -627,6 +627,12 @@ export function MyPreferencesPage() {
                     value={minScoreMode}
                     onChange={(m) => {
                       setMinScoreMode(m);
+                      // Seed custom from the effective threshold (often 0 when
+                      // system default is 0) so switching modes never jumps to
+                      // a stale leftover custom value.
+                      if (m === 'custom') {
+                        setMinScore(settings?.min_match_score ?? defaultMinScore);
+                      }
                       setMinScoreSaveMsg('');
                       setMinScoreCheckResult(null);
                       setMinScoreCheckMsg('');

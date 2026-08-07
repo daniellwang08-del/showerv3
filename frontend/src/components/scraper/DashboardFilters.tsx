@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Globe, Target } from 'lucide-react';
 
+/** Fixed-height filter chips — single-line label + non-wrapping flex so the
+ *  chevron stays vertically centered at every toolbar width. */
 const FILTER_CONTROL_BASE =
-  'inline-flex h-11 items-center gap-2 rounded-lg border px-3 text-sm font-semibold shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/25';
+  'inline-flex h-11 min-h-11 max-h-11 flex-nowrap items-center gap-2 overflow-hidden rounded-lg border px-3 text-sm font-semibold shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/25';
 
 interface RemoteFilterToggleProps {
   active: boolean;
@@ -26,8 +28,8 @@ export function RemoteFilterToggle({ active, onChange, className = '' }: RemoteF
         className,
       ].join(' ')}
     >
-      <Globe size={16} className={active ? 'text-emerald-600' : 'text-slate-500'} />
-      <span>Remote</span>
+      <Globe size={16} className={`shrink-0 ${active ? 'text-emerald-600' : 'text-slate-500'}`} />
+      <span className="whitespace-nowrap">Remote</span>
       <span
         className={[
           'ml-0.5 h-2 w-2 shrink-0 rounded-full transition-colors',
@@ -57,6 +59,7 @@ export function MatchScoreFilter({ value, onChange, className = '' }: MatchScore
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const active = value > 0;
+  const label = active ? `Match ≥ ${value}` : 'Match score';
 
   useEffect(() => {
     if (!open) return;
@@ -95,58 +98,66 @@ export function MatchScoreFilter({ value, onChange, className = '' }: MatchScore
             : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-800',
         ].join(' ')}
       >
-        <span className="flex items-center gap-2">
-          <Target size={16} className={active ? 'text-amber-600' : 'text-slate-500'} />
-          <span>{active ? `Match ≥ ${value}` : 'Match score'}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+          <Target
+            size={16}
+            className={`shrink-0 ${active ? 'text-amber-600' : 'text-slate-500'}`}
+            aria-hidden
+          />
+          <span className="truncate whitespace-nowrap">{label}</span>
         </span>
         <ChevronDown
-          size={16}
-          className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          size={14}
+          aria-hidden
+          className={[
+            'ml-1 shrink-0 text-slate-400 transition-transform',
+            open ? 'rotate-180' : '',
+          ].join(' ')}
         />
       </button>
 
       {open && (
-        <>
-          <div
-            role="listbox"
-            className="absolute right-0 top-full z-20 mt-2 w-64 origin-top-right overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5"
-          >
-            {SCORE_PRESETS.map((preset) => {
-              const isActive = preset.value === value;
-              return (
-                <button
-                  key={preset.value}
-                  type="button"
-                  role="option"
-                  aria-selected={isActive}
-                  onClick={() => handleSelect(preset.value)}
+        <div
+          role="listbox"
+          className="absolute right-0 top-full z-20 mt-2 w-64 origin-top-right overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5"
+        >
+          {SCORE_PRESETS.map((preset) => {
+            const isActive = preset.value === value;
+            return (
+              <button
+                key={preset.value}
+                type="button"
+                role="option"
+                aria-selected={isActive}
+                onClick={() => handleSelect(preset.value)}
+                className={[
+                  'flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors',
+                  isActive ? 'bg-amber-50' : 'hover:bg-slate-50/70',
+                ].join(' ')}
+              >
+                <span
                   className={[
-                    'flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors',
-                    isActive ? 'bg-amber-50' : 'hover:bg-slate-50/70',
+                    'flex h-8 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold tabular-nums',
+                    isActive ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500',
                   ].join(' ')}
                 >
-                  <span
-                    className={[
-                      'flex h-8 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold tabular-nums',
-                      isActive ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500',
-                    ].join(' ')}
-                  >
-                    {preset.value === 0 ? 'Any' : `${preset.value}+`}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className={`truncate text-sm font-semibold ${isActive ? 'text-amber-700' : 'text-slate-700'}`}>
-                        {preset.label}
-                      </span>
-                      {isActive && <Check size={14} className="shrink-0 text-amber-500" />}
+                  {preset.value === 0 ? 'Any' : `${preset.value}+`}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span
+                      className={`truncate text-sm font-semibold ${isActive ? 'text-amber-700' : 'text-slate-700'}`}
+                    >
+                      {preset.label}
                     </span>
-                    <span className="mt-0.5 block truncate text-xs text-slate-400">{preset.hint}</span>
+                    {isActive && <Check size={14} className="shrink-0 text-amber-500" />}
                   </span>
-                </button>
-              );
-            })}
-          </div>
-        </>
+                  <span className="mt-0.5 block truncate text-xs text-slate-400">{preset.hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );

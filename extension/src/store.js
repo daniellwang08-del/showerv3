@@ -404,8 +404,8 @@ export function replaceJobsCatalog(catalog, jobs, { since, revision, minScore, m
   };
 }
 
-// Minimum match score filter. Defaults to 0 (same as the web dashboard) so the
-// extension shows the same job set unless the user raises the threshold.
+// Local cache of the account minimum match score preference (My Preferences).
+// System default is 0 (show all); users may set any 0–100 value.
 export const DEFAULT_MIN_SCORE = 0;
 
 export async function getMinScore() {
@@ -433,6 +433,20 @@ export async function getAutoAdvance() {
 export async function setAutoAdvance(value) {
   const v = value === true;
   await LOCAL.set({ autoAdvance: v });
+  return v;
+}
+
+// Workday only: when enabled, the auto-advance loop clicks the final "Submit"
+// on the Review step instead of stopping there. OFF by default — submitting an
+// application is a deliberate action, so the user must opt in.
+export async function getAutoSubmit() {
+  const { autoSubmit } = await LOCAL.get("autoSubmit");
+  return autoSubmit === true;
+}
+
+export async function setAutoSubmit(value) {
+  const v = value === true;
+  await LOCAL.set({ autoSubmit: v });
   return v;
 }
 
@@ -475,6 +489,27 @@ export async function setPageSize(value) {
   let n = Number(value);
   if (n !== 25 && n !== 50 && n !== 100) n = 25;
   await LOCAL.set({ pageSize: n });
+  return n;
+}
+
+/** Daily applications goal drawn on the weekly progress chart. 0 hides the line. */
+export const DEFAULT_DAILY_APPLY_TARGET = 50;
+
+export async function getDailyApplyTarget() {
+  const { dailyApplyTarget } = await LOCAL.get("dailyApplyTarget");
+  if (dailyApplyTarget === undefined || dailyApplyTarget === null) {
+    return DEFAULT_DAILY_APPLY_TARGET;
+  }
+  const n = Number(dailyApplyTarget);
+  if (!Number.isFinite(n)) return DEFAULT_DAILY_APPLY_TARGET;
+  return Math.max(0, Math.min(200, Math.round(n)));
+}
+
+export async function setDailyApplyTarget(value) {
+  let n = Number(value);
+  if (!Number.isFinite(n)) n = DEFAULT_DAILY_APPLY_TARGET;
+  n = Math.max(0, Math.min(200, Math.round(n)));
+  await LOCAL.set({ dailyApplyTarget: n });
   return n;
 }
 

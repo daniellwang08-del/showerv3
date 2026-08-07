@@ -28,10 +28,9 @@ from app.services.data_management_stats import (
     fetch_team_applied_vs_fetched_series,
 )
 from app.services.job_exclusion_types import (
-    LOCATION_UNKNOWN_EXCLUSION,
     NON_US_LOCATION_EXCLUSION,
 )
-from app.services.job_location_classifier import LocationVerdict, classify_job_location
+from app.services.job_location_classifier import keeps_us_job_pool
 from app.storage.database import get_session
 from app.storage.repository import (
     JobMatchInProgressRepository,
@@ -652,7 +651,6 @@ async def reconcile_locations_data_management(
 
     restored = await _restore_us_location_exclusions(user_id)
     moved_non_us = 0
-    moved_unknown = 0
     scanned = 0
 
     if job_ids:
@@ -690,24 +688,16 @@ async def reconcile_locations_data_management(
                 if status_row and status_row.status not in (None, "active"):
                     continue
 
-                verdict, detail = classify_job_location(
+                keep, _verdict, detail = keeps_us_job_pool(
                     job.location,
                     remote_policy=extraction.remote_policy if extraction else None,
                 )
-                if verdict == LocationVerdict.US:
+                if keep:
                     continue
 
-                if verdict == LocationVerdict.NON_US:
-                    exclusion_type = NON_US_LOCATION_EXCLUSION
-                    reason = f"Non-US job location ({detail})."
-                    moved_non_us += 1
-                else:
-                    exclusion_type = LOCATION_UNKNOWN_EXCLUSION
-                    reason = (
-                        f"Job location could not be verified as US ({detail}). "
-                        "Review in Duplicates."
-                    )
-                    moved_unknown += 1
+                exclusion_type = NON_US_LOCATION_EXCLUSION
+                reason = f"Non-US job location ({detail})."
+                moved_non_us += 1
 
                 await ujs_repo.upsert(
                     user_id=user_id,
@@ -734,7 +724,7 @@ async def reconcile_locations_data_management(
         "matched_count": preview["matched_count"],
         "scanned": scanned,
         "moved_non_us": moved_non_us,
-        "moved_unknown": moved_unknown,
+        "moved_unknown": 0,
         "restored": restored,
         "capped": preview["capped"],
     }

@@ -6,9 +6,39 @@ import { isDashboardUrl } from "./src/backendOrigin.js";
 
 const BRIDGE_FILE = "content/webapp-bridge.js";
 
-async function injectBridge(tabId) {
+/**
+ * Hosts already covered by manifest content_scripts. Programmatic inject is
+ * only needed for (a) tabs open before install and (b) LAN dashboard hosts not
+ * listed in the manifest. Re-injecting into a live document without an
+ * idempotent bridge stacks APPLY listeners → duplicate job tabs.
+ */
+function isManifestContentScriptHost(hostname) {
+  const h = (hostname || "").toLowerCase();
+  return (
+    h === "robertstaff.com" ||
+    h === "www.robertstaff.com" ||
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "[::1]"
+  );
+}
+
+async function injectBridge(tabId, { force = false } = {}) {
   if (tabId == null) return;
   try {
+    if (!force) {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab && tab.url) {
+        try {
+          const host = new URL(tab.url).hostname;
+          // Already-open tabs at install still need force inject (see callers).
+          // For later complete events on manifest hosts, skip — static CS ran.
+          if (isManifestContentScriptHost(host)) return;
+        } catch {
+          /* ignore bad url */
+        }
+      }
+    }
     await chrome.scripting.executeScript({
       target: { tabId, allFrames: false },
       files: [BRIDGE_FILE],
@@ -24,7 +54,9 @@ async function injectBridgeIntoOpenTabs() {
   try {
     const tabs = await chrome.tabs.query({});
     await Promise.all(
-      tabs.filter((tab) => tab.url && isDashboardUrl(tab.url)).map((tab) => injectBridge(tab.id)),
+      tabs
+        .filter((tab) => tab.url && isDashboardUrl(tab.url))
+        .map((tab) => injectBridge(tab.id, { force: true })),
     );
   } catch (err) {
     console.warn("injectBridgeIntoOpenTabs failed", err);
@@ -141,15 +173,64 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // The dashboard's "Apply with Assistant" button relays a job here (via the
 // content-script bridge). We remember it, open the application URL in a new
 // tab, and try to surface the side panel; the panel then loads that job.
+//
+// DEFENSE: duplicate bridge listeners can deliver WEBAPP_APPLY_JOB more than
+// once per click. Sync memory dedupe + a shared in-flight tab-open promise
+// guarantee at most one chrome.tabs.create per jobId.
+let lastWebappApply = { jobId: null, at: 0 };
+const WEBAPP_APPLY_DEDUPE_MS = 2500;
+/** @type {Map<string, Promise<void>>} */
+const applyTabOpenLocks = new Map();
+
+async function openApplicationTabOnce(jobId, url) {
+  if (!url) return;
+  const existing = applyTabOpenLocks.get(jobId);
+  if (existing) {
+    await existing;
+    return;
+  }
+  const work = (async () => {
+    let reused = false;
+    try {
+      const matches = await chrome.tabs.query({ url });
+      const hit = (matches || []).find((t) => t.id != null);
+      if (hit && hit.id != null) {
+        await chrome.tabs.update(hit.id, { active: true });
+        if (hit.windowId != null) {
+          await chrome.windows.update(hit.windowId, { focused: true }).catch(() => {});
+        }
+        reused = true;
+      }
+    } catch {
+      /* exact-url query can fail for some schemes */
+    }
+    if (!reused) {
+      await chrome.tabs.create({ url, active: true });
+    }
+  })().finally(() => {
+    // Keep the lock briefly so a lagged duplicate handler joins this open.
+    setTimeout(() => {
+      if (applyTabOpenLocks.get(jobId) === work) applyTabOpenLocks.delete(jobId);
+    }, WEBAPP_APPLY_DEDUPE_MS);
+  });
+  applyTabOpenLocks.set(jobId, work);
+  await work;
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!(msg && msg.type === "WEBAPP_APPLY_JOB" && msg.jobId)) return false;
+
+  const jobId = String(msg.jobId);
+  const now = Date.now();
+  const isDupe =
+    lastWebappApply.jobId === jobId && now - lastWebappApply.at < WEBAPP_APPLY_DEDUPE_MS;
 
   // CRITICAL: open the side panel FIRST, synchronously, before any await.
   // sidePanel.open() may only be called in response to a user gesture, and
   // Chrome drops the gesture flag after ~1ms / the first await. The bridge
   // relays this message from inside the dashboard click, so the gesture is
   // still valid right here (see extension/content/webapp-bridge.js).
-  if (msg.openPanel) {
+  if (msg.openPanel && !isDupe) {
     const windowId = sender && sender.tab && sender.tab.windowId != null ? sender.tab.windowId : null;
     if (windowId != null) {
       chrome.sidePanel
@@ -158,26 +239,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
 
+  if (isDupe) {
+    // Still coalesce onto the in-flight tab open if one exists.
+    const pending = applyTabOpenLocks.get(jobId);
+    if (pending) {
+      pending.finally(() => sendResponse({ ok: true, deduped: true }));
+      return true;
+    }
+    sendResponse({ ok: true, deduped: true });
+    return false;
+  }
+  lastWebappApply = { jobId, at: now };
+
   (async () => {
     try {
-      // Remember the job so the panel loads it once it boots.
       await chrome.storage.session.set({
-        [PENDING_JOB_KEY]: { jobId: String(msg.jobId), url: msg.url || null, ts: Date.now() },
+        [PENDING_JOB_KEY]: { jobId, url: msg.url || null, ts: Date.now() },
       });
 
-      // Open the application page in a new tab (same window keeps the global
-      // side panel visible).
-      if (msg.url) {
-        try {
-          await chrome.tabs.create({ url: msg.url, active: true });
-        } catch (err) {
-          console.warn("open application tab failed", err);
-        }
+      try {
+        await openApplicationTabOnce(jobId, msg.url || null);
+      } catch (err) {
+        console.warn("open application tab failed", err);
       }
 
-      // If the panel is already open, tell it to load the job right away.
       try {
-        chrome.runtime.sendMessage({ type: "WEBAPP_OPEN_PENDING_JOB", jobId: String(msg.jobId) }, () => {
+        chrome.runtime.sendMessage({ type: "WEBAPP_OPEN_PENDING_JOB", jobId }, () => {
           void chrome.runtime.lastError;
         });
       } catch (_e) {

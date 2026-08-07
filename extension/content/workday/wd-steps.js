@@ -1388,6 +1388,42 @@
       } catch {}
     }
   }
+
+  // Some Workday builds do NOT honor a fully-synthetic option click — React only
+  // commits on a trusted click. This is the SAME class of failure already proven
+  // in this repo for checkboxes (the fix there was a native input.click()). So
+  // fire the synthetic pointer/mouse sequence (drives hover/focus state) AND a
+  // native .click() as a backstop. The isConnected guard makes the native click a
+  // no-op when the first click already committed and Workday detached the option
+  // from its portal — so this never double-toggles a working tenant.
+  function pointerClickWithNativeBackstop(el, opts) {
+    firePointerClick(el, opts);
+    try {
+      if (el && el.isConnected && typeof el.click === "function") el.click();
+    } catch {}
+  }
+
+  // ARIA listbox contract: the committed option carries aria-selected="true"
+  // (Workday sets this on the <li role="option">, NOT on hover — the highlighted
+  // option is tracked via the input's aria-activedescendant instead). This is the
+  // authoritative commit signal and does NOT depend on the trigger button's text
+  // finalizing, which some tenants only do AFTER the popup closes.
+  function portalOptionLooksSelected(match, popup, choice, want) {
+    try {
+      if (match && match.getAttribute && match.getAttribute("aria-selected") === "true") return true;
+      const root = popup && popup.querySelectorAll ? popup : document;
+      const sels = D.qa('[role="option"][aria-selected="true"]', root);
+      for (const el of sels) {
+        const id = (el.id || "").trim();
+        const val = (el.getAttribute("data-value") || el.getAttribute("value") || "").trim();
+        const t = D.norm(el.textContent);
+        if ((choice && choice.id && id === choice.id) || (choice && choice.value && val === choice.value)) return true;
+        if (want && t && (t === want || t.includes(want) || want.includes(t))) return true;
+      }
+    } catch {}
+    return false;
+  }
+
   function pickOption(want, root) {
     const w = D.norm(want);
     const scored = visibleOptions(root)
@@ -1677,17 +1713,28 @@
     const wantText = (choice.text || choice.value || choice.id || "").trim();
     const want = D.norm(wantText);
     const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
-    firePointerClick(match, { scroll: "nearest" });
+    pointerClickWithNativeBackstop(match, { scroll: "nearest" });
+    let sawSelected = false;
     const committed = () => {
+      if (!sawSelected && portalOptionLooksSelected(match, popup, choice, want)) sawSelected = true;
+      if (sawSelected) return true;
       const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
       return valueMatchesWant(got, want) || valueMatchesWant(got, chosen) || valueMatchesWant(got, choice.text);
     };
-    for (let i = 0; i < 6 && !committed(); i++) await D.delay(40);
+    for (let i = 0; i < 8 && !committed(); i++) await D.delay(40);
     if (!committed()) await typeAheadCommit(trigger, chosen, committed);
     await closeListbox(trigger);
+    for (let i = 0; i < 4 && !committed(); i++) await D.delay(60);
     if (committed()) return true;
+    const ff2 = trigger.closest && trigger.closest('[data-automation-id^="formField-"]');
     try {
-      WD.warn("applyListboxPortal did not commit", choice, selectDisplayValue(trigger));
+      WD.warn("applyListboxPortal did not commit", choice, {
+        display: selectDisplayValue(trigger),
+        triggerValue: triggerCurrentValue(trigger),
+        ariaSelectedSeen: sawSelected,
+        triggerHtml: String((trigger && trigger.outerHTML) || "").slice(0, 220),
+        fieldInvalid: !!(ff2 && ff2.querySelector('[aria-invalid="true"]')),
+      });
     } catch {}
     return false;
   }
@@ -1763,17 +1810,32 @@
     }
 
     const chosen = (match.textContent || "").replace(/\s+/g, " ").trim();
-    firePointerClick(match, { scroll: "nearest" });
+    pointerClickWithNativeBackstop(match, { scroll: "nearest" });
+    // Latch the ARIA commit signal: once the option reads aria-selected="true"
+    // (checked while the portal is still open) the value IS set, even if this
+    // tenant only paints the trigger text after the popup closes / never at all.
+    let sawSelected = false;
     const committed = () => {
+      if (!sawSelected && portalOptionLooksSelected(match, popup, choice, want)) sawSelected = true;
+      if (sawSelected) return true;
       const got = selectDisplayValue(trigger) || triggerCurrentValue(trigger);
       return valueMatchesWant(got, want) || valueMatchesWant(got, chosen) || valueMatchesWant(got, choice.text);
     };
-    for (let i = 0; i < 6 && !committed(); i++) await D.delay(40);
+    for (let i = 0; i < 8 && !committed(); i++) await D.delay(40);
     if (!committed()) await typeAheadCommit(trigger, chosen, committed);
     await closeListbox(trigger);
+    // Some builds finalize the trigger text only after the popup closes — settle
+    // then re-check before declaring failure.
+    for (let i = 0; i < 4 && !committed(); i++) await D.delay(60);
     if (committed()) return true;
     try {
-      WD.warn("openAndPickPortal did not commit", choice, selectDisplayValue(trigger));
+      WD.warn("openAndPickPortal did not commit", choice, {
+        display: selectDisplayValue(trigger),
+        triggerValue: triggerCurrentValue(trigger),
+        ariaSelectedSeen: sawSelected,
+        triggerHtml: String((trigger && trigger.outerHTML) || "").slice(0, 220),
+        fieldInvalid: !!(ff && ff.querySelector('[aria-invalid="true"]')),
+      });
     } catch {}
     return false;
   }
@@ -4010,6 +4072,20 @@
     return undefined;
   }
 
+  // A REQUIRED, binary Yes/No control asking the candidate to OPT IN to being
+  // contacted (marketing/telemarketing calls, texts, SMS, email). The candidate
+  // is never required to consent — only required to answer — so when the model
+  // abstains this is the one class of dropped option we can safely default to
+  // "No" (decline). Scoped tightly to explicit consent-to-contact wording so we
+  // never invent answers to qualification / eligibility questions.
+  function isContactConsentLabel(label) {
+    const s = String(label || "").toLowerCase();
+    if (!/\bconsent\b|opt[-\s]?in|authoriz|permission to|agree to receive|wish to receive/.test(s)) {
+      return false;
+    }
+    return /call|text message|texts?\b|\bsms\b|phone|dialing|prerecorded|autodial|marketing|contact me/.test(s);
+  }
+
   // Batch resolve: one (chunked) WD_RESOLVE for pre-harvested items. Does not write DOM.
   async function resolveItemsWithLLM(items, profile) {
     const values = {};
@@ -4308,6 +4384,36 @@
       } catch {}
     }
 
+    // Final deterministic fallback for a REQUIRED contact-consent Yes/No the model
+    // still would not answer. Proven GDIT 2026-08-07: "I consent to receive
+    // telephone calls and/or text messages from GDIT…" came back answered:0 on the
+    // batch AND on the retry (recovered:0) → APPLY no-value → Save rejected the
+    // whole step every attempt. There is no profile `want` for a consent, so pick
+    // the privacy-safe, application-neutral option ("No" = decline). This ONLY
+    // fires for a clean binary Yes/No whose label is explicit consent-to-contact
+    // wording, so qualification questions are never auto-answered.
+    for (const item of items) {
+      if (values[item.cid]) continue;
+      if (!item.required) continue;
+      if (item.isSkills || isSkillsField(item.key, item.label)) continue;
+      const opts = item.portalOptions && item.portalOptions.length ? item.portalOptions : null;
+      if (!opts || opts.length !== 2) continue;
+      if (!isContactConsentLabel(item.label)) continue;
+      const normed = opts.map((o) => ({ o, t: D.norm(o && o.text) }));
+      const hasYes = normed.some((x) => /^yes\b/.test(x.t));
+      const decline = normed.find((x) => /^no\b/.test(x.t));
+      if (!hasYes || !decline) continue;
+      values[item.cid] = decline.o;
+      try {
+        if (WD.aa) {
+          WD.aa("LLM consent default", {
+            label: String(item.label || "").slice(0, 60),
+            pick: decline.o && decline.o.text,
+          });
+        }
+      } catch {}
+    }
+
     return values;
   }
 
@@ -4488,9 +4594,27 @@
         const stillInvalid = !!c.querySelector('[aria-invalid="true"]');
         const simpleList =
           !!listboxTrigger(c) && !c.querySelector('[data-automation-id="multiSelectContainer"]');
-        if (!(stillInvalid && simpleList)) {
+        // A committed value that Workday STILL flags aria-invalid must be
+        // RE-COMMITTED, not skipped. Proven GDIT 2026-08-07: the "By typing your
+        // name…certify" textarea held "Zeyu Wang" (committed:true) yet went
+        // aria-invalid after Save; recovery hit this branch with simpleList=false
+        // (a <textarea>, not a listbox), matched !(stillInvalid && simpleList),
+        // recorded it as filled and skipped it forever → the step could never
+        // advance. Re-writing a plain text/textarea re-fires input+change+blur
+        // (writeTextEl→deferOrCommit, incl. a keystroke retry) which re-registers
+        // the value in React and clears aria-invalid. So: only skip when the field
+        // is NOT invalid; if it is invalid, let listboxes AND free-text fall
+        // through to writeField for a real re-commit.
+        const plainTextInvalid =
+          stillInvalid &&
+          !simpleList &&
+          !c.querySelector('[data-automation-id="multiSelectContainer"]') &&
+          !!c.querySelector(
+            'textarea, input[type="text"], input[type="tel"], input[type="email"], input[type="url"], input[type="number"], input:not([type])',
+          );
+        if (!(stillInvalid && (simpleList || plainTextInvalid))) {
           record(rep, label || key, true);
-          skipLog("onlyInvalid+committed-skip-rewrite", { stillInvalid, simpleList });
+          skipLog("onlyInvalid+committed-skip-rewrite", { stillInvalid, simpleList, plainTextInvalid });
           continue;
         }
       }
@@ -5066,6 +5190,9 @@
         });
       }
     } catch {}
+    // Track every plain-listbox pick so we can verify + re-commit them AFTER the
+    // whole pass (see the durability sweep below Phase 4).
+    const listboxApplied = [];
     for (const t of targets) {
       throwIfAborted();
       const labelHead = String(t.label || t.key || "").slice(0, 80);
@@ -5238,6 +5365,15 @@
             resolvePortalChoice(value, t.portalOptions || []) ||
             value;
           ok = await applyListboxPortal(trigger, choice, t.portalOptions || []);
+          listboxApplied.push({
+            trigger,
+            container: t.container,
+            choice,
+            value,
+            label: t.label,
+            key: t.key,
+            portalOptions: t.portalOptions || [],
+          });
         } else if (multi && isCountryPhoneCodeField(t.key, t.label)) {
           ok = await fillMultiselect(multi, valueText(value) || value, {
             alreadyOpen: isMultiListOpen(multi),
@@ -5270,6 +5406,52 @@
         }
       } catch {}
       await D.delay(40);
+    }
+
+    // ── Durability sweep: verify + re-commit reverted listboxes (single pass) ──
+    // PROVEN GDIT 2026-08-07: filling ~20 questionnaire listboxes back-to-back,
+    // six that reported APPLY ok:true reverted to "Select One" by the rescan
+    // (#204 "If you accept…" ok:true → #227 shown:"Select One"). The per-field
+    // committed() latch cannot catch this because a sibling's later portal open
+    // resets an already-committed field AFTER its own APPLY returned. Now that the
+    // whole pass is done (all portals closed, every trigger settled), re-read each
+    // listbox trigger and re-pick any that did not durably stick — so all
+    // listboxes are filled in THIS first pass instead of depending on the rescan.
+    for (const rc of listboxApplied) {
+      throwIfAborted();
+      if (!rc.trigger || !rc.trigger.isConnected) continue;
+      const wantN = D.norm(
+        (rc.choice && (rc.choice.text || rc.choice.value)) || valueText(rc.value) || rc.value,
+      );
+      if (!wantN) continue;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const ff = rc.container && rc.container.querySelector('[aria-invalid="true"]');
+        const shownN = D.norm(selectDisplayValue(rc.trigger) || triggerCurrentValue(rc.trigger));
+        const stuck =
+          !triggerShowsPlaceholder(rc.trigger) && valueMatchesWant(shownN, wantN) && !ff;
+        if (stuck) break;
+        try {
+          if (WD.aa) {
+            WD.aa("fillStep APPLY re-commit", {
+              key: String(rc.key || "").slice(0, 40),
+              labelHead: String(rc.label || "").slice(0, 60),
+              attempt: attempt + 1,
+              shown: shownN.slice(0, 40),
+              want: wantN.slice(0, 40),
+            });
+          }
+        } catch {}
+        let reok = false;
+        try {
+          reok = await applyListboxPortal(rc.trigger, rc.choice || rc.value, rc.portalOptions);
+        } catch (e) {
+          if (e && e.name === "WDAborted") throw e;
+        }
+        await D.delay(80);
+        if (reok) {
+          record(rep, rc.label || rc.key, true);
+        }
+      }
     }
 
     // One-pass design: no second option recheck / refill after APPLY.
@@ -6537,9 +6719,9 @@
   // a STALE engine (reload the extension at chrome://extensions, then hard-reload
   // the Workday page).
   try {
-    WD.log("wd-steps build: 2026-08-07-lazy-mount-rescan-v23");
+    WD.log("wd-steps build: 2026-08-07-listbox-durability-sweep-v27");
     try {
-      if (WD.aa) WD.aa("engine-build", { build: "2026-08-07-lazy-mount-rescan-v23", href: location.href });
+      if (WD.aa) WD.aa("engine-build", { build: "2026-08-07-listbox-durability-sweep-v27", href: location.href });
     } catch {}
   } catch {}
 })();

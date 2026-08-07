@@ -4,7 +4,9 @@
 // detectStep() inspects headings + key automation-ids to classify the current
 // step, fillCurrent() runs the matching section filler, and runAll() optionally
 // auto-advances (clicking Save and Continue / Next) until it reaches Review.
-// Auto-submit is intentionally never performed. Namespaced under window.__WD.engine.
+// The final Submit is NEVER clicked by the auto-advance flow itself; it happens
+// only when the side panel explicitly sends WD_SUBMIT (user opted into
+// auto-submit) → submitApplication(). Namespaced under window.__WD.engine.
 (() => {
   // Always (re)install so an updated extension takes effect on the next Start
   // without a manual page reload. engine is a pure namespace re-derived from the
@@ -142,8 +144,8 @@
     // Same class of bug for Application Questions 1 of 2 vs 2 of 2: both headings
     // match "Application Question". Collapsing them to one id made WD_NEXT report
     // advanced=false after a real Save navigation, so auto-advance never started a
-    // fresh fill on page 2 — one harvest→LLM→apply pass only (WD_MAX_STEP_FILLS=1);
-    // no onlyInvalid recovery refill.
+    // fresh fill on page 2 (the initial full pass; the panel adds a bounded
+    // onlyInvalid recovery pass only when validation stays dirty).
     if (pageHeadingHas("Self Identify") || pageHeadingHas("Self-Identify")) {
       logDetectStep("selfid");
       return "selfid";
@@ -379,6 +381,70 @@
     return xpathOk;
   }
 
+  // Click the FINAL "Submit" control on the Review step and wait for the
+  // thank-you / submitted confirmation. This is the deliberate action that
+  // clickNext explicitly refuses to take — the side panel only calls it (via
+  // WD_SUBMIT) when the user has turned auto-submit ON. Workday only.
+  async function submitApplication() {
+    if (aborted()) return { ok: false, aborted: true };
+    // Prefer the wizard footer button when it reads as a final Submit.
+    let el = null;
+    for (const s of [
+      S.AID("pageFooterNextButton"),
+      S.AID("bottom-navigation-next-button"),
+      S.AID("btnNext"),
+      S.AID("wizardNextButton"),
+    ]) {
+      const cand = D.q(s);
+      if (cand && D.isVisible(cand) && isFinalSubmitControl(cand)) {
+        el = cand;
+        break;
+      }
+    }
+    // Fallback: any visible button/link that reads as a final Submit.
+    if (!el) {
+      el =
+        [...document.querySelectorAll('button, [role="button"], a[role="button"], input[type="submit"]')].find(
+          (b) => D.isVisible(b) && isFinalSubmitControl(b),
+        ) || null;
+    }
+    if (!el) {
+      try {
+        if (WD.aa) WD.aa("submitApplication", { ok: false, reason: "no-submit-button" });
+      } catch {}
+      return { ok: false, reason: "no-submit-button" };
+    }
+    try {
+      if (WD.aa) {
+        WD.aa("submitApplication click", {
+          text: String(el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40),
+        });
+      }
+    } catch {}
+    D.clickEl(el);
+    // Poll for the submitted confirmation (nav + async post can take a moment).
+    for (let i = 0; i < 40; i++) {
+      if (aborted()) break;
+      try {
+        await D.delay(150);
+      } catch (e) {
+        if (e && e.name === "WDAborted") break;
+        throw e;
+      }
+      if (detectSubmittedPage()) {
+        try {
+          if (WD.aa) WD.aa("submitApplication", { ok: true, submitted: true });
+        } catch {}
+        return { ok: true, submitted: true };
+      }
+    }
+    const submitted = detectSubmittedPage();
+    try {
+      if (WD.aa) WD.aa("submitApplication", { ok: true, submitted });
+    } catch {}
+    return { ok: true, submitted };
+  }
+
   async function runAll(profile, options, onReport) {
     options = options || {};
     let guard = 0;
@@ -404,6 +470,7 @@
     detectValidation,
     fillCurrent,
     clickNext,
+    submitApplication,
     runAll,
   };
 })();

@@ -23,7 +23,7 @@ export interface Job {
  *  'same_url'              – identical URL already active for user
  *  'extraction_failed'     – expired/invalid posting could not be extracted
  *  'non_us_location'       – structured location is outside the United States
- *  'location_unknown'        – location missing or could not be verified as US
+ *  'location_unknown'        – legacy: location missing/ambiguous (no longer auto-hidden by default)
  *  'blocked_domain'        – domain blocked at submit
  */
 export type ExclusionType =

@@ -206,6 +206,8 @@ class Settings(BaseSettings):
     # Disabled by default for maximum dashboard visibility. Set the matching env
     # var to true to re-enable a rule. Always-on rules (below_min_score, non_us,
     # same_url, strict_similarity) are not toggleable here.
+    # Unknown/missing locations are kept by default (treated as US); this toggle
+    # is the optional strict mode that still hides them for Duplicates review.
     dedup_rule_location_unknown_enabled: bool = False
     dedup_rule_applied_company_enabled: bool = False
     dedup_rule_score_comparison_enabled: bool = False

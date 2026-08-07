@@ -60,21 +60,26 @@ jobs:
             echo "Waiting for in-flight scrapes before restarting scraper worker..."
             # Rolling restart mid-crawl cancels run_scraper_task and showed a false
             # "Cancelled or timed out" banner even when scrape_runs already succeeded.
+            # NOTE: heredoc body must stay indented at the script block's minimum
+            # indent so YAML does not end `script: |` early (GitHub Actions parse error).
+            # Closing PY must use that same minimum indent so bash sees it at column 0
+            # after YAML strips the common leading whitespace.
             DBURL=$(grep -E '^DATABASE_URL=' .env | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
             DBURL=$(echo "$DBURL" | sed 's/postgresql+asyncpg/postgresql/' | sed 's/+asyncpg//')
             for i in $(seq 1 120); do
-              running=$(python - <<PY
-from sqlalchemy import create_engine, text
-url = """$DBURL"""
-try:
-    e = create_engine(url)
-    with e.connect() as c:
-        n = c.execute(text("SELECT count(*) FROM scrape_runs WHERE status = 'running'")).scalar() or 0
-    print(int(n))
-except Exception as exc:
-    print(0)
-PY
-)
+              running=$(DBURL="$DBURL" python - <<'PY'
+            from sqlalchemy import create_engine, text
+            import os
+            url = os.environ["DBURL"]
+            try:
+                e = create_engine(url)
+                with e.connect() as c:
+                    n = c.execute(text("SELECT count(*) FROM scrape_runs WHERE status = 'running'")).scalar() or 0
+                print(int(n))
+            except Exception:
+                print(0)
+            PY
+              )
               if [ "$running" = "0" ]; then
                 echo "No running scrape_runs — safe to restart scraper."
                 break

@@ -367,8 +367,9 @@ const SideTile = memo(function SideTile({
   trendMaxScale,
 }: SideTileProps) {
   const className = [
-    // Compact rail tiles — number + sync detail share one row.
-    'stats-side-tile group relative flex min-h-[92px] w-full flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3.5 py-3 text-left shadow-sm transition-[border-color,box-shadow,transform,background-color] duration-300 sm:gap-4 sm:px-5 sm:py-3.5',
+    // min-w-0 + overflow-hidden: tiles shrink inside fractional grid tracks instead of
+    // overflowing neighboring columns (the source of the stats-board overlap).
+    'stats-side-tile group relative flex min-h-[76px] w-full min-w-0 flex-1 items-center gap-2.5 overflow-hidden rounded-2xl border px-3 py-2.5 text-left shadow-sm transition-[border-color,box-shadow,transform,background-color] duration-300 sm:min-h-[84px] sm:gap-3 sm:px-4 sm:py-3 2xl:min-h-[92px] 2xl:gap-4 2xl:px-5 2xl:py-3.5',
     'border-slate-200/90 bg-white/95 dark:border-slate-700/80 dark:bg-[#141d31]/95',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 dark:hover:border-slate-500'
@@ -379,28 +380,29 @@ const SideTile = memo(function SideTile({
     <>
       <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accent} opacity-[0.08] transition-opacity duration-300 group-hover:opacity-[0.16]`} />
       <div className={`absolute inset-y-4 left-0 w-1 rounded-r-full bg-gradient-to-b ${accent}`} />
-      <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${iconWrap} text-white shadow-lg transition-transform duration-300 group-hover:scale-105 sm:h-12 sm:w-12`}>
-        <Icon size={20} strokeWidth={2.35} />
+      <div className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${iconWrap} text-white shadow-lg transition-transform duration-300 group-hover:scale-105 sm:h-10 sm:w-10 2xl:h-12 2xl:w-12`}>
+        <Icon size={18} strokeWidth={2.35} />
       </div>
       <div className="relative min-w-0 flex-[1.05]">
-        <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3">
+        <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 sm:gap-x-3">
           <AnimatedNumber
             value={value}
-            className="text-[1.75rem] font-black leading-none tracking-tight text-slate-900 sm:text-[1.9rem]"
+            className="text-[1.45rem] font-black leading-none tracking-tight text-slate-900 sm:text-[1.65rem] 2xl:text-[1.9rem]"
           />
           <p
-            className="min-w-0 truncate text-[11px] font-medium leading-snug text-slate-500 sm:text-[11.5px]"
+            className="min-w-0 truncate text-[10.5px] font-medium leading-snug text-slate-500 sm:text-[11px] 2xl:text-[11.5px]"
             title={hint}
           >
             {hint}
           </p>
         </div>
-        <p className="mt-1.5 truncate text-[13px] font-bold leading-none text-slate-700 sm:text-[14px]">
+        <p className="mt-1 truncate text-[12px] font-bold leading-none text-slate-700 sm:mt-1.5 sm:text-[13px] 2xl:text-[14px]">
           {label}
         </p>
       </div>
+      {/* Sparklines need horizontal room — hide before 2xl so tiles don't crush neighbors. */}
       {Array.isArray(trend) && trend.length > 0 ? (
-        <div className="relative min-w-0 flex-1 self-stretch pl-0.5 sm:pl-1">
+        <div className="relative hidden min-w-0 flex-1 self-stretch pl-0.5 2xl:block 2xl:pl-1">
           <TrendSparkline
             values={trend}
             labels={trendLabels}
@@ -509,7 +511,7 @@ const RailStat = memo(function RailStat({
 }: RailStatProps) {
   const className = [
     // flex-1 fills the rail column so left/right rails match the main board height.
-    'stats-rail-stat group flex min-h-[68px] w-full min-w-0 flex-1 items-center gap-3 overflow-hidden rounded-2xl border px-3 py-3 text-left transition-[border-color,box-shadow,transform,background-color] duration-300',
+    'stats-rail-stat group flex min-h-[58px] w-full min-w-0 flex-1 items-center gap-2.5 overflow-hidden rounded-2xl border px-2.5 py-2.5 text-left transition-[border-color,box-shadow,transform,background-color] duration-300 sm:min-h-[64px] sm:gap-3 sm:px-3 sm:py-3 2xl:min-h-[68px]',
     'border-slate-200/80 bg-white/85 dark:border-slate-700/70 dark:bg-[#101827]/85',
     onClick
       ? 'cursor-pointer hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/40 dark:hover:border-slate-500'
@@ -520,7 +522,7 @@ const RailStat = memo(function RailStat({
     <>
       <div
         className={[
-          'relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-105',
+          'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-105 sm:h-10 sm:w-10 2xl:h-11 2xl:w-11',
           tone,
           modern ? 'stats-total-icon' : '',
         ].join(' ')}
@@ -528,18 +530,18 @@ const RailStat = memo(function RailStat({
         {modern ? (
           <>
             <span className="stats-total-icon-glow absolute inset-0 rounded-xl" />
-            <Layers size={20} strokeWidth={2.2} className="relative" />
+            <Layers size={18} strokeWidth={2.2} className="relative" />
           </>
         ) : (
-          <Icon size={18} strokeWidth={2.4} />
+          <Icon size={16} strokeWidth={2.4} />
         )}
       </div>
       <div className="min-w-0 flex-1">
         <AnimatedNumber
           value={value}
-          className="text-[1.45rem] font-black leading-none tracking-tight text-slate-900"
+          className="text-[1.25rem] font-black leading-none tracking-tight text-slate-900 sm:text-[1.35rem] 2xl:text-[1.45rem]"
         />
-        <p className="mt-1 truncate text-[11.5px] font-semibold text-slate-500">
+        <p className="mt-0.5 truncate text-[10.5px] font-semibold text-slate-500 sm:mt-1 sm:text-[11.5px]">
           {label}
         </p>
       </div>
@@ -792,14 +794,19 @@ const StatsBoardContent = memo(function StatsBoardContent({
   ]);
 
   return (
-    <div className="stats-board-shell relative w-full overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5">
+    <div className="stats-board-shell relative w-full min-w-0 overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-3 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-4 2xl:p-5">
       <div className="pointer-events-none absolute -left-20 top-0 h-48 w-48 rounded-full bg-blue-400/10 blur-3xl dark:bg-blue-500/10" />
       <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
 
-      <div className="relative grid grid-cols-1 items-stretch gap-4 xl:grid-cols-[13.5rem_minmax(0,1fr)_13.5rem] xl:gap-4">
+      {/*
+        Progressive layout to avoid mid-width crush/overlap:
+        - <2xl: hero + side tiles on top; rails wrap below as a grid
+        - 2xl+: side rails flank the center (fluid minmax tracks, never fixed rem)
+      */}
+      <div className="relative grid min-w-0 grid-cols-1 items-stretch gap-3 2xl:grid-cols-[minmax(0,10.5rem)_minmax(0,1fr)_minmax(0,10.5rem)] 2xl:gap-3">
         <div
           className={[
-            'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+            'order-2 grid min-w-0 gap-2.5 self-stretch 2xl:order-1 2xl:flex 2xl:h-full 2xl:min-h-0 2xl:flex-col',
             railGridClass(leftRail.length),
           ].join(' ')}
         >
@@ -818,8 +825,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
           ))}
         </div>
 
-        <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[1fr_auto_1fr] lg:gap-4 xl:order-2">
-          <div className="flex h-full min-h-0 flex-col gap-3.5">
+        <div className="order-1 grid h-full min-h-0 min-w-0 grid-cols-1 items-stretch gap-3 self-stretch lg:grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] lg:gap-3 2xl:order-2 2xl:gap-4">
+          <div className="flex h-full min-h-0 min-w-0 flex-col gap-2.5 sm:gap-3 2xl:gap-3.5">
             <SideTile
               icon={Rocket}
               value={ready}
@@ -859,7 +866,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             onClick={onSelectToday}
             title="Show today's new jobs"
             className={[
-              'stats-hero-tile group relative mx-auto flex h-full min-h-[220px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-3 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
+              'stats-hero-tile group relative mx-auto flex h-full min-h-[180px] w-full min-w-0 max-w-[220px] flex-col items-center justify-center self-stretch overflow-hidden rounded-[1.75rem] border px-3 py-2.5 text-center transition-[border-color,box-shadow,transform,background-color] duration-300 sm:min-h-[200px] sm:max-w-[240px] sm:rounded-[2rem] sm:px-4 sm:py-3 2xl:min-h-[220px] 2xl:max-w-[280px]',
               'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
               'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
               'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
@@ -867,31 +874,33 @@ const StatsBoardContent = memo(function StatsBoardContent({
               todayBumped ? 'stats-hero-pulse' : '',
             ].join(' ')}
           >
-            <div className="relative flex items-center justify-center">
-              <HeroOrbitRing
-                progress={todayReadyRatio}
-                showShimmer={todayAvailable > 0 && todayReadyRatio < 1}
-              />
-              <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
+            <div className="relative mx-auto h-[175px] w-[175px] shrink-0 sm:h-[197px] sm:w-[197px] 2xl:h-[224px] 2xl:w-[224px]">
+              <div className="absolute left-1/2 top-1/2 origin-center -translate-x-1/2 -translate-y-1/2 scale-[0.78] sm:scale-[0.88] 2xl:scale-100">
+                <HeroOrbitRing
+                  progress={todayReadyRatio}
+                  showShimmer={todayAvailable > 0 && todayReadyRatio < 1}
+                />
+              </div>
+              <div className="absolute inset-0 flex flex-col items-center justify-center px-4 pb-3 sm:px-5 sm:pb-4 2xl:px-8 2xl:pb-6">
                 <CalendarDays size={15} className="mb-1 text-blue-500 dark:text-blue-300 stats-hero-icon-float" />
                 <AnimatedNumber
                   value={today}
-                  className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
+                  className="text-[2.35rem] font-black leading-none tracking-tight text-slate-900 sm:text-[2.7rem] 2xl:text-[3.1rem]"
                 />
-                <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-300">
+                <span className="mt-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-blue-600 dark:text-blue-300 sm:mt-1.5 sm:text-[11px] sm:tracking-[0.16em] 2xl:text-[12px]">
                   Today&apos;s jobs
                 </span>
               </div>
             </div>
-            <div className="mt-1 flex h-[44px] flex-col justify-center space-y-0.5">
-              <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
+            <div className="mt-0.5 flex h-[40px] w-full min-w-0 flex-col justify-center space-y-0.5 sm:mt-1 sm:h-[44px]">
+              <p className="truncate text-[11px] font-semibold leading-snug text-slate-600 sm:text-[12px] 2xl:text-[13px]">
                 {today > 0
                   ? `${fmt(todayReady)} ready / ${fmt(todayAvailable)} available to start`
                   : todayRemote > 0
                     ? `${fmt(todayRemote)} remote added today`
                     : 'No jobs added to your board today'}
               </p>
-              <p className="truncate text-[12px] font-medium text-slate-500">
+              <p className="truncate text-[10.5px] font-medium text-slate-500 sm:text-[11px] 2xl:text-[12px]">
                 {today > 0
                   ? `${Math.round(todayReadyRatio * 100)}% ready vs available to start today`
                   : appliedToday > 0
@@ -901,7 +910,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
             </div>
           </button>
 
-          <div className="flex h-full min-h-0 flex-col gap-3.5">
+          <div className="flex h-full min-h-0 min-w-0 flex-col gap-2.5 sm:gap-3 2xl:gap-3.5">
             <SideTile
               icon={Wifi}
               value={remote}
@@ -939,7 +948,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
 
         <div
           className={[
-            'order-3 grid gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+            'order-3 grid min-w-0 gap-2.5 self-stretch 2xl:flex 2xl:h-full 2xl:min-h-0 2xl:flex-col',
             railGridClass(rightRail.length),
           ].join(' ')}
         >
@@ -1263,19 +1272,19 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
   );
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-3.5 xl:flex-row xl:items-stretch">
+    <div className="flex w-full min-w-0 flex-col gap-3.5 2xl:flex-row 2xl:items-stretch">
       {/* ── Main statistics board (flex-2; shares row, leftover → Job fetch) */}
       <div
-        className="stats-board-shell relative flex w-full min-w-0 flex-col overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-4 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-5 xl:flex-[5] xl:basis-0"
+        className="stats-board-shell relative flex w-full min-w-0 flex-col overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-blue-50/50 p-3 shadow-sm dark:border-slate-700/80 dark:from-[#0f172a] dark:via-[#141d31] dark:to-[#172554]/45 sm:p-4 2xl:flex-[5] 2xl:basis-0 2xl:p-5"
         style={{ contentVisibility: 'auto' }}
       >
         <div className="pointer-events-none absolute -left-20 top-0 h-48 w-48 rounded-full bg-blue-400/10 blur-3xl dark:bg-blue-500/10" />
         <div className="pointer-events-none absolute -right-12 bottom-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl dark:bg-emerald-500/10" />
 
-        <div className="relative grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] xl:gap-4">
+        <div className="relative grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch gap-3 2xl:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] 2xl:gap-3">
           <div
             className={[
-              'order-2 grid gap-2.5 self-stretch xl:order-1 xl:flex xl:h-full xl:min-h-0 xl:flex-col',
+              'order-2 grid min-w-0 gap-2.5 self-stretch 2xl:order-1 2xl:flex 2xl:h-full 2xl:min-h-0 2xl:flex-col',
               railGridClass(leftRail.length),
             ].join(' ')}
           >
@@ -1300,8 +1309,8 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
             platform rails can never be clipped. Backlog/JD get 1.5fr weight;
             Last check + platform rails share 1fr each.
           */}
-          <div className="order-1 grid h-full min-h-0 grid-cols-1 items-stretch gap-3.5 self-stretch lg:grid-cols-[minmax(0,1.5fr)_auto_minmax(0,1fr)_minmax(0,1fr)] lg:gap-3 xl:order-2">
-            <div className="flex h-full min-h-0 min-w-0 flex-col gap-3.5">
+          <div className="order-1 grid h-full min-h-0 min-w-0 grid-cols-1 items-stretch gap-3 self-stretch lg:grid-cols-[minmax(0,1.5fr)_minmax(0,auto)_minmax(0,1fr)_minmax(0,1fr)] lg:gap-2.5 2xl:order-2 2xl:gap-3">
+            <div className="flex h-full min-h-0 min-w-0 flex-col gap-2.5 sm:gap-3 2xl:gap-3.5">
               <SideTile
                 icon={FileSearch}
                 value={needs}
@@ -1345,7 +1354,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
               onClick={onSelectToday}
               title="Show today's fetched jobs"
               className={[
-                'stats-hero-tile group relative mx-auto flex h-full min-h-[220px] w-full max-w-[280px] flex-col items-center justify-center self-stretch rounded-[2rem] border px-4 py-3 text-center transition-[border-color,box-shadow,transform,background-color] duration-300',
+                'stats-hero-tile group relative mx-auto flex h-full min-h-[180px] w-full min-w-0 max-w-[200px] flex-col items-center justify-center self-stretch overflow-hidden rounded-[1.75rem] border px-3 py-2.5 text-center transition-[border-color,box-shadow,transform,background-color] duration-300 sm:min-h-[200px] sm:max-w-[220px] sm:rounded-[2rem] sm:px-4 sm:py-3 2xl:min-h-[220px] 2xl:max-w-[280px]',
                 'border-blue-200/80 bg-white/95 shadow-lg shadow-blue-500/10',
                 'hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-xl hover:shadow-blue-500/20',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50',
@@ -1353,25 +1362,27 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
                 todayBumped ? 'stats-hero-pulse' : '',
               ].join(' ')}
             >
-              <div className="relative flex items-center justify-center">
-                <HeroOrbitRing
-                  progress={extractRatio}
-                  failProgress={failRatio}
-                  showShimmer={needs > 0 || pending > 0}
-                />
-                <div className="absolute inset-0 flex flex-col items-center justify-center px-8 pb-6">
+              <div className="relative mx-auto h-[161px] w-[161px] shrink-0 sm:h-[184px] sm:w-[184px] 2xl:h-[224px] 2xl:w-[224px]">
+                <div className="absolute left-1/2 top-1/2 origin-center -translate-x-1/2 -translate-y-1/2 scale-[0.72] sm:scale-[0.82] 2xl:scale-100">
+                  <HeroOrbitRing
+                    progress={extractRatio}
+                    failProgress={failRatio}
+                    showShimmer={needs > 0 || pending > 0}
+                  />
+                </div>
+                <div className="absolute inset-0 flex flex-col items-center justify-center px-3 pb-3 sm:px-4 sm:pb-4 2xl:px-8 2xl:pb-6">
                   <CalendarDays size={15} className="mb-1 text-blue-500 stats-hero-icon-float" />
                   <AnimatedNumber
                     value={today}
-                    className="text-[3.1rem] font-black leading-none tracking-tight text-slate-900"
+                    className="text-[2.2rem] font-black leading-none tracking-tight text-slate-900 sm:text-[2.55rem] 2xl:text-[3.1rem]"
                   />
-                  <span className="mt-1.5 text-[12px] font-extrabold uppercase tracking-[0.16em] text-blue-600">
+                  <span className="mt-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-blue-600 sm:mt-1.5 sm:text-[11px] sm:tracking-[0.16em] 2xl:text-[12px]">
                     Today&apos;s fetched
                   </span>
                 </div>
               </div>
-              <div className="mt-1 flex h-[44px] flex-col justify-center space-y-0.5">
-                <p className="truncate text-[13px] font-semibold leading-snug text-slate-600">
+              <div className="mt-0.5 flex h-[40px] w-full min-w-0 flex-col justify-center space-y-0.5 sm:mt-1 sm:h-[44px]">
+                <p className="truncate text-[11px] font-semibold leading-snug text-slate-600 sm:text-[12px] 2xl:text-[13px]">
                   {lastNew > 0
                     ? `${fmt(lastNew)} new from last sync`
                     : platforms.length > 0
@@ -1379,7 +1390,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
                       : 'New jobs added to the platform today'}
                 </p>
                 <p
-                  className="truncate text-[12px] font-medium text-slate-500"
+                  className="truncate text-[10.5px] font-medium text-slate-500 sm:text-[11px] 2xl:text-[12px]"
                   title={
                     failed > 0
                       ? `${fmt(extracted)} JD ready · ${fmt(failed)} extraction failed · ${fmt(needs)} still need extraction`
@@ -1422,7 +1433,7 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
 
             <div
               className={[
-                'grid min-w-0 gap-2.5 self-stretch xl:flex xl:h-full xl:min-h-0 xl:w-full xl:flex-col',
+                'grid min-w-0 gap-2.5 self-stretch 2xl:flex 2xl:h-full 2xl:min-h-0 2xl:w-full 2xl:flex-col',
                 railGridClass(Math.max(platformRails.length, 1)),
               ].join(' ')}
             >
@@ -1447,8 +1458,8 @@ const AdminStatsBoardContent = memo(function AdminStatsBoardContent({
       </div>
 
       {/* ── Job fetch: takes the remaining screen width ───────────────── */}
-      <aside className="flex w-full min-w-0 flex-[2] basis-0 xl:min-h-0 xl:min-w-[18rem] xl:self-stretch">
-        <div className="flex h-full min-h-[220px] w-full min-w-0 flex-1">
+      <aside className="flex w-full min-w-0 flex-[2] basis-0 2xl:min-h-0 2xl:min-w-[16rem] 2xl:self-stretch">
+        <div className="flex h-full min-h-[200px] w-full min-w-0 flex-1 2xl:min-h-[220px]">
           <SyncControlBoard />
         </div>
       </aside>

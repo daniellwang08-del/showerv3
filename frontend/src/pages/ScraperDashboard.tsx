@@ -363,30 +363,41 @@ export function ScraperDashboard() {
       </div>
 
       <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 dark:border-slate-700 dark:bg-[#141d31]">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
-          <div className="shrink-0">
-            <DashboardViewSwitcher
-              view={view}
-              counts={counts}
-              onChange={handleViewChange}
-              isAdmin={isAdmin}
-              adminStats={adminStats}
-              activeCount={isAdmin ? total : activeBoardCount}
-            />
-          </div>
+        {/*
+          Toolbar rules:
+          - Dividers are fixed-height (h-8), never self-stretch — stretch made the
+            rule grow/shrink with wrapped filter rows and looked like it “moved”.
+          - Filters keep intrinsic widths (no flex-1 4-col grid) so Match score is
+            not crushed and the URL-side rule does not slide with compression.
+          - URL + Duplicates take remaining width; side-by-side from xl up.
+        */}
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-2.5">
+            <div className="shrink-0">
+              <DashboardViewSwitcher
+                view={view}
+                counts={counts}
+                onChange={handleViewChange}
+                isAdmin={isAdmin}
+                adminStats={adminStats}
+                activeCount={isAdmin ? total : activeBoardCount}
+              />
+            </div>
 
-          {/* Applicant-only list filters — admins fetch/extract, they do not filter the job pool. */}
-          {!isAdmin && (
-            <>
-              <div className="hidden self-stretch w-px bg-slate-200 dark:bg-slate-700 xl:block" />
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:shrink-0">
+            {/* Applicant-only list filters — admins fetch/extract, they do not filter the job pool. */}
+            {!isAdmin && (
+              <>
+                <span
+                  aria-hidden
+                  className="hidden h-8 w-px shrink-0 bg-slate-200 dark:bg-slate-600 min-[480px]:block"
+                />
                 <SearchInput
                   value={titleFilter}
                   onChange={handleTitleFilter}
                   placeholder="Filter by title"
                   icon={Briefcase}
                   variant="solid"
-                  className="w-full sm:w-44"
+                  className="w-full min-w-0 basis-full min-[480px]:w-40 min-[480px]:basis-auto sm:w-44"
                 />
                 <SearchInput
                   value={companyFilter}
@@ -394,18 +405,28 @@ export function ScraperDashboard() {
                   placeholder="Filter by company"
                   icon={Building2}
                   variant="solid"
-                  className="w-full sm:w-44"
+                  className="w-full min-w-0 basis-full min-[480px]:w-40 min-[480px]:basis-auto sm:w-44"
                 />
-                <RemoteFilterToggle active={remoteOnly} onChange={setRemoteOnly} className="w-full sm:w-auto" />
-                <MatchScoreFilter value={minScore} onChange={setMinScore} className="w-full sm:w-44" />
-              </div>
-            </>
-          )}
+                <RemoteFilterToggle
+                  active={remoteOnly}
+                  onChange={setRemoteOnly}
+                  className="shrink-0"
+                />
+                <MatchScoreFilter
+                  value={minScore}
+                  onChange={setMinScore}
+                  className="w-[10.5rem] shrink-0"
+                />
+              </>
+            )}
+          </div>
 
-          <div className="hidden self-stretch w-px bg-slate-200 dark:bg-slate-700 xl:block" />
-
-          <div className="flex w-full min-w-0 flex-wrap items-start gap-2 sm:gap-3 xl:flex-1 xl:min-w-[18rem]">
-            <div className="min-w-0 flex-1 basis-[min(100%,16rem)]">
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+            <span
+              aria-hidden
+              className="hidden h-8 w-px shrink-0 bg-slate-200 dark:bg-slate-600 xl:block"
+            />
+            <div className="min-w-0 flex-1 basis-0">
               <SubmitForm inline />
             </div>
             {!isAdmin && (

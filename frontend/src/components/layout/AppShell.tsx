@@ -52,7 +52,7 @@ export function AppShell({ userEmail, userName, isAdmin, onLogout }: AppShellPro
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
 
   return (
-    <div className="flex h-dvh max-h-dvh overflow-hidden">
+    <div className="flex h-dvh max-h-dvh min-w-[1400px] overflow-hidden">
       {/* Desktop sidebar */}
       <div className="hidden h-full shrink-0 md:flex">
         <Sidebar
@@ -93,7 +93,9 @@ export function AppShell({ userEmail, userName, isAdmin, onLogout }: AppShellPro
         </div>
       ) : null}
 
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-50">
+      {/* min-w keeps the jobs platform usable when the viewport narrows (extension
+          side panel drag). Sibling panels must not crush this below the floor. */}
+      <main className="flex min-h-0 min-w-[1100px] flex-1 flex-col overflow-hidden bg-slate-50">
         {/* Mobile top bar */}
         <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 py-2.5 md:hidden">
           <button

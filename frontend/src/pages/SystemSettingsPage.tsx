@@ -1238,7 +1238,7 @@ export function SystemSettingsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {renderAutoField('default_min_match_score', { label: 'Min match score' })}
             {renderAutoField('default_dedup_recycle_days', { label: 'Dedup recycle days' })}
-            {renderAutoField('dedup_rule_location_unknown_enabled', { label: 'Dedup: unknown loc' })}
+            {renderAutoField('dedup_rule_location_unknown_enabled', { label: 'Dedup: hide unknown loc' })}
             {renderAutoField('dedup_rule_applied_company_enabled', { label: 'Dedup: applied co.' })}
             {renderAutoField('dedup_rule_score_comparison_enabled', { label: 'Dedup: score cmp' })}
             {renderAutoField('extension_token_expire_days', { label: 'Ext. token days' })}

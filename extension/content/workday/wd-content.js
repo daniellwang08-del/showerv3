@@ -6,7 +6,7 @@
 // step on WD_DETECT so the panel can show what it sees before running.
 (() => {
   const WD = (window.__WD = window.__WD || {});
-  const BUILD = "2026-08-07-lazy-mount-rescan-v23";
+  const BUILD = "2026-08-07-listbox-durability-sweep-v27";
 
   // Page-console bridge MUST re-bind on every executeScript inject. The rest of
   // this file early-returns when __WD_CONTENT__ is set, which previously left
@@ -334,6 +334,35 @@
           advanced,
           aborted: !!(WD.isAborted && WD.isAborted()),
         });
+      })();
+      return true;
+    }
+
+    // Final Submit on the Review step. Only sent by the side panel when the user
+    // enabled auto-submit; the auto-advance loop never clicks Submit on its own.
+    if (msg.type === "WD_SUBMIT") {
+      (async () => {
+        if (!WD || !WD.engine || !WD.engine.submitApplication) {
+          return sendResponse({ ok: false, error: "engine-not-loaded" });
+        }
+        if (WD.isAborted && WD.isAborted()) {
+          return sendResponse({ ok: false, aborted: true });
+        }
+        // Only the frame that actually shows the Review/Submit step should act.
+        const step = WD.engine.detectStep();
+        if (step !== "review" && step !== "submitted") {
+          return sendResponse({ ok: false, reason: "not-review", step });
+        }
+        if (step === "submitted") {
+          return sendResponse({ ok: true, submitted: true, alreadySubmitted: true });
+        }
+        try {
+          const res = await WD.engine.submitApplication();
+          sendResponse({ ...(res || {}), aborted: !!(WD.isAborted && WD.isAborted()) });
+        } catch (e) {
+          if (e && e.name === "WDAborted") return sendResponse({ ok: false, aborted: true });
+          sendResponse({ ok: false, error: String((e && e.message) || e) });
+        }
       })();
       return true;
     }

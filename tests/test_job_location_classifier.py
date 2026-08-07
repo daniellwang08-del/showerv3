@@ -2,7 +2,11 @@
 
 import pytest
 
-from app.services.job_location_classifier import LocationVerdict, classify_job_location
+from app.services.job_location_classifier import (
+    LocationVerdict,
+    classify_job_location,
+    keeps_us_job_pool,
+)
 
 
 @pytest.mark.parametrize(
@@ -95,3 +99,25 @@ def test_foreign_only_remote_still_non_us(location):
     """Foreign-only postings (no US mention) remain non-US."""
     verdict, _detail = classify_job_location(location, remote_policy="Fully remote")
     assert verdict == LocationVerdict.NON_US
+
+
+@pytest.mark.parametrize(
+    "location,remote_policy,expect_keep",
+    [
+        ("San Francisco, CA", None, True),
+        ("Paris, France", None, False),
+        ("Remote", None, True),
+        (None, None, True),
+        ("", "Remote", True),
+        ("unknown", None, True),
+        ("London, UK", None, False),
+    ],
+)
+def test_keeps_us_job_pool_only_drops_non_us(location, remote_policy, expect_keep):
+    """Unknown/missing locations stay in the pool; only explicit non-US is dropped."""
+    keep, verdict, _detail = keeps_us_job_pool(location, remote_policy=remote_policy)
+    assert keep is expect_keep
+    if expect_keep:
+        assert verdict != LocationVerdict.NON_US
+    else:
+        assert verdict == LocationVerdict.NON_US

@@ -15,7 +15,6 @@ import {
   Copy,
   MousePointer2,
   SquareCheck,
-  X,
   ExternalLink as OpenUrl,
   Download,
   ClipboardCheck,
@@ -24,6 +23,7 @@ import {
   Rocket,
   MessageSquare,
   FileText,
+  ListChecks,
 } from 'lucide-react';
 import { Badge } from '../shared/Badge';
 import { ConfirmDialog } from '../extraction/ConfirmDialog';
@@ -32,6 +32,7 @@ import { DocumentPreviewModal, type PreviewDocType } from './DocumentPreviewModa
 import { InstallExtensionModal } from './InstallExtensionModal';
 import { detectExtension, applyViaExtension } from '../../lib/extensionBridge';
 import { useScraperStore } from '../../stores/scraperStore';
+import { fetchDashboardJobs } from '../../api/scraperApi';
 import { fetchSheetsConfig } from '../../api/googleSheetsApi';
 import { fetchPumbleConfig } from '../../api/pumbleApi';
 import { PumbleDestinationModal } from './PumbleDestinationModal';
@@ -39,7 +40,7 @@ import type { PumbleIntegration } from '../../types/pumble';
 import { apiClient } from '../../api/client';
 import { namedDownloadFile } from '../../utils/resumeFileName';
 import type { DashboardJob, ExtractionStatus } from '../../types/scraper';
-import { dashboardJobMarkedApplied, dashboardJobRowSurfaceClass, dashboardJobStickyCellClass } from '../../utils/appliedStatus';
+import { dashboardJobMarkedApplied, dashboardJobRowSurfaceClass } from '../../utils/appliedStatus';
 import { BrandedLoader } from '../layout/BrandedLoader';
 
 interface ScraperJobsTableProps {
@@ -160,14 +161,16 @@ const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   // 1.5× prior 130px so labels like "Welcome to the Jungle" fit without clipping.
   added_from: '195px',
   created_at: '68px',
-  __processing__: '120px',
+  // Fixed match pill (~116px) + cell padding — was 120px and clipped into Added.
+  __processing__: '152px',
   __resume__: '108px',
   __cover__: '108px',
   __status__: '128px',
-  __actions__: '300px',
+  // Apply + Run/Analyze + Delete (row click opens the job modal — no View button).
+  __actions__: '220px',
 };
 
-const ADMIN_ACTIONS_WIDTH = '220px';
+const ADMIN_ACTIONS_WIDTH = '150px';
 const ADMIN_TITLE_WIDTH = '260px';
 const ADMIN_COMPANY_WIDTH = '130px';
 
@@ -182,17 +185,110 @@ const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
   '__actions__',
 ]);
 
-/** Applicant: hide Source first when the viewport cannot fit every column. */
-const SOURCE_COL_CLASS = 'hidden min-[1600px]:table-column';
-const SOURCE_CELL_CLASS = 'hidden min-[1600px]:table-cell';
+/**
+ * Applicant columns that must stay visible at every width (never `display:none`).
+ * Title / company / work mode / posted / match / resume / cover / status / actions
+ * plus row chrome (checkbox, No.).
+ */
+const APPLICANT_MUST_KEYS = new Set<ColumnKey>([
+  '__check__',
+  '__no__',
+  'title',
+  'company',
+  'work_mode',
+  'posted_date',
+  '__processing__',
+  '__resume__',
+  '__cover__',
+  '__status__',
+  '__actions__',
+]);
+
+/**
+ * Optional applicant columns — hide below the listed viewport width so must
+ * columns keep usable space. Class strings are complete for Tailwind JIT.
+ */
+const APPLICANT_OPTIONAL_VIS: Partial<Record<ColumnKey, { col: string; cell: string }>> = {
+  created_at: {
+    col: 'hidden min-[1400px]:table-column',
+    cell: 'hidden min-[1400px]:table-cell',
+  },
+  added_from: {
+    col: 'hidden min-[1480px]:table-column',
+    cell: 'hidden min-[1480px]:table-cell',
+  },
+  location: {
+    col: 'hidden min-[1560px]:table-column',
+    cell: 'hidden min-[1560px]:table-cell',
+  },
+  job_type: {
+    col: 'hidden min-[1640px]:table-column',
+    cell: 'hidden min-[1640px]:table-cell',
+  },
+  salary_raw: {
+    col: 'hidden min-[1640px]:table-column',
+    cell: 'hidden min-[1640px]:table-cell',
+  },
+  source: {
+    col: 'hidden min-[1760px]:table-column',
+    cell: 'hidden min-[1760px]:table-cell',
+  },
+};
+
+/** Admin: only drop lower-priority metadata when narrow; keep title/company/URL/status/actions. */
+const ADMIN_OPTIONAL_VIS: Partial<Record<ColumnKey, { col: string; cell: string }>> = {
+  created_at: {
+    col: 'hidden min-[1280px]:table-column',
+    cell: 'hidden min-[1280px]:table-cell',
+  },
+  added_from: {
+    col: 'hidden min-[1400px]:table-column',
+    cell: 'hidden min-[1400px]:table-cell',
+  },
+  source: {
+    col: 'hidden min-[1520px]:table-column',
+    cell: 'hidden min-[1520px]:table-cell',
+  },
+};
+
+function columnVisibilityClass(
+  key: ColumnKey,
+  isAdmin: boolean,
+  kind: 'col' | 'cell',
+): string | undefined {
+  if (!isAdmin && APPLICANT_MUST_KEYS.has(key)) return undefined;
+  const map = isAdmin ? ADMIN_OPTIONAL_VIS : APPLICANT_OPTIONAL_VIS;
+  return map[key]?.[kind];
+}
+
+/** Floor width so must columns are not crushed inside `table-fixed` (horizontal scroll instead). */
+const APPLICANT_TABLE_MIN_WIDTH =
+  32 + // check
+  44 + // no
+  180 + // title min
+  118 + // company
+  74 + // work mode
+  68 + // posted
+  152 + // match
+  108 + // resume
+  108 + // cover
+  128 + // status
+  220; // actions
+
+const ADMIN_TABLE_MIN_WIDTH =
+  32 + // check
+  44 + // no
+  200 + // title min
+  130 + // company
+  160 + // url min
+  128 + // status
+  150; // actions
 
 /** Shared height with MatchScoreBadge so status squares align visually. */
 const MATCH_BADGE_H = 28;
 
 const ROW_H = 'h-[52px] max-h-[52px]';
 const CELL = 'px-3 py-0 align-middle overflow-hidden';
-
-const STICKY_SHADOW = 'shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)]';
 
 // ---------------------------------------------------------------------------
 // Resume / Cover letter column helpers
@@ -208,6 +304,21 @@ function isDocsBuilding(job: DashboardJob): boolean {
       ((cg === 'completed' || !cg) &&
         (job.resume_build_status === 'pending' || job.resume_build_status === 'processing')))
   );
+}
+
+/**
+ * Apply with Assistant is only offered when the full applicant pipeline is done:
+ * match scored, tailored resume PDF + cover letter PDF ready, nothing in-flight.
+ */
+function isJobApplyReady(job: DashboardJob): boolean {
+  if (job.match_overall_score == null) return false;
+  if (job.match_in_progress) return false;
+  const ext = job.extraction_status;
+  if (ext === 'pending' || ext === 'processing') return false;
+  if (isDocsBuilding(job)) return false;
+  if (job.resume_pdf_status !== 'completed') return false;
+  if (job.cover_letter_pdf_status !== 'completed') return false;
+  return true;
 }
 
 const DocActionPair = memo(function DocActionPair({
@@ -484,11 +595,74 @@ function processingDots(job: DashboardJob): [DotConfig, DotConfig, DotConfig] {
   ];
 }
 
+/** Shared JD is on disk — same gate as Actions Run (yellow) / processing dots. */
+function dashboardJobRawJdReady(job: DashboardJob): boolean {
+  return (
+    job.extraction_status === 'extracted' ||
+    job.extraction_status === 'completed' ||
+    job.match_overall_score != null
+  );
+}
+
+/**
+ * Title link color = job readiness at a glance:
+ * - green  → marked applied (wins over everything)
+ * - yellow → raw / shared JD ready (extracted or completed)
+ * - blue   → fresh: no JD yet (not started, queued, or still extracting)
+ * - rose   → extraction failed
+ */
+type JobTitleTone = 'fresh' | 'jd_ready' | 'applied' | 'failed';
+
+function dashboardJobTitleTone(job: DashboardJob): JobTitleTone {
+  if (dashboardJobMarkedApplied(job)) return 'applied';
+  if (job.extraction_status === 'failed') return 'failed';
+  if (dashboardJobRawJdReady(job)) return 'jd_ready';
+  return 'fresh';
+}
+
+const JOB_TITLE_TONE_CLASS: Record<JobTitleTone, string> = {
+  fresh: 'text-blue-600 hover:text-blue-800',
+  jd_ready: 'text-yellow-700 hover:text-yellow-900',
+  applied: 'text-emerald-600 hover:text-emerald-800',
+  failed: 'text-rose-600 hover:text-rose-800',
+};
+
+const JOB_TITLE_TONE_HINT: Record<JobTitleTone, string> = {
+  fresh: 'No job description yet',
+  jd_ready: 'Job description ready',
+  applied: 'Marked as applied',
+  failed: 'Extraction failed',
+};
+
+const JobTitleLink = memo(function JobTitleLink({ job }: { job: DashboardJob }) {
+  const tone = dashboardJobTitleTone(job);
+  const label = job.title || 'Untitled';
+  return (
+    <a
+      href={job.source_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className={`inline-flex min-w-0 flex-1 items-center gap-1 font-medium leading-snug ${JOB_TITLE_TONE_CLASS[tone]}`}
+      title={`${JOB_TITLE_TONE_HINT[tone]} · ${label}`}
+    >
+      <span className="truncate">{label}</span>
+      <ExternalLink size={11} className="shrink-0 opacity-60" />
+    </a>
+  );
+});
+
 function scoreColors(score: number): string {
-  if (score >= 75) return 'border-emerald-300 bg-emerald-50 text-emerald-800';
-  if (score >= 50) return 'border-sky-300    bg-sky-50    text-sky-800';
-  if (score >= 30) return 'border-amber-300  bg-amber-50  text-amber-800';
-  return 'border-red-300 bg-red-50 text-red-800';
+  if (score >= 75) {
+    return 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300';
+  }
+  if (score >= 50) {
+    return 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-500/40 dark:bg-sky-500/15 dark:text-sky-300';
+  }
+  if (score >= 30) {
+    return 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300';
+  }
+  return 'border-red-300 bg-red-50 text-red-800 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-300';
 }
 function scoreLabel(score: number): string {
   if (score >= 75) return 'Strong';
@@ -497,16 +671,71 @@ function scoreLabel(score: number): string {
   return 'Weak';
 }
 
-/** Match score pill — fixed height so Status squares can match it exactly. */
+/** Shared Match column shell — fixed size so Good/Strong/No score all align. */
+const MATCH_PILL_BASE =
+  'inline-flex h-[28px] w-[7.5rem] shrink-0 items-center justify-center gap-1 rounded-lg border px-2 shadow-sm';
+
+/** Match score pill — fixed width/height for every band label. */
 const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number }) {
   return (
     <div
       title={`Match score: ${score}/100 - ${scoreLabel(score)}`}
-      className={`inline-flex h-[28px] max-w-full shrink-0 items-center gap-1.5 rounded-lg border px-2.5 shadow-sm ${scoreColors(score)}`}
+      className={`${MATCH_PILL_BASE} ${scoreColors(score)}`}
     >
-      <Sparkles size={11} className="shrink-0 opacity-75" />
-      <span className="text-sm font-bold tabular-nums leading-none">{score}</span>
-      <span className="text-[10px] font-medium leading-none opacity-70">{scoreLabel(score)}</span>
+      <Sparkles size={11} className="shrink-0 opacity-75" aria-hidden />
+      <span className="w-6 shrink-0 text-right text-sm font-bold tabular-nums leading-none">{score}</span>
+      <span className="w-11 shrink-0 whitespace-nowrap text-left text-[10px] font-medium leading-none opacity-70">
+        {scoreLabel(score)}
+      </span>
+    </div>
+  );
+});
+
+/** Match column: score only (or pipeline pending). Always the same pill footprint. */
+const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
+  if (job.match_overall_score != null) {
+    return <MatchScoreBadge score={job.match_overall_score} />;
+  }
+
+  const dots = processingDots(job).filter((dot) => dot.state !== 'idle');
+  const matching = !!job.match_in_progress;
+  const jdReady =
+    job.extraction_status === 'extracted' || job.extraction_status === 'completed';
+
+  let title = 'Pipeline progress: scrape → structure → documents';
+  let shell =
+    'border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-400';
+  let body: ReactNode = <span className="truncate text-[10px] font-medium leading-none">—</span>;
+
+  if (matching) {
+    title = 'Matching with your profile…';
+    shell =
+      'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/15 dark:text-sky-300';
+    body = (
+      <>
+        <Sparkles size={11} className="shrink-0 animate-pulse opacity-80" aria-hidden />
+        <span className="truncate text-[10px] font-semibold leading-none animate-pulse">Matching…</span>
+      </>
+    );
+  } else if (jdReady || dots.length > 0) {
+    title = 'Job description ready — no match score yet';
+    shell =
+      'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300';
+    body = (
+      <>
+        <span className="flex shrink-0 items-center gap-1" aria-hidden>
+          {dots.length > 0
+            ? dots.slice(0, 3).map((dot) => <StatusDot key={dot.label} {...dot} />)
+            : <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+        </span>
+        <span className="min-w-0 truncate text-[10px] font-semibold leading-none">No score</span>
+      </>
+    );
+  }
+
+  return (
+    <div title={title} className={`${MATCH_PILL_BASE} ${shell}`}>
+      {body}
     </div>
   );
 });
@@ -578,49 +807,6 @@ function WorkModeBadge({ mode, isRemoteFallback }: { mode: string | null | undef
   }
   return <span className="text-slate-300 text-xs">-</span>;
 }
-
-/** Match column: score only (or pipeline dots). Integration badges live in Status.
- *
- * Both states must share the same right edge. Unscored rows used to left-align the
- * dots inside a block sized by the "No score yet" caption, so the dots sat left of
- * score badges on neighboring rows.
- */
-const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
-  if (job.match_overall_score != null) {
-    return <MatchScoreBadge score={job.match_overall_score} />;
-  }
-
-  const dots = processingDots(job).filter((dot) => dot.state !== 'idle');
-  let caption: ReactNode = null;
-  if (job.match_in_progress) {
-    caption = (
-      <span className="flex items-center gap-1 text-[10px] font-medium leading-none text-blue-500 animate-pulse dark:text-sky-300">
-        <Sparkles size={9} className="shrink-0" />
-        Matching…
-      </span>
-    );
-  } else if (job.extraction_status === 'extracted' || job.extraction_status === 'completed') {
-    caption = (
-      <span className="text-[10px] font-medium leading-none text-slate-400 dark:text-slate-600">
-        No score yet
-      </span>
-    );
-  }
-
-  return (
-    <div
-      className="flex h-[28px] w-full min-w-0 flex-col items-end justify-center gap-0.5"
-      title="Pipeline progress: scrape → structure → documents"
-    >
-      <div className="flex h-[10px] shrink-0 items-center justify-end gap-1.5">
-        {dots.map((dot) => (
-          <StatusDot key={dot.label} {...dot} />
-        ))}
-      </div>
-      {caption}
-    </div>
-  );
-});
 
 /** Admin Status column: detailed JD extraction progress (not applicant apply/match). */
 const AdminExtractionStatusCell = memo(function AdminExtractionStatusCell({
@@ -965,7 +1151,7 @@ function ContextMenu({
   }
 
   const menuItems: Array<{ icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; disabled?: boolean } | 'divider'> = [
-    ...(!multi && !isAdmin ? [{
+    ...(!multi && !isAdmin && isJobApplyReady(job) ? [{
       icon: <Rocket size={13} />,
       label: 'Apply with Assistant',
       onClick: () => { onApply(job); onClose(); },
@@ -1087,7 +1273,12 @@ function ContextMenu({
 interface BulkBarProps {
   count: number;
   totalVisible: number;
+  unanalyzedCount: number;
+  showSelectAllPages: boolean;
+  selectingAllPages: boolean;
   onSelectAll: () => void;
+  onSelectUnanalyzedPage: () => void;
+  onSelectUnanalyzedAllPages: () => void;
   onClearAll: () => void;
   onRerun: () => void;
   onOpenUrls: () => void;
@@ -1106,7 +1297,12 @@ interface BulkBarProps {
 function BulkBar({
   count,
   totalVisible,
+  unanalyzedCount,
+  showSelectAllPages,
+  selectingAllPages,
   onSelectAll,
+  onSelectUnanalyzedPage,
+  onSelectUnanalyzedAllPages,
   onClearAll,
   onRerun,
   onOpenUrls,
@@ -1121,24 +1317,32 @@ function BulkBar({
   postingToPumble,
   isAdmin = false,
 }: BulkBarProps) {
-  const busy = rerunning || deleting || postingToSheet || postingToPumble;
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 shadow-sm">
-      <SquareCheck size={15} className="text-blue-600 shrink-0" />
-      <span className="text-sm font-bold text-blue-800">
-        {count} selected
-      </span>
+  const busy = rerunning || deleting || postingToSheet || postingToPumble || selectingAllPages;
+  const unanalyzedLabel = isAdmin ? 'not extracted' : 'unanalyzed';
 
-      <div className="h-4 w-px bg-blue-200 mx-1" />
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 shadow-sm dark:border-blue-500/30 dark:bg-[#152033] sm:px-4">
+      <button
+        type="button"
+        onClick={onClearAll}
+        title="Clear selection (Esc)"
+        aria-label={`Clear selection (${count} selected)`}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-2 py-1 text-sm font-bold text-blue-800 shadow-sm transition hover:border-blue-400 hover:bg-blue-100 dark:border-blue-500/40 dark:bg-[#1a2740] dark:text-blue-100 dark:hover:bg-blue-500/20"
+      >
+        <SquareCheck size={15} className="shrink-0 text-blue-600 dark:text-blue-300" aria-hidden />
+        {count} selected
+      </button>
+
+      <div className="mx-1 hidden h-4 w-px bg-blue-200 dark:bg-blue-500/30 sm:block" />
 
       <button type="button" onClick={onRerun} disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:opacity-50">
+        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25">
         {rerunning ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
         {isAdmin ? 'Extract selected' : 'Prepare selected'}
       </button>
 
       <button type="button" onClick={onOpenUrls} disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:opacity-50">
+        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 disabled:opacity-50 dark:border-blue-500/30 dark:bg-[#1a2740] dark:text-blue-200 dark:hover:bg-blue-500/20">
         <OpenUrl size={12} />
         Open URLs
       </button>
@@ -1148,7 +1352,7 @@ function BulkBar({
           type="button"
           onClick={onPostToSheet}
           disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-500/30 dark:bg-[#1a2740] dark:text-emerald-200 dark:hover:bg-emerald-500/15"
         >
           {postingToSheet ? <Loader2 size={12} className="animate-spin" /> : <Table2 size={12} />}
           Post to Sheet
@@ -1160,7 +1364,7 @@ function BulkBar({
           type="button"
           onClick={onPostToPumble}
           disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-800 shadow-sm transition hover:bg-violet-50 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-800 shadow-sm transition hover:bg-violet-50 disabled:opacity-50 dark:border-violet-500/30 dark:bg-[#1a2740] dark:text-violet-200 dark:hover:bg-violet-500/15"
         >
           {postingToPumble ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={12} />}
           Post to Pumble
@@ -1168,23 +1372,58 @@ function BulkBar({
       )}
 
       <button type="button" onClick={onDelete} disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 shadow-sm transition hover:bg-red-50 disabled:opacity-50">
+        className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 shadow-sm transition hover:bg-red-50 disabled:opacity-50 dark:border-rose-500/30 dark:bg-[#1a2740] dark:text-rose-300 dark:hover:bg-rose-500/15">
         {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
         Delete selected
       </button>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex flex-wrap items-center gap-2">
         {count < totalVisible && (
-          <button type="button" onClick={onSelectAll}
-            className="text-xs font-medium text-blue-600 hover:underline">
+          <button
+            type="button"
+            onClick={onSelectAll}
+            title={`Select all ${totalVisible} jobs on this page`}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100 dark:border-blue-500/30 dark:bg-[#1a2740] dark:text-blue-200 dark:hover:bg-blue-500/20"
+          >
+            <SquareCheck size={12} />
             Select all {totalVisible}
           </button>
         )}
-        <button type="button" onClick={onClearAll}
-          className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-700">
-          <X size={12} />
-          Clear
-        </button>
+        {unanalyzedCount > 0 && (
+          <button
+            type="button"
+            onClick={onSelectUnanalyzedPage}
+            disabled={busy}
+            title={
+              isAdmin
+                ? `Select ${unanalyzedCount} jobs on this page without a job description`
+                : `Select ${unanalyzedCount} jobs on this page that have not been analyzed yet`
+            }
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 shadow-sm transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200 dark:hover:bg-amber-500/25"
+          >
+            <ListChecks size={12} />
+            {unanalyzedLabel} · page
+            <span className="rounded-full bg-amber-200/80 px-1.5 py-0.5 text-[10px] font-extrabold tabular-nums text-amber-900 dark:bg-amber-400/25 dark:text-amber-100">
+              {unanalyzedCount}
+            </span>
+          </button>
+        )}
+        {showSelectAllPages && (
+          <button
+            type="button"
+            onClick={onSelectUnanalyzedAllPages}
+            disabled={busy}
+            title={
+              isAdmin
+                ? 'Select every not-extracted job across all pages of the current filters'
+                : 'Select every unanalyzed job across all pages of the current filters'
+            }
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900 shadow-sm transition hover:bg-amber-200 disabled:opacity-50 dark:border-amber-400/50 dark:bg-amber-500/25 dark:text-amber-100 dark:hover:bg-amber-500/35"
+          >
+            {selectingAllPages ? <Loader2 size={12} className="animate-spin" /> : <ListChecks size={12} />}
+            {unanalyzedLabel} · all pages
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1319,9 +1558,17 @@ export function ScraperJobsTable({
   const [pendingPumbleTargets, setPendingPumbleTargets] = useState<DashboardJob[]>([]);
   const [installFor,       setInstallFor]       = useState<DashboardJob | null>(null);
   const [applyChecking,    setApplyChecking]    = useState<string | null>(null);
+  const applyInFlightRef = useRef<string | null>(null);
 
   // ── Selection state ───────────────────────────────────────────────────────
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
+  /**
+   * Durable catalog of selected job rows. Without this, Prepare/Delete/etc. only
+   * resolve jobs from the *current page* (`displayJobs`), so selections made on
+   * other pages are counted in the bulk bar but silently dropped from processing.
+   */
+  const [selectedJobCatalog, setSelectedJobCatalog] = useState<DashboardJob[]>([]);
+  const [selectingUnanalyzedAll, setSelectingUnanalyzedAll] = useState(false);
   const [isSelectingMode, setIsSelectingMode] = useState(false);
   const longPressTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired   = useRef(false);
@@ -1351,6 +1598,32 @@ export function ScraperJobsTable({
     setSelectedIds((prev) => prev.has(id) ? prev : new Set([...prev, id]));
   }, []);
 
+  // Keep catalog in sync: merge visible selected rows in, drop deselected rows.
+  // Must run when either selection or the current page changes.
+  useEffect(() => {
+    setSelectedJobCatalog((prev) => {
+      const byId = new Map<string, DashboardJob>();
+      for (const j of prev) {
+        if (selectedIds.has(j.id)) byId.set(j.id, j);
+      }
+      for (const j of displayJobs) {
+        if (selectedIds.has(j.id)) byId.set(j.id, j);
+      }
+      const next: DashboardJob[] = [];
+      for (const id of selectedIds) {
+        const job = byId.get(id);
+        if (job) next.push(job);
+      }
+      if (
+        next.length === prev.length
+        && next.every((j, i) => j.id === prev[i]?.id && j === prev[i])
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [selectedIds, displayJobs]);
+
   // Global mouseup / pointercancel → end drag-select
   useEffect(() => {
     const end = () => {
@@ -1375,14 +1648,22 @@ export function ScraperJobsTable({
     return () => document.removeEventListener('mousedown', onDown);
   }, [contextMenu]);
 
-  // Close context menu on Escape
+  // Escape: close context menu first, otherwise clear the row selection
   useEffect(() => {
-    if (!contextMenu) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (contextMenu) {
+        setContextMenu(null);
+        return;
+      }
+      if (selectedIds.size > 0) {
+        setSelectedIds(new Set());
+        setSelectedJobCatalog([]);
+      }
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [contextMenu]);
-
+  }, [contextMenu, selectedIds.size]);
   useEffect(() => {
     if (isAdmin) {
       setSheetsConfigured(false);
@@ -1452,11 +1733,20 @@ export function ScraperJobsTable({
   // Context menu targets: if right-clicked job is in selection → all selected; else just that job
   const getContextTargets = useCallback((job: DashboardJob): DashboardJob[] => {
     if (selectedIds.has(job.id) && selectedIds.size > 1) {
-      return displayJobs.filter((j) => selectedIds.has(j.id));
+      // Use the durable catalog — not just the current page — so multi-page
+      // selections are not silently truncated to visible rows.
+      const fromDisplay = new Map(displayJobs.map((j) => [j.id, j]));
+      const fromCatalog = new Map(selectedJobCatalog.map((j) => [j.id, j]));
+      const resolved: DashboardJob[] = [];
+      for (const id of selectedIds) {
+        const row = fromDisplay.get(id) ?? fromCatalog.get(id);
+        if (row) resolved.push(row);
+      }
+      return resolved.length > 0 ? resolved : [job];
     }
     const row = displayJobs.find((j) => j.id === job.id) ?? job;
     return [row];
-  }, [selectedIds, displayJobs]);
+  }, [selectedIds, displayJobs, selectedJobCatalog]);
 
   // ── Action handlers ───────────────────────────────────────────────────────
   // "Apply with Assistant": hand the job to the extension AND open its side
@@ -1466,6 +1756,14 @@ export function ScraperJobsTable({
   // state: installed-but-stale-tab -> open the URL and ask for a reload; not
   // installed -> prompt to install (and retry once they have).
   const handleApply = useCallback(async (job: DashboardJob) => {
+    if (!isJobApplyReady(job)) {
+      showToast('warning', 'Finish match analysis and document generation before applying.');
+      return;
+    }
+    // Synchronous in-flight guard (state alone is too late for double-clicks).
+    if (applyInFlightRef.current) return;
+    applyInFlightRef.current = job.id;
+    // Must dispatch the CustomEvent inside this click turn (gesture → side panel).
     const ackPromise = applyViaExtension(job.id, job.source_url);
     setApplyChecking(job.id);
     try {
@@ -1476,12 +1774,18 @@ export function ScraperJobsTable({
       }
       const info = await detectExtension();
       if (info.installed) {
-        window.open(job.source_url, '_blank', 'noopener,noreferrer');
-        showToast('warning', 'Opened the job in a new tab. Reload this dashboard once so the assistant opens automatically.');
+        // NEVER window.open here. The bridge may have already told the worker to
+        // chrome.tabs.create; a page-level open was the second identical tab.
+        // Installed-but-stale-tab: user must reload so the content script attaches.
+        showToast(
+          'warning',
+          'Extension is installed but this tab is not connected. Reload the dashboard, then click Apply again.',
+        );
       } else {
         setInstallFor(job);
       }
     } finally {
+      applyInFlightRef.current = null;
       setApplyChecking(null);
     }
   }, [showToast]);
@@ -1501,12 +1805,17 @@ export function ScraperJobsTable({
   };
 
   const handleRerunMany = useCallback(async (targets: DashboardJob[]) => {
+    if (targets.length === 0) return;
     if (targets.length === 1) { await handleRerun(targets[0]); return; }
     setBulkRerunning(true);
-    const res = await batchRerunJobs(targets.map((t) => t.id));
-    setBulkRerunning(false);
-    setSelectedIds(new Set());
-    showToast(res.ok ? 'success' : res.partial ? 'warning' : 'error', res.message);
+    try {
+      const res = await batchRerunJobs(targets.map((t) => t.id));
+      setSelectedIds(new Set());
+      setSelectedJobCatalog([]);
+      showToast(res.ok ? 'success' : res.partial ? 'warning' : 'error', res.message);
+    } finally {
+      setBulkRerunning(false);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchRerunJobs, showToast]);
 
@@ -1707,11 +2016,114 @@ export function ScraperJobsTable({
   };
 
   // ── Bulk bar handlers ─────────────────────────────────────────────────────
-  const selectedJobs = displayJobs.filter((j) => selectedIds.has(j.id));
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    setSelectedJobCatalog([]);
+  }, []);
 
-  const handleBulkRerun = useCallback(() => void handleRerunMany(selectedJobs),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedJobs]);
+  const isUnanalyzedJob = useCallback(
+    (j: DashboardJob) =>
+      isAdmin ? !dashboardJobRawJdReady(j) : j.match_overall_score == null,
+    [isAdmin],
+  );
+
+  /** Resolved selected rows in selection order (current page preferred over catalog). */
+  const selectedJobs = useMemo(() => {
+    const fromDisplay = new Map(displayJobs.map((j) => [j.id, j]));
+    const fromCatalog = new Map(selectedJobCatalog.map((j) => [j.id, j]));
+    const resolved: DashboardJob[] = [];
+    for (const id of selectedIds) {
+      const job = fromDisplay.get(id) ?? fromCatalog.get(id);
+      if (job) resolved.push(job);
+    }
+    return resolved;
+  }, [displayJobs, selectedJobCatalog, selectedIds]);
+
+  const unanalyzedJobs = useMemo(
+    () => displayJobs.filter(isUnanalyzedJob),
+    [displayJobs, isUnanalyzedJob],
+  );
+
+  const tablePages = useScraperStore((s) => s.pages);
+
+  /**
+   * Prepare selected — always enqueue every id in `selectedIds`.
+   * Using only `selectedJobs` previously dropped any selected row that had left
+   * the current page (catalog was not kept for manual selection).
+   */
+  const handleBulkRerun = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+
+    if (ids.length === 1) {
+      const job = selectedJobs.find((j) => j.id === ids[0]);
+      if (job) {
+        await handleRerun(job);
+        return;
+      }
+    }
+
+    setBulkRerunning(true);
+    try {
+      const res = await batchRerunJobs(ids);
+      setSelectedIds(new Set());
+      setSelectedJobCatalog([]);
+      showToast(res.ok ? 'success' : res.partial ? 'warning' : 'error', res.message);
+    } finally {
+      setBulkRerunning(false);
+    }
+  }, [selectedIds, selectedJobs, batchRerunJobs, showToast, handleRerun]);
+
+  const handleSelectUnanalyzedPage = useCallback(() => {
+    setSelectedJobCatalog([]);
+    setSelectedIds(new Set(unanalyzedJobs.map((j) => j.id)));
+  }, [unanalyzedJobs]);
+
+  const handleSelectUnanalyzedAllPages = useCallback(async () => {
+    if (selectingUnanalyzedAll) return;
+    setSelectingUnanalyzedAll(true);
+    try {
+      const s = useScraperStore.getState();
+      const perPage = 200;
+      const collected: DashboardJob[] = [];
+      let page = 1;
+      let pages = 1;
+      do {
+        const result = await fetchDashboardJobs({
+          page,
+          per_page: perPage,
+          source: s.sourceFilter || undefined,
+          q: s.searchQuery || undefined,
+          title: s.titleFilter || undefined,
+          company: s.companyFilter || undefined,
+          remote_only: s.remoteOnly || undefined,
+          min_match_score: s.minScore || undefined,
+          sort: s.sortField,
+          order: s.sortOrder,
+          view: s.view,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
+        collected.push(...result.items);
+        pages = Math.max(1, result.pages || 1);
+        page += 1;
+      } while (page <= pages);
+
+      const unanalyzed = collected.filter(isUnanalyzedJob);
+      setSelectedJobCatalog(unanalyzed);
+      setSelectedIds(new Set(unanalyzed.map((j) => j.id)));
+      const label = isAdmin ? 'not extracted' : 'unanalyzed';
+      showToast(
+        'success',
+        unanalyzed.length > 0
+          ? `Selected ${unanalyzed.length} ${label} job${unanalyzed.length === 1 ? '' : 's'} across all pages.`
+          : `No ${label} jobs found across all pages.`,
+      );
+    } catch {
+      showToast('error', 'Could not load all pages for selection.');
+    } finally {
+      setSelectingUnanalyzedAll(false);
+    }
+  }, [isAdmin, isUnanalyzedJob, selectingUnanalyzedAll, showToast]);
 
   const handleBulkOpenUrls = useCallback(() => {
     selectedJobs.forEach((j) => window.open(j.source_url, '_blank', 'noopener,noreferrer'));
@@ -1766,8 +2178,16 @@ export function ScraperJobsTable({
         <BulkBar
           count={selectedIds.size}
           totalVisible={jobs.length}
-          onSelectAll={() => setSelectedIds(new Set(jobs.map((j) => j.id)))}
-          onClearAll={() => setSelectedIds(new Set())}
+          unanalyzedCount={unanalyzedJobs.length}
+          showSelectAllPages={tablePages > 1}
+          selectingAllPages={selectingUnanalyzedAll}
+          onSelectAll={() => {
+            setSelectedJobCatalog([]);
+            setSelectedIds(new Set(jobs.map((j) => j.id)));
+          }}
+          onSelectUnanalyzedPage={handleSelectUnanalyzedPage}
+          onSelectUnanalyzedAllPages={() => void handleSelectUnanalyzedAllPages()}
+          onClearAll={clearSelection}
           onRerun={handleBulkRerun}
           onOpenUrls={handleBulkOpenUrls}
           onPostToSheet={handleBulkPostToSheet}
@@ -1793,21 +2213,34 @@ export function ScraperJobsTable({
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#141d31]">
         <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
-          <table className="w-full table-fixed border-collapse text-sm">
+          <table
+            className="w-full table-fixed border-collapse text-sm"
+            style={{ minWidth: isAdmin ? ADMIN_TABLE_MIN_WIDTH : APPLICANT_TABLE_MIN_WIDTH }}
+          >
             <colgroup>
               {columns.map((col) => {
                 let width = COLUMN_WIDTHS[col.key];
                 if (col.key === '__actions__' && isAdmin) width = ADMIN_ACTIONS_WIDTH;
                 if (col.key === 'title' && isAdmin) width = ADMIN_TITLE_WIDTH;
                 if (col.key === 'company' && isAdmin) width = ADMIN_COMPANY_WIDTH;
-                // Admin: URL is the flex column. Applicant: Source stays flex (no fixed width).
-                if (col.key === 'source' && !isAdmin) width = undefined;
+                // Flex absorbers: title (applicant) / URL (admin) take leftover width.
+                // Source is optional and no longer the flex column for applicants.
+                if (col.key === 'title' && !isAdmin) width = undefined;
                 if (col.key === 'source_url') width = undefined;
+                const vis = columnVisibilityClass(col.key, isAdmin, 'col');
                 return (
                   <col
                     key={col.key}
-                    style={width ? { width, minWidth: width } : undefined}
-                    className={col.key === 'source' && !isAdmin ? SOURCE_COL_CLASS : undefined}
+                    style={
+                      width
+                        ? { width, minWidth: width }
+                        : col.key === 'title' && !isAdmin
+                          ? { minWidth: '180px' }
+                          : col.key === 'source_url'
+                            ? { minWidth: '160px' }
+                            : undefined
+                    }
+                    className={vis}
                   />
                 );
               })}
@@ -1830,11 +2263,8 @@ export function ScraperJobsTable({
                       col.sortable
                         ? 'cursor-pointer select-none hover:bg-slate-200/70 hover:text-slate-800 dark:hover:bg-slate-700/50 dark:hover:text-white'
                         : '',
-                      col.key === '__actions__'
-                        ? `sticky right-0 z-20 bg-slate-100 dark:bg-[#1a2438] ${STICKY_SHADOW}`
-                        : '',
                       col.key === '__check__' ? 'px-2' : '',
-                      col.key === 'source' && !isAdmin ? SOURCE_CELL_CLASS : '',
+                      columnVisibilityClass(col.key, isAdmin, 'cell') ?? '',
                     ].join(' ')}
                   >
                     {col.key === '__check__' ? (
@@ -1963,20 +2393,10 @@ export function ScraperJobsTable({
                       {rowOffset + idx + 1}
                     </td>
 
-                    {/* Title */}
+                    {/* Title — color mirrors readiness (blue / yellow / green) */}
                     <td className={CELL}>
                       <div className="flex min-w-0 items-center gap-1.5">
-                        <a
-                          href={job.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex min-w-0 flex-1 items-center gap-1 text-blue-600 hover:text-blue-800 font-medium leading-snug"
-                          title={job.title ?? undefined}
-                        >
-                          <span className="truncate">{job.title || 'Untitled'}</span>
-                          <ExternalLink size={11} className="shrink-0 opacity-60" />
-                        </a>
+                        <JobTitleLink job={job} />
                       </div>
                     </td>
 
@@ -2004,29 +2424,35 @@ export function ScraperJobsTable({
                     {/* Applicant listing metadata */}
                     {!isAdmin && (
                       <>
-                        <td className={`${CELL} text-slate-500 text-xs truncate`}>
+                        <td
+                          className={`${CELL} text-slate-500 text-xs truncate ${columnVisibilityClass('location', false, 'cell') ?? ''}`}
+                        >
                           {job.location || '-'}
                         </td>
                         <td className={CELL}>
                           <WorkModeBadge mode={job.work_mode} isRemoteFallback={job.is_remote} />
                         </td>
-                        <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
+                        <td
+                          className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate ${columnVisibilityClass('salary_raw', false, 'cell') ?? ''}`}
+                        >
                           {job.salary_raw || <span className="text-slate-300">-</span>}
                         </td>
-                        <td className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate`}>
+                        <td
+                          className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate ${columnVisibilityClass('job_type', false, 'cell') ?? ''}`}
+                        >
                           {job.job_type || <span className="text-slate-300">-</span>}
                         </td>
                       </>
                     )}
 
-                    {/* Source — admin always visible; applicant flex / responsive hide */}
-                    <td className={`${CELL} ${isAdmin ? '' : SOURCE_CELL_CLASS}`}>
+                    {/* Source — optional on narrow viewports */}
+                    <td className={`${CELL} ${columnVisibilityClass('source', isAdmin, 'cell') ?? ''}`}>
                       <Badge variant={SOURCE_BADGE_VARIANT[job.source?.toLowerCase() ?? ''] || 'default'}>
                         {job.source || job.domain}
                       </Badge>
                     </td>
 
-                    {/* Posted (applicant only) */}
+                    {/* Posted (applicant only) — must display */}
                     {!isAdmin && (
                       <td className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs`}>
                         {relativeTime(job.posted_date)}
@@ -2034,12 +2460,16 @@ export function ScraperJobsTable({
                     )}
 
                     {/* Added from — scrape site or Manual (Source stays the ATS/site) */}
-                    <td className="px-3 py-0 align-middle whitespace-nowrap overflow-visible">
+                    <td
+                      className={`px-3 py-0 align-middle whitespace-nowrap overflow-visible ${columnVisibilityClass('added_from', isAdmin, 'cell') ?? ''}`}
+                    >
                       <AddedFromBadge job={job} />
                     </td>
 
                     {/* Added */}
-                    <td className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs`}>
+                    <td
+                      className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs ${columnVisibilityClass('created_at', isAdmin, 'cell') ?? ''}`}
+                    >
                       {relativeTime(job.created_at)}
                     </td>
 
@@ -2087,18 +2517,22 @@ export function ScraperJobsTable({
                       </div>
                     </td>
 
-                    {/* Actions (sticky) */}
+                    {/* Actions — same table-cell layout as other columns (not sticky) */}
                     <td
                       onClick={(e) => e.stopPropagation()}
-                      className={`sticky right-0 z-10 px-2 py-0 whitespace-nowrap align-middle text-right ${STICKY_SHADOW} ${dashboardJobStickyCellClass(job, { isSelected })}`}
+                      className={`${CELL} whitespace-nowrap text-right`}
                     >
                       <div className="flex items-center justify-end gap-1">
-                        {/* Apply with Assistant — applicants only */}
-                        {!isAdmin && (
+                        {/* Apply with Assistant — only when match + resume + cover are done */}
+                        {!isAdmin && isJobApplyReady(job) && (
                           <button
                             type="button"
                             disabled={applyChecking === job.id}
-                            onClick={() => void handleApply(job)}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleApply(job);
+                            }}
                             title="Apply with the Job Application Assistant extension"
                             className="inline-flex w-[72px] h-[28px] items-center justify-center gap-1 rounded-md border border-blue-200 bg-blue-50 text-xs font-medium text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
                           >
@@ -2175,16 +2609,6 @@ export function ScraperJobsTable({
                                   )
                                   : null
                           )}
-                        </button>
-
-                        {/* View */}
-                        <button
-                          type="button"
-                          onClick={() => setViewingJobId(job.id)}
-                          title={isAdmin ? 'View job details' : 'View job analysis'}
-                          className="inline-flex w-[56px] h-[28px] items-center justify-center gap-1 rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-600 transition-all hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
-                        >
-                          <Eye size={12} /><span>View</span>
                         </button>
 
                         {/* Delete */}

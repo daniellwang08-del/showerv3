@@ -7,8 +7,10 @@ entirely based on same-company comparisons within the user's recycle window.
 Rules (applied in order):
   0a. Security clearance / not-a-job → duplicated (removed from Jobs list).
   0b. Score 0 or below user's min threshold → duplicated (below_min_score).
-  1. US location filter - non-US structured location → duplicated (non_us_location).
-     Missing/ambiguous location → duplicated (location_unknown) for review in Duplicates tab.
+  1. US location filter - only explicit non-US structured locations are dropped
+     (non_us_location). Missing/ambiguous locations are kept (treated as US);
+     the optional dedup_rule_location_unknown_enabled toggle can still hide them
+     for review when an admin turns it on.
   2. Same URL - another active job with identical normalized_url → duplicated (same_url).
   3. Strict similarity - same title + same company → duplicated.
   4. Applied at same company - user already applied within recycle window → duplicated.
