@@ -163,6 +163,7 @@ Remember: work_mode is metadata only and must not affect match scores.
   - Never use em dashes in any output field (summary, strengths, gaps, description). Use a comma, period, or hyphen instead.
 - **Do not invent** facts, requirements, or benefits not supported by the source.
 - Put salary, location, employment type, and remote policy in their structured fields - do not repeat them as a noisy prefix inside `description`.
+- Keep `description` under **8000 characters** when possible so the full JSON response fits reliably. Prefer trimming marketing fluff over cutting requirements or responsibilities.
 
 **Location format**: Use "City, State" for US jobs (e.g. "San Francisco, CA"), "City, Country" for international jobs (e.g. "London, UK"). If city is unavailable, use state/region or country only. Never include street addresses, zip codes, or building names.
 

@@ -152,7 +152,7 @@ class Settings(BaseSettings):
     autopost_worker_max_jobs: int = 4
     # Max parallel OpenAI calls when attachment text is split into chunks.
     openai_attachment_max_concurrent: int = 4
-    phase_a_max_tokens: int = 8192
+    phase_a_max_tokens: int = 16384
     phase_b_max_tokens: int = 16384
     auto_generate_tailored_content: bool = True
 

@@ -784,6 +784,25 @@ def _response_message_meta(response: object) -> tuple[str, str | None, dict[str,
     return response_message_meta(response)
 
 
+def _loads_llm_json(result_text: str) -> dict:
+    """Parse model JSON; repair truncated/malformed payloads when possible."""
+    try:
+        parsed = json.loads(result_text)
+    except json.JSONDecodeError as strict_err:
+        try:
+            from json_repair import repair_json as _repair_json
+        except ImportError:
+            raise strict_err
+        try:
+            repaired = _repair_json(result_text, return_objects=False)
+            parsed = json.loads(repaired if isinstance(repaired, str) else json.dumps(repaired))
+        except Exception as repair_err:
+            raise strict_err from repair_err
+    if not isinstance(parsed, dict):
+        raise AIParsingError("AI response JSON must be an object")
+    return parsed
+
+
 async def _call_openai_json(
     *,
     system_prompt: str,
@@ -801,21 +820,67 @@ async def _call_openai_json(
         {"role": "user", "content": user_content},
     ]
 
-    try:
-        result_text, _response = await chat_completion_with_empty_retry(
+    async def _complete(*, token_budget: int, reasoning_effort: str | None = None) -> tuple[str, object]:
+        create_kwargs: dict = {
+            "model": settings.openai_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": token_budget,
+            "response_format": {"type": "json_object"},
+        }
+        if reasoning_effort:
+            create_kwargs["reasoning_effort"] = reasoning_effort
+        return await chat_completion_with_empty_retry(
             client,
             observe=observe_name,
             job_type=job_type,
-            model=settings.openai_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"},
+            **create_kwargs,
         )
-        return json.loads(result_text)
-    except json.JSONDecodeError as e:
-        logger.error("job_match_json_error", observe=observe_name, error=str(e))
-        raise AIParsingError(f"Failed to parse AI response: {e}")
+
+    try:
+        result_text, response = await _complete(token_budget=max_tokens)
+        try:
+            return _loads_llm_json(result_text)
+        except (json.JSONDecodeError, AIParsingError) as first_err:
+            _content, finish_reason, usage = response_message_meta(response)
+            logger.error(
+                "job_match_json_error",
+                observe=observe_name,
+                error=str(first_err),
+                finish_reason=finish_reason,
+                content_chars=len(result_text or ""),
+                completion_tokens=usage.get("completion_tokens"),
+                reasoning_tokens=usage.get("reasoning_tokens"),
+            )
+            # Reasoning models often hit max_completion_tokens mid-string inside
+            # structured_job.description. Retry once with a larger budget + low effort
+            # and JSON repair so scores are not dropped.
+            retry_budget = min(16384, max(max_tokens * 2, max_tokens + 4096))
+            result_text, response = await _complete(
+                token_budget=retry_budget,
+                reasoning_effort="low",
+            )
+            try:
+                parsed = _loads_llm_json(result_text)
+                logger.info(
+                    "job_match_json_recovered",
+                    observe=observe_name,
+                    retry_max_tokens=retry_budget,
+                    content_chars=len(result_text or ""),
+                )
+                return parsed
+            except (json.JSONDecodeError, AIParsingError) as second_err:
+                _c2, finish2, usage2 = response_message_meta(response)
+                logger.error(
+                    "job_match_json_error_after_retry",
+                    observe=observe_name,
+                    error=str(second_err),
+                    finish_reason=finish2,
+                    content_chars=len(result_text or ""),
+                    completion_tokens=usage2.get("completion_tokens"),
+                    reasoning_tokens=usage2.get("reasoning_tokens"),
+                )
+                raise AIParsingError(f"Failed to parse AI response: {second_err}") from second_err
     except AIParsingError:
         raise
     except Exception as e:
