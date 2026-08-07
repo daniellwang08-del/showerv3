@@ -88,14 +88,18 @@ async def test_save_lock_busy_defers_instead_of_sleeping():
 
 
 @pytest.mark.asyncio
-async def test_save_lock_timeout_after_max_attempts():
+async def test_save_lock_keeps_deferring_after_soft_threshold():
+    """Completed analysis must never be discarded when the per-user lock is busy."""
     redis = AsyncMock()
     redis.set = AsyncMock(return_value=False)
 
+    save_pool = AsyncMock()
+    save_pool.enqueue_job = AsyncMock(return_value=MagicMock())
+
     with (
+        patch("app.tasks.worker.get_save_pool", new=AsyncMock(return_value=save_pool)),
         patch("app.tasks.worker.clear_job_match_progress", new=AsyncMock()) as clear_progress,
         patch("app.tasks.worker.publish_ws_event", new=AsyncMock()) as publish,
-        patch("app.tasks.worker.get_save_pool", new=AsyncMock()) as get_pool,
     ):
         result = await save_analyzed_job(
             {"redis": redis},
@@ -106,11 +110,12 @@ async def test_save_lock_timeout_after_max_attempts():
             SAVE_LOCK_MAX_ATTEMPTS,
         )
 
-    assert result is None
-    get_pool.assert_not_called()
-    clear_progress.assert_awaited()
-    publish.assert_awaited()
-    assert publish.await_args.args[0]["type"] == "match_failed"
+    assert result == {"deferred": "lock_busy", "lock_attempt": SAVE_LOCK_MAX_ATTEMPTS + 1}
+    save_pool.enqueue_job.assert_awaited_once()
+    clear_progress.assert_not_awaited()
+    publish.assert_not_awaited()
+    kwargs = save_pool.enqueue_job.await_args.kwargs
+    assert kwargs.get("_defer_by") == 1.5
 
 
 @pytest.mark.asyncio

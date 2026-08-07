@@ -5,6 +5,7 @@ import { useWebSocket, type WsEvent } from './hooks/useWebSocket';
 import { useScraperStore } from './stores/scraperStore';
 import { useJobsStore } from './stores/jobsStore';
 import { useModalStore } from './stores/modalStore';
+import { useUIStore } from './stores/uiStore';
 import { AppShell } from './components/layout/AppShell';
 import { BrandedLoader } from './components/layout/BrandedLoader';
 import { ScraperDashboard } from './pages/ScraperDashboard';
@@ -86,6 +87,19 @@ function App() {
     if (event.type === 'job_excluded_for_user' || event.type === 'extraction_failed') {
       void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
       useScraperStore.getState().bgRefreshJobs();
+    }
+
+    if (event.type === 'match_failed') {
+      const detail = (event.error || event.message || 'Match analysis failed').trim();
+      useUIStore.getState().notify('error', detail, 8000);
+      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
+    }
+
+    if (event.type === 'extraction_failed' && (event.error || event.message)) {
+      const detail = String(event.error || event.message).trim();
+      if (detail) {
+        useUIStore.getState().notify('error', detail, 8000);
+      }
     }
 
     const pipelineEvents = [

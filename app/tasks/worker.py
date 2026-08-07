@@ -23,9 +23,13 @@ SAVE_QUEUE = "job_save"
 AUTOPOST_QUEUE = "job_autopost"
 
 # Per-user save lock: defer instead of sleeping so waiters do not occupy max_jobs.
+# Never abandon a completed analysis — keep deferring until the lock is free.
 SAVE_LOCK_POLL_SECONDS = 1.5
+# Soft log threshold only (not a hard give-up). Kept for metrics/tests.
 SAVE_LOCK_MAX_WAIT_SECONDS = 90
 SAVE_LOCK_MAX_ATTEMPTS = int(SAVE_LOCK_MAX_WAIT_SECONDS / SAVE_LOCK_POLL_SECONDS)
+# Lock must outlive a slow dedup; refresh is not needed if TTL is generous.
+SAVE_LOCK_TTL_SECONDS = 300
 
 
 async def _mark_extraction_failed_cancelled(job_id: str) -> None:
@@ -266,15 +270,61 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
             pool = await get_save_pool()
             from app.core.redis_support import pipeline_job_id
+            import uuid
 
-            await pool.enqueue_job(
+            # Prefer stable id; on collision (prior save still queued) use a unique
+            # id so completed match_data is never silently dropped.
+            arq_id = pipeline_job_id("save", valid_job_id, user_id)
+            job = await pool.enqueue_job(
                 "save_analyzed_job",
                 valid_job_id,
                 user_id,
                 extraction_id,
                 result,
-                _job_id=pipeline_job_id("save", valid_job_id, user_id),
+                _job_id=arq_id,
             )
+            if job is None:
+                retry_id = pipeline_job_id(
+                    "save", valid_job_id, user_id, f"r{uuid.uuid4().hex[:10]}"
+                )
+                job = await pool.enqueue_job(
+                    "save_analyzed_job",
+                    valid_job_id,
+                    user_id,
+                    extraction_id,
+                    result,
+                    _job_id=retry_id,
+                )
+                logger.info(
+                    "worker_save_enqueued_unique_retry",
+                    valid_job_id=valid_job_id,
+                    user_id=user_id,
+                    arq_job_id=retry_id,
+                    already_queued=job is None,
+                )
+            if job is None:
+                # Last resort: persist in-process so LLM output is never dropped.
+                logger.warning(
+                    "worker_save_enqueue_collision_fallback_in_process",
+                    valid_job_id=valid_job_id,
+                    user_id=user_id,
+                )
+                await save_analyzed_job(
+                    {"redis": ctx.get("redis")},
+                    valid_job_id,
+                    user_id,
+                    extraction_id,
+                    result,
+                )
+        else:
+            # run_job_match_analysis already cleared progress on failure paths.
+            logger.warning("worker_analyze_job_match_empty_result", valid_job_id=valid_job_id, user_id=user_id)
+            await publish_ws_event({
+                "type": "match_failed",
+                "user_id": user_id,
+                "valid_job_id": valid_job_id,
+                "error": "Match analysis returned no result",
+            })
         return result
     except asyncio.CancelledError:
         await clear_job_match_progress(valid_job_id, user_id)
@@ -282,6 +332,12 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
     except Exception as e:
         logger.exception("worker_analyze_job_match_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
         await clear_job_match_progress(valid_job_id, user_id)
+        await publish_ws_event({
+            "type": "match_failed",
+            "user_id": user_id,
+            "valid_job_id": valid_job_id,
+            "error": str(e)[:300],
+        })
         return None
     finally:
         clear_logging_context()
@@ -300,6 +356,9 @@ async def save_analyzed_job(
     Lock contention re-enqueues with ``_defer_by`` instead of sleeping so waiters
     do not occupy a save ``max_jobs`` slot. Dedup runs under the lock; Phase B
     enqueue, WS events, and auto-post run after the lock is released.
+
+    Critical: a completed Phase A result must never be discarded because the
+    per-user lock is busy — keep deferring until the save succeeds.
     """
     from app.core.redis_support import pipeline_job_id
     from app.services.post_analysis_dedup import run_post_analysis_dedup
@@ -315,7 +374,7 @@ async def save_analyzed_job(
 
     redis = ctx.get("redis")
     lock_key = f"job_save_lock:{user_id}"
-    lock_ttl = 120
+    lock_ttl = SAVE_LOCK_TTL_SECONDS
     lock_held = False
     dedup_result: dict | None = None
     action: str | None = None
@@ -324,27 +383,22 @@ async def save_analyzed_job(
         acquired = await redis.set(lock_key, "1", nx=True, ex=lock_ttl)
         if not acquired:
             attempt = max(0, int(lock_attempt or 0))
-            if attempt >= SAVE_LOCK_MAX_ATTEMPTS:
-                logger.error(
-                    "save_lock_timeout",
+            next_attempt = attempt + 1
+            if next_attempt == SAVE_LOCK_MAX_ATTEMPTS or (
+                next_attempt > SAVE_LOCK_MAX_ATTEMPTS and next_attempt % SAVE_LOCK_MAX_ATTEMPTS == 0
+            ):
+                # Soft warning only — still keep waiting; never drop match_data.
+                logger.warning(
+                    "save_lock_still_busy",
                     job_id=job_id,
                     user_id=user_id,
-                    waited=SAVE_LOCK_MAX_WAIT_SECONDS,
-                    lock_attempt=attempt,
+                    lock_attempt=next_attempt,
+                    waited_approx_seconds=round(next_attempt * SAVE_LOCK_POLL_SECONDS),
                 )
-                await clear_job_match_progress(job_id, user_id)
-                await publish_ws_event({
-                    "type": "match_failed",
-                    "user_id": user_id,
-                    "valid_job_id": job_id,
-                    "error": "Timed out waiting for save lock",
-                })
-                clear_logging_context()
-                return None
-
-            next_attempt = attempt + 1
             try:
                 pool = await get_save_pool()
+                # Unique id per attempt so a running waiter can schedule the next poll
+                # after it returns (stable ids would collide with the in-flight job).
                 await pool.enqueue_job(
                     "save_analyzed_job",
                     job_id,
@@ -369,15 +423,39 @@ async def save_analyzed_job(
                     user_id=user_id,
                     error=str(e),
                 )
-                await clear_job_match_progress(job_id, user_id)
-                await publish_ws_event({
-                    "type": "match_failed",
-                    "user_id": user_id,
-                    "valid_job_id": job_id,
-                    "error": "Failed to requeue while waiting for save lock",
-                })
-                clear_logging_context()
-                return None
+                # Last resort: try once more with a unique suffix before failing.
+                try:
+                    pool = await get_save_pool()
+                    await pool.enqueue_job(
+                        "save_analyzed_job",
+                        job_id,
+                        user_id,
+                        extraction_id,
+                        match_data,
+                        next_attempt,
+                        _job_id=pipeline_job_id(
+                            "save", job_id, user_id, f"lockretry{next_attempt}"
+                        ),
+                        _defer_by=SAVE_LOCK_POLL_SECONDS * 2,
+                    )
+                    clear_logging_context()
+                    return {"deferred": "lock_busy_retry", "lock_attempt": next_attempt}
+                except Exception as e2:
+                    logger.error(
+                        "save_lock_defer_retry_failed",
+                        job_id=job_id,
+                        user_id=user_id,
+                        error=str(e2),
+                    )
+                    await clear_job_match_progress(job_id, user_id)
+                    await publish_ws_event({
+                        "type": "match_failed",
+                        "user_id": user_id,
+                        "valid_job_id": job_id,
+                        "error": "Failed to requeue while waiting for save lock",
+                    })
+                    clear_logging_context()
+                    return None
             clear_logging_context()
             return {"deferred": "lock_busy", "lock_attempt": next_attempt}
         lock_held = True

@@ -532,18 +532,7 @@ async def match_rerun_data_management_jobs(
                     JobMatchInProgress.user_id == user_id,
                 )
             )
-            if in_prog.scalar_one_or_none():
-                skipped.append({"id": job_id, "reason": "already_in_progress"})
-                continue
-
-            await match_repo.delete(job_id, user_id)
-            await session.execute(
-                text(
-                    "DELETE FROM resume_build_results "
-                    "WHERE job_id = :job_id AND user_id = :uid"
-                ),
-                {"job_id": job_id, "uid": user_id},
-            )
+            was_in_progress = in_prog.scalar_one_or_none() is not None
 
             r = await session.execute(select(Job).where(Job.id == job_id, Job.status == "active"))
             job = r.scalar_one_or_none()
@@ -561,7 +550,17 @@ async def match_rerun_data_management_jobs(
                 skipped.append({"id": job_id, "reason": "extraction_not_ready"})
                 continue
 
-            await progress_repo.add(job_id, user_id)
+            # Re-queue even when a progress row exists (stuck/aborted worker).
+            await match_repo.delete(job_id, user_id)
+            await session.execute(
+                text(
+                    "DELETE FROM resume_build_results "
+                    "WHERE job_id = :job_id AND user_id = :uid"
+                ),
+                {"job_id": job_id, "uid": user_id},
+            )
+            if not was_in_progress:
+                await progress_repo.add(job_id, user_id)
             await session.commit()
             enqueued_ids.append(job_id)
 
@@ -573,7 +572,7 @@ async def match_rerun_data_management_jobs(
             "enqueued_ids": [],
             "skipped": skipped,
             "capped": preview["capped"],
-            "message": "Nothing queued; fix skipped reasons or wait for in-progress jobs.",
+            "message": "Nothing queued; check skipped reasons.",
         }
 
     ids_for_in_process = list(enqueued_ids)

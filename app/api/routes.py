@@ -843,20 +843,54 @@ async def _run_analyze_and_enqueue_save(
 
     result = await run_job_match_analysis(job_id, user_id, extraction_id=extraction_id)
     if not result:
+        await publish_ws_event({
+            "type": "match_failed",
+            "user_id": user_id,
+            "valid_job_id": job_id,
+            "error": "Match analysis returned no result",
+        })
         return
 
     pool = await try_get_save_pool()
     if pool:
         try:
-            await pool.enqueue_job(
+            import uuid
+
+            arq_id = pipeline_job_id("save", job_id, user_id)
+            job = await pool.enqueue_job(
                 "save_analyzed_job",
                 job_id,
                 user_id,
                 extraction_id,
                 result,
-                _job_id=pipeline_job_id("save", job_id, user_id),
+                _job_id=arq_id,
             )
-            return
+            if job is None:
+                retry_id = pipeline_job_id(
+                    "save", job_id, user_id, f"r{uuid.uuid4().hex[:10]}"
+                )
+                job = await pool.enqueue_job(
+                    "save_analyzed_job",
+                    job_id,
+                    user_id,
+                    extraction_id,
+                    result,
+                    _job_id=retry_id,
+                )
+                logger.info(
+                    "save_after_match_enqueued_unique_retry",
+                    job_id=job_id,
+                    user_id=user_id,
+                    arq_job_id=retry_id,
+                    already_queued=job is None,
+                )
+            if job is not None:
+                return
+            logger.warning(
+                "save_after_match_redis_enqueue_collision",
+                job_id=job_id,
+                user_id=user_id,
+            )
         except Exception as e:
             logger.warning(
                 "save_after_match_redis_enqueue_failed",
@@ -882,6 +916,7 @@ async def enqueue_job_match_analysis(
     *,
     background_tasks: BackgroundTasks | None = None,
     extraction_id: str | None = None,
+    force_requeue: bool = False,
 ) -> None:
     """
     Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks
@@ -889,6 +924,9 @@ async def enqueue_job_match_analysis(
 
     The analysis worker enqueues ``save_analyzed_job`` (persist + Phase B). The
     in-process fallback must do the same via ``_run_analyze_and_enqueue_save``.
+
+    ``force_requeue`` uses an alternate arq id when the stable id is already
+    reserved (stale/in-flight), so Prepare/retry never silently no-ops.
     """
     from app.core.redis_support import allow_in_process_job_fallback, pipeline_job_id
     from app.tasks.worker import ANALYSIS_QUEUE
@@ -905,14 +943,46 @@ async def enqueue_job_match_analysis(
                 extraction_id,
                 _job_id=arq_id,
             )
-            logger.info(
-                "job_match_enqueued_redis",
-                job_id=job_id,
-                user_id=user_id,
-                queue=ANALYSIS_QUEUE,
-                arq_job_id=arq_id,
-                already_queued=job is None,
-            )
+            if job is None and force_requeue:
+                import uuid
+
+                retry_id = pipeline_job_id("analyze", job_id, user_id, "retry")
+                job = await pool.enqueue_job(
+                    "analyze_job_match",
+                    job_id,
+                    user_id,
+                    extraction_id,
+                    _job_id=retry_id,
+                )
+                if job is None:
+                    uniq_id = pipeline_job_id(
+                        "analyze", job_id, user_id, f"r{uuid.uuid4().hex[:10]}"
+                    )
+                    job = await pool.enqueue_job(
+                        "analyze_job_match",
+                        job_id,
+                        user_id,
+                        extraction_id,
+                        _job_id=uniq_id,
+                    )
+                    retry_id = uniq_id
+                logger.info(
+                    "job_match_enqueued_redis_retry",
+                    job_id=job_id,
+                    user_id=user_id,
+                    queue=ANALYSIS_QUEUE,
+                    arq_job_id=retry_id,
+                    already_queued=job is None,
+                )
+            else:
+                logger.info(
+                    "job_match_enqueued_redis",
+                    job_id=job_id,
+                    user_id=user_id,
+                    queue=ANALYSIS_QUEUE,
+                    arq_job_id=arq_id,
+                    already_queued=job is None,
+                )
             return
         except Exception as e:
             logger.warning("job_match_redis_enqueue_failed", job_id=job_id, error=str(e))
@@ -965,9 +1035,15 @@ async def start_personal_job_analysis(
     """Queue per-user analysis for a job that already has (or will use) shared JD.
 
     Returns a small status dict: queued | cached | in_progress | error detail keys.
+
+    If a progress row already exists (stuck/aborted worker), still re-enqueue
+    analysis so Prepare never silently no-ops.
     """
     from app.services.job_pipeline_mode import extraction_has_shared_jd
     from app.storage.repository import JobMatchInProgressRepository
+
+    already_in_progress = False
+    extraction_id: str | None = None
 
     async with get_session() as session:
         progress_repo = JobMatchInProgressRepository(session)
@@ -978,11 +1054,10 @@ async def start_personal_job_analysis(
                 JobMatchInProgress.user_id == user_id,
             )
         )
-        if in_prog.scalar_one_or_none():
-            return {"status": "in_progress", "message": "Match analysis already in progress"}
+        already_in_progress = in_prog.scalar_one_or_none() is not None
 
         existing = await match_repo.get(job_id, user_id)
-        if existing and not force:
+        if existing and not force and not already_in_progress:
             return {"status": "cached", "message": "Match already computed"}
         if existing and force:
             await match_repo.delete(job_id, user_id)
@@ -997,7 +1072,8 @@ async def start_personal_job_analysis(
         if not extraction_has_shared_jd(extraction):
             return {"status": "error", "message": "Job description not yet scraped"}
 
-        await progress_repo.add(job_id, user_id)
+        if not already_in_progress:
+            await progress_repo.add(job_id, user_id)
         await session.commit()
         extraction_id = job.extraction_id
 
@@ -1006,8 +1082,16 @@ async def start_personal_job_analysis(
         user_id,
         background_tasks=background_tasks,
         extraction_id=extraction_id,
+        force_requeue=already_in_progress or force,
     )
-    return {"status": "queued", "message": "Match analysis queued"}
+    return {
+        "status": "queued",
+        "message": (
+            "Match analysis re-queued"
+            if already_in_progress
+            else "Match analysis queued"
+        ),
+    }
 
 
 async def prepare_job_for_user(
@@ -3361,10 +3445,6 @@ async def rerun_job_match_batch(
             extractions_by_id = {e.id: e for e in ext_rows.scalars().all()}
 
         for job_id in unique_ids:
-            if job_id in already_in_progress:
-                skipped.append({"id": job_id, "reason": "already_in_progress"})
-                continue
-
             job = jobs_by_id.get(job_id)
             if not job or not job.extraction_id:
                 skipped.append({"id": job_id, "reason": "no_extraction"})
@@ -3377,6 +3457,8 @@ async def rerun_job_match_batch(
                 skipped.append({"id": job_id, "reason": "extraction_not_ready"})
                 continue
 
+            # Stuck/aborted in_progress must still be re-queued (unique arq ids below).
+            was_in_progress = job_id in already_in_progress
             await match_repo.delete(job_id, user_id)
             await session.execute(
                 text(
@@ -3385,7 +3467,8 @@ async def rerun_job_match_batch(
                 ),
                 {"job_id": job_id, "uid": user_id},
             )
-            await progress_repo.add(job_id, user_id)
+            if not was_in_progress:
+                await progress_repo.add(job_id, user_id)
             enqueued_ids.append(job_id)
 
         await session.commit()
@@ -3396,7 +3479,7 @@ async def rerun_job_match_batch(
             "enqueued": 0,
             "enqueued_ids": [],
             "skipped": skipped,
-            "message": "Nothing queued; fix skipped reasons or wait for in-progress jobs.",
+            "message": "Nothing queued; check skipped reasons.",
         }
 
     ids_for_in_process: list[str] = list(enqueued_ids)
