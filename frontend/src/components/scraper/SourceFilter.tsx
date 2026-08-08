@@ -11,6 +11,15 @@ const SOURCE_COLORS: Record<string, string> = {
   adzuna: 'bg-cyan-100 text-cyan-700 border-cyan-200',
 };
 
+const SOURCE_SHORT_LABELS: Record<string, string> = {
+  remoterocketship: 'RRS',
+  jobright: 'JR.ai',
+  welcometothejungle: 'WTTJ',
+  adzuna: 'Aduna',
+  ziprecruiter: 'ZR',
+  manual: 'FM',
+};
+
 export function SourceFilter({ sources, selected, onChange }: SourceFilterProps) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -26,16 +35,19 @@ export function SourceFilter({ sources, selected, onChange }: SourceFilterProps)
       </button>
       {sources.map((src) => {
         const isActive = selected === src;
-        const colorCls = SOURCE_COLORS[src.toLowerCase()] || 'bg-slate-100 text-slate-700 border-slate-200';
+        const key = src.toLowerCase();
+        const colorCls = SOURCE_COLORS[key] || 'bg-slate-100 text-slate-700 border-slate-200';
+        const label = SOURCE_SHORT_LABELS[key] || src;
         return (
           <button
             key={src}
+            title={src}
             onClick={() => onChange(isActive ? '' : src)}
             className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               isActive ? colorCls : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
             }`}
           >
-            {src}
+            {label}
           </button>
         );
       })}

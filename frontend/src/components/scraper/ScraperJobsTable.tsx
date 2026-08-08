@@ -157,17 +157,17 @@ const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
   job_type: '72px',
   source: '110px',
   posted_date: '56px',
-  added_from: '140px',
+  added_from: '72px',
   created_at: '56px',
-  // Match pill is ~6.75rem; keep column snug so Resume sits next to it.
-  __processing__: '118px',
+  // Compact match pill (score + band).
+  __processing__: '100px',
   // Icon-only doc actions (view + download).
   __resume__: '64px',
   __cover__: '64px',
   // Overridden dynamically from integration count (Applied ± Sheets ± Pumble).
   __status__: '40px',
-  // Apply + Analyze + Delete — compact buttons.
-  __actions__: '176px',
+  // Worst case: Apply + Re-run + Delete must all fit (table-fixed clips otherwise).
+  __actions__: '196px',
 };
 
 const ADMIN_ACTIONS_WIDTH = '132px';
@@ -191,11 +191,11 @@ function applicantTableMinWidth(sheetsConfigured: boolean, pumbleConfigured: boo
     100 + // company
     72 + // work mode
     56 + // posted
-    118 + // match
+    100 + // match
     64 + // resume
     64 + // cover
     statusPx +
-    176 // actions
+    196 // actions (Apply + Re-run + Delete)
   );
 }
 
@@ -668,11 +668,11 @@ function scoreLabel(score: number): string {
   return 'Weak';
 }
 
-/** Shared Match column shell — compact fixed size so Match sits flush with Resume. */
+/** Shared Match column shell — tight horizontal padding. */
 const MATCH_PILL_BASE =
-  'inline-flex h-[28px] w-[6.75rem] shrink-0 items-center justify-center gap-0.5 rounded-lg border px-1.5 shadow-sm';
+  'inline-flex h-[28px] w-auto shrink-0 items-center justify-center gap-0.5 rounded-lg border px-1 shadow-sm';
 
-/** Match score pill — fixed width/height for every band label. */
+/** Match score pill — compact footprint for every band label. */
 const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number }) {
   return (
     <div
@@ -680,7 +680,7 @@ const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number
       className={`${MATCH_PILL_BASE} ${scoreColors(score)}`}
     >
       <Sparkles size={11} className="shrink-0 opacity-75" aria-hidden />
-      <span className="w-5 shrink-0 text-right text-sm font-bold tabular-nums leading-none">{score}</span>
+      <span className="shrink-0 text-sm font-bold tabular-nums leading-none">{score}</span>
       <span className="min-w-0 shrink truncate text-left text-[10px] font-medium leading-none opacity-70">
         {scoreLabel(score)}
       </span>
@@ -737,9 +737,19 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
   );
 });
 
-/** How the job entered the pool — separate from ATS/platform Source. */
+/** How the job entered the pool — short badges; full name stays in the tooltip. */
 const ADDED_FROM_LABELS: Record<string, string> = {
-  manual: 'Manual',
+  manual: 'FM',
+  job_sites: 'Sites',
+  remoterocketship: 'RRS',
+  jobright: 'JR.ai',
+  welcometothejungle: 'WTTJ',
+  adzuna: 'Aduna',
+  ziprecruiter: 'ZR',
+};
+
+const ADDED_FROM_FULL_NAMES: Record<string, string> = {
+  manual: 'Manual (from me)',
   job_sites: 'Job sites',
   remoterocketship: 'RemoteRocketship',
   jobright: 'Jobright.ai',
@@ -768,12 +778,13 @@ function resolveAddedFromSlug(job: DashboardJob): string {
 function AddedFromBadge({ job }: { job: DashboardJob }) {
   const slug = resolveAddedFromSlug(job);
   const label = ADDED_FROM_LABELS[slug] || slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const fullName = ADDED_FROM_FULL_NAMES[slug] || label;
   const title =
     slug === 'manual'
-      ? 'You added this job by URL or attachment'
+      ? 'You added this job by URL or attachment (FM)'
       : slug === 'job_sites'
         ? 'Fetched from job sites during platform sync'
-        : `Fetched from ${label} during platform sync`;
+        : `Fetched from ${fullName} during platform sync`;
   return (
     <span title={title} className="inline-flex max-w-full">
       <Badge variant={ADDED_FROM_VARIANT[slug] || 'default'}>
@@ -2202,7 +2213,7 @@ export function ScraperJobsTable({
 
       {/* ── Hint when nothing selected ──────────────────────────────────── */}
       {selectedIds.size === 0 && (
-        <p className="hidden items-center gap-1.5 px-1 text-[11px] text-slate-400 md:flex">
+        <p className="hidden items-center gap-1.5 px-1 text-[11px] text-slate-500 md:flex dark:text-slate-300">
           <MousePointer2 size={11} />
           Long-press a row to start drag-selecting · Right-click for actions · Ctrl+Click to toggle
         </p>
@@ -2258,7 +2269,7 @@ export function ScraperJobsTable({
 
             {/* ── Header ── */}
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-[#1a2438]">
+              <tr className="border-b border-slate-200 bg-slate-100 dark:border-slate-500/70 dark:bg-[#243148]">
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -2274,10 +2285,10 @@ export function ScraperJobsTable({
                       col.key === '__actions__'
                         ? 'px-1.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden'
                         : 'px-2.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden',
-                      'text-slate-600 dark:text-slate-200',
+                      'text-slate-700 dark:text-[#e8eef7]',
                       RIGHT_ALIGN_KEYS.has(col.key) ? 'text-right' : 'text-left',
                       col.sortable
-                        ? 'cursor-pointer select-none hover:bg-slate-200/70 hover:text-slate-800 dark:hover:bg-slate-700/50 dark:hover:text-white'
+                        ? 'cursor-pointer select-none hover:bg-slate-200/70 hover:text-slate-900 dark:hover:bg-[#2f3d58] dark:hover:text-white'
                         : '',
                       col.key === '__check__' ? 'px-2' : '',
                       columnVisibilityClass(col.key, isAdmin, 'cell') ?? '',
@@ -2334,8 +2345,8 @@ export function ScraperJobsTable({
                             size={12}
                             className={
                               sortField === ('sortKey' in col && col.sortKey ? col.sortKey : col.key)
-                                ? 'text-blue-600 dark:text-blue-400'
-                                : 'text-slate-400 dark:text-slate-500'
+                                ? 'text-blue-600 dark:text-sky-300'
+                                : 'text-slate-400 dark:text-slate-300'
                             }
                           />
                         )}
@@ -2347,7 +2358,7 @@ export function ScraperJobsTable({
             </thead>
 
             {/* ── Body ── */}
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/80">
               {displayJobs.map((job, idx) => {
                 const isSelected      = selectedIds.has(job.id);
                 const isApiCallInFlight = rerunningId === job.id;
@@ -2533,12 +2544,12 @@ export function ScraperJobsTable({
                       </div>
                     </td>
 
-                    {/* Actions — overflow visible so Analyze is never clipped to Delete-only */}
+                    {/* Actions — width reserved for Apply + Run/Re-run + Delete */}
                     <td
                       onClick={(e) => e.stopPropagation()}
-                      className="px-1.5 py-0 align-middle whitespace-nowrap overflow-visible text-right"
+                      className="px-1 py-0 align-middle whitespace-nowrap overflow-visible text-right"
                     >
-                      <div className="inline-flex items-center justify-end gap-1">
+                      <div className="inline-flex max-w-full items-center justify-end gap-1">
                         {/* Apply with Assistant — only when match + resume + cover are done */}
                         {!isAdmin && isJobApplyReady(job) && (
                           <button
@@ -2550,7 +2561,7 @@ export function ScraperJobsTable({
                               void handleApply(job);
                             }}
                             title="Apply with the Job Application Assistant extension"
-                            className="inline-flex h-[28px] min-w-[64px] items-center justify-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-1.5 text-[11px] font-medium text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            className="inline-flex h-[28px] shrink-0 items-center justify-center gap-0.5 rounded-md border border-blue-200 bg-blue-50 px-1.5 text-[11px] font-medium text-blue-700 transition-all hover:border-blue-300 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-200"
                           >
                             {applyChecking === job.id
                               ? <Loader2 size={12} className="animate-spin" />
@@ -2581,7 +2592,7 @@ export function ScraperJobsTable({
                                   : 'Extract job description then analyze'
                           }
                           className={[
-                            'relative inline-flex h-[28px] min-w-[78px] items-center justify-center gap-1 rounded-md border px-1.5 text-[11px] font-medium transition-all disabled:cursor-not-allowed',
+                            'relative inline-flex h-[28px] shrink-0 items-center justify-center gap-0.5 rounded-md border px-1.5 text-[11px] font-medium transition-all disabled:cursor-not-allowed',
                             isPipelineRunning
                               ? 'border-amber-300 bg-amber-50 text-amber-700 opacity-90 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300'
                               : isAdmin
@@ -2589,25 +2600,22 @@ export function ScraperJobsTable({
                                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300'
                                   : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:border-blue-300 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-300')
                                 : analysisDone
-                                  // Re-analyze — score already exists
                                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-300 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300'
                                   : hasExtraction
-                                    // Analyze — JD scraped (yellow status dot), score not run yet
                                     ? 'border-yellow-300 bg-yellow-50 text-yellow-800 hover:bg-yellow-100 hover:border-yellow-400 dark:border-yellow-500/40 dark:bg-yellow-500/15 dark:text-yellow-300'
                                     : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:border-blue-300 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-300',
                           ].join(' ')}
                         >
                           {isRerunning ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                           <span>
-                            {isApiCallInFlight         ? 'Starting…'
-                              : isPipelineRunning && pipelineStatus === 'pending'    ? 'Queued'
-                              : isPipelineRunning && pipelineStatus === 'processing' ? 'Extracting'
-                              : isPipelineRunning && job.match_in_progress           ? 'Analyzing'
+                            {isApiCallInFlight         ? '…'
+                              : isPipelineRunning && pipelineStatus === 'pending'    ? 'Wait'
+                              : isPipelineRunning && pipelineStatus === 'processing' ? '…'
+                              : isPipelineRunning && job.match_in_progress           ? '…'
                               : isAdmin
-                                ? (jdReady ? 'Re-extract' : 'Extract')
+                                ? (jdReady ? 'Re-run' : 'Run')
                                 : analysisDone
-                                  ? 'Re-analyze'
-                                  : hasExtraction                   ? 'Analyze'
+                                  ? 'Re-run'
                                   : 'Run'}
                           </span>
                           {!isRerunning && (
@@ -2627,12 +2635,13 @@ export function ScraperJobsTable({
                           )}
                         </button>
 
-                        {/* Delete */}
+                        {/* Delete — always visible; never shrink away behind Apply/Re-run */}
                         <button
                           type="button"
                           onClick={() => { setDeleteError(null); setDeleting([job]); }}
                           title="Delete"
-                          className="inline-flex h-[28px] w-[28px] items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 transition-all hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                          aria-label="Delete job"
+                          className="inline-flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-all hover:border-red-200 hover:bg-red-50 hover:text-red-600 dark:border-slate-500/50 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:border-rose-400/50 dark:hover:bg-rose-500/15 dark:hover:text-rose-300"
                         >
                           <Trash2 size={13} />
                         </button>
