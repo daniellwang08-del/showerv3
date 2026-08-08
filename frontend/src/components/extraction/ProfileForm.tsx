@@ -28,6 +28,7 @@ import { JOB_TYPES, EMPLOYMENT_TYPES, isValidJobArrangement } from '../../types/
 import { FlexibleDatePicker } from '../shared/FlexibleDatePicker';
 import { ContributionsField } from '../resumeBuilder/ContributionsField';
 import {
+  coerceFlexibleDate,
   formatFlexibleDate,
   isFlexibleDateAfter,
   parseFlexibleDate,
@@ -132,9 +133,10 @@ function collectErrors(form: ProfileFormData): Record<string, string> {
 
   form.certificates.forEach((c, i) => {
     if ((c.name?.length ?? 0) > 200) err[`cert_${i}_name`] = 'Max 200 characters';
-    const issued = (c.issued_at ?? '').trim();
+    const issuedRaw = (c.issued_at ?? '').trim();
+    const issued = coerceFlexibleDate(issuedRaw);
     if (issued.length > 40) err[`cert_${i}_issued_at`] = 'Max 40 characters';
-    else if (issued && !parseFlexibleDate(issued)) err[`cert_${i}_issued_at`] = 'Pick a valid issue date';
+    else if (issuedRaw && !issued) err[`cert_${i}_issued_at`] = 'Pick a valid issue date';
     const url = (c.url ?? '').trim();
     if (url.length > 500) err[`cert_${i}_url`] = 'Max 500 characters';
     else if (url && !/^https?:\/\//i.test(url) && !/^[a-z0-9.-]+\.[a-z]{2,}/i.test(url)) {
@@ -1329,7 +1331,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
                     <FlexibleDatePicker
                       size="md"
                       placeholder="Issue date (optional)"
-                      value={c.issued_at ?? ''}
+                      value={coerceFlexibleDate(c.issued_at ?? '') || (c.issued_at ?? '')}
                       onChange={(nextValue) => {
                         const next = [...form.certificates];
                         next[i] = { ...c, issued_at: nextValue };

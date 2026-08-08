@@ -68,6 +68,10 @@ class User(Base):
     dedup_score_comparison_mode = Column(String(20), default="default", nullable=False, server_default="default")
     dedup_score_comparison_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # Auto-prepare: when platform JD is ready, enqueue personal match (and optionally full tailor).
+    auto_prepare_match = Column(Boolean, default=False, nullable=False, server_default="false")
+    auto_prepare_full = Column(Boolean, default=False, nullable=False, server_default="false")
+
     # OpenAI: "default" uses server OPENAI_API_KEY; "custom" uses encrypted user key.
     openai_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
     openai_api_key_encrypted = deferred(Column(Text, nullable=True))

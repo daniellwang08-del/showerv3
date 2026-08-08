@@ -1100,11 +1100,14 @@ async def prepare_job_for_user(
     *,
     background_tasks: BackgroundTasks | None = None,
     force_rescrape: bool = False,
+    allow_force_rescrape: bool = False,
 ) -> dict:
     """Smart entry for applicants: analyze if JD ready, else extract then analyze.
 
-    ``force_rescrape`` resets extraction (same as legacy rescrape) then chains
-    analysis for this user.
+    Applicants cannot force re-extract when a shared JD already exists
+    (``allow_force_rescrape`` is admin-only). When extraction is already
+    pending/processing, we wait for that shared extract and then analyze —
+    never reset mid-flight.
     """
     from app.services.job_pipeline_mode import extraction_has_shared_jd
 
@@ -1122,10 +1125,37 @@ async def prepare_job_for_user(
         if job.extraction_id:
             extraction = await extraction_repo.get_by_id(job.extraction_id)
 
-        jd_ready = bool(extraction_has_shared_jd(extraction) and not force_rescrape)
+        jd_ready = bool(extraction_has_shared_jd(extraction))
+        if force_rescrape and jd_ready and not allow_force_rescrape:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Shared job description already exists. "
+                    "Re-extract is admin-only; use prepare/analyze instead."
+                ),
+            )
 
-        if jd_ready:
-            # Personal pipeline only — do not touch shared extraction.
+        # In-flight shared extract: do not reset; chain personal analysis after it.
+        status_l = (getattr(extraction, "status", None) or "").lower() if extraction else ""
+        if extraction and status_l in ("pending", "processing") and not (
+            force_rescrape and allow_force_rescrape
+        ):
+            await session.commit()
+            await enqueue_extraction(
+                extraction.id,
+                source_url,
+                user_id=user_id,
+                background_tasks=background_tasks,
+            )
+            return {
+                "status": "queued",
+                "mode": "extract_then_analyze",
+                "job_id": job_id,
+                "extraction_id": extraction.id,
+                "message": "Extraction already in progress; analysis will follow for your profile.",
+            }
+
+        if jd_ready and not (force_rescrape and allow_force_rescrape):
             pass
         else:
             try:
@@ -3544,18 +3574,18 @@ async def rerun_job_match_batch(
 @router.post(
     "/jobs/valid/rescrape/batch",
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_admin)],
 )
 async def rescrape_valid_jobs_batch(
     body: JobIdsBatchRequest,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
     """
-    Force re-queue page extraction for many valid jobs (stored source_url each).
+    Admin-only: force re-queue page extraction for many valid jobs (shared JD).
 
-    Admin: extraction only (shared JD). Applicant: extract then personal analysis.
-    Prefer ``POST /jobs/valid/prepare/batch`` for smart analyze-without-rescrape.
+    Applicants must use ``POST /jobs/valid/prepare/batch`` (analyze without rescrape
+    when JD is already saved).
     """
     from app.services.job_pipeline_mode import ingest_chain_user_id
 
@@ -3563,7 +3593,7 @@ async def rescrape_valid_jobs_batch(
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     chain_user_id = ingest_chain_user_id(
-        is_admin=bool(current_user.get("is_admin")),
+        is_admin=True,
         user_id=user_id,
     )
 
@@ -3639,11 +3669,13 @@ async def prepare_valid_job(
             force_rescrape=force_rescrape,
         )
 
+    # Applicants: never force re-extract via this endpoint when JD exists.
     return await prepare_job_for_user(
         job_id,
         user_id,
         background_tasks=background_tasks,
-        force_rescrape=force_rescrape,
+        force_rescrape=False,
+        allow_force_rescrape=False,
     )
 
 
@@ -3716,23 +3748,23 @@ async def prepare_valid_jobs_batch(
     }
 
 
-@router.post("/jobs/valid/{job_id}/rescrape", dependencies=[Depends(get_current_user)])
+@router.post("/jobs/valid/{job_id}/rescrape", dependencies=[Depends(require_admin)])
 async def rescrape_valid_job(
     job_id: str,
     request: RescrapeRequest,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_admin),
 ):
-    """Force-reset extraction and re-enqueue scraping.
+    """Admin-only: force-reset extraction and re-enqueue scraping (shared JD).
 
-    Admin: extract-only. Applicant: extract then analyze for their profile.
-    Prefer ``/jobs/valid/{id}/prepare`` when the JD is already saved.
+    Applicants must use ``/jobs/valid/{id}/prepare`` which analyzes from the
+    saved JD when present and never re-extracts shared content.
     """
     from app.services.job_pipeline_mode import ingest_chain_user_id
 
     user_id = current_user.get("user_id")
     chain_user_id = ingest_chain_user_id(
-        is_admin=bool(current_user.get("is_admin")),
+        is_admin=True,
         user_id=user_id,
     )
     source_url = request.url.strip()
@@ -4014,6 +4046,8 @@ class UserSettingsResponse(BaseModel):
     dedup_score_comparison_enabled: bool = False
     dedup_score_comparison_enabled_custom: bool = False
     default_dedup_score_comparison_enabled: bool = False
+    auto_prepare_match: bool = False
+    auto_prepare_full: bool = False
     resume_tailoring_prompt_mode: str
     resume_tailoring_prompt_instructions: str
     resume_tailoring_prompt_instructions_custom: str
@@ -4063,6 +4097,8 @@ class UserSettingsUpdateRequest(BaseModel):
     dedup_applied_company_enabled: bool | None = None
     dedup_score_comparison_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     dedup_score_comparison_enabled: bool | None = None
+    auto_prepare_match: bool | None = None
+    auto_prepare_full: bool | None = None
     resume_tailoring_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     resume_tailoring_prompt_custom: str | None = Field(default=None, max_length=12000)
     cover_letter_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
@@ -4461,6 +4497,7 @@ async def get_user_settings(
 )
 async def update_user_settings(
     body: UserSettingsUpdateRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ) -> UserSettingsResponse:
     user_id = current_user.get("user_id")
@@ -4469,6 +4506,11 @@ async def update_user_settings(
     async with get_session() as session:
         user_repo = UserRepository(session)
         try:
+            prev = await user_repo.get_user_settings(user_id)
+            if not prev:
+                raise HTTPException(status_code=404, detail="User not found")
+            prev_match = bool(prev.get("auto_prepare_match"))
+            prev_full = bool(prev.get("auto_prepare_full"))
             data = await user_repo.update_user_settings(
                 user_id,
                 openai_key_mode=body.openai_key_mode,
@@ -4491,6 +4533,8 @@ async def update_user_settings(
                 dedup_applied_company_enabled=body.dedup_applied_company_enabled,
                 dedup_score_comparison_mode=body.dedup_score_comparison_mode,
                 dedup_score_comparison_enabled=body.dedup_score_comparison_enabled,
+                auto_prepare_match=body.auto_prepare_match,
+                auto_prepare_full=body.auto_prepare_full,
                 resume_tailoring_prompt_mode=body.resume_tailoring_prompt_mode,
                 resume_tailoring_prompt_custom=body.resume_tailoring_prompt_custom,
                 cover_letter_prompt_mode=body.cover_letter_prompt_mode,
@@ -4503,6 +4547,26 @@ async def update_user_settings(
             raise HTTPException(status_code=400, detail=str(e))
     if not data:
         raise HTTPException(status_code=404, detail="User not found")
+
+    newly_match = bool(data.get("auto_prepare_match")) and not prev_match
+    newly_full = bool(data.get("auto_prepare_full")) and not prev_full
+    if newly_match or newly_full:
+        from app.services.auto_prepare_service import backfill_auto_prepare_for_user
+
+        full = bool(data.get("auto_prepare_full"))
+        background_tasks.add_task(
+            backfill_auto_prepare_for_user,
+            user_id,
+            match=True,
+            full=full,
+        )
+        logger.info(
+            "auto_prepare_backfill_scheduled",
+            user_id=user_id,
+            newly_match=newly_match,
+            newly_full=newly_full,
+            full=full,
+        )
 
     logger.info("user_settings_saved", user_id=user_id)
     return UserSettingsResponse(**data)

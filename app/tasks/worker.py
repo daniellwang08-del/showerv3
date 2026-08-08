@@ -185,6 +185,7 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                                 job.id,
                                 user_id,
                                 job_id,
+                                False,
                                 _job_id=pipeline_job_id("analyze", job.id, user_id),
                             )
                             logger.info("job_match_enqueued", valid_job_id=job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
@@ -194,6 +195,31 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                             await session.commit()
                             pending_match_progress = None
                             logger.warning("job_match_enqueue_failed", valid_job_id=job.id, error=str(enq_err))
+            else:
+                # Shared inventory extract finished — fan-out auto-prepare for opted-in users.
+                try:
+                    async with get_session() as session:
+                        job_repo = JobRepository(session)
+                        job = await job_repo.get_by_extraction_id(job_id)
+                        valid_job_id = job.id if job else None
+                    if valid_job_id:
+                        from app.services.auto_prepare_service import fanout_auto_prepare_for_job
+
+                        fanout = await fanout_auto_prepare_for_job(
+                            valid_job_id,
+                            extraction_id=job_id,
+                        )
+                        logger.info(
+                            "auto_prepare_fanout_after_extract",
+                            extraction_id=job_id,
+                            **{k: fanout.get(k) for k in ("job_id", "enqueued", "skipped", "users")},
+                        )
+                except Exception as fanout_err:
+                    logger.warning(
+                        "auto_prepare_fanout_failed",
+                        extraction_id=job_id,
+                        error=str(fanout_err),
+                    )
 
         elif result.get("status") == "failed":
             error_msg = result.get("error", "Unknown error")
@@ -251,12 +277,23 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
         clear_logging_context()
 
 
-async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extraction_id: str | None = None) -> dict | None:
+async def analyze_job_match(
+    ctx: dict,
+    valid_job_id: str,
+    user_id: str,
+    extraction_id: str | None = None,
+    skip_phase_b: bool = False,
+) -> dict | None:
     from app.services.job_match_orchestrator import run_job_match_analysis
 
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="analyze_job_match", valid_job_id=valid_job_id, user_id=user_id)
-    logger.info("worker_analyze_job_match_started", valid_job_id=valid_job_id, user_id=user_id)
+    logger.info(
+        "worker_analyze_job_match_started",
+        valid_job_id=valid_job_id,
+        user_id=user_id,
+        skip_phase_b=bool(skip_phase_b),
+    )
 
     await publish_ws_event({
         "type": "match_started",
@@ -265,7 +302,12 @@ async def analyze_job_match(ctx: dict, valid_job_id: str, user_id: str, extracti
     })
 
     try:
-        result = await run_job_match_analysis(valid_job_id, user_id, extraction_id=extraction_id)
+        result = await run_job_match_analysis(
+            valid_job_id,
+            user_id,
+            extraction_id=extraction_id,
+            skip_phase_b=bool(skip_phase_b),
+        )
         if result:
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
             pool = await get_save_pool()

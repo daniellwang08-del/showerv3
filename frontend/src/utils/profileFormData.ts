@@ -8,6 +8,7 @@ import type {
   AddressInfo,
   UserProfile,
 } from '../types/profile';
+import { coerceFlexibleDate } from './flexibleDate';
 import { deriveWorkContent } from './workExperience';
 
 export const emptyTechSkill = (): TechnicalSkillBlock => ({ category: '', skills: '' });
@@ -170,7 +171,7 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
     })),
     certificates: cert.map((x) => ({
       name: (x as CertificateBlock).name ?? '',
-      issued_at: (x as CertificateBlock).issued_at ?? '',
+      issued_at: coerceFlexibleDate((x as CertificateBlock).issued_at ?? ''),
       url: (x as CertificateBlock).url ?? '',
     })),
     extra,

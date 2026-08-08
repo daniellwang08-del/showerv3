@@ -210,6 +210,7 @@ async def run_job_match_analysis(
     user_id: str,
     *,
     extraction_id: str | None = None,
+    skip_phase_b: bool = False,
 ) -> dict | None:
     """Phase A: match scoring + structured job extraction.
 
@@ -217,6 +218,9 @@ async def run_job_match_analysis(
     (should_run_phase_b, extraction_id, structured_company).  Match persistence,
     company policy, sheets posting, and tailored-content enqueue are handled
     downstream by the save_analyzed_job worker task.
+
+    ``skip_phase_b`` is used by auto-prepare match-only so Phase B is not chained.
+    Manual Prepare/Run always passes False (Phase B still gated by system setting).
     """
     bind_logging_context(job_id=job_id, user_id=user_id)
     ext_id: str | None = None
@@ -294,7 +298,8 @@ async def run_job_match_analysis(
                 overall_score = int(result.get("overall_score") or 0)
                 result["is_job_posting"] = is_job_posting
                 result["should_run_phase_b"] = (
-                    bool(get_effective_value_sync("auto_generate_tailored_content"))
+                    (not skip_phase_b)
+                    and bool(get_effective_value_sync("auto_generate_tailored_content"))
                     and has_profile
                     and is_job_posting
                     and not result.get("requires_security_clearance")
@@ -302,6 +307,7 @@ async def run_job_match_analysis(
                 )
                 result["extraction_id"] = ext_id
                 result["structured_company"] = structured_company
+                result["skip_phase_b"] = bool(skip_phase_b)
 
                 logger.info(
                     "job_match_phase_a_complete",

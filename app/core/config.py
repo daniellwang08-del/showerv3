@@ -155,6 +155,12 @@ class Settings(BaseSettings):
     phase_a_max_tokens: int = 16384
     phase_b_max_tokens: int = 16384
     auto_generate_tailored_content: bool = True
+    # Global kill-switch for auto-prepare fan-out / backfill (manual Run unaffected).
+    auto_prepare_enabled: bool = True
+    # Soft per-user daily cap on auto-prepare analyze enqueues (UTC day).
+    auto_prepare_daily_cap_per_user: int = Field(default=200, ge=1, le=5000)
+    # Soft pending-in-progress cap before auto-prepare stops enqueueing for a user.
+    auto_prepare_pending_cap_per_user: int = Field(default=100, ge=1, le=2000)
 
     # Anthropic Claude - used as automatic fallback when OpenAI is unavailable
     # (insufficient_quota, rate-limit, auth failure, connection/timeout error).

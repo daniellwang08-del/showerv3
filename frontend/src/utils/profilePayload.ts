@@ -1,4 +1,5 @@
 import type { ProfileFormData } from '../types/profile';
+import { coerceFlexibleDate } from './flexibleDate';
 
 /** Convert form state to the API PUT /profile body. */
 export function profileFormToPayload(data: ProfileFormData) {
@@ -50,7 +51,7 @@ export function profileFormToPayload(data: ProfileFormData) {
       .filter((c) => c.name.trim())
       .map((c) => ({
         name: c.name.trim(),
-        issued_at: emptyToNull(c.issued_at),
+        issued_at: emptyToNull(coerceFlexibleDate(c.issued_at)),
         url: emptyToNull(c.url),
       })),
     extra: data.extra.filter((x) => x.trim()),

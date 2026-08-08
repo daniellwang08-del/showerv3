@@ -63,6 +63,7 @@ import type {
 const BOOL_KEYS = new Set([
   'llm_fallback_enabled',
   'auto_generate_tailored_content',
+  'auto_prepare_enabled',
   'dedup_rule_applied_company_enabled',
   'dedup_rule_score_comparison_enabled',
 ]);
@@ -85,6 +86,8 @@ const NUMBER_KEYS = new Set([
   'anthropic_timeout_seconds',
   'gemini_timeout_seconds',
   'llm_circuit_breaker_cooldown_seconds',
+  'auto_prepare_daily_cap_per_user',
+  'auto_prepare_pending_cap_per_user',
 ]);
 
 const PROVIDERS: {
@@ -741,11 +744,14 @@ export function SystemSettingsPage() {
             {renderAutoField('default_llm_provider', { label: 'Default provider' })}
             {renderAutoField('llm_fallback_enabled', { label: 'Fallback' })}
             {renderAutoField('auto_generate_tailored_content', { label: 'Auto tailor' })}
+            {renderAutoField('auto_prepare_enabled', { label: 'Auto-prepare' })}
             {renderAutoField('openai_reasoning_effort', { label: 'Reasoning effort' })}
             {renderAutoField('phase_a_max_tokens', { label: 'Phase A tokens' })}
             {renderAutoField('phase_b_max_tokens', { label: 'Phase B tokens' })}
             {renderAutoField('llm_circuit_breaker_threshold', { label: 'Breaker threshold' })}
             {renderAutoField('llm_circuit_breaker_cooldown_seconds', { label: 'Breaker cooldown' })}
+            {renderAutoField('auto_prepare_daily_cap_per_user', { label: 'Auto-prepare daily cap' })}
+            {renderAutoField('auto_prepare_pending_cap_per_user', { label: 'Auto-prepare pending cap' })}
           </div>
         </SettingsCard>
 

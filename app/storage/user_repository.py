@@ -489,6 +489,8 @@ class UserRepository:
             "dedup_score_comparison_enabled": effective_score_cmp,
             "dedup_score_comparison_enabled_custom": custom_score_cmp,
             "default_dedup_score_comparison_enabled": default_score_cmp,
+            "auto_prepare_match": bool(getattr(user, "auto_prepare_match", False)),
+            "auto_prepare_full": bool(getattr(user, "auto_prepare_full", False)),
             "resume_tailoring_prompt_mode": prompt_mode,
             "resume_tailoring_prompt_instructions": effective_instructions,
             "resume_tailoring_prompt_instructions_custom": stored_custom_prompt,
@@ -530,6 +532,8 @@ class UserRepository:
         dedup_applied_company_enabled: bool | None = None,
         dedup_score_comparison_mode: str | None = None,
         dedup_score_comparison_enabled: bool | None = None,
+        auto_prepare_match: bool | None = None,
+        auto_prepare_full: bool | None = None,
         resume_tailoring_prompt_mode: str | None = None,
         resume_tailoring_prompt_custom: str | None = None,
         cover_letter_prompt_mode: str | None = None,
@@ -629,6 +633,18 @@ class UserRepository:
             user.dedup_score_comparison_enabled = bool(dedup_score_comparison_enabled)
             if dedup_score_comparison_mode is None:
                 user.dedup_score_comparison_mode = "custom"
+
+        if auto_prepare_match is not None:
+            user.auto_prepare_match = bool(auto_prepare_match)
+            if not user.auto_prepare_match:
+                # Match off forces full off.
+                user.auto_prepare_full = False
+
+        if auto_prepare_full is not None:
+            user.auto_prepare_full = bool(auto_prepare_full)
+            if user.auto_prepare_full:
+                # Full implies match.
+                user.auto_prepare_match = True
 
         if resume_tailoring_prompt_mode is not None:
             if resume_tailoring_prompt_mode not in ("default", "custom"):

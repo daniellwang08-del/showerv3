@@ -74,6 +74,8 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     dedup_score_comparison_enabled: Boolean(data.dedup_score_comparison_enabled),
     dedup_score_comparison_enabled_custom: Boolean(data.dedup_score_comparison_enabled_custom),
     default_dedup_score_comparison_enabled: Boolean(data.default_dedup_score_comparison_enabled),
+    auto_prepare_match: Boolean(data.auto_prepare_match),
+    auto_prepare_full: Boolean(data.auto_prepare_full),
     resume_tailoring_prompt_mode: (data.resume_tailoring_prompt_mode as SettingsMode) ?? 'default',
     resume_tailoring_prompt_instructions: String(data.resume_tailoring_prompt_instructions ?? ''),
     resume_tailoring_prompt_instructions_custom: String(data.resume_tailoring_prompt_instructions_custom ?? ''),
@@ -189,6 +191,12 @@ export async function saveDedupSettings(
     | 'dedup_score_comparison_mode'
     | 'dedup_score_comparison_enabled'
   >,
+) {
+  return updateUserSettings(body);
+}
+
+export async function saveAutoPrepareSettings(
+  body: Pick<UserSettingsUpdate, 'auto_prepare_match' | 'auto_prepare_full'>,
 ) {
   return updateUserSettings(body);
 }

@@ -8,6 +8,7 @@ import {
   isValidJobArrangement,
 } from '../types/profile';
 import type { UserProfile } from '../types/profile';
+import { coerceFlexibleDate } from './flexibleDate';
 import { profileToForm } from './profileFormData';
 
 export type ResumeDraft = {
@@ -154,7 +155,8 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
   const certificates: CertificateBlock[] = (draft.certificates ?? [])
     .map((c) => ({
       name: pick(c.name) ?? '',
-      issued_at: pick(c.issued_at) ?? '',
+      // Coerce résumé wording ("Aug 2023") → YYYY-MM so import validation passes.
+      issued_at: coerceFlexibleDate(c.issued_at),
       url: pick(c.url) ?? '',
     }))
     .filter((c) => c.name);

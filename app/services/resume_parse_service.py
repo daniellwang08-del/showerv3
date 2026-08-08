@@ -23,6 +23,7 @@ from app.models.profile_schemas import (
     ResumeSkillBlock,
     ResumeWorkBlock,
 )
+from app.utils.flexible_date import coerce_flexible_date
 
 logger = get_logger(__name__)
 
@@ -90,7 +91,10 @@ Work experience (critical - most errors happen here):
 - extra: optional lines copied verbatim (e.g. languages, awards) not captured elsewhere.
 - period_*: use YYYY-MM when the document shows month+year; use YYYY if only year; use null if unclear-do not guess dates.
 - LinkedIn/GitHub: exact URLs from the document only.
-- certificates: include name; issued_at when a date is shown; url when a credential/verification link is present.
+- certificates: include name; issued_at when an issue date is shown; url when a credential/verification link is present.
+  - issued_at MUST use the same formats as period_*: YYYY-MM (month+year) or YYYY (year only). Never emit résumé wording like "Aug 2023", "Issued Nov 2021", or "August 2023".
+  - Example: "Issued Aug 2023 Expired Aug 2025" → issued_at "2023-08". Prefer the issue date, not the expiry.
+  - Issuer names and credential IDs are not separate fields — put the certificate title in name; do not dump issuer/ID/date lines into extra when they belong with a certificate.
 - phone_country_code: dialing code only (e.g. "+1", "+44"). phone_number: the **complete** national number without the country code.
   - For US/Canada (+1): phone_number MUST be the full 10-digit number (area code + local), e.g. "(610) 234-7936" or "6102347936". Never emit a truncated fragment such as "313-3369" or "610-234".
   - If the résumé phone is incomplete, unreadable, or you cannot recover all digits, set BOTH phone_country_code and phone_number to null — do not invent or keep partial numbers.
@@ -856,7 +860,8 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
             certs.append(
                 ResumeCertBlock(
                     name=n,
-                    issued_at=_clean(c.issued_at),
+                    # Coerce résumé wording ("Aug 2023", "Issued Nov 2021") → YYYY-MM / YYYY.
+                    issued_at=coerce_flexible_date(_clean(c.issued_at)),
                     url=_clean(c.url),
                 )
             )

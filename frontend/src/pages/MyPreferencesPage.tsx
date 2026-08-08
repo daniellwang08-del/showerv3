@@ -7,12 +7,14 @@ import {
   Mail,
   RefreshCw,
   Search,
+  Sparkles,
   Target,
   UserCog,
 } from 'lucide-react';
 import {
   fetchUserSettings,
   saveDedupSettings,
+  saveAutoPrepareSettings,
   saveMinMatchScoreSettings,
   saveResumeTailoringPromptSettings,
   saveCoverLetterPromptSettings,
@@ -160,6 +162,13 @@ export function MyPreferencesPage() {
   const [matchPreferencesSaveMsg, setMatchPreferencesSaveMsg] = useState('');
   const [matchPreferencesSaveOk, setMatchPreferencesSaveOk] = useState(false);
 
+  // Auto-prepare (opt-in background analyze / apply-ready)
+  const [autoPrepareMatch, setAutoPrepareMatch] = useState(false);
+  const [autoPrepareFull, setAutoPrepareFull] = useState(false);
+  const [autoPrepareSaving, setAutoPrepareSaving] = useState(false);
+  const [autoPrepareSaveMsg, setAutoPrepareSaveMsg] = useState('');
+  const [autoPrepareSaveOk, setAutoPrepareSaveOk] = useState(false);
+
   const applySettings = useCallback((data: UserSettings) => {
     setSettings(data);
     setDedupDays(data.dedup_recycle_days);
@@ -172,6 +181,8 @@ export function MyPreferencesPage() {
     setCoverPromptMode(data.cover_letter_prompt_mode ?? 'default');
     setCoverPromptText(resolveStoredCoverLetterPromptText(data));
     setMatchPreferences(data.job_match_preferences ?? '');
+    setAutoPrepareMatch(Boolean(data.auto_prepare_match));
+    setAutoPrepareFull(Boolean(data.auto_prepare_full));
   }, []);
 
   const load = useCallback(async () => {
@@ -244,6 +255,15 @@ export function MyPreferencesPage() {
     const t = window.setTimeout(() => setMatchPreferencesSaveOk(false), 3000);
     return () => window.clearTimeout(t);
   }, [matchPreferencesSaveOk]);
+
+  useEffect(() => {
+    if (!autoPrepareSaveOk) return;
+    const t = window.setTimeout(() => {
+      setAutoPrepareSaveOk(false);
+      setAutoPrepareSaveMsg('');
+    }, 4000);
+    return () => window.clearTimeout(t);
+  }, [autoPrepareSaveOk]);
 
   const defaultDedup = settings?.default_dedup_recycle_days ?? 60;
   const defaultMinScore = settings?.default_min_match_score ?? 0;
@@ -336,6 +356,56 @@ export function MyPreferencesPage() {
     } finally {
       setDedupSaving(false);
     }
+  };
+
+  const persistAutoPrepare = async (nextMatch: boolean, nextFull: boolean, enabling: boolean) => {
+    setAutoPrepareSaving(true);
+    setAutoPrepareSaveMsg('');
+    try {
+      const data = await saveAutoPrepareSettings({
+        auto_prepare_match: nextMatch,
+        auto_prepare_full: nextFull,
+      });
+      applySettings(data);
+      setAutoPrepareSaveOk(true);
+      setAutoPrepareSaveMsg(
+        enabling
+          ? 'Saved. Preparing existing jobs with a ready JD in the background…'
+          : 'Auto-prepare preference saved.',
+      );
+    } catch (err: unknown) {
+      setAutoPrepareMatch(Boolean(settings?.auto_prepare_match));
+      setAutoPrepareFull(Boolean(settings?.auto_prepare_full));
+      setAutoPrepareSaveOk(false);
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setAutoPrepareSaveMsg(typeof msg === 'string' ? msg : 'Failed to save auto-prepare settings.');
+    } finally {
+      setAutoPrepareSaving(false);
+    }
+  };
+
+  const handleAutoPrepareMatchToggle = (next: boolean) => {
+    // Match off forces full off.
+    const nextFull = next ? autoPrepareFull : false;
+    setAutoPrepareMatch(next);
+    setAutoPrepareFull(nextFull);
+    void persistAutoPrepare(next, nextFull, next && !Boolean(settings?.auto_prepare_match));
+  };
+
+  const handleAutoPrepareFullToggle = (next: boolean) => {
+    // Full on implies match on.
+    const nextMatch = next ? true : autoPrepareMatch;
+    setAutoPrepareMatch(nextMatch);
+    setAutoPrepareFull(next);
+    void persistAutoPrepare(
+      nextMatch,
+      next,
+      (next && !Boolean(settings?.auto_prepare_full)) ||
+        (nextMatch && !Boolean(settings?.auto_prepare_match)),
+    );
   };
 
   const handlePreviewDedupRules = async () => {
@@ -711,6 +781,55 @@ export function MyPreferencesPage() {
             </div>
 
             {settings && <ProviderKeysCard settings={settings} onSaved={applySettings} />}
+
+            <SettingsCard
+              icon={Sparkles}
+              iconClass="bg-gradient-to-br from-teal-500 to-emerald-600"
+              title="Auto-prepare jobs"
+              description="When admin inventory already has a job description, prepare matches for you in the background. Off by default."
+            >
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-[#e2e8f0]">
+                      Auto-prepare match score
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-[#94a3b8]">
+                      Score only — run Phase A when a shared JD is ready so jobs appear analyzed without manual Run.
+                    </p>
+                  </div>
+                  <SettingsToggle
+                    checked={autoPrepareMatch}
+                    onChange={handleAutoPrepareMatchToggle}
+                    disabled={autoPrepareSaving}
+                    aria-label="Auto-prepare match score"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3 dark:border-slate-500/30">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-[#e2e8f0]">
+                      Auto-prepare Apply-ready
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-[#94a3b8]">
+                      Score + tailored resume + cover letter so you can start Apply without running prepare first.
+                    </p>
+                  </div>
+                  <SettingsToggle
+                    checked={autoPrepareFull}
+                    onChange={handleAutoPrepareFullToggle}
+                    disabled={autoPrepareSaving}
+                    aria-label="Auto-prepare Apply-ready"
+                  />
+                </div>
+                {autoPrepareSaving ? (
+                  <p className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                    <Loader2 size={13} className="animate-spin" />
+                    Saving…
+                  </p>
+                ) : null}
+                <SectionMessage ok={autoPrepareSaveOk} text={autoPrepareSaveMsg} />
+              </div>
+            </SettingsCard>
 
             <div className="grid items-stretch gap-3 sm:gap-4 xl:grid-cols-2">
               {/* Minimum match score */}

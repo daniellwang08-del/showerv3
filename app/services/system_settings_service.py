@@ -40,6 +40,9 @@ ALLOWLISTED_KEYS: frozenset[str] = frozenset(
         "llm_circuit_breaker_threshold",
         "llm_circuit_breaker_cooldown_seconds",
         "auto_generate_tailored_content",
+        "auto_prepare_enabled",
+        "auto_prepare_daily_cap_per_user",
+        "auto_prepare_pending_cap_per_user",
         # Defaults
         "default_min_match_score",
         "default_dedup_recycle_days",
@@ -68,6 +71,7 @@ _BOOL_KEYS = frozenset(
     {
         "llm_fallback_enabled",
         "auto_generate_tailored_content",
+        "auto_prepare_enabled",
         "dedup_rule_applied_company_enabled",
         "dedup_rule_score_comparison_enabled",
     }
@@ -87,6 +91,8 @@ _INT_KEYS = frozenset(
         "default_min_match_score",
         "default_dedup_recycle_days",
         "extension_token_expire_days",
+        "auto_prepare_daily_cap_per_user",
+        "auto_prepare_pending_cap_per_user",
     }
 )
 _FLOAT_KEYS = frozenset(

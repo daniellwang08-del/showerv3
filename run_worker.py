@@ -13,6 +13,12 @@ Usage:
 
 All workers share the same Redis instance but listen on independent queues
 so they can be scaled and deployed separately.
+
+Auto-prepare (opt-in My Preferences) fans out Phase A on ``job_analysis`` and
+optionally Phase B on ``job_tailoring``. Under load, run a second analysis
+(and/or tailoring) process against the same Redis queues, and/or raise
+``analysis_worker_max_jobs`` / ``tailoring_worker_max_jobs`` in System Settings.
+Use ``auto_prepare_enabled`` / daily+pending caps to pause or throttle.
 """
 import argparse
 import asyncio

@@ -48,6 +48,8 @@ export interface UserSettings {
   dedup_score_comparison_enabled: boolean;
   dedup_score_comparison_enabled_custom: boolean;
   default_dedup_score_comparison_enabled: boolean;
+  auto_prepare_match: boolean;
+  auto_prepare_full: boolean;
   resume_tailoring_prompt_mode: SettingsMode;
   resume_tailoring_prompt_instructions: string;
   resume_tailoring_prompt_instructions_custom: string;
@@ -97,6 +99,8 @@ export interface UserSettingsUpdate {
   dedup_applied_company_enabled?: boolean;
   dedup_score_comparison_mode?: SettingsMode;
   dedup_score_comparison_enabled?: boolean;
+  auto_prepare_match?: boolean;
+  auto_prepare_full?: boolean;
   resume_tailoring_prompt_mode?: SettingsMode;
   resume_tailoring_prompt_custom?: string;
   cover_letter_prompt_mode?: SettingsMode;
