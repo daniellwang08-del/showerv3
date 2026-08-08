@@ -111,27 +111,31 @@ function relativeTime(dateStr: string | null): string {
   return `${months}mo ago`;
 }
 
+/**
+ * Percentage widths sum to 100% so `table-fixed` always spans the full container.
+ * Title (and admin URL) take the flexible share; compact columns stay readable.
+ */
 const ALL_COLUMNS = [
-  { key: '__check__',      label: '',           sortable: false },
-  { key: '__no__',         label: 'No.',        sortable: false },
-  { key: 'title',          label: 'Title',      sortable: true  },
-  { key: 'company',        label: 'Company',    sortable: true  },
+  { key: '__check__',      label: '',           sortable: false, width: '2.2%' },
+  { key: '__no__',         label: 'No.',        sortable: false, width: '2.4%' },
+  { key: 'title',          label: 'Title',      sortable: true,  width: '15%' },
+  { key: 'company',        label: 'Company',    sortable: true,  width: '8%' },
   // Admin: raw listing metadata is usually empty — show the posting URL instead.
-  { key: 'source_url',     label: 'URL',        sortable: false, adminOnly: true as const },
+  { key: 'source_url',     label: 'URL',        sortable: false, adminOnly: true as const, width: '22%' },
   // Applicant-only listing metadata (admin table uses URL in their place).
-  { key: 'location',       label: 'Location',   sortable: false, applicantOnly: true as const },
-  { key: 'work_mode',      label: 'Mode',       sortable: false, applicantOnly: true as const },
-  { key: 'salary_raw',     label: 'Salary',     sortable: false, applicantOnly: true as const },
-  { key: 'job_type',       label: 'Type',       sortable: false, applicantOnly: true as const },
-  { key: 'source',         label: 'Source',     sortable: false },
-  { key: 'posted_date',    label: 'Posted',     sortable: true, applicantOnly: true as const },
-  { key: 'added_from',     label: 'Added from', sortable: false },
-  { key: 'created_at',     label: 'Added',      sortable: true  },
-  { key: '__processing__', label: 'Match',      sortable: true, sortKey: 'match_score' as const, applicantOnly: true as const },
-  { key: '__resume__',     label: 'Resume',     sortable: false, applicantOnly: true as const },
-  { key: '__cover__',      label: 'Cover',      sortable: false, applicantOnly: true as const },
-  { key: '__status__',     label: 'Status',     sortable: false },
-  { key: '__actions__',    label: 'Actions',    sortable: false },
+  { key: 'location',       label: 'Location',   sortable: false, applicantOnly: true as const, width: '7%' },
+  { key: 'work_mode',      label: 'Mode',       sortable: false, applicantOnly: true as const, width: '5%' },
+  { key: 'salary_raw',     label: 'Salary',     sortable: false, applicantOnly: true as const, width: '6.5%' },
+  { key: 'job_type',       label: 'Type',       sortable: false, applicantOnly: true as const, width: '5%' },
+  { key: 'source',         label: 'Source',     sortable: false, width: '8%' },
+  { key: 'posted_date',    label: 'Posted',     sortable: true, applicantOnly: true as const, width: '4.5%' },
+  { key: 'added_from',     label: 'Added from', sortable: false, width: '4.5%' },
+  { key: 'created_at',     label: 'Added',      sortable: true,  width: '4.5%' },
+  { key: '__processing__', label: 'Match',      sortable: true, sortKey: 'match_score' as const, applicantOnly: true as const, width: '5.5%' },
+  { key: '__resume__',     label: 'Resume',     sortable: false, applicantOnly: true as const, width: '3.5%' },
+  { key: '__cover__',      label: 'Cover',      sortable: false, applicantOnly: true as const, width: '3.5%' },
+  { key: '__status__',     label: 'Status',     sortable: false, width: '5%' },
+  { key: '__actions__',    label: 'Actions',    sortable: false, width: '9.4%' },
 ] as const;
 
 type ColumnDef = (typeof ALL_COLUMNS)[number];
@@ -146,11 +150,10 @@ function visibleColumns(isAdmin: boolean): ColumnDef[] {
 }
 
 /**
- * Column sizing for applicant + admin jobs tables:
- * - `table-auto` (w-max): every column width follows its content
- * - Cell padding (`px`/`py`) is the only horizontal constraint
- * - No fixed widths, no max-width caps, no truncate on body cells
- * - Horizontal scroll when the row is wider than the viewport
+ * Jobs table layout (applicant + admin):
+ * - Always spans 100% of the main content width (`table-fixed` + col %)
+ * - Padding + type scale respond to viewport breakpoints
+ * - Long text truncates inside its column (no shrink-scale gutters)
  */
 const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
   'posted_date',
@@ -165,14 +168,16 @@ const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
 /** Shared height with MatchScoreBadge so status squares align visually. */
 const MATCH_BADGE_H = 28;
 
-const ROW_H = 'h-[52px] max-h-[52px]';
-/**
- * Universal cell: padding + nowrap + visible overflow.
- * Width is intrinsic from content for every column (title → actions).
- */
+const ROW_H = 'h-10 sm:h-11 lg:h-[52px] max-h-10 sm:max-h-11 lg:max-h-[52px]';
+
+/** Responsive cell padding — tighter on smaller screens, roomier on large. */
 const CELL =
-  'px-2.5 py-1.5 align-middle whitespace-nowrap overflow-visible';
+  'min-w-0 px-1 py-1 sm:px-1.5 sm:py-1.5 lg:px-2.5 lg:py-1.5 xl:px-3 align-middle overflow-hidden text-[11px] sm:text-xs lg:text-sm';
 const CELL_END = `${CELL} text-right`;
+const CELL_CLIP = 'min-w-0 max-w-full truncate';
+
+const TH_CELL =
+  'min-w-0 px-1 py-2.5 sm:px-1.5 sm:py-3 lg:px-2.5 lg:py-3.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.06em] sm:tracking-[0.08em] overflow-hidden text-ellipsis whitespace-nowrap text-slate-700 dark:text-[#e8eef7]';
 
 // ---------------------------------------------------------------------------
 // Resume / Cover letter column helpers
@@ -510,10 +515,10 @@ const JobTitleLink = memo(function JobTitleLink({ job }: { job: DashboardJob }) 
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
-      className={`inline-flex items-center gap-1 font-medium leading-snug whitespace-nowrap ${JOB_TITLE_TONE_CLASS[tone]}`}
+      className={`inline-flex max-w-full items-center gap-1 font-medium leading-snug ${JOB_TITLE_TONE_CLASS[tone]}`}
       title={`${JOB_TITLE_TONE_HINT[tone]} · ${label}`}
     >
-      <span>{label}</span>
+      <span className="min-w-0 truncate">{label}</span>
       <ExternalLink size={11} className="shrink-0 opacity-60" />
     </a>
   );
@@ -1355,6 +1360,13 @@ export function ScraperJobsTable({
   );
 
   const columns = useMemo(() => visibleColumns(isAdmin), [isAdmin]);
+  /** Normalize visible column % so they always fill 100% of the table width. */
+  const colWidths = useMemo(() => {
+    const raw = columns.map((c) => Number.parseFloat(c.width));
+    const sum = raw.reduce((a, b) => a + b, 0) || 1;
+    return columns.map((_, i) => `${((raw[i] / sum) * 100).toFixed(3)}%`);
+  }, [columns]);
+
 
   useEffect(() => {
     const finishedLoading = wasLoadingRef.current && !loading;
@@ -2095,9 +2107,13 @@ export function ScraperJobsTable({
         </p>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#141d31]">
-        <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
-          <table className="w-max min-w-full border-collapse text-sm">
+      <div className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#141d31]">
+        <table className="w-full table-fixed border-collapse">
+            <colgroup>
+              {columns.map((col, i) => (
+                <col key={col.key} style={{ width: colWidths[i] }} />
+              ))}
+            </colgroup>
             {/* ── Header ── */}
             <thead>
               <tr className="border-b border-slate-200 bg-slate-100 dark:border-slate-500/70 dark:bg-[#243148]">
@@ -2109,13 +2125,12 @@ export function ScraperJobsTable({
                       if (col.sortable) onSort(sortKey);
                     }}
                     className={[
-                      'px-2.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap',
-                      'text-slate-700 dark:text-[#e8eef7]',
+                      TH_CELL,
                       RIGHT_ALIGN_KEYS.has(col.key) ? 'text-right' : 'text-left',
                       col.sortable
                         ? 'cursor-pointer select-none hover:bg-slate-200/70 hover:text-slate-900 dark:hover:bg-[#2f3d58] dark:hover:text-white'
                         : '',
-                      col.key === '__check__' ? 'px-2' : '',
+                      col.key === '__check__' ? 'px-1 sm:px-1.5' : '',
                     ].join(' ')}
                   >
                     {col.key === '__check__' ? (
@@ -2224,7 +2239,7 @@ export function ScraperJobsTable({
                     ].join(' ')}
                   >
                     {/* Checkbox */}
-                    <td className="px-2 py-1.5 align-middle whitespace-nowrap">
+                    <td className={`${CELL} whitespace-nowrap`}>
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); toggleSelect(job.id); }}
@@ -2240,21 +2255,25 @@ export function ScraperJobsTable({
                     </td>
 
                     {/* No. */}
-                    <td className={`${CELL} text-xs text-slate-400 font-mono`}>
+                    <td className={`${CELL} whitespace-nowrap text-xs text-slate-400 font-mono`}>
                       {rowOffset + idx + 1}
                     </td>
 
-                    {/* Title — full text; column grows with content */}
+                    {/* Title — fills leftover width; truncates long names */}
                     <td className={CELL}>
-                      <JobTitleLink job={job} />
+                      <div className={CELL_CLIP} title={job.title || undefined}>
+                        <JobTitleLink job={job} />
+                      </div>
                     </td>
 
                     {/* Company */}
                     <td className={`${CELL} text-slate-700 text-xs`}>
-                      {job.company || '-'}
+                      <div className={CELL_CLIP} title={job.company || undefined}>
+                        {job.company || '-'}
+                      </div>
                     </td>
 
-                    {/* Admin: posting URL — full URL, content-sized */}
+                    {/* Admin: posting URL */}
                     {isAdmin && (
                       <td className={CELL}>
                         <a
@@ -2262,7 +2281,7 @@ export function ScraperJobsTable({
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="inline-block whitespace-nowrap font-mono text-[11px] leading-snug text-slate-600 hover:text-blue-600 dark:text-[#cbd5e1] dark:hover:text-[#93c5fd]"
+                          className={`${CELL_CLIP} block font-mono text-[11px] leading-snug text-slate-600 hover:text-blue-600 dark:text-[#cbd5e1] dark:hover:text-[#93c5fd]`}
                           title={job.source_url}
                         >
                           {job.source_url || <span className="text-slate-400 dark:text-[#64748b]">-</span>}
@@ -2274,58 +2293,66 @@ export function ScraperJobsTable({
                     {!isAdmin && (
                       <>
                         <td className={`${CELL} text-slate-500 text-xs`}>
-                          {job.location || '-'}
+                          <div className={CELL_CLIP} title={job.location || undefined}>
+                            {job.location || '-'}
+                          </div>
                         </td>
-                        <td className={CELL}>
+                        <td className={`${CELL} whitespace-nowrap`}>
                           <WorkModeBadge mode={job.work_mode} isRemoteFallback={job.is_remote} />
                         </td>
                         <td className={`${CELL} text-slate-500 text-xs`}>
-                          {job.salary_raw || <span className="text-slate-300">-</span>}
+                          <div className={CELL_CLIP} title={job.salary_raw || undefined}>
+                            {job.salary_raw || <span className="text-slate-300">-</span>}
+                          </div>
                         </td>
                         <td className={`${CELL} text-slate-500 text-xs`}>
-                          {job.job_type || <span className="text-slate-300">-</span>}
+                          <div className={CELL_CLIP} title={job.job_type || undefined}>
+                            {job.job_type || <span className="text-slate-300">-</span>}
+                          </div>
                         </td>
                       </>
                     )}
 
                     {/* Source */}
                     <td className={CELL}>
-                      <Badge variant={SOURCE_BADGE_VARIANT[job.source?.toLowerCase() ?? ''] || 'default'}>
-                        <span className="whitespace-nowrap">{job.source || job.domain || '-'}</span>
-                      </Badge>
+                      <div className={CELL_CLIP} title={job.source || job.domain || undefined}>
+                        <Badge variant={SOURCE_BADGE_VARIANT[job.source?.toLowerCase() ?? ''] || 'default'}>
+                          <span className="truncate">{job.source || job.domain || '-'}</span>
+                        </Badge>
+                      </div>
                     </td>
 
                     {/* Posted (applicant only) */}
                     {!isAdmin && (
-                      <td className={`${CELL_END} text-slate-500 text-xs`}>
+                      <td className={`${CELL_END} whitespace-nowrap text-slate-500 text-xs`}>
                         {relativeTime(job.posted_date)}
                       </td>
                     )}
 
                     {/* Added from */}
-                    <td className={CELL}>
+                    <td className={`${CELL} whitespace-nowrap`}>
                       <AddedFromBadge job={job} />
                     </td>
 
                     {/* Added */}
-                    <td className={`${CELL_END} text-slate-500 text-xs`}>
+                    <td className={`${CELL_END} whitespace-nowrap text-slate-500 text-xs`}>
                       {relativeTime(job.created_at)}
                     </td>
 
                     {/* Match / Resume / Cover — applicant only */}
                     {!isAdmin && (
                       <>
-                        <td className={CELL_END}>
+                        <td className={`${CELL_END} overflow-visible whitespace-nowrap`}>
                           <div className="inline-flex h-[28px] items-center justify-end">
                             <MatchCell job={job} />
                           </div>
                         </td>
-                        <td className={CELL_END} onClick={(e) => e.stopPropagation()}>
+                        <td className={`${CELL_END} overflow-visible whitespace-nowrap`} onClick={(e) => e.stopPropagation()}>
                           <div className="inline-flex h-[28px] items-center justify-end">
                             <ResumeDocCell job={job} />
                           </div>
                         </td>
-                        <td className={CELL_END} onClick={(e) => e.stopPropagation()}>
+                        <td className={`${CELL_END} overflow-visible whitespace-nowrap`} onClick={(e) => e.stopPropagation()}>
                           <div className="inline-flex h-[28px] items-center justify-end">
                             <CoverDocCell job={job} />
                           </div>
@@ -2334,7 +2361,7 @@ export function ScraperJobsTable({
                     )}
 
                     {/* Status */}
-                    <td className={CELL_END}>
+                    <td className={`${CELL_END} overflow-visible whitespace-nowrap`}>
                       <div className="inline-flex h-[28px] items-center justify-end gap-1.5">
                         {isAdmin ? (
                           <AdminExtractionStatusCell
@@ -2359,7 +2386,7 @@ export function ScraperJobsTable({
                     {/* Actions */}
                     <td
                       onClick={(e) => e.stopPropagation()}
-                      className={CELL_END}
+                      className={`${CELL_END} overflow-visible whitespace-nowrap`}
                     >
                       <div className="inline-flex items-center justify-end gap-1">
                         {/* Apply with Assistant — only when match + resume + cover are done */}
@@ -2465,7 +2492,6 @@ export function ScraperJobsTable({
               })}
             </tbody>
           </table>
-        </div>
       </div>
 
       {/* ── Context menu portal ──────────────────────────────────────────── */}

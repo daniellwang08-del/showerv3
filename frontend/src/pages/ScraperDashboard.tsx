@@ -241,7 +241,7 @@ export function ScraperDashboard() {
 
   return (
     <PageScrollArea alwaysShowScrollbar={false}>
-    <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+    <div className="w-full min-w-0 space-y-4 px-2 py-4 sm:space-y-5 sm:px-3 sm:py-5 lg:px-4">
       <PageHeader
         icon={Briefcase}
         gradient="from-slate-700 to-slate-900"
