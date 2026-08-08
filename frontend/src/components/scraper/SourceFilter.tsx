@@ -18,6 +18,7 @@ const SOURCE_SHORT_LABELS: Record<string, string> = {
   adzuna: 'Aduna',
   ziprecruiter: 'ZR',
   manual: 'FM',
+  admin_manual: 'FA',
 };
 
 export function SourceFilter({ sources, selected, onChange }: SourceFilterProps) {

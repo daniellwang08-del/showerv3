@@ -145,61 +145,13 @@ function visibleColumns(isAdmin: boolean): ColumnDef[] {
   });
 }
 
-/** Left cluster keeps fixed widths; title alone absorbs leftover table width. */
-const COLUMN_WIDTHS: Partial<Record<ColumnKey, string>> = {
-  __check__: '28px',
-  __no__: '36px',
-  title: '160px',
-  company: '100px',
-  location: '96px',
-  work_mode: '72px',
-  salary_raw: '92px',
-  job_type: '72px',
-  source: '110px',
-  posted_date: '56px',
-  added_from: '72px',
-  created_at: '56px',
-  // Compact match pill (score + band).
-  __processing__: '100px',
-  // Icon-only doc actions (view + download).
-  __resume__: '64px',
-  __cover__: '64px',
-  // Overridden dynamically from integration count (Applied ± Sheets ± Pumble).
-  __status__: '40px',
-  // Worst case: Apply + Re-run + Delete must all fit (table-fixed clips otherwise).
-  __actions__: '196px',
-};
-
-const ADMIN_ACTIONS_WIDTH = '132px';
-const ADMIN_TITLE_WIDTH = '240px';
-const ADMIN_COMPANY_WIDTH = '120px';
-
-/** Applicant Status column: one 28px square per integration + gaps + slim padding. */
-function applicantStatusColumnWidth(sheetsConfigured: boolean, pumbleConfigured: boolean): string {
-  const squares = 1 + (sheetsConfigured ? 1 : 0) + (pumbleConfigured ? 1 : 0);
-  const content = squares * 28 + Math.max(0, squares - 1) * 6;
-  return `${content + 8}px`;
-}
-
-/** Sum of applicant must-column floors (optional cols add on top when visible). */
-function applicantTableMinWidth(sheetsConfigured: boolean, pumbleConfigured: boolean): number {
-  const statusPx = parseInt(applicantStatusColumnWidth(sheetsConfigured, pumbleConfigured), 10) || 40;
-  return (
-    28 + // check
-    36 + // no
-    140 + // title min
-    100 + // company
-    72 + // work mode
-    56 + // posted
-    100 + // match
-    64 + // resume
-    64 + // cover
-    statusPx +
-    196 // actions (Apply + Re-run + Delete)
-  );
-}
-
-/** Columns pinned to the right edge of the table. */
+/**
+ * Column sizing for applicant + admin jobs tables:
+ * - `table-auto` (w-max): every column width follows its content
+ * - Cell padding (`px`/`py`) is the only horizontal constraint
+ * - No fixed widths, no max-width caps, no truncate on body cells
+ * - Horizontal scroll when the row is wider than the viewport
+ */
 const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
   'posted_date',
   'created_at',
@@ -210,99 +162,17 @@ const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
   '__actions__',
 ]);
 
-/**
- * Applicant columns that must stay visible at every width (never `display:none`).
- * Title / company / work mode / posted / match / resume / cover / status / actions
- * plus row chrome (checkbox, No.).
- */
-const APPLICANT_MUST_KEYS = new Set<ColumnKey>([
-  '__check__',
-  '__no__',
-  'title',
-  'company',
-  'work_mode',
-  'posted_date',
-  '__processing__',
-  '__resume__',
-  '__cover__',
-  '__status__',
-  '__actions__',
-]);
-
-/**
- * Optional applicant columns — hide early so must columns (title → actions)
- * always remain visible without crushing or inventing a mid-table gap.
- */
-const APPLICANT_OPTIONAL_VIS: Partial<Record<ColumnKey, { col: string; cell: string }>> = {
-  created_at: {
-    col: 'hidden min-[1280px]:table-column',
-    cell: 'hidden min-[1280px]:table-cell',
-  },
-  added_from: {
-    col: 'hidden min-[1360px]:table-column',
-    cell: 'hidden min-[1360px]:table-cell',
-  },
-  location: {
-    col: 'hidden min-[1440px]:table-column',
-    cell: 'hidden min-[1440px]:table-cell',
-  },
-  job_type: {
-    col: 'hidden min-[1520px]:table-column',
-    cell: 'hidden min-[1520px]:table-cell',
-  },
-  salary_raw: {
-    col: 'hidden min-[1520px]:table-column',
-    cell: 'hidden min-[1520px]:table-cell',
-  },
-  source: {
-    col: 'hidden min-[1600px]:table-column',
-    cell: 'hidden min-[1600px]:table-cell',
-  },
-};
-
-/** Admin: only drop lower-priority metadata when narrow; keep title/company/URL/status/actions. */
-const ADMIN_OPTIONAL_VIS: Partial<Record<ColumnKey, { col: string; cell: string }>> = {
-  created_at: {
-    col: 'hidden min-[1280px]:table-column',
-    cell: 'hidden min-[1280px]:table-cell',
-  },
-  added_from: {
-    col: 'hidden min-[1400px]:table-column',
-    cell: 'hidden min-[1400px]:table-cell',
-  },
-  source: {
-    col: 'hidden min-[1520px]:table-column',
-    cell: 'hidden min-[1520px]:table-cell',
-  },
-};
-
-function columnVisibilityClass(
-  key: ColumnKey,
-  isAdmin: boolean,
-  kind: 'col' | 'cell',
-): string | undefined {
-  if (!isAdmin && APPLICANT_MUST_KEYS.has(key)) return undefined;
-  const map = isAdmin ? ADMIN_OPTIONAL_VIS : APPLICANT_OPTIONAL_VIS;
-  return map[key]?.[kind];
-}
-
-/** Floor width so must columns are not crushed inside `table-fixed` (horizontal scroll instead). */
-const ADMIN_TABLE_MIN_WIDTH =
-  32 + // check
-  44 + // no
-  200 + // title min
-  130 + // company
-  160 + // url min
-  100 + // status / extraction
-  150; // actions
-
 /** Shared height with MatchScoreBadge so status squares align visually. */
 const MATCH_BADGE_H = 28;
 
 const ROW_H = 'h-[52px] max-h-[52px]';
-const CELL = 'px-3 py-0 align-middle overflow-hidden';
-/** Slimmer padding for Resume / Cover / Status / Actions so those columns pack tightly. */
-const CELL_COMPACT = 'px-1.5 py-0 align-middle overflow-hidden';
+/**
+ * Universal cell: padding + nowrap + visible overflow.
+ * Width is intrinsic from content for every column (title → actions).
+ */
+const CELL =
+  'px-2.5 py-1.5 align-middle whitespace-nowrap overflow-visible';
+const CELL_END = `${CELL} text-right`;
 
 // ---------------------------------------------------------------------------
 // Resume / Cover letter column helpers
@@ -485,7 +355,7 @@ function CoverDocCell({ job }: { job: DashboardJob }) {
 const DocsProcessingRing = memo(function DocsProcessingRing({ compact = false }: { compact?: boolean }) {
   return (
     <div
-      className="inline-flex items-center gap-1.5 text-emerald-600"
+      className="inline-flex w-max shrink-0 items-center gap-1.5 whitespace-nowrap text-emerald-600"
       title="Building resume & cover letter…"
       aria-label="Building resume and cover letter"
       style={{ height: MATCH_BADGE_H }}
@@ -640,10 +510,10 @@ const JobTitleLink = memo(function JobTitleLink({ job }: { job: DashboardJob }) 
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
-      className={`inline-flex min-w-0 flex-1 items-center gap-1 font-medium leading-snug ${JOB_TITLE_TONE_CLASS[tone]}`}
+      className={`inline-flex items-center gap-1 font-medium leading-snug whitespace-nowrap ${JOB_TITLE_TONE_CLASS[tone]}`}
       title={`${JOB_TITLE_TONE_HINT[tone]} · ${label}`}
     >
-      <span className="truncate">{label}</span>
+      <span>{label}</span>
       <ExternalLink size={11} className="shrink-0 opacity-60" />
     </a>
   );
@@ -668,11 +538,11 @@ function scoreLabel(score: number): string {
   return 'Weak';
 }
 
-/** Shared Match column shell — tight horizontal padding. */
+/** Shared Match column shell — content-sized with padding (no fixed width). */
 const MATCH_PILL_BASE =
-  'inline-flex h-[28px] w-auto shrink-0 items-center justify-center gap-0.5 rounded-lg border px-1 shadow-sm';
+  'inline-flex h-[28px] w-max max-w-none shrink-0 items-center justify-center gap-1 rounded-lg border px-2 shadow-sm whitespace-nowrap';
 
-/** Match score pill — compact footprint for every band label. */
+/** Match score pill — grows with score + band label. */
 const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number }) {
   return (
     <div
@@ -681,7 +551,7 @@ const MatchScoreBadge = memo(function MatchScoreBadge({ score }: { score: number
     >
       <Sparkles size={11} className="shrink-0 opacity-75" aria-hidden />
       <span className="shrink-0 text-sm font-bold tabular-nums leading-none">{score}</span>
-      <span className="min-w-0 shrink truncate text-left text-[10px] font-medium leading-none opacity-70">
+      <span className="shrink-0 text-[10px] font-medium leading-none opacity-70">
         {scoreLabel(score)}
       </span>
     </div>
@@ -702,7 +572,7 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
   let title = 'Pipeline progress: scrape → structure → documents';
   let shell =
     'border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-400';
-  let body: ReactNode = <span className="truncate text-[10px] font-medium leading-none">—</span>;
+  let body: ReactNode = <span className="text-[10px] font-medium leading-none">—</span>;
 
   if (matching) {
     title = 'Matching with your profile…';
@@ -711,7 +581,7 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
     body = (
       <>
         <Sparkles size={11} className="shrink-0 animate-pulse opacity-80" aria-hidden />
-        <span className="truncate text-[10px] font-semibold leading-none animate-pulse">Matching…</span>
+        <span className="text-[10px] font-semibold leading-none animate-pulse">Matching…</span>
       </>
     );
   } else if (jdReady || dots.length > 0) {
@@ -725,7 +595,7 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
             ? dots.slice(0, 3).map((dot) => <StatusDot key={dot.label} {...dot} />)
             : <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
         </span>
-        <span className="min-w-0 truncate text-[10px] font-semibold leading-none">No score</span>
+        <span className="text-[10px] font-semibold leading-none">No score</span>
       </>
     );
   }
@@ -740,6 +610,7 @@ const MatchCell = memo(function MatchCell({ job }: { job: DashboardJob }) {
 /** How the job entered the pool — short badges; full name stays in the tooltip. */
 const ADDED_FROM_LABELS: Record<string, string> = {
   manual: 'FM',
+  admin_manual: 'FA',
   job_sites: 'Sites',
   remoterocketship: 'RRS',
   jobright: 'JR.ai',
@@ -750,6 +621,7 @@ const ADDED_FROM_LABELS: Record<string, string> = {
 
 const ADDED_FROM_FULL_NAMES: Record<string, string> = {
   manual: 'Manual (from me)',
+  admin_manual: 'Manual (from admin)',
   job_sites: 'Job sites',
   remoterocketship: 'RemoteRocketship',
   jobright: 'Jobright.ai',
@@ -760,6 +632,7 @@ const ADDED_FROM_FULL_NAMES: Record<string, string> = {
 
 const ADDED_FROM_VARIANT: Record<string, 'default' | 'success' | 'warning' | 'danger' | 'info'> = {
   manual: 'info',
+  admin_manual: 'warning',
   job_sites: 'default',
   remoterocketship: 'default',
   jobright: 'info',
@@ -769,8 +642,9 @@ const ADDED_FROM_VARIANT: Record<string, 'default' | 'success' | 'warning' | 'da
 };
 
 function resolveAddedFromSlug(job: DashboardJob): string {
-  if (job.added_from === 'manual' || job.from_me) return 'manual';
   const raw = (job.added_from || '').trim().toLowerCase();
+  if (raw === 'admin_manual') return 'admin_manual';
+  if (raw === 'manual' || job.from_me) return 'manual';
   if (raw && raw !== 'job_sites') return raw;
   return 'job_sites';
 }
@@ -782,11 +656,13 @@ function AddedFromBadge({ job }: { job: DashboardJob }) {
   const title =
     slug === 'manual'
       ? 'You added this job by URL or attachment (FM)'
-      : slug === 'job_sites'
-        ? 'Fetched from job sites during platform sync'
-        : `Fetched from ${fullName} during platform sync`;
+      : slug === 'admin_manual'
+        ? 'Admin added this job manually to inventory (FA)'
+        : slug === 'job_sites'
+          ? 'Fetched from job sites during platform sync'
+          : `Fetched from ${fullName} during platform sync`;
   return (
-    <span title={title} className="inline-flex max-w-full">
+    <span title={title} className="inline-flex shrink-0">
       <Badge variant={ADDED_FROM_VARIANT[slug] || 'default'}>
         <span className="whitespace-nowrap">{label}</span>
       </Badge>
@@ -2221,52 +2097,7 @@ export function ScraperJobsTable({
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#141d31]">
         <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
-          <table
-            className="w-full table-fixed border-collapse text-sm"
-            style={{
-              minWidth: isAdmin
-                ? ADMIN_TABLE_MIN_WIDTH
-                : applicantTableMinWidth(sheetsConfigured, pumbleConfigured),
-            }}
-          >
-            <colgroup>
-              {columns.map((col) => {
-                let width = COLUMN_WIDTHS[col.key];
-                if (col.key === '__actions__' && isAdmin) width = ADMIN_ACTIONS_WIDTH;
-                if (col.key === 'title' && isAdmin) width = ADMIN_TITLE_WIDTH;
-                if (col.key === 'company' && isAdmin) width = ADMIN_COMPANY_WIDTH;
-                if (col.key === '__status__' && !isAdmin) {
-                  width = applicantStatusColumnWidth(sheetsConfigured, pumbleConfigured);
-                }
-                if (col.key === '__status__' && isAdmin) width = '118px';
-                // Title (applicant) / URL (admin) must claim ALL leftover width via 100%.
-                // Without this, table-fixed distributes slack into Match and opens a gap
-                // before Resume while clipping Actions down to the delete icon.
-                if (col.key === 'title' && !isAdmin) width = '100%';
-                if (col.key === 'source_url') width = '100%';
-                const vis = columnVisibilityClass(col.key, isAdmin, 'col');
-                return (
-                  <col
-                    key={col.key}
-                    style={
-                      width
-                        ? {
-                            width,
-                            minWidth:
-                              col.key === 'title' && !isAdmin
-                                ? '140px'
-                                : col.key === 'source_url'
-                                  ? '140px'
-                                  : width,
-                          }
-                        : undefined
-                    }
-                    className={vis}
-                  />
-                );
-              })}
-            </colgroup>
-
+          <table className="w-max min-w-full border-collapse text-sm">
             {/* ── Header ── */}
             <thead>
               <tr className="border-b border-slate-200 bg-slate-100 dark:border-slate-500/70 dark:bg-[#243148]">
@@ -2278,20 +2109,13 @@ export function ScraperJobsTable({
                       if (col.sortable) onSort(sortKey);
                     }}
                     className={[
-                      col.key === '__processing__' ||
-                      col.key === '__resume__' ||
-                      col.key === '__cover__' ||
-                      col.key === '__status__' ||
-                      col.key === '__actions__'
-                        ? 'px-1.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden'
-                        : 'px-2.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap overflow-hidden',
+                      'px-2.5 py-3.5 text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap',
                       'text-slate-700 dark:text-[#e8eef7]',
                       RIGHT_ALIGN_KEYS.has(col.key) ? 'text-right' : 'text-left',
                       col.sortable
                         ? 'cursor-pointer select-none hover:bg-slate-200/70 hover:text-slate-900 dark:hover:bg-[#2f3d58] dark:hover:text-white'
                         : '',
                       col.key === '__check__' ? 'px-2' : '',
-                      columnVisibilityClass(col.key, isAdmin, 'cell') ?? '',
                     ].join(' ')}
                   >
                     {col.key === '__check__' ? (
@@ -2400,7 +2224,7 @@ export function ScraperJobsTable({
                     ].join(' ')}
                   >
                     {/* Checkbox */}
-                    <td className="px-2 py-0 align-middle w-[32px]">
+                    <td className="px-2 py-1.5 align-middle whitespace-nowrap">
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); toggleSelect(job.id); }}
@@ -2416,23 +2240,21 @@ export function ScraperJobsTable({
                     </td>
 
                     {/* No. */}
-                    <td className={`${CELL} text-xs text-slate-400 font-mono whitespace-nowrap`}>
+                    <td className={`${CELL} text-xs text-slate-400 font-mono`}>
                       {rowOffset + idx + 1}
                     </td>
 
-                    {/* Title — color mirrors readiness (blue / yellow / green) */}
+                    {/* Title — full text; column grows with content */}
                     <td className={CELL}>
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <JobTitleLink job={job} />
-                      </div>
+                      <JobTitleLink job={job} />
                     </td>
 
                     {/* Company */}
-                    <td className={`${CELL} text-slate-700 whitespace-nowrap text-xs truncate`}>
+                    <td className={`${CELL} text-slate-700 text-xs`}>
                       {job.company || '-'}
                     </td>
 
-                    {/* Admin: long posting URL (absorbs width up to Source) */}
+                    {/* Admin: posting URL — full URL, content-sized */}
                     {isAdmin && (
                       <td className={CELL}>
                         <a
@@ -2440,7 +2262,7 @@ export function ScraperJobsTable({
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="block min-w-0 truncate font-mono text-[11px] leading-snug text-slate-600 hover:text-blue-600 dark:text-[#cbd5e1] dark:hover:text-[#93c5fd]"
+                          className="inline-block whitespace-nowrap font-mono text-[11px] leading-snug text-slate-600 hover:text-blue-600 dark:text-[#cbd5e1] dark:hover:text-[#93c5fd]"
                           title={job.source_url}
                         >
                           {job.source_url || <span className="text-slate-400 dark:text-[#64748b]">-</span>}
@@ -2451,79 +2273,69 @@ export function ScraperJobsTable({
                     {/* Applicant listing metadata */}
                     {!isAdmin && (
                       <>
-                        <td
-                          className={`${CELL} text-slate-500 text-xs truncate ${columnVisibilityClass('location', false, 'cell') ?? ''}`}
-                        >
+                        <td className={`${CELL} text-slate-500 text-xs`}>
                           {job.location || '-'}
                         </td>
                         <td className={CELL}>
                           <WorkModeBadge mode={job.work_mode} isRemoteFallback={job.is_remote} />
                         </td>
-                        <td
-                          className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate ${columnVisibilityClass('salary_raw', false, 'cell') ?? ''}`}
-                        >
+                        <td className={`${CELL} text-slate-500 text-xs`}>
                           {job.salary_raw || <span className="text-slate-300">-</span>}
                         </td>
-                        <td
-                          className={`${CELL} text-slate-500 whitespace-nowrap text-xs truncate ${columnVisibilityClass('job_type', false, 'cell') ?? ''}`}
-                        >
+                        <td className={`${CELL} text-slate-500 text-xs`}>
                           {job.job_type || <span className="text-slate-300">-</span>}
                         </td>
                       </>
                     )}
 
-                    {/* Source — optional on narrow viewports */}
-                    <td className={`${CELL} ${columnVisibilityClass('source', isAdmin, 'cell') ?? ''}`}>
+                    {/* Source */}
+                    <td className={CELL}>
                       <Badge variant={SOURCE_BADGE_VARIANT[job.source?.toLowerCase() ?? ''] || 'default'}>
-                        {job.source || job.domain}
+                        <span className="whitespace-nowrap">{job.source || job.domain || '-'}</span>
                       </Badge>
                     </td>
 
-                    {/* Posted (applicant only) — must display */}
+                    {/* Posted (applicant only) */}
                     {!isAdmin && (
-                      <td className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs`}>
+                      <td className={`${CELL_END} text-slate-500 text-xs`}>
                         {relativeTime(job.posted_date)}
                       </td>
                     )}
 
-                    {/* Added from — scrape site or Manual (Source stays the ATS/site) */}
-                    <td
-                      className={`px-3 py-0 align-middle whitespace-nowrap overflow-visible ${columnVisibilityClass('added_from', isAdmin, 'cell') ?? ''}`}
-                    >
+                    {/* Added from */}
+                    <td className={CELL}>
                       <AddedFromBadge job={job} />
                     </td>
 
                     {/* Added */}
-                    <td
-                      className={`${CELL} text-right text-slate-500 whitespace-nowrap text-xs ${columnVisibilityClass('created_at', isAdmin, 'cell') ?? ''}`}
-                    >
+                    <td className={`${CELL_END} text-slate-500 text-xs`}>
                       {relativeTime(job.created_at)}
                     </td>
 
                     {/* Match / Resume / Cover — applicant only */}
                     {!isAdmin && (
                       <>
-                        <td className={`${CELL_COMPACT} text-right`}>
-                          <div className="flex h-[28px] items-center justify-end">
+                        <td className={CELL_END}>
+                          <div className="inline-flex h-[28px] items-center justify-end">
                             <MatchCell job={job} />
                           </div>
                         </td>
-                        <td className={`${CELL_COMPACT} text-right`} onClick={(e) => e.stopPropagation()}>
-                          <div className="flex h-[28px] items-center justify-end">
+                        <td className={CELL_END} onClick={(e) => e.stopPropagation()}>
+                          <div className="inline-flex h-[28px] items-center justify-end">
                             <ResumeDocCell job={job} />
                           </div>
                         </td>
-                        <td className={`${CELL_COMPACT} text-right`} onClick={(e) => e.stopPropagation()}>
-                          <div className="flex h-[28px] items-center justify-end">
+                        <td className={CELL_END} onClick={(e) => e.stopPropagation()}>
+                          <div className="inline-flex h-[28px] items-center justify-end">
                             <CoverDocCell job={job} />
                           </div>
                         </td>
                       </>
                     )}
 
-                    {/* Status: extraction progress (admin) or apply/sheet/pumble squares (applicant) */}
-                    <td className={`${CELL_COMPACT} text-right`}>
-                      <div className="flex h-[28px] items-center justify-end">
+                    {/* Status */}
+                    <td className={CELL_END}>
+                      <div className="inline-flex h-[28px] items-center justify-end gap-1.5">
                         {isAdmin ? (
                           <AdminExtractionStatusCell
                             job={job}
@@ -2544,12 +2356,13 @@ export function ScraperJobsTable({
                       </div>
                     </td>
 
-                    {/* Actions — width reserved for Apply + Run/Re-run + Delete */}
+                    {/* Actions */}
                     <td
                       onClick={(e) => e.stopPropagation()}
-                      className="px-1 py-0 align-middle whitespace-nowrap overflow-visible text-right"
+                      className={CELL_END}
                     >
-                      <div className="inline-flex max-w-full items-center justify-end gap-1">
+                      <div className="inline-flex items-center justify-end gap-1">
+                        {/* Apply with Assistant — only when match + resume + cover are done */}
                         {/* Apply with Assistant — only when match + resume + cover are done */}
                         {!isAdmin && isJobApplyReady(job) && (
                           <button

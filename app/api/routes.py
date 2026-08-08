@@ -1699,7 +1699,10 @@ async def submit_job(
                     "posted_date": request.posted_date.isoformat() if request.posted_date else None,
                     "experience_level": request.experience_level,
                     "industry": request.industry,
-                }
+                },
+                # Admin inventory URL adds are FA (from admin), not FM (from me).
+                "submitted_by_admin": bool(is_admin),
+                "submitted_by_user_id": user_id,
             },
         )
         session.add(new_job)
@@ -1882,12 +1885,19 @@ def _dashboard_view_clauses(
                 clauses.append(added_at >= day_start)
                 clauses.append(added_at < day_end)
     elif view == "mine":
-        # Manual submissions stamp raw_metadata.submitted_data and live in my pool
-        # with an active per-user status; scraped/promoted jobs never carry it.
+        # Applicant "Jobs from me": URL/attachment they (or any applicant) submitted —
+        # never admin inventory FA adds.
         clauses.append(UserJobStatus.status == "active")
         clauses.append(Job.raw_metadata["submitted_data"].isnot(None))
+        clauses.append(
+            or_(
+                Job.raw_metadata["submitted_by_admin"].as_string().is_(None),
+                Job.raw_metadata["submitted_by_admin"].as_string() != "true",
+            )
+        )
     elif view == "manual":
-        # Admin ops: any job that entered via URL/attachment (system-wide).
+        # Admin ops: any job that entered via URL/attachment (system-wide),
+        # including admin FA adds and applicant FM adds.
         clauses.append(Job.raw_metadata["submitted_data"].isnot(None))
     elif view == "suggested":
         needs_match_join = True
@@ -2010,20 +2020,38 @@ def _dashboard_search_clauses(
     return clauses
 
 
+def _is_admin_manual_submission(meta: dict) -> bool:
+    """True when a manual URL/attachment add was done by an admin (FA)."""
+    flag = meta.get("submitted_by_admin")
+    if flag is True:
+        return True
+    if isinstance(flag, str) and flag.strip().lower() in {"true", "1", "yes"}:
+        return True
+    if meta.get("submitted_by") == "admin":
+        return True
+    return False
+
+
 def resolve_dashboard_added_from(meta: dict | None) -> str:
     """Origin for the Jobs table "Added from" column.
 
     Prefer the concrete scraper slug stored at promote time (``scraped_source``),
     so the UI can show RemoteRocketship / Jobright / etc. instead of a generic
-    "Job sites" bucket. Manual URL/attachment submissions stay ``manual``.
+    "Job sites" bucket.
+
+    Manual URL/attachment submissions:
+      - applicant → ``manual`` (FM / from me)
+      - admin → ``admin_manual`` (FA / from admin)
     """
     data = meta if isinstance(meta, dict) else {}
     if data.get("submitted_data"):
+        if _is_admin_manual_submission(data):
+            return "admin_manual"
         return "manual"
     scraped = data.get("scraped_source")
     if isinstance(scraped, str):
         slug = scraped.strip().lower()
-        if slug and slug not in {"manual", "scraper", "unknown", "job_sites"}:
+        if slug and slug not in {"manual", "admin_manual", "scraper", "unknown", "job_sites"}:
             return slug
     return "job_sites"
 
@@ -2175,7 +2203,7 @@ def _row_to_dashboard_job(row) -> DashboardJobResponse:
         work_mode=work_mode,
         salary_raw=ext_salary_range or meta.get("salary_raw"),
         job_type=meta.get("job_type"),
-        from_me=bool(meta.get("submitted_data")),
+        from_me=bool(meta.get("submitted_data")) and not _is_admin_manual_submission(meta),
         added_from=resolve_dashboard_added_from(meta),
         pool_added_at=pool_added_at,
     )

@@ -69,7 +69,17 @@ def _job_source_expr():
     return func.coalesce(
         Job.raw_metadata["source"].as_string(),
         Job.raw_metadata["scraped_source"].as_string(),
-        case((Job.raw_metadata["submitted_data"].isnot(None), "manual"), else_="unknown"),
+        case(
+            (
+                and_(
+                    Job.raw_metadata["submitted_data"].isnot(None),
+                    Job.raw_metadata["submitted_by_admin"].as_string() == "true",
+                ),
+                "admin_manual",
+            ),
+            (Job.raw_metadata["submitted_data"].isnot(None), "manual"),
+            else_="unknown",
+        ),
     )
 
 
@@ -132,6 +142,10 @@ async def fetch_dashboard_stats(
                     and_(
                         UserJobStatus.status == "active",
                         Job.raw_metadata["submitted_data"].isnot(None),
+                        or_(
+                            Job.raw_metadata["submitted_by_admin"].as_string().is_(None),
+                            Job.raw_metadata["submitted_by_admin"].as_string() != "true",
+                        ),
                     )
                 ).label("my_jobs"),
                 func.count().filter(

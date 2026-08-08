@@ -253,9 +253,9 @@ class DashboardJobResponse(BaseModel):
     work_mode: str | None = None
     salary_raw: str | None = None
     job_type: str | None = None
-    # True when the job was added by this user via URL/attachment (has submitted_data).
+    # True when the job was added via applicant URL/attachment (FM), not admin FA.
     from_me: bool = False
-    # How the job entered the pool: "manual", a scraper slug
+    # How the job entered the pool: "manual" (FM), "admin_manual" (FA), a scraper slug
     # (remoterocketship, jobright, …), or legacy "job_sites".
     added_from: str = "job_sites"
     # When the job entered this user's visible pool (UserJobStatus.created_at,
