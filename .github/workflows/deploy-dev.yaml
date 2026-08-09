@@ -62,6 +62,7 @@ jobs:
             systemctl restart showerv3-dev-worker@tailoring
             systemctl restart showerv3-dev-worker@save
             systemctl restart showerv3-dev-worker@resume
+            systemctl restart showerv3-dev-worker@autopost
             systemctl restart showerv3-dev-worker@scraper
 
             echo "Waiting for startup..."

@@ -16,6 +16,8 @@ services:
       - "yes"
       - --appendfsync
       - everysec
+      - --maxmemory
+      - "2gb"
       - --maxmemory-policy
       - noeviction
       - --save
@@ -44,6 +46,35 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-job_scraper}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # CPX51-class host (16 vCPU / 32GB): raise connections + memory for shared
+    # API+worker load. ALTER SYSTEM on a live volume also works; these flags
+    # apply cleanly on fresh volume init / compose recreate.
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=6GB
+      - -c
+      - effective_cache_size=20GB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - wal_buffers=64MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - max_worker_processes=16
+      - -c
+      - max_parallel_workers=12
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s

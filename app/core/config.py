@@ -55,8 +55,10 @@ class Settings(BaseSettings):
     sqlalchemy_echo: bool = False
 
     database_url: str = Field(default="")
-    database_pool_size: int = 20
-    database_max_overflow: int = 10
+    # Sized for a shared API+workers box (~CPX51). Keep pool×process_count under
+    # Postgres max_connections (production tuned to 300).
+    database_pool_size: int = 12
+    database_max_overflow: int = 8
 
     @field_validator("database_url")
     @classmethod
@@ -110,9 +112,9 @@ class Settings(BaseSettings):
     redis_cache_url: str | None = Field(default=None)
     redis_pubsub_url: str | None = Field(default=None)
     # Connection pool sizes per role (redis.asyncio clients).
-    redis_pool_size: int = 10  # extraction cache
-    redis_broker_pool_size: int = 10  # admin queue depth / health
-    redis_pubsub_pool_size: int = 5
+    redis_pool_size: int = 20  # extraction cache
+    redis_broker_pool_size: int = 20  # admin queue depth / health
+    redis_pubsub_pool_size: int = 10
     # When True, API refuses in-process BackgroundTasks job fallback.
     # None = auto (True for APP_ENV=production|prod, False otherwise).
     redis_require_for_jobs: bool | None = Field(default=None)
@@ -142,16 +144,17 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = 240.0
     # Concurrent arq jobs per worker process (overridable via System Settings).
     # Applied at worker process start from DB overrides when present.
-    extraction_worker_max_jobs: int = 10
-    analysis_worker_max_jobs: int = 6
-    tailoring_worker_max_jobs: int = 8
-    save_worker_max_jobs: int = 10
-    resume_worker_max_jobs: int = 10
+    # Defaults target a 16-vCPU / 32GB shared production host (CPX51-class).
+    extraction_worker_max_jobs: int = 12
+    analysis_worker_max_jobs: int = 10
+    tailoring_worker_max_jobs: int = 10
+    save_worker_max_jobs: int = 16
+    resume_worker_max_jobs: int = 8
     scraper_worker_max_jobs: int = 2
     # Sheets/Pumble auto-post (low priority; must not hold save slots).
-    autopost_worker_max_jobs: int = 4
+    autopost_worker_max_jobs: int = 6
     # Max parallel OpenAI calls when attachment text is split into chunks.
-    openai_attachment_max_concurrent: int = 4
+    openai_attachment_max_concurrent: int = 8
     phase_a_max_tokens: int = 16384
     phase_b_max_tokens: int = 16384
     auto_generate_tailored_content: bool = True
@@ -192,7 +195,7 @@ class Settings(BaseSettings):
 
     # Match extraction_worker_max_jobs so concurrent extract jobs are not
     # serialized on a smaller Playwright semaphore.
-    browser_pool_size: int = 10
+    browser_pool_size: int = 12
     browser_timeout_ms: int = 30000
     browser_headless: bool = True
 
@@ -201,8 +204,8 @@ class Settings(BaseSettings):
     http_retry_delay_seconds: float = 1.0
 
     # Align with extraction concurrency (token bucket + burst semaphore).
-    rate_limit_requests_per_second: float = 10.0
-    rate_limit_burst: int = 10
+    rate_limit_requests_per_second: float = 12.0
+    rate_limit_burst: int = 20
 
     extraction_cache_ttl_seconds: int = 3600
     default_dedup_recycle_days: int = Field(default=60, ge=1, le=3650)

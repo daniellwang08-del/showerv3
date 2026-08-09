@@ -64,6 +64,7 @@ jobs:
             systemctl restart showerv3-worker@tailoring
             systemctl restart showerv3-worker@save
             systemctl restart showerv3-worker@resume
+            systemctl restart showerv3-worker@autopost
 
             echo "Waiting for in-flight scrapes before restarting scraper worker..."
             # Rolling restart mid-crawl cancels run_scraper_task and showed a false

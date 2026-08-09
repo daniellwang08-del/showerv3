@@ -126,8 +126,8 @@ async def init_http_client() -> None:
         max_redirects=10,
         http2=True,
         limits=httpx.Limits(
-            max_keepalive_connections=20,
-            max_connections=100,
+            max_keepalive_connections=40,
+            max_connections=150,
             keepalive_expiry=30,
         ),
     )
