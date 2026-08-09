@@ -142,6 +142,8 @@ export interface SourceStats {
 export interface ScraperStats {
   total_jobs: number;
   total_remote: number;
+  /** Remote jobs not yet marked applied. Optional for older backends. */
+  unapplied_remote_jobs?: number;
   today_scraped: number;
   today_remote: number;
   today_posted: number;

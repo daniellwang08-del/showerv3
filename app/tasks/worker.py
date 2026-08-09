@@ -124,10 +124,23 @@ async def _skip_linkedin_extraction(
     }
 
 
-async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = None) -> dict:
+async def extract_job(
+    ctx: dict,
+    job_id: str,
+    url: str,
+    user_id: str | None = None,
+    skip_phase_b: bool = False,
+    chain_analysis: bool = True,
+) -> dict:
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="extract_job", extraction_id=job_id, target_url=url, user_id=user_id)
-    logger.info("worker_extract_job_started", job_id=job_id, url=url)
+    logger.info(
+        "worker_extract_job_started",
+        job_id=job_id,
+        url=url,
+        skip_phase_b=bool(skip_phase_b),
+        chain_analysis=bool(chain_analysis),
+    )
 
     from app.services.linkedin_job_filter import is_linkedin_job_url
 
@@ -168,33 +181,40 @@ async def extract_job(ctx: dict, job_id: str, url: str, user_id: str | None = No
                     "method": method,
                 })
 
-                async with get_session() as session:
-                    job_repo = JobRepository(session)
-                    job = await job_repo.get_by_extraction_id(job_id)
-                    if job:
-                        try:
-                            progress_repo = JobMatchInProgressRepository(session)
-                            await progress_repo.add(job.id, user_id)
-                            await session.commit()
-                            pending_match_progress = (job.id, user_id)
-                            pool = await get_analysis_pool()
-                            from app.core.redis_support import pipeline_job_id
+                if chain_analysis:
+                    async with get_session() as session:
+                        job_repo = JobRepository(session)
+                        job = await job_repo.get_by_extraction_id(job_id)
+                        if job:
+                            try:
+                                progress_repo = JobMatchInProgressRepository(session)
+                                await progress_repo.add(job.id, user_id)
+                                await session.commit()
+                                pending_match_progress = (job.id, user_id)
+                                pool = await get_analysis_pool()
+                                from app.core.redis_support import pipeline_job_id
 
-                            await pool.enqueue_job(
-                                "analyze_job_match",
-                                job.id,
-                                user_id,
-                                job_id,
-                                False,
-                                _job_id=pipeline_job_id("analyze", job.id, user_id),
-                            )
-                            logger.info("job_match_enqueued", valid_job_id=job.id, user_id=user_id, queue=ANALYSIS_QUEUE)
-                            pending_match_progress = None
-                        except Exception as enq_err:
-                            await progress_repo.remove(job.id, user_id)
-                            await session.commit()
-                            pending_match_progress = None
-                            logger.warning("job_match_enqueue_failed", valid_job_id=job.id, error=str(enq_err))
+                                await pool.enqueue_job(
+                                    "analyze_job_match",
+                                    job.id,
+                                    user_id,
+                                    job_id,
+                                    bool(skip_phase_b),
+                                    _job_id=pipeline_job_id("analyze", job.id, user_id),
+                                )
+                                logger.info(
+                                    "job_match_enqueued",
+                                    valid_job_id=job.id,
+                                    user_id=user_id,
+                                    queue=ANALYSIS_QUEUE,
+                                    skip_phase_b=bool(skip_phase_b),
+                                )
+                                pending_match_progress = None
+                            except Exception as enq_err:
+                                await progress_repo.remove(job.id, user_id)
+                                await session.commit()
+                                pending_match_progress = None
+                                logger.warning("job_match_enqueue_failed", valid_job_id=job.id, error=str(enq_err))
             else:
                 # Shared inventory extract finished — fan-out auto-prepare for opted-in users.
                 try:

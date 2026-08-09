@@ -126,6 +126,12 @@ async def fetch_dashboard_stats(
                 func.count().label("total_jobs"),
                 func.count().filter(is_remote == True).label("total_remote"),  # noqa: E712
                 func.count().filter(
+                    and_(
+                        is_remote == True,  # noqa: E712
+                        ValidJobUserApplication.id.is_(None),
+                    )
+                ).label("unapplied_remote_jobs"),
+                func.count().filter(
                     and_(added_at >= day_start, added_at < day_end)
                 ).label("today_added"),
                 func.count().filter(
@@ -272,6 +278,7 @@ async def fetch_dashboard_stats(
     return {
         "total_jobs": stats_row.total_jobs or 0,
         "total_remote": stats_row.total_remote or 0,
+        "unapplied_remote_jobs": getattr(stats_row, "unapplied_remote_jobs", None) or 0,
         "today_scraped": stats_row.today_added or 0,
         "today_remote": stats_row.today_remote or 0,
         "today_posted": stats_row.today_posted or 0,

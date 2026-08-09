@@ -347,6 +347,17 @@ function arrayBufferToBase64(buf) {
   return btoa(binary);
 }
 
+// ── job submission ──────────────────────────────────────────────────────────
+
+export const submitJobUrl = (url) =>
+  apiFetch("/jobs/submit", { method: "POST", body: { url } });
+
+// User settings live at GET/PUT /settings (same as webapp).
+export const getUserSettings = () => apiFetch("/settings");
+
+export const updateUserSettings = (body) =>
+  apiFetch("/settings", { method: "PUT", body });
+
 // ── streaming chat (SSE over fetch, so we can send the Authorization header) ──
 
 export async function chatStream(reqBody, { onDelta, onDone, onError, signal }) {

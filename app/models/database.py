@@ -72,6 +72,9 @@ class User(Base):
     auto_prepare_match = Column(Boolean, default=False, nullable=False, server_default="false")
     auto_prepare_full = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # Manual URL/paste submit depth: extract | match | full (default full).
+    manual_submit_pipeline = Column(String(20), default="full", nullable=False, server_default="full")
+
     # OpenAI: "default" uses server OPENAI_API_KEY; "custom" uses encrypted user key.
     openai_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
     openai_api_key_encrypted = deferred(Column(Text, nullable=True))

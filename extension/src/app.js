@@ -33,8 +33,11 @@ let state = {
   // renders this instead. See fetchHomeExtras / renderActiveTab("ready").
   readyList: [],
   readyListLoaded: false,
-  bestQueue: [], // strong matches (score >= 75)
-  remoteQueue: [], // remote-only jobs
+  queuedQueue: [], // queued/available jobs (JD ready, no tailored resume, not applied)
+  // Authoritative Queued list from server view=available (independent of catalog).
+  queuedList: [],
+  queuedListLoaded: false,
+  remoteQueue: [], // unapplied remote-only jobs
   mineQueue: [], // jobs posted by me
   todayQueue: [], // jobs added today (matches dashboard view=today)
   todayPlatformQueue: [], // today's scraped/platform jobs (not user-submitted)
@@ -46,7 +49,7 @@ let state = {
   platformCounts: {
     total: 0,
     ready: 0,
-    best: 0,
+    queued: 0,
     today: 0,
     remote: 0,
     mine: 0,
@@ -64,7 +67,7 @@ let state = {
   appliedQueue: [], // jobs applied to today (most recent first)
   // Which Jobs list the user opened chat from — Complete & Next advances in this list.
   applyListContext: null, // { key, view?, remote_only?, min_match_score?, jobIds: string[] }
-  homeTab: "hub", // hub | progress | today | all | ready | best | remote | mine | tailor | stats | settings
+  homeTab: "hub", // hub | progress | today | all | ready | queued | remote | mine | tailor | stats | settings | add
   todaySubTab: "all", // "all" | "platform" | "mine" — narrows the New today list
   tailorSubTab: "making", // "making" | "ready" — in-progress vs generated resumes
   tailorHits: [], // unified resume search hits (library + job builds)
@@ -75,12 +78,16 @@ let state = {
     today: 1,
     all: 1,
     ready: 1,
-    best: 1,
+    queued: 1,
     remote: 1,
     mine: 1,
     tailor: 1,
   }, // 1-based page per list section
   BEST_MATCH_SCORE: 75,
+  userSettings: null, // { manual_submit_pipeline, ... } from GET /settings
+  addJobs: null, // { urls: string[], submitted: number, posted: number, dup: number, failed: number, running: boolean }
+  allSearchMode: false, // Total tile: search-only until user enters a query
+  allSearchQuery: "", // Total tile: current search query
   pageSize: 25, // rows per page, user-selectable
   listFilters: {
     title: "",
@@ -1033,10 +1040,16 @@ async function goHome() {
     homeTab: "hub",
     applyListContext: null,
   });
-  // Paint cached lists immediately, then sync in the background. refreshReadyList
-  // runs independently of loadQueue's warm-poll skip so the Ready tab always loads.
+  // Paint cached lists immediately, then sync in the background. refreshReadyList /
+  // refreshQueuedList run independently of loadQueue's warm-poll skip.
   const hadCache = await hydrateCatalogFromStorage();
-  await Promise.all([loadQueue({ silent: hadCache }), checkSync(), refreshReadyList()]);
+  await Promise.all([
+    loadQueue({ silent: hadCache }),
+    checkSync(),
+    refreshReadyList(),
+    refreshQueuedList(),
+  ]);
+  void loadUserSettings();
   startHomePolling();
 }
 
@@ -1127,14 +1140,20 @@ function openHomeSection(id) {
   if (pageByTab[id] != null) pageByTab[id] = 1;
   const patch = { homeTab: id, pageByTab };
   if (id === "tailor") {
-    // Job list work-mode filter must not hide resumes (they have no work mode).
     patch.listFilters = { ...getListFilters(), workMode: "" };
+  }
+  if (id === "all") {
+    patch.allSearchMode = true;
+    patch.allSearchQuery = "";
+  }
+  if (id === "add") {
+    patch.addJobs = null;
+    void loadUserSettings();
   }
   setState(patch, { resetScroll: true });
   if (id === "tailor") void loadTailorResumes();
-  // Ready list is fetched on its own (ungated) path; refresh on open so it's
-  // current even when the background poll skipped (revision unchanged).
   if (id === "ready") void refreshReadyList();
+  if (id === "queued") void refreshQueuedList();
   if (id === "stats") void loadStatsPeriod(state.statsPeriod || "week");
 }
 
@@ -1236,7 +1255,6 @@ function isReadyJob(j) {
 function deriveHomeFromCatalog(catalog) {
   const jobsById = (catalog && catalog.jobsById) || {};
   const all = Object.values(jobsById);
-  const bestFloor = state.BEST_MATCH_SCORE || 75;
   const todayAll = sortJobs(
     all.filter((j) => tsInLocalDay(j.pool_added_at || j.created_at)),
     "created_at",
@@ -1246,12 +1264,14 @@ function deriveHomeFromCatalog(catalog) {
   const todayPlatform = todayAll.filter((j) => !isFromMe(j));
   const queue = sortJobs(all, "created_at", "desc");
   const readyQueue = sortJobs(all.filter(isReadyJob), "match_score", "desc");
-  const bestQueue = sortJobs(
-    all.filter((j) => Number(j.match_overall_score) >= bestFloor),
-    "match_score",
-    "desc"
-  );
-  const remoteQueue = sortJobs(all.filter(isRemoteJob), "created_at", "desc");
+  const isQueuedJob = (j) => {
+    // Mirror dashboard view=available: shared JD ready, not resume-ready, not applied.
+    if (isJobApplied(j) || isReadyJob(j)) return false;
+    const ext = String(j.extraction_status || "").toLowerCase();
+    return ext === "extracted" || ext === "completed" || ext === "done";
+  };
+  const queuedQueue = sortJobs(all.filter(isQueuedJob), "match_score", "desc");
+  const remoteQueue = sortJobs(all.filter((j) => isRemoteJob(j) && !isJobApplied(j)), "created_at", "desc");
   const mineQueue = sortJobs(all.filter((j) => isFromMe(j)), "created_at", "desc");
   const appliedQueue = sortJobs(
     all.filter((j) => tsInLocalDay(j.applied_at)),
@@ -1283,9 +1303,9 @@ function deriveHomeFromCatalog(catalog) {
   const platformCounts = {
     ...(meta.platformCounts || {
       total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
-      best: ss.best_jobs != null ? ss.best_jobs : bestQueue.length,
+      queued: ss.available_jobs != null ? ss.available_jobs : queuedQueue.length,
       today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
-      remote: ss.total_remote != null ? ss.total_remote : remoteQueue.length,
+      remote: ss.unapplied_remote_jobs != null ? ss.unapplied_remote_jobs : remoteQueue.length,
       mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
     }),
     ready:
@@ -1297,7 +1317,7 @@ function deriveHomeFromCatalog(catalog) {
   return {
     queue,
     readyQueue,
-    bestQueue,
+    queuedQueue,
     remoteQueue,
     mineQueue,
     todayQueue: todayAll,
@@ -1345,9 +1365,9 @@ function buildMetaFromExtras(extras, counts, catalog) {
   const platformCounts = {
     total: ss.total_jobs != null ? ss.total_jobs : dashboardCounts.all,
     ready: ss.ready_jobs != null ? ss.ready_jobs : prev.platformCounts?.ready,
-    best: ss.best_jobs != null ? ss.best_jobs : prev.platformCounts?.best,
+    queued: ss.available_jobs != null ? ss.available_jobs : prev.platformCounts?.queued,
     today: ss.today_scraped != null ? ss.today_scraped : dashboardCounts.today,
-    remote: ss.total_remote != null ? ss.total_remote : prev.platformCounts?.remote,
+    remote: ss.unapplied_remote_jobs != null ? ss.unapplied_remote_jobs : prev.platformCounts?.remote,
     mine: ss.my_jobs != null ? ss.my_jobs : dashboardCounts.mine,
   };
   return {
@@ -1373,6 +1393,7 @@ function applyHomeFromCatalog(catalog, { silent = false, resetPages = false } = 
     ...(nextHome.queue || []),
     ...(nextHome.todayQueue || []),
     ...(nextHome.readyQueue || []),
+    ...(nextHome.queuedQueue || []),
   ]);
   setState({
     ...nextHome,
@@ -1384,7 +1405,7 @@ function applyHomeFromCatalog(catalog, { silent = false, resetPages = false } = 
             today: 1,
             all: 1,
             ready: 1,
-            best: 1,
+            queued: 1,
             remote: 1,
             mine: 1,
             tailor: 1,
@@ -1560,7 +1581,7 @@ function homeDataUnchanged(prev, next) {
   if (sessionsListSig(prev.sessions) !== sessionsListSig(next.sessions)) return false;
   if (jobsListSig(prev.queue) !== jobsListSig(next.queue)) return false;
   if (jobsListSig(prev.readyQueue) !== jobsListSig(next.readyQueue)) return false;
-  if (jobsListSig(prev.bestQueue) !== jobsListSig(next.bestQueue)) return false;
+  if (jobsListSig(prev.queuedQueue) !== jobsListSig(next.queuedQueue)) return false;
   if (jobsListSig(prev.remoteQueue) !== jobsListSig(next.remoteQueue)) return false;
   if (jobsListSig(prev.mineQueue) !== jobsListSig(next.mineQueue)) return false;
   if (jobsListSig(prev.todayQueue) !== jobsListSig(next.todayQueue)) return false;
@@ -1610,6 +1631,23 @@ async function refreshReadyList() {
   } catch (err) {
     console.warn("refreshReadyList failed", err);
     setState({ readyListLoaded: true });
+  }
+}
+
+// Authoritative Queued list: server view=available (JD ready, no tailored resume,
+// not applied). Mirrors Waiting's independent refresh so the tab is not stuck on
+// a stale catalog subset.
+async function refreshQueuedList() {
+  try {
+    const page = await fetchDashboardPages({
+      view: "available",
+      sort: "match_score",
+      order: "desc",
+    });
+    setState({ queuedList: (page && page.items) || [], queuedListLoaded: true });
+  } catch (err) {
+    console.warn("refreshQueuedList failed", err);
+    setState({ queuedListLoaded: true });
   }
 }
 
@@ -1785,11 +1823,10 @@ async function consumePendingWebappJob() {
  */
 function applyContextForTab(tabId, jobIds) {
   const score = minScoreParam();
-  const bestFloor = state.BEST_MATCH_SCORE || 75;
   const ids = (jobIds || []).map(String);
   switch (tabId) {
-    case "best":
-      return { key: "best", view: "all", min_match_score: bestFloor, jobIds: ids };
+    case "queued":
+      return { key: "queued", view: "available", jobIds: ids };
     case "remote":
       return {
         key: "remote",
@@ -1807,7 +1844,7 @@ function applyContextForTab(tabId, jobIds) {
     case "ready":
       return { key: "ready", view: "ready", min_match_score: score, jobIds: ids };
     case "progress":
-      return { key: "progress", view: "ready", min_match_score: score, jobIds: ids };
+      return { key: "progress", jobIds: ids };
     default:
       return { key: "ready", view: "ready", min_match_score: score, jobIds: ids };
   }
@@ -1890,8 +1927,8 @@ async function resolveNextJob(afterJobId) {
 function listContextLabel(ctx) {
   if (!ctx || !ctx.key) return "ready";
   const labels = {
-    ready: "ready",
-    best: "best",
+    ready: "waiting",
+    queued: "queued",
     remote: "remote",
     mine: "posted by me",
     today: "today",
@@ -1901,16 +1938,21 @@ function listContextLabel(ctx) {
   return labels[ctx.key] || ctx.key;
 }
 
-async function openJob(jobId, { redirect = false, keepReportNotice = false } = {}) {
+async function openJob(jobId, { redirect = false, keepReportNotice = false, resumeSource } = {}) {
   stopHomePolling();
   if (state.streaming) stopStreaming();
-  setState({
+  const patch = {
     view: "job",
     job: null,
     jdOpen: true,
     error: null,
     ...(keepReportNotice ? {} : { reportNotice: null }),
-  });
+  };
+  // One-shot override for "Start without tailored resume" (and similar).
+  if (resumeSource === "original" || resumeSource === "tailored") {
+    patch.resumeSource = resumeSource;
+  }
+  setState(patch);
   try {
     await api.createSession(jobId);
     // Fresh chat per application open — prior turns for this job must not linger.
@@ -5306,13 +5348,14 @@ const HOME_SECTION_META = {
   progress: { title: "In progress", empty: "No applications in progress yet." },
   today: { title: "Today's jobs", empty: "No jobs were added today." },
   all: { title: "Total jobs", empty: "No jobs in the system yet." },
-  ready: { title: "Ready to apply", empty: "No ready-to-apply jobs yet." },
-  best: { title: "Best jobs", empty: "No best-match jobs yet." },
-  remote: { title: "Remote jobs", empty: "No remote jobs yet." },
+  ready: { title: "Waiting jobs", empty: "No waiting jobs yet (tailored resume ready, not applied)." },
+  queued: { title: "Queued jobs", empty: "No queued jobs yet (JD ready, no tailored resume)." },
+  remote: { title: "Remote jobs", empty: "No unapplied remote jobs yet." },
   mine: { title: "Posted by me", empty: "You have not posted any jobs yet." },
   tailor: { title: "Tailor resume", empty: null },
   stats: { title: "Statistics", empty: null },
   settings: { title: "Settings", empty: null },
+  add: { title: "Add jobs", empty: null },
 };
 
 function renderHomeSection() {
@@ -5628,7 +5671,7 @@ function renderHomeTiles() {
     el("div", { class: "home-tiles home-tiles-platform", "aria-label": "Job lists" }, [
       tile({
         id: "ready",
-        label: "Ready to apply",
+        label: "Waiting jobs",
         countNode: count(pc.ready),
         iconSvg: ICON_CHECK,
         featured: true,
@@ -5640,9 +5683,9 @@ function renderHomeTiles() {
         iconSvg: ICON_BOLT,
       }),
       tile({
-        id: "best",
-        label: "Best jobs",
-        countNode: count(pc.best),
+        id: "queued",
+        label: "Queued jobs",
+        countNode: count(pc.queued),
         iconSvg: ICON_STAR,
         featured: true,
       }),
@@ -5674,6 +5717,11 @@ function renderHomeTiles() {
         label: "In progress",
         iconSvg: ICON_LIST,
         badgeCount: state.sessions.length,
+      }),
+      toolBtn({
+        id: "add",
+        label: "Add jobs",
+        iconSvg: ICON_PLUS,
       }),
       toolBtn({
         id: "tailor",
@@ -5817,7 +5865,7 @@ function resetListPages() {
     today: 1,
     all: 1,
     ready: 1,
-    best: 1,
+    queued: 1,
     remote: 1,
     mine: 1,
     tailor: 1,
@@ -6149,7 +6197,6 @@ function renderFilteredJobList(tabId, cards, emptyMsg, { prepend, bindContext = 
 function renderActiveTab() {
   const scoreHint =
     state.minScore > 0 ? `No jobs at or above match score ${state.minScore}.` : null;
-  const bestFloor = state.BEST_MATCH_SCORE || 75;
   switch (state.homeTab) {
     case "progress":
       return renderFilteredJobList(
@@ -6182,17 +6229,8 @@ function renderActiveTab() {
         { prepend: renderTodaySubTabs() }
       );
     case "all":
-      return renderFilteredJobList(
-        "all",
-        state.queue.map((j) => jobToCard(j)),
-        scoreHint || "No jobs in the system yet.",
-        { prepend: renderMinScoreControl() }
-      );
+      return renderAllSearchMode();
     case "ready": {
-      // Ready = tailored resume built & not applied; match score is irrelevant, so
-      // this list is the ungated server view (state.readyList), NOT the score-gated
-      // catalog. No min-score control here for the same reason. Filter out jobs we
-      // just applied locally (pending) so Complete & Next drops them instantly.
       const pendingReady = new Set(state.pendingAppliedIds || []);
       const readyCards = (state.readyList || [])
         .filter((j) => j && !isJobApplied(j) && !pendingReady.has(j.id))
@@ -6201,22 +6239,28 @@ function renderActiveTab() {
         "ready",
         readyCards,
         state.readyListLoaded
-          ? "No ready-to-apply jobs yet (tailored resume ready, not yet applied)."
-          : "Loading ready-to-apply jobs…"
+          ? "No waiting jobs yet (tailored resume ready, not yet applied)."
+          : "Loading waiting jobs…"
       );
     }
-    case "best":
+    case "queued": {
+      const queuedCards = (state.queuedListLoaded ? state.queuedList : state.queuedQueue || [])
+        .filter((j) => j && !isJobApplied(j) && !isReadyJob(j))
+        .map((j) => jobToCardWithHover(j));
       return renderFilteredJobList(
-        "best",
-        (state.bestQueue || []).map((j) => jobToCard(j)),
-        `No jobs with match score ≥ ${bestFloor}.`,
-        { prepend: renderMinScoreControl() }
+        "queued",
+        queuedCards,
+        state.queuedListLoaded
+          ? "No queued jobs yet (JD ready, no tailored resume)."
+          : "Loading queued jobs…",
+        { bindContext: true }
       );
+    }
     case "remote":
       return renderFilteredJobList(
         "remote",
         (state.remoteQueue || []).map((j) => jobToCard(j)),
-        scoreHint || "No remote jobs yet.",
+        scoreHint || "No unapplied remote jobs yet.",
         { prepend: renderMinScoreControl() }
       );
     case "mine":
@@ -6232,13 +6276,10 @@ function renderActiveTab() {
       return renderStatistics();
     case "settings":
       return renderSettings();
+    case "add":
+      return renderAddJobs();
     default:
-      return renderFilteredJobList(
-        "all",
-        state.queue.map((j) => jobToCard(j)),
-        scoreHint || "No jobs in the system yet.",
-        { prepend: renderMinScoreControl() }
-      );
+      return renderAllSearchMode();
   }
 }
 
@@ -7406,6 +7447,32 @@ function renderSettings() {
         }),
       ]),
       el("div", { class: "settings-field" }, [
+        el("label", { class: "settings-field-label" }, "Submit pipeline mode"),
+        el(
+          "p",
+          { class: "muted small settings-hint" },
+          "Controls what happens when a job is submitted via Add Jobs: extract only, match only, or full pipeline."
+        ),
+        renderSelect({
+          value: (state.userSettings && state.userSettings.manual_submit_pipeline) || "full",
+          className: "settings-select",
+          options: [
+            { value: "extract", label: "Extract only" },
+            { value: "match", label: "Extract + Match" },
+            { value: "full", label: "Full pipeline (recommended)" },
+          ],
+          onChange: async (v) => {
+            try {
+              await api.updateUserSettings({ manual_submit_pipeline: v });
+              setState({ userSettings: { ...(state.userSettings || {}), manual_submit_pipeline: v } });
+              toast(`Pipeline mode set to "${v}".`);
+            } catch (err) {
+              toast("Failed to update pipeline setting: " + (err.message || "Unknown error"));
+            }
+          },
+        }),
+      ]),
+      el("div", { class: "settings-field" }, [
         el("label", { class: "settings-field-label" }, "Answer strategy"),
         el(
           "p",
@@ -7592,6 +7659,258 @@ function settingsPreset(score, label) {
     },
     label
   );
+}
+
+// ── URL extraction (matches frontend/src/utils/extractHttpUrls.ts) ────────
+
+const HTTP_URL_RE = /https?:\/\/[^\s<>"'`）\]}>，。；、]+/gi;
+function extractHttpUrlsFromText(text) {
+  if (!text || !text.trim()) return [];
+  const found = text.match(HTTP_URL_RE) || [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of found) {
+    const url = raw.trim().replace(/[.,;:!?)\]]+$/g, "");
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+  }
+  return out;
+}
+
+// ── User settings (manual_submit_pipeline) ────────────────────────────────
+
+async function loadUserSettings() {
+  try {
+    const s = await api.getSettings();
+    setState({ userSettings: s || {} });
+  } catch {
+    /* noop */
+  }
+}
+
+// ── "Total jobs" search-only UI ───────────────────────────────────────────
+
+let allSearchTimer = null;
+function renderAllSearchMode() {
+  const section = el("div", { class: "tab-panel all-search-section" });
+  const input = el("input", {
+    type: "text",
+    class: "list-filter-input all-search-input",
+    placeholder: "Exact search: title, company, or job URL…",
+    value: state.allSearchQuery || "",
+  });
+  input.addEventListener("input", (e) => {
+    const q = e.target.value;
+    setState({ allSearchQuery: q });
+    if (allSearchTimer) clearTimeout(allSearchTimer);
+    allSearchTimer = setTimeout(() => {
+      allSearchTimer = null;
+      const trimmed = String(q || "").trim();
+      if (trimmed) void executeAllSearch(trimmed);
+    }, 400);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (allSearchTimer) clearTimeout(allSearchTimer);
+      allSearchTimer = null;
+      const q = (state.allSearchQuery || "").trim();
+      if (q) void executeAllSearch(q);
+    }
+  });
+  section.appendChild(
+    el("div", { class: "all-search-bar" }, [
+      el("p", { class: "muted small" }, "Search by title, company, or paste a job URL. No results until you search."),
+      input,
+    ])
+  );
+
+  const q = (state.allSearchQuery || "").trim();
+  if (!q) {
+    section.appendChild(el("p", { class: "muted center" }, "Type a search query to find jobs."));
+  } else if (state.queueLoading) {
+    section.appendChild(renderSpinner("Searching…"));
+  } else {
+    const cards = (state.queue || []).map((j) =>
+      isReadyJob(j) ? jobToCard(j) : jobToCardWithHover(j)
+    );
+    section.appendChild(jobListSection("all", cards, "No jobs match this search."));
+  }
+  return section;
+}
+
+async function executeAllSearch(q) {
+  try {
+    setState({ queueLoading: true });
+    const params = {
+      q: String(q || "").trim(),
+      sort: "match_score",
+      order: "desc",
+      per_page: 100,
+      timezone: localTimezone(),
+      view: "all",
+    };
+    const score = minScoreParam();
+    if (score) params.min_match_score = score;
+    const data = await api.getDashboard(params);
+    const items = (data && data.items) || [];
+    setState({ queue: items, queueLoading: false });
+  } catch (err) {
+    setState({ queueLoading: false });
+    toast("Search failed: " + (err.message || "Unknown error"));
+  }
+}
+
+// ── Hover actions on queued/non-ready cards ───────────────────────────────
+
+function jobToCardWithHover(j) {
+  const card = jobToCard(j);
+  card.hoverActions = [
+    {
+      label: "Run",
+      className: "card-hover-btn primary",
+      onClick: (e) => {
+        e.stopPropagation();
+        void startJobTailor(j);
+      },
+    },
+    {
+      label: "Start without tailored resume",
+      className: "card-hover-btn",
+      onClick: (e) => {
+        e.stopPropagation();
+        void openJob(j.id, { redirect: true, resumeSource: "original" });
+      },
+    },
+  ];
+  return card;
+}
+
+// ── Add Jobs section ──────────────────────────────────────────────────────
+
+let addJobsDraft = "";
+
+function renderAddJobs() {
+  const section = el("div", { class: "tab-panel add-jobs-section" });
+  const pipelineSetting = (state.userSettings && state.userSettings.manual_submit_pipeline) || "full";
+
+  section.appendChild(
+    el("div", { class: "add-jobs-hero" }, [
+      el("div", { class: "add-jobs-hero-title" }, "Add jobs by URL"),
+      el("p", { class: "muted small add-jobs-hero-sub" },
+        "Paste one or more job URLs. Each URL will be submitted to the backend pipeline."
+      ),
+      el("p", { class: "muted small add-jobs-pipeline-note" },
+        `Pipeline mode: ${pipelineSetting}`
+      ),
+    ])
+  );
+
+  const textarea = el("textarea", {
+    class: "add-jobs-textarea",
+    rows: "6",
+    placeholder: "https://boards.greenhouse.io/company/jobs/12345\nhttps://company.workday.com/...\n\nPaste multiple URLs, one per line or mixed in text.",
+    value: addJobsDraft || "",
+  });
+  textarea.addEventListener("input", (e) => {
+    addJobsDraft = e.target.value;
+  });
+  section.appendChild(textarea);
+
+  const aj = state.addJobs;
+  const isRunning = aj && aj.running;
+
+  section.appendChild(
+    el("div", { class: "add-jobs-actions" }, [
+      el(
+        "button",
+        {
+          type: "button",
+          class: "btn primary",
+          disabled: isRunning,
+          onclick: () => {
+            const urls = extractHttpUrlsFromText(addJobsDraft);
+            if (!urls.length) {
+              toast("No valid URLs found in the text.");
+              return;
+            }
+            void runAddJobs(urls);
+          },
+        },
+        isRunning ? "Submitting…" : "Submit URLs"
+      ),
+    ])
+  );
+
+  if (aj) {
+    const total = (aj.urls || []).length;
+    const done = aj.submitted || 0;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    section.appendChild(
+      el("div", { class: "add-jobs-progress" }, [
+        el("div", { class: "add-jobs-progress-bar-wrap" }, [
+          el("div", { class: "add-jobs-progress-bar", style: `width:${pct}%` }),
+        ]),
+        el("div", { class: "add-jobs-progress-text muted small" },
+          `${done}/${total} submitted — ${aj.posted || 0} posted, ${aj.dup || 0} duplicate, ${aj.failed || 0} failed`
+        ),
+      ])
+    );
+  }
+
+  return section;
+}
+
+async function runAddJobs(urls) {
+  setState({
+    addJobs: { urls, submitted: 0, posted: 0, dup: 0, failed: 0, running: true },
+  });
+  const CONCURRENCY = 15;
+  let submitted = 0;
+  let posted = 0;
+  let dup = 0;
+  let failed = 0;
+
+  const work = async (url) => {
+    try {
+      const res = await api.submitJobUrl(url);
+      if (res && (res.is_duplicate || res.status === "duplicate")) {
+        dup++;
+      } else if (res && res.success === false) {
+        failed++;
+      } else {
+        posted++;
+      }
+    } catch {
+      failed++;
+    }
+    submitted++;
+    setState({
+      addJobs: { urls, submitted, posted, dup, failed, running: submitted < urls.length },
+    });
+  };
+
+  const pending = new Set();
+  let idx = 0;
+  while (idx < urls.length) {
+    while (pending.size < CONCURRENCY && idx < urls.length) {
+      const p = work(urls[idx++]);
+      pending.add(p);
+      p.finally(() => pending.delete(p));
+    }
+    if (pending.size >= CONCURRENCY) await Promise.race(pending);
+  }
+  await Promise.all(pending);
+
+  setState({
+    addJobs: { urls, submitted, posted, dup, failed, running: false },
+  });
+  addJobsDraft = "";
+  toast(`Done: ${posted} posted, ${dup} duplicate, ${failed} failed.`);
+  void loadQueue();
+  void refreshReadyList();
+  void refreshQueuedList();
 }
 
 function settingsToggleRow({ title, hint, on, onToggle }) {
@@ -7824,7 +8143,7 @@ function setTabPage(tabId, page) {
 
 function renderListBulkActions(tabId, jobIds) {
   if (!state.pumbleConfigured || !jobIds.length) return null;
-  if (tabId !== "today" && tabId !== "ready") return null;
+  if (tabId !== "today" && tabId !== "ready" && tabId !== "queued") return null;
   return el("div", { class: "list-bulk-actions" }, [
     el(
       "button",
@@ -7846,7 +8165,7 @@ function applyPageSize(size) {
   const n = size === 50 || size === 100 ? size : 25;
   void store.setPageSize(n);
   setState(
-    { pageSize: n, pageByTab: { progress: 1, today: 1, ready: 1, tailor: 1 } },
+    { pageSize: n, pageByTab: { progress: 1, today: 1, ready: 1, queued: 1, tailor: 1 } },
     { resetScroll: true }
   );
 }
@@ -8111,7 +8430,7 @@ function renderMinScoreControl({ compact = true } = {}) {
 const ICON_BRIEFCASE =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 12h18"/></svg>';
 
-function jobCard({ title, company, location, score, onClick, badge, chips = [], source, docDownloads }) {
+function jobCard({ title, company, location, score, onClick, badge, chips = [], source, docDownloads, hoverActions }) {
   const meta = sourceMeta(source);
   const side = [];
   if (score != null) {
@@ -8132,19 +8451,29 @@ function jobCard({ title, company, location, score, onClick, badge, chips = [], 
 
   const subtitle = [company, location].filter(Boolean).join(" · ");
 
-  return el(
-    "div",
-    { class: "card", style: `--src-color:${meta.color}`, onclick: onClick },
-    [
-      logo,
-      el("div", { class: "card-main" }, [
-        el("div", { class: "card-title", title }, title),
-        subtitle ? el("div", { class: "card-sub muted", title: subtitle }, subtitle) : null,
-        chips.length ? el("div", { class: "card-chips" }, chips.map(renderChip)) : null,
-      ]),
-      side.length ? el("div", { class: "card-side" }, side) : null,
-    ]
-  );
+  const cardClass = "card" + (hoverActions && hoverActions.length ? " card-has-hover" : "");
+
+  const children = [
+    logo,
+    el("div", { class: "card-main" }, [
+      el("div", { class: "card-title", title }, title),
+      subtitle ? el("div", { class: "card-sub muted", title: subtitle }, subtitle) : null,
+      chips.length ? el("div", { class: "card-chips" }, chips.map(renderChip)) : null,
+    ]),
+    side.length ? el("div", { class: "card-side" }, side) : null,
+  ];
+
+  if (hoverActions && hoverActions.length) {
+    children.push(
+      el("div", { class: "card-hover-actions" },
+        hoverActions.map((a) =>
+          el("button", { type: "button", class: a.className || "card-hover-btn", onclick: a.onClick }, a.label)
+        )
+      )
+    );
+  }
+
+  return el("div", { class: cardClass, style: `--src-color:${meta.color}`, onclick: onClick }, children);
 }
 
 function renderChip(c) {

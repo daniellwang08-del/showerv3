@@ -491,6 +491,12 @@ class UserRepository:
             "default_dedup_score_comparison_enabled": default_score_cmp,
             "auto_prepare_match": bool(getattr(user, "auto_prepare_match", False)),
             "auto_prepare_full": bool(getattr(user, "auto_prepare_full", False)),
+            "manual_submit_pipeline": (
+                str(getattr(user, "manual_submit_pipeline", None) or "full").strip().lower()
+                if str(getattr(user, "manual_submit_pipeline", None) or "full").strip().lower()
+                in ("extract", "match", "full")
+                else "full"
+            ),
             "resume_tailoring_prompt_mode": prompt_mode,
             "resume_tailoring_prompt_instructions": effective_instructions,
             "resume_tailoring_prompt_instructions_custom": stored_custom_prompt,
@@ -534,6 +540,7 @@ class UserRepository:
         dedup_score_comparison_enabled: bool | None = None,
         auto_prepare_match: bool | None = None,
         auto_prepare_full: bool | None = None,
+        manual_submit_pipeline: str | None = None,
         resume_tailoring_prompt_mode: str | None = None,
         resume_tailoring_prompt_custom: str | None = None,
         cover_letter_prompt_mode: str | None = None,
@@ -645,6 +652,12 @@ class UserRepository:
             if user.auto_prepare_full:
                 # Full implies match.
                 user.auto_prepare_match = True
+
+        if manual_submit_pipeline is not None:
+            mode = str(manual_submit_pipeline).strip().lower()
+            if mode not in ("extract", "match", "full"):
+                raise ValueError("manual_submit_pipeline must be 'extract', 'match', or 'full'")
+            user.manual_submit_pipeline = mode
 
         if resume_tailoring_prompt_mode is not None:
             if resume_tailoring_prompt_mode not in ("default", "custom"):

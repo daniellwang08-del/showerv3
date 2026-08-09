@@ -212,7 +212,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
   flex-shrink: 0;
 }
 .home-tiles-tools {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   flex-shrink: 0;
   padding: 2px 0 4px;
@@ -1788,6 +1788,56 @@ input[type="number"].num-stepper-input::-webkit-inner-spin-button {
 .card-doc-btn-ico svg { width: 12px; height: 12px; display: block; }
 .card-doc-btn-label { line-height: 1; }
 
+/* Hover action buttons on job cards (queued / non-ready) */
+.card-has-hover { position: relative; }
+.card-hover-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(11, 18, 32, 0.82);
+  border-radius: var(--radius);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+  z-index: 2;
+}
+.card-has-hover:hover .card-hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.card-hover-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.1s ease;
+  white-space: nowrap;
+}
+.card-hover-btn:hover {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  background: color-mix(in srgb, var(--primary) 14%, var(--panel-2));
+  transform: translateY(-1px);
+}
+.card-hover-btn.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.card-hover-btn.primary:hover {
+  background: var(--primary-2);
+}
+
 /* Meta chips */
 .card-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
 .chip {
@@ -2888,6 +2938,88 @@ input[type="number"].num-stepper-input::-webkit-inner-spin-button {
   border-radius: 6px;
 }
 .af-remove:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+
+/* ── Add Jobs section ──────────────────────────────────────────────────────── */
+.add-jobs-section { gap: 12px; }
+.add-jobs-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel));
+}
+.add-jobs-hero-title { font-size: 14px; font-weight: 800; letter-spacing: -0.01em; }
+.add-jobs-hero-sub { margin: 0; line-height: 1.4; }
+.add-jobs-pipeline-note {
+  margin: 2px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+}
+.add-jobs-textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.add-jobs-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
+}
+.add-jobs-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.add-jobs-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.add-jobs-progress-bar-wrap {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.add-jobs-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), #7dd3fc);
+  transition: width 0.25s ease;
+}
+.add-jobs-progress-text { line-height: 1.3; }
+
+/* ── Total jobs search-only UI ────────────────────────────────────────────── */
+.all-search-section { gap: 12px; }
+.all-search-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.all-search-input {
+  font-size: 13px !important;
+  padding: 10px 12px !important;
+}
 
 /* ── Login screen (matches Atomspace web auth) ─────────────────────────────── */
 

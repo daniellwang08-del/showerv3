@@ -165,6 +165,7 @@ class AdminBoardTrends(BaseModel):
 class ScraperStatsResponse(BaseModel):
     total_jobs: int
     total_remote: int
+    unapplied_remote_jobs: int = 0  # remote and not yet applied
     today_scraped: int = 0
     today_remote: int = 0
     today_posted: int = 0
@@ -913,6 +914,7 @@ async def get_scraper_stats(
         return ScraperStatsResponse(
             total_jobs=data["total_jobs"],
             total_remote=data["total_remote"],
+            unapplied_remote_jobs=data.get("unapplied_remote_jobs", 0),
             today_scraped=data["today_scraped"],
             today_remote=data["today_remote"],
             today_posted=data["today_posted"],

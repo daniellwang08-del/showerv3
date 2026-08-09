@@ -773,10 +773,15 @@ async def enqueue_extraction(
     *,
     user_id: str | None = None,
     background_tasks: BackgroundTasks | None = None,
+    skip_phase_b: bool = False,
+    chain_analysis: bool = True,
 ) -> None:
     """
     Prefer Redis/arq whenever Redis is reachable (jobs wait in queue until a worker runs).
     Fall back in-process only when Redis is down and APP_ENV is not production.
+
+    ``chain_analysis`` / ``skip_phase_b`` control post-extract personal pipeline depth
+    when ``user_id`` is set (manual submit preference).
     """
     from app.core.redis_support import allow_in_process_job_fallback, pipeline_job_id
     from app.tasks.worker import EXTRACTION_QUEUE
@@ -786,21 +791,15 @@ async def enqueue_extraction(
     if pool:
         try:
             job_id = pipeline_job_id("extract", extraction_id)
-            if user_id:
-                job = await pool.enqueue_job(
-                    "extract_job",
-                    extraction_id,
-                    url,
-                    user_id,
-                    _job_id=job_id,
-                )
-            else:
-                job = await pool.enqueue_job(
-                    "extract_job",
-                    extraction_id,
-                    url,
-                    _job_id=job_id,
-                )
+            job = await pool.enqueue_job(
+                "extract_job",
+                extraction_id,
+                url,
+                user_id,
+                bool(skip_phase_b),
+                bool(chain_analysis),
+                _job_id=job_id,
+            )
             logger.info(
                 "extraction_enqueued_redis",
                 extraction_id=extraction_id,
@@ -808,13 +807,22 @@ async def enqueue_extraction(
                 queue=EXTRACTION_QUEUE,
                 arq_job_id=job_id,
                 already_queued=job is None,
+                skip_phase_b=bool(skip_phase_b),
+                chain_analysis=bool(chain_analysis),
             )
             return
         except Exception as e:
             logger.warning("extraction_redis_enqueue_failed", extraction_id=extraction_id, error=str(e))
 
     if allow_in_process_job_fallback() and background_tasks:
-        background_tasks.add_task(process_extraction_sync, extraction_id, url, user_id)
+        background_tasks.add_task(
+            process_extraction_sync,
+            extraction_id,
+            url,
+            user_id,
+            bool(skip_phase_b),
+            bool(chain_analysis),
+        )
         logger.info("extraction_enqueued_in_process", extraction_id=extraction_id, url=url)
         return
 
@@ -831,6 +839,7 @@ async def _run_analyze_and_enqueue_save(
     user_id: str,
     *,
     extraction_id: str | None = None,
+    skip_phase_b: bool = False,
 ) -> None:
     """In-process Phase A then enqueue (or run) save → tailor chain.
 
@@ -841,7 +850,12 @@ async def _run_analyze_and_enqueue_save(
     from app.core.redis_support import pipeline_job_id
     from app.services.job_match_orchestrator import run_job_match_analysis
 
-    result = await run_job_match_analysis(job_id, user_id, extraction_id=extraction_id)
+    result = await run_job_match_analysis(
+        job_id,
+        user_id,
+        extraction_id=extraction_id,
+        skip_phase_b=bool(skip_phase_b),
+    )
     if not result:
         await publish_ws_event({
             "type": "match_failed",
@@ -917,6 +931,7 @@ async def enqueue_job_match_analysis(
     background_tasks: BackgroundTasks | None = None,
     extraction_id: str | None = None,
     force_requeue: bool = False,
+    skip_phase_b: bool = False,
 ) -> None:
     """
     Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks
@@ -933,6 +948,7 @@ async def enqueue_job_match_analysis(
 
     pool = await try_get_analysis_pool()
     bind_logging_context(job_id=job_id, user_id=user_id)
+    skip_b = bool(skip_phase_b)
     if pool:
         try:
             arq_id = pipeline_job_id("analyze", job_id, user_id)
@@ -941,6 +957,7 @@ async def enqueue_job_match_analysis(
                 job_id,
                 user_id,
                 extraction_id,
+                skip_b,
                 _job_id=arq_id,
             )
             if job is None and force_requeue:
@@ -952,6 +969,7 @@ async def enqueue_job_match_analysis(
                     job_id,
                     user_id,
                     extraction_id,
+                    skip_b,
                     _job_id=retry_id,
                 )
                 if job is None:
@@ -963,6 +981,7 @@ async def enqueue_job_match_analysis(
                         job_id,
                         user_id,
                         extraction_id,
+                        skip_b,
                         _job_id=uniq_id,
                     )
                     retry_id = uniq_id
@@ -973,6 +992,7 @@ async def enqueue_job_match_analysis(
                     queue=ANALYSIS_QUEUE,
                     arq_job_id=retry_id,
                     already_queued=job is None,
+                    skip_phase_b=skip_b,
                 )
             else:
                 logger.info(
@@ -982,6 +1002,7 @@ async def enqueue_job_match_analysis(
                     queue=ANALYSIS_QUEUE,
                     arq_job_id=arq_id,
                     already_queued=job is None,
+                    skip_phase_b=skip_b,
                 )
             return
         except Exception as e:
@@ -993,13 +1014,14 @@ async def enqueue_job_match_analysis(
             job_id,
             user_id,
             extraction_id=extraction_id,
+            skip_phase_b=skip_b,
         )
         logger.info("job_match_enqueued_in_process", job_id=job_id, user_id=user_id)
         return
 
     if allow_in_process_job_fallback():
         await _run_analyze_and_enqueue_save(
-            job_id, user_id, extraction_id=extraction_id
+            job_id, user_id, extraction_id=extraction_id, skip_phase_b=skip_b
         )
         return
 
@@ -1012,10 +1034,17 @@ async def enqueue_job_match_analysis(
     )
 
 
-async def _fallback_job_match_after_extraction(job_id: str, user_id: str) -> None:
+async def _fallback_job_match_after_extraction(
+    job_id: str,
+    user_id: str,
+    *,
+    skip_phase_b: bool = False,
+) -> None:
     """Run match+save chain so extraction (BackgroundTasks) does not block on OpenAI."""
     try:
-        await _run_analyze_and_enqueue_save(job_id, user_id)
+        await _run_analyze_and_enqueue_save(
+            job_id, user_id, skip_phase_b=bool(skip_phase_b)
+        )
     except Exception as match_err:
         logger.warning(
             "fallback_job_match_failed",
@@ -1031,6 +1060,7 @@ async def start_personal_job_analysis(
     *,
     background_tasks: BackgroundTasks | None = None,
     force: bool = False,
+    skip_phase_b: bool = False,
 ) -> dict:
     """Queue per-user analysis for a job that already has (or will use) shared JD.
 
@@ -1083,6 +1113,7 @@ async def start_personal_job_analysis(
         background_tasks=background_tasks,
         extraction_id=extraction_id,
         force_requeue=already_in_progress or force,
+        skip_phase_b=bool(skip_phase_b),
     )
     return {
         "status": "queued",
@@ -1316,6 +1347,8 @@ async def process_extraction_sync(
     extraction_id: str,
     url: str,
     user_id: str | None = None,
+    skip_phase_b: bool = False,
+    chain_analysis: bool = True,
 ) -> None:
     from app.services.extraction_service import ExtractionService
     from app.storage.repository import JobRepository
@@ -1326,7 +1359,7 @@ async def process_extraction_sync(
         if result.get("status") == "extracted":
             # Scrape-only stays EXTRACTED (shared JD ready). Do not promote to
             # COMPLETED — that status means Phase A structured the posting.
-            if user_id:
+            if user_id and chain_analysis:
                 found_job_id: str | None = None
                 async with get_session() as session:
                     job_repo = JobRepository(session)
@@ -1337,7 +1370,13 @@ async def process_extraction_sync(
                         await progress_repo.add(job.id, user_id)
                         await session.commit()
                 if found_job_id:
-                    asyncio.create_task(_fallback_job_match_after_extraction(found_job_id, user_id))
+                    asyncio.create_task(
+                        _fallback_job_match_after_extraction(
+                            found_job_id,
+                            user_id,
+                            skip_phase_b=bool(skip_phase_b),
+                        )
+                    )
     except Exception as e:
         logger.error("sync_extraction_failed", extraction_id=extraction_id, error=str(e))
 
@@ -1530,10 +1569,13 @@ async def submit_job(
 
     Pipeline ownership:
     - Admin: extraction only (shared JD inventory).
-    - Applicant + new URL: extract then analyze/tailor for that user.
-    - Applicant + existing URL with completed JD: link pool and start analysis (no rescrape).
+    - Applicant: depth from ``manual_submit_pipeline`` (extract | match | full).
     """
-    from app.services.job_pipeline_mode import ingest_chain_user_id, extraction_has_shared_jd
+    from app.services.job_pipeline_mode import (
+        extraction_has_shared_jd,
+        manual_submit_enqueue_flags,
+        normalize_manual_submit_pipeline,
+    )
 
     is_valid, error = URLManager.validate_url(request.url)
     if not is_valid:
@@ -1548,7 +1590,18 @@ async def submit_job(
 
     user_id = current_user.get("user_id")
     is_admin = bool(current_user.get("is_admin"))
-    chain_user_id = ingest_chain_user_id(is_admin=is_admin, user_id=user_id)
+    pipeline = "full"
+    if user_id and not is_admin:
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_id(user_id)
+            pipeline = normalize_manual_submit_pipeline(
+                getattr(user, "manual_submit_pipeline", None) if user else None
+            )
+    extract_user_id, chain_analysis, skip_phase_b = manual_submit_enqueue_flags(
+        pipeline, is_admin=is_admin, user_id=user_id
+    )
+    analysis_user_id = extract_user_id  # None for admin / extract-only
     normalized_url = request.url
     domain = URLManager.extract_domain(request.url)
 
@@ -1640,21 +1693,34 @@ async def submit_job(
             await _publish_job_submitted(user_id, existing_job.id, request.url)
 
             # Applicants: start personal analysis on shared JD, or finish extraction first.
-            if chain_user_id:
+            # Depth follows manual_submit_pipeline (extract | match | full).
+            if analysis_user_id:
                 if jd_ready:
                     await start_personal_job_analysis(
                         existing_job.id,
-                        chain_user_id,
+                        analysis_user_id,
                         background_tasks=background_tasks,
                         force=False,
+                        skip_phase_b=skip_phase_b,
                     )
                 elif extraction_id:
                     await enqueue_extraction(
                         extraction_id,
                         request.url,
-                        user_id=chain_user_id,
+                        user_id=analysis_user_id,
                         background_tasks=background_tasks,
+                        skip_phase_b=skip_phase_b,
+                        chain_analysis=True,
                     )
+            elif not is_admin and extraction_id and not jd_ready:
+                # Extract-only: scrape shared JD without chaining personal analysis.
+                await enqueue_extraction(
+                    extraction_id,
+                    request.url,
+                    user_id=None,
+                    background_tasks=background_tasks,
+                    chain_analysis=False,
+                )
 
             return JobSubmissionResponse(
                 success=True,
@@ -1727,19 +1793,22 @@ async def submit_job(
         await session.commit()
 
         if not extraction_has_shared_jd(extraction):
-            # Admin: extract-only. Applicant: extract then analyze (chain_user_id set).
+            # Admin / extract-only: shared scrape. Match/full: extract then analyze.
             await enqueue_extraction(
                 extraction.id,
                 request.url,
-                user_id=chain_user_id,
+                user_id=extract_user_id,
                 background_tasks=background_tasks,
+                skip_phase_b=skip_phase_b,
+                chain_analysis=chain_analysis,
             )
-        elif chain_user_id:
+        elif analysis_user_id:
             await start_personal_job_analysis(
                 new_job.id,
-                chain_user_id,
+                analysis_user_id,
                 background_tasks=background_tasks,
                 force=False,
+                skip_phase_b=skip_phase_b,
             )
 
         logger.info(
@@ -1748,7 +1817,10 @@ async def submit_job(
             url=request.url,
             extraction_id=extraction.id,
             is_admin=is_admin,
-            chain_user_id=chain_user_id,
+            pipeline=pipeline,
+            extract_user_id=extract_user_id,
+            chain_analysis=chain_analysis,
+            skip_phase_b=skip_phase_b,
         )
         await _publish_job_submitted(user_id, new_job.id, request.url)
         return JobSubmissionResponse(
@@ -1991,12 +2063,22 @@ def _dashboard_search_clauses(
     """Shared text/source/remote filters for the dashboard list + counts.
 
     ``title`` and ``company`` are independent column filters (combined with AND),
-    while ``q`` is the legacy combined title-or-company search.
+    while ``q`` is the legacy combined title-or-company search. When ``q`` looks
+    like an http(s) URL, also match ``source_url`` / ``normalized_url``.
     """
     clauses: list = []
     if q and q.strip():
-        pattern = f"%{q.strip()}%"
-        clauses.append((Job.title.ilike(pattern)) | (Job.company.ilike(pattern)))
+        raw_q = q.strip()
+        pattern = f"%{raw_q}%"
+        text_match = (Job.title.ilike(pattern)) | (Job.company.ilike(pattern))
+        if raw_q.lower().startswith("http://") or raw_q.lower().startswith("https://"):
+            clauses.append(
+                text_match
+                | Job.source_url.ilike(pattern)
+                | Job.normalized_url.ilike(pattern)
+            )
+        else:
+            clauses.append(text_match)
     if title and title.strip():
         clauses.append(Job.title.ilike(f"%{title.strip()}%"))
     if company and company.strip():
@@ -4080,6 +4162,7 @@ class UserSettingsResponse(BaseModel):
     default_dedup_score_comparison_enabled: bool = False
     auto_prepare_match: bool = False
     auto_prepare_full: bool = False
+    manual_submit_pipeline: str = "full"
     resume_tailoring_prompt_mode: str
     resume_tailoring_prompt_instructions: str
     resume_tailoring_prompt_instructions_custom: str
@@ -4131,6 +4214,7 @@ class UserSettingsUpdateRequest(BaseModel):
     dedup_score_comparison_enabled: bool | None = None
     auto_prepare_match: bool | None = None
     auto_prepare_full: bool | None = None
+    manual_submit_pipeline: str | None = None
     resume_tailoring_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     resume_tailoring_prompt_custom: str | None = Field(default=None, max_length=12000)
     cover_letter_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
@@ -4567,6 +4651,7 @@ async def update_user_settings(
                 dedup_score_comparison_enabled=body.dedup_score_comparison_enabled,
                 auto_prepare_match=body.auto_prepare_match,
                 auto_prepare_full=body.auto_prepare_full,
+                manual_submit_pipeline=body.manual_submit_pipeline,
                 resume_tailoring_prompt_mode=body.resume_tailoring_prompt_mode,
                 resume_tailoring_prompt_custom=body.resume_tailoring_prompt_custom,
                 cover_letter_prompt_mode=body.cover_letter_prompt_mode,

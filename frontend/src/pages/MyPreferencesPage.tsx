@@ -15,6 +15,7 @@ import {
   fetchUserSettings,
   saveDedupSettings,
   saveAutoPrepareSettings,
+  saveManualSubmitPipelineSettings,
   saveMinMatchScoreSettings,
   saveResumeTailoringPromptSettings,
   saveCoverLetterPromptSettings,
@@ -168,6 +169,10 @@ export function MyPreferencesPage() {
   const [autoPrepareSaving, setAutoPrepareSaving] = useState(false);
   const [autoPrepareSaveMsg, setAutoPrepareSaveMsg] = useState('');
   const [autoPrepareSaveOk, setAutoPrepareSaveOk] = useState(false);
+  const [manualSubmitPipeline, setManualSubmitPipeline] = useState<'extract' | 'match' | 'full'>('full');
+  const [manualPipelineSaving, setManualPipelineSaving] = useState(false);
+  const [manualPipelineSaveMsg, setManualPipelineSaveMsg] = useState('');
+  const [manualPipelineSaveOk, setManualPipelineSaveOk] = useState(false);
 
   const applySettings = useCallback((data: UserSettings) => {
     setSettings(data);
@@ -183,6 +188,7 @@ export function MyPreferencesPage() {
     setMatchPreferences(data.job_match_preferences ?? '');
     setAutoPrepareMatch(Boolean(data.auto_prepare_match));
     setAutoPrepareFull(Boolean(data.auto_prepare_full));
+    setManualSubmitPipeline(data.manual_submit_pipeline || 'full');
   }, []);
 
   const load = useCallback(async () => {
@@ -384,6 +390,28 @@ export function MyPreferencesPage() {
       setAutoPrepareSaveMsg(typeof msg === 'string' ? msg : 'Failed to save auto-prepare settings.');
     } finally {
       setAutoPrepareSaving(false);
+    }
+  };
+
+  const handleManualSubmitPipeline = async (next: 'extract' | 'match' | 'full') => {
+    setManualSubmitPipeline(next);
+    setManualPipelineSaving(true);
+    setManualPipelineSaveMsg('');
+    try {
+      const data = await saveManualSubmitPipelineSettings({ manual_submit_pipeline: next });
+      applySettings(data);
+      setManualPipelineSaveOk(true);
+      setManualPipelineSaveMsg('Submit pipeline preference saved.');
+    } catch (err: unknown) {
+      setManualSubmitPipeline(settings?.manual_submit_pipeline || 'full');
+      setManualPipelineSaveOk(false);
+      const msg =
+        err && typeof err === 'object' && 'response' in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null;
+      setManualPipelineSaveMsg(typeof msg === 'string' ? msg : 'Failed to save submit pipeline.');
+    } finally {
+      setManualPipelineSaving(false);
     }
   };
 
@@ -828,6 +856,77 @@ export function MyPreferencesPage() {
                   </p>
                 ) : null}
                 <SectionMessage ok={autoPrepareSaveOk} text={autoPrepareSaveMsg} />
+              </div>
+            </SettingsCard>
+
+            <SettingsCard
+              icon={FileText}
+              iconClass="bg-gradient-to-br from-indigo-500 to-blue-600"
+              title="When you submit job URLs"
+              description="Controls how far the pipeline runs after you paste or add a job URL (webapp or extension)."
+            >
+              <div className="space-y-2">
+                {(
+                  [
+                    {
+                      value: 'extract' as const,
+                      label: 'Extraction only',
+                      hint: 'Scrape the shared job description. Run match/tailor yourself later.',
+                    },
+                    {
+                      value: 'match' as const,
+                      label: 'Up to analysis',
+                      hint: 'Extract + match score. Skip tailored resume and cover letter.',
+                    },
+                    {
+                      value: 'full' as const,
+                      label: 'Full pipeline',
+                      hint: 'Extract + match + tailored resume and cover letter (when allowed).',
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const active = manualSubmitPipeline === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      disabled={manualPipelineSaving}
+                      onClick={() => void handleManualSubmitPipeline(opt.value)}
+                      className={[
+                        'flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition',
+                        active
+                          ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-300/60 dark:border-indigo-400/50 dark:bg-indigo-500/15'
+                          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-600 dark:bg-[#141d31]',
+                        manualPipelineSaving ? 'opacity-60' : '',
+                      ].join(' ')}
+                    >
+                      <span
+                        className={[
+                          'mt-0.5 h-4 w-4 shrink-0 rounded-full border-2',
+                          active
+                            ? 'border-indigo-600 bg-indigo-600 shadow-[inset_0_0_0_2px_white]'
+                            : 'border-slate-300 dark:border-slate-500',
+                        ].join(' ')}
+                        aria-hidden
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-slate-800 dark:text-[#e2e8f0]">
+                          {opt.label}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-slate-500 dark:text-[#94a3b8]">
+                          {opt.hint}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+                {manualPipelineSaving ? (
+                  <p className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                    <Loader2 size={13} className="animate-spin" />
+                    Saving…
+                  </p>
+                ) : null}
+                <SectionMessage ok={manualPipelineSaveOk} text={manualPipelineSaveMsg} />
               </div>
             </SettingsCard>
 
