@@ -1925,7 +1925,8 @@ def _dashboard_view_clauses(
     elif view == "available":
         from app.models.schemas import ExtractionStatus
 
-        # Available to start: shared JD scraped, not yet resume-ready, not applied.
+        # Upcoming jobs: shared JD scraped, not yet resume-ready, not applied —
+        # the pool where applicants run match / tailor / resume pipelines.
         clauses.append(
             JobExtraction.status.in_(
                 (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
@@ -2537,7 +2538,8 @@ async def get_dashboard_sync(
             "all": await _count("all"),
             "today": await _count("today"),
             "mine": await _count("mine"),
-            "suggested": await _count("suggested"),
+            "available": await _count("available"),
+            "suggested": 0,
             "applied_today": await _count("applied_today"),
         }
 
@@ -2674,7 +2676,8 @@ class DashboardCountsResponse(BaseModel):
     all: int
     today: int
     mine: int
-    suggested: int
+    available: int = 0  # Upcoming jobs (JD ready, pipeline incomplete)
+    suggested: int = 0  # Deprecated alias; kept for older clients
     applied_today: int = 0
 
 
@@ -2717,7 +2720,7 @@ async def get_dashboard_counts(
     day_start, day_end = day_bounds_for_timezone(timezone)
 
     async with get_session() as session:
-        # Preference threshold for the Suggested tab only (not the Match Score toolbar).
+        # Preference threshold retained for legacy ``suggested`` view clauses only.
         min_score = await UserRepository(session).get_effective_min_match_score(user_id)
 
         shared_filter = [Job.status != "blocked"]
@@ -2783,7 +2786,8 @@ async def get_dashboard_counts(
             all=await _count("all"),
             today=await _count("today"),
             mine=await _count("mine"),
-            suggested=await _count("suggested"),
+            available=await _count("available"),
+            suggested=0,
             applied_today=await _count("applied_today"),
         )
 

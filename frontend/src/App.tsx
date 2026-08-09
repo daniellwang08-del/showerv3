@@ -19,6 +19,7 @@ import { SystemSettingsPage } from './pages/SystemSettingsPage';
 import { AuthScreen } from './components/extraction/AuthScreen';
 import { JobActionModal } from './components/extraction/JobActionModal';
 import { ConfirmDialog } from './components/extraction/ConfirmDialog';
+import { NotificationToasts } from './components/shared/NotificationToasts';
 
 function AdminOnly({ isAdmin, children }: { isAdmin: boolean; children: React.ReactNode }) {
   if (!isAdmin) {
@@ -146,6 +147,7 @@ function App() {
 
   return (
     <>
+      <NotificationToasts />
       <JobActionModal
         modal={modal}
         modalUrl={modalUrl}

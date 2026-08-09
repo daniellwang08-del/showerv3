@@ -291,7 +291,7 @@ export function ScraperDashboard() {
             applyAgentDashboard({ reset: true, view: 'ready', remote_only: false, min_match_score: 0 })
           }
           onSelectBest={() =>
-            applyAgentDashboard({ reset: true, view: 'all', remote_only: false, min_match_score: 75 })
+            applyAgentDashboard({ reset: true, view: 'applied', remote_only: false, min_match_score: 0 })
           }
           onSelectGood={() =>
             applyAgentDashboard({ reset: true, view: 'suggested', remote_only: false, min_match_score: 0 })

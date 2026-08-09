@@ -69,7 +69,10 @@ export interface DashboardCounts {
   all: number;
   today: number;
   mine: number;
-  suggested: number;
+  /** Upcoming jobs: JD ready, pipeline not finished (match / tailor / resume). */
+  available: number;
+  /** @deprecated Prefer `available`. Kept for older API responses. */
+  suggested?: number;
   /** Jobs marked applied today (user timezone). Optional for older backends. */
   applied_today?: number;
 }
@@ -84,7 +87,14 @@ export async function fetchDashboardCounts(params: {
 }): Promise<DashboardCounts> {
   // Match-score filtering is list-only; tab badges stay aligned with Total jobs.
   const { data } = await apiClient.get('/jobs/dashboard/counts', { params });
-  return data;
+  return {
+    all: data.all ?? 0,
+    today: data.today ?? 0,
+    mine: data.mine ?? 0,
+    available: data.available ?? data.suggested ?? 0,
+    suggested: data.suggested,
+    applied_today: data.applied_today,
+  };
 }
 
 export async function fetchScrapedJob(id: string) {

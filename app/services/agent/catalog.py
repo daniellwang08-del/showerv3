@@ -79,10 +79,10 @@ _VIEW_LABELS = {
     "all": "all jobs",
     "today": "today's new jobs",
     "mine": "jobs you posted",
-    "suggested": "suggested jobs",
+    "suggested": "suggested jobs (match score filter)",
     "applied": "applied jobs",
     "applied_today": "jobs applied today",
-    "available": "available-to-start jobs (JD scraped, pipeline incomplete)",
+    "available": "upcoming jobs (JD ready, pipeline incomplete)",
     "ready": "ready-to-apply jobs",
     "sheet_posted": "jobs in Google Sheets",
     "pumble_posted": "jobs in Pumble",
@@ -231,7 +231,7 @@ async def _get_stats(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         f"{d.get('applied_jobs', 0)} applied ({d.get('applied_today', 0)} today), "
         f"{d.get('sheet_posted_jobs', 0)} in Sheets, "
         f"{d.get('pumble_posted_jobs', 0)} in Pumble, "
-        f"{d.get('available_jobs', 0)} available to start (JD ready, pipeline incomplete)."
+        f"{d.get('available_jobs', 0)} upcoming (JD ready, pipeline incomplete)."
     )
     return ToolResult(ok=True, summary=summary, data=d)
 

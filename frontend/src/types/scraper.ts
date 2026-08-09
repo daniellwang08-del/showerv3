@@ -162,7 +162,7 @@ export interface ScraperStats {
   scored_jobs?: number;
   /** Average match score across scored jobs. Optional for older backends. */
   avg_match_score?: number;
-  /** Jobs with shared JD scraped but pipeline not finished (not resume-ready, not applied). */
+  /** Jobs with shared JD scraped but pipeline not finished (upcoming — not resume-ready, not applied). */
   available_jobs?: number;
   /** Visible jobs marked applied. Optional for older backends. */
   applied_jobs?: number;

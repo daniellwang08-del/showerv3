@@ -3,7 +3,6 @@ import {
   LayoutGrid,
   CalendarClock,
   UserRound,
-  Sparkles,
   ChevronDown,
   Check,
   ClipboardCheck,
@@ -58,12 +57,12 @@ export const DASHBOARD_VIEWS: ViewMeta[] = [
     active: 'text-blue-700 dark:text-blue-300',
   },
   {
-    id: 'suggested',
-    label: 'Suggested jobs',
-    description: 'Analysed matches at or above your minimum score',
-    icon: Sparkles,
-    accent: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
-    active: 'text-amber-700 dark:text-amber-300',
+    id: 'available',
+    label: 'Upcoming jobs',
+    description: 'JD ready — run match, tailor, and resume pipelines',
+    icon: CirclePlay,
+    accent: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
+    active: 'text-violet-700 dark:text-violet-300',
   },
 ];
 
@@ -139,8 +138,8 @@ const BOARD_VIEWS: ViewMeta[] = [
   },
   {
     id: 'available',
-    label: 'Available to start',
-    description: 'JD scraped but pipeline not finished yet',
+    label: 'Upcoming jobs',
+    description: 'JD ready — run match, tailor, and resume pipelines',
     icon: CirclePlay,
     accent: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
     active: 'text-violet-700 dark:text-violet-300',
@@ -283,7 +282,7 @@ export function DashboardViewSwitcher({
 
   const current = VIEW_BY_ID[view] ?? VIEW_BY_ID.all;
   const CurrentIcon = current.icon;
-  const tabCountKeys: Array<keyof DashboardCounts> = ['all', 'today', 'mine', 'suggested', 'applied_today'];
+  const tabCountKeys: Array<keyof DashboardCounts> = ['all', 'today', 'mine', 'available', 'applied_today'];
   const countFromTabs = tabCountKeys.includes(view as keyof DashboardCounts)
     ? counts[view as keyof DashboardCounts]
     : undefined;

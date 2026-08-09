@@ -6,6 +6,8 @@ import {
   ExternalLink,
   ArrowUpDown,
   Wifi,
+  Building2,
+  Layers,
   RefreshCw,
   Trash2,
   CheckCircle2,
@@ -479,29 +481,37 @@ function dashboardJobRawJdReady(job: DashboardJob): boolean {
 /**
  * Title link color = job readiness at a glance:
  * - green  → marked applied (wins over everything)
- * - yellow → raw / shared JD ready (extracted or completed)
+ * - white  → Apply-ready (match + resume + cover done)
+ * - yellow → JD extracted / in progress toward Apply (not Apply-ready yet)
  * - blue   → fresh: no JD yet (not started, queued, or still extracting)
  * - rose   → extraction failed
  */
-type JobTitleTone = 'fresh' | 'jd_ready' | 'applied' | 'failed';
+type JobTitleTone = 'fresh' | 'jd_ready' | 'apply_ready' | 'applied' | 'failed';
 
 function dashboardJobTitleTone(job: DashboardJob): JobTitleTone {
   if (dashboardJobMarkedApplied(job)) return 'applied';
   if (job.extraction_status === 'failed') return 'failed';
+  if (isJobApplyReady(job)) return 'apply_ready';
   if (dashboardJobRawJdReady(job)) return 'jd_ready';
   return 'fresh';
 }
 
 const JOB_TITLE_TONE_CLASS: Record<JobTitleTone, string> = {
-  fresh: 'text-blue-600 hover:text-blue-800',
-  jd_ready: 'text-yellow-700 hover:text-yellow-900',
-  applied: 'text-emerald-600 hover:text-emerald-800',
-  failed: 'text-rose-600 hover:text-rose-800',
+  fresh: 'text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300',
+  // JD ready but not Apply-ready yet — keep the yellow signal
+  jd_ready:
+    'text-yellow-700 hover:text-yellow-900 dark:text-yellow-400 dark:hover:text-yellow-300',
+  // Apply-ready — white in dark UI; near-black in light so it stays readable
+  apply_ready:
+    'text-slate-900 hover:text-slate-700 dark:text-white dark:hover:text-slate-100',
+  applied: 'text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300',
+  failed: 'text-rose-600 hover:text-rose-800 dark:text-rose-400 dark:hover:text-rose-300',
 };
 
 const JOB_TITLE_TONE_HINT: Record<JobTitleTone, string> = {
   fresh: 'No job description yet',
-  jd_ready: 'Job description ready',
+  jd_ready: 'Job description ready — prepare to apply',
+  apply_ready: 'Ready to apply',
   applied: 'Marked as applied',
   failed: 'Extraction failed',
 };
@@ -680,21 +690,41 @@ function WorkModeBadge({ mode, isRemoteFallback }: { mode: string | null | undef
   // "unknown" (and blanks) are not a real classification - fall back to is_remote.
   const meaningful = raw && raw !== 'unknown' ? raw : '';
   const normalized = meaningful || (isRemoteFallback ? 'remote' : '');
+
   if (normalized === 'remote') {
     return (
-      <span className="inline-flex items-center gap-1 text-emerald-600">
-        <Wifi size={13} />
-        <span className="text-[11px] font-medium">Remote</span>
+      <span
+        title="Remote"
+        className="inline-flex max-w-full items-center gap-1 text-emerald-600 dark:text-emerald-400"
+      >
+        <Wifi size={13} className="shrink-0" aria-hidden />
+        <span className="truncate text-[11px] font-medium">Remote</span>
       </span>
     );
   }
   if (normalized === 'hybrid') {
-    return <span className="text-[11px] font-semibold text-amber-700">Hybrid</span>;
+    return (
+      <span
+        title="Hybrid"
+        className="inline-flex max-w-full items-center gap-1 text-amber-700 dark:text-amber-300"
+      >
+        <Layers size={13} className="shrink-0" aria-hidden />
+        <span className="truncate text-[11px] font-medium">Hybrid</span>
+      </span>
+    );
   }
   if (normalized === 'onsite') {
-    return <span className="text-[11px] font-semibold text-slate-600">Onsite</span>;
+    return (
+      <span
+        title="Onsite"
+        className="inline-flex max-w-full items-center gap-1 text-slate-600 dark:text-[#cbd5e1]"
+      >
+        <Building2 size={13} className="shrink-0" aria-hidden />
+        <span className="truncate text-[11px] font-medium">Onsite</span>
+      </span>
+    );
   }
-  return <span className="text-slate-300 text-xs">-</span>;
+  return <span className="text-xs text-slate-300 dark:text-slate-500">-</span>;
 }
 
 /** Admin Status column: detailed JD extraction progress (not applicant apply/match). */

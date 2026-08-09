@@ -31,18 +31,17 @@ function PasteUrlsModal({
   open: boolean;
   busy: boolean;
   onClose: () => void;
-  onSubmit: (text: string) => Promise<void>;
+  /** Fire-and-forget friendly: modal closes before this finishes. */
+  onSubmit: (text: string) => void | Promise<void>;
 }) {
   const [text, setText] = useState('');
   const [localError, setLocalError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!open) return;
     setText('');
     setLocalError('');
-    setSubmitting(false);
     const t = window.setTimeout(() => textareaRef.current?.focus(), 40);
     return () => window.clearTimeout(t);
   }, [open]);
@@ -59,7 +58,7 @@ function PasteUrlsModal({
   if (!open) return null;
 
   const urlCount = extractHttpUrlsFromText(text).length;
-  const blocked = busy || submitting;
+  const blocked = busy;
 
   const handleClean = () => {
     if (blocked) return;
@@ -68,23 +67,19 @@ function PasteUrlsModal({
     textareaRef.current?.focus();
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (blocked) return;
     const urls = extractHttpUrlsFromText(text);
     if (!urls.length) {
       setLocalError('Paste at least one http(s) job URL.');
       return;
     }
-    setLocalError('');
-    setSubmitting(true);
-    try {
-      await onSubmit(text);
-      onClose();
-    } catch {
-      // Error is surfaced via store submitError; keep modal open so the user can edit.
-    } finally {
-      setSubmitting(false);
-    }
+    const payload = text;
+    // Close immediately; submission continues in the background (progress in URL bar + toast).
+    onClose();
+    void Promise.resolve(onSubmit(payload)).catch(() => {
+      // Errors surface via store submitError / global toast.
+    });
   };
 
   return createPortal(
@@ -107,6 +102,7 @@ function PasteUrlsModal({
             </h3>
             <p className="mt-1.5 text-sm leading-relaxed text-slate-600 sm:text-base">
               Paste one or more links (any text). We’ll pick out the http(s) URLs and submit them.
+              Submit starts in the background and closes this window right away.
             </p>
           </div>
           <button
@@ -168,11 +164,11 @@ function PasteUrlsModal({
           <button
             type="button"
             disabled={blocked || urlCount === 0}
-            onClick={() => void handleSubmit()}
+            onClick={handleSubmit}
             className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            {submitting ? 'Submitting…' : 'Submit'}
+            <Send size={16} />
+            Submit
           </button>
         </div>
       </div>
@@ -427,13 +423,21 @@ export function SubmitForm({ inline = false }: SubmitFormProps = {}) {
         </button>
       </div>
 
-      {submitNotice && submitNoticeKind === 'warning' && (
-        <div className="mt-2.5 text-sm font-medium text-amber-700">
-          \u26A0 {submitNotice}
+      {submitNotice && submitNoticeKind === 'success' && (
+        <div className="mt-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+          {submitNotice}
         </div>
       )}
 
-      {submitError && <div className="mt-2.5 text-sm font-medium text-red-700">\u2715 {submitError}</div>}
+      {submitNotice && submitNoticeKind === 'warning' && (
+        <div className="mt-2.5 text-sm font-medium text-amber-700 dark:text-amber-300">
+          {submitNotice}
+        </div>
+      )}
+
+      {submitError && (
+        <div className="mt-2.5 text-sm font-medium text-red-700 dark:text-rose-300">{submitError}</div>
+      )}
 
       {dropup}
 

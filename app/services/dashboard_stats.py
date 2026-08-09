@@ -199,7 +199,7 @@ async def fetch_dashboard_stats(
                     JobMatchResult.overall_score.is_not(None)
                 ).label("scored_jobs"),
                 func.coalesce(func.avg(JobMatchResult.overall_score), 0).label("avg_match_score"),
-                # Available to start: shared JD scraped, pipeline not finished (no
+                # Upcoming jobs: shared JD scraped, pipeline not finished (no
                 # tailored resume yet), and not marked applied.
                 func.count().filter(
                     and_(

@@ -178,7 +178,7 @@ class ScraperStatsResponse(BaseModel):
     qualified_jobs: int = 0   # match score >= user's preference minimum
     scored_jobs: int = 0      # jobs with any match score
     avg_match_score: int = 0  # average match score across scored jobs
-    available_jobs: int = 0   # JD scraped, not resume-ready, not applied
+    available_jobs: int = 0   # Upcoming: JD scraped, not resume-ready, not applied
     applied_jobs: int = 0     # marked applied
     applied_today: int = 0    # marked applied today
     sheet_posted_jobs: int = 0

@@ -50,7 +50,11 @@ async function submitExtractedUrls(
   set: JobsStoreSet,
   urls: string[],
   warnings?: string[],
-): Promise<void> {
+): Promise<{ posted: number; duplicate: number; failed: number; total: number }> {
+  let posted = 0;
+  let duplicate = 0;
+  let failed = 0;
+
   set({
     attachmentFlow: {
       phase: 'submitting',
@@ -59,11 +63,26 @@ async function submitExtractedUrls(
       total: urls.length,
     },
   });
+
   await runWithConcurrencyLimit(
     urls,
     ATTACHMENT_SUBMIT_CONCURRENCY,
     async (u) => {
-      await apiClient.post<SubmissionResponse>('/jobs/submit', { url: u });
+      try {
+        const axiosResponse = await apiClient.post<SubmissionResponse>('/jobs/submit', { url: u });
+        const response = axiosResponse.data;
+        if (!response?.success) {
+          failed += 1;
+          return;
+        }
+        if (response.is_duplicate) {
+          duplicate += 1;
+        } else {
+          posted += 1;
+        }
+      } catch {
+        failed += 1;
+      }
     },
     (done, tot) => {
       set({
@@ -76,14 +95,56 @@ async function submitExtractedUrls(
       });
     },
   );
+
   await get().refreshLists({ showLoading: false, reset: false });
   await syncDashboardAfterSubmit();
+
+  const parts: string[] = [];
+  if (posted > 0) {
+    parts.push(`Posted ${posted} job${posted === 1 ? '' : 's'}`);
+  }
+  if (duplicate > 0) {
+    parts.push(`${duplicate} already existed`);
+  }
+  if (failed > 0) {
+    parts.push(`${failed} failed`);
+  }
+  const summary =
+    parts.length > 0
+      ? `${parts.join(' · ')} (${urls.length} URL${urls.length === 1 ? '' : 's'} total)`
+      : `No jobs posted from ${urls.length} URL${urls.length === 1 ? '' : 's'}.`;
+
+  const noticeKind: 'success' | 'warning' =
+    failed > 0 || duplicate > 0 || posted === 0 ? 'warning' : 'success';
+  const toastKind =
+    failed > 0 && posted === 0 ? 'error' : noticeKind;
+
   if (warnings?.length) {
+    const warnText =
+      warnings.slice(0, 2).join(' \u00b7 ') + (warnings.length > 2 ? ' \u2026' : '');
     set({
       submitNoticeKind: 'warning',
-      submitNotice: warnings.slice(0, 2).join(' \u00b7 ') + (warnings.length > 2 ? ' \u2026' : ''),
+      submitNotice: `${summary} \u00b7 ${warnText}`,
+      submitError: '',
+    });
+  } else if (failed > 0 && posted === 0 && duplicate === 0) {
+    set({ submitError: summary, submitNotice: '' });
+  } else {
+    set({
+      submitNoticeKind: noticeKind,
+      submitNotice: summary,
+      submitError: '',
     });
   }
+
+  try {
+    const { useUIStore } = await import('./uiStore');
+    useUIStore.getState().notify(toastKind, summary, 9000);
+  } catch {
+    // Toast is best-effort; submitNotice still set above.
+  }
+
+  return { posted, duplicate, failed, total: urls.length };
 }
 
 let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -594,13 +655,24 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       const { urls, warnings } = res.data;
       if (!urls?.length) {
         set({ submitError: 'No job URLs found in the attachment.' });
-        throw new Error('NO_URLS_IN_ATTACHMENT');
+        try {
+          const { useUIStore } = await import('./uiStore');
+          useUIStore.getState().notify('error', 'No job URLs found in the attachment.', 8000);
+        } catch {
+          // ignore
+        }
+        return;
       }
       await submitExtractedUrls(get, set, urls, warnings);
     } catch (error: any) {
       const msg = extractErrorMessage(error, 'Attachment processing failed');
       set({ submitError: msg });
-      throw error;
+      try {
+        const { useUIStore } = await import('./uiStore');
+        useUIStore.getState().notify('error', msg, 8000);
+      } catch {
+        // ignore
+      }
     } finally {
       set({ loading: false, attachmentFlow: null });
     }
@@ -624,11 +696,17 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       },
     });
     try {
+      // Runs after the paste modal closes — progress shows in the URL bar.
       await submitExtractedUrls(get, set, urls);
     } catch (error: any) {
       const msg = extractErrorMessage(error, 'Paste submit failed');
       set({ submitError: msg });
-      throw error;
+      try {
+        const { useUIStore } = await import('./uiStore');
+        useUIStore.getState().notify('error', msg, 8000);
+      } catch {
+        // ignore
+      }
     } finally {
       set({ loading: false, attachmentFlow: null });
     }

@@ -587,7 +587,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   sortOrder: 'desc',
 
   view: 'today',
-  counts: { all: 0, today: 0, mine: 0, suggested: 0 },
+  counts: { all: 0, today: 0, mine: 0, available: 0 },
 
   analysisPanelRefresh: null,
   bumpAnalysisPanelRefresh: (jobId) => {

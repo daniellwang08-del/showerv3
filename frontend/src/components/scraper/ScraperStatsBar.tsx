@@ -1,7 +1,6 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   Rocket,
-  Sparkles,
   Wifi,
   CirclePlay,
   CalendarDays,
@@ -648,9 +647,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const ready = safe(view.ready_jobs);
   const todayReady = safe(view.today_ready_jobs ?? 0);
   const todayAvailable = safe(view.today_available_jobs ?? 0);
-  const best = safe(view.best_jobs ?? 0);
   const good = safe(view.good_jobs ?? 0);
-  const qualified = safe(view.qualified_jobs ?? good + best);
+  const qualified = safe(view.qualified_jobs ?? good);
   const scored = safe(view.scored_jobs ?? 0);
   const avgScore = safe(view.avg_match_score ?? 0);
   const remote = safe(view.total_remote);
@@ -661,7 +659,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const appliedToday = safe(view.applied_today ?? 0);
   const sheetPosted = safe(view.sheet_posted_jobs ?? 0);
   const pumblePosted = safe(view.pumble_posted_jobs ?? 0);
-  // Hero ring is today's work only: today ready / today available-to-start.
+  // Hero ring is today's work only: today ready / today upcoming.
   const todayReadyRatio =
     todayAvailable > 0
       ? Math.min(1, todayReady / todayAvailable)
@@ -674,14 +672,12 @@ const StatsBoardContent = memo(function StatsBoardContent({
   const trends = view.trends;
   const trendDayLabels = trends?.labels ?? [];
   const readyTrend = trends?.ready ?? [];
-  const bestTrend = trends?.best ?? [];
   const remoteTrend = trends?.remote ?? [];
   const availableTrend = trends?.available ?? [];
-  // One Y-domain for all four side sparklines so absolute daily peaks compare
-  // (836 best must draw shorter than 1131 ready — not both maxed out).
+  // One Y-domain for side sparklines so absolute daily peaks compare fairly.
   const trendMaxScale = Math.max(
     1,
-    ...[...readyTrend, ...bestTrend, ...remoteTrend, ...availableTrend].map((n) =>
+    ...[...readyTrend, ...remoteTrend, ...availableTrend].map((n) =>
       Number.isFinite(n) ? Math.max(0, n) : 0,
     ),
   );
@@ -844,19 +840,22 @@ const StatsBoardContent = memo(function StatsBoardContent({
               trendMaxScale={trendMaxScale}
             />
             <SideTile
-              icon={Sparkles}
-              value={best}
-              label="Best jobs"
-              hint={`Strong matches · score 75+${good > 0 ? ` · ${fmt(good)} good` : ''}`}
-              accent="from-amber-400 to-orange-500"
-              iconWrap="from-amber-500 to-orange-500"
+              icon={ClipboardCheck}
+              value={applied}
+              label="Applied jobs"
+              hint={
+                appliedToday > 0
+                  ? `${fmt(appliedToday)} today · ${Math.round(appliedRatio * 100)}% of pool`
+                  : total > 0
+                    ? `${Math.round(appliedRatio * 100)}% of your pool`
+                    : 'Jobs you marked as applied'
+              }
+              accent="from-sky-400 to-blue-500"
+              iconWrap="from-sky-500 to-blue-600"
               delay={90}
-              onClick={onSelectBest}
-              title="Jobs with a strong match score (75+)"
-              trend={bestTrend}
-              trendLabels={trendDayLabels}
-              trendColor="#fbbf24"
-              trendLabel="Best jobs"
+              onClick={onSelectApplied}
+              title="Jobs you marked as applied"
+              trendLabel="Applied jobs"
               trendMaxScale={trendMaxScale}
             />
           </div>
@@ -895,14 +894,14 @@ const StatsBoardContent = memo(function StatsBoardContent({
             <div className="mt-0.5 flex h-[40px] w-full min-w-0 flex-col justify-center space-y-0.5 sm:mt-1 sm:h-[44px]">
               <p className="truncate text-[11px] font-semibold leading-snug text-slate-600 sm:text-[12px] 2xl:text-[13px]">
                 {today > 0
-                  ? `${fmt(todayReady)} ready / ${fmt(todayAvailable)} available to start`
+                  ? `${fmt(todayReady)} ready / ${fmt(todayAvailable)} upcoming`
                   : todayRemote > 0
                     ? `${fmt(todayRemote)} remote added today`
                     : 'No jobs added to your board today'}
               </p>
               <p className="truncate text-[10.5px] font-medium text-slate-500 sm:text-[11px] 2xl:text-[12px]">
                 {today > 0
-                  ? `${Math.round(todayReadyRatio * 100)}% ready vs available to start today`
+                  ? `${Math.round(todayReadyRatio * 100)}% ready vs upcoming today`
                   : appliedToday > 0
                     ? `${fmt(appliedToday)} applied today · ${fmt(applied)} total`
                     : `${fmt(applied)} applied · ${Math.round(appliedRatio * 100)}% of pool`}
@@ -930,8 +929,8 @@ const StatsBoardContent = memo(function StatsBoardContent({
             <SideTile
               icon={CirclePlay}
               value={available}
-              label="Available to start"
-              hint="JD scraped · pipeline not finished"
+              label="Upcoming jobs"
+              hint="JD ready · run match / tailor / resume"
               accent="from-violet-400 to-indigo-500"
               iconWrap="from-violet-500 to-indigo-600"
               delay={90}
@@ -940,7 +939,7 @@ const StatsBoardContent = memo(function StatsBoardContent({
               trend={availableTrend}
               trendLabels={trendDayLabels}
               trendColor="#a78bfa"
-              trendLabel="Available to start"
+              trendLabel="Upcoming jobs"
               trendMaxScale={trendMaxScale}
             />
           </div>
