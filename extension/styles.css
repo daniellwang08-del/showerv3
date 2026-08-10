@@ -212,7 +212,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
   flex-shrink: 0;
 }
 .home-tiles-tools {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   flex-shrink: 0;
   padding: 2px 0 4px;
@@ -2941,6 +2941,13 @@ input[type="number"].num-stepper-input::-webkit-inner-spin-button {
 
 /* ── Add Jobs section ──────────────────────────────────────────────────────── */
 .add-jobs-section { gap: 12px; }
+.add-jobs-section--hub {
+  margin-top: 4px;
+  padding-bottom: 8px;
+}
+.add-jobs-section--hub .add-jobs-textarea {
+  min-height: 88px;
+}
 .add-jobs-hero {
   display: flex;
   flex-direction: column;

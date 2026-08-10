@@ -7,6 +7,8 @@ Design:
   - Full keeps Phase B subject to the platform auto_generate kill-switch.
   - Backfill on preference enable is chunked with a per-user pending cap.
   - Platform ``auto_prepare_enabled`` pauses fan-out/backfill (manual Run OK).
+  - Daily cap (0 = unlimited) counts only auto-prepare enqueues (fanout/backfill),
+    never manual Run / all match results.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ logger = get_logger(__name__)
 # Soft caps — protect LLM spend / queue depth under multi-user auto-prepare.
 AUTO_PREPARE_FANOUT_MAX_USERS = 200
 AUTO_PREPARE_BACKFILL_CHUNK = 50
+# Redis counter TTL for per-user auto-prepare daily enqueue budget (UTC day).
+_AUTO_PREPARE_DAILY_TTL_SECONDS = 60 * 60 * 36
 
 
 def _utcnow_naive() -> datetime:
@@ -35,6 +39,36 @@ def _utcnow_naive() -> datetime:
 def _utc_day_start() -> datetime:
     now = _utcnow_naive()
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _auto_prepare_daily_redis_key(user_id: str, day: datetime | None = None) -> str:
+    day = day or _utc_day_start()
+    return f"auto_prepare:daily:{user_id}:{day.strftime('%Y%m%d')}"
+
+
+async def _auto_prepare_daily_count(user_id: str) -> int:
+    """Enqueues attributed to auto-prepare today (fanout/backfill), not manual Run."""
+    try:
+        from app.core.redis_support import get_broker_redis
+
+        raw = await get_broker_redis().get(_auto_prepare_daily_redis_key(user_id))
+        return max(0, int(raw or 0))
+    except Exception as err:
+        logger.warning("auto_prepare_daily_count_failed", user_id=user_id, error=str(err))
+        return 0
+
+
+async def _bump_auto_prepare_daily(user_id: str) -> None:
+    try:
+        from app.core.redis_support import get_broker_redis
+
+        r = get_broker_redis()
+        key = _auto_prepare_daily_redis_key(user_id)
+        count = await r.incr(key)
+        if int(count or 0) == 1:
+            await r.expire(key, _AUTO_PREPARE_DAILY_TTL_SECONDS)
+    except Exception as err:
+        logger.warning("auto_prepare_daily_bump_failed", user_id=user_id, error=str(err))
 
 
 async def _auto_prepare_globally_enabled() -> bool:
@@ -60,14 +94,15 @@ async def _pending_cap() -> int:
 
 
 async def _daily_cap() -> int:
+    """Return daily auto-prepare enqueue cap. ``0`` means unlimited."""
     try:
         from app.services.system_settings_service import get_effective_value
 
-        return int(await get_effective_value("auto_prepare_daily_cap_per_user"))
+        return max(0, int(await get_effective_value("auto_prepare_daily_cap_per_user")))
     except Exception:
         from app.core.config import get_settings
 
-        return int(get_settings().auto_prepare_daily_cap_per_user)
+        return max(0, int(get_settings().auto_prepare_daily_cap_per_user))
 
 
 async def list_auto_prepare_users(
@@ -358,7 +393,6 @@ async def _enqueue_analyze(
     try:
         pending_cap = await _pending_cap()
         daily_cap = await _daily_cap()
-        day_start = _utc_day_start()
 
         async with get_session() as session:
             pending = (
@@ -379,28 +413,20 @@ async def _enqueue_analyze(
                 )
                 return False
 
-            today_count = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(JobMatchResult)
-                    .where(
-                        JobMatchResult.user_id == user_id,
-                        JobMatchResult.created_at >= day_start,
+            # 0 = unlimited. When capped, count only auto-prepare enqueues
+            # (Redis), not every JobMatchResult / manual Run.
+            if daily_cap > 0:
+                today_auto = await _auto_prepare_daily_count(user_id)
+                if today_auto >= daily_cap:
+                    logger.info(
+                        "auto_prepare_daily_cap_hit",
+                        user_id=user_id,
+                        job_id=job_id,
+                        soft_daily=today_auto,
+                        cap=daily_cap,
+                        source=source,
                     )
-                )
-            ).scalar_one()
-            # Also count in-flight toward the soft daily budget.
-            soft_daily = int(today_count or 0) + int(pending or 0)
-            if soft_daily >= daily_cap:
-                logger.info(
-                    "auto_prepare_daily_cap_hit",
-                    user_id=user_id,
-                    job_id=job_id,
-                    soft_daily=soft_daily,
-                    cap=daily_cap,
-                    source=source,
-                )
-                return False
+                    return False
 
             progress_repo = JobMatchInProgressRepository(session)
             await progress_repo.add(job_id, user_id)
@@ -433,6 +459,9 @@ async def _enqueue_analyze(
             skip_phase_b,
             **enqueue_kwargs,
         )
+        # Count only newly enqueued auto-prepare work toward the daily budget.
+        if job is not None:
+            await _bump_auto_prepare_daily(user_id)
         logger.info(
             "auto_prepare_analyze_enqueued",
             job_id=job_id,
@@ -442,6 +471,7 @@ async def _enqueue_analyze(
             source=source,
             defer_by_s=defer_by.total_seconds() if defer_by else 0,
             already_queued=job is None,
+            daily_cap=daily_cap,
         )
         return True
     except Exception as e:

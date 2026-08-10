@@ -750,7 +750,9 @@ export function SystemSettingsPage() {
             {renderAutoField('phase_b_max_tokens', { label: 'Phase B tokens' })}
             {renderAutoField('llm_circuit_breaker_threshold', { label: 'Breaker threshold' })}
             {renderAutoField('llm_circuit_breaker_cooldown_seconds', { label: 'Breaker cooldown' })}
-            {renderAutoField('auto_prepare_daily_cap_per_user', { label: 'Auto-prepare daily cap' })}
+            {renderAutoField('auto_prepare_daily_cap_per_user', {
+              label: 'Auto-prepare daily cap (0 = unlimited)',
+            })}
             {renderAutoField('auto_prepare_pending_cap_per_user', { label: 'Auto-prepare pending cap' })}
           </div>
         </SettingsCard>

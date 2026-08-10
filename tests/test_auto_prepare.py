@@ -99,6 +99,98 @@ def test_shared_jd_ready_helper():
 
 
 @pytest.mark.asyncio
+async def test_daily_cap_zero_is_unlimited():
+    from app.services import auto_prepare_service as svc
+
+    with (
+        patch.object(svc, "_pending_cap", AsyncMock(return_value=100)),
+        patch.object(svc, "_daily_cap", AsyncMock(return_value=0)),
+        patch.object(svc, "_auto_prepare_daily_count", AsyncMock(return_value=9999)),
+        patch.object(svc, "_bump_auto_prepare_daily", AsyncMock()),
+        patch(
+            "app.storage.repository.JobMatchInProgressRepository.add",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.storage.repository.JobMatchInProgressRepository.remove",
+            new_callable=AsyncMock,
+        ),
+        patch("app.tasks.worker.get_analysis_pool", new_callable=AsyncMock) as pool_factory,
+    ):
+        pool = AsyncMock()
+        pool.enqueue_job = AsyncMock(return_value=object())
+        pool_factory.return_value = pool
+
+        # Minimal DB session stubs via patching get_session context
+        class _Sess:
+            async def execute(self, *_a, **_k):
+                class _R:
+                    def scalar_one(self_inner):
+                        return 0
+
+                return _R()
+
+            async def commit(self):
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return False
+
+        with patch("app.services.auto_prepare_service.get_session", return_value=_Sess()):
+            ok = await svc._enqueue_analyze(
+                "job-1",
+                "user-1",
+                extraction_id="ext-1",
+                skip_phase_b=False,
+                source="fanout",
+            )
+        assert ok is True
+        pool.enqueue_job.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_daily_cap_counts_auto_prepare_only():
+    from app.services import auto_prepare_service as svc
+
+    with (
+        patch.object(svc, "_pending_cap", AsyncMock(return_value=100)),
+        patch.object(svc, "_daily_cap", AsyncMock(return_value=10)),
+        patch.object(svc, "_auto_prepare_daily_count", AsyncMock(return_value=10)),
+        patch.object(svc, "_bump_auto_prepare_daily", AsyncMock()) as bump,
+    ):
+        class _Sess:
+            async def execute(self, *_a, **_k):
+                class _R:
+                    def scalar_one(self_inner):
+                        return 0
+
+                return _R()
+
+            async def commit(self):
+                return None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return False
+
+        with patch("app.services.auto_prepare_service.get_session", return_value=_Sess()):
+            ok = await svc._enqueue_analyze(
+                "job-1",
+                "user-1",
+                extraction_id="ext-1",
+                skip_phase_b=False,
+                source="fanout",
+            )
+        assert ok is False
+        bump.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_fanout_skips_when_globally_paused():
     from app.services import auto_prepare_service as svc
 

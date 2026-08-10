@@ -1146,8 +1146,9 @@ function openHomeSection(id) {
     patch.allSearchMode = true;
     patch.allSearchQuery = "";
   }
+  // Add jobs is embedded on the hub — never open as a sub-page.
   if (id === "add") {
-    patch.addJobs = null;
+    patch.homeTab = "hub";
     void loadUserSettings();
   }
   setState(patch, { resetScroll: true });
@@ -5335,9 +5336,10 @@ function renderHome() {
   if (state.sync) wrap.appendChild(renderSyncBanner());
   if (state.error) wrap.appendChild(el("div", { class: "error", onclick: () => setState({ error: null }) }, state.error));
 
-  if (state.homeTab === "hub") {
+  if (state.homeTab === "hub" || state.homeTab === "add") {
     wrap.appendChild(renderWeeklyProgress());
     wrap.appendChild(renderHomeTiles());
+    wrap.appendChild(renderAddJobs({ embedded: true }));
   } else {
     wrap.appendChild(renderHomeSection());
   }
@@ -5717,11 +5719,6 @@ function renderHomeTiles() {
         label: "In progress",
         iconSvg: ICON_LIST,
         badgeCount: state.sessions.length,
-      }),
-      toolBtn({
-        id: "add",
-        label: "Add jobs",
-        iconSvg: ICON_PLUS,
       }),
       toolBtn({
         id: "tailor",
@@ -6277,7 +6274,8 @@ function renderActiveTab() {
     case "settings":
       return renderSettings();
     case "add":
-      return renderAddJobs();
+      // Embedded on hub; keep branch for safety if state is stale.
+      return renderAddJobs({ embedded: true });
     default:
       return renderAllSearchMode();
   }
@@ -7791,9 +7789,18 @@ function jobToCardWithHover(j) {
 
 let addJobsDraft = "";
 
-function renderAddJobs() {
-  const section = el("div", { class: "tab-panel add-jobs-section" });
+function renderAddJobs({ embedded = false } = {}) {
+  const section = el(
+    "div",
+    {
+      class: "tab-panel add-jobs-section" + (embedded ? " add-jobs-section--hub" : ""),
+    }
+  );
   const pipelineSetting = (state.userSettings && state.userSettings.manual_submit_pipeline) || "full";
+
+  if (embedded) {
+    section.appendChild(el("div", { class: "home-board-label muted small" }, "Add jobs"));
+  }
 
   section.appendChild(
     el("div", { class: "add-jobs-hero" }, [
@@ -7809,7 +7816,7 @@ function renderAddJobs() {
 
   const textarea = el("textarea", {
     class: "add-jobs-textarea",
-    rows: "6",
+    rows: embedded ? "4" : "6",
     placeholder: "https://boards.greenhouse.io/company/jobs/12345\nhttps://company.workday.com/...\n\nPaste multiple URLs, one per line or mixed in text.",
     value: addJobsDraft || "",
   });

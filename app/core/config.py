@@ -161,7 +161,8 @@ class Settings(BaseSettings):
     # Global kill-switch for auto-prepare fan-out / backfill (manual Run unaffected).
     auto_prepare_enabled: bool = True
     # Soft per-user daily cap on auto-prepare analyze enqueues (UTC day).
-    auto_prepare_daily_cap_per_user: int = Field(default=200, ge=1, le=5000)
+    # 0 = unlimited (default). Manual Run is never counted toward this cap.
+    auto_prepare_daily_cap_per_user: int = Field(default=0, ge=0, le=100_000)
     # Soft pending-in-progress cap before auto-prepare stops enqueueing for a user.
     auto_prepare_pending_cap_per_user: int = Field(default=100, ge=1, le=2000)
 
