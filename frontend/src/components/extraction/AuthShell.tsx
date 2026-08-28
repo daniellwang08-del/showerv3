@@ -1,11 +1,18 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
+import { usePublicViewport } from '../../hooks/usePublicViewport';
 
 /**
  * Shared chrome for the auth screens: still background, right-aligned glass
  * card with the flowing star border, and the brand header. Only the form
  * passed as `children` changes between sign in and sign up.
  */
-export function AuthShell({ children }: { children: ReactNode }) {
+export function AuthShell({ children, homeTo }: { children: ReactNode; homeTo?: string }) {
+  // Sign in / sign up are public pages: drop the dashboard's 1400px floor so
+  // visitors arriving from the landing page on a phone get a fitting layout.
+  usePublicViewport();
+
   return (
     <div className="app-surface relative flex min-h-dvh items-center justify-center overflow-hidden bg-gradient-to-br from-blue-100 via-blue-50 to-indigo-100 p-3 sm:p-4 lg:justify-end lg:pr-[26vw]">
       <img
@@ -38,6 +45,16 @@ export function AuthShell({ children }: { children: ReactNode }) {
           />
 
           <div className="relative">
+            {homeTo ? (
+              <Link
+                to={homeTo}
+                className="mb-4 inline-flex items-center gap-1.5 text-xs font-bold text-blue-50/70 transition hover:text-white"
+              >
+                <ArrowLeft size={14} strokeWidth={2.75} />
+                Back to home
+              </Link>
+            ) : null}
+
             <div className="mb-6 text-center sm:mb-8">
               <div className="relative mx-auto mb-3 w-fit">
                 <div className="absolute inset-0 -z-10 rounded-full bg-sky-400/30 blur-2xl" aria-hidden="true" />

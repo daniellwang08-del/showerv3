@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { useWebSocket, type WsEvent } from './hooks/useWebSocket';
 import { useScraperStore } from './stores/scraperStore';
@@ -8,6 +8,7 @@ import { useModalStore } from './stores/modalStore';
 import { useUIStore } from './stores/uiStore';
 import { AppShell } from './components/layout/AppShell';
 import { BrandedLoader } from './components/layout/BrandedLoader';
+import { LandingPage } from './pages/LandingPage';
 import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
 import { MyPreferencesPage } from './pages/MyPreferencesPage';
@@ -38,6 +39,7 @@ function ApplicantOnly({ isAdmin, children }: { isAdmin: boolean; children: Reac
 
 function App() {
   const { isAuthenticated, user, authPage, logout, onAuthSuccess, refreshUser } = useAuth();
+  const navigate = useNavigate();
 
   const modal = useModalStore((s) => s.modal);
   const modalUrl = useModalStore((s) => s.modalUrl);
@@ -142,7 +144,44 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    return <AuthScreen onAuthSuccess={onAuthSuccess} initialMode={authPage} />;
+    // Visitors land on the public marketing page; /login and /signup own the
+    // auth mode so both are shareable. Any other path (an app route reached
+    // with an expired session) still shows the form directly, so signing back
+    // in returns the user to where they were.
+    const gotoMode = (mode: 'login' | 'signup') =>
+      navigate(mode === 'login' ? '/login' : '/signup');
+
+    return (
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route
+          path="/login"
+          element={
+            <AuthScreen
+              onAuthSuccess={onAuthSuccess}
+              initialMode="login"
+              onModeChange={gotoMode}
+              homeTo="/"
+            />
+          }
+        />
+        <Route
+          path="/signup"
+          element={
+            <AuthScreen
+              onAuthSuccess={onAuthSuccess}
+              initialMode="signup"
+              onModeChange={gotoMode}
+              homeTo="/"
+            />
+          }
+        />
+        <Route
+          path="*"
+          element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode={authPage} homeTo="/" />}
+        />
+      </Routes>
+    );
   }
 
   return (

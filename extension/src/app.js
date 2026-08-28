@@ -5380,8 +5380,7 @@ function renderHomeSection() {
 function renderWeeklyProgress() {
   const wp = state.weeklyProgress;
   const series = (wp && wp.series) || [];
-  const totals = (wp && wp.totals) || { posted: 0, recommended: 0, applied: 0 };
-  const minScore = wp && wp.min_match_score != null ? wp.min_match_score : null;
+  const totals = (wp && wp.totals) || { posted: 0, applied: 0 };
   const applyTarget = Math.max(0, Number(state.dailyApplyTarget) || 0);
   const todayApplied = series.length ? Number(series[series.length - 1].applied) || 0 : 0;
 
@@ -5389,19 +5388,12 @@ function renderWeeklyProgress() {
   wrap.appendChild(
     el("div", { class: "weekly-progress-head" }, [
       el("div", { class: "weekly-progress-title" }, "Weekly progress"),
-      el(
-        "div",
-        { class: "weekly-progress-sub muted small" },
-        minScore != null
-          ? `Recommended = match ≥ ${minScore} (Preferences)`
-          : "Posted · Recommended · Applied"
-      ),
+      el("div", { class: "weekly-progress-sub muted small" }, "Posted · Applied"),
     ])
   );
 
   const legendItems = [
     legendSwatch("posted", "Posted", totals.posted),
-    legendSwatch("recommended", "Recommended", totals.recommended),
     legendSwatch("applied", "Applied", totals.applied),
   ];
   if (applyTarget > 0) {
@@ -5420,7 +5412,12 @@ function renderWeeklyProgress() {
     return wrap;
   }
 
-  wrap.appendChild(buildWeeklyChartSvg(series, { applyTarget }));
+  wrap.appendChild(
+    buildWeeklyChartSvg(series, {
+      applyTarget,
+      keys: ["posted", "applied"],
+    })
+  );
 
   if (applyTarget > 0) {
     const met = todayApplied >= applyTarget;
@@ -5473,7 +5470,10 @@ function buildWeeklyChartSvg(series, opts = {}) {
   };
   const innerW = W - pad.l - pad.r;
   const innerH = H - pad.t - pad.b;
-  const keys = ["posted", "recommended", "applied"];
+  // Hub chart is Posted + Applied only; Statistics may pass more series.
+  const keys = Array.isArray(opts.keys) && opts.keys.length
+    ? opts.keys
+    : ["posted", "applied"];
   const keyLabel = { posted: "Posted", recommended: "Recommended", applied: "Applied" };
   const dataMax = Math.max(0, ...series.flatMap((d) => keys.map((k) => Number(d[k]) || 0)));
   const { max: maxVal, ticks } = niceChartScale(Math.max(dataMax, applyTarget), 4);
@@ -7044,7 +7044,7 @@ function renderStatistics() {
 
   const bestDay = series.reduce(
     (best, d) => {
-      const score = (Number(d.applied) || 0) * 3 + (Number(d.recommended) || 0);
+      const score = (Number(d.applied) || 0) * 3 + (Number(d.posted) || 0);
       if (!best || score > best.score) return { ...d, score };
       return best;
     },
@@ -7122,7 +7122,6 @@ function renderStatistics() {
   chartCard.appendChild(
     el("div", { class: "weekly-legend" }, [
       legendSwatch("posted", "Posted", posted),
-      legendSwatch("recommended", "Recommended", recommended),
       legendSwatch("applied", "Applied", applied),
       ...(Math.max(0, Number(state.dailyApplyTarget) || 0) > 0
         ? [legendSwatch("target", "Daily goal", state.dailyApplyTarget)]
@@ -7143,15 +7142,16 @@ function renderStatistics() {
         tall: true,
         dense: series.length > 10,
         applyTarget: state.dailyApplyTarget,
+        keys: ["posted", "applied"],
       })
     );
   }
-  if (bestDay && (bestDay.applied > 0 || bestDay.recommended > 0)) {
+  if (bestDay && (bestDay.applied > 0 || bestDay.posted > 0)) {
     chartCard.appendChild(
       el(
         "div",
         { class: "stats-insight muted small" },
-        `Peak day: ${bestDay.date || bestDay.label} · ${bestDay.applied || 0} applied · ${bestDay.recommended || 0} recommended`
+        `Peak day: ${bestDay.date || bestDay.label} · ${bestDay.applied || 0} applied · ${bestDay.posted || 0} posted`
       )
     );
   }
