@@ -1,6 +1,6 @@
 # Job Application Assistant - Browser Extension
 
-Manifest V3 side-panel for [Atomspace](https://robertstaff.com/). Sign in with
+Manifest V3 side-panel for [Atomspace](https://atomspace.it.com/). Sign in with
 your account, cache profile/settings, and autofill applications with AI help.
 
 No build step. Load this folder unpacked in Chrome/Edge.
@@ -14,16 +14,18 @@ No build step. Load this folder unpacked in Chrome/Edge.
 
 ## Sign in
 
-- Default API/dashboard origin is `https://robertstaff.com` (`config.js`).
+- Default API/dashboard origin is `https://atomspace.it.com` (`config.js`).
 - Opening the dashboard syncs that origin automatically.
 - On first sign-in Chrome asks for permission to the server origin.
+- After a domain change, reload the extension: a stored origin that no longer
+  matches `config.js` is discarded on the next read (`src/store.js`).
 
 ## CORS (production)
 
 Production must allow the extension origin (id is fixed by the manifest `key`):
 
 ```
-FRONTEND_URL=https://robertstaff.com
+FRONTEND_URL=https://atomspace.it.com
 CORS_EXTRA_ORIGINS=chrome-extension://leemdaklomjjbdfmaepplhpbeomhifmn
 ```
 

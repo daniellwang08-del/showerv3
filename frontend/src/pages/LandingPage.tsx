@@ -2,6 +2,8 @@ import { usePublicViewport } from '../hooks/usePublicViewport';
 import { useRevealOnScroll } from '../hooks/useRevealOnScroll';
 import { LandingHeader } from '../components/landing/LandingHeader';
 import { HeroSection } from '../components/landing/HeroSection';
+import { ProofStrip } from '../components/landing/ProofStrip';
+import { FilmStrip } from '../components/landing/FilmStrip';
 import { HowItWorksSection } from '../components/landing/HowItWorksSection';
 import { FeaturesSection } from '../components/landing/FeaturesSection';
 import { AutofillSection } from '../components/landing/AutofillSection';
@@ -20,6 +22,8 @@ export function LandingPage() {
       <LandingHeader />
       <main>
         <HeroSection />
+        <ProofStrip />
+        <FilmStrip />
         <HowItWorksSection />
         <FeaturesSection />
         <AutofillSection />

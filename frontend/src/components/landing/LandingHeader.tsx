@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, X, ArrowRight } from 'lucide-react';
 import { NAV_LINKS } from './landingData';
+import { PromoRibbon } from './landingMotion';
 import {
   CTA_SIZE_LG,
   CTA_SIZE_SM,
@@ -50,6 +51,15 @@ export function LandingHeader() {
           : 'border-b border-transparent'
       }`}
     >
+      <div
+        className={`overflow-hidden transition-all duration-500 ${
+          scrolled ? 'max-h-0 opacity-0' : 'max-h-12 opacity-100'
+        }`}
+      >
+        <PromoRibbon>
+          Now live · 5 job networks · 14 ATS engines · you keep the final click
+        </PromoRibbon>
+      </div>
       <div className={`${LANDING_CONTAINER} flex h-16 items-center justify-between gap-6 sm:h-18`}>
         <Link to="/" className="group flex items-center gap-2.5" aria-label="Atomspace home">
           <span className="relative flex h-9 w-9 items-center justify-center">

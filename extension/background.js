@@ -1,4 +1,4 @@
-// Dashboard origins: production (robertstaff.com), localhost, and private LAN.
+// Dashboard origins: production (atomspace.it.com), localhost, and private LAN.
 // Chrome match patterns ignore ports, so LAN inject covers any Vite port (e.g. :5173).
 
 import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/store.js";
@@ -15,8 +15,8 @@ const BRIDGE_FILE = "content/webapp-bridge.js";
 function isManifestContentScriptHost(hostname) {
   const h = (hostname || "").toLowerCase();
   return (
-    h === "robertstaff.com" ||
-    h === "www.robertstaff.com" ||
+    h === "atomspace.it.com" ||
+    h === "www.atomspace.it.com" ||
     h === "localhost" ||
     h === "127.0.0.1" ||
     h === "[::1]"

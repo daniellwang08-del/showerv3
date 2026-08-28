@@ -5,4 +5,4 @@
  * Local Vite dev: temporarily set to http://localhost:5173 (or your LAN URL)
  * so the extension syncs from the open dashboard tab.
  */
-export const DEFAULT_BACKEND_URL = "https://robertstaff.com";
+export const DEFAULT_BACKEND_URL = "https://atomspace.it.com";

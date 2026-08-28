@@ -282,8 +282,16 @@ export async function downloadResumeFile(jobId, fileType) {
   try {
     res = await fetch(url, { method: "GET", headers: h });
   } catch (networkErr) {
+    // Name the origin actually in use so the hint stays correct across
+    // domain changes and localhost switches.
+    let origin = "the dashboard";
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      /* keep the generic wording */
+    }
     throw new ApiError(
-      `Cannot download ${fileType}: backend unreachable. Confirm the extension is signed in to https://robertstaff.com (reload the extension after switching off localhost).`,
+      `Cannot download ${fileType}: backend unreachable. Confirm the extension is signed in to ${origin} (reload the extension after switching off localhost).`,
       0
     );
   }

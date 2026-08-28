@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { FEATURES, type Feature } from './landingData';
+import { FEATURES_BAND } from './landingMedia';
 import { ACCENTS, GlassCard, LANDING_CONTAINER, SectionHeading, SectionShell } from './landingUi';
 
 const ICONS: Record<Feature['icon'], LucideIcon> = {
@@ -27,8 +28,19 @@ const ICONS: Record<Feature['icon'], LucideIcon> = {
 
 export function FeaturesSection() {
   return (
-    <SectionShell id="features" className="bg-[#070b16]">
-      <div className={LANDING_CONTAINER}>
+    <SectionShell id="features" className="overflow-hidden bg-[#070b16]">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-72 opacity-30"
+        style={{
+          backgroundImage: `url(${FEATURES_BAND})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          maskImage: 'linear-gradient(to bottom, black, transparent)',
+          WebkitMaskImage: 'linear-gradient(to bottom, black, transparent)',
+        }}
+      />
+      <div className={`${LANDING_CONTAINER} relative`}>
         <div className="landing-reveal">
           <SectionHeading
             eyebrow="The platform"

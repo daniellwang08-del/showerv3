@@ -1,5 +1,7 @@
 import { Check, Chrome, MousePointerClick } from 'lucide-react';
 import { ATS_PLATFORMS, AUTOFILL_POINTS, INTEGRATIONS } from './landingData';
+import { AutofillDemo } from './AutofillDemo';
+import { AUTOFILL_POSTER, AUTOFILL_VIDEO, HERO_GIF } from './landingMedia';
 import { Chip, Eyebrow, GlassCard, LANDING_CONTAINER, SectionShell } from './landingUi';
 
 export function AutofillSection() {
@@ -17,6 +19,36 @@ export function AutofillSection() {
               which job you are applying to, and which documents belong to it — then it types
               everything so you can review and submit.
             </p>
+
+            <div className="relative mt-8 overflow-hidden rounded-3xl border border-white/10">
+              <img
+                src={AUTOFILL_POSTER}
+                alt=""
+                className="h-56 w-full object-cover sm:h-64 motion-reduce:block hidden"
+              />
+              <video
+                className="h-56 w-full object-cover motion-reduce:hidden sm:h-64"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                poster={AUTOFILL_POSTER}
+                aria-hidden="true"
+              >
+                <source src={AUTOFILL_VIDEO} type="video/mp4" />
+              </video>
+              <img
+                src={HERO_GIF}
+                alt=""
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-[0.14] motion-reduce:hidden"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#05070f] via-[#05070f]/35 to-transparent" />
+              <p className="absolute bottom-4 left-5 text-[12px] font-black uppercase tracking-[0.16em] text-white">
+                You watch. You submit.
+              </p>
+            </div>
 
             <ul className="mt-10 space-y-6">
               {AUTOFILL_POINTS.map((point) => (
@@ -40,11 +72,15 @@ export function AutofillSection() {
                   <MousePointerClick size={18} strokeWidth={2.5} />
                 </span>
                 <div>
-                  <p className="text-sm font-black text-white">Dedicated engines</p>
+                  <p className="text-sm font-black text-white">Watch it type</p>
                   <p className="text-[12px] font-semibold text-white/45">
-                    14 platforms, plus custom career pages
+                    Illustrative Workday pass · 14 platforms in production
                   </p>
                 </div>
+              </div>
+
+              <div className="mt-6">
+                <AutofillDemo />
               </div>
 
               <div className="mt-7 flex flex-wrap gap-2">

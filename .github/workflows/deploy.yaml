@@ -103,6 +103,11 @@ jobs:
             sleep 10
 
             echo "Health check..."
-            curl --fail https://robertstaff.com/api/v1/health
+            # Runs on the VPS, so resolve the hostname locally instead of through
+            # DNS: a stale entry in the box's resolver cache would otherwise fail
+            # a deploy whose app is perfectly healthy. The first call checks the
+            # API process, the second the full nginx + TLS path.
+            curl --fail http://127.0.0.1:8000/api/v1/health
+            curl --fail --resolve atomspace.it.com:443:127.0.0.1 https://atomspace.it.com/api/v1/health
 
             echo "Deployment successful."

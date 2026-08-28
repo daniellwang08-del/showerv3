@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { CheckCircle2, FileText, Sparkles, Wand2 } from 'lucide-react';
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
 /**
  * Stylised representation of the jobs board and the autofill side panel.
@@ -7,9 +9,9 @@ import { CheckCircle2, FileText, Sparkles, Wand2 } from 'lucide-react';
  */
 
 const TILES = [
-  { label: 'Ready to apply', value: '12', accent: 'text-emerald-300' },
-  { label: 'Matched today', value: '34', accent: 'text-sky-300' },
-  { label: 'Applied', value: '9', accent: 'text-violet-300' },
+  { label: 'Ready to apply', value: 12, accent: 'text-emerald-300' },
+  { label: 'Matched today', value: 34, accent: 'text-sky-300' },
+  { label: 'Applied', value: 9, accent: 'text-violet-300' },
 ];
 
 const ROWS = [
@@ -37,6 +39,13 @@ const ROWS = [
     stages: ['Scored'],
     ready: false,
   },
+];
+
+const AUTOFILL_STATUS = [
+  { label: 'Reading Workday form…', progress: 28, note: '4 of 28 fields' },
+  { label: 'Answering screening…', progress: 54, note: '2 of 4 questions' },
+  { label: 'Attaching résumé…', progress: 76, note: 'Tailored PDF' },
+  { label: 'Ready for your review', progress: 100, note: 'You keep the click' },
 ];
 
 function ScoreRing({ score }: { score: number }) {
@@ -73,14 +82,35 @@ function ScoreRing({ score }: { score: number }) {
 }
 
 export function ProductMock() {
+  const reduced = usePrefersReducedMotion();
+  const [activeRow, setActiveRow] = useState(1);
+  const [fillStep, setFillStep] = useState(0);
+
+  useEffect(() => {
+    if (reduced) return;
+    const rows = window.setInterval(() => {
+      setActiveRow((current) => (current + 1) % ROWS.length);
+    }, 2800);
+    const fill = window.setInterval(() => {
+      setFillStep((current) => (current + 1) % AUTOFILL_STATUS.length);
+    }, 2200);
+    return () => {
+      window.clearInterval(rows);
+      window.clearInterval(fill);
+    };
+  }, [reduced]);
+
+  const fill = AUTOFILL_STATUS[fillStep];
+
   return (
     <div className="relative">
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute -inset-6 rounded-[40px] bg-gradient-to-br from-sky-500/25 via-indigo-500/20 to-fuchsia-500/20 opacity-70 blur-3xl"
+        className="landing-glow-pulse pointer-events-none absolute -inset-6 rounded-[40px] bg-gradient-to-br from-sky-500/30 via-indigo-500/20 to-fuchsia-500/25 opacity-80 blur-3xl"
       />
 
       <div className="landing-float relative overflow-hidden rounded-3xl border border-white/12 bg-[#080d1c]/90 shadow-[0_40px_120px_-40px_rgba(2,6,23,0.95)] ring-1 ring-inset ring-white/10 backdrop-blur-2xl">
+        <span aria-hidden="true" className="landing-scanline pointer-events-none absolute inset-0" />
         <div className="flex items-center gap-2 border-b border-white/10 px-5 py-3.5">
           <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
@@ -106,10 +136,14 @@ export function ProductMock() {
         </div>
 
         <div className="space-y-2.5 p-5">
-          {ROWS.map((row) => (
+          {ROWS.map((row, index) => (
             <div
               key={row.title}
-              className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition duration-300 hover:border-sky-300/30 hover:bg-sky-400/[0.06]"
+              className={`flex items-center gap-4 rounded-2xl border px-4 py-3.5 transition duration-500 ${
+                activeRow === index
+                  ? 'border-sky-300/40 bg-sky-400/[0.1] shadow-[0_0_24px_-8px_rgba(56,189,248,0.55)]'
+                  : 'border-white/10 bg-white/[0.04] hover:border-sky-300/30 hover:bg-sky-400/[0.06]'
+              }`}
             >
               <ScoreRing score={row.score} />
               <div className="min-w-0 flex-1">
@@ -136,7 +170,7 @@ export function ProductMock() {
                 </span>
               ) : (
                 <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-3 py-1.5 text-[11px] font-bold text-sky-300 sm:inline-flex">
-                  <Sparkles size={13} strokeWidth={2.75} />
+                  <Sparkles size={13} strokeWidth={2.75} className="landing-spin-slow" />
                   Working
                 </span>
               )}
@@ -152,13 +186,16 @@ export function ProductMock() {
           </span>
           <div>
             <p className="text-[12px] font-black text-white">Autofill · Workday</p>
-            <p className="text-[10px] font-semibold text-white/45">28 fields · 4 questions</p>
+            <p className="text-[10px] font-semibold text-white/45">{fill.note}</p>
           </div>
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-          <span className="landing-progress block h-full w-3/4 rounded-full bg-gradient-to-r from-sky-400 to-indigo-500" />
+          <span
+            className="block h-full rounded-full bg-gradient-to-r from-sky-400 to-indigo-500 transition-[width] duration-700"
+            style={{ width: `${fill.progress}%` }}
+          />
         </div>
-        <p className="mt-2 text-[10px] font-semibold text-emerald-300">Résumé attached</p>
+        <p className="mt-2 text-[10px] font-semibold text-emerald-300">{fill.label}</p>
       </div>
     </div>
   );

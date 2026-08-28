@@ -1,17 +1,25 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { NAV_LINKS } from './landingData';
+import { CLOSING_IMAGE } from './landingMedia';
 import { Eyebrow, GhostCta, LANDING_CONTAINER, PrimaryCta } from './landingUi';
 
 export function ClosingSection() {
   return (
     <>
       <section className="landing-section relative overflow-hidden py-24 sm:py-32">
+        <img
+          src={CLOSING_IMAGE}
+          alt=""
+          aria-hidden="true"
+          className="landing-ken-burns absolute inset-0 h-full w-full object-cover opacity-30"
+        />
         <span
           aria-hidden="true"
-          className="landing-aurora pointer-events-none absolute left-1/2 top-0 h-72 w-[36rem] -translate-x-1/2 rounded-full bg-indigo-500/25 blur-[120px]"
+          className="landing-aurora pointer-events-none absolute left-1/2 top-0 h-72 w-[36rem] -translate-x-1/2 rounded-full bg-indigo-500/30 blur-[120px]"
         />
         <div aria-hidden="true" className="landing-grid absolute inset-0 opacity-25" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#05070f] via-[#05070f]/80 to-[#05070f]" />
 
         <div className={`${LANDING_CONTAINER} relative`}>
           <div className="landing-reveal relative mx-auto max-w-4xl overflow-hidden rounded-[32px] border border-white/12 bg-gradient-to-b from-white/[0.09] to-white/[0.03] px-6 py-14 text-center backdrop-blur-2xl sm:px-14">
@@ -19,6 +27,7 @@ export function ClosingSection() {
               aria-hidden="true"
               className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/60 to-transparent"
             />
+            <span aria-hidden="true" className="landing-cta-orbit pointer-events-none absolute -inset-20 rounded-full" />
 
             <Eyebrow>Start today</Eyebrow>
             <h2 className="mt-6 text-balance text-3xl font-black leading-[1.1] tracking-tight text-white sm:text-4xl lg:text-5xl">
@@ -30,7 +39,7 @@ export function ClosingSection() {
             </p>
 
             <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <PrimaryCta to="/signup">
+              <PrimaryCta to="/signup" className="landing-cta-pulse">
                 Sign up free
                 <ArrowRight size={16} strokeWidth={2.75} />
               </PrimaryCta>
