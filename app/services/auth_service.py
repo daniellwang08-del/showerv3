@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import uuid
 import jwt
 from passlib.context import CryptContext
 from app.core.config import get_settings
@@ -61,7 +62,10 @@ class AuthService:
             expire = datetime.now(timezone.utc) + expires_delta
         else:
             expire = datetime.now(timezone.utc) + timedelta(minutes=1440) # 24 hours default
-        
+
+        # Unique token id so individual tokens can be revoked (logout) without
+        # rotating the signing secret (which would invalidate everyone at once).
+        to_encode.setdefault("jti", uuid.uuid4().hex)
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, settings.auth_secret_key, algorithm="HS256")
         return encoded_jwt

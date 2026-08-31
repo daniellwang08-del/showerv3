@@ -44,7 +44,11 @@ class Settings(BaseSettings):
 
     app_name: str = "Atomspace"
     app_version: str = "1.0.0"
-    debug: bool = True
+    # Secure by default: debug must be explicitly enabled (DEBUG=true) for local
+    # dev. Leaving it off in production keeps /docs closed and the permissive
+    # private-LAN/extension CORS regex disabled. Interactive docs stay available
+    # in any non-production environment regardless of this flag (see main.py).
+    debug: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     @field_validator("app_env")
@@ -226,6 +230,11 @@ class Settings(BaseSettings):
 
     auth_password: str = Field(default="")
     auth_secret_key: str = Field(default="")
+    # Dedicated key for encrypting user secrets at rest (custom LLM/Pumble keys).
+    # Empty = derive from auth_secret_key (back-compat). Set this to rotate the
+    # JWT signing secret WITHOUT re-encrypting every stored secret, and to avoid
+    # coupling token forgery risk to secret-at-rest confidentiality.
+    settings_encryption_key: str = Field(default="")
     # Lifetime (days) of the long-lived bearer token issued to non-cookie clients
     # (e.g. the browser extension) when they request `long_lived` at login.
     extension_token_expire_days: int = Field(default=30, ge=1, le=365)

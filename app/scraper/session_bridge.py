@@ -44,7 +44,13 @@ class SessionBridge:
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Access-Control-Allow-Origin", "*")
+                # Only the browser extension should be able to POST cookies here.
+                # Echo the Origin solely for extension schemes; omit ACAO for any
+                # other origin so a random web page cannot read/abuse this bridge.
+                origin = self.headers.get("Origin", "") or ""
+                if origin.startswith("chrome-extension://") or origin.startswith("moz-extension://"):
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("Vary", "Origin")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
                 self.end_headers()

@@ -84,6 +84,16 @@ async def lifespan(app: FastAPI):
     _install_windows_accept_noise_filter()
     logger.info("application_starting")
 
+    # Fail closed in production if the JWT signing secret is missing: an empty
+    # secret lets anyone forge valid tokens (jwt.encode(payload, "", HS256)).
+    _settings = get_settings()
+    if _settings.app_env.strip().lower() in ("production", "prod") and not (_settings.auth_secret_key or "").strip():
+        logger.error("auth_secret_key_missing_in_production")
+        raise RuntimeError(
+            "AUTH_SECRET_KEY must be set in production. Refusing to start with an "
+            "empty JWT signing secret (tokens would be trivially forgeable)."
+        )
+
     try:
         await init_database()
     except Exception as e:
@@ -250,8 +260,8 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=settings.app_version,
         lifespan=lifespan,
-        docs_url="/docs" if settings.debug else None,
-        redoc_url="/redoc" if settings.debug else None,
+        docs_url="/docs" if (settings.debug or settings.app_env != "production") else None,
+        redoc_url="/redoc" if (settings.debug or settings.app_env != "production") else None,
     )
 
     # When `allow_credentials=True`, `allow_origins` must not be ['*'] or browsers will block cookies.

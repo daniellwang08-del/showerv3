@@ -131,6 +131,12 @@ class DismissDuplicatesBatchRequest(BaseModel):
     user_job_status_ids: list[str] = Field(..., min_length=1, max_length=2000)
 
 
+class ValidJobDeleteBatchRequest(BaseModel):
+    """Job ids to remove. For admins this hard-deletes the shared job (platform
+    curation); for applicants it only hides the job from their own list."""
+    job_ids: list[str] = Field(default_factory=list, max_length=2000)
+
+
 async def _purge_job_cascade(session, job_id: str) -> bool:
     """
     Delete a job row and related match/progress/application/user_job_status rows.
@@ -164,6 +170,27 @@ async def _purge_job_cascade(session, job_id: str) -> bool:
     return True
 
 
+async def _hide_job_for_user(session, job_id: str, user_id: str) -> bool:
+    """Applicant-scoped 'delete': hide the shared job from this user's list only.
+
+    `jobs` is a shared multi-tenant table — a non-admin must never cascade-delete
+    the row (that would destroy every other user's match/application/resume data).
+    Instead we upsert a per-user manual_hidden status, exactly like report-invalid.
+    Returns False when the job does not exist.
+    """
+    exists = await session.execute(select(Job.id).where(Job.id == job_id).limit(1))
+    if exists.scalar_one_or_none() is None:
+        return False
+    await UserJobStatusRepository(session).upsert(
+        user_id=user_id,
+        job_id=job_id,
+        status="manual_hidden",
+        exclusion_type="manual_invalid",
+        reason="Removed from your list",
+    )
+    return True
+
+
 def _extract_bearer_token(request: Request) -> str | None:
     """Return the JWT from an `Authorization: Bearer <token>` header, if present.
 
@@ -189,6 +216,13 @@ async def get_current_user(request: Request):
     if not payload:
         logger.warning("auth_required_invalid_token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # Reject tokens explicitly revoked at logout (fail-open if Redis is down).
+    from app.services.token_denylist import is_jti_revoked
+
+    if await is_jti_revoked(payload.get("jti")):
+        logger.warning("auth_required_revoked_token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
 
     user_id: str | None = None
     uid = payload.get("user_id")
@@ -239,11 +273,15 @@ async def require_applicant(current_user: dict = Depends(get_current_user)) -> d
 
 
 @router.post("/auth/signup", response_model=AuthResponse)
-async def signup(request: SignupRequest, response: Response) -> AuthResponse:
+async def signup(request: SignupRequest, response: Response, http_request: Request) -> AuthResponse:
     """Register a new user with email and password"""
     settings = get_settings()
     normalized_email = request.email.lower().strip()
-    
+
+    from app.api.rate_limit import enforce_auth_rate_limit
+
+    await enforce_auth_rate_limit(http_request, scope="signup", email=normalized_email)
+
     async with get_session() as session:
         user_repo = UserRepository(session)
         
@@ -298,11 +336,15 @@ async def signup(request: SignupRequest, response: Response) -> AuthResponse:
 
 
 @router.post("/auth/login", response_model=AuthResponse)
-async def login(request: LoginRequest, response: Response) -> AuthResponse:
+async def login(request: LoginRequest, response: Response, http_request: Request) -> AuthResponse:
     """Login with email and password"""
     settings = get_settings()
     normalized_email = request.email.lower().strip()
-    
+
+    from app.api.rate_limit import enforce_auth_rate_limit
+
+    await enforce_auth_rate_limit(http_request, scope="login", email=normalized_email)
+
     async with get_session() as session:
         user_repo = UserRepository(session)
 
@@ -366,8 +408,23 @@ async def login(request: LoginRequest, response: Response) -> AuthResponse:
 
 
 @router.post("/auth/logout")
-async def logout(response: Response):
+async def logout(response: Response, request: Request):
     settings = get_settings()
+
+    # Revoke the presented token so a stolen/long-lived bearer (extension tokens
+    # live up to 30 days) cannot be reused after logout. Best-effort/fail-open.
+    token = request.cookies.get("access_token") or _extract_bearer_token(request)
+    if token:
+        payload = AuthService.verify_token(token)
+        if payload and payload.get("jti"):
+            exp = payload.get("exp")
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            ttl = int(exp) - now_ts if isinstance(exp, (int, float)) else 0
+            if ttl > 0:
+                from app.services.token_denylist import revoke_jti
+
+                await revoke_jti(payload["jti"], ttl)
+
     response.delete_cookie(
         key="access_token",
         samesite="lax",
@@ -5715,39 +5772,74 @@ async def report_invalid_as_duplicate(
         return {"success": True}
 
 
-@router.post("/jobs/valid/delete/batch", dependencies=[Depends(get_current_user)])
-async def batch_delete_valid_jobs(body: dict) -> dict:
-    """Delete multiple valid jobs in a single request."""
-    job_ids = body.get("job_ids", [])
+@router.post("/jobs/valid/delete/batch")
+async def batch_delete_valid_jobs(
+    body: ValidJobDeleteBatchRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Remove multiple jobs. Admins hard-delete the shared rows (platform
+    curation); applicants only hide them from their own list."""
+    job_ids = list(dict.fromkeys(j for j in body.job_ids if j and str(j).strip()))
     if not job_ids:
         return {"deleted": 0}
+    is_admin = bool(current_user.get("is_admin"))
+    user_id = current_user.get("user_id")
+    if not is_admin and not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
     deleted = 0
     async with get_session() as session:
         for jid in job_ids:
-            ok = await _purge_job_cascade(session, jid)
+            if is_admin:
+                ok = await _purge_job_cascade(session, jid)
+            else:
+                ok = await _hide_job_for_user(session, jid, user_id)
             if ok:
                 deleted += 1
         await session.commit()
-    logger.info("batch_delete_valid_jobs", deleted=deleted, requested=len(job_ids))
+    logger.info(
+        "batch_delete_valid_jobs",
+        deleted=deleted,
+        requested=len(job_ids),
+        mode="cascade" if is_admin else "user_hide",
+    )
     return {"deleted": deleted}
 
 
-@router.delete("/jobs/valid/{job_id}", dependencies=[Depends(get_current_user)])
-async def delete_valid_job(job_id: str) -> dict:
+@router.delete("/jobs/valid/{job_id}")
+async def delete_valid_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Admin: hard-delete the shared job and its cascade. Applicant: hide the
+    job from their own list only (shared data is never destroyed)."""
+    is_admin = bool(current_user.get("is_admin"))
+    user_id = current_user.get("user_id")
     async with get_session() as session:
-        ext_row = await session.execute(select(Job.extraction_id).where(Job.id == job_id))
-        extraction_id = ext_row.scalar_one_or_none()
-        ok = await _purge_job_cascade(session, job_id)
+        if is_admin:
+            ext_row = await session.execute(select(Job.extraction_id).where(Job.id == job_id))
+            extraction_id = ext_row.scalar_one_or_none()
+            ok = await _purge_job_cascade(session, job_id)
+            if not ok:
+                logger.warning("delete_valid_job_not_found", job_id=job_id)
+                raise HTTPException(status_code=404, detail="Valid job not found")
+            await session.commit()
+            logger.info(
+                "delete_valid_job_success",
+                job_id=job_id,
+                extraction_deleted=bool(extraction_id),
+                mode="cascade",
+            )
+            return {"success": True}
+
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        ok = await _hide_job_for_user(session, job_id, user_id)
         if not ok:
             logger.warning("delete_valid_job_not_found", job_id=job_id)
             raise HTTPException(status_code=404, detail="Valid job not found")
-
         await session.commit()
-        logger.info(
-            "delete_valid_job_success",
-            job_id=job_id,
-            extraction_deleted=bool(extraction_id),
-        )
+        logger.info("delete_valid_job_success", job_id=job_id, user_id=user_id, mode="user_hide")
         return {"success": True}
 
 

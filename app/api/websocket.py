@@ -186,6 +186,27 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         await ws.close(code=4001, reason="Invalid token")
         return
 
+    # Mirror the HTTP auth guarantees: reject revoked tokens and deactivated
+    # accounts instead of streaming their events indefinitely.
+    from app.services.token_denylist import is_jti_revoked
+
+    if await is_jti_revoked(payload.get("jti")):
+        await ws.close(code=4001, reason="Token revoked")
+        return
+
+    try:
+        from app.storage.database import get_session
+        from app.storage.user_repository import UserRepository
+
+        async with get_session() as session:
+            user = await UserRepository(session).get_by_id(user_id)
+        if not user or not user.is_active:
+            await ws.close(code=4001, reason="Account disabled")
+            return
+    except Exception as e:
+        # Fail-open on infra errors so a transient DB blip doesn't drop all sockets.
+        logger.warning("ws_active_check_failed", user_id=user_id, error=str(e))
+
     await manager.connect(ws, user_id)
     try:
         while True:

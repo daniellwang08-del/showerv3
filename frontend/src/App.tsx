@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { lazy, Suspense, useCallback } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { useWebSocket, type WsEvent } from './hooks/useWebSocket';
@@ -13,10 +13,20 @@ import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
 import { MyPreferencesPage } from './pages/MyPreferencesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
-import { ResumeBuilderPage } from './pages/ResumeBuilderPage';
-import { DataAnalysisManagementPage } from './pages/DataManagementPage';
-import { UserManagementPage } from './pages/UserManagementPage';
-import { SystemSettingsPage } from './pages/SystemSettingsPage';
+// Code-split the heaviest / role-gated pages so applicants never download the
+// admin bundles (System Settings + User Management) and vice-versa.
+const ResumeBuilderPage = lazy(() =>
+  import('./pages/ResumeBuilderPage').then((m) => ({ default: m.ResumeBuilderPage })),
+);
+const DataAnalysisManagementPage = lazy(() =>
+  import('./pages/DataManagementPage').then((m) => ({ default: m.DataAnalysisManagementPage })),
+);
+const UserManagementPage = lazy(() =>
+  import('./pages/UserManagementPage').then((m) => ({ default: m.UserManagementPage })),
+);
+const SystemSettingsPage = lazy(() =>
+  import('./pages/SystemSettingsPage').then((m) => ({ default: m.SystemSettingsPage })),
+);
 import { AuthScreen } from './components/extraction/AuthScreen';
 import { JobActionModal } from './components/extraction/JobActionModal';
 import { ConfirmDialog } from './components/extraction/ConfirmDialog';
@@ -224,6 +234,7 @@ function App() {
         onCancel={closeBatchDeleteConfirm}
       />
 
+      <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
       <Routes>
         <Route
           element={
@@ -311,6 +322,7 @@ function App() {
           <Route path="*" element={<Navigate to="/scraper" replace />} />
         </Route>
       </Routes>
+      </Suspense>
     </>
   );
 }

@@ -15,12 +15,32 @@ logger = get_logger(__name__)
 _fernet: Fernet | None = None
 
 
+_DEV_FALLBACK_SEED = "dev-insecure-settings-key"
+
+
 def _get_fernet() -> Fernet:
     global _fernet
     if _fernet is None:
         settings = get_settings()
-        seed = (settings.auth_secret_key or "dev-insecure-settings-key").encode("utf-8")
-        key = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
+        # Prefer a dedicated encryption key; fall back to the JWT secret for
+        # back-compat with existing installs that only set AUTH_SECRET_KEY.
+        raw = (settings.settings_encryption_key or settings.auth_secret_key or "").strip()
+        if not raw:
+            is_production = settings.app_env.strip().lower() in ("production", "prod")
+            if is_production:
+                # Never silently encrypt production secrets with a public,
+                # source-code-embedded key — that is equivalent to plaintext.
+                raise RuntimeError(
+                    "SETTINGS_ENCRYPTION_KEY or AUTH_SECRET_KEY must be set in production; "
+                    "refusing to encrypt user secrets with the insecure development fallback."
+                )
+            logger.warning(
+                "secret_encryption_dev_fallback_key",
+                detail="No SETTINGS_ENCRYPTION_KEY/AUTH_SECRET_KEY set; using insecure dev key. "
+                "Do NOT use this outside local development.",
+            )
+            raw = _DEV_FALLBACK_SEED
+        key = base64.urlsafe_b64encode(hashlib.sha256(raw.encode("utf-8")).digest())
         _fernet = Fernet(key)
     return _fernet
 
