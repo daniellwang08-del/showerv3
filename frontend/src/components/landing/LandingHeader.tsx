@@ -13,8 +13,12 @@ import {
 
 /**
  * Public site header: brand on the left, section links in the middle, and the
- * Sign in / Sign up entry points on the right. It stays fixed at the top and
- * gains a glass background once the visitor scrolls past the hero fold.
+ * Sign in / Sign up entry points on the right.
+ *
+ * Sticky (not fixed) so it lives in the first-screen flex column. Collapsing
+ * the promo ribbon used to change the header height after a few pixels of
+ * scroll, which shoved the whole page on Y. The ribbon now stays put; only
+ * the glass fill changes once the visitor leaves the top.
  */
 export function LandingHeader() {
   const [scrolled, setScrolled] = useState(false);
@@ -45,21 +49,15 @@ export function LandingHeader() {
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-50 transition-all duration-500 ${
+      className={`sticky top-0 z-50 shrink-0 transition-[background-color,border-color,box-shadow] duration-300 ${
         scrolled
-          ? 'border-b border-white/10 bg-[#05070f]/85 backdrop-blur-xl'
-          : 'border-b border-transparent'
+          ? 'border-b border-white/10 bg-[#05070f]/85 shadow-[0_10px_40px_-20px_rgba(2,6,23,0.9)] backdrop-blur-xl'
+          : 'border-b border-white/5 bg-[#05070f]/55 backdrop-blur-md'
       }`}
     >
-      <div
-        className={`overflow-hidden transition-all duration-500 ${
-          scrolled ? 'max-h-0 opacity-0' : 'max-h-12 opacity-100'
-        }`}
-      >
-        <PromoRibbon>
-          Now live · 5 job networks · 14 ATS engines · you keep the final click
-        </PromoRibbon>
-      </div>
+      <PromoRibbon>
+        Now live · 5 job networks · 14 ATS engines · you keep the final click
+      </PromoRibbon>
       <div className={`${LANDING_CONTAINER} flex h-16 items-center justify-between gap-6 sm:h-18`}>
         <Link to="/" className="group flex items-center gap-2.5" aria-label="Atomspace home">
           <span className="relative flex h-9 w-9 items-center justify-center">

@@ -155,8 +155,8 @@ export function PointerGlow({ children }: { children: ReactNode }) {
   }, [reduced]);
 
   return (
-    <div ref={ref} className="landing-pointer-glow relative">
-      <div className="relative z-10">{children}</div>
+    <div ref={ref} className="landing-pointer-glow relative flex min-h-0 flex-1 flex-col">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }
@@ -173,12 +173,26 @@ export function HeadlineCycle({ words }: { words: string[] }) {
     return () => window.clearInterval(id);
   }, [reduced, words.length]);
 
-  const word = words[reduced ? 0 : index];
+  const active = words[reduced ? 0 : index];
 
+  // Every phrase occupies the same grid cell so swapping "matching" for
+  // "filling" cannot change the heading height or shove the page down.
   return (
-    <span className="landing-headline-cycle relative inline-block">
-      <span key={word} className="landing-word-swap mt-1 block bg-gradient-to-r from-sky-300 via-blue-100 to-indigo-300 bg-clip-text text-transparent">
-        {word}
+    <span className="landing-headline-cycle mt-1">
+      {words.map((word) => (
+        <span
+          key={word}
+          className="invisible block whitespace-pre-wrap bg-gradient-to-r from-sky-300 via-blue-100 to-indigo-300 bg-clip-text text-transparent"
+          aria-hidden="true"
+        >
+          {word}
+        </span>
+      ))}
+      <span
+        key={active}
+        className="landing-word-swap block bg-gradient-to-r from-sky-300 via-blue-100 to-indigo-300 bg-clip-text text-transparent"
+      >
+        {active}
       </span>
     </span>
   );
@@ -217,7 +231,9 @@ export function CountStat({
   return (
     <div ref={ref}>
       <dt className="text-2xl font-black tabular-nums text-white sm:text-3xl">
-        {Number.isFinite(numeric) ? counted : value}
+        <span className="inline-block min-w-[2ch]">
+          {Number.isFinite(numeric) ? counted : value}
+        </span>
       </dt>
       <dd className="mt-1 text-[13px] font-bold text-sky-200">{label}</dd>
       <dd className="text-[11px] font-semibold leading-snug text-white/40">{hint}</dd>

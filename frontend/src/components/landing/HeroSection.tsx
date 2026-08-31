@@ -17,7 +17,7 @@ const HEADLINE_WORDS = ['Start closing them.', 'Start matching them.', 'Start fi
 
 export function HeroSection() {
   return (
-    <section className="relative overflow-hidden pt-32 pb-16 sm:pt-40 sm:pb-24">
+    <section className="landing-hero relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <CinematicBackdrop video={HERO_VIDEO} poster={HERO_POSTER} gif={HERO_GIF} gifOpacity={0.14} />
       <NetworkField />
       <div aria-hidden="true" className="landing-grid absolute inset-0 opacity-[0.28]" />
@@ -27,7 +27,7 @@ export function HeroSection() {
       />
       <span
         aria-hidden="true"
-        className="landing-aurora landing-aurora-delay pointer-events-none absolute -right-16 top-40 h-80 w-80 rounded-full bg-fuchsia-500/25 blur-[110px]"
+        className="landing-aurora landing-aurora-delay pointer-events-none absolute -right-16 top-24 h-80 w-80 rounded-full bg-fuchsia-500/25 blur-[110px]"
       />
       <span
         aria-hidden="true"
@@ -36,25 +36,25 @@ export function HeroSection() {
       />
 
       <PointerGlow>
-        <div className={`${LANDING_CONTAINER} relative`}>
-          <div className="grid items-center gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-12">
+        <div className={`${LANDING_CONTAINER} relative flex min-h-0 flex-1 flex-col`}>
+          <div className="grid min-h-0 flex-1 items-center gap-8 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-10 lg:py-4">
             <div className="max-w-xl">
               <Eyebrow icon={<Sparkles size={12} strokeWidth={3} />}>
                 AI job application workspace
               </Eyebrow>
 
-              <h1 className="mt-6 text-balance text-4xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
-                Stop hunting jobs.
+              <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-[3.5rem] xl:text-6xl">
+                <span className="block">Stop hunting jobs.</span>
                 <HeadlineCycle words={HEADLINE_WORDS} />
               </h1>
 
-              <p className="mt-6 text-pretty text-lg leading-relaxed text-white/70">
+              <p className="mt-5 text-pretty text-base leading-relaxed text-white/70 sm:text-lg">
                 Atomspace finds fresh roles across five job networks, reads the real posting from the
                 hiring system, scores it against your profile, then writes the tailored résumé and
                 cover letter. When you are ready to apply, it fills the form for you.
               </p>
 
-              <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <PrimaryCta to="/signup" className="landing-cta-pulse">
                   Create your free account
                   <ArrowRight size={16} strokeWidth={2.75} />
@@ -69,14 +69,14 @@ export function HeroSection() {
                 </a>
               </div>
 
-              <dl className="mt-12 grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-4">
+              <dl className="mt-8 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
                 {HERO_STATS.map((stat) => (
                   <CountStat key={stat.label} value={stat.value} label={stat.label} hint={stat.hint} />
                 ))}
               </dl>
             </div>
 
-            <div className="relative lg:pl-4">
+            <div className="relative min-h-0 pb-10 lg:pl-4">
               <FloatingCast />
               <LiveToasts />
               <div className="landing-tilt relative z-10">
@@ -85,11 +85,11 @@ export function HeroSection() {
             </div>
           </div>
 
-          <div className="mt-20 sm:mt-24">
+          <div className="shrink-0 pb-5 sm:pb-6">
             <p className="text-center text-[11px] font-bold uppercase tracking-[0.22em] text-white/35">
               Sourcing from
             </p>
-            <div className="landing-marquee-mask mt-5 overflow-hidden">
+            <div className="landing-marquee-mask mt-4 overflow-hidden">
               <div className="landing-marquee flex w-max">
                 {[0, 1].map((copy) => (
                   <div

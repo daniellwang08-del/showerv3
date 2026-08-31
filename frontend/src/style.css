@@ -1250,18 +1250,26 @@ html:not(.dark) select optgroup {
    Landing colors below are fixed values, never the slate/gray
    scale, so the dark-mode palette remap cannot invert them.
    ============================================================ */
-html.public-viewport,
-html.public-viewport body,
-html.public-viewport #root {
+/* Only <html> may scroll. overflow-x: hidden on body/#root computes to
+   overflow-y: auto (CSS overflow spec) and creates nested scrollers — those
+   fight the document, steal position:fixed, and make the page jump on Y. */
+html.public-viewport {
   min-width: 0;
   height: auto;
   min-height: 100%;
-  overflow-x: hidden;
-  overflow-y: visible;
+  overflow-x: clip;
+  overflow-y: auto;
+  overflow-anchor: none;
+  scroll-behavior: auto;
 }
 
-html.public-viewport {
-  scroll-behavior: smooth;
+html.public-viewport body,
+html.public-viewport #root {
+  min-width: 0;
+  width: 100%;
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
 }
 
 html.landing-theme,
@@ -1270,9 +1278,9 @@ html.landing-theme body {
   color: #e6ecfb;
 }
 
-/* Anchor targets clear the fixed site header. */
+/* Anchor targets clear the sticky site header (ribbon + nav). */
 .landing-section {
-  scroll-margin-top: 5.5rem;
+  scroll-margin-top: 7rem;
 }
 
 .landing-grid {
@@ -1314,8 +1322,8 @@ html.landing-theme body {
 }
 
 @keyframes landing-float {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-9px); }
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -8px, 0); }
 }
 .landing-float { animation: landing-float 7s ease-in-out infinite; }
 .landing-float-slow { animation: landing-float 9s ease-in-out infinite; animation-delay: -3s; }
@@ -1347,13 +1355,20 @@ html.landing-theme body {
 .landing-ken-burns { animation: landing-ken-burns 22s ease-in-out infinite; }
 
 @keyframes landing-word-swap {
-  0%   { opacity: 0; transform: translateY(14px); filter: blur(8px); }
-  14%  { opacity: 1; transform: none; filter: none; }
-  82%  { opacity: 1; transform: none; filter: none; }
-  100% { opacity: 0; transform: translateY(-12px); filter: blur(8px); }
+  0%   { opacity: 0; transform: translateY(10px); filter: blur(6px); }
+  12%  { opacity: 1; transform: none; filter: none; }
+  84%  { opacity: 1; transform: none; filter: none; }
+  100% { opacity: 0; transform: translateY(-8px); filter: blur(6px); }
 }
 .landing-word-swap { animation: landing-word-swap 2.8s ease-in-out both; }
-.landing-headline-cycle { min-height: 1.15em; }
+.landing-headline-cycle {
+  display: grid;
+  justify-items: start;
+  overflow: hidden;
+}
+.landing-headline-cycle > * {
+  grid-area: 1 / 1;
+}
 
 @keyframes landing-cta-pulse {
   0%, 100% {
@@ -1498,6 +1513,11 @@ html.landing-theme body {
   background: conic-gradient(from 80deg, transparent 0 70%, rgba(125, 211, 252, 0.35), transparent 88%);
   animation: landing-cta-orbit 10s linear infinite;
   filter: blur(18px);
+}
+
+.landing-hero {
+  min-height: 0;
+  overflow: clip;
 }
 
 @media (prefers-reduced-motion: reduce) {

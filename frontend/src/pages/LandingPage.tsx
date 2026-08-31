@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { usePublicViewport } from '../hooks/usePublicViewport';
 import { useRevealOnScroll } from '../hooks/useRevealOnScroll';
 import { LandingHeader } from '../components/landing/LandingHeader';
@@ -17,12 +18,34 @@ export function LandingPage() {
   usePublicViewport('landing-theme');
   useRevealOnScroll();
 
+  // Pin the document to the top unless the visitor arrived on a real section
+  // hash. Nested scrollers and scroll anchoring were sliding this page on Y
+  // as images, counters and the headline cycle finished loading.
+  useLayoutEffect(() => {
+    const previous = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+
+    const id = window.location.hash.replace(/^#/, '');
+    const target = id ? document.getElementById(id) : null;
+    if (target) {
+      target.scrollIntoView({ block: 'start', behavior: 'auto' });
+    } else {
+      window.scrollTo(0, 0);
+    }
+
+    return () => {
+      window.history.scrollRestoration = previous;
+    };
+  }, []);
+
   return (
-    <div className="min-h-dvh w-full overflow-x-hidden bg-[#05070f] text-white antialiased">
-      <LandingHeader />
-      <main>
+    <div className="w-full bg-[#05070f] text-white antialiased">
+      <div className="flex min-h-dvh flex-col">
+        <LandingHeader />
         <HeroSection />
         <ProofStrip />
+      </div>
+      <main>
         <FilmStrip />
         <HowItWorksSection />
         <FeaturesSection />
