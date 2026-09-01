@@ -1520,6 +1520,27 @@ html.landing-theme body {
   overflow: clip;
 }
 
+.landing-dash {
+  min-height: 0;
+}
+
+.landing-dash-row {
+  animation: landing-toast-copy 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes landing-step-progress {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.landing-step-progress {
+  transform-origin: left center;
+  animation: landing-step-progress 4.2s linear both;
+}
+
+.landing-marquee-mask:hover .landing-marquee {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html.public-viewport { scroll-behavior: auto; }
   .landing-reveal { opacity: 1; transform: none; transition: none; }
@@ -1544,7 +1565,9 @@ html.landing-theme body {
   .landing-spin-slow,
   .landing-caret,
   .landing-pipeline-line,
-  .landing-cta-orbit {
+  .landing-cta-orbit,
+  .landing-step-progress,
+  .landing-dash-row {
     animation: none !important;
   }
   .landing-cta-pulse::before,

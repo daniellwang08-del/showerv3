@@ -229,7 +229,7 @@ export function CountStat({
   }, []);
 
   return (
-    <div ref={ref}>
+    <div ref={ref} className="border-l border-white/10 pl-3 sm:pl-3.5">
       <dt className="text-2xl font-black tabular-nums text-white sm:text-3xl">
         <span className="inline-block min-w-[2ch]">
           {Number.isFinite(numeric) ? counted : value}

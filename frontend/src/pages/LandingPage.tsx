@@ -40,12 +40,13 @@ export function LandingPage() {
 
   return (
     <div className="w-full bg-[#05070f] text-white antialiased">
+      {/* First viewport is header + hero only, so the product mock can fill the remaining screen. */}
       <div className="flex min-h-dvh flex-col">
         <LandingHeader />
         <HeroSection />
-        <ProofStrip />
       </div>
       <main>
+        <ProofStrip />
         <FilmStrip />
         <HowItWorksSection />
         <FeaturesSection />

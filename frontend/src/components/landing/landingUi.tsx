@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
  * invert into unreadable text. These primitives keep one look in both themes.
  */
 
-export const LANDING_CONTAINER = 'mx-auto w-full max-w-7xl px-5 sm:px-8';
+export const LANDING_CONTAINER = 'mx-auto w-full max-w-[88rem] px-5 sm:px-8';
 
 /** Padding is intentionally left out of the base button classes so callers pick
  *  a size without needing an important override. */
@@ -77,7 +77,7 @@ export function SectionShell({
   className?: string;
 }) {
   return (
-    <section id={id} className={`landing-section relative py-20 sm:py-28 ${className}`.trim()}>
+    <section id={id} className={`landing-section relative py-24 sm:py-32 ${className}`.trim()}>
       {children}
     </section>
   );
@@ -98,7 +98,7 @@ export function SectionHeading({
   return (
     <div className={`${centered ? 'mx-auto max-w-3xl text-center' : 'max-w-2xl'}`}>
       <Eyebrow>{eyebrow}</Eyebrow>
-      <h2 className="mt-5 text-balance text-3xl font-black leading-[1.1] tracking-tight text-white sm:text-4xl lg:text-[2.75rem]">
+      <h2 className="mt-5 text-balance text-3xl font-black leading-[1.1] tracking-tight text-white sm:text-4xl lg:text-[2.85rem]">
         {title}
       </h2>
       {subtitle ? (
@@ -120,7 +120,7 @@ export function GlassCard({
 }) {
   return (
     <div
-      className={`group relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl transition duration-500 hover:-translate-y-1 hover:border-white/25 hover:bg-white/[0.07] ${className}`.trim()}
+      className={`group relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl transition duration-500 hover:-translate-y-1.5 hover:border-white/25 hover:bg-white/[0.08] hover:shadow-[0_24px_60px_-28px_rgba(56,189,248,0.45)] motion-reduce:hover:translate-y-0 ${className}`.trim()}
     >
       {glow ? (
         <span

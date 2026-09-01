@@ -23,12 +23,33 @@ import {
 export function LandingHeader() {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [activeId, setActiveId] = useState<string>('');
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    const nodes = NAV_LINKS.map((link) => document.getElementById(link.id)).filter(
+      (node): node is HTMLElement => Boolean(node),
+    );
+    if (nodes.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible?.target.id) setActiveId(visible.target.id);
+      },
+      { rootMargin: '-28% 0px -58% 0px', threshold: [0.12, 0.4] },
+    );
+
+    nodes.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
   }, []);
 
   // Freeze the page behind the open sheet. The landing page scrolls on <html>
@@ -75,15 +96,22 @@ export function LandingHeader() {
         </Link>
 
         <nav className="hidden items-center gap-1 lg:flex" aria-label="Sections">
-          {NAV_LINKS.map((link) => (
-            <a
-              key={link.id}
-              href={`#${link.id}`}
-              className="rounded-full px-4 py-2 text-sm font-semibold text-white/65 transition hover:bg-white/5 hover:text-white"
-            >
-              {link.label}
-            </a>
-          ))}
+          {NAV_LINKS.map((link) => {
+            const active = activeId === link.id;
+            return (
+              <a
+                key={link.id}
+                href={`#${link.id}`}
+                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  active
+                    ? 'bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]'
+                    : 'text-white/65 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                {link.label}
+              </a>
+            );
+          })}
         </nav>
 
         <div className="hidden items-center gap-2.5 sm:flex">

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
-import { NAV_LINKS } from './landingData';
+import { HERO_STATS, NAV_LINKS } from './landingData';
 import { CLOSING_IMAGE } from './landingMedia';
 import { Eyebrow, GhostCta, LANDING_CONTAINER, PrimaryCta } from './landingUi';
 
@@ -22,7 +22,7 @@ export function ClosingSection() {
         <div className="absolute inset-0 bg-gradient-to-b from-[#05070f] via-[#05070f]/80 to-[#05070f]" />
 
         <div className={`${LANDING_CONTAINER} relative`}>
-          <div className="landing-reveal relative mx-auto max-w-4xl overflow-hidden rounded-[32px] border border-white/12 bg-gradient-to-b from-white/[0.09] to-white/[0.03] px-6 py-14 text-center backdrop-blur-2xl sm:px-14">
+          <div className="landing-reveal relative mx-auto max-w-5xl overflow-hidden rounded-[36px] border border-white/12 bg-gradient-to-b from-white/[0.1] to-white/[0.03] px-6 py-14 text-center backdrop-blur-2xl sm:px-16 sm:py-16">
             <span
               aria-hidden="true"
               className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/60 to-transparent"
@@ -38,6 +38,20 @@ export function ClosingSection() {
               scoring and writing. You keep the final click.
             </p>
 
+            <dl className="mx-auto mt-10 grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
+              {HERO_STATS.map((stat) => (
+                <div
+                  key={stat.label}
+                  className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-4"
+                >
+                  <dt className="text-2xl font-black tabular-nums text-white">{stat.value}</dt>
+                  <dd className="mt-1 text-[11px] font-bold uppercase tracking-[0.12em] text-sky-200">
+                    {stat.label}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+
             <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <PrimaryCta to="/signup" className="landing-cta-pulse">
                 Sign up free
@@ -50,7 +64,7 @@ export function ClosingSection() {
       </section>
 
       <footer className="border-t border-white/10 bg-[#04060d]">
-        <div className={`${LANDING_CONTAINER} flex flex-col gap-8 py-12 sm:flex-row sm:items-center sm:justify-between`}>
+        <div className={`${LANDING_CONTAINER} flex flex-col gap-10 py-14 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <Link to="/" className="flex items-center gap-2.5">
               <img src="/atomspace-logo.png" alt="" className="h-7 w-7 object-contain" />

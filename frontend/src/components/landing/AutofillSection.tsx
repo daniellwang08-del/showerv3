@@ -8,7 +8,7 @@ export function AutofillSection() {
   return (
     <SectionShell id="autofill">
       <div className={LANDING_CONTAINER}>
-        <div className="grid gap-14 lg:grid-cols-2 lg:items-start lg:gap-16">
+        <div className="grid gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-start lg:gap-16">
           <div className="landing-reveal">
             <Eyebrow icon={<Chrome size={12} strokeWidth={3} />}>Chrome side panel</Eyebrow>
             <h2 className="mt-5 text-balance text-3xl font-black leading-[1.1] tracking-tight text-white sm:text-4xl lg:text-[2.75rem]">
@@ -20,39 +20,47 @@ export function AutofillSection() {
               everything so you can review and submit.
             </p>
 
-            <div className="relative mt-8 overflow-hidden rounded-3xl border border-white/10">
-              <img
-                src={AUTOFILL_POSTER}
-                alt=""
-                className="h-56 w-full object-cover sm:h-64 motion-reduce:block hidden"
-              />
-              <video
-                className="h-56 w-full object-cover motion-reduce:hidden sm:h-64"
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="metadata"
-                poster={AUTOFILL_POSTER}
-                aria-hidden="true"
-              >
-                <source src={AUTOFILL_VIDEO} type="video/mp4" />
-              </video>
-              <img
-                src={HERO_GIF}
-                alt=""
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-[0.14] motion-reduce:hidden"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#05070f] via-[#05070f]/35 to-transparent" />
-              <p className="absolute bottom-4 left-5 text-[12px] font-black uppercase tracking-[0.16em] text-white">
-                You watch. You submit.
-              </p>
+            <div className="relative mt-8 overflow-hidden rounded-[28px] border border-white/10 bg-[#080d1c]/80 shadow-[0_30px_80px_-40px_rgba(2,6,23,0.9)]">
+              <div className="flex items-center gap-2 border-b border-white/8 px-4 py-2.5">
+                <span className="h-2 w-2 rounded-full bg-rose-400/70" />
+                <span className="h-2 w-2 rounded-full bg-amber-400/70" />
+                <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
+                <span className="ml-2 text-[11px] font-bold text-white/40">workday · application</span>
+              </div>
+              <div className="relative">
+                <img
+                  src={AUTOFILL_POSTER}
+                  alt=""
+                  className="h-56 w-full object-cover sm:h-72 motion-reduce:block hidden"
+                />
+                <video
+                  className="h-56 w-full object-cover motion-reduce:hidden sm:h-72"
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  poster={AUTOFILL_POSTER}
+                  aria-hidden="true"
+                >
+                  <source src={AUTOFILL_VIDEO} type="video/mp4" />
+                </video>
+                <img
+                  src={HERO_GIF}
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-[0.14] motion-reduce:hidden"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#05070f] via-[#05070f]/30 to-transparent" />
+                <p className="absolute bottom-4 left-5 rounded-full border border-white/15 bg-[#05070f]/70 px-3.5 py-1.5 text-[12px] font-black uppercase tracking-[0.16em] text-white backdrop-blur-md">
+                  You watch. You submit.
+                </p>
+              </div>
             </div>
 
-            <ul className="mt-10 space-y-6">
+            <ul className="mt-10 grid gap-5 sm:grid-cols-2">
               {AUTOFILL_POINTS.map((point) => (
-                <li key={point.title} className="flex gap-4">
+                <li key={point.title} className="flex gap-3.5">
                   <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/10 text-emerald-300">
                     <Check size={13} strokeWidth={3.5} />
                   </span>
@@ -65,8 +73,8 @@ export function AutofillSection() {
             </ul>
           </div>
 
-          <div className="landing-reveal" style={{ transitionDelay: '90ms' }}>
-            <GlassCard className="p-7 sm:p-8">
+          <div className="landing-reveal lg:sticky lg:top-28" style={{ transitionDelay: '90ms' }}>
+            <GlassCard className="p-6 sm:p-8">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-indigo-900/50">
                   <MousePointerClick size={18} strokeWidth={2.5} />

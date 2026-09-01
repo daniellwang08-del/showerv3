@@ -99,6 +99,23 @@ jobs:
 
             systemctl restart showerv3-worker@scraper
 
+            echo "Applying nginx security hardening (TLS-safe conf.d drop-in)..."
+            # Installs only an http-scope drop-in (security headers + auth
+            # rate-limit zone). It never rewrites the certbot-managed vhost, so
+            # TLS stays intact. Fully guarded: a bad config removes the drop-in
+            # and keeps the previous nginx config, and never fails the deploy.
+            if [ -d /etc/nginx/conf.d ]; then
+              cp deploy/nginx/conf.d/atomspace-hardening.conf /etc/nginx/conf.d/atomspace-hardening.conf || true
+              if nginx -t; then
+                systemctl reload nginx || echo "nginx reload failed; previous config still serving"
+              else
+                echo "nginx -t failed; reverting drop-in and keeping previous config"
+                rm -f /etc/nginx/conf.d/atomspace-hardening.conf || true
+              fi
+            else
+              echo "no /etc/nginx/conf.d; skipping nginx hardening"
+            fi
+
             echo "Waiting for startup..."
             sleep 10
 
