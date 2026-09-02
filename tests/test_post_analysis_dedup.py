@@ -9,7 +9,7 @@ from app.models.database import Job, JobMatchResult, User, UserJobStatus
 from app.services.job_exclusion_types import (
     BELOW_MIN_SCORE_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
-    NON_US_LOCATION_EXCLUSION,
+    OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
     SAME_URL_EXCLUSION,
     STRICT_SIMILARITY_EXCLUSION,
 )
@@ -44,9 +44,19 @@ async def setup_db():
     await close_database()
 
 
-async def _seed_user(session) -> str:
+async def _seed_user(session, *, countries: list[str] | None = None) -> str:
+    """New users default to no country preferences (worldwide, no location
+    filter). Location-rule tests seed explicit preferences."""
     uid = str(uuid.uuid4())
-    session.add(User(id=uid, email=f"{uid}@test.example.com", password_hash="x"))
+    session.add(
+        User(
+            id=uid,
+            email=f"{uid}@test.example.com",
+            password_hash="x",
+            country_preferences=countries or [],
+            country_preferences_source="manual" if countries else "unset",
+        )
+    )
     await session.commit()
     return uid
 
@@ -347,7 +357,56 @@ async def test_lower_score_duplicate_when_company_matches(enable_all_dedup_rules
 
 
 @pytest.mark.asyncio
-async def test_non_us_location_is_hidden_in_non_us_tab():
+async def test_outside_preferred_countries_is_hidden():
+    async with get_session() as session:
+        user_id = await _seed_user(session, countries=["US"])
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/fr/{uuid.uuid4()}",
+            company="Acme",
+            title="Engineer",
+            location="Paris, France",
+        )
+        job_id = job.id
+
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        _match_data(82),
+        extraction_id=None,
+    )
+    assert result["action"] == "saved_duplicated"
+    assert result["exclusion_type"] == OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION
+
+
+@pytest.mark.asyncio
+async def test_preferred_country_match_stays_active():
+    """A user preferring France keeps a Paris job that a US user would lose."""
+    async with get_session() as session:
+        user_id = await _seed_user(session, countries=["FR"])
+        job = await _add_job(
+            session,
+            user_id=user_id,
+            url=f"https://example.com/fr/{uuid.uuid4()}",
+            company="Acme",
+            title="Engineer",
+            location="Paris, France",
+        )
+        job_id = job.id
+
+    result = await run_post_analysis_dedup(
+        job_id,
+        user_id,
+        _match_data(82),
+        extraction_id=None,
+    )
+    assert result["action"] == "saved_active"
+
+
+@pytest.mark.asyncio
+async def test_no_country_preferences_disables_location_filter():
+    """Empty preference list = worldwide: nothing is hidden by location."""
     async with get_session() as session:
         user_id = await _seed_user(session)
         job = await _add_job(
@@ -366,15 +425,14 @@ async def test_non_us_location_is_hidden_in_non_us_tab():
         _match_data(82),
         extraction_id=None,
     )
-    assert result["action"] == "saved_duplicated"
-    assert result["exclusion_type"] == NON_US_LOCATION_EXCLUSION
+    assert result["action"] == "saved_active"
 
 
 @pytest.mark.asyncio
 async def test_unknown_location_is_kept_as_us(enable_all_dedup_rules):
     """Unknown/ambiguous locations stay visible even when platform toggles are on."""
     async with get_session() as session:
-        user_id = await _seed_user(session)
+        user_id = await _seed_user(session, countries=["US"])
         job = await _add_job(
             session,
             user_id=user_id,
@@ -397,7 +455,7 @@ async def test_unknown_location_is_kept_as_us(enable_all_dedup_rules):
 @pytest.mark.asyncio
 async def test_us_location_passes_location_filter_before_dedup():
     async with get_session() as session:
-        user_id = await _seed_user(session)
+        user_id = await _seed_user(session, countries=["US"])
         job = await _add_job(
             session,
             user_id=user_id,
@@ -420,7 +478,7 @@ async def test_us_location_passes_location_filter_before_dedup():
 @pytest.mark.asyncio
 async def test_unknown_location_active_when_rule_disabled_by_default():
     async with get_session() as session:
-        user_id = await _seed_user(session)
+        user_id = await _seed_user(session, countries=["US"])
         job = await _add_job(
             session,
             user_id=user_id,

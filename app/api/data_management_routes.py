@@ -27,10 +27,11 @@ from app.services.data_management_stats import (
     fetch_scrape_health_series,
     fetch_team_applied_vs_fetched_series,
 )
+from app.services.country_catalog import describe_country_list
 from app.services.job_exclusion_types import (
-    NON_US_LOCATION_EXCLUSION,
+    OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
 )
-from app.services.job_location_classifier import keeps_us_job_pool
+from app.services.job_location_classifier import keeps_preferred_job_pool
 from app.storage.database import get_session
 from app.storage.repository import (
     JobMatchInProgressRepository,
@@ -633,7 +634,8 @@ async def reconcile_locations_data_management(
 ):
     """Run location reconcile only on jobs matching the filter (plus restore US exclusions)."""
     from app.api.websocket import publish_ws_event
-    from app.services.job_location_reconcile import _restore_us_location_exclusions
+    from app.services.job_location_reconcile import _restore_location_exclusions
+    from app.storage.user_repository import UserRepository
 
     user_id = _require_user(current_user)
     if not body.confirm:
@@ -648,11 +650,14 @@ async def reconcile_locations_data_management(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    restored = await _restore_us_location_exclusions(user_id)
+    async with get_session() as session:
+        preferred_countries = await UserRepository(session).get_country_preferences(user_id)
+
+    restored = await _restore_location_exclusions(user_id, preferred_countries)
     moved_non_us = 0
     scanned = 0
 
-    if job_ids:
+    if job_ids and preferred_countries:
         async with get_session() as session:
             from app.models.database import JobExtraction, JobMatchResult, UserJobStatus
 
@@ -687,15 +692,19 @@ async def reconcile_locations_data_management(
                 if status_row and status_row.status not in (None, "active"):
                     continue
 
-                keep, _verdict, detail = keeps_us_job_pool(
+                keep, _verdict, detail = keeps_preferred_job_pool(
                     job.location,
                     remote_policy=extraction.remote_policy if extraction else None,
+                    allowed_countries=preferred_countries,
                 )
                 if keep:
                     continue
 
-                exclusion_type = NON_US_LOCATION_EXCLUSION
-                reason = f"Non-US job location ({detail})."
+                exclusion_type = OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION
+                reason = (
+                    f"Job location is outside your preferred countries "
+                    f"({describe_country_list(preferred_countries)}): {detail}."
+                )
                 moved_non_us += 1
 
                 await ujs_repo.upsert(

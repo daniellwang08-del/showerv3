@@ -37,3 +37,10 @@ def test_extraction_failed_tab_only_extraction_failed():
 def test_non_us_tab_only_non_us_location():
     assert matches_invalid_job_category(NON_US_LOCATION_EXCLUSION, "non_us") is True
     assert matches_invalid_job_category(LOCATION_UNKNOWN_EXCLUSION, "non_us") is False
+
+
+def test_non_us_tab_includes_outside_preferred_countries():
+    from app.services.job_exclusion_types import OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION
+
+    assert matches_invalid_job_category(OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION, "non_us") is True
+    assert matches_invalid_job_category(OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION, "duplicates") is False

@@ -390,6 +390,63 @@ class UserRepository:
         user = await self.get_by_id(user_id)
         return self._cover_letter_instructions_for_user(user)
 
+    async def get_country_preferences(self, user_id: str) -> list[str]:
+        """Preferred job countries (ISO codes). Empty list = no location filter."""
+        user = await self.get_by_id(user_id)
+        if not user:
+            return []
+        raw = getattr(user, "country_preferences", None)
+        if not isinstance(raw, list):
+            return []
+        return [str(c).strip().upper() for c in raw if str(c).strip()]
+
+    async def update_country_preferences(
+        self,
+        user_id: str,
+        countries: list[str],
+        *,
+        source: str = "manual",
+    ) -> list[str] | None:
+        """Set the preferred-country list. Returns the stored codes or None."""
+        from app.services.country_catalog import normalize_country_preferences
+
+        if source not in ("unset", "auto", "manual"):
+            raise ValueError("source must be 'unset', 'auto', or 'manual'")
+        user = await self.get_by_id(user_id)
+        if not user:
+            return None
+        cleaned = normalize_country_preferences(countries)
+        user.country_preferences = cleaned
+        user.country_preferences_source = source
+        await self.session.flush()
+        logger.info(
+            "country_preferences_updated",
+            user_id=user_id,
+            countries=cleaned,
+            source=source,
+        )
+        return cleaned
+
+    async def autoset_country_preferences_from_resume(
+        self,
+        user_id: str,
+        detected: list[str],
+    ) -> list[str] | None:
+        """Apply resume-detected countries unless the user set theirs manually.
+
+        Returns the stored list when applied, else None (manual prefs kept or
+        nothing detected).
+        """
+        if not detected:
+            return None
+        user = await self.get_by_id(user_id)
+        if not user:
+            return None
+        source = getattr(user, "country_preferences_source", None) or "unset"
+        if source == "manual":
+            return None
+        return await self.update_country_preferences(user_id, detected, source="auto")
+
     async def update_dedup_recycle_days(self, user_id: str, days: int) -> bool:
         """Update dedup_recycle_days (1–3650). Returns True on success."""
         days = self._clamp_dedup_days(days)
@@ -510,6 +567,14 @@ class UserRepository:
             "cover_letter_prompt_max_length": COVER_LETTER_PROMPT_MAX_LENGTH,
             "job_match_preferences": (getattr(user, "job_match_preferences", None) or "").strip(),
             "job_match_preferences_max_length": JOB_MATCH_PREFERENCES_MAX_LENGTH,
+            "country_preferences": [
+                str(c).strip().upper()
+                for c in (getattr(user, "country_preferences", None) or [])
+                if str(c).strip()
+            ],
+            "country_preferences_source": (
+                getattr(user, "country_preferences_source", None) or "unset"
+            ),
             **template_status_payload(user),
             **cover_letter_template_status_payload(user),
         }
@@ -547,6 +612,7 @@ class UserRepository:
         cover_letter_prompt_custom: str | None = None,
         job_match_preferences: str | None = None,
         clear_job_match_preferences: bool = False,
+        country_preferences: list[str] | None = None,
     ) -> dict | None:
         user = await self.get_by_id(user_id)
         if not user:
@@ -684,6 +750,12 @@ class UserRepository:
 
         if job_match_preferences is not None:
             user.job_match_preferences = self._validate_job_match_preferences(job_match_preferences)
+
+        if country_preferences is not None:
+            from app.services.country_catalog import normalize_country_preferences
+
+            user.country_preferences = normalize_country_preferences(country_preferences)
+            user.country_preferences_source = "manual"
 
         await self.session.flush()
         logger.info("user_settings_updated", user_id=user_id)

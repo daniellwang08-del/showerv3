@@ -586,6 +586,45 @@ async def put_profile(
         return _user_to_profile_response(user)
 
 
+async def _apply_detected_countries_from_resume(user_id: str, result) -> None:
+    """Auto-set country preferences from a parsed resume (never over manual).
+
+    Mutates ``result`` with the detection outcome and schedules a location
+    reconcile so existing jobs re-bucket under the new preference.
+    """
+    from app.services.resume_parse_service import infer_country_preferences
+
+    detected = infer_country_preferences(result.draft)
+    result.detected_countries = detected
+    if not detected:
+        return
+    async with get_session() as session:
+        repo = UserRepository(session)
+        applied = await repo.autoset_country_preferences_from_resume(user_id, detected)
+        await session.commit()
+    if applied is None:
+        return
+    result.country_preferences_applied = True
+    logger.info(
+        "country_preferences_autodetected_from_resume",
+        user_id=user_id,
+        countries=applied,
+    )
+    from app.services.job_location_reconcile import reconcile_job_locations_for_user
+
+    async def _reconcile() -> None:
+        try:
+            await reconcile_job_locations_for_user(user_id)
+        except Exception as e:
+            logger.warning(
+                "country_preferences_reconcile_failed",
+                user_id=user_id,
+                error=str(e),
+            )
+
+    asyncio.create_task(_reconcile())
+
+
 @router.post("/profile/resume-parse", response_model=ResumeParseResponse, dependencies=[Depends(get_current_user)])
 async def resume_parse(
     file: UploadFile = File(...),
@@ -600,7 +639,22 @@ async def resume_parse(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
     try:
         result = await parse_resume_bytes(raw=raw, filename=file.filename or "", user_id=user_id)
-        logger.info("resume_parse_ok", user_id=user_id, source_kind=result.source_kind)
+        try:
+            await _apply_detected_countries_from_resume(user_id, result)
+        except Exception as country_err:
+            # Country auto-detect must never fail the parse itself.
+            logger.warning(
+                "resume_parse_country_autodetect_failed",
+                user_id=user_id,
+                error=str(country_err),
+            )
+        logger.info(
+            "resume_parse_ok",
+            user_id=user_id,
+            source_kind=result.source_kind,
+            detected_countries=result.detected_countries,
+            country_preferences_applied=result.country_preferences_applied,
+        )
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -4042,6 +4096,7 @@ async def get_invalid_job_counts(
         BELOW_MIN_SCORE_EXCLUSION,
         EXTRACTION_FAILED_EXCLUSION,
         NON_US_LOCATION_EXCLUSION,
+        OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
         _EXCLUDED_FROM_DUPLICATES_TAB,
     )
 
@@ -4055,7 +4110,9 @@ async def get_invalid_job_counts(
             select(
                 func.count().filter(et == BELOW_MIN_SCORE_EXCLUSION).label("low_score"),
                 func.count().filter(et == EXTRACTION_FAILED_EXCLUSION).label("extraction_failed"),
-                func.count().filter(et == NON_US_LOCATION_EXCLUSION).label("non_us"),
+                func.count().filter(
+                    et.in_([NON_US_LOCATION_EXCLUSION, OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION])
+                ).label("non_us"),
                 func.count().filter(
                     (et.is_(None)) | (et.notin_(list(_EXCLUDED_FROM_DUPLICATES_TAB)))
                 ).label("duplicates"),
@@ -4233,6 +4290,9 @@ class UserSettingsResponse(BaseModel):
     cover_letter_prompt_max_length: int
     job_match_preferences: str = ""
     job_match_preferences_max_length: int = 4000
+    country_preferences: list[str] = Field(default_factory=list)
+    country_preferences_source: str = "unset"
+    available_countries: list[dict] = Field(default_factory=list)
     resume_template_status: str
     resume_template_source_filename: str | None = None
     resume_template_error: str | None = None
@@ -4278,6 +4338,8 @@ class UserSettingsUpdateRequest(BaseModel):
     cover_letter_prompt_custom: str | None = Field(default=None, max_length=12000)
     job_match_preferences: str | None = Field(default=None, max_length=4000)
     clear_job_match_preferences: bool = False
+    # ISO alpha-2 codes (or country names); empty list = no location filter.
+    country_preferences: list[str] | None = Field(default=None, max_length=30)
 
 
 class OpenAiKeyTestRequest(BaseModel):
@@ -4660,6 +4722,9 @@ async def get_user_settings(
         data = await user_repo.get_user_settings(user_id)
     if not data:
         raise HTTPException(status_code=404, detail="User not found")
+    from app.services.country_catalog import available_countries
+
+    data["available_countries"] = available_countries()
     return UserSettingsResponse(**data)
 
 
@@ -4715,12 +4780,24 @@ async def update_user_settings(
                 cover_letter_prompt_custom=body.cover_letter_prompt_custom,
                 job_match_preferences=body.job_match_preferences,
                 clear_job_match_preferences=body.clear_job_match_preferences,
+                country_preferences=body.country_preferences,
             )
             await session.commit()
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     if not data:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if body.country_preferences is not None:
+        # Re-bucket existing jobs under the new preferred countries.
+        from app.services.job_location_reconcile import reconcile_job_locations_for_user
+
+        background_tasks.add_task(reconcile_job_locations_for_user, user_id)
+        logger.info(
+            "country_preferences_reconcile_scheduled",
+            user_id=user_id,
+            countries=data.get("country_preferences"),
+        )
 
     newly_match = bool(data.get("auto_prepare_match")) and not prev_match
     newly_full = bool(data.get("auto_prepare_full")) and not prev_full
@@ -4743,6 +4820,9 @@ async def update_user_settings(
         )
 
     logger.info("user_settings_saved", user_id=user_id)
+    from app.services.country_catalog import available_countries
+
+    data["available_countries"] = available_countries()
     return UserSettingsResponse(**data)
 
 

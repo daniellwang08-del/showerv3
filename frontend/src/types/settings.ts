@@ -10,6 +10,11 @@ export const LLM_PROVIDER_LABELS: Record<LlmProvider, string> = {
   gemini: 'Gemini',
 };
 
+export interface CountryOption {
+  code: string;
+  name: string;
+}
+
 export type ResumeTemplateStatus = 'missing' | 'processing' | 'ready' | 'stale' | 'failed';
 export type CoverLetterTemplateStatus = 'missing' | 'processing' | 'ready' | 'failed';
 
@@ -65,6 +70,12 @@ export interface UserSettings {
   cover_letter_prompt_max_length: number;
   job_match_preferences: string;
   job_match_preferences_max_length: number;
+  /** Preferred job countries (ISO alpha-2). Empty = no location filtering. */
+  country_preferences: string[];
+  /** How the preferences were set: unset | auto (resume) | manual. */
+  country_preferences_source: 'unset' | 'auto' | 'manual';
+  /** Full country list for the preferences dropdown. */
+  available_countries: CountryOption[];
   resume_template_status: ResumeTemplateStatus;
   resume_template_source_filename: string | null;
   resume_template_error: string | null;
@@ -110,6 +121,8 @@ export interface UserSettingsUpdate {
   cover_letter_prompt_custom?: string;
   job_match_preferences?: string;
   clear_job_match_preferences?: boolean;
+  /** ISO alpha-2 codes; empty array disables location filtering. */
+  country_preferences?: string[];
 }
 
 export const RESUME_TAILORING_PROMPT_MIN_LENGTH = 50;

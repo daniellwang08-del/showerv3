@@ -41,7 +41,8 @@ const EXCLUSION_TYPE_LABELS: Record<NonNullable<ExclusionType>, string> = {
   strict_similarity: 'Same title',
   same_url: 'Same URL',
   extraction_failed: 'Extraction failed',
-  non_us_location: 'Non-US',
+  non_us_location: 'Other country',
+  outside_preferred_countries: 'Other country',
   location_unknown: 'Location review',
   blocked_domain: 'Blocked domain',
   manual_invalid: 'Hidden',
@@ -58,6 +59,7 @@ const EXCLUSION_TYPE_COLORS: Record<NonNullable<ExclusionType>, string> = {
   same_url: 'bg-cyan-100 text-cyan-800 border-cyan-200',
   extraction_failed: 'bg-slate-200 text-slate-800 border-slate-300',
   non_us_location: 'bg-orange-100 text-orange-800 border-orange-200',
+  outside_preferred_countries: 'bg-orange-100 text-orange-800 border-orange-200',
   location_unknown: 'bg-amber-100 text-amber-900 border-amber-200',
   blocked_domain: 'bg-zinc-200 text-zinc-800 border-zinc-300',
   manual_invalid: 'bg-rose-100 text-rose-800 border-rose-200',
@@ -95,11 +97,11 @@ const DUP_TABS: { id: DupTabId; label: string; icon: LucideIcon; accent: AccentK
   },
   {
     id: 'non_us',
-    label: 'Non-US',
+    label: 'Other countries',
     icon: Globe,
     accent: 'orange',
-    noun: 'non-US jobs',
-    emptyHint: 'Jobs outside the United States are moved here after AI analysis.',
+    noun: 'jobs outside your countries',
+    emptyHint: 'Jobs located outside your preferred countries are moved here after AI analysis.',
   },
   {
     id: 'low_score',
@@ -498,7 +500,7 @@ export function DuplicateJobsPanel({
               <div>
                 <h2 className="text-xl font-bold tracking-tight text-slate-900">Hidden jobs</h2>
                 <p className="mt-0.5 text-sm text-slate-500">
-                  Review duplicates, non-US, low-match, and failed extractions - restore, replace, or dismiss.
+                  Review duplicates, other-country, low-match, and failed extractions - restore, replace, or dismiss.
                 </p>
               </div>
             </div>

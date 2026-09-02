@@ -40,6 +40,7 @@ import { SettingsCard } from '../components/settings/SettingsCard';
 import { prefsSaveBtnClass } from '../components/settings/prefsSaveButtonClass';
 import { EeoPreferencesSection } from '../components/preferences/EeoPreferencesSection';
 import { AddressPreferencesSection } from '../components/preferences/AddressPreferencesSection';
+import { CountryPreferencesSection } from '../components/preferences/CountryPreferencesSection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
@@ -807,6 +808,8 @@ export function MyPreferencesPage() {
               <EeoPreferencesSection />
               <AddressPreferencesSection />
             </div>
+
+            {settings && <CountryPreferencesSection settings={settings} onSaved={applySettings} />}
 
             {settings && <ProviderKeysCard settings={settings} onSaved={applySettings} />}
 

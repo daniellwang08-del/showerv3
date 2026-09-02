@@ -107,6 +107,14 @@ class User(Base):
     # Free-text job preferences used by the match analysis engine (Phase A).
     job_match_preferences = deferred(Column(Text, nullable=True))
 
+    # Preferred job countries (ISO 3166-1 alpha-2 codes). Empty list = no
+    # location filtering (worldwide). Source: 'unset' | 'auto' (resume parse
+    # detection) | 'manual' (preferences page). Auto never overwrites manual.
+    country_preferences = Column(JSON, default=list, nullable=False, server_default="[]")
+    country_preferences_source = Column(
+        String(20), default="unset", nullable=False, server_default="unset"
+    )
+
     # Visual resume builder design (theme/typography/colors/layout). Every résumé is
     # compiled from this design; the working template + blueprint are derived from it.
     # These columns MIRROR the currently-active resume in the library (see

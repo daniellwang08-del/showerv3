@@ -942,7 +942,10 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       await apiClient.delete(`/jobs/user-exclusions/${jobId}`);
       if (item.exclusion_type === 'below_min_score') {
         get().removeLowScoreUrlsByIds([item.id]);
-      } else if (item.exclusion_type === 'non_us_location') {
+      } else if (
+        item.exclusion_type === 'non_us_location' ||
+        item.exclusion_type === 'outside_preferred_countries'
+      ) {
         get().removeNonUsUrlsByIds([item.id]);
       } else if (item.exclusion_type === 'extraction_failed') {
         get().removeExtractionFailedUrlsByIds([item.id]);

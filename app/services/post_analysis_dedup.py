@@ -7,8 +7,9 @@ entirely based on same-company comparisons within the user's recycle window.
 Rules (applied in order):
   0a. Security clearance / not-a-job → duplicated (removed from Jobs list).
   0b. Score 0 or below user's min threshold → duplicated (below_min_score).
-  1. US location filter - only explicit non-US structured locations are dropped
-     (non_us_location). Missing/ambiguous locations are kept (treated as US).
+  1. Country preference filter - only locations explicitly outside the user's
+     preferred countries are dropped (outside_preferred_countries). Missing or
+     ambiguous locations are kept. Empty preference list = no location filter.
   2. Same URL - another active job with identical normalized_url → duplicated (same_url).
   3. Strict similarity - same title + same company → duplicated.
   4. Applied at same company - user already applied within recycle window → duplicated
@@ -29,14 +30,18 @@ from app.services.job_exclusion_types import (
     APPLIED_COMPANY_EXCLUSION,
     BELOW_MIN_SCORE_EXCLUSION,
     LOWER_SCORE_EXCLUSION,
-    NON_US_LOCATION_EXCLUSION,
     NOT_A_JOB_POSTING_EXCLUSION,
+    OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
     SAME_URL_EXCLUSION,
     SECURITY_CLEARANCE_EXCLUSION,
     STRICT_SIMILARITY_EXCLUSION,
     SUPERSEDED_BY_HIGHER_EXCLUSION,
 )
-from app.services.job_location_classifier import LocationVerdict, classify_job_location
+from app.services.country_catalog import describe_country_list
+from app.services.job_location_classifier import (
+    CountryMatchVerdict,
+    classify_job_location_for_countries,
+)
 from app.storage.repository import JobMatchRepository, UserJobStatusRepository
 from app.storage.database import get_session
 from app.api.websocket import publish_ws_event
@@ -321,28 +326,35 @@ async def run_post_analysis_dedup(
             )
             extraction = extraction_row.scalar_one_or_none()
 
-        location_verdict, location_detail = classify_job_location(
-            current_job.location,
-            remote_policy=extraction.remote_policy if extraction else None,
-        )
-        if location_verdict == LocationVerdict.NON_US:
-            logger.info(
-                "post_analysis_dedup_non_us_location",
-                job_id=job_id,
-                user_id=user_id,
-                location=current_job.location,
+        preferred_countries = await user_repo.get_country_preferences(user_id)
+        if preferred_countries:
+            location_verdict, location_detail = classify_job_location_for_countries(
+                current_job.location,
+                remote_policy=extraction.remote_policy if extraction else None,
+                allowed_countries=preferred_countries,
             )
-            return await _save_duplicated(
-                session,
-                job_id=job_id,
-                user_id=user_id,
-                match_data=match_data,
-                overall_score=overall_score,
-                duplicated_because_id=None,
-                exclusion_type=NON_US_LOCATION_EXCLUSION,
-                reason=f"Non-US job location ({location_detail}).",
-            )
-        # UNKNOWN / missing locations are treated as US and stay visible.
+            if location_verdict == CountryMatchVerdict.NO_MATCH:
+                logger.info(
+                    "post_analysis_dedup_outside_preferred_countries",
+                    job_id=job_id,
+                    user_id=user_id,
+                    location=current_job.location,
+                    preferred_countries=preferred_countries,
+                )
+                return await _save_duplicated(
+                    session,
+                    job_id=job_id,
+                    user_id=user_id,
+                    match_data=match_data,
+                    overall_score=overall_score,
+                    duplicated_because_id=None,
+                    exclusion_type=OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
+                    reason=(
+                        f"Job location is outside your preferred countries "
+                        f"({describe_country_list(preferred_countries)}): {location_detail}."
+                    ),
+                )
+        # UNKNOWN / missing locations stay visible; empty preference list = no filter.
 
         url_duplicate = await _find_same_url_active_duplicate(
             session,

@@ -266,6 +266,10 @@ class ResumeParseResponse(BaseModel):
     draft: ResumeExtractedDraft
     source_kind: str
     warnings: list[str] = Field(default_factory=list)
+    # Countries auto-detected from the resume (ISO alpha-2). Applied to the
+    # user's country preferences unless they configured them manually.
+    detected_countries: list[str] = Field(default_factory=list)
+    country_preferences_applied: bool = False
 
 
 class ProfileCreateRequest(BaseModel):

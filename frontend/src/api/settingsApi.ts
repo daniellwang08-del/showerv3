@@ -98,6 +98,15 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     cover_letter_prompt_max_length: Number(data.cover_letter_prompt_max_length ?? 12000),
     job_match_preferences: String(data.job_match_preferences ?? ''),
     job_match_preferences_max_length: Number(data.job_match_preferences_max_length ?? 4000),
+    country_preferences: Array.isArray(data.country_preferences)
+      ? (data.country_preferences as string[])
+      : [],
+    country_preferences_source:
+      (['unset', 'auto', 'manual'] as const).find((s) => s === data.country_preferences_source) ??
+      'unset',
+    available_countries: Array.isArray(data.available_countries)
+      ? (data.available_countries as UserSettings['available_countries'])
+      : [],
     resume_template_status: (data.resume_template_status as UserSettings['resume_template_status']) ?? 'missing',
     resume_template_source_filename: (data.resume_template_source_filename as string | null | undefined) ?? null,
     resume_template_error: (data.resume_template_error as string | null | undefined) ?? null,
@@ -228,6 +237,10 @@ export async function saveCoverLetterPromptSettings(
   body: Pick<UserSettingsUpdate, 'cover_letter_prompt_mode' | 'cover_letter_prompt_custom'>,
 ) {
   return updateUserSettings(body);
+}
+
+export async function saveCountryPreferences(countries: string[]): Promise<UserSettings> {
+  return updateUserSettings({ country_preferences: countries });
 }
 
 export async function saveJobMatchPreferences(

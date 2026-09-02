@@ -956,6 +956,40 @@ async def _call_openai_resume(
         raise AIParsingError("Failed to parse extracted profile JSON") from e
 
 
+def infer_country_preferences(draft) -> list[str]:
+    """Detect the candidate's likely job countries from a parsed resume draft.
+
+    Signals, strongest first:
+      1. Work-experience locations (document order ≈ most recent first).
+      2. Education locations.
+      3. Phone dialing code (weak fallback, only when no location matched).
+
+    Returns ISO alpha-2 codes, first-seen order, capped at 3. Used to seed
+    ``users.country_preferences`` unless the user configured them manually.
+    """
+    from app.services.country_catalog import DIAL_CODE_TO_COUNTRY
+    from app.services.job_location_classifier import detect_countries_in_text
+
+    ordered: list[str] = []
+
+    def _add(codes: list[str]) -> None:
+        for code in codes:
+            if code not in ordered:
+                ordered.append(code)
+
+    for work in (getattr(draft, "work_experience", None) or [])[:5]:
+        _add(detect_countries_in_text(getattr(work, "location", None)))
+    for edu in (getattr(draft, "education", None) or [])[:3]:
+        _add(detect_countries_in_text(getattr(edu, "location", None)))
+
+    if not ordered:
+        dial = re.sub(r"\D", "", str(getattr(draft, "phone_country_code", None) or ""))
+        if dial in DIAL_CODE_TO_COUNTRY:
+            ordered.append(DIAL_CODE_TO_COUNTRY[dial])
+
+    return ordered[:3]
+
+
 async def parse_resume_bytes(*, raw: bytes, filename: str, user_id: str | None = None) -> ResumeParseResponse:
     if len(raw) > MAX_RESUME_BYTES:
         raise ValueError(f"File too large (max {MAX_RESUME_BYTES // (1024 * 1024)} MB).")

@@ -15,8 +15,16 @@ SUPERSEDED_BY_HIGHER_EXCLUSION = "superseded_by_higher"
 APPLIED_COMPANY_EXCLUSION = "applied_company"
 BLOCKED_DOMAIN_EXCLUSION = "blocked_domain"
 LINKEDIN_JOB_EXCLUSION = "linkedin_job"
-NON_US_LOCATION_EXCLUSION = "non_us_location"
+NON_US_LOCATION_EXCLUSION = "non_us_location"  # legacy rows (pre country-preferences)
+OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION = "outside_preferred_countries"
 LOCATION_UNKNOWN_EXCLUSION = "location_unknown"
+
+# Location-based auto-exclusions (safe to bulk-restore when prefs change).
+LOCATION_EXCLUSION_TYPES = frozenset({
+    NON_US_LOCATION_EXCLUSION,
+    OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
+    LOCATION_UNKNOWN_EXCLUSION,
+})
 
 INVALID_JOB_CATEGORIES = frozenset({
     "duplicates",
@@ -32,7 +40,9 @@ _CATEGORY_ONLY: dict[str, frozenset[str | None]] = {
         SECURITY_CLEARANCE_EXCLUSION,
     }),
     "extraction_failed": frozenset({EXTRACTION_FAILED_EXCLUSION}),
-    "non_us": frozenset({NON_US_LOCATION_EXCLUSION}),
+    # Category key kept as "non_us" for API compatibility; it now means
+    # "outside the user's preferred countries" and covers legacy rows too.
+    "non_us": frozenset({NON_US_LOCATION_EXCLUSION, OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION}),
 }
 
 _EXCLUDED_FROM_DUPLICATES_TAB = frozenset({
@@ -41,6 +51,7 @@ _EXCLUDED_FROM_DUPLICATES_TAB = frozenset({
     SECURITY_CLEARANCE_EXCLUSION,
     EXTRACTION_FAILED_EXCLUSION,
     NON_US_LOCATION_EXCLUSION,
+    OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
     LINKEDIN_JOB_EXCLUSION,
 })
 
@@ -76,7 +87,9 @@ def sql_filter_for_invalid_category(exclusion_type_column, category: str):
     if category == "extraction_failed":
         return exclusion_type_column == EXTRACTION_FAILED_EXCLUSION
     if category == "non_us":
-        return exclusion_type_column == NON_US_LOCATION_EXCLUSION
+        return exclusion_type_column.in_(
+            [NON_US_LOCATION_EXCLUSION, OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION]
+        )
     return or_(
         exclusion_type_column.is_(None),
         exclusion_type_column.notin_(list(_EXCLUDED_FROM_DUPLICATES_TAB)),

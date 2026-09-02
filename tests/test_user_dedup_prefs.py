@@ -348,13 +348,17 @@ async def test_reconcile_restores_location_unknown():
 
 @pytest.mark.asyncio
 async def test_reconcile_hides_applied_company_when_enabled():
+    # Unique company per run: the applied-company rule matches by company name
+    # across ALL jobs visible to the user, so a shared literal name ("Acme")
+    # picks up rows leaked by other tests against the same database.
+    company = f"Acme {uuid.uuid4().hex[:8]}"
     async with get_session() as session:
         user_id = await _seed_user(session)
         applied_job = await _add_job(
             session,
             user_id=user_id,
             url=f"https://example.com/app/{uuid.uuid4()}",
-            company="Acme",
+            company=company,
             title="Applied Role",
             score=80,
         )
@@ -362,7 +366,7 @@ async def test_reconcile_hides_applied_company_when_enabled():
             session,
             user_id=user_id,
             url=f"https://example.com/peer/{uuid.uuid4()}",
-            company="Acme",
+            company=company,
             title="Other Role",
             score=70,
         )

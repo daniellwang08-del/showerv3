@@ -1,9 +1,32 @@
-"""Classify structured job locations as US, non-US, or unknown for post-analysis dedup."""
+"""Classify structured job locations against a user's preferred countries.
+
+Generalizes the original US-only pool filter: every user has a list of
+preferred ISO country codes (``users.country_preferences``). A job stays
+visible when its location explicitly matches a preferred country, names a
+region containing one (EU, APAC, …), says it is worldwide, or is
+unknown/ambiguous. Only locations that explicitly resolve OUTSIDE the
+preferred set are dropped — the historical "only explicit non-US is dropped"
+policy, applied per user.
+
+The legacy US-only API (``classify_job_location`` / ``keeps_us_job_pool``)
+is preserved as a thin wrapper over the generalized classifier with
+``allowed_countries={"US"}``.
+"""
 
 from __future__ import annotations
 
 import re
 from enum import Enum
+from typing import Iterable
+
+from app.services.country_catalog import (
+    PHRASE_TO_CODE,
+    PHRASES_BY_LENGTH,
+    REGION_GROUPS,
+    SUBDIVISION_TO_CODE,
+    WORLDWIDE_TOKENS,
+    describe_country_list,
+)
 
 _US_STATE_ABBREVS = frozenset({
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN",
@@ -37,31 +60,6 @@ _US_COUNTRY_PHRASES = (
     "america",
 )
 
-_NON_US_COUNTRY_PHRASES = (
-    "afghanistan", "albania", "algeria", "andorra", "angola", "argentina", "armenia",
-    "australia", "austria", "azerbaijan", "bahrain", "bangladesh", "belarus", "belgium",
-    "bolivia", "bosnia", "brazil", "bulgaria", "cambodia", "cameroon", "canada",
-    "chile", "china", "colombia", "costa rica", "croatia", "cuba", "cyprus",
-    "czech republic", "czechia", "denmark", "dominican republic", "ecuador", "egypt",
-    "el salvador", "estonia", "ethiopia", "finland", "france", "georgia", "germany",
-    "ghana", "greece", "guatemala", "honduras", "hong kong", "hungary", "iceland",
-    "india", "indonesia", "iran", "iraq", "ireland", "israel", "italy", "jamaica",
-    "japan", "jordan", "kazakhstan", "kenya", "korea", "kuwait", "latvia", "lebanon",
-    "libya", "lithuania", "luxembourg", "macau", "malaysia", "malta", "mexico",
-    "moldova", "mongolia", "morocco", "myanmar", "nepal", "netherlands", "new zealand",
-    "nicaragua", "nigeria", "norway", "oman", "pakistan", "panama", "paraguay", "peru",
-    "philippines", "poland", "portugal", "qatar", "romania", "russia", "saudi arabia",
-    "serbia", "singapore", "slovakia", "slovenia", "south africa", "spain", "sri lanka",
-    "sweden", "switzerland", "syria", "taiwan", "thailand", "turkey", "ukraine",
-    "united arab emirates", "united kingdom", "uruguay", "uzbekistan", "venezuela",
-    "vietnam",
-)
-
-_NON_US_SHORT_REGIONS = frozenset({
-    "uk", "u.k.", "u.k", "eu", "europe", "emea", "apac", "latam", "mea",
-    "england", "scotland", "wales", "northern ireland",
-})
-
 _PLACEHOLDER_LOCATIONS = frozenset({
     "", "unknown", "n/a", "na", "none", "not specified", "tbd", "remote", "hybrid",
     "on-site", "onsite", "office", "various", "multiple locations", "worldwide",
@@ -76,6 +74,11 @@ _COMMA_SEGMENT_RE = re.compile(r"^(.+?),\s*(.+)$")
 # "travel less than 25%", which a remote-policy sentence can produce.
 _REGION_NAME_RE = re.compile(r"^[a-z][a-z .'\-]*$")
 
+# Region tokens longest-first so "asia pacific" wins over "asia".
+_REGION_TOKENS_BY_LENGTH: tuple[str, ...] = tuple(
+    sorted(REGION_GROUPS, key=len, reverse=True)
+)
+
 
 def _looks_like_region_name(region: str) -> bool:
     region = region.strip()
@@ -85,9 +88,16 @@ def _looks_like_region_name(region: str) -> bool:
 
 
 class LocationVerdict(str, Enum):
+    """Legacy US-pool verdict (kept for stored data and existing callers)."""
     US = "us"
     NON_US = "non_us"
     UNKNOWN = "unknown"
+
+
+class CountryMatchVerdict(str, Enum):
+    MATCH = "match"          # explicitly inside the preferred countries
+    NO_MATCH = "no_match"    # explicitly outside the preferred countries
+    UNKNOWN = "unknown"      # missing / placeholder / ambiguous → keep visible
 
 
 def _normalize(text: str | None) -> str:
@@ -121,17 +131,6 @@ def _contains_us_country(text: str) -> bool:
     return False
 
 
-def _contains_non_us_country(text: str) -> bool:
-    padded = f" {text} "
-    for phrase in _NON_US_COUNTRY_PHRASES:
-        if f" {phrase} " in padded or text.endswith(f", {phrase}") or text == phrase:
-            return True
-    for region in _NON_US_SHORT_REGIONS:
-        if text == region or text.endswith(f", {region}") or f" {region} " in padded:
-            return True
-    return False
-
-
 def _looks_like_us_city_state(segment: str) -> bool:
     match = _COMMA_SEGMENT_RE.match(segment.strip())
     if not match:
@@ -143,6 +142,43 @@ def _looks_like_us_city_state(segment: str) -> bool:
     return region in _US_STATE_NAMES
 
 
+def _detect_country_codes(text: str) -> set[str]:
+    """All country codes explicitly named in the segment text."""
+    codes: set[str] = set()
+    for phrase in PHRASES_BY_LENGTH:
+        if _has_word(text, phrase):
+            codes.add(PHRASE_TO_CODE[phrase])
+    if _contains_us_country(text):
+        codes.add("US")
+    if _looks_like_us_city_state(text):
+        codes.add("US")
+        # Legacy quirk kept on purpose: "City, Georgia" reads as the US state,
+        # not the country Georgia.
+        codes.discard("GE")
+    return codes
+
+
+def _detect_region_groups(text: str) -> list[frozenset[str]]:
+    groups: list[frozenset[str]] = []
+    for token in _REGION_TOKENS_BY_LENGTH:
+        if _has_word(text, token):
+            groups.append(REGION_GROUPS[token])
+    return groups
+
+
+def _is_worldwide(text: str) -> bool:
+    if text in WORLDWIDE_TOKENS:
+        return True
+    for token in WORLDWIDE_TOKENS:
+        # "international" only counts as an exact match ("International Airport",
+        # "international travel" must not read as open-to-any-country).
+        if token == "international":
+            continue
+        if _has_word(text, token):
+            return True
+    return False
+
+
 def _split_into_segments(text: str) -> list[str]:
     if not text:
         return []
@@ -150,41 +186,73 @@ def _split_into_segments(text: str) -> list[str]:
     return segments or [text]
 
 
-def _classify_segment(segment: str, *, allow_region_fallback: bool = True) -> LocationVerdict:
-    """Classify one location segment.
+def _classify_segment_for_countries(
+    segment: str,
+    allowed: frozenset[str],
+    *,
+    allow_region_fallback: bool,
+    strict_unrecognized_region: bool,
+) -> CountryMatchVerdict:
+    """Classify one location segment against the preferred-country set.
 
     ``allow_region_fallback`` gates the generic "city, region" heuristic. It is
     enabled for the trusted structured ``location`` field but disabled for the
     free-form ``remote_policy`` text, whose prose (e.g. "..., travel less than
     25%") must never be mistaken for a foreign region.
+
+    ``strict_unrecognized_region`` keeps the historical US-only behavior where
+    an unrecognized "City, Region" (region is not a US state) is treated as
+    foreign. It is only safe for the {"US"} preference set because US postings
+    near-universally use the "City, ST" format; for other preference sets an
+    unrecognized region stays UNKNOWN (kept visible).
     """
     text = _normalize(segment)
-    if not text or text in _PLACEHOLDER_LOCATIONS:
-        return LocationVerdict.UNKNOWN
+    if not text:
+        return CountryMatchVerdict.UNKNOWN
 
-    # US inclusion wins: a segment that names the US (a state, a city/state, or
-    # the country) is US-eligible even when it lists other countries too, e.g.
-    # "US or Canada", "US, LATAM, and India", "United States or Canada". This is
-    # checked BEFORE the non-US keyword scan so a co-mentioned foreign country
-    # cannot flip an explicitly US-eligible posting to non-US.
-    if _looks_like_us_city_state(text) or _contains_us_country(text):
-        return LocationVerdict.US
-    if _contains_non_us_country(text):
-        return LocationVerdict.NON_US
+    # Explicit country / region signals win, and are checked FIRST so
+    # "anywhere in Germany" is still resolved by country rather than by the
+    # worldwide token. Inclusion wins within a segment: "US or Canada" is
+    # eligible for a US-preferring user even though Canada is also named.
+    codes = _detect_country_codes(text)
+    groups = _detect_region_groups(text)
+    if codes or groups:
+        if codes & allowed:
+            return CountryMatchVerdict.MATCH
+        if any(group & allowed for group in groups):
+            return CountryMatchVerdict.MATCH
+        return CountryMatchVerdict.NO_MATCH
+
+    if _is_worldwide(text):
+        return CountryMatchVerdict.MATCH
+    if text in _PLACEHOLDER_LOCATIONS:
+        return CountryMatchVerdict.UNKNOWN
 
     # Remote/hybrid descriptive text is prose, not a location. Guard here -
     # BEFORE the generic comma heuristic - so a sentence such as
     # "Remote position ..., travel less than 25%" is not misread as non-US.
     if text.startswith("remote") or text.startswith("hybrid"):
-        return LocationVerdict.UNKNOWN
+        return CountryMatchVerdict.UNKNOWN
 
     match = _COMMA_SEGMENT_RE.match(text)
     if match:
         region = match.group(2).strip()
         if region.upper() in _US_STATE_ABBREVS or region in _US_STATE_NAMES:
-            return LocationVerdict.US
+            return (
+                CountryMatchVerdict.MATCH
+                if "US" in allowed
+                else CountryMatchVerdict.NO_MATCH
+            )
+        sub_code = SUBDIVISION_TO_CODE.get(region) or SUBDIVISION_TO_CODE.get(region.upper())
+        if sub_code:
+            return (
+                CountryMatchVerdict.MATCH
+                if sub_code in allowed
+                else CountryMatchVerdict.NO_MATCH
+            )
         if (
             allow_region_fallback
+            and strict_unrecognized_region
             and len(region) >= 3
             and not region.isdigit()
             # A trailing prose/placeholder word ("Remote", "Hybrid", "Anywhere")
@@ -192,9 +260,131 @@ def _classify_segment(segment: str, *, allow_region_fallback: bool = True) -> Lo
             and region not in _PLACEHOLDER_LOCATIONS
             and _looks_like_region_name(region)
         ):
-            return LocationVerdict.NON_US
+            return CountryMatchVerdict.NO_MATCH
 
-    return LocationVerdict.UNKNOWN
+    return CountryMatchVerdict.UNKNOWN
+
+
+def classify_job_location_for_countries(
+    location: str | None,
+    *,
+    remote_policy: str | None = None,
+    allowed_countries: Iterable[str],
+) -> tuple[CountryMatchVerdict, str]:
+    """Classify a job's location against a set of preferred country codes.
+
+    Returns ``(verdict, detail)``. An empty preference set disables filtering
+    (always MATCH). Segment aggregation mirrors the historical policy:
+    an explicit outside-preference segment wins over a matching one, a match
+    wins over unknown, and all-unknown stays unknown (kept visible).
+    """
+    allowed = frozenset(str(c).strip().upper() for c in allowed_countries if str(c).strip())
+    location_clean = location.strip() if location and location.strip() else ""
+    remote_clean = remote_policy.strip() if remote_policy and remote_policy.strip() else ""
+    combined = " | ".join(p for p in (location_clean, remote_clean) if p)
+
+    if not allowed:
+        return CountryMatchVerdict.MATCH, "no country preference filter"
+    if not location_clean and not remote_clean:
+        return CountryMatchVerdict.UNKNOWN, "missing location"
+
+    strict_unrecognized_region = allowed == frozenset({"US"})
+
+    verdicts: list[CountryMatchVerdict] = []
+    # Structured location field: trusted - full heuristics incl. the comma region fallback.
+    for seg in _split_into_segments(location_clean):
+        verdicts.append(
+            _classify_segment_for_countries(
+                seg,
+                allowed,
+                allow_region_fallback=True,
+                strict_unrecognized_region=strict_unrecognized_region,
+            )
+        )
+    # Remote policy: free-form prose - only trust explicit country/region keywords,
+    # never the generic "city, region" fallback (avoids false non-US from sentences).
+    for seg in _split_into_segments(remote_clean):
+        verdicts.append(
+            _classify_segment_for_countries(
+                seg,
+                allowed,
+                allow_region_fallback=False,
+                strict_unrecognized_region=strict_unrecognized_region,
+            )
+        )
+
+    preferred_names = describe_country_list(sorted(allowed))
+    if CountryMatchVerdict.NO_MATCH in verdicts:
+        return (
+            CountryMatchVerdict.NO_MATCH,
+            f"location outside preferred countries ({preferred_names}): {combined[:120]}",
+        )
+    if CountryMatchVerdict.MATCH in verdicts:
+        return (
+            CountryMatchVerdict.MATCH,
+            f"location matches preferred countries: {combined[:120]}",
+        )
+    return CountryMatchVerdict.UNKNOWN, f"location needs review: {combined[:120]}"
+
+
+def keeps_preferred_job_pool(
+    location: str | None,
+    *,
+    remote_policy: str | None = None,
+    allowed_countries: Iterable[str],
+) -> tuple[bool, CountryMatchVerdict, str]:
+    """Whether a job should stay in the user's visible pool.
+
+    Only locations that explicitly resolve outside the preferred countries are
+    dropped. Missing / ambiguous locations are kept so users can filter them
+    later themselves. An empty preference list keeps everything.
+    """
+    verdict, detail = classify_job_location_for_countries(
+        location,
+        remote_policy=remote_policy,
+        allowed_countries=allowed_countries,
+    )
+    return verdict != CountryMatchVerdict.NO_MATCH, verdict, detail
+
+
+def detect_countries_in_text(text: str | None) -> list[str]:
+    """Best-effort country codes named in a free-form location string.
+
+    Used by the resume country auto-detector. Returns explicit country hits
+    first; falls back to the "City, Region" subdivision heuristic
+    ("Toronto, Ontario" → CA, "Austin, TX" → US). Empty when nothing
+    recognizable is found.
+    """
+    normalized = _normalize(text)
+    if not normalized or normalized in _PLACEHOLDER_LOCATIONS:
+        return []
+    codes: set[str] = set()
+    for seg in _split_into_segments(normalized):
+        seg_codes = _detect_country_codes(seg)
+        if seg_codes:
+            codes |= seg_codes
+            continue
+        match = _COMMA_SEGMENT_RE.match(seg)
+        if match:
+            region = match.group(2).strip()
+            if region.upper() in _US_STATE_ABBREVS or region in _US_STATE_NAMES:
+                codes.add("US")
+                continue
+            sub_code = SUBDIVISION_TO_CODE.get(region) or SUBDIVISION_TO_CODE.get(region.upper())
+            if sub_code:
+                codes.add(sub_code)
+    return sorted(codes)
+
+
+# ---- Legacy US-only API (wrappers over the generalized classifier) ----
+
+_LEGACY_US_SET = frozenset({"US"})
+
+_COUNTRY_TO_LOCATION_VERDICT = {
+    CountryMatchVerdict.MATCH: LocationVerdict.US,
+    CountryMatchVerdict.NO_MATCH: LocationVerdict.NON_US,
+    CountryMatchVerdict.UNKNOWN: LocationVerdict.UNKNOWN,
+}
 
 
 def classify_job_location(
@@ -202,30 +392,28 @@ def classify_job_location(
     *,
     remote_policy: str | None = None,
 ) -> tuple[LocationVerdict, str]:
-    """Return (verdict, detail) using structured location and optional remote policy."""
+    """Return (verdict, detail) using structured location and optional remote policy.
+
+    Legacy US-pool classification, equivalent to the generalized classifier
+    with ``allowed_countries={"US"}``.
+    """
     location_clean = location.strip() if location and location.strip() else ""
     remote_clean = remote_policy.strip() if remote_policy and remote_policy.strip() else ""
+    combined = " | ".join(p for p in (location_clean, remote_clean) if p)
 
+    verdict, _detail = classify_job_location_for_countries(
+        location,
+        remote_policy=remote_policy,
+        allowed_countries=_LEGACY_US_SET,
+    )
+    mapped = _COUNTRY_TO_LOCATION_VERDICT[verdict]
     if not location_clean and not remote_clean:
         return LocationVerdict.UNKNOWN, "missing location"
-
-    verdicts: list[LocationVerdict] = []
-    # Structured location field: trusted - full heuristics incl. the comma region fallback.
-    for seg in _split_into_segments(location_clean):
-        verdicts.append(_classify_segment(seg, allow_region_fallback=True))
-    # Remote policy: free-form prose - only trust explicit country/region keywords,
-    # never the generic "city, region" fallback (avoids false non-US from sentences).
-    for seg in _split_into_segments(remote_clean):
-        verdicts.append(_classify_segment(seg, allow_region_fallback=False))
-
-    combined = " | ".join(p for p in (location_clean, remote_clean) if p)
-    if LocationVerdict.NON_US in verdicts:
-        return LocationVerdict.NON_US, f"non-US location detected: {combined[:120]}"
-    if verdicts and all(v == LocationVerdict.US for v in verdicts):
-        return LocationVerdict.US, f"US location: {combined[:120]}"
-    if LocationVerdict.US in verdicts and LocationVerdict.UNKNOWN in verdicts:
-        return LocationVerdict.US, f"US location with unspecified segments: {combined[:120]}"
-    return LocationVerdict.UNKNOWN, f"location needs review: {combined[:120]}"
+    if mapped == LocationVerdict.NON_US:
+        return mapped, f"non-US location detected: {combined[:120]}"
+    if mapped == LocationVerdict.US:
+        return mapped, f"US location: {combined[:120]}"
+    return mapped, f"location needs review: {combined[:120]}"
 
 
 def keeps_us_job_pool(
