@@ -53,6 +53,43 @@ export async function clearSystemSetting(key: string): Promise<SystemSettingsRes
   return data;
 }
 
+export interface MatchEngineShadowStats {
+  match_engine: string;
+  window_days: number;
+  comparisons: number;
+  mean_delta: number | null;
+  mean_absolute_error: number | null;
+  max_absolute_error: number | null;
+  abs_delta_histogram: Record<string, number>;
+  jobs_encoded: number;
+  users_encoded: number;
+  recent: {
+    job_id: string;
+    user_id: string;
+    llm: number;
+    vector: number;
+    delta: number;
+    at: string | null;
+  }[];
+}
+
+export async function triggerMatchEngineBackfill(): Promise<{
+  enqueued: boolean;
+  already_running: boolean;
+}> {
+  const { data } = await apiClient.post<{ enqueued: boolean; already_running: boolean }>(
+    '/admin/match-engine/backfill',
+  );
+  return data;
+}
+
+export async function fetchMatchEngineShadowStats(days = 30): Promise<MatchEngineShadowStats> {
+  const { data } = await apiClient.get<MatchEngineShadowStats>(
+    `/admin/match-engine/shadow-stats?days=${days}`,
+  );
+  return data;
+}
+
 export async function fetchOpsOverview(): Promise<OpsOverview> {
   const { data } = await apiClient.get<OpsOverview>('/admin/ops/overview');
   return data;

@@ -20,6 +20,7 @@ import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { SettingsCard } from '../components/settings/SettingsCard';
 import { JobSyncSettingsSection } from '../components/settings/JobSyncSettingsSection';
 import { LlmBenchmarkSection } from '../components/settings/LlmBenchmarkSection';
+import { MatchEngineOps } from '../components/settings/MatchEngineSection';
 import type { BenchmarkCatalogModel } from '../components/settings/LlmBenchmarkSection';
 import { ConfirmDialog } from '../components/extraction/ConfirmDialog';
 import { MenuSelect } from '../components/shared/MenuSelect';
@@ -78,6 +79,7 @@ const NUMBER_KEYS = new Set([
   'autopost_worker_max_jobs',
   'resume_worker_max_jobs',
   'scraper_worker_max_jobs',
+  'encoding_worker_max_jobs',
   'llm_circuit_breaker_threshold',
   'default_min_match_score',
   'default_dedup_recycle_days',
@@ -605,6 +607,33 @@ export function SystemSettingsPage() {
       );
     }
 
+    if (key === 'match_engine') {
+      return (
+        <div key={key} className={`group relative flex min-w-0 flex-col gap-1 ${opts?.className ?? ''}`}>
+          {renderFieldChrome(key, label, item)}
+          <MenuSelect
+            aria-label={label}
+            value={String(rawValue || 'llm')}
+            minMenuWidth={300}
+            options={[
+              { value: 'llm', label: 'LLM', description: 'LLM scores every match (current default)' },
+              {
+                value: 'shadow',
+                label: 'Shadow',
+                description: 'LLM authoritative; vector scorer runs alongside for comparison',
+              },
+              {
+                value: 'vector',
+                label: 'Vector',
+                description: 'Embedding engine scores matches; no LLM calls for Phase A',
+              },
+            ]}
+            onChange={(next) => scheduleSave(key, next, true)}
+          />
+        </div>
+      );
+    }
+
     if (key === 'openai_reasoning_effort') {
       const known = REASONING_EFFORT_OPTIONS.some((o) => o.value === String(rawValue));
       const selectOptions = [
@@ -771,6 +800,21 @@ export function SystemSettingsPage() {
             {renderAutoField('autopost_worker_max_jobs', { label: 'Autopost (Sheets/Pumble)' })}
             {renderAutoField('resume_worker_max_jobs', { label: 'Resume build' })}
             {renderAutoField('scraper_worker_max_jobs', { label: 'Scraper' })}
+            {renderAutoField('encoding_worker_max_jobs', { label: 'Encoding (embeddings)' })}
+          </div>
+        </SettingsCard>
+
+        <SettingsCard
+          icon={Zap}
+          iconClass="bg-gradient-to-br from-indigo-500 to-violet-600"
+          title="Match engine"
+          description="Which engine scores job matches. Rollout: backfill encodings → shadow (collect comparisons) → vector (no LLM). Switching back to LLM is instant."
+        >
+          <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {renderAutoField('match_engine', { label: 'Engine' })}
+            </div>
+            <MatchEngineOps />
           </div>
         </SettingsCard>
 
