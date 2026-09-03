@@ -877,3 +877,107 @@ async def cleanup_old_jobs(
             "deleted": deleted,
             "sample": sample,
         }
+
+
+# ── Vector match engine ─────────────────────────────────────────────────────
+
+@router.post("/match-engine/backfill")
+async def trigger_encoding_backfill(current_user: dict = Depends(require_admin)):
+    """Enqueue the encoding backfill (all jobs/users missing current encodings)."""
+    from app.core.redis_support import pipeline_job_id
+    from app.tasks.worker import get_encoding_pool
+
+    pool = await get_encoding_pool()
+    job = await pool.enqueue_job(
+        "backfill_encodings_task",
+        _job_id=pipeline_job_id("encbackfill", "all", "all"),
+    )
+    already_running = job is None
+    logger.info(
+        "encoding_backfill_triggered",
+        by=current_user.get("user_id"),
+        already_running=already_running,
+    )
+    return {"enqueued": not already_running, "already_running": already_running}
+
+
+@router.get("/match-engine/shadow-stats")
+async def match_engine_shadow_stats(
+    days: int = 30,
+    current_user: dict = Depends(require_admin),
+):
+    """Aggregate LLM-vs-vector comparisons collected in shadow mode."""
+    from app.models.database import JobEncoding, MatchEngineComparison, UserEncoding
+    from app.services.system_settings_service import get_effective_value
+
+    days = max(1, min(int(days or 30), 365))
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    delta = MatchEngineComparison.vector_overall - MatchEngineComparison.llm_overall
+
+    async with get_session() as session:
+        agg = (
+            await session.execute(
+                select(
+                    func.count(MatchEngineComparison.id),
+                    func.avg(delta),
+                    func.avg(func.abs(delta)),
+                    func.max(func.abs(delta)),
+                ).where(MatchEngineComparison.created_at >= since)
+            )
+        ).one()
+        count, mean_delta, mae, max_abs = agg
+
+        buckets_rows = (
+            await session.execute(
+                select(
+                    func.width_bucket(func.abs(delta), 0, 50, 5),
+                    func.count(MatchEngineComparison.id),
+                )
+                .where(MatchEngineComparison.created_at >= since)
+                .group_by(func.width_bucket(func.abs(delta), 0, 50, 5))
+            )
+        ).all()
+
+        recent_rows = (
+            await session.execute(
+                select(MatchEngineComparison)
+                .order_by(MatchEngineComparison.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+
+        jobs_encoded = (
+            await session.execute(select(func.count(JobEncoding.job_id)))
+        ).scalar_one()
+        users_encoded = (
+            await session.execute(select(func.count(UserEncoding.user_id)))
+        ).scalar_one()
+
+        engine = await get_effective_value("match_engine", session)
+
+    bucket_labels = {1: "0-10", 2: "10-20", 3: "20-30", 4: "30-40", 5: "40-50", 6: "50+"}
+    return {
+        "match_engine": engine,
+        "window_days": days,
+        "comparisons": int(count or 0),
+        "mean_delta": round(float(mean_delta), 2) if mean_delta is not None else None,
+        "mean_absolute_error": round(float(mae), 2) if mae is not None else None,
+        "max_absolute_error": int(max_abs) if max_abs is not None else None,
+        "abs_delta_histogram": {
+            bucket_labels.get(int(bucket), str(bucket)): int(n)
+            for bucket, n in buckets_rows
+        },
+        "jobs_encoded": int(jobs_encoded or 0),
+        "users_encoded": int(users_encoded or 0),
+        "recent": [
+            {
+                "job_id": row.job_id,
+                "user_id": row.user_id,
+                "llm": row.llm_overall,
+                "vector": row.vector_overall,
+                "delta": row.vector_overall - row.llm_overall,
+                "at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in recent_rows
+        ],
+    }

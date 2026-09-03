@@ -578,6 +578,18 @@ async def put_profile(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         await session.commit()
 
+    # Vector match engine: refresh the profile encoding (skips when unchanged).
+    try:
+        from app.tasks.worker import enqueue_encode_user
+
+        await enqueue_encode_user(user_id)
+    except Exception as enc_err:
+        logger.warning(
+            "encode_user_enqueue_after_profile_save_failed",
+            user_id=user_id,
+            error=str(enc_err),
+        )
+
     async with get_session() as session:
         repo = UserRepository(session)
         user = await repo.get_by_id(user_id)
@@ -4798,6 +4810,24 @@ async def update_user_settings(
             user_id=user_id,
             countries=data.get("country_preferences"),
         )
+
+    if (
+        body.job_match_preferences is not None
+        or body.clear_job_match_preferences
+        or body.resume_tailoring_prompt_mode is not None
+        or body.resume_tailoring_prompt_custom is not None
+    ):
+        # Vector match engine: preferences/guidance feed the profile encoding.
+        try:
+            from app.tasks.worker import enqueue_encode_user
+
+            await enqueue_encode_user(user_id)
+        except Exception as enc_err:
+            logger.warning(
+                "encode_user_enqueue_after_settings_failed",
+                user_id=user_id,
+                error=str(enc_err),
+            )
 
     newly_match = bool(data.get("auto_prepare_match")) and not prev_match
     newly_full = bool(data.get("auto_prepare_full")) and not prev_full

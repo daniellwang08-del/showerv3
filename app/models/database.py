@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, Date, DateTime, Float, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Text, Date, DateTime, Float, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import declarative_base, deferred
 from sqlalchemy.sql import func
 from app.models.schemas import ExtractionMethod, ExtractionStatus
@@ -381,6 +381,106 @@ class JobMatchInProgress(Base):
 
     __table_args__ = (
         UniqueConstraint("job_id", "user_id", name="uq_job_match_progress_job_user"),
+    )
+
+
+class JobEncoding(Base):
+    """Once-per-job vector encoding + extracted signals for non-LLM matching.
+
+    Vectors are float32 arrays stored as raw bytes (dimension defined by
+    ``model_version``); cosine math runs in Python/numpy — no pgvector
+    extension required on the database server.
+    """
+    __tablename__ = "job_encodings"
+
+    job_id = Column(
+        String(36), ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    model_version = Column(String(200), nullable=False)
+    # Embedding of the job title (or best title guess).
+    title_vec = deferred(Column(LargeBinary, nullable=True))
+    # Embedding of the substantive JD body (description + requirements).
+    content_vec = deferred(Column(LargeBinary, nullable=True))
+    # {"skill": "required" | "preferred" | "mentioned", ...}
+    skills = Column(JSON, default=dict, nullable=False)
+    years_required = Column(Integer, nullable=True)
+    degree_required = Column(Boolean, nullable=True)
+    requires_security_clearance = Column(Boolean, default=False, nullable=False)
+    encoded_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class UserEncoding(Base):
+    """Once-per-profile vector encoding, refreshed when the profile changes."""
+    __tablename__ = "user_encodings"
+
+    user_id = Column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    model_version = Column(String(200), nullable=False)
+    # Embedding of the full experience narrative.
+    experience_vec = deferred(Column(LargeBinary, nullable=True))
+    # Embedding of job preferences + custom guidance (null when unset).
+    prefs_vec = deferred(Column(LargeBinary, nullable=True))
+    # [{"title": str, "vec": base64-float32}, ...] recent titles, newest first.
+    title_vecs = Column(JSON, default=list, nullable=False)
+    # {"skill": recency_weight 0..1, ...}
+    skills = Column(JSON, default=dict, nullable=False)
+    years_experience = Column(Float, nullable=True)
+    has_degree = Column(Boolean, nullable=True)
+    # Hash of the encoded inputs; unchanged profiles are never re-encoded.
+    profile_hash = Column(String(64), nullable=True)
+    encoded_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class UserJobSource(Base):
+    """A job board (Greenhouse/Lever/Ashby/Workable) a user registered.
+
+    Synced periodically: new postings on the board are pulled into the user's
+    pipeline via the normal submit/extract flow.
+    """
+    __tablename__ = "user_job_sources"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    url = Column(Text, nullable=False)
+    name = Column(String(200), nullable=False)
+    ats_type = Column(String(30), nullable=False)  # greenhouse | lever | ashby | workable
+    board_token = Column(String(200), nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    last_synced_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    # Postings seen on the board during the last sync.
+    last_listing_count = Column(Integer, nullable=True)
+    # New jobs created for this user during the last sync.
+    last_new_jobs = Column(Integer, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "ats_type", "board_token", name="uq_user_job_source_board"),
+    )
+
+
+class MatchEngineComparison(Base):
+    """Shadow-mode record: LLM score vs vector score for the same user x job."""
+    __tablename__ = "match_engine_comparisons"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    llm_overall = Column(Integer, nullable=False)
+    vector_overall = Column(Integer, nullable=False)
+    llm_dimensions = Column(JSON, default=dict, nullable=False)
+    vector_dimensions = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_match_engine_comparisons_created_at", "created_at"),
     )
 
 

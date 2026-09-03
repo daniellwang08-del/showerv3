@@ -225,6 +225,24 @@ class Settings(BaseSettings):
     dedup_rule_applied_company_enabled: bool = False
     dedup_rule_score_comparison_enabled: bool = False
 
+    # ── Non-LLM vector match engine ─────────────────────────────────────
+    # llm    = Phase A scoring via LLM only (legacy behavior).
+    # shadow = LLM stays authoritative; vector scorer runs alongside and the
+    #          comparison is stored for calibration (no user-visible change).
+    # vector = vector scorer is authoritative; LLM used only for once-per-job
+    #          structured extraction (and Phase B tailoring, unchanged).
+    match_engine: Literal["llm", "shadow", "vector"] = "llm"
+    # Sentence-transformers model for section embeddings (CPU inference).
+    # MiniLM-L6 (~90 MB, 384-dim) fits small VPS hosts; upgrade to
+    # all-mpnet-base-v2 (~420 MB, 768-dim) via env on larger machines.
+    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # Where model weights are cached on disk (persists across deploys).
+    embedding_model_cache_dir: str = Field(default="./model_cache")
+    embedding_batch_size: int = Field(default=16, ge=1, le=256)
+    # Concurrent arq jobs for the encoding worker (model inference is CPU bound;
+    # keep low so it never starves the other workers).
+    encoding_worker_max_jobs: int = 2
+
     proxy_enabled: bool = False
     proxy_url: str | None = None
 

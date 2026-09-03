@@ -35,6 +35,7 @@ from app.api.assistant_routes import assistant_router
 from app.api.agent_routes import agent_router
 from app.api.data_management_routes import router as data_management_router
 from app.api.admin_routes import router as admin_router
+from app.api.job_sources_routes import router as job_sources_router
 from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
@@ -344,6 +345,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_router, prefix="/api/v1")
     app.include_router(data_management_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(job_sources_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 
     return app

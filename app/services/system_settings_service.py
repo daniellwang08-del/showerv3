@@ -43,6 +43,9 @@ ALLOWLISTED_KEYS: frozenset[str] = frozenset(
         "auto_prepare_enabled",
         "auto_prepare_daily_cap_per_user",
         "auto_prepare_pending_cap_per_user",
+        # Vector match engine
+        "match_engine",
+        "encoding_worker_max_jobs",
         # Defaults
         "default_min_match_score",
         "default_dedup_recycle_days",
@@ -93,6 +96,7 @@ _INT_KEYS = frozenset(
         "extension_token_expire_days",
         "auto_prepare_daily_cap_per_user",
         "auto_prepare_pending_cap_per_user",
+        "encoding_worker_max_jobs",
     }
 )
 _FLOAT_KEYS = frozenset(
@@ -271,6 +275,8 @@ async def upsert_settings(
             raise ValueError("default_llm_provider must be openai, anthropic, or gemini")
         if key == "openai_reasoning_effort" and parsed not in ("low", "medium", "high"):
             raise ValueError("openai_reasoning_effort must be low, medium, or high")
+        if key == "match_engine" and parsed not in ("llm", "shadow", "vector"):
+            raise ValueError("match_engine must be llm, shadow, or vector")
 
         # Skip write if equal to env default (optional cleanup) — still store override
         # so admin intent is explicit.

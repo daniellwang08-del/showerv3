@@ -19,7 +19,11 @@ from app.services.job_match_service import (
     analyze_job_match_phase_a,
     generate_tailored_content_phase_b,
     _build_job_text,
+    _zero_match_result,
     build_structured_context,
+)
+from app.services.security_clearance_detector import (
+    requires_security_clearance as detect_security_clearance,
 )
 from app.services.extraction_cache import ExtractionCache
 from app.services.job_field_utils import parse_job_title
@@ -205,6 +209,126 @@ async def _enqueue_resume_doc_build(job_id: str, user_id: str) -> None:
         logger.warning("resume_build_enqueue_failed", job_id=job_id, error=str(enq_err))
 
 
+async def _enqueue_missing_encodings(job_id: str, user_id: str) -> None:
+    """Best-effort: queue encoding work so the vector engine can serve next time."""
+    try:
+        from app.tasks.worker import enqueue_encode_job, enqueue_encode_user
+
+        await enqueue_encode_job(job_id)
+        await enqueue_encode_user(user_id)
+    except Exception as e:
+        logger.warning(
+            "encoding_enqueue_from_match_failed",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(e),
+        )
+
+
+async def _try_vector_authoritative(
+    job_id: str,
+    user_id: str,
+    ext_id: str,
+) -> tuple[dict, bool] | None:
+    """Score with the vector engine when the job is already structured.
+
+    Returns (match_result, is_job_posting) or None when the LLM path must run
+    (first-time structuring, or encodings not ready yet).
+    """
+    async with get_session() as session:
+        extraction = await JobExtractionRepository(session).get_by_id(ext_id)
+    if (
+        extraction is None
+        or not (extraction.description or "").strip()
+        or extraction.is_job_posting is None
+    ):
+        # Needs the once-per-job LLM structuring pass first.
+        return None
+    if extraction.is_job_posting is False:
+        return _zero_match_result("Not a job posting"), False
+
+    from app.services.vector_match_service import compute_vector_match
+
+    vector_result = await compute_vector_match(job_id, user_id)
+    if vector_result is None:
+        await _enqueue_missing_encodings(job_id, user_id)
+        return None
+    return vector_result, True
+
+
+async def _record_shadow_comparison(job_id: str, user_id: str, llm_result: dict) -> None:
+    """Shadow mode: score the same pair with the vector engine and store both."""
+    if llm_result.get("requires_security_clearance") or not llm_result.get(
+        "is_job_posting", True
+    ):
+        return
+    try:
+        from app.services.vector_match_service import compute_vector_match
+
+        vector_result = await compute_vector_match(job_id, user_id)
+        if vector_result is None:
+            await _enqueue_missing_encodings(job_id, user_id)
+            return
+
+        from app.models.database import MatchEngineComparison
+
+        llm_overall = int(llm_result.get("overall_score") or 0)
+        vector_overall = int(vector_result.get("overall_score") or 0)
+        async with get_session() as session:
+            session.add(
+                MatchEngineComparison(
+                    job_id=job_id,
+                    user_id=user_id,
+                    llm_overall=llm_overall,
+                    vector_overall=vector_overall,
+                    llm_dimensions=dict(llm_result.get("dimension_scores") or {}),
+                    vector_dimensions=dict(vector_result.get("dimension_scores") or {}),
+                )
+            )
+        logger.info(
+            "match_engine_shadow_compared",
+            job_id=job_id,
+            user_id=user_id,
+            llm_overall=llm_overall,
+            vector_overall=vector_overall,
+            delta=vector_overall - llm_overall,
+        )
+    except Exception as e:
+        logger.warning(
+            "match_engine_shadow_failed",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(e),
+        )
+
+
+def _attach_result_metadata(
+    result: dict,
+    *,
+    ext_id: str,
+    is_job_posting: bool,
+    has_profile: bool,
+    skip_phase_b: bool,
+    structured_company: str | None,
+    engine: str,
+) -> dict:
+    overall_score = int(result.get("overall_score") or 0)
+    result["is_job_posting"] = is_job_posting
+    result["should_run_phase_b"] = (
+        (not skip_phase_b)
+        and bool(get_effective_value_sync("auto_generate_tailored_content"))
+        and has_profile
+        and is_job_posting
+        and not result.get("requires_security_clearance")
+        and overall_score > 0
+    )
+    result["extraction_id"] = ext_id
+    result["structured_company"] = structured_company
+    result["skip_phase_b"] = bool(skip_phase_b)
+    result["match_engine"] = engine
+    return result
+
+
 async def run_job_match_analysis(
     job_id: str,
     user_id: str,
@@ -234,6 +358,68 @@ async def run_job_match_analysis(
             return None
         ext_id, job_text, profile_text = loaded
         has_profile = bool((profile_text or "").strip())
+
+        try:
+            engine = str(get_effective_value_sync("match_engine") or "llm")
+        except Exception:
+            engine = "llm"
+
+        # ── Phase 0 deterministic gate: security clearance (no LLM call) ──
+        clearance_required, clearance_phrase = detect_security_clearance(job_text)
+        if clearance_required:
+            logger.info(
+                "job_match_clearance_gate_hit",
+                job_id=job_id,
+                user_id=user_id,
+                phrase=clearance_phrase,
+            )
+            async with get_session() as session:
+                extraction_repo = JobExtractionRepository(session)
+                # Clearance phrasing only appears in genuine postings; advance
+                # the extraction so the UI stops showing "Analyzing". The raw
+                # extractor fields remain (no LLM re-structuring for a job
+                # that is excluded anyway).
+                await extraction_repo.update_is_job_posting(ext_id, True)
+                await extraction_repo.update_status(ext_id, ExtractionStatus.COMPLETED)
+            try:
+                await ExtractionCache().delete(ext_id)
+            except Exception:
+                pass
+            result = _zero_match_result(
+                "Requires security clearance - not scored",
+                requires_security_clearance=True,
+            )
+            return _attach_result_metadata(
+                result,
+                ext_id=ext_id,
+                is_job_posting=True,
+                has_profile=has_profile,
+                skip_phase_b=skip_phase_b,
+                structured_company=None,
+                engine="gate",
+            )
+
+        # ── Vector engine (authoritative) when the job is already structured ──
+        if engine == "vector" and has_profile:
+            vector_outcome = await _try_vector_authoritative(job_id, user_id, ext_id)
+            if vector_outcome is not None:
+                result, is_job_posting = vector_outcome
+                logger.info(
+                    "job_match_vector_engine_complete",
+                    job_id=job_id,
+                    user_id=user_id,
+                    score=result.get("overall_score"),
+                    is_job_posting=is_job_posting,
+                )
+                return _attach_result_metadata(
+                    result,
+                    ext_id=ext_id,
+                    is_job_posting=is_job_posting,
+                    has_profile=has_profile,
+                    skip_phase_b=skip_phase_b,
+                    structured_company=None,
+                    engine="vector",
+                )
 
         try:
             result, structured_job, is_job_posting = await analyze_job_match_phase_a(
@@ -295,19 +481,15 @@ async def run_job_match_analysis(
                 except Exception:
                     pass
 
-                overall_score = int(result.get("overall_score") or 0)
-                result["is_job_posting"] = is_job_posting
-                result["should_run_phase_b"] = (
-                    (not skip_phase_b)
-                    and bool(get_effective_value_sync("auto_generate_tailored_content"))
-                    and has_profile
-                    and is_job_posting
-                    and not result.get("requires_security_clearance")
-                    and overall_score > 0
+                _attach_result_metadata(
+                    result,
+                    ext_id=ext_id,
+                    is_job_posting=is_job_posting,
+                    has_profile=has_profile,
+                    skip_phase_b=skip_phase_b,
+                    structured_company=structured_company,
+                    engine="llm",
                 )
-                result["extraction_id"] = ext_id
-                result["structured_company"] = structured_company
-                result["skip_phase_b"] = bool(skip_phase_b)
 
                 logger.info(
                     "job_match_phase_a_complete",
@@ -325,6 +507,25 @@ async def run_job_match_analysis(
                 )
                 await clear_job_match_progress(job_id, user_id)
                 return None
+
+        # Re-encode with the professionally structured text (idempotent upsert)
+        # so vector scoring uses clean content instead of raw page text.
+        if structured_persisted:
+            try:
+                from app.tasks.worker import enqueue_encode_job
+
+                await enqueue_encode_job(job_id)
+            except Exception as enc_err:
+                logger.warning(
+                    "encode_enqueue_after_structuring_failed",
+                    job_id=job_id,
+                    error=str(enc_err),
+                )
+
+        # Shadow mode: also score with the vector engine and store the pair for
+        # calibration. Never affects the returned (LLM) result.
+        if engine == "shadow":
+            await _record_shadow_comparison(job_id, user_id, result)
 
         # Auto-post runs on the save worker after persistence so Phase A does not
         # hold analysis concurrency slots on Pumble/Sheets network I/O.

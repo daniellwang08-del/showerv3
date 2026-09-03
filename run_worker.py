@@ -10,6 +10,7 @@ Usage:
     python run_worker.py autopost     # Sheets/Pumble auto-post
     python run_worker.py resume       # DOCX/PDF generation
     python run_worker.py scraper      # Scrapy crawl runs
+    python run_worker.py encoding     # job/profile embeddings (vector match)
 
 All workers share the same Redis instance but listen on independent queues
 so they can be scaled and deployed separately.
@@ -51,6 +52,7 @@ from app.tasks.worker import (
     AutoPostWorkerSettings,
     ResumeBuildWorkerSettings,
     ScraperWorkerSettings,
+    EncodingWorkerSettings,
     extract_job,
     analyze_job_match,
     generate_tailored_content,
@@ -59,6 +61,10 @@ from app.tasks.worker import (
     run_match_auto_posts_task,
     build_resume_task,
     run_scraper_task,
+    sync_user_job_sources_task,
+    encode_job_task,
+    encode_user_task,
+    backfill_encodings_task,
 )
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
@@ -79,6 +85,7 @@ MODE_MAX_JOBS_SETTING = {
     "autopost": "autopost_worker_max_jobs",
     "resume": "resume_worker_max_jobs",
     "scraper": "scraper_worker_max_jobs",
+    "encoding": "encoding_worker_max_jobs",
 }
 
 
@@ -320,7 +327,7 @@ async def scraper_shutdown(ctx):
 class ScraperWorkerConfig(ScraperWorkerSettings):
     on_startup = scraper_startup
     on_shutdown = scraper_shutdown
-    functions = [run_scraper_task]
+    functions = [run_scraper_task, sync_user_job_sources_task]
     cron_jobs = ScraperWorkerSettings.cron_jobs
     queue_name = ScraperWorkerSettings.queue_name
     job_timeout = ScraperWorkerSettings.job_timeout
@@ -328,6 +335,42 @@ class ScraperWorkerConfig(ScraperWorkerSettings):
     max_tries = ScraperWorkerSettings.max_tries
     keep_result = ScraperWorkerSettings.keep_result
     redis_settings = ScraperWorkerSettings.redis_settings()
+
+
+# ── Encoding worker lifecycle (DB + embedding model, no browser/HTTP) ───────
+
+async def encoding_startup(ctx):
+    logger.info("encoding_worker_startup_begin")
+    await init_database()
+    from app.core.redis_support import init_pubsub_redis_pool
+
+    await init_pubsub_redis_pool()
+    # Blocking model load (first run downloads weights into the cache dir).
+    from app.services.encoding_service import get_embedding_model
+
+    await asyncio.get_running_loop().run_in_executor(None, get_embedding_model)
+    logger.info("encoding_worker_startup_complete")
+
+
+async def encoding_shutdown(ctx):
+    logger.info("encoding_worker_shutdown_begin")
+    from app.core.redis_support import close_pubsub_redis_pool
+
+    await close_pubsub_redis_pool()
+    await close_database()
+    logger.info("encoding_worker_shutdown_complete")
+
+
+class EncodingWorkerConfig(EncodingWorkerSettings):
+    on_startup = encoding_startup
+    on_shutdown = encoding_shutdown
+    functions = [encode_job_task, encode_user_task, backfill_encodings_task]
+    queue_name = EncodingWorkerSettings.queue_name
+    job_timeout = EncodingWorkerSettings.job_timeout
+    max_jobs = EncodingWorkerSettings.max_jobs
+    max_tries = EncodingWorkerSettings.max_tries
+    keep_result = EncodingWorkerSettings.keep_result
+    redis_settings = EncodingWorkerSettings.redis_settings()
 
 
 WORKER_CONFIGS = {
@@ -338,6 +381,7 @@ WORKER_CONFIGS = {
     "autopost": AutoPostWorkerConfig,
     "resume": ResumeBuildWorkerConfig,
     "scraper": ScraperWorkerConfig,
+    "encoding": EncodingWorkerConfig,
 }
 
 
@@ -453,7 +497,7 @@ if __name__ == "__main__":
         choices=list(WORKER_CONFIGS.keys()),
         help=(
             "Which pipeline to run: extraction | analysis | tailoring | "
-            "save | autopost | resume | scraper."
+            "save | autopost | resume | scraper | encoding."
         ),
     )
     args = parser.parse_args()

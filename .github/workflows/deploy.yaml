@@ -44,7 +44,13 @@ jobs:
             source venv/bin/activate
 
             echo "Installing Python dependencies..."
+            # torch first from the CPU index so sentence-transformers never
+            # pulls the multi-GB CUDA bundle onto the VPS.
+            pip install torch --index-url https://download.pytorch.org/whl/cpu
             pip install -r requirements.txt
+
+            echo "Pre-downloading embedding model (cached under ./model_cache)..."
+            python -c "from dotenv import load_dotenv; load_dotenv('.env'); from app.services.encoding_service import get_embedding_model; get_embedding_model()" || echo "model pre-download failed; encoding worker will retry at startup"
 
             echo "Running database migrations..."
             alembic upgrade head
@@ -65,6 +71,10 @@ jobs:
             systemctl restart showerv3-worker@save
             systemctl restart showerv3-worker@resume
             systemctl restart showerv3-worker@autopost
+
+            echo "Starting encoding worker (vector match engine)..."
+            systemctl enable showerv3-worker@encoding || true
+            systemctl restart showerv3-worker@encoding
 
             echo "Waiting for in-flight scrapes before restarting scraper worker..."
             # Rolling restart mid-crawl cancels run_scraper_task and showed a false

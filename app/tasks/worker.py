@@ -21,6 +21,7 @@ RESUME_BUILD_QUEUE = "resume_build"
 SCRAPER_QUEUE = "job_scraper_crawl"
 SAVE_QUEUE = "job_save"
 AUTOPOST_QUEUE = "job_autopost"
+ENCODING_QUEUE = "job_encoding"
 
 # Per-user save lock: defer instead of sleeping so waiters do not occupy max_jobs.
 # Never abandon a completed analysis — keep deferring until the lock is free.
@@ -169,6 +170,20 @@ async def extract_job(
                 method=method,
                 content_length=content_length,
             )
+            # Vector match engine: encode the job once as soon as raw text exists
+            # (idempotent; re-encoded after Phase A structuring improves the text).
+            try:
+                async with get_session() as session:
+                    _job_row = await JobRepository(session).get_by_extraction_id(job_id)
+                if _job_row:
+                    await enqueue_encode_job(_job_row.id)
+            except Exception as enc_err:
+                logger.warning(
+                    "encode_enqueue_after_extract_failed",
+                    extraction_id=job_id,
+                    error=str(enc_err),
+                )
+
             # Platform / admin extract-only leaves status at EXTRACTED (shared raw JD
             # ready). COMPLETED is reserved for Phase A structuring — never promote
             # scrape-only rows here or the Jobs dots treat structuring as done.
@@ -1428,6 +1443,37 @@ async def check_job_sync_schedule_task(ctx: dict) -> dict:
         clear_logging_context()
 
 
+async def sync_user_job_sources_task(ctx: dict, source_id: str | None = None) -> dict:
+    """Sync per-user registered job boards into their pipelines.
+
+    With ``source_id``: sync that one source (user pressed "Sync now").
+    Without: cron pass over every enabled source past its sync interval.
+    """
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="sync_user_job_sources", source_id=source_id)
+    try:
+        from app.services.job_source_sync import (
+            sync_due_job_sources,
+            sync_user_job_source,
+        )
+
+        if source_id:
+            return await sync_user_job_source(source_id)
+        return await sync_due_job_sources()
+    except Exception as e:
+        logger.exception(
+            "sync_user_job_sources_task_failed", source_id=source_id, error=str(e)
+        )
+        return {"status": "failed", "error": str(e)}
+    finally:
+        clear_logging_context()
+
+
+async def cron_sync_user_job_sources(ctx: dict) -> dict:
+    """Cron wrapper (distinct name from the manually-enqueued task)."""
+    return await sync_user_job_sources_task(ctx)
+
+
 def _redis_settings() -> RedisSettings:
     from app.core.redis_support import arq_redis_settings
 
@@ -1606,12 +1652,190 @@ async def get_scraper_pool() -> ArqRedis:
     return await _get_shared_pool(SCRAPER_QUEUE)
 
 
+async def get_encoding_pool() -> ArqRedis:
+    return await _get_shared_pool(ENCODING_QUEUE)
+
+
+async def enqueue_encode_job(job_id: str) -> bool:
+    """Best-effort enqueue of once-per-job encoding (stable id dedupes)."""
+    try:
+        from app.core.redis_support import pipeline_job_id
+
+        pool = await get_encoding_pool()
+        await pool.enqueue_job(
+            "encode_job_task",
+            job_id,
+            _job_id=pipeline_job_id("encjob", job_id, "job"),
+        )
+        return True
+    except Exception as e:
+        logger.warning("encode_job_enqueue_failed", job_id=job_id, error=str(e))
+        return False
+
+
+async def enqueue_encode_user(user_id: str) -> bool:
+    """Best-effort enqueue of profile encoding (stable id dedupes)."""
+    try:
+        from app.core.redis_support import pipeline_job_id
+
+        pool = await get_encoding_pool()
+        await pool.enqueue_job(
+            "encode_user_task",
+            user_id,
+            _job_id=pipeline_job_id("encuser", user_id, "user"),
+        )
+        return True
+    except Exception as e:
+        logger.warning("encode_user_enqueue_failed", user_id=user_id, error=str(e))
+        return False
+
+
+async def encode_job_task(ctx: dict, job_id: str) -> dict:
+    """Encoding worker: embed one job + extract deterministic signals."""
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="encode_job", valid_job_id=job_id)
+    try:
+        from app.services.encoding_service import encode_job
+
+        ok = await encode_job(job_id)
+        return {"job_id": job_id, "encoded": bool(ok)}
+    except Exception as e:
+        logger.exception("encode_job_task_failed", valid_job_id=job_id, error=str(e))
+        return {"job_id": job_id, "encoded": False, "error": str(e)}
+    finally:
+        clear_logging_context()
+
+
+async def encode_user_task(ctx: dict, user_id: str) -> dict:
+    """Encoding worker: embed one user profile (skips when unchanged)."""
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="encode_user", user_id=user_id)
+    try:
+        from app.services.encoding_service import encode_user
+
+        ok = await encode_user(user_id)
+        return {"user_id": user_id, "encoded": bool(ok)}
+    except Exception as e:
+        logger.exception("encode_user_task_failed", user_id=user_id, error=str(e))
+        return {"user_id": user_id, "encoded": False, "error": str(e)}
+    finally:
+        clear_logging_context()
+
+
+async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
+    """Encode all jobs and users that have no (current-model) encoding yet.
+
+    Resumable: each run processes jobs in id order and skips rows already
+    encoded with the current model version. Triggered from the admin API.
+    """
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="backfill_encodings")
+    from sqlalchemy import select
+
+    from app.models.database import Job as JobModel, JobEncoding, User, UserEncoding
+    from app.services.encoding_service import encode_job, encode_user, model_version
+
+    jobs_done = 0
+    jobs_failed = 0
+    users_done = 0
+    current_model = model_version()
+
+    try:
+        async with get_session() as session:
+            user_rows = await session.execute(
+                select(User.id)
+                .outerjoin(UserEncoding, UserEncoding.user_id == User.id)
+                .where(
+                    (UserEncoding.user_id.is_(None))
+                    | (UserEncoding.model_version != current_model)
+                )
+                .where(User.is_active.is_(True))
+            )
+            user_ids = [row[0] for row in user_rows.all()]
+        for user_id in user_ids:
+            try:
+                await encode_user(user_id, force=True)
+                users_done += 1
+            except Exception as e:
+                logger.warning("backfill_user_encode_failed", user_id=user_id, error=str(e))
+
+        failed_ids: set[str] = set()
+        while True:
+            async with get_session() as session:
+                query = (
+                    select(JobModel.id)
+                    .outerjoin(JobEncoding, JobEncoding.job_id == JobModel.id)
+                    .where(
+                        (JobEncoding.job_id.is_(None))
+                        | (JobEncoding.model_version != current_model)
+                    )
+                    .where(JobModel.status != "blocked")
+                    .order_by(JobModel.id)
+                    .limit(batch_size)
+                )
+                if failed_ids:
+                    query = query.where(JobModel.id.notin_(failed_ids))
+                job_rows = await session.execute(query)
+                job_ids = [row[0] for row in job_rows.all()]
+            if not job_ids:
+                break
+            for job_id in job_ids:
+                try:
+                    if await encode_job(job_id):
+                        jobs_done += 1
+                    else:
+                        jobs_failed += 1
+                        failed_ids.add(job_id)
+                except Exception as e:
+                    jobs_failed += 1
+                    failed_ids.add(job_id)
+                    logger.warning(
+                        "backfill_job_encode_failed", valid_job_id=job_id, error=str(e)
+                    )
+
+        logger.info(
+            "backfill_encodings_complete",
+            users=users_done,
+            jobs=jobs_done,
+            job_failures=jobs_failed,
+        )
+        return {"users": users_done, "jobs": jobs_done, "job_failures": jobs_failed}
+    finally:
+        clear_logging_context()
+
+
+async def _encoding_worker_startup(ctx: dict) -> None:
+    """Load the embedding model once per worker process."""
+    from app.core.redis_support import init_pubsub_redis_pool
+    from app.services.encoding_service import get_embedding_model
+
+    await init_pubsub_redis_pool()
+    # Blocking model load at startup (downloads on first run) so the first
+    # task doesn't pay the cold-start inside its job timeout.
+    await asyncio.get_running_loop().run_in_executor(None, get_embedding_model)
+
+
+class EncodingWorkerSettings:
+    """arq settings for job/profile embedding (CPU model inference)."""
+    functions = [encode_job_task, encode_user_task, backfill_encodings_task]
+    redis_settings = _redis_settings
+    queue_name = ENCODING_QUEUE
+    # Backfill can walk the whole jobs table; give it room.
+    job_timeout = 14400
+    max_jobs = get_settings().encoding_worker_max_jobs
+    max_tries = 2
+    keep_result = _keep_result()
+    on_startup = _encoding_worker_startup
+
+
 class ScraperWorkerSettings:
     """arq settings for the scraper crawl pipeline (subprocess-based Scrapy)."""
-    functions = [run_scraper_task]
+    functions = [run_scraper_task, sync_user_job_sources_task]
     cron_jobs = [
         # Dynamic schedules (interval hours / daily HH:MM + timezone) are evaluated here.
         cron(check_job_sync_schedule_task, minute=set(range(60)), unique=True),
+        # Per-user job sources: twice-hourly pass syncs boards past their interval.
+        cron(cron_sync_user_job_sources, minute={5, 35}, unique=True),
     ]
     redis_settings = _redis_settings
     queue_name = SCRAPER_QUEUE

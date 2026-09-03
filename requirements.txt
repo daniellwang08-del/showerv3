@@ -49,6 +49,12 @@ openpyxl==3.1.5
 gspread==6.1.4
 google-auth==2.38.0
 
+# Vector match engine (non-LLM scoring): CPU sentence-transformers inference.
+# On Linux servers install torch CPU wheels first to avoid the CUDA bundle:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers>=3.3
+numpy>=1.26
+
 # Scraper module (scrapy joblinks integration)
 psycopg2-binary>=2.9
 scrapy>=2.11
