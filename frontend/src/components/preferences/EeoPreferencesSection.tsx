@@ -7,6 +7,7 @@ import { fetchProfileForm, saveUserProfile } from '../../api/profileApi';
 import type { EEOPreferences, ProfileFormData } from '../../types/profile';
 import { GENDER_OPTIONS, RACE_OPTIONS, SEXUAL_ORIENTATION_OPTIONS } from '../../types/profile';
 import { emptyEEO } from '../../utils/profileFormData';
+import { sectionAccents } from '../../ui/tokens';
 
 const EEO_YESNO_FIELDS: Array<{
   key: keyof EEOPreferences;
@@ -128,7 +129,7 @@ export function EeoPreferencesSection() {
   return (
     <SettingsCard
       icon={ShieldCheck}
-      iconClass="bg-gradient-to-br from-sky-500 to-blue-600"
+      iconClass={sectionAccents.sky}
       title="EEO / demographics"
       description="Voluntary answers used to auto-fill application forms (e.g. Workday). Leave Unspecified to skip."
       className="!p-3 sm:!p-3.5 h-full"
@@ -156,7 +157,7 @@ export function EeoPreferencesSection() {
               <select
                 value={eeo.gender ?? ''}
                 onChange={(e) => setEeo((s) => ({ ...s, gender: e.target.value }))}
-                className="h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#0f172a]"
+                className="h-10 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-white/15 dark:bg-[var(--app-input)] dark:text-[var(--app-fg)]"
               >
                 <option value="">Unspecified</option>
                 {GENDER_OPTIONS.map((o) => (
@@ -174,7 +175,7 @@ export function EeoPreferencesSection() {
               <select
                 value={eeo.race ?? ''}
                 onChange={(e) => setEeo((s) => ({ ...s, race: e.target.value }))}
-                className="h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#0f172a]"
+                className="h-10 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-white/15 dark:bg-[var(--app-input)] dark:text-[var(--app-fg)]"
               >
                 <option value="">Unspecified</option>
                 {RACE_OPTIONS.map((o) => (
@@ -192,7 +193,7 @@ export function EeoPreferencesSection() {
               <select
                 value={eeo.sexual_orientation ?? ''}
                 onChange={(e) => setEeo((s) => ({ ...s, sexual_orientation: e.target.value }))}
-                className="h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#0f172a]"
+                className="h-10 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-white/15 dark:bg-[var(--app-input)] dark:text-[var(--app-fg)]"
               >
                 <option value="">Unspecified (decline on forms)</option>
                 {SEXUAL_ORIENTATION_OPTIONS.map((o) => (

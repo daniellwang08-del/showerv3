@@ -7,6 +7,7 @@ import { ResumeImportSection } from './ResumeImportSection';
 import { PageHeader } from '../layout/PageHeader';
 import { PageScrollArea } from '../layout/PageScrollArea';
 import { BrandedLoader } from '../layout/BrandedLoader';
+import { pagePad } from '../../ui/tokens';
 import type { UserProfile } from '../../types/profile';
 import type { ProfileFormData } from '../../types/profile';
 import { computeProfileCompletion } from '../../utils/profileCompletion';
@@ -112,10 +113,9 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
 
   return (
     <PageScrollArea>
-      <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+      <div className={pagePad}>
         <PageHeader
           icon={UserCircle2}
-          gradient="from-blue-600 to-indigo-600"
           title="Your profile"
           description="Structured profile data powers match summaries, dimension scores, and gap analysis when you run job fit checks."
         />

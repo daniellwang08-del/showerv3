@@ -48,7 +48,27 @@ import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { SettingsToggle } from '../components/shared/SettingsToggle';
 import { useJobsStore } from '../stores/jobsStore';
 import { useScraperStore } from '../stores/scraperStore';
+import { pagePad, mutedText, headingText, sectionAccents } from '../ui/tokens';
 
+function PrefsSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3 sm:space-y-4">
+      <div className="px-0.5">
+        <h2 className={`text-sm font-bold tracking-tight ${headingText}`}>{title}</h2>
+        {description ? <p className={`mt-0.5 text-xs ${mutedText}`}>{description}</p> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
 const DEDUP_SLIDER_MAX = 365;
 const DEDUP_PRESETS = [30, 60, 90, 180] as const;
 function resolveStoredPromptText(data: Pick<UserSettings, 'resume_tailoring_prompt_instructions_custom' | 'default_resume_tailoring_prompt_instructions'>) {
@@ -791,10 +811,9 @@ export function MyPreferencesPage() {
 
   return (
     <PageScrollArea>
-      <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+      <div className={pagePad}>
         <PageHeader
           icon={UserCog}
-          gradient="from-slate-700 to-slate-900"
           title="My Preferences"
           description="API keys, match scoring, prompts, EEO, and location — your personal defaults."
         />
@@ -804,21 +823,39 @@ export function MyPreferencesPage() {
         ) : loadError ? (
           <p className="text-sm text-rose-700">{loadError}</p>
         ) : (
-          <div className="space-y-3 sm:space-y-4">
-            <div className="grid items-stretch gap-3 sm:gap-4 xl:grid-cols-2">
-              <EeoPreferencesSection />
-              <AddressPreferencesSection />
-            </div>
+          <div className="space-y-8 sm:space-y-10">
+            <PrefsSection
+              title="Location & identity"
+              description="Countries you want jobs from, plus EEO and address answers used when autofilling applications."
+            >
+              <div className="grid items-stretch gap-3 sm:gap-4 xl:grid-cols-2">
+                <EeoPreferencesSection />
+                <AddressPreferencesSection />
+              </div>
+              {settings && <CountryPreferencesSection settings={settings} onSaved={applySettings} />}
+            </PrefsSection>
 
-            {settings && <CountryPreferencesSection settings={settings} onSaved={applySettings} />}
+            <PrefsSection
+              title="Job sites"
+              description="Company boards to pull openings from automatically."
+            >
+              <JobSourcesSection />
+            </PrefsSection>
 
-            <JobSourcesSection />
+            <PrefsSection
+              title="API keys"
+              description="Your own provider keys override the platform defaults for AI features."
+            >
+              {settings && <ProviderKeysCard settings={settings} onSaved={applySettings} />}
+            </PrefsSection>
 
-            {settings && <ProviderKeysCard settings={settings} onSaved={applySettings} />}
-
+            <PrefsSection
+              title="Matching & pipeline"
+              description="How jobs are scored, prepared, and how far URL submits go."
+            >
             <SettingsCard
               icon={Sparkles}
-              iconClass="bg-gradient-to-br from-teal-500 to-emerald-600"
+              iconClass={sectionAccents.emerald}
               title="Auto-prepare jobs"
               description="When admin inventory already has a job description, prepare matches for you in the background. Off by default."
             >
@@ -867,7 +904,7 @@ export function MyPreferencesPage() {
 
             <SettingsCard
               icon={FileText}
-              iconClass="bg-gradient-to-br from-indigo-500 to-blue-600"
+              iconClass={sectionAccents.indigo}
               title="When you submit job URLs"
               description="Controls how far the pipeline runs after you paste or add a job URL (webapp or extension)."
             >
@@ -940,7 +977,7 @@ export function MyPreferencesPage() {
               {/* Minimum match score */}
               <SettingsCard
                 icon={Target}
-                iconClass="bg-gradient-to-br from-rose-500 to-orange-600"
+                iconClass={sectionAccents.rose}
                 title="Minimum match score"
                 description="Auto-hide jobs scoring below this after AI analysis."
                 actions={
@@ -1046,7 +1083,7 @@ export function MyPreferencesPage() {
               {/* Dedup Preferences */}
               <SettingsCard
                 icon={RefreshCw}
-                iconClass="bg-gradient-to-br from-indigo-500 to-purple-600"
+                iconClass={sectionAccents.indigo}
                 title="Dedup Preferences"
                 description="Recycle window and optional same-company hide rules."
               >
@@ -1214,7 +1251,7 @@ export function MyPreferencesPage() {
 
             <SettingsCard
               icon={Target}
-              iconClass="bg-gradient-to-br from-violet-500 to-fuchsia-600"
+              iconClass={sectionAccents.indigo}
               title="Job match preferences"
               description="Tell the AI what kinds of roles you want. This feeds the User Preferences dimension (12% of match score) during analysis. Work mode (remote/onsite) is ignored for scoring."
             >
@@ -1270,11 +1307,17 @@ export function MyPreferencesPage() {
               )}
             </SettingsCard>
 
+            </PrefsSection>
+
+            <PrefsSection
+              title="Prompts"
+              description="Customize how AI writes tailored resumes and cover letters."
+            >
             <div className="grid items-start gap-3 sm:gap-4 xl:grid-cols-2">
               {/* Resume tailoring prompt */}
               <SettingsCard
                 icon={FileText}
-                iconClass="bg-gradient-to-br from-blue-500 to-indigo-600"
+                iconClass={sectionAccents.sky}
                 title="Resume tailoring prompt"
                 description="How AI writes tailored resume content. In Custom mode, your notes also guide match scoring (target roles, industries, constraints)."
                 actions={<ModeToggle value={promptMode} onChange={handlePromptModeChange} disabled={promptSaving} />}
@@ -1333,7 +1376,7 @@ export function MyPreferencesPage() {
               {/* Cover letter prompt */}
               <SettingsCard
                 icon={Mail}
-                iconClass="bg-gradient-to-br from-violet-500 to-purple-600"
+                iconClass={sectionAccents.indigo}
                 title="Cover letter prompt"
                 description="How AI writes the cover letter body."
                 actions={<ModeToggle value={coverPromptMode} onChange={handleCoverPromptModeChange} disabled={coverPromptSaving} />}
@@ -1389,6 +1432,7 @@ export function MyPreferencesPage() {
                 {coverPromptSaveMsg && <SectionMessage ok={coverPromptSaveOk} text={coverPromptSaveMsg} />}
               </SettingsCard>
             </div>
+            </PrefsSection>
           </div>
         )}
       </div>

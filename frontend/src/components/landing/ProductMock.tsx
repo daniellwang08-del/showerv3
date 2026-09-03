@@ -181,7 +181,7 @@ export function ProductMock() {
     <div className="relative flex h-full min-h-0 w-full flex-col">
       <span
         aria-hidden="true"
-        className="landing-glow-pulse pointer-events-none absolute -inset-8 rounded-[40px] bg-gradient-to-br from-sky-500/35 via-indigo-500/20 to-fuchsia-500/30 opacity-90 blur-3xl"
+        className="landing-glow-pulse pointer-events-none absolute -inset-8 rounded-[40px] bg-gradient-to-br from-sky-500/35 via-blue-500/25 to-indigo-500/30 opacity-90 blur-3xl"
       />
 
       <div className="landing-dash relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-white/12 bg-[#080d1c]/92 shadow-[0_40px_120px_-40px_rgba(2,6,23,0.95)] ring-1 ring-inset ring-white/10 backdrop-blur-2xl sm:rounded-[28px]">
@@ -202,6 +202,10 @@ export function ProductMock() {
 
         <div className="relative z-10 grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[11.5rem_minmax(0,1fr)_17.5rem]">
           <aside className="hidden flex-col border-r border-white/8 bg-white/[0.02] px-3 py-4 lg:flex">
+            <div className="mb-3 flex items-center gap-2 px-2">
+              <img src="/atomspace-logo.png" alt="" className="h-6 w-auto object-contain" />
+              <span className="text-[12px] font-bold tracking-tight text-white">Atomspace</span>
+            </div>
             <p className="px-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/30">
               Workspace
             </p>

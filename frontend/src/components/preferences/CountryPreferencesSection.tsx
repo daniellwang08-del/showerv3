@@ -6,6 +6,7 @@ import { SettingsCard } from '../settings/SettingsCard';
 import { prefsSaveBtnClass } from '../settings/prefsSaveButtonClass';
 import { useJobsStore } from '../../stores/jobsStore';
 import { useScraperStore } from '../../stores/scraperStore';
+import { input, mutedText, sectionAccents } from '../../ui/tokens';
 
 const SOURCE_LABELS: Record<UserSettings['country_preferences_source'], string> = {
   unset: 'Not set — add countries or parse your resume to auto-detect.',
@@ -97,25 +98,25 @@ export function CountryPreferencesSection({
   return (
     <SettingsCard
       icon={Globe2}
-      iconClass="bg-gradient-to-br from-sky-500 to-cyan-600"
+      iconClass={sectionAccents.sky}
       title="Job countries"
       description="Jobs with locations outside these countries are hidden automatically. Leave empty to see jobs from anywhere."
     >
       <div className="space-y-3">
-        <p className="text-xs text-slate-500 dark:text-[#94a3b8]">
+        <p className={`text-xs ${mutedText}`}>
           {SOURCE_LABELS[settings.country_preferences_source]}
         </p>
 
         <div className="flex flex-wrap items-center gap-1.5">
           {selected.length === 0 ? (
-            <span className="rounded-lg border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-500 dark:border-slate-500/40 dark:text-[#94a3b8]">
+            <span className={`rounded-xl border border-dashed border-slate-300 px-2.5 py-1.5 text-xs font-medium ${mutedText}`}>
               No filter — worldwide
             </span>
           ) : (
             selected.map((code) => (
               <span
                 key={code}
-                className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-900 dark:border-sky-400/40 dark:bg-sky-500/15 dark:text-sky-200"
+                className="inline-flex items-center gap-1 rounded-xl border border-sky-200 bg-sky-50 px-2 py-1 text-xs font-semibold text-sky-900 dark:border-sky-400/40 dark:bg-sky-500/15 dark:text-sky-200"
               >
                 {nameByCode.get(code) ?? code}
                 <button
@@ -137,7 +138,7 @@ export function CountryPreferencesSection({
             value=""
             onChange={(e) => handleAdd(e.target.value)}
             disabled={saving || addable.length === 0}
-            className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-60 dark:border-slate-500/40 dark:bg-[#0b1220] dark:text-[#e2e8f0]"
+            className={`max-w-xs ${input}`}
           >
             <option value="" disabled>
               Add a country…

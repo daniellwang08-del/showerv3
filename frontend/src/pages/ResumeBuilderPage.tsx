@@ -294,7 +294,6 @@ export function ResumeBuilderPage() {
       <div className="shrink-0 space-y-3 px-3 pt-3 sm:space-y-3.5 sm:px-5 sm:pt-4">
         <PageHeader
           icon={FileText}
-          gradient="from-blue-600 to-indigo-600"
           title="Resume Builder"
           description="Style and edit this resume. Preview is the real PDF. Changes auto-save after a short pause."
           actions={

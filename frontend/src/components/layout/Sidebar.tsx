@@ -16,6 +16,7 @@ import {
 import { useThemeStore } from '../../stores/themeStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { BrandMark } from '../shared/BrandMark';
+import { brandGradient, borderSubtle, mutedText } from '../../ui/tokens';
 
 interface SidebarProps {
   userEmail?: string;
@@ -40,11 +41,11 @@ function ThemeToggle() {
       aria-checked={isDark}
       aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      className="group flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+      className={`group flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors hover:bg-sky-50 hover:text-sky-900 dark:hover:bg-sky-500/10 dark:hover:text-sky-200 ${mutedText}`}
     >
       <span className="flex items-center gap-3">
         {isDark ? (
-          <Moon size={18} className="text-indigo-400" />
+          <Moon size={18} className="text-sky-400" />
         ) : (
           <Sun size={18} className="text-amber-500" />
         )}
@@ -52,7 +53,7 @@ function ThemeToggle() {
       </span>
       <span
         className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ${
-          isDark ? 'bg-indigo-500' : 'bg-slate-300'
+          isDark ? 'bg-sky-500' : 'bg-slate-300'
         }`}
       >
         <span
@@ -61,7 +62,7 @@ function ThemeToggle() {
           }`}
         >
           {isDark ? (
-            <Moon size={10} className="text-indigo-500" />
+            <Moon size={10} className="text-sky-600" />
           ) : (
             <Sun size={10} className="text-amber-500" />
           )}
@@ -104,11 +105,13 @@ export function Sidebar({
 
   return (
     <aside
-      className={`flex h-full w-60 max-w-full flex-col border-r border-slate-200 bg-white ${className}`.trim()}
+      className={`flex h-full w-60 max-w-full flex-col border-r bg-white dark:bg-[var(--app-card)] ${borderSubtle} ${className}`.trim()}
     >
-      <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-4">
+      <div className={`flex items-center gap-2.5 border-b px-5 py-4 ${borderSubtle}`}>
         <img src="/atomspace-logo.png" alt="Atomspace" className="h-8 w-auto object-contain" />
-        <span className="text-[15px] font-semibold text-slate-800">Atomspace</span>
+        <span className="text-[15px] font-bold tracking-tight text-slate-900 dark:text-white">
+          Atomspace
+        </span>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
@@ -119,10 +122,10 @@ export function Sidebar({
             onClick={() => onNavigate?.()}
             title={label}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                  ? 'bg-sky-50 text-sky-800 dark:bg-sky-500/15 dark:text-sky-200'
+                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-[var(--app-muted)] dark:hover:bg-white/5 dark:hover:text-white'
               }`
             }
           >
@@ -144,23 +147,29 @@ export function Sidebar({
             aria-pressed={agentOpen}
             title="AI Assistant"
             className={[
-              'oneclick-launcher-glow group flex w-full items-center gap-3 overflow-hidden rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition-all',
-              'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300',
+              'group flex w-full items-center gap-3 overflow-hidden rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition-all',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300',
               agentOpen
-                ? 'border-violet-400 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 text-white shadow-md shadow-violet-500/30'
-                : 'border-violet-200 bg-gradient-to-r from-indigo-50 via-violet-50 to-fuchsia-50 text-violet-800 shadow-sm hover:border-violet-300 hover:shadow-md',
+                ? `border-sky-400 bg-gradient-to-r ${brandGradient} text-white shadow-md shadow-sky-500/25`
+                : 'border-sky-200 bg-gradient-to-r from-sky-50 via-blue-50 to-indigo-50 text-sky-900 shadow-sm hover:border-sky-300 hover:shadow-md dark:border-sky-400/30 dark:from-sky-500/10 dark:via-blue-500/10 dark:to-indigo-500/10 dark:text-sky-100',
             ].join(' ')}
           >
             {agentOpen ? (
               <BrandMark mood="idle" size="sm" />
             ) : (
-              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-500 text-white shadow-sm">
+              <span
+                className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${brandGradient} text-white shadow-sm`}
+              >
                 <Sparkles size={15} strokeWidth={2.4} />
               </span>
             )}
             <span className="min-w-0 flex-1">
               <span className="block truncate leading-none">AI Assistant</span>
-              <span className={`mt-1 block truncate text-[11px] font-medium leading-none ${agentOpen ? 'text-white/85' : 'text-violet-600/80'}`}>
+              <span
+                className={`mt-1 block truncate text-[11px] font-medium leading-none ${
+                  agentOpen ? 'text-white/85' : 'text-sky-700/80 dark:text-sky-300/80'
+                }`}
+              >
                 Ask about your jobs
               </span>
             </span>
@@ -168,26 +177,28 @@ export function Sidebar({
         </div>
       ) : null}
 
-      <div className="border-t border-slate-100 px-3 py-2">
+      <div className={`border-t px-3 py-2 ${borderSubtle}`}>
         <ThemeToggle />
       </div>
 
-      <div className="border-t border-slate-100 px-3 py-3">
+      <div className={`border-t px-3 py-3 ${borderSubtle}`}>
         <div className="mb-2 flex items-center gap-2.5 px-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 text-xs font-semibold text-white">
             {initial}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-slate-800">{displayName}</p>
+            <p className="truncate text-sm font-medium text-slate-800 dark:text-white">
+              {displayName}
+            </p>
             {userEmail && userEmail !== displayName && (
-              <p className="truncate text-xs text-slate-500">{userEmail}</p>
+              <p className={`truncate text-xs ${mutedText}`}>{userEmail}</p>
             )}
           </div>
         </div>
         <button
           type="button"
           onClick={onLogout}
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-red-50 hover:text-red-700"
+          className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm transition-colors hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-500/10 dark:hover:text-rose-300 ${mutedText}`}
         >
           <LogOut size={16} className="shrink-0" />
           Sign out

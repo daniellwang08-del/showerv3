@@ -15,6 +15,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { ConfirmDialog } from '../components/extraction/ConfirmDialog';
+import { pagePad } from '../ui/tokens';
 import {
   deleteAdminUser,
   fetchAdminUsers,
@@ -226,10 +227,9 @@ export function UserManagementPage() {
 
   return (
     <PageScrollArea>
-      <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+      <div className={pagePad}>
         <PageHeader
           icon={Users}
-          gradient="from-slate-700 to-slate-900"
           title="User Management"
           description="Select users to promote, demote, enable, disable, or delete. Roles and account status live on each row."
         />

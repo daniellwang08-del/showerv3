@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { brandCtaFill, brandGradient } from '../../ui/tokens';
 
 /**
  * Shared building blocks for the public landing page.
@@ -15,13 +16,15 @@ export const LANDING_CONTAINER = 'mx-auto w-full max-w-[88rem] px-5 sm:px-8';
 /** Padding is intentionally left out of the base button classes so callers pick
  *  a size without needing an important override. */
 export const ctaPrimaryClass =
-  'group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 text-sm font-bold text-white shadow-[0_14px_40px_-12px_rgba(37,99,235,0.9)] transition duration-300 hover:from-sky-400 hover:via-blue-500 hover:to-indigo-500 hover:shadow-[0_18px_50px_-12px_rgba(56,189,248,0.75)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#05070f]';
+  `group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-full ${brandCtaFill} text-sm font-bold text-white shadow-[0_14px_40px_-12px_rgba(37,99,235,0.9)] transition duration-300 hover:shadow-[0_18px_50px_-12px_rgba(56,189,248,0.75)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#05070f]`;
 
 export const ctaGhostClass =
   'inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/5 text-sm font-bold text-white backdrop-blur-md transition duration-300 hover:border-white/40 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#05070f]';
 
 export const CTA_SIZE_LG = 'px-6 py-3';
 export const CTA_SIZE_SM = 'px-5 py-2.5';
+
+export { brandGradient };
 
 export const ACCENTS = {
   sky: {

@@ -36,6 +36,14 @@
 /* Enable class-based dark mode (toggled by adding `.dark` to <html>). */
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --app-bg: #f8fafc;
+  --app-card: #ffffff;
+  --app-input: #ffffff;
+  --app-fg: #0f172a;
+  --app-muted: #64748b;
+}
+
 html,
 body,
 #root {
@@ -51,8 +59,8 @@ body,
 }
 
 body {
-  background: #f8fafc;
-  color: #0f172a;
+  background: var(--app-bg);
+  color: var(--app-fg);
 }
 
 html { color-scheme: light; }
@@ -121,9 +129,21 @@ html.dark { color-scheme: dark; }
   --color-red-50: #2a1212;     --color-red-100: #3a1818;
 }
 
+html.dark {
+  --app-bg: #0b1220;
+  --app-card: #141d31;
+  --app-input: #0f172a;
+  --app-fg: #e2e8f0;
+  --app-muted: #94a3b8;
+}
+
 .dark body {
-  background: #0b1220;
-  color: #e2e8f0;
+  background: var(--app-bg);
+  color: var(--app-fg);
+}
+
+.app-bg {
+  background-color: var(--app-bg);
 }
 
 /* White surfaces -> dark glass. text-white / border-white are left intact

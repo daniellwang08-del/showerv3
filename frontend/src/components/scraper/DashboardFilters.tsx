@@ -4,7 +4,7 @@ import { Check, ChevronDown, Globe, Target } from 'lucide-react';
 /** Fixed-height filter chips — single-line label + non-wrapping flex so the
  *  chevron stays vertically centered at every toolbar width. */
 const FILTER_CONTROL_BASE =
-  'inline-flex h-11 min-h-11 max-h-11 flex-nowrap items-center gap-2 overflow-hidden rounded-lg border px-3 text-sm font-semibold shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/25';
+  'inline-flex h-11 min-h-11 max-h-11 flex-nowrap items-center gap-2 overflow-hidden rounded-xl border px-3 text-sm font-semibold shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500/25';
 
 interface RemoteFilterToggleProps {
   active: boolean;

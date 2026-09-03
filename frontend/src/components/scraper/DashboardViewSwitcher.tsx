@@ -308,11 +308,11 @@ export function DashboardViewSwitcher({
         aria-haspopup="listbox"
         aria-expanded={open}
         className={[
-          'group inline-flex items-center gap-2.5 rounded-xl border py-2 pl-2.5 pr-3 text-sm font-semibold shadow-sm transition-all',
-          'border-slate-200 bg-white',
+          'group inline-flex h-11 min-h-11 items-center gap-2.5 rounded-xl border py-0 pl-2.5 pr-3 text-sm font-semibold shadow-sm transition-all',
+          'border-slate-300 bg-white dark:border-white/15 dark:bg-[var(--app-input)]',
           open
-            ? 'border-slate-300 ring-2 ring-slate-900/5 dark:border-blue-400/40 dark:ring-blue-400/20'
-            : 'hover:border-slate-300 hover:shadow',
+            ? 'border-sky-400 ring-2 ring-sky-500/20 dark:border-sky-400/50 dark:ring-sky-400/20'
+            : 'hover:border-slate-400 hover:shadow',
         ].join(' ')}
       >
         <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${current.accent}`}>

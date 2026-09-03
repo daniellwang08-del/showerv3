@@ -6,6 +6,7 @@ import { BrandedLoader } from '../layout/BrandedLoader';
 import { fetchProfileForm, saveUserProfile } from '../../api/profileApi';
 import type { AddressInfo, ProfileFormData } from '../../types/profile';
 import { emptyAddress } from '../../utils/profileFormData';
+import { sectionAccents } from '../../ui/tokens';
 
 const MAX_LOCAL_PREFS = 30;
 const MAX_PREF_LEN = 120;
@@ -165,7 +166,7 @@ export function AddressPreferencesSection() {
   return (
     <SettingsCard
       icon={MapPin}
-      iconClass="bg-gradient-to-br from-teal-500 to-emerald-600"
+      iconClass={sectionAccents.emerald}
       title="Location preferences"
       description="Your legal / home address for application autofill, plus preferred job locales."
       className="!p-3 sm:!p-3.5 h-full"
@@ -201,7 +202,7 @@ export function AddressPreferencesSection() {
                     placeholder={f.placeholder}
                     autoComplete={f.autoComplete}
                     title={(address[f.key] as string) || f.placeholder}
-                    className="h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#0f172a]"
+                    className="h-10 w-full min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-white/15 dark:bg-[var(--app-input)] dark:text-[var(--app-fg)]"
                   />
                 </label>
               ))}
@@ -232,7 +233,7 @@ export function AddressPreferencesSection() {
                   }
                 }}
                 placeholder="Add a preferred location…"
-                className="h-8 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#0f172a]"
+                className="h-10 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-white/15 dark:bg-[var(--app-input)] dark:text-[var(--app-fg)]"
               />
               <button
                 type="button"

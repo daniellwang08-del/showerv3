@@ -95,20 +95,22 @@ export function AppShell({ userEmail, userName, isAdmin, onLogout }: AppShellPro
 
       {/* min-w keeps the jobs platform usable when the viewport narrows (extension
           side panel drag). Sibling panels must not crush this below the floor. */}
-      <main className="flex min-h-0 min-w-[1100px] flex-1 flex-col overflow-hidden bg-slate-50">
+      <main className="app-bg flex min-h-0 min-w-[1100px] flex-1 flex-col overflow-hidden">
         {/* Mobile top bar */}
-        <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 py-2.5 md:hidden">
+        <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 py-2.5 dark:border-white/10 dark:bg-[var(--app-card)] md:hidden">
           <button
             type="button"
             onClick={() => setMobileNavOpen(true)}
             aria-label="Open navigation"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-white/15 dark:bg-[var(--app-input)] dark:text-[var(--app-fg)]"
           >
             <Menu size={20} />
           </button>
           <div className="flex min-w-0 items-center gap-2">
             <img src="/atomspace-logo.png" alt="" className="h-7 w-auto object-contain" />
-            <span className="truncate text-sm font-semibold text-slate-800">Atomspace</span>
+            <span className="truncate text-sm font-bold tracking-tight text-slate-900 dark:text-white">
+              Atomspace
+            </span>
           </div>
         </div>
 

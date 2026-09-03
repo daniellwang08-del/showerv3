@@ -3,14 +3,14 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { DataManagementAnalyticsSection } from '../components/data-management/DataManagementAnalyticsSection';
 import { JobCleanupSection } from '../components/data-management/JobCleanupSection';
+import { pagePad } from '../ui/tokens';
 
 export function DataAnalysisManagementPage() {
   return (
     <PageScrollArea>
-      <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+      <div className={pagePad}>
         <PageHeader
           icon={ChartColumnIncreasing}
-          gradient="from-slate-700 to-slate-900"
           title="Data Analysis"
           description="Review jobs added to Atomspace, user activity, and scrape platforms — then purge stale or unwanted jobs by age or regex pattern."
         />

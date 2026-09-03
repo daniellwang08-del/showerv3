@@ -1,10 +1,11 @@
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { brandChipGradient, card, headingText, mutedText } from '../../ui/tokens';
 
 interface PageHeaderProps {
   icon: LucideIcon;
-  /** Tailwind gradient classes for the icon chip, e.g. "from-blue-600 to-indigo-600". */
-  gradient: string;
+  /** Tailwind gradient classes for the icon chip, e.g. "from-sky-500 to-indigo-600". */
+  gradient?: string;
   title: string;
   description: string;
   /** Optional right-aligned slot (toolbar, actions, badges). */
@@ -17,13 +18,20 @@ interface PageHeaderProps {
  * A slim gradient-washed band with an accent icon chip, title and one-line
  * description so every page opens with a consistent, self-explaining banner.
  */
-export function PageHeader({ icon: Icon, gradient, title, description, actions, className = '' }: PageHeaderProps) {
+export function PageHeader({
+  icon: Icon,
+  gradient = brandChipGradient,
+  title,
+  description,
+  actions,
+  className = '',
+}: PageHeaderProps) {
   return (
     <header
       // overflow-visible so action menus (Sync All, LLM, etc.) are not clipped at the
       // header edge. z-40 keeps this band above later siblings (stats tiles, filter
       // board) that would otherwise paint over absolutely/fixed-positioned menus.
-      className={`relative z-40 flex flex-col gap-3 overflow-visible rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:gap-4 ${className}`.trim()}
+      className={`relative z-40 flex flex-col gap-3 overflow-visible px-4 py-3 sm:flex-row sm:items-center sm:gap-4 ${card} ${className}`.trim()}
     >
       <span
         aria-hidden
@@ -36,8 +44,10 @@ export function PageHeader({ icon: Icon, gradient, title, description, actions, 
           <Icon size={20} />
         </div>
         <div className="min-w-0">
-          <h1 className="truncate text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{title}</h1>
-          <p className="mt-0.5 text-xs leading-snug text-slate-500 sm:text-sm">{description}</p>
+          <h1 className={`truncate text-lg font-bold tracking-tight sm:text-xl ${headingText}`}>
+            {title}
+          </h1>
+          <p className={`mt-0.5 text-xs leading-snug sm:text-sm ${mutedText}`}>{description}</p>
         </div>
       </div>
       {actions && (

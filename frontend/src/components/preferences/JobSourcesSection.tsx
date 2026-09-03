@@ -17,6 +17,7 @@ import {
 } from '../../api/jobSourcesApi';
 import { SettingsCard } from '../settings/SettingsCard';
 import { SettingsToggle } from '../shared/SettingsToggle';
+import { bodyText, btnPrimary, btnSecondary, input, mutedText, sectionAccents } from '../../ui/tokens';
 
 const ATS_LABELS: Record<string, string> = {
   greenhouse: 'Greenhouse',
@@ -134,7 +135,7 @@ export function JobSourcesSection() {
   return (
     <SettingsCard
       icon={Building2}
-      iconClass="bg-gradient-to-br from-violet-500 to-purple-600"
+      iconClass={sectionAccents.indigo}
       title="My job sites"
       description="Add company job boards (Greenhouse, Lever, Ashby, Workable). New postings are pulled into your pipeline automatically every few hours."
     >
@@ -149,13 +150,13 @@ export function JobSourcesSection() {
             }}
             placeholder="https://boards.greenhouse.io/company"
             disabled={adding || sources.length >= maxSources}
-            className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-60 dark:border-slate-500/40 dark:bg-[#0b1220] dark:text-[#e2e8f0]"
+            className={input}
           />
           <button
             type="button"
             onClick={() => void handleAdd()}
             disabled={!url.trim() || adding || sources.length >= maxSources}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className={`shrink-0 ${btnPrimary}`}
           >
             {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
             Add
@@ -163,17 +164,17 @@ export function JobSourcesSection() {
         </div>
 
         {sources.length >= maxSources ? (
-          <p className="text-xs text-slate-500 dark:text-[#94a3b8]">
+          <p className={`text-xs ${mutedText}`}>
             Limit reached ({maxSources} sites). Remove one to add another.
           </p>
         ) : null}
 
         {loading ? (
-          <p className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-[#94a3b8]">
+          <p className={`flex items-center gap-1.5 text-sm ${mutedText}`}>
             <Loader2 size={14} className="animate-spin" /> Loading job sites…
           </p>
         ) : sources.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-center text-sm text-slate-500 dark:border-slate-500/40 dark:text-[#94a3b8]">
+          <p className={`rounded-xl border border-dashed border-slate-300 px-3 py-4 text-center text-sm ${mutedText}`}>
             No job sites yet. Paste a company board URL above to start pulling their
             openings automatically.
           </p>
@@ -184,18 +185,18 @@ export function JobSourcesSection() {
               return (
                 <li
                   key={source.id}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 dark:border-slate-500/30 dark:bg-[#0b1220]"
+                  className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 dark:border-white/10 dark:bg-[var(--app-input)]"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-semibold text-slate-800 dark:text-[#e2e8f0]">
+                      <span className={`truncate text-sm font-semibold ${bodyText}`}>
                         {source.name}
                       </span>
-                      <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                      <span className="shrink-0 rounded-lg bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-500/15 dark:text-sky-300">
                         {ATS_LABELS[source.ats_type] ?? source.ats_type}
                       </span>
                     </div>
-                    <p className="truncate text-xs text-slate-500 dark:text-[#94a3b8]">
+                    <p className={`truncate text-xs ${mutedText}`}>
                       {source.last_error ? (
                         <span className="text-rose-600 dark:text-rose-400">
                           Last sync failed: {source.last_error}
@@ -226,7 +227,7 @@ export function JobSourcesSection() {
                       onClick={() => void handleSync(source)}
                       disabled={busy || !source.enabled}
                       title="Sync now"
-                      className="rounded-lg border border-slate-300 p-1.5 text-slate-600 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-500/40 dark:text-[#94a3b8] dark:hover:bg-slate-500/10"
+                      className={`${btnSecondary} !h-9 !w-9 !px-0`}
                     >
                       {busy ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -239,7 +240,7 @@ export function JobSourcesSection() {
                       onClick={() => void handleDelete(source)}
                       disabled={busy}
                       title="Remove"
-                      className="rounded-lg border border-rose-200 p-1.5 text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-400/40 dark:text-rose-400 dark:hover:bg-rose-500/10"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-200 text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-400/40 dark:text-rose-400 dark:hover:bg-rose-500/10"
                     >
                       <Trash2 size={14} />
                     </button>

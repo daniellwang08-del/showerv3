@@ -50,6 +50,7 @@ import {
   updateSystemSettings,
   validateLlmKey,
 } from '../api/adminApi';
+import { headingText, input as CONTROL, mutedText, pagePad } from '../ui/tokens';
 import type {
   BlockedDomain,
   LlmDiscoveredModel,
@@ -186,19 +187,16 @@ const BREAKER_THRESHOLD_OPTIONS: { value: string; label: string; description: st
  * Avoid `dark:text-slate-100/300` — this app inverts the slate scale in dark mode,
  * so those classes become dark-on-dark and labels disappear.
  */
-const FIELD_LABEL =
-  'text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-[#e2e8f0]';
-const FIELD_HINT = 'text-xs leading-snug text-slate-600 dark:text-[#94a3b8]';
-const CONTROL =
-  'h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-200 dark:border-slate-500/40 dark:bg-[#0b1220] dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-900/40';
+const FIELD_LABEL = `text-xs font-semibold uppercase tracking-wide ${headingText}`;
+const FIELD_HINT = `text-xs leading-snug ${mutedText}`;
 const CONTROL_ROW =
-  'flex h-9 w-full shrink-0 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 dark:border-slate-500/40 dark:bg-[#0b1220]';
+  'flex h-10 w-full shrink-0 items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-2.5 dark:border-white/15 dark:bg-[var(--app-input)]';
 const BADGE_DB =
   'rounded px-1 py-px text-[10px] font-bold normal-case tracking-normal bg-amber-100 text-amber-800 dark:bg-amber-500/30 dark:text-amber-100';
 const BADGE_ENV =
-  'rounded px-1 py-px text-[10px] font-bold normal-case tracking-normal bg-slate-200 text-slate-700 dark:bg-white/15 dark:text-[#e2e8f0]';
+  'rounded px-1 py-px text-[10px] font-bold normal-case tracking-normal bg-slate-200 text-slate-700 dark:bg-white/15 dark:text-[var(--app-fg)]';
 const SURFACE_CARD =
-  'rounded-xl border border-slate-200/80 bg-slate-50/80 dark:border-slate-500/30 dark:bg-[#0b1220]/70';
+  'rounded-xl border border-slate-200/80 bg-slate-50/80 dark:border-white/10 dark:bg-[var(--app-input)]';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -741,10 +739,9 @@ export function SystemSettingsPage() {
 
   return (
     <PageScrollArea>
-      <div className="w-full space-y-4 px-3 py-4 sm:space-y-5 sm:px-5 sm:py-5">
+      <div className={pagePad}>
         <PageHeader
           icon={Cpu}
-          gradient="from-violet-600 to-indigo-700"
           title="System Settings"
           description="Platform defaults, LLM keys, job sync, and ops. Changes save automatically; API keys require a successful validation before they are stored."
         />

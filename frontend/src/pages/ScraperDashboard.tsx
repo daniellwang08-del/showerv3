@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useScraperStore } from '../stores/scraperStore';
 import { useJobsStore } from '../stores/jobsStore';
 import { apiClient } from '../api/client';
+import { btnPrimary, pagePad, toolbar } from '../ui/tokens';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
@@ -241,10 +242,9 @@ export function ScraperDashboard() {
 
   return (
     <PageScrollArea alwaysShowScrollbar={false}>
-    <div className="w-full min-w-0 space-y-4 px-2 py-4 sm:space-y-5 sm:px-3 sm:py-5 lg:px-4">
+    <div className={pagePad}>
       <PageHeader
         icon={Briefcase}
-        gradient="from-slate-700 to-slate-900"
         title="Jobs Dashboard"
         description={
           isAdmin
@@ -258,7 +258,7 @@ export function ScraperDashboard() {
                 type="button"
                 onClick={openResumeAiCenter}
                 title="Paste a job description and tailor your resume with AI"
-                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-blue-300/60 bg-gradient-to-r from-blue-600 to-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:shadow-md sm:flex-none"
+                className={`${btnPrimary} min-w-0 flex-1 sm:flex-none`}
               >
                 <Wand2 size={15} className="shrink-0" />
                 <span className="truncate">Tailor with AI</span>
@@ -362,7 +362,7 @@ export function ScraperDashboard() {
         />
       </div>
 
-      <div className="relative z-10 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 dark:border-slate-700 dark:bg-[#141d31]">
+      <div className={`relative z-10 ${toolbar}`}>
         {/*
           Toolbar rules:
           - Dividers are fixed-height (h-8), never self-stretch — stretch made the

@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle,
+  Briefcase,
   ExternalLink,
   ArrowUpDown,
   Wifi,
@@ -170,16 +171,16 @@ const RIGHT_ALIGN_KEYS = new Set<ColumnKey>([
 /** Shared height with MatchScoreBadge so status squares align visually. */
 const MATCH_BADGE_H = 28;
 
-const ROW_H = 'h-10 sm:h-11 lg:h-[52px] max-h-10 sm:max-h-11 lg:max-h-[52px]';
+const ROW_H = 'h-11 sm:h-12 lg:h-[56px] max-h-11 sm:max-h-12 lg:max-h-[56px]';
 
 /** Responsive cell padding — tighter on smaller screens, roomier on large. */
 const CELL =
-  'min-w-0 px-1 py-1 sm:px-1.5 sm:py-1.5 lg:px-2.5 lg:py-1.5 xl:px-3 align-middle overflow-hidden text-[11px] sm:text-xs lg:text-sm';
+  'min-w-0 px-1.5 py-1.5 sm:px-2 sm:py-2 lg:px-3 lg:py-2 xl:px-3.5 align-middle overflow-hidden text-xs sm:text-[13px] lg:text-sm';
 const CELL_END = `${CELL} text-right`;
 const CELL_CLIP = 'min-w-0 max-w-full truncate';
 
 const TH_CELL =
-  'min-w-0 px-1 py-2.5 sm:px-1.5 sm:py-3 lg:px-2.5 lg:py-3.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.06em] sm:tracking-[0.08em] overflow-hidden text-ellipsis whitespace-nowrap text-slate-700 dark:text-[#e8eef7]';
+  'sticky top-0 z-[1] min-w-0 px-1.5 py-3 sm:px-2 sm:py-3.5 lg:px-3 lg:py-3.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.06em] sm:tracking-[0.08em] overflow-hidden text-ellipsis whitespace-nowrap text-slate-600 dark:text-[var(--app-muted)]';
 
 // ---------------------------------------------------------------------------
 // Resume / Cover letter column helpers
@@ -2074,7 +2075,7 @@ export function ScraperJobsTable({
   /* ── Loading / empty states ─────────────────────────────────────────── */
   if (loading) {
     return (
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[var(--app-card)]">
         <BrandedLoader compact label="Loading jobs…" />
       </div>
     );
@@ -2082,17 +2083,20 @@ export function ScraperJobsTable({
 
   if (jobs.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden dark:border-slate-700 dark:bg-[#141d31]">
-        <div className="p-12 text-center">
-          <p className="text-slate-500 text-sm dark:text-slate-400">
-            {isAdmin ? 'No jobs match this view.' : 'No scraped jobs found.'}
+      <div className="overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-white shadow-sm dark:border-white/15 dark:bg-[var(--app-card)]">
+        <div className="flex flex-col items-center px-6 py-14 text-center">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-sm">
+            <Briefcase size={22} />
+          </div>
+          <p className="text-sm font-semibold text-slate-800 dark:text-white">
+            {isAdmin ? 'No jobs match this view' : 'No jobs here yet'}
           </p>
-          <p className="text-slate-400 text-xs mt-1 dark:text-slate-500">
+          <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-slate-500 dark:text-[var(--app-muted)]">
             {isAdmin
               ? 'Try another board filter, or Sync All if the pool is empty.'
               : canSync
-                ? 'Hit "Sync All" to start scraping.'
-                : 'Jobs will appear here once an admin runs a sync.'}
+                ? 'Hit “Sync All” to pull listings, or add a company board under My Preferences → My job sites.'
+                : 'Jobs will appear here once an admin runs a sync, or after you add a job site in Preferences.'}
           </p>
         </div>
       </div>
@@ -2140,7 +2144,7 @@ export function ScraperJobsTable({
         </p>
       )}
 
-      <div className="w-full min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#141d31]">
+      <div className="w-full min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[var(--app-card)]">
         <table className="w-full table-fixed border-collapse">
             <colgroup>
               {columns.map((col, i) => (
@@ -2149,7 +2153,7 @@ export function ScraperJobsTable({
             </colgroup>
             {/* ── Header ── */}
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-100 dark:border-slate-500/70 dark:bg-[#243148]">
+              <tr className="border-b border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-[var(--app-input)]">
                 {columns.map((col) => (
                   <th
                     key={col.key}

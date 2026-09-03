@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { input, inputSolid, mutedText } from '../../ui/tokens';
 
 interface SearchInputProps {
   value: string;
@@ -31,7 +32,9 @@ export function SearchInput({
   const [local, setLocal] = useState(value);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  useEffect(() => { setLocal(value); }, [value]);
+  useEffect(() => {
+    setLocal(value);
+  }, [value]);
 
   const handleChange = (v: string) => {
     setLocal(v);
@@ -45,29 +48,21 @@ export function SearchInput({
     <div className={`relative ${className}`}>
       <Icon
         size={16}
-        className={[
-          'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 transition-colors',
-          solid ? 'text-slate-500' : 'text-slate-400',
-        ].join(' ')}
+        className={`pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 transition-colors ${mutedText}`}
       />
       <input
         type="text"
         value={local}
         onChange={(e) => handleChange(e.target.value)}
         placeholder={placeholder}
-        className={[
-          'w-full rounded-lg text-sm placeholder:text-slate-400 transition-colors focus:outline-none',
-          solid
-            ? 'h-11 border border-slate-300 bg-white pl-9 pr-9 font-medium text-slate-800 shadow-sm hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25'
-            : 'border border-slate-200 bg-white pl-9 pr-8 py-2 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20',
-        ].join(' ')}
+        className={solid ? inputSolid : `${input} pl-9 pr-8`}
       />
       {local && (
         <button
           type="button"
           onClick={() => handleChange('')}
           aria-label="Clear"
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          className={`absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1 hover:bg-slate-100 dark:hover:bg-white/10 ${mutedText}`}
         >
           <X size={14} />
         </button>
