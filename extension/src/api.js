@@ -49,9 +49,41 @@ async function authHeaders(extra = {}) {
   return headers;
 }
 
-export async function apiFetch(path, { method = "GET", body, headers } = {}) {
+function parseJsonBody(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function errorDetail(data, fallback) {
+  if (data && typeof data === "object" && data.detail != null) {
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail) && data.detail.length) {
+      const first = data.detail[0];
+      if (typeof first === "string") return first;
+      if (first && typeof first === "object" && first.msg) return String(first.msg);
+    }
+    try {
+      return JSON.stringify(data.detail);
+    } catch {
+      /* fall through */
+    }
+  }
+  if (typeof data === "string" && data.trim()) return data.trim();
+  return fallback;
+}
+
+// Never send the dashboard cookie. Chrome can attach it to extension fetches
+// that match host_permissions, and an expired/revoked cookie would 401 a
+// request that already has a valid Bearer token.
+const FETCH_CREDS = { credentials: "omit" };
+
+export async function apiFetch(path, { method = "GET", body, headers, auth = true } = {}) {
   const url = await buildUrl(path);
-  const h = await authHeaders(headers || {});
+  const h = auth ? await authHeaders(headers || {}) : { ...(headers || {}) };
   let payload = body;
   if (body !== undefined && !(body instanceof FormData)) {
     h["Content-Type"] = "application/json";
@@ -59,35 +91,26 @@ export async function apiFetch(path, { method = "GET", body, headers } = {}) {
   }
   let res;
   try {
-    res = await fetch(url, { method, headers: h, body: payload });
+    res = await fetch(url, { method, headers: h, body: payload, ...FETCH_CREDS });
   } catch (networkErr) {
     throw new ApiError(
       "Cannot reach the backend. Open the Atomspace dashboard in this browser first (it syncs the server address), or set DEFAULT_BACKEND_URL in extension/config.js.",
       0
     );
   }
-  if (res.status === 401) {
-    await clearToken();
-    throw new ApiError("Your session expired. Please sign in again.", 401);
-  }
   if (res.status === 204) return null;
-  const text = await res.text();
-  let data = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
+  const data = parseJsonBody(await res.text());
+  if (res.status === 401) {
+    // Sign-in itself returns 401 for bad credentials / unknown account.
+    // That is not an expired session — the user is trying to create one.
+    if (auth) {
+      await clearToken();
+      throw new ApiError("Your session expired. Please sign in again.", 401);
     }
+    throw new ApiError(errorDetail(data, "Sign in failed."), 401);
   }
   if (!res.ok) {
-    const detail =
-      data && typeof data === "object" && data.detail
-        ? typeof data.detail === "string"
-          ? data.detail
-          : JSON.stringify(data.detail)
-        : `Request failed (${res.status})`;
-    throw new ApiError(detail, res.status);
+    throw new ApiError(errorDetail(data, `Request failed (${res.status})`), res.status);
   }
   return data;
 }
@@ -96,9 +119,12 @@ export async function apiFetch(path, { method = "GET", body, headers } = {}) {
 
 export async function login(backendUrl, email, password) {
   await setBackendUrl(backendUrl);
+  // Drop any leftover bearer so a previous expiry cannot ride along on login.
+  await clearToken();
   const data = await apiFetch("/auth/login", {
     method: "POST",
     body: { email, password, long_lived: true },
+    auth: false,
   });
   if (!data || !data.access_token) {
     throw new ApiError("Login did not return a token. Update the backend to the latest version.", 500);
@@ -280,7 +306,7 @@ export async function downloadResumeFile(jobId, fileType) {
   const h = await authHeaders({});
   let res;
   try {
-    res = await fetch(url, { method: "GET", headers: h });
+    res = await fetch(url, { method: "GET", headers: h, ...FETCH_CREDS });
   } catch (networkErr) {
     // Name the origin actually in use so the hint stays correct across
     // domain changes and localhost switches.
@@ -373,7 +399,7 @@ export async function chatStream(reqBody, { onDelta, onDone, onError, signal }) 
   const h = await authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" });
   let res;
   try {
-    res = await fetch(url, { method: "POST", headers: h, body: JSON.stringify(reqBody), signal });
+    res = await fetch(url, { method: "POST", headers: h, body: JSON.stringify(reqBody), signal, ...FETCH_CREDS });
   } catch (err) {
     if (err && err.name === "AbortError") return;
     onError && onError("Cannot reach the backend.");
@@ -473,6 +499,7 @@ export async function streamResumeAiChat(messages, lastJobDescription, { onStage
       headers: h,
       body: JSON.stringify({ messages, last_job_description: lastJobDescription }),
       signal,
+      ...FETCH_CREDS,
     });
   } catch (err) {
     if (err && err.name === "AbortError") throw err;

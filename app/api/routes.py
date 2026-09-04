@@ -207,6 +207,18 @@ def _extract_bearer_token(request: Request) -> str | None:
     return None
 
 
+def _request_access_token(request: Request) -> str | None:
+    """Pick the JWT for this request.
+
+    An explicit `Authorization: Bearer` header always wins. Chrome may attach
+    the web app's `access_token` cookie to extension fetches (host permissions),
+    and that cookie can be expired or revoked even while the extension is
+    signing in with a fresh bearer token. Cookie-only clients (the dashboard)
+    are unchanged: they do not send Bearer.
+    """
+    return _extract_bearer_token(request) or request.cookies.get("access_token")
+
+
 def _auth_cookie_params(*, max_age: int | None = None) -> dict:
     """Shared flags for access_token cookies across apex + logs subdomain."""
     from urllib.parse import urlparse
@@ -238,8 +250,7 @@ def _auth_cookie_params(*, max_age: int | None = None) -> dict:
 
 
 async def get_current_user(request: Request):
-    # Prefer the cookie (web app); fall back to a Bearer header (extension/API clients).
-    token = request.cookies.get("access_token") or _extract_bearer_token(request)
+    token = _request_access_token(request)
     if not token:
         logger.warning("auth_required_missing_token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -415,11 +426,15 @@ async def login(request: LoginRequest, response: Response, http_request: Request
             data={"sub": user.email, "user_id": user.id},
             expires_delta=expires_delta,
         )
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            **_auth_cookie_params(max_age=expires_seconds),
-        )
+        # Bearer-only clients (the extension) must not overwrite or share the
+        # dashboard cookie: logging out of the web app would denylist the same
+        # jti and immediately invalidate the extension session.
+        if not request.long_lived:
+            response.set_cookie(
+                key="access_token",
+                value=access_token,
+                **_auth_cookie_params(max_age=expires_seconds),
+            )
         
         logger.info("user_login_success", email=user.email, user_id=user.id, long_lived=request.long_lived)
         
@@ -438,7 +453,7 @@ async def login(request: LoginRequest, response: Response, http_request: Request
 async def logout(response: Response, request: Request):
     # Revoke the presented token so a stolen/long-lived bearer (extension tokens
     # live up to 30 days) cannot be reused after logout. Best-effort/fail-open.
-    token = request.cookies.get("access_token") or _extract_bearer_token(request)
+    token = _request_access_token(request)
     if token:
         payload = AuthService.verify_token(token)
         if payload and payload.get("jti"):

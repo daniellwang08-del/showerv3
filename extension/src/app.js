@@ -932,6 +932,9 @@ async function init() {
     await consumePendingAskSelection();
     await consumePendingAppSubmitted();
   } else {
+    // Token without a user (or the reverse) is a leftover, not a session.
+    if (token) await store.clearToken();
+    if (user) await store.clearCurrentUser();
     const remembered = await store.getRememberedEmail();
     loginDraft = { email: remembered, password: "", remember: Boolean(remembered), showPassword: false };
     setState({ view: "login" });
@@ -1039,6 +1042,8 @@ async function goHome() {
     reportNotice: null,
     homeTab: "hub",
     applyListContext: null,
+    loginLoading: false,
+    error: null,
   });
   // Paint cached lists immediately, then sync in the background. refreshReadyList /
   // refreshQueuedList run independently of loadQueue's warm-poll skip.
