@@ -35,18 +35,18 @@ export function HeroSection() {
 
       <PointerGlow>
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)] xl:grid-cols-[minmax(22rem,28rem)_minmax(0,1fr)]">
-            <div className="flex flex-col justify-center px-5 py-8 sm:px-8 lg:px-10 lg:py-6 xl:pl-14">
+          <div className="grid min-h-0 flex-1 lg:grid-cols-2 lg:items-center">
+            <div className="flex flex-col justify-center px-5 py-8 sm:px-8 lg:px-10 lg:py-8 xl:pl-16 xl:pr-8">
               <Eyebrow icon={<Sparkles size={12} strokeWidth={3} />}>
                 AI job application workspace
               </Eyebrow>
 
-              <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl xl:text-[3.35rem]">
+              <h1 className="mt-5 max-w-xl text-4xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl xl:text-[3.5rem]">
                 <span className="block">Stop hunting jobs.</span>
                 <HeadlineCycle words={HEADLINE_WORDS} />
               </h1>
 
-              <p className="mt-5 max-w-md text-pretty text-[15px] leading-relaxed text-white/70 sm:text-base">
+              <p className="mt-5 max-w-lg text-pretty text-[15px] leading-relaxed text-white/70 sm:text-base xl:text-[17px]">
                 Atomspace finds fresh roles across five job networks, reads the real posting from the
                 hiring system, scores it against your profile, then writes the tailored résumé and
                 cover letter. When you are ready to apply, it fills the form for you.
@@ -67,14 +67,14 @@ export function HeroSection() {
                 </a>
               </div>
 
-              <dl className="mt-8 grid grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+              <dl className="mt-8 grid max-w-xl grid-cols-2 gap-x-5 gap-y-5 sm:grid-cols-4">
                 {HERO_STATS.map((stat) => (
                   <CountStat key={stat.label} value={stat.value} label={stat.label} hint={stat.hint} />
                 ))}
               </dl>
             </div>
 
-            <div className="relative flex min-h-[32rem] min-w-0 flex-1 flex-col px-4 pb-4 sm:min-h-[38rem] sm:px-6 lg:min-h-0 lg:py-4 lg:pl-2 lg:pr-5 xl:pr-7">
+            <div className="relative mx-auto flex min-h-[28rem] w-full max-w-xl min-w-0 flex-col px-4 pb-6 sm:min-h-[32rem] sm:px-6 lg:mx-0 lg:h-[min(34rem,calc(100dvh-7rem))] lg:max-w-none lg:min-h-0 lg:py-6 lg:pl-4 lg:pr-8 xl:pr-12">
               <ProductMock />
             </div>
           </div>

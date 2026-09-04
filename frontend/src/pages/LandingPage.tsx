@@ -40,7 +40,7 @@ export function LandingPage() {
 
   return (
     <div className="w-full bg-[#05070f] text-white antialiased">
-      {/* First viewport is header + hero only, so the product mock can fill the remaining screen. */}
+      {/* First viewport: header + hero — copy and product mock share the screen 50/50. */}
       <div className="flex min-h-dvh flex-col">
         <LandingHeader />
         <HeroSection />

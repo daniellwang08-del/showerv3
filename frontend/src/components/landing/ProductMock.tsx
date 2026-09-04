@@ -15,9 +15,8 @@ import { TOASTS } from './landingMedia';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
 /**
- * Full-viewport product window for the hero. The floating toast, autofill
- * chip and job cards from the old mock now live inside a real app chrome
- * (sidebar · board · inspector) so every component fills the remaining screen.
+ * Compact product window for the hero (about half the first viewport).
+ * Sidebar + jobs board stay in chrome; pipeline/autofill float as overlays.
  */
 
 const TILES = [
@@ -200,34 +199,37 @@ export function ProductMock() {
           </span>
         </div>
 
-        <div className="relative z-10 grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[11.5rem_minmax(0,1fr)_17.5rem]">
-          <aside className="hidden flex-col border-r border-white/8 bg-white/[0.02] px-3 py-4 lg:flex">
-            <div className="mb-3 flex items-center gap-2 px-2">
+        <div className="relative z-10 grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[4.25rem_minmax(0,1fr)] xl:grid-cols-[9.5rem_minmax(0,1fr)]">
+          <aside className="hidden flex-col border-r border-white/8 bg-white/[0.02] px-2 py-3 lg:flex xl:px-3 xl:py-4">
+            <div className="mb-3 flex items-center justify-center gap-2 px-1 xl:justify-start xl:px-2">
               <img src="/atomspace-logo.png" alt="" className="h-6 w-auto object-contain" />
-              <span className="text-[12px] font-bold tracking-tight text-white">Atomspace</span>
+              <span className="hidden text-[12px] font-bold tracking-tight text-white xl:inline">
+                Atomspace
+              </span>
             </div>
-            <p className="px-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/30">
+            <p className="hidden px-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/30 xl:block">
               Workspace
             </p>
-            <nav className="mt-3 space-y-1" aria-hidden="true">
+            <nav className="mt-2 space-y-1 xl:mt-3" aria-hidden="true">
               {SIDE_NAV.map((item) => {
                 const Icon = item.icon;
                 return (
                   <span
                     key={item.label}
-                    className={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[12px] font-bold ${
+                    title={item.label}
+                    className={`flex items-center justify-center gap-2.5 rounded-xl px-2 py-2 text-[12px] font-bold xl:justify-start xl:px-2.5 ${
                       item.active
                         ? 'bg-sky-400/15 text-white shadow-[inset_0_0_0_1px_rgba(125,211,252,0.25)]'
                         : 'text-white/40'
                     }`}
                   >
                     <Icon size={14} strokeWidth={2.4} />
-                    {item.label}
+                    <span className="hidden xl:inline">{item.label}</span>
                   </span>
                 );
               })}
             </nav>
-            <div className="mt-auto rounded-xl border border-white/8 bg-white/[0.04] px-2.5 py-2.5">
+            <div className="mt-auto hidden rounded-xl border border-white/8 bg-white/[0.04] px-2.5 py-2.5 xl:block">
               <p className="text-[11px] font-black text-white">Alex Rivera</p>
               <p className="text-[10px] font-semibold text-white/40">Profile synced</p>
             </div>
@@ -326,36 +328,34 @@ export function ProductMock() {
             </div>
           </div>
 
-          <aside className="hidden min-h-0 flex-col gap-3 overflow-hidden border-l border-white/8 bg-white/[0.02] p-4 lg:flex">
-            <div>
-              <p className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-300">
-                <span className="landing-pulse-dot h-1.5 w-1.5 rounded-full bg-emerald-300" />
-                Live pipeline
-              </p>
-              <div className="space-y-2">
-                {TOASTS.map((toast, index) => (
-                  <div
-                    key={toast.title}
-                    className={`rounded-xl border px-3 py-2.5 transition duration-500 ${
-                      toastIndex === index
-                        ? 'border-emerald-300/30 bg-emerald-400/10'
-                        : 'border-white/8 bg-white/[0.03] opacity-55'
-                    }`}
-                  >
-                    <p className="text-[12px] font-black text-white">{toast.title}</p>
-                    <p className="mt-0.5 text-[10px] font-semibold text-white/50">{toast.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="mt-auto">
-              <AutofillCard fill={fill} />
-            </div>
-          </aside>
         </div>
 
-        <div className="relative z-10 shrink-0 border-t border-white/8 p-3 lg:hidden">
-          <AutofillCard fill={fill} />
+        <div className="pointer-events-none absolute bottom-3 right-3 z-20 w-[min(100%-1.5rem,15rem)] sm:bottom-4 sm:right-4">
+          <div className="pointer-events-auto shadow-[0_18px_40px_-20px_rgba(2,6,23,0.9)]">
+            <AutofillCard fill={fill} />
+          </div>
+        </div>
+
+        <div className="pointer-events-none absolute left-3 top-[4.25rem] z-20 hidden w-44 sm:block lg:left-auto lg:right-3 lg:top-14">
+          <div className="pointer-events-none space-y-1.5 rounded-xl border border-white/10 bg-[#080d1c]/88 p-2 backdrop-blur-md">
+            <p className="mb-1 flex items-center gap-1.5 px-1 text-[9px] font-black uppercase tracking-[0.14em] text-emerald-300">
+              <span className="landing-pulse-dot h-1.5 w-1.5 rounded-full bg-emerald-300" />
+              Live pipeline
+            </p>
+            {TOASTS.slice(0, 2).map((toast, index) => (
+              <div
+                key={toast.title}
+                className={`rounded-lg border px-2 py-1.5 transition duration-500 ${
+                  toastIndex === index
+                    ? 'border-emerald-300/30 bg-emerald-400/10'
+                    : 'border-white/8 bg-white/[0.03] opacity-55'
+                }`}
+              >
+                <p className="truncate text-[11px] font-black text-white">{toast.title}</p>
+                <p className="truncate text-[9px] font-semibold text-white/50">{toast.detail}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
