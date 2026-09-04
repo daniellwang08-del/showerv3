@@ -319,8 +319,13 @@ def _entry_text(entry: dict) -> str:
 async def encode_user(user_id: str, *, force: bool = False) -> bool:
     """Compute and upsert the UserEncoding row. Skips when profile unchanged."""
     async with get_session() as session:
+        # Profile JSON/text columns are deferred — must undefer under AsyncSession.
         user = (
-            await session.execute(select(User).where(User.id == user_id))
+            await session.execute(
+                select(User)
+                .options(undefer("*"))
+                .where(User.id == user_id)
+            )
         ).scalar_one_or_none()
         if not user:
             logger.warning("encode_user_missing_user", user_id=user_id)

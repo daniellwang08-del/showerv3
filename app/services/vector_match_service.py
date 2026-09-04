@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 from sqlalchemy import select
+from sqlalchemy.orm import undefer
 
 from app.core.logging import get_logger
 from app.models.database import JobEncoding, UserEncoding
@@ -208,22 +209,42 @@ def _build_narrative(
 async def load_encodings(
     job_id: str, user_id: str
 ) -> tuple[JobEncoding | None, UserEncoding | None]:
+    """Load encoding rows with vector blobs eagerly undeferred.
+
+    ``title_vec`` / ``content_vec`` / ``experience_vec`` / ``prefs_vec`` are
+    ``deferred()`` columns. Sync attribute access under AsyncSession raises
+    MissingGreenlet (sqlalchemy xd2s) — never "touch" them; undefer in the
+    SELECT instead.
+    """
     async with get_session() as session:
         job_enc = (
             await session.execute(
-                select(JobEncoding).where(JobEncoding.job_id == job_id)
+                select(JobEncoding)
+                .options(
+                    undefer(JobEncoding.title_vec),
+                    undefer(JobEncoding.content_vec),
+                )
+                .where(JobEncoding.job_id == job_id)
             )
         ).scalar_one_or_none()
         user_enc = (
             await session.execute(
-                select(UserEncoding).where(UserEncoding.user_id == user_id)
+                select(UserEncoding)
+                .options(
+                    undefer(UserEncoding.experience_vec),
+                    undefer(UserEncoding.prefs_vec),
+                )
+                .where(UserEncoding.user_id == user_id)
             )
         ).scalar_one_or_none()
+        # Materialize deferred bytes while the session is still open so
+        # score_pair can run after the context exits.
         if job_enc is not None:
-            # Touch deferred vector columns inside the session.
-            _ = job_enc.title_vec, job_enc.content_vec
+            job_enc.title_vec = job_enc.title_vec
+            job_enc.content_vec = job_enc.content_vec
         if user_enc is not None:
-            _ = user_enc.experience_vec, user_enc.prefs_vec
+            user_enc.experience_vec = user_enc.experience_vec
+            user_enc.prefs_vec = user_enc.prefs_vec
         return job_enc, user_enc
 
 
