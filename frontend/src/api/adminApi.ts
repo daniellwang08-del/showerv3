@@ -90,6 +90,66 @@ export async function fetchMatchEngineShadowStats(days = 30): Promise<MatchEngin
   return data;
 }
 
+export interface MatchDiagnoseStep {
+  step: string;
+  duration_ms: number;
+  detail?: Record<string, unknown>;
+}
+
+export interface MatchDiagnoseResult {
+  ok: boolean;
+  job_id: string;
+  user_id: string;
+  match_engine_setting?: string;
+  errors: string[];
+  warnings: string[];
+  job?: Record<string, unknown> | null;
+  extraction?: Record<string, unknown> | null;
+  profile?: { has_profile: boolean; profile_chars: number };
+  encodings?: Record<string, unknown>;
+  clearance_gate?: { hit: boolean; phrase?: string | null };
+  stored_match?: Record<string, unknown> | null;
+  vector_result?: {
+    overall_score: number;
+    dimension_scores: Record<string, number>;
+    summary?: string;
+    strengths?: string[];
+    gaps?: string[];
+    recommendation?: string;
+    requires_security_clearance?: boolean;
+    explain?: Record<string, unknown>;
+  } | null;
+  timing?: { total_ms: number; steps: MatchDiagnoseStep[] };
+  recent_logs?: Array<{
+    created_at: string | null;
+    level: string;
+    event: string;
+    service: string;
+    duration_ms?: number | null;
+    message?: string | null;
+    user_id?: string | null;
+    payload?: Record<string, unknown> | null;
+  }>;
+  persisted_analysis?: Record<string, unknown>;
+  job_text_chars?: number;
+  inline_encode?: { job_ok: boolean; user_ok: boolean };
+}
+
+export async function diagnoseMatchEngine(body: {
+  job_id: string;
+  user_id?: string;
+  encode_if_missing?: boolean;
+  include_logs?: boolean;
+  log_hours?: number;
+  persist?: boolean;
+}): Promise<MatchDiagnoseResult> {
+  const { data } = await apiClient.post<MatchDiagnoseResult>(
+    '/admin/match-engine/diagnose',
+    body,
+  );
+  return data;
+}
+
 export async function fetchOpsOverview(): Promise<OpsOverview> {
   const { data } = await apiClient.get<OpsOverview>('/admin/ops/overview');
   return data;

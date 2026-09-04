@@ -206,6 +206,48 @@ class JobExtractionRepository:
             .values(is_job_posting=is_job_posting, updated_at=_utcnow())
         )
 
+    async def patch_display_metadata(
+        self,
+        job_id: str,
+        job_data: JobDescriptionSchema,
+    ) -> None:
+        """Fill empty display columns without forcing COMPLETED status."""
+        existing = await self.get_by_id(job_id)
+        if not existing:
+            return
+        limits = _JOB_EXTRACTION_LIMITS
+        values: dict = {"updated_at": _utcnow()}
+
+        title = _truncate_job_title_for_db(job_data.title, limits["title"])
+        if title and not clean_optional_job_field(existing.title):
+            values["title"] = title
+        company = _truncate_for_db(job_data.company, limits["company"])
+        if company and not clean_optional_job_field(existing.company):
+            values["company"] = company
+        location = _truncate_for_db(job_data.location, limits["location"])
+        if location and not clean_optional_job_field(existing.location):
+            values["location"] = location
+        employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])
+        if employment_type and not clean_optional_job_field(existing.employment_type):
+            values["employment_type"] = employment_type
+        salary_range = _truncate_for_db(job_data.salary_range, limits["salary_range"])
+        if salary_range and not clean_optional_job_field(existing.salary_range):
+            values["salary_range"] = salary_range
+        work_mode = _truncate_for_db(job_data.work_mode, limits["work_mode"])
+        if work_mode and not clean_optional_job_field(existing.work_mode):
+            values["work_mode"] = work_mode
+        remote_policy = _truncate_for_db(job_data.remote_policy, limits["remote_policy"])
+        if remote_policy and not clean_optional_job_field(existing.remote_policy):
+            values["remote_policy"] = remote_policy
+        if not (existing.description or "").strip() and (job_data.description or "").strip():
+            values["description"] = job_data.description
+
+        if len(values) <= 1:
+            return
+        await self._session.execute(
+            update(JobExtraction).where(JobExtraction.id == job_id).values(**values)
+        )
+
     async def save_raw_plain_text(self, job_id: str, plain_text: str) -> None:
         await self._session.execute(
             update(JobExtraction)
@@ -359,7 +401,9 @@ class JobRepository:
             recovered = infer_title_from_description(job_data.description)
             if recovered:
                 job.title = _truncate_for_db(recovered, 500) or job.title
-        job.company = _truncate_for_db(job_data.company, 500) or job.company
+        new_company = _truncate_for_db(job_data.company, 500)
+        if new_company:
+            job.company = new_company
         job.location = _truncate_for_db(job_data.location, 500) or job.location
         job.work_mode = _truncate_for_db(job_data.work_mode, 20) or job.work_mode
         old_vj = (job.description or "").strip()

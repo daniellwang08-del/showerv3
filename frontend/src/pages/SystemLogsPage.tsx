@@ -16,6 +16,7 @@ import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { Pagination } from '../components/shared/Pagination';
 import { ConfirmDialog } from '../components/extraction/ConfirmDialog';
 import {
+  fetchJobLogTimeline,
   fetchRequestTimeline,
   fetchSystemLogStats,
   fetchSystemLogs,
@@ -94,6 +95,7 @@ export function SystemLogsPage() {
   const [pathContains, setPathContains] = useState('');
   const [eventContains, setEventContains] = useState('');
   const [requestId, setRequestId] = useState('');
+  const [jobId, setJobId] = useState('');
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
 
@@ -106,6 +108,7 @@ export function SystemLogsPage() {
   const [error, setError] = useState('');
 
   const [timelineId, setTimelineId] = useState<string | null>(null);
+  const [timelineKind, setTimelineKind] = useState<'request' | 'job'>('request');
   const [timeline, setTimeline] = useState<SystemLogEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [selected, setSelected] = useState<SystemLogEvent | null>(null);
@@ -130,6 +133,7 @@ export function SystemLogsPage() {
             path_contains: pathContains.trim() || undefined,
             event_contains: eventContains.trim() || undefined,
             request_id: requestId.trim() || undefined,
+            job_id: jobId.trim() || undefined,
           }),
           fetchSystemLogStats(hours),
         ]);
@@ -145,7 +149,7 @@ export function SystemLogsPage() {
         setRefreshing(false);
       }
     },
-    [page, perPage, hours, level, category, service, pathContains, eventContains, requestId],
+    [page, perPage, hours, level, category, service, pathContains, eventContains, requestId, jobId],
   );
 
   useEffect(() => {
@@ -153,6 +157,7 @@ export function SystemLogsPage() {
   }, [load]);
 
   const openTimeline = async (rid: string) => {
+    setTimelineKind('request');
     setTimelineId(rid);
     setTimeline([]);
     setTimelineLoading(true);
@@ -160,6 +165,21 @@ export function SystemLogsPage() {
       setTimeline(await fetchRequestTimeline(rid));
     } catch (e: unknown) {
       setError(errDetail(e, 'Failed to load request timeline'));
+      setTimelineId(null);
+    } finally {
+      setTimelineLoading(false);
+    }
+  };
+
+  const openJobTimeline = async (jid: string) => {
+    setTimelineKind('job');
+    setTimelineId(jid);
+    setTimeline([]);
+    setTimelineLoading(true);
+    try {
+      setTimeline(await fetchJobLogTimeline(jid, Math.max(hours, 72)));
+    } catch (e: unknown) {
+      setError(errDetail(e, 'Failed to load job timeline'));
       setTimelineId(null);
     } finally {
       setTimelineLoading(false);
@@ -356,6 +376,21 @@ export function SystemLogsPage() {
                 }}
               />
             </label>
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 sm:col-span-2">
+              Job ID
+              <input
+                className={`${input} mt-1 font-mono text-xs`}
+                value={jobId}
+                placeholder="filter match / extract / encode for one job"
+                onChange={(e) => setJobId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setPage(1);
+                    void load({ soft: true });
+                  }
+                }}
+              />
+            </label>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -372,12 +407,33 @@ export function SystemLogsPage() {
               type="button"
               className={btnGhost}
               onClick={() => {
+                setEventContains('job_match_analysis_timing');
+                setPage(1);
+                void load({ soft: true });
+              }}
+            >
+              Match timings only
+            </button>
+            <button
+              type="button"
+              className={btnGhost}
+              disabled={!jobId.trim()}
+              onClick={() => void openJobTimeline(jobId.trim())}
+            >
+              <Clock3 size={14} />
+              Job timeline
+            </button>
+            <button
+              type="button"
+              className={btnGhost}
+              onClick={() => {
                 setLevel('');
                 setCategory('');
                 setService('');
                 setPathContains('');
                 setEventContains('');
                 setRequestId('');
+                setJobId('');
                 setPage(1);
               }}
             >
@@ -572,6 +628,20 @@ export function SystemLogsPage() {
                   View full request timeline
                 </button>
               ) : null}
+              {selected.job_id ? (
+                <button
+                  type="button"
+                  className={btnSecondary}
+                  onClick={() => {
+                    const jid = selected.job_id!;
+                    setSelected(null);
+                    void openJobTimeline(jid);
+                  }}
+                >
+                  <Clock3 size={16} />
+                  View job analysis timeline
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -582,7 +652,9 @@ export function SystemLogsPage() {
           <div className={`${card} max-h-[85vh] w-full max-w-3xl overflow-hidden shadow-xl`}>
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-white/10">
               <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-white">Request timeline</p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                  {timelineKind === 'job' ? 'Job timeline' : 'Request timeline'}
+                </p>
                 <p className="font-mono text-xs text-sky-700 dark:text-sky-300">{timelineId}</p>
               </div>
               <button
@@ -601,7 +673,9 @@ export function SystemLogsPage() {
                   Loading timeline…
                 </div>
               ) : timeline.length === 0 ? (
-                <p className={`py-8 text-center ${mutedText}`}>No events for this request id.</p>
+                <p className={`py-8 text-center ${mutedText}`}>
+                  No events for this {timelineKind === 'job' ? 'job' : 'request'} id.
+                </p>
               ) : (
                 <ol className="relative space-y-3 border-l border-slate-200 pl-4 dark:border-white/10">
                   {timeline.map((ev) => (

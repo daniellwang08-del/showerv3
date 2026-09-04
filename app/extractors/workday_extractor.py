@@ -201,9 +201,21 @@ class WorkdayExtractor(BaseExtractor):
             "workday_cxs_extraction_success",
             url=source_url, content_length=len(plain_text),
         )
+        job_info = (data.get("jobPostingInfo") or {}) if isinstance(data, dict) else {}
+        if not isinstance(job_info, dict):
+            job_info = {}
         return ExtractionResult(
             success=True, method=self.method,
-            raw_content=plain_text, structured_data=None,
+            raw_content=plain_text,
+            structured_data={
+                "title": (job_info.get("title") or data.get("title") or "").strip() or None,
+                "location": (
+                    job_info.get("location").strip()
+                    if isinstance(job_info.get("location"), str) and job_info.get("location").strip()
+                    else None
+                ),
+                "employment_type": job_info.get("timeType") or job_info.get("jobType") or None,
+            },
         )
 
     async def _fetch_html_fallback(self, source_url: str) -> ExtractionResult:

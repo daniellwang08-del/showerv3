@@ -18,6 +18,17 @@ export async function fetchRequestTimeline(requestId: string): Promise<SystemLog
   return data;
 }
 
+export async function fetchJobLogTimeline(
+  jobId: string,
+  hours = 72,
+): Promise<SystemLogEvent[]> {
+  const { data } = await apiClient.get<SystemLogEvent[]>(
+    `/admin/logs/job/${encodeURIComponent(jobId)}`,
+    { params: { hours } },
+  );
+  return data;
+}
+
 export async function fetchSystemLogStats(hours = 24): Promise<SystemLogStats> {
   const { data } = await apiClient.get<SystemLogStats>('/admin/logs/stats', {
     params: { hours },

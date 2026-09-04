@@ -122,18 +122,6 @@ def _score_experience(
     return base
 
 
-def _score_title(job_title_vec: np.ndarray | None, user_title_vecs: list) -> int:
-    if job_title_vec is None or not user_title_vecs:
-        return 50
-    best: float | None = None
-    for item in user_title_vecs:
-        vec = b64_to_vec(item.get("vec")) if isinstance(item, dict) else None
-        cos = _cos(job_title_vec, vec)
-        if cos is not None and (best is None or cos > best):
-            best = cos
-    return _cos_to_score(best, _TITLE_POINTS)
-
-
 def _score_education(job: JobEncoding, has_degree: bool | None) -> int:
     if job.degree_required is True:
         if has_degree is True:
@@ -248,10 +236,84 @@ async def load_encodings(
         return job_enc, user_enc
 
 
-def score_pair(job_enc: JobEncoding, user_enc: UserEncoding) -> dict:
+def _best_title_cosine(
+    job_title_vec: np.ndarray | None, user_title_vecs: list
+) -> float | None:
+    if job_title_vec is None or not user_title_vecs:
+        return None
+    best: float | None = None
+    for item in user_title_vecs:
+        vec = b64_to_vec(item.get("vec")) if isinstance(item, dict) else None
+        cos = _cos(job_title_vec, vec)
+        if cos is not None and (best is None or cos > best):
+            best = cos
+    return best
+
+
+def _build_explain(
+    *,
+    job_enc: JobEncoding,
+    user_enc: UserEncoding,
+    dims: dict[str, int],
+    overall: int,
+    matched: list[str],
+    missing_required: list[str],
+    cos_experience: float | None,
+    cos_prefs: float | None,
+    cos_title: float | None,
+    job_skills: dict[str, str],
+    user_skills: dict[str, float],
+) -> dict:
+    contributions = {
+        key: {
+            "score": int(dims.get(key, 0)),
+            "weight": float(weight),
+            "weighted": round(float(dims.get(key, 0)) * float(weight), 2),
+        }
+        for key, weight in MATCH_DIMENSION_WEIGHTS.items()
+    }
+    return {
+        "model_version": job_enc.model_version,
+        "cosines": {
+            "experience_to_content": (
+                round(cos_experience, 4) if cos_experience is not None else None
+            ),
+            "prefs_to_content": round(cos_prefs, 4) if cos_prefs is not None else None,
+            "best_title": round(cos_title, 4) if cos_title is not None else None,
+        },
+        "skills": {
+            "job_skill_count": len(job_skills),
+            "user_skill_count": len(user_skills),
+            "job_skills": dict(sorted(job_skills.items())),
+            "matched": sorted(matched),
+            "missing_required": sorted(missing_required),
+        },
+        "signals": {
+            "years_required": job_enc.years_required,
+            "years_experience": user_enc.years_experience,
+            "degree_required": job_enc.degree_required,
+            "has_degree": user_enc.has_degree,
+            "requires_security_clearance": bool(job_enc.requires_security_clearance),
+        },
+        "dimension_contributions": contributions,
+        "overall_from_weights": overall,
+        "calibration": {
+            "experience_points": list(_EXPERIENCE_POINTS),
+            "title_points": list(_TITLE_POINTS),
+            "industry_points": list(_INDUSTRY_POINTS),
+            "prefs_points": list(_PREFS_POINTS),
+            "note": (
+                "experience_match and industry_domain_match both derive from "
+                "experience_to_content cosine (different calibration curves)."
+            ),
+        },
+    }
+
+
+def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = False) -> dict:
     """Score one user x job pair from loaded encodings (sync, pure math)."""
     if job_enc.requires_security_clearance:
-        return {
+        result = {
             "overall_score": 0,
             "dimension_scores": {k: 0 for k in MATCH_DIMENSION_WEIGHTS},
             "summary": "Requires security clearance - not scored",
@@ -260,13 +322,27 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding) -> dict:
             "recommendation": "poor_match",
             "requires_security_clearance": True,
         }
+        if explain:
+            result["explain"] = {
+                "model_version": job_enc.model_version,
+                "gated": "security_clearance",
+                "signals": {
+                    "requires_security_clearance": True,
+                    "years_required": job_enc.years_required,
+                    "years_experience": user_enc.years_experience,
+                },
+            }
+        return result
 
     job_title_vec = bytes_to_vec(job_enc.title_vec)
     job_content_vec = bytes_to_vec(job_enc.content_vec)
     experience_vec = bytes_to_vec(user_enc.experience_vec)
     prefs_vec = bytes_to_vec(user_enc.prefs_vec)
+    title_vecs = list(user_enc.title_vecs or [])
 
     cos_experience = _cos(experience_vec, job_content_vec)
+    cos_prefs = _cos(prefs_vec, job_content_vec) if prefs_vec is not None else None
+    cos_title = _best_title_cosine(job_title_vec, title_vecs)
     job_skills = dict(job_enc.skills or {})
     user_skills = {k: float(v) for k, v in dict(user_enc.skills or {}).items()}
 
@@ -276,22 +352,18 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding) -> dict:
         "experience_match": _score_experience(
             job_enc, cos_experience, user_enc.years_experience
         ),
-        "job_title_similarity": _score_title(
-            job_title_vec, list(user_enc.title_vecs or [])
-        ),
+        "job_title_similarity": _cos_to_score(cos_title, _TITLE_POINTS),
         "industry_domain_match": _cos_to_score(cos_experience, _INDUSTRY_POINTS),
         "education": _score_education(job_enc, user_enc.has_degree),
         "user_preferences": (
-            _cos_to_score(_cos(prefs_vec, job_content_vec), _PREFS_POINTS)
-            if prefs_vec is not None
-            else 50
+            _cos_to_score(cos_prefs, _PREFS_POINTS) if cos_prefs is not None else 50
         ),
     }
     overall = _compute_overall(dims)
     summary, strengths, gaps = _build_narrative(
         overall, dims, matched, missing_required, job_enc, user_enc.years_experience
     )
-    return {
+    result = {
         "overall_score": overall,
         "dimension_scores": dims,
         "summary": summary,
@@ -300,9 +372,26 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding) -> dict:
         "recommendation": _recommendation(overall),
         "requires_security_clearance": False,
     }
+    if explain:
+        result["explain"] = _build_explain(
+            job_enc=job_enc,
+            user_enc=user_enc,
+            dims=dims,
+            overall=overall,
+            matched=matched,
+            missing_required=missing_required,
+            cos_experience=cos_experience,
+            cos_prefs=cos_prefs,
+            cos_title=cos_title,
+            job_skills=job_skills,
+            user_skills=user_skills,
+        )
+    return result
 
 
-async def compute_vector_match(job_id: str, user_id: str) -> dict | None:
+async def compute_vector_match(
+    job_id: str, user_id: str, *, explain: bool = False
+) -> dict | None:
     """Load encodings and score. None when encodings are missing/stale."""
     job_enc, user_enc = await load_encodings(job_id, user_id)
     if job_enc is None or user_enc is None:
@@ -323,4 +412,4 @@ async def compute_vector_match(job_id: str, user_id: str) -> dict | None:
             user_model=user_enc.model_version,
         )
         return None
-    return score_pair(job_enc, user_enc)
+    return score_pair(job_enc, user_enc, explain=explain)

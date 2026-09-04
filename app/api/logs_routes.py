@@ -110,6 +110,7 @@ async def list_logs(
     path_contains: str | None = None,
     event_contains: str | None = None,
     user_id: str | None = None,
+    job_id: str | None = None,
     hours: int = Query(24, ge=1, le=720),
     since: str | None = None,
     current_user: dict = Depends(require_admin),
@@ -126,6 +127,8 @@ async def list_logs(
         filters.append(SystemLogEvent.request_id == request_id.strip())
     if user_id:
         filters.append(SystemLogEvent.user_id == user_id.strip())
+    if job_id:
+        filters.append(SystemLogEvent.job_id == job_id.strip())
     if path_contains:
         filters.append(SystemLogEvent.path.ilike(f"%{path_contains.strip()}%"))
     if event_contains:
@@ -173,6 +176,38 @@ async def request_timeline(
                 await session.execute(
                     select(SystemLogEvent)
                     .where(SystemLogEvent.request_id == rid)
+                    .order_by(SystemLogEvent.created_at.asc())
+                    .limit(500)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_to_out(r) for r in rows]
+
+
+@router.get("/job/{job_id}", response_model=list[LogEventOut])
+async def job_timeline(
+    job_id: str,
+    hours: int = Query(72, ge=1, le=720),
+    current_user: dict = Depends(require_admin),
+) -> list[LogEventOut]:
+    """Chronological log timeline for one job (match analysis, extract, encode, …)."""
+    jid = job_id.strip()
+    if not jid:
+        raise HTTPException(status_code=400, detail="job_id required")
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        hours=max(1, min(hours, 720))
+    )
+    async with get_session() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(SystemLogEvent)
+                    .where(
+                        SystemLogEvent.job_id == jid,
+                        SystemLogEvent.created_at >= cutoff,
+                    )
                     .order_by(SystemLogEvent.created_at.asc())
                     .limit(500)
                 )

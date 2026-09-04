@@ -156,7 +156,7 @@ class ExtractionService:
                 )
         # ────────────────────────────────────────────────────────────────────
 
-        candidates: list[tuple[str, str]] = []
+        candidates: list[tuple[str, str, dict | None]] = []
         last_error: str | None = None
 
         try:
@@ -165,7 +165,7 @@ class ExtractionService:
                 logger.info("ashby_api_attempt", job_id=job_id)
                 result = await self.ashby_api_extractor.extract(url)
                 if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value))
+                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
                 elif result.error:
                     last_error = result.error
                     logger.warning("ashby_api_extract_failed", job_id=job_id, error=result.error)
@@ -175,7 +175,7 @@ class ExtractionService:
                 logger.info("lever_api_attempt", job_id=job_id)
                 result = await self.lever_api_extractor.extract(url)
                 if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value))
+                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
                 elif result.error:
                     last_error = result.error
                     logger.warning("lever_api_extract_failed", job_id=job_id, error=result.error)
@@ -185,7 +185,7 @@ class ExtractionService:
                 logger.info("workable_api_attempt", job_id=job_id)
                 result = await self.workable_api_extractor.extract(url)
                 if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value))
+                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
                 elif result.error:
                     last_error = result.error
                     logger.warning("workable_api_extract_failed", job_id=job_id, error=result.error)
@@ -195,7 +195,7 @@ class ExtractionService:
                 logger.info("workday_api_attempt", job_id=job_id)
                 result = await self.workday_extractor.extract(url)
                 if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value))
+                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
                 elif result.error:
                     last_error = result.error
                     logger.warning("workday_extract_failed", job_id=job_id, error=result.error)
@@ -205,7 +205,7 @@ class ExtractionService:
                 logger.info("wttj_algolia_attempt", job_id=job_id)
                 wttj_result = await self.wttj_algolia_extractor.extract(url)
                 if wttj_result.success and wttj_result.raw_content:
-                    candidates.append((wttj_result.raw_content, ExtractionMethod.API_VENDOR.value))
+                    candidates.append((wttj_result.raw_content, ExtractionMethod.API_VENDOR.value, wttj_result.structured_data))
                 elif wttj_result.error:
                     last_error = wttj_result.error
                     logger.warning("wttj_algolia_extract_failed", job_id=job_id, error=wttj_result.error)
@@ -216,13 +216,13 @@ class ExtractionService:
                 logger.info("greenhouse_api_attempt", job_id=job_id, url=url)
                 gh_early = await self.greenhouse_board_extractor.extract(url)
                 if gh_early.success and gh_early.raw_content:
-                    candidates.append((gh_early.raw_content, ExtractionMethod.API_VENDOR.value))
+                    candidates.append((gh_early.raw_content, ExtractionMethod.API_VENDOR.value, gh_early.structured_data))
                 elif gh_early.error:
                     last_error = gh_early.error
                     logger.warning("greenhouse_api_extract_failed", job_id=job_id, error=gh_early.error)
 
             # Strong vendor hit — skip HTTP + browser (avoids repeating slow failures).
-            early_best, early_method = pick_best_text(candidates)
+            early_best, early_method, early_structured = pick_best_text(candidates)
             if len(early_best) >= 500:
                 logger.info(
                     "extraction_early_vendor_success",
@@ -234,6 +234,7 @@ class ExtractionService:
                 if validation.is_valid:
                     return await self._cache_and_mark_extracted(
                         job_id, url, early_best, early_method,
+                        structured_data=early_structured,
                     )
                 logger.warning(
                     "extraction_early_vendor_failed_validation",
@@ -274,7 +275,7 @@ class ExtractionService:
                 if parse_ashby_jid_from_url(url):
                     emb = await self.ashby_api_extractor.extract_embedded(url, html_content)
                     if emb.success and emb.raw_content:
-                        candidates.append((emb.raw_content, ExtractionMethod.API_VENDOR.value))
+                        candidates.append((emb.raw_content, ExtractionMethod.API_VENDOR.value, emb.structured_data))
                     elif emb.error:
                         logger.debug("ashby_embedded_not_used", job_id=job_id, error=emb.error)
 
@@ -282,7 +283,7 @@ class ExtractionService:
                 if await self.greenhouse_board_extractor.can_extract(url, html_content):
                     gh = await self.greenhouse_board_extractor.extract(url, html_content)
                     if gh.success and gh.raw_content:
-                        candidates.append((gh.raw_content, ExtractionMethod.API_VENDOR.value))
+                        candidates.append((gh.raw_content, ExtractionMethod.API_VENDOR.value, gh.structured_data))
                     elif gh.error:
                         logger.debug("greenhouse_board_api_not_used", job_id=job_id, error=gh.error)
 
@@ -291,7 +292,7 @@ class ExtractionService:
                     if await self.lever_api_extractor.can_extract(url, html_content):
                         lev_emb = await self.lever_api_extractor.extract(url, html_content)
                         if lev_emb.success and lev_emb.raw_content:
-                            candidates.append((lev_emb.raw_content, ExtractionMethod.API_VENDOR.value))
+                            candidates.append((lev_emb.raw_content, ExtractionMethod.API_VENDOR.value, lev_emb.structured_data))
                         elif lev_emb.error:
                             logger.debug("lever_embedded_not_used", job_id=job_id, error=lev_emb.error)
 
@@ -300,7 +301,7 @@ class ExtractionService:
                     if await self.workable_api_extractor.can_extract(url, html_content):
                         wk_emb = await self.workable_api_extractor.extract(url, html_content)
                         if wk_emb.success and wk_emb.raw_content:
-                            candidates.append((wk_emb.raw_content, ExtractionMethod.API_VENDOR.value))
+                            candidates.append((wk_emb.raw_content, ExtractionMethod.API_VENDOR.value, wk_emb.structured_data))
                         elif wk_emb.error:
                             logger.debug("workable_embedded_not_used", job_id=job_id, error=wk_emb.error)
 
@@ -308,14 +309,14 @@ class ExtractionService:
                 if await self.api_extractor.can_extract(url, html_content):
                     ld_result = await self.api_extractor.extract(url, html_content)
                     if ld_result.success and ld_result.raw_content:
-                        candidates.append((ld_result.raw_content, ExtractionMethod.API_JSON_LD.value))
+                        candidates.append((ld_result.raw_content, ExtractionMethod.API_JSON_LD.value, ld_result.structured_data))
                     elif ld_result.error:
                         last_error = ld_result.error
 
                 # 6. Static HTML (full page text)
                 html_result = await self.html_extractor.extract(url, html_content)
                 if html_result.success and html_result.raw_content:
-                    candidates.append((html_result.raw_content, ExtractionMethod.STATIC_HTML.value))
+                    candidates.append((html_result.raw_content, ExtractionMethod.STATIC_HTML.value, html_result.structured_data))
                 elif html_result.error:
                     last_error = html_result.error
 
@@ -328,7 +329,7 @@ class ExtractionService:
             if needs_browser and await self.browser_extractor.can_extract(url):
                 browser_result = await self.browser_extractor.extract(url)
                 if browser_result.success and browser_result.raw_content:
-                    candidates.append((browser_result.raw_content, ExtractionMethod.BROWSER_RENDER.value))
+                    candidates.append((browser_result.raw_content, ExtractionMethod.BROWSER_RENDER.value, browser_result.structured_data))
 
                     # Re-run vendor extractors on browser-rendered HTML - many
                     # SPAs only reveal Greenhouse/Lever/Ashby tokens after JS runs.
@@ -337,29 +338,29 @@ class ExtractionService:
                     if await self.greenhouse_board_extractor.can_extract(url, rendered_html):
                         gh_br = await self.greenhouse_board_extractor.extract(url, rendered_html)
                         if gh_br.success and gh_br.raw_content:
-                            candidates.append((gh_br.raw_content, ExtractionMethod.API_VENDOR.value))
+                            candidates.append((gh_br.raw_content, ExtractionMethod.API_VENDOR.value, gh_br.structured_data))
 
                     if not is_lever_job_url(url):
                         if await self.lever_api_extractor.can_extract(url, rendered_html):
                             lev_br = await self.lever_api_extractor.extract(url, rendered_html)
                             if lev_br.success and lev_br.raw_content:
-                                candidates.append((lev_br.raw_content, ExtractionMethod.API_VENDOR.value))
+                                candidates.append((lev_br.raw_content, ExtractionMethod.API_VENDOR.value, lev_br.structured_data))
 
                     if parse_ashby_jid_from_url(url):
                         ash_br = await self.ashby_api_extractor.extract_embedded(url, rendered_html)
                         if ash_br.success and ash_br.raw_content:
-                            candidates.append((ash_br.raw_content, ExtractionMethod.API_VENDOR.value))
+                            candidates.append((ash_br.raw_content, ExtractionMethod.API_VENDOR.value, ash_br.structured_data))
 
                     if not is_workable_job_url(url) and parse_workable_shortcode_from_url(url):
                         if await self.workable_api_extractor.can_extract(url, rendered_html):
                             wk_br = await self.workable_api_extractor.extract(url, rendered_html)
                             if wk_br.success and wk_br.raw_content:
-                                candidates.append((wk_br.raw_content, ExtractionMethod.API_VENDOR.value))
+                                candidates.append((wk_br.raw_content, ExtractionMethod.API_VENDOR.value, wk_br.structured_data))
 
                     if await self.api_extractor.can_extract(url, rendered_html):
                         ld_br = await self.api_extractor.extract(url, rendered_html)
                         if ld_br.success and ld_br.raw_content:
-                            candidates.append((ld_br.raw_content, ExtractionMethod.API_JSON_LD.value))
+                            candidates.append((ld_br.raw_content, ExtractionMethod.API_JSON_LD.value, ld_br.structured_data))
                 elif browser_result.error:
                     last_error = browser_result.error
             elif needs_browser:
@@ -369,7 +370,7 @@ class ExtractionService:
                 )
 
             # 8. Pick best result and cache
-            best_text, best_method = pick_best_text(candidates)
+            best_text, best_method, best_structured = pick_best_text(candidates)
 
             if not best_text:
                 final_message = "All extraction methods failed"
@@ -391,10 +392,11 @@ class ExtractionService:
                         )
                         return await self._cache_and_mark_extracted(
                             job_id, url, fallback_text, fallback_method,
+                            structured_data=None,
                         )
                 return await self._mark_failed(job_id, f"Validation failed: {', '.join(validation.errors)}")
 
-            return await self._cache_and_mark_extracted(job_id, url, best_text, best_method)
+            return await self._cache_and_mark_extracted(job_id, url, best_text, best_method, structured_data=best_structured)
 
         except Exception as e:
             logger.error("extraction_service_failed", job_id=job_id, error=str(e))
@@ -447,6 +449,7 @@ class ExtractionService:
 
     async def _cache_and_mark_extracted(
         self, job_id: str, url: str, plain_text: str, method: str,
+        structured_data: dict | None = None,
     ) -> dict:
         content = ExtractionContent.create(
             plain_text=plain_text,
@@ -463,6 +466,28 @@ class ExtractionService:
             # Persist the original plain text permanently so any user can run
             # analysis later without re-fetching the job posting.
             await repository.save_raw_plain_text(job_id, plain_text)
+
+        try:
+            from app.services.job_metadata_hydrator import hydrate_job_metadata
+            from app.storage.repository import JobRepository
+            async with get_session() as session:
+                job = await JobRepository(session).get_by_extraction_id(job_id)
+                job_pk = job.id if job else None
+            if job_pk:
+                await hydrate_job_metadata(
+                    job_id=job_pk,
+                    extraction_id=job_id,
+                    plain_text=plain_text,
+                    source_url=url,
+                    structured_data=structured_data,
+                    mark_completed=False,
+                )
+        except Exception as hydrate_err:
+            logger.warning(
+                "extraction_metadata_hydrate_failed",
+                job_id=job_id,
+                error=str(hydrate_err),
+            )
 
         logger.info(
             "extraction_completed_cached",

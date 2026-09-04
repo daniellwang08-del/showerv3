@@ -48,6 +48,7 @@ export interface SystemLogQuery {
   category?: string;
   service?: string;
   request_id?: string;
+  job_id?: string;
   path_contains?: string;
   event_contains?: string;
   user_id?: string;

@@ -901,6 +901,59 @@ async def trigger_encoding_backfill(current_user: dict = Depends(require_admin))
     return {"enqueued": not already_running, "already_running": already_running}
 
 
+@router.post("/match-engine/diagnose")
+async def match_engine_diagnose(
+    body: dict,
+    current_user: dict = Depends(require_admin),
+):
+    """Timed, explainable probe for one job × user match (vector engine).
+
+    Body:
+      - job_id (required)
+      - user_id (optional; defaults to the admin calling)
+      - encode_if_missing (default true)
+      - include_logs (default true)
+      - log_hours (default 24)
+      - persist (default false) — also run full analysis and save the match
+    """
+    from app.services.match_diagnose_service import diagnose_job_match
+
+    job_id = str(body.get("job_id") or "").strip()
+    if not job_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="job_id required")
+    user_id = str(body.get("user_id") or current_user.get("user_id") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id required")
+
+    encode_if_missing = bool(body.get("encode_if_missing", True))
+    include_logs = bool(body.get("include_logs", True))
+    persist = bool(body.get("persist", False))
+    try:
+        log_hours = int(body.get("log_hours") or 24)
+    except (TypeError, ValueError):
+        log_hours = 24
+
+    result = await diagnose_job_match(
+        job_id,
+        user_id,
+        encode_if_missing=encode_if_missing,
+        include_logs=include_logs,
+        log_hours=log_hours,
+        persist=persist,
+    )
+    logger.info(
+        "match_engine_diagnose_run",
+        job_id=job_id,
+        user_id=user_id,
+        by=current_user.get("user_id"),
+        ok=result.get("ok"),
+        score=(result.get("vector_result") or {}).get("overall_score"),
+        total_ms=(result.get("timing") or {}).get("total_ms"),
+        persist=persist,
+    )
+    return result
+
+
 @router.get("/match-engine/shadow-stats")
 async def match_engine_shadow_stats(
     days: int = 30,

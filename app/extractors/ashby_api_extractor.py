@@ -209,7 +209,25 @@ class AshbyApiExtractor(BaseExtractor):
             success=True,
             method=self.method,
             raw_content=plain_text,
-            structured_data=None,
+            structured_data={
+                "title": (job.get("title") or "").strip() or None,
+                "location": (job.get("location") or "").strip() or None,
+                "employment_type": (
+                    str(job.get("employmentType")).replace("_", " ").strip()
+                    if job.get("employmentType")
+                    else None
+                ),
+                "workplace": (
+                    "remote"
+                    if job.get("isRemote")
+                    else (
+                        str(job.get("workplaceType")).replace("_", " ").strip()
+                        if job.get("workplaceType")
+                        else None
+                    )
+                ),
+                "is_remote": bool(job.get("isRemote")),
+            },
         )
 
     def _job_to_plain_text(self, job: dict) -> str:

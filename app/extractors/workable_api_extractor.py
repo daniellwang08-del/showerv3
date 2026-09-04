@@ -200,7 +200,21 @@ class WorkableApiExtractor(BaseExtractor):
             success=True,
             method=self.method,
             raw_content=plain_text,
-            structured_data=None,
+            structured_data={
+                "title": (job.get("title") or "").strip() or None,
+                "location": self._format_location(job.get("location")),
+                "employment_type": (
+                    str(job.get("type")).replace("_", " ").strip()
+                    if job.get("type")
+                    else None
+                ),
+                "workplace": (
+                    str(job.get("workplace")).replace("_", " ").strip()
+                    if job.get("workplace")
+                    else ("remote" if job.get("remote") else None)
+                ),
+                "is_remote": bool(job.get("remote")),
+            },
         )
 
     def _job_to_plain_text(self, job: dict) -> str:

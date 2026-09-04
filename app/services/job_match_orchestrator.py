@@ -6,6 +6,7 @@ Phase B (generate_tailored_content on job_tailoring): tailored resume JSON + cov
 """
 
 import asyncio
+import time
 from typing import Any
 
 from sqlalchemy import select
@@ -225,13 +226,38 @@ async def _enqueue_missing_encodings(job_id: str, user_id: str) -> None:
         )
 
 
-async def _mark_extraction_ready_without_llm(ext_id: str) -> None:
+async def _mark_extraction_ready_without_llm(ext_id: str, job_id: str | None = None) -> None:
     """Advance extraction past Analyzing without an LLM structuring pass.
 
-    Vector mode scores from raw/extraction text via encodings; it does not
-    need Phase A structured_job. Marking is_job_posting=True keeps the Jobs
-    UI from staying on Analyzing forever.
+    Hydrates title/company/location/etc. from raw text / ATS signals, then marks
+    COMPLETED so the Jobs UI leaves Analyzing.
     """
+    from app.services.job_metadata_hydrator import hydrate_job_metadata
+
+    job_pk = job_id
+    if not job_pk:
+        async with get_session() as session:
+            job = await JobRepository(session).get_by_extraction_id(ext_id)
+            job_pk = job.id if job else None
+    if job_pk:
+        try:
+            await hydrate_job_metadata(
+                job_id=job_pk,
+                extraction_id=ext_id,
+                mark_completed=True,
+            )
+            try:
+                await ExtractionCache().delete(ext_id)
+            except Exception:
+                pass
+            return
+        except Exception as e:
+            logger.warning(
+                "vector_metadata_hydrate_failed",
+                job_id=job_pk,
+                extraction_id=ext_id,
+                error=str(e),
+            )
     async with get_session() as session:
         extraction_repo = JobExtractionRepository(session)
         await extraction_repo.update_is_job_posting(ext_id, True)
@@ -301,7 +327,7 @@ async def _try_vector_authoritative(
         return _zero_match_result("Not a job posting"), False
 
     if extraction.is_job_posting is None:
-        await _mark_extraction_ready_without_llm(ext_id)
+        await _mark_extraction_ready_without_llm(ext_id, job_id)
 
     from app.services.vector_match_service import compute_vector_match
 
@@ -414,22 +440,61 @@ async def run_job_match_analysis(
     ext_id: str | None = None
     is_job_posting = False
     has_profile = False
+    t0 = time.perf_counter()
+    timing_steps: list[dict[str, Any]] = []
+
+    def _mark(step: str, **detail: Any) -> None:
+        now = time.perf_counter()
+        prev = timing_steps[-1]["_t"] if timing_steps else t0
+        entry: dict[str, Any] = {
+            "step": step,
+            "duration_ms": round((now - prev) * 1000, 2),
+            "_t": now,
+        }
+        if detail:
+            entry["detail"] = {k: v for k, v in detail.items() if v is not None}
+        timing_steps.append(entry)
+
+    def _emit_timing(*, engine: str, score: Any = None, ok: bool = True) -> None:
+        total_ms = round((time.perf_counter() - t0) * 1000, 2)
+        steps = [{k: v for k, v in s.items() if k != "_t"} for s in timing_steps]
+        logger.info(
+            "job_match_analysis_timing",
+            job_id=job_id,
+            user_id=user_id,
+            duration_ms=total_ms,
+            match_engine=engine,
+            score=score,
+            ok=ok,
+            steps=steps,
+            source="orchestrator",
+        )
 
     try:
         loaded = await _load_job_and_profile(job_id, user_id, extraction_id)
         if not loaded:
+            _mark("load_job_and_profile", found=False)
+            _emit_timing(engine="none", ok=False)
             await clear_job_match_progress(job_id, user_id)
             return None
         ext_id, job_text, profile_text = loaded
         has_profile = bool((profile_text or "").strip())
+        _mark(
+            "load_job_and_profile",
+            found=True,
+            job_text_chars=len(job_text or ""),
+            has_profile=has_profile,
+        )
 
         try:
             engine = str(get_effective_value_sync("match_engine") or "vector")
         except Exception:
             engine = "vector"
+        _mark("resolve_engine", engine=engine)
 
         # ── Phase 0 deterministic gate: security clearance (no LLM call) ──
         clearance_required, clearance_phrase = detect_security_clearance(job_text)
+        _mark("clearance_gate", hit=clearance_required, phrase=clearance_phrase)
         if clearance_required:
             logger.info(
                 "job_match_clearance_gate_hit",
@@ -453,6 +518,8 @@ async def run_job_match_analysis(
                 "Requires security clearance - not scored",
                 requires_security_clearance=True,
             )
+            _mark("clearance_gate_persist")
+            _emit_timing(engine="gate", score=0, ok=True)
             return _attach_result_metadata(
                 result,
                 ext_id=ext_id,
@@ -471,6 +538,7 @@ async def run_job_match_analysis(
                     job_id=job_id,
                     user_id=user_id,
                 )
+                _emit_timing(engine="vector", ok=False)
                 await clear_job_match_progress(job_id, user_id)
                 return None
             vector_outcome = await _try_vector_authoritative(job_id, user_id, ext_id)
@@ -480,15 +548,32 @@ async def run_job_match_analysis(
                     job_id=job_id,
                     user_id=user_id,
                 )
+                _mark("vector_score", available=False)
+                _emit_timing(engine="vector", ok=False)
                 await clear_job_match_progress(job_id, user_id)
                 return None
             result, is_job_posting = vector_outcome
+            _mark(
+                "vector_score",
+                available=True,
+                score=result.get("overall_score"),
+                recommendation=result.get("recommendation"),
+            )
             logger.info(
                 "job_match_vector_engine_complete",
                 job_id=job_id,
                 user_id=user_id,
                 score=result.get("overall_score"),
                 is_job_posting=is_job_posting,
+                dimension_scores=result.get("dimension_scores"),
+                summary=(result.get("summary") or "")[:240],
+                strengths=result.get("strengths"),
+                gaps=result.get("gaps"),
+            )
+            _emit_timing(
+                engine="vector",
+                score=result.get("overall_score"),
+                ok=True,
             )
             return _attach_result_metadata(
                 result,
@@ -504,6 +589,11 @@ async def run_job_match_analysis(
             result, structured_job, is_job_posting = await analyze_job_match_phase_a(
                 job_text, profile_text, user_id=user_id,
             )
+            _mark(
+                "llm_phase_a",
+                score=result.get("overall_score"),
+                is_job_posting=is_job_posting,
+            )
         except Exception as e:
             logger.error(
                 "job_match_phase_a_failed",
@@ -511,6 +601,8 @@ async def run_job_match_analysis(
                 user_id=user_id,
                 error=str(e),
             )
+            _mark("llm_phase_a", failed=True)
+            _emit_timing(engine="llm", ok=False)
             await clear_job_match_progress(job_id, user_id)
             return None
 
@@ -569,6 +661,7 @@ async def run_job_match_analysis(
                     structured_company=structured_company,
                     engine="llm",
                 )
+                _mark("persist_structured", structured_persisted=structured_persisted)
 
                 logger.info(
                     "job_match_phase_a_complete",
@@ -576,6 +669,8 @@ async def run_job_match_analysis(
                     user_id=user_id,
                     score=result["overall_score"],
                     phase_b=result["should_run_phase_b"],
+                    dimension_scores=result.get("dimension_scores"),
+                    summary=(result.get("summary") or "")[:240],
                 )
             except Exception as e:
                 logger.error(
@@ -584,6 +679,7 @@ async def run_job_match_analysis(
                     user_id=user_id,
                     error=str(e),
                 )
+                _emit_timing(engine="llm", ok=False)
                 await clear_job_match_progress(job_id, user_id)
                 return None
 
@@ -594,18 +690,22 @@ async def run_job_match_analysis(
                 from app.tasks.worker import enqueue_encode_job
 
                 await enqueue_encode_job(job_id)
+                _mark("encode_enqueue", enqueued=True)
             except Exception as enc_err:
                 logger.warning(
                     "encode_enqueue_after_structuring_failed",
                     job_id=job_id,
                     error=str(enc_err),
                 )
+                _mark("encode_enqueue", enqueued=False)
 
         # Shadow mode: also score with the vector engine and store the pair for
         # calibration. Never affects the returned (LLM) result.
         if engine == "shadow":
             await _record_shadow_comparison(job_id, user_id, result)
+            _mark("shadow_compare")
 
+        _emit_timing(engine=engine, score=result.get("overall_score"), ok=True)
         # Auto-post runs on the save worker after persistence so Phase A does not
         # hold analysis concurrency slots on Pumble/Sheets network I/O.
         return result

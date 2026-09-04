@@ -89,20 +89,30 @@ def _quality_score(text: str) -> float:
     return _signal_score(text) - _negative_penalty(text) + (_length_score(text) * 0.4)
 
 
-def pick_best_text(candidates: Iterable[tuple[str, str]]) -> tuple[str, str]:
-    """Pick the best ``(plain_text, method_name)`` candidate.
+Candidate = tuple[str, str] | tuple[str, str, dict | None]
+
+
+def pick_best_text(
+    candidates: Iterable[Candidate],
+) -> tuple[str, str, dict | None]:
+    """Pick the best ``(plain_text, method_name[, structured_data])`` candidate.
 
     Selection rule: highest JD-quality score, with length as a tiebreaker.
-    Returns ``("", "none")`` if no candidate has sufficient content.
+    Returns ``("", "none", None)`` if no candidate has sufficient content.
     """
-    valid = [
-        (t, m) for t, m in candidates
-        if t and len(t.strip()) >= MIN_LENGTH
-    ]
-    if not valid:
-        return ("", "none")
+    normalized: list[tuple[str, str, dict | None]] = []
+    for item in candidates:
+        if len(item) == 2:
+            text, method = item  # type: ignore[misc]
+            structured = None
+        else:
+            text, method, structured = item  # type: ignore[misc]
+        if text and len(text.strip()) >= MIN_LENGTH:
+            normalized.append((text, method, structured if isinstance(structured, dict) else None))
+    if not normalized:
+        return ("", "none", None)
 
     return max(
-        valid,
+        normalized,
         key=lambda x: (_quality_score(x[0]), len(x[0])),
     )

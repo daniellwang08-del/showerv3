@@ -212,7 +212,19 @@ class GreenhouseBoardExtractor(BaseExtractor):
             success=True,
             method=self.method,
             raw_content=plain_text,
-            structured_data=None,
+            structured_data={
+                "title": (job.get("title") or "").strip() or None,
+                "company": (
+                    job.get("company_name").strip()
+                    if isinstance(job.get("company_name"), str) and job.get("company_name").strip()
+                    else None
+                ),
+                "location": (
+                    (job.get("location") or {}).get("name")
+                    if isinstance(job.get("location"), dict)
+                    else (job.get("location") if isinstance(job.get("location"), str) else None)
+                ),
+            },
         )
 
     def _job_to_plain_text(self, job: dict) -> str:

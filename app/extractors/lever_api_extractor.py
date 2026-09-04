@@ -181,11 +181,40 @@ class LeverApiExtractor(BaseExtractor):
                 error="Insufficient content from Lever API",
             )
 
+        title = (data.get("text") or "").strip() or None
+        cats = data.get("categories") if isinstance(data.get("categories"), dict) else {}
+        location = None
+        if isinstance(cats, dict):
+            location = (cats.get("location") or "").strip() or None
+            if not location:
+                all_locs = cats.get("allLocations")
+                if isinstance(all_locs, list) and all_locs:
+                    location = ", ".join(str(x).strip() for x in all_locs if str(x).strip()) or None
+        commitment = None
+        workplace = None
+        if isinstance(cats, dict):
+            commitment = (cats.get("commitment") or "").strip() or None
+            workplace = (cats.get("workplaceType") or "").strip() or None
+        salary_range = None
+        salary = data.get("salaryRange")
+        if isinstance(salary, dict) and (salary.get("min") or salary.get("max")):
+            salary_range = (
+                f"{salary.get('min') or '?'} - {salary.get('max') or '?'} "
+                f"{salary.get('currency') or ''} {salary.get('interval') or ''}"
+            ).strip()
+
         return ExtractionResult(
             success=True,
             method=self.method,
             raw_content=plain_text,
-            structured_data=None,
+            structured_data={
+                "title": title,
+                "company": company_slug.replace("-", " ").replace("_", " ").title(),
+                "location": location,
+                "employment_type": commitment,
+                "workplace": workplace,
+                "salary_range": salary_range,
+            },
         )
 
     def _posting_to_plain_text(self, posting: dict) -> str:

@@ -272,6 +272,23 @@ def test_score_pair_shape_matches_phase_a_contract():
     assert result["overall_score"] == expected
 
 
+def test_score_pair_explain_includes_cosines_and_contributions():
+    job, user = _make_pair(similar=True, years_required=5, years_experience=6.0)
+    result = score_pair(job, user, explain=True)
+    explain = result["explain"]
+    assert "cosines" in explain
+    assert explain["cosines"]["experience_to_content"] is not None
+    assert explain["skills"]["matched"] == ["python"]
+    contrib = explain["dimension_contributions"]
+    assert set(contrib) == set(MATCH_DIMENSION_WEIGHTS)
+    assert abs(
+        sum(c["weighted"] for c in contrib.values()) - result["overall_score"]
+    ) < 1.0
+    assert explain["signals"]["years_required"] == 5
+    assert explain["signals"]["years_experience"] == 6.0
+    assert "calibration" in explain
+
+
 def test_score_pair_clearance_zeroes_everything():
     job, user = _make_pair(clearance=True)
     result = score_pair(job, user)
