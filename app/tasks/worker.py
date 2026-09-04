@@ -1815,6 +1815,8 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
                         (JobEncoding.job_id.is_(None))
                         | (JobEncoding.model_version != current_model)
                         | (JobEncoding.industry_vec.is_(None))
+                        | (JobModel.work_mode.is_(None))
+                        | (JobModel.work_mode == "")
                     )
                     .where(JobModel.status != "blocked")
                     .order_by(JobModel.id)

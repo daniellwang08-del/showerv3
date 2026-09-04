@@ -102,6 +102,7 @@ def resolve_job_work_mode(job: Job) -> str | None:
         analysis_work_mode=job.work_mode,
         location=str(location) if location else None,
         remote_policy=str(remote_policy) if remote_policy else None,
+        title=str(getattr(job, "title", None) or "") or None,
         is_remote=is_remote,
     )
 

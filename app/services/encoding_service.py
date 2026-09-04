@@ -271,6 +271,12 @@ async def encode_job(job_id: str) -> bool:
         title_text, content_text, industry_text, full_text = _compose_job_texts(
             job, extraction, raw_text
         )
+        job_title = job.title
+        job_location = job.location
+        job_work_mode = job.work_mode
+        job_extraction_id = job.extraction_id
+        meta = job.raw_metadata if isinstance(job.raw_metadata, dict) else {}
+        is_remote_flag = bool(meta.get("is_remote"))
 
     if not content_text.strip():
         logger.warning("encode_job_no_text", job_id=job_id)
@@ -285,6 +291,31 @@ async def encode_job(job_id: str) -> bool:
         [title_text or content_text[:200], content_text, industry_text]
     )
     title_vec, content_vec, industry_vec = vecs[0], vecs[1], vecs[2]
+
+    # Vector work-mode fill: MiniLM prototypes when rules left mode empty.
+    work_mode_to_set: str | None = None
+    try:
+        from app.services.work_mode_classifier import classify_work_mode
+
+        mode, explain = classify_work_mode(
+            title=job_title or title_text,
+            location=job_location,
+            workplace=job_work_mode,
+            plain_text=full_text,
+            is_remote=is_remote_flag,
+            use_vector=True,
+        )
+        if mode and not (job_work_mode or "").strip():
+            work_mode_to_set = mode
+            logger.info(
+                "work_mode_classified",
+                job_id=job_id,
+                mode=mode,
+                source=explain.get("source"),
+                best_cos=explain.get("best_cos"),
+            )
+    except Exception as mode_err:
+        logger.warning("work_mode_classify_failed", job_id=job_id, error=str(mode_err))
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_session() as session:
@@ -306,6 +337,21 @@ async def encode_job(job_id: str) -> bool:
         row.requires_security_clearance = bool(clearance)
         row.encoded_at = now
 
+        if work_mode_to_set:
+            job_row = (
+                await session.execute(select(Job).where(Job.id == job_id))
+            ).scalar_one_or_none()
+            if job_row is not None and not (job_row.work_mode or "").strip():
+                job_row.work_mode = work_mode_to_set
+            if job_extraction_id:
+                ext_row = (
+                    await session.execute(
+                        select(JobExtraction).where(JobExtraction.id == job_extraction_id)
+                    )
+                ).scalar_one_or_none()
+                if ext_row is not None and not (ext_row.work_mode or "").strip():
+                    ext_row.work_mode = work_mode_to_set
+
     logger.info(
         "job_encoded",
         job_id=job_id,
@@ -313,6 +359,7 @@ async def encode_job(job_id: str) -> bool:
         years_required=years_required,
         clearance=clearance,
         industry_chars=len(industry_text),
+        work_mode=work_mode_to_set or job_work_mode,
     )
     return True
 

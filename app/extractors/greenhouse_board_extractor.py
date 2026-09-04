@@ -30,6 +30,8 @@ _BOARD_JOBS_IN_PATH = re.compile(
 )
 _JOBS_NUMERIC_PATH = re.compile(r"/jobs/(\d+)(?:[/?#]|$)", re.IGNORECASE)
 _GH_JID_QUERY = re.compile(r"[?&]gh_jid=(\d+)", re.IGNORECASE)
+# Jobright / embed iframes often use token=<numeric job id> (not gh_jid).
+_GH_EMBED_TOKEN_QUERY = re.compile(r"[?&]token=(\d+)", re.IGNORECASE)
 _EMBED_FOR_QUERY = re.compile(r"[?&]for=([^&\"'\s<>]+)", re.IGNORECASE)
 
 _TOKEN_FROM_HTML_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -58,6 +60,53 @@ _TOKEN_FROM_HTML_PATTERNS: tuple[re.Pattern[str], ...] = (
 _MAX_TOKEN_CANDIDATES = 4
 
 
+def normalize_work_mode_hint(text: str | None) -> str | None:
+    """Map Greenhouse location / metadata strings to remote|hybrid|onsite."""
+    from app.services.job_field_utils import normalize_work_mode_display
+
+    return normalize_work_mode_display(text)
+
+
+def workplace_from_greenhouse_metadata(metadata: object) -> str | None:
+    """Scan Greenhouse custom ``metadata`` array for workplace-like fields."""
+    if not isinstance(metadata, list):
+        return None
+    for item in metadata:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip().lower()
+        value = item.get("value")
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value if v is not None)
+        value_s = str(value or "").strip()
+        if not value_s:
+            continue
+        if any(
+            key in name
+            for key in (
+                "remote",
+                "workplace",
+                "work type",
+                "work mode",
+                "location type",
+                "office type",
+            )
+        ):
+            mode = normalize_work_mode_hint(value_s)
+            if mode:
+                return mode
+        mode = normalize_work_mode_hint(value_s)
+        if mode and name in {"location", "job location", "job posting location"}:
+            # Only accept when the whole value is a mode keyword, not a city.
+            if normalize_work_mode_hint(value_s) and len(value_s) < 40:
+                if re.fullmatch(
+                    r"(?i)\s*(remote|hybrid|on-?\s*site|onsite|in-?\s*office|wfh).*\s*",
+                    value_s,
+                ):
+                    return mode
+    return None
+
+
 def parse_greenhouse_job_id_from_url(url: str) -> str | None:
     if not url:
         return None
@@ -68,7 +117,14 @@ def parse_greenhouse_job_id_from_url(url: str) -> str | None:
     if m:
         return m.group(1)
     m = _GH_JID_QUERY.search(url)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    # Embed application URLs: .../embed/job_app?for=board&token=JOBID
+    if "greenhouse.io" in url.lower() and "embed" in url.lower():
+        m = _GH_EMBED_TOKEN_QUERY.search(url)
+        if m:
+            return m.group(1)
+    return None
 
 
 def greenhouse_board_tokens_from_url(url: str) -> list[str]:
@@ -208,22 +264,37 @@ class GreenhouseBoardExtractor(BaseExtractor):
                 error="Insufficient content from Greenhouse API",
             )
 
+        title = (data.get("title") or "").strip() or None
+        company = (
+            data.get("company_name").strip()
+            if isinstance(data.get("company_name"), str) and data.get("company_name").strip()
+            else None
+        )
+        location = None
+        loc = data.get("location")
+        if isinstance(loc, dict):
+            location = (loc.get("name") or "").strip() or None
+        elif isinstance(loc, str) and loc.strip():
+            location = loc.strip()
+
+        # Greenhouse has no workplaceType; infer a soft signal from location /
+        # custom metadata so the hydrator / MiniLM classifier can resolve mode.
+        workplace = None
+        if location and normalize_work_mode_hint(location):
+            workplace = normalize_work_mode_hint(location)
+        else:
+            workplace = workplace_from_greenhouse_metadata(data.get("metadata"))
+
         return ExtractionResult(
             success=True,
             method=self.method,
             raw_content=plain_text,
             structured_data={
-                "title": (job.get("title") or "").strip() or None,
-                "company": (
-                    job.get("company_name").strip()
-                    if isinstance(job.get("company_name"), str) and job.get("company_name").strip()
-                    else None
-                ),
-                "location": (
-                    (job.get("location") or {}).get("name")
-                    if isinstance(job.get("location"), dict)
-                    else (job.get("location") if isinstance(job.get("location"), str) else None)
-                ),
+                "title": title,
+                "company": company,
+                "location": location,
+                "workplace": workplace,
+                "is_remote": workplace == "remote",
             },
         )
 
@@ -258,6 +329,20 @@ class GreenhouseBoardExtractor(BaseExtractor):
             office_names = [o.get("name") for o in offices if isinstance(o, dict) and o.get("name")]
             if office_names:
                 parts.append(f"Office: {', '.join(office_names)}")
+
+        workplace = None
+        loc_name = None
+        loc = job.get("location")
+        if isinstance(loc, dict):
+            loc_name = (loc.get("name") or "").strip() or None
+        elif isinstance(loc, str):
+            loc_name = loc.strip() or None
+        if loc_name:
+            workplace = normalize_work_mode_hint(loc_name)
+        if not workplace:
+            workplace = workplace_from_greenhouse_metadata(job.get("metadata"))
+        if workplace:
+            parts.append(f"Workplace Type: {workplace}")
 
         raw_content = job.get("content") or ""
         if isinstance(raw_content, str) and raw_content.strip():

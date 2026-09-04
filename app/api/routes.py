@@ -2468,6 +2468,7 @@ def _row_to_dashboard_job(row) -> DashboardJobResponse:
         analysis_work_mode=ext_work_mode or job.work_mode,
         location=job.location,
         remote_policy=ext_remote_policy,
+        title=job.title,
         is_remote=bool(meta.get("is_remote", False)),
     )
     pool_added_at = ujs_created_at or job.created_at

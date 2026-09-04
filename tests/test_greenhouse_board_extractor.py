@@ -17,6 +17,9 @@ def test_parse_job_id_from_path_and_query():
     assert parse_greenhouse_job_id_from_url(
         "https://boards.greenhouse.io/acme/jobs/12345?t=1"
     ) == "12345"
+    assert parse_greenhouse_job_id_from_url(
+        "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=999888777"
+    ) == "999888777"
 
 
 def test_tokens_from_html_embed():
@@ -74,7 +77,8 @@ async def test_extract_unescapes_entity_encoded_html():
     url = "https://boards.greenhouse.io/abnormalsecurity/jobs/7528379003"
     r = await ex.extract(url, "<html></html>")
     assert r.success
-    assert r.structured_data is None
+    assert r.structured_data is not None
+    assert r.structured_data.get("title") == "Security Engineer"
     assert r.raw_content is not None
     assert "Security Engineer" in r.raw_content
     assert "detection" in r.raw_content.lower()

@@ -106,10 +106,19 @@ def infer_company_from_url(url: str | None) -> str | None:
     if board is not None:
         return _slug_to_company(board.token)
     try:
-        host = (urlparse(url).hostname or "").lower()
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        query = parsed.query or ""
     except Exception:
         return None
-    for prefix in ("jobs.", "careers.", "apply.", "boards."):
+    # Greenhouse embed: .../embed/job_app?for=boardtoken&token=JOBID
+    if "greenhouse.io" in host and "for=" in query.lower():
+        for part in query.split("&"):
+            if part.lower().startswith("for="):
+                tok = unquote(part.split("=", 1)[-1]).strip()
+                if tok and tok.lower() not in {"embed", "job_app"}:
+                    return _slug_to_company(tok)
+    for prefix in ("jobs.", "careers.", "apply.", "boards.", "job-boards."):
         if host.startswith(prefix):
             host = host[len(prefix) :]
             break
@@ -445,13 +454,35 @@ def build_metadata(
     workplace = structured.get("workplace") or labeled.get("workplace")
     if not workplace and location and "remote" in location.lower():
         workplace = "remote"
-    work_mode = resolve_display_work_mode(
-        analysis_work_mode=normalize_work_mode_display(workplace)
-        or normalize_work_mode_display(existing_work_mode),
+    is_remote_flag = bool(structured.get("is_remote"))
+    if isinstance(structured.get("is_remote"), str):
+        is_remote_flag = structured.get("is_remote", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
+    # Fast deterministic path (no torch). Encoding worker upgrades via MiniLM.
+    from app.services.work_mode_classifier import classify_work_mode
+
+    work_mode, _mode_explain = classify_work_mode(
+        title=title,
         location=location,
+        workplace=workplace,
         remote_policy=workplace,
-        is_remote=False,
+        plain_text=plain_text,
+        is_remote=is_remote_flag,
+        use_vector=False,
     )
+    if not work_mode:
+        work_mode = resolve_display_work_mode(
+            analysis_work_mode=normalize_work_mode_display(workplace)
+            or normalize_work_mode_display(existing_work_mode),
+            location=location,
+            remote_policy=workplace,
+            title=title,
+            is_remote=is_remote_flag,
+        )
 
     description = body_description_from_plain_text(plain_text)
     posted_date = _parse_posted_date(labeled.get("posted_date_raw"))

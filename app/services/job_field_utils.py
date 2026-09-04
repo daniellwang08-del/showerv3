@@ -128,20 +128,29 @@ def resolve_display_work_mode(
     analysis_work_mode: str | None = None,
     location: str | None = None,
     remote_policy: str | None = None,
+    title: str | None = None,
     is_remote: bool = False,
 ) -> str | None:
     """Resolve the work mode shown in the jobs table from all available signals.
 
     Priority order:
       1. An explicit remote/hybrid/onsite classification from analysis/extraction.
-      2. The location text (e.g. "Remote, United States", "Austin, TX (Hybrid)").
-      3. The remote-policy text (e.g. "Remote within the US").
-      4. The scraper's ``is_remote`` flag.
+      2. Title markers (e.g. ``AI Engineer | REMOTE``) — delimited only.
+      3. The location text (e.g. "Remote, United States", "Austin, TX (Hybrid)").
+      4. The remote-policy text (e.g. "Remote within the US").
+      5. The scraper's ``is_remote`` flag.
     Returns None only when no signal indicates a work mode.
     """
     explicit = normalize_work_mode_display(analysis_work_mode)
     if explicit:
         return explicit
+    if title:
+        # Delimited markers only — avoid "Remote Support Engineer" false positives.
+        from app.services.work_mode_classifier import classify_work_mode_rules
+
+        titled = classify_work_mode_rules(title=title)
+        if titled:
+            return titled
     for text in (location, remote_policy):
         signal = normalize_work_mode_display(text)
         if signal:
