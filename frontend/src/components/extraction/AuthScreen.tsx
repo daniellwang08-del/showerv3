@@ -13,7 +13,7 @@ interface AuthScreenProps {
    * flipping local state, so /login and /signup stay shareable and reloadable.
    */
   onModeChange?: (mode: AuthMode) => void;
-  /** Renders a "back to site" link in the card header (public landing page). */
+  /** Kept for call-site compatibility; home is always the landing header brand. */
   homeTo?: string;
 }
 
@@ -21,7 +21,6 @@ export function AuthScreen({
   onAuthSuccess,
   initialMode = 'login',
   onModeChange,
-  homeTo,
 }: AuthScreenProps) {
   const [localMode, setLocalMode] = useState<AuthMode>(initialMode);
   const mode = onModeChange ? initialMode : localMode;
@@ -32,8 +31,7 @@ export function AuthScreen({
   };
 
   return (
-    <AuthShell homeTo={homeTo}>
-      {/* key swap triggers a smooth crossfade; the shell/background stays put */}
+    <AuthShell mode={mode} onModeChange={switchTo}>
       <div key={mode} className="auth-form-swap">
         {mode === 'login' ? (
           <LoginForm onLogin={onAuthSuccess} onSwitchToSignup={() => switchTo('signup')} />

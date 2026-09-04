@@ -1,81 +1,202 @@
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import {
+  ArrowRight,
+  CheckCircle2,
+  FileText,
+  Sparkles,
+  Wand2,
+} from 'lucide-react';
 import { usePublicViewport } from '../../hooks/usePublicViewport';
+import { LandingHeader } from '../landing/LandingHeader';
+import { HERO_GIF, HERO_POSTER, HERO_VIDEO } from '../landing/landingMedia';
+import { CinematicBackdrop, NetworkField } from '../landing/landingMotion';
+import { Eyebrow, LANDING_CONTAINER } from '../landing/landingUi';
+
+type AuthMode = 'login' | 'signup';
+
+const PROOFS = [
+  {
+    icon: Sparkles,
+    title: 'Match, then tailor',
+    detail: 'Score every role against your profile before the résumé is written.',
+  },
+  {
+    icon: FileText,
+    title: 'Documents ready to send',
+    detail: 'Tailored résumé and cover letter land in your workspace, not a chat thread.',
+  },
+  {
+    icon: Wand2,
+    title: 'You keep the final click',
+    detail: 'Autofill fills ATS fields. You review and submit.',
+  },
+] as const;
 
 /**
- * Shared chrome for the auth screens: still background, right-aligned glass
- * card with the flowing star border, and the brand header. Only the form
- * passed as `children` changes between sign in and sign up.
+ * Public auth chrome: same landing header + cinematic surface, then a split
+ * composition (brand story · interactive form). The form panel is the only
+ * “card” — it exists so fields stay a clear interaction target.
  */
-export function AuthShell({ children, homeTo }: { children: ReactNode; homeTo?: string }) {
-  // Sign in / sign up are public pages: drop the dashboard's 1400px floor so
-  // visitors arriving from the landing page on a phone get a fitting layout.
-  usePublicViewport();
+export function AuthShell({
+  children,
+  mode,
+  onModeChange,
+}: {
+  children: ReactNode;
+  mode: AuthMode;
+  onModeChange: (mode: AuthMode) => void;
+}) {
+  usePublicViewport('landing-theme');
+
+  const isLogin = mode === 'login';
 
   return (
-    <div className="app-surface relative flex min-h-dvh items-center justify-center overflow-hidden bg-gradient-to-br from-blue-100 via-blue-50 to-indigo-100 p-3 sm:p-4 lg:justify-end lg:pr-[26vw]">
-      <img
-        src="/login-still.jpg"
-        alt=""
-        aria-hidden="true"
-        className="absolute inset-0 z-0 h-full w-full object-cover"
-      />
+    <div className="relative flex min-h-dvh flex-col overflow-x-hidden bg-[#05070f] text-white antialiased">
+      <LandingHeader />
 
-      {/* Right-side scrim so the glass card stays legible.
-          Hardcoded dark hex (not slate-*) so the app's dark-mode palette remap
-          can't invert this cinematic scrim into a light wash. */}
-      <div
-        className="absolute inset-0 z-[1] bg-gradient-to-l from-[#05080f]/85 via-[#0b1220]/35 to-transparent"
-        aria-hidden="true"
-      />
-
-      <div className="relative z-10 w-full max-w-md">
-        {/* Ambient glow behind the glass for a brilliant edge */}
-        <div
-          className="pointer-events-none absolute -inset-px -z-10 rounded-[28px] bg-gradient-to-br from-sky-400/40 via-indigo-500/30 to-fuchsia-500/30 opacity-70 blur-2xl"
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <CinematicBackdrop video={HERO_VIDEO} poster={HERO_POSTER} gif={HERO_GIF} gifOpacity={0.1} />
+        <NetworkField />
+        <div aria-hidden="true" className="landing-grid absolute inset-0 opacity-[0.22]" />
+        <span
           aria-hidden="true"
+          className="landing-aurora pointer-events-none absolute -left-24 top-16 h-72 w-72 rounded-full bg-sky-500/25 blur-[100px]"
+        />
+        <span
+          aria-hidden="true"
+          className="landing-aurora landing-aurora-delay pointer-events-none absolute -right-20 bottom-10 h-80 w-80 rounded-full bg-indigo-500/20 blur-[110px]"
         />
 
-        <div className="relative overflow-hidden rounded-3xl border border-white/25 bg-white/10 p-5 shadow-[0_20px_60px_-15px_rgba(2,6,23,0.7)] ring-1 ring-inset ring-white/15 backdrop-blur-2xl sm:p-8">
-          {/* Glossy top sheen */}
-          <div
-            className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-white/25 to-transparent"
-            aria-hidden="true"
-          />
+        <div
+          className={`${LANDING_CONTAINER} relative z-10 grid flex-1 items-center gap-10 py-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(20rem,26rem)] lg:gap-14 lg:py-14 xl:gap-20`}
+        >
+          <div className="max-w-xl">
+            <Eyebrow icon={<Sparkles size={12} strokeWidth={3} />}>
+              {isLogin ? 'Welcome back' : 'Start free'}
+            </Eyebrow>
 
-          <div className="relative">
-            {homeTo ? (
-              <Link
-                to={homeTo}
-                className="mb-4 inline-flex items-center gap-1.5 text-xs font-bold text-blue-50/70 transition hover:text-white"
-              >
-                <ArrowLeft size={14} strokeWidth={2.75} />
-                Back to home
-              </Link>
-            ) : null}
+            <h1 className="mt-5 text-4xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl xl:text-[3.35rem]">
+              {isLogin ? (
+                <>
+                  <span className="block">Your workspace</span>
+                  <span className="block text-white/55">is waiting.</span>
+                </>
+              ) : (
+                <>
+                  <span className="block">Stop hunting jobs.</span>
+                  <span className="block text-white/55">Start matching them.</span>
+                </>
+              )}
+            </h1>
 
-            <div className="mb-6 text-center sm:mb-8">
-              <div className="relative mx-auto mb-3 w-fit">
-                <div className="absolute inset-0 -z-10 rounded-full bg-sky-400/30 blur-2xl" aria-hidden="true" />
-                <img
-                  src="/atomspace-logo.png"
-                  alt="Atomspace"
-                  className="h-14 w-auto object-contain drop-shadow-[0_4px_18px_rgba(56,189,248,0.45)] sm:h-16"
-                />
+            <p className="mt-5 max-w-md text-pretty text-[15px] leading-relaxed text-white/65 sm:text-base">
+              {isLogin
+                ? 'Sign in to pick up matches, tailored documents, and autofill — the same Atomspace you left, ready on this device.'
+                : 'Create an account to sync five job networks, score roles against your profile, and open applications with the form already filled.'}
+            </p>
+
+            <ul className="mt-8 hidden space-y-4 sm:block">
+              {PROOFS.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <li key={item.title} className="flex gap-3">
+                    <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/25 bg-sky-400/10 text-sky-300">
+                      <Icon size={16} strokeWidth={2.5} />
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold text-white">{item.title}</p>
+                      <p className="mt-0.5 text-sm leading-snug text-white/50">{item.detail}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          <div className="relative mx-auto w-full max-w-md lg:mx-0 lg:justify-self-end">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -inset-6 rounded-[36px] bg-gradient-to-br from-sky-500/25 via-blue-500/15 to-indigo-500/20 opacity-90 blur-3xl"
+            />
+
+            <div className="relative overflow-hidden rounded-[28px] border border-white/12 bg-[#080d1c]/88 p-5 shadow-[0_40px_120px_-48px_rgba(2,6,23,0.95)] ring-1 ring-inset ring-white/10 backdrop-blur-2xl sm:p-7">
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent"
+              />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-8 top-0 h-24 bg-gradient-to-b from-white/10 to-transparent"
+              />
+
+              <div className="relative">
+                <div
+                  className="mb-6 grid grid-cols-2 gap-1 rounded-full border border-white/12 bg-white/[0.04] p-1"
+                  role="tablist"
+                  aria-label="Account"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={isLogin}
+                    onClick={() => onModeChange('login')}
+                    className={`rounded-full px-3 py-2.5 text-sm font-bold transition ${
+                      isLogin
+                        ? 'bg-white text-[#05070f] shadow-sm'
+                        : 'text-white/55 hover:text-white'
+                    }`}
+                  >
+                    Sign in
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={!isLogin}
+                    onClick={() => onModeChange('signup')}
+                    className={`rounded-full px-3 py-2.5 text-sm font-bold transition ${
+                      !isLogin
+                        ? 'bg-gradient-to-r from-sky-500 via-blue-600 to-indigo-600 text-white shadow-[0_10px_28px_-12px_rgba(37,99,235,0.9)]'
+                        : 'text-white/55 hover:text-white'
+                    }`}
+                  >
+                    Sign up
+                  </button>
+                </div>
+
+                <div className="mb-5">
+                  <h2 className="text-xl font-black tracking-tight text-white sm:text-2xl">
+                    {isLogin ? 'Sign in to Atomspace' : 'Create your free account'}
+                  </h2>
+                  <p className="mt-1.5 text-sm text-white/50">
+                    {isLogin
+                      ? 'Use the email and password for your workspace.'
+                      : 'No credit card. You can start matching in minutes.'}
+                  </p>
+                </div>
+
+                {children}
+
+                <p className="mt-6 flex items-start gap-2 text-[11px] leading-relaxed text-white/35">
+                  <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-400/80" />
+                  <span>
+                    By continuing you agree to use Atomspace for your own applications. Autofill never
+                    submits without you.
+                    <span className="mt-1 flex items-center gap-1 text-white/45">
+                      Prefer the tour first?
+                      <a
+                        href="/#how-it-works"
+                        className="inline-flex items-center gap-0.5 font-semibold text-sky-300 transition hover:text-sky-200"
+                      >
+                        How it works
+                        <ArrowRight size={12} strokeWidth={2.75} />
+                      </a>
+                    </span>
+                  </span>
+                </p>
               </div>
-              <h1 className="bg-gradient-to-r from-white via-blue-50 to-sky-200 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent drop-shadow-[0_2px_10px_rgba(56,189,248,0.45)] sm:text-4xl">
-                Atomspace
-              </h1>
-              <p className="mt-2 text-sm font-semibold text-blue-50">Your AI job application workspace</p>
             </div>
-
-            {children}
           </div>
         </div>
-
-        {/* Bright stars flowing along the modal border */}
-        <div className="modal-star-border pointer-events-none absolute inset-0 rounded-3xl" aria-hidden="true" />
       </div>
     </div>
   );

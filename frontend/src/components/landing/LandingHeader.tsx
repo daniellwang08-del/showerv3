@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, ArrowRight } from 'lucide-react';
 import { NAV_LINKS } from './landingData';
 import { PromoRibbon } from './landingMotion';
@@ -12,15 +12,15 @@ import {
 } from './landingUi';
 
 /**
- * Public site header: brand on the left, section links in the middle, and the
- * Sign in / Sign up entry points on the right.
- *
- * Sticky (not fixed) so it lives in the first-screen flex column. Collapsing
- * the promo ribbon used to change the header height after a few pixels of
- * scroll, which shoved the whole page on Y. The ribbon now stays put; only
- * the glass fill changes once the visitor leaves the top.
+ * Public site header shared by the landing page and auth screens.
+ * Section links always resolve against the landing page (`/#…` when off-home).
  */
 export function LandingHeader() {
+  const location = useLocation();
+  const onLanding = location.pathname === '/';
+  const onLogin = location.pathname === '/login';
+  const onSignup = location.pathname === '/signup';
+
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string>('');
@@ -33,6 +33,10 @@ export function LandingHeader() {
   }, []);
 
   useEffect(() => {
+    if (!onLanding) {
+      setActiveId('');
+      return;
+    }
     const nodes = NAV_LINKS.map((link) => document.getElementById(link.id)).filter(
       (node): node is HTMLElement => Boolean(node),
     );
@@ -50,11 +54,8 @@ export function LandingHeader() {
 
     nodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
-  }, []);
+  }, [onLanding]);
 
-  // Freeze the page behind the open sheet. The landing page scrolls on <html>
-  // (see `.public-viewport` in style.css), so both elements are locked rather
-  // than relying on overflow propagating from <body>.
   useEffect(() => {
     if (!menuOpen) return;
     const root = document.documentElement;
@@ -67,6 +68,8 @@ export function LandingHeader() {
       document.body.style.overflow = previousBody;
     };
   }, [menuOpen]);
+
+  const sectionHref = (id: string) => (onLanding ? `#${id}` : `/#${id}`);
 
   return (
     <header
@@ -97,11 +100,11 @@ export function LandingHeader() {
 
         <nav className="hidden items-center gap-1 lg:flex" aria-label="Sections">
           {NAV_LINKS.map((link) => {
-            const active = activeId === link.id;
+            const active = onLanding && activeId === link.id;
             return (
               <a
                 key={link.id}
-                href={`#${link.id}`}
+                href={sectionHref(link.id)}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
                   active
                     ? 'bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]'
@@ -115,10 +118,22 @@ export function LandingHeader() {
         </nav>
 
         <div className="hidden items-center gap-2.5 sm:flex">
-          <Link to="/login" className={`${ctaGhostClass} ${CTA_SIZE_SM}`}>
+          <Link
+            to="/login"
+            className={`${ctaGhostClass} ${CTA_SIZE_SM} ${
+              onLogin ? 'border-white/40 bg-white/15 text-white' : ''
+            }`}
+            aria-current={onLogin ? 'page' : undefined}
+          >
             Sign in
           </Link>
-          <Link to="/signup" className={`${ctaPrimaryClass} ${CTA_SIZE_SM}`}>
+          <Link
+            to="/signup"
+            className={`${ctaPrimaryClass} ${CTA_SIZE_SM} ${
+              onSignup ? 'ring-2 ring-sky-300/50 ring-offset-2 ring-offset-[#05070f]' : ''
+            }`}
+            aria-current={onSignup ? 'page' : undefined}
+          >
             <span
               aria-hidden="true"
               className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full"
@@ -147,14 +162,13 @@ export function LandingHeader() {
             {NAV_LINKS.map((link) => (
               <a
                 key={link.id}
-                href={`#${link.id}`}
+                href={sectionHref(link.id)}
                 onClick={() => setMenuOpen(false)}
                 className="rounded-xl px-3 py-3 text-sm font-semibold text-white/75 transition hover:bg-white/5 hover:text-white"
               >
                 {link.label}
               </a>
             ))}
-            {/* The header already shows both CTAs from the sm breakpoint up. */}
             <div className="mt-3 flex flex-col gap-2.5 sm:hidden">
               <Link
                 to="/login"

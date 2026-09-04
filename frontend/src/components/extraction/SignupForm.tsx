@@ -210,19 +210,19 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
 
       <button className={primaryButtonClass} type="submit" disabled={!canSubmit}>
         <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-        {loading ? 'Creating Account...' : 'Create Account'}
+        <span className="relative">{loading ? 'Creating account…' : 'Create free account'}</span>
       </button>
 
-      <div className="text-center text-sm font-medium text-blue-50">
-        Already have an account?{' '}
+      <p className="text-center text-sm text-white/45">
+        Already have a workspace?{' '}
         <button
           type="button"
           onClick={onSwitchToLogin}
           className="font-bold text-sky-300 transition hover:text-sky-200"
         >
-          Sign In
+          Sign in
         </button>
-      </div>
+      </p>
     </form>
   );
 }

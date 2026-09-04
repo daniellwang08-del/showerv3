@@ -120,7 +120,7 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
         </div>
       </div>
 
-      <label className="group flex w-fit cursor-pointer select-none items-center gap-2.5 text-sm font-semibold text-blue-50">
+      <label className="group flex w-fit cursor-pointer select-none items-center gap-2.5 text-sm font-semibold text-white/65">
         <span className="relative inline-flex h-5 w-5 items-center justify-center">
           <input
             type="checkbox"
@@ -128,33 +128,33 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
             onChange={(e) => setRemember(e.target.checked)}
             className="peer sr-only"
           />
-          <span className="absolute inset-0 rounded-md border border-white/30 bg-white/10 shadow-inner backdrop-blur-md transition-all duration-200 group-hover:border-white/50 peer-checked:border-sky-300 peer-checked:bg-gradient-to-br peer-checked:from-sky-400 peer-checked:to-indigo-500 peer-checked:shadow-[0_0_10px_rgba(56,189,248,0.6)] peer-focus-visible:ring-2 peer-focus-visible:ring-sky-400/60 peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-transparent" />
+          <span className="absolute inset-0 rounded-md border border-white/25 bg-white/10 shadow-inner backdrop-blur-md transition-all duration-200 group-hover:border-white/45 peer-checked:border-sky-300 peer-checked:bg-gradient-to-br peer-checked:from-sky-400 peer-checked:to-indigo-500 peer-checked:shadow-[0_0_10px_rgba(56,189,248,0.55)] peer-focus-visible:ring-2 peer-focus-visible:ring-sky-400/60 peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-transparent" />
           <Check
             size={13}
             strokeWidth={3.5}
             className="relative scale-50 text-white opacity-0 transition-all duration-200 peer-checked:scale-100 peer-checked:opacity-100"
           />
         </span>
-        <span className="transition-colors group-hover:text-white">Remember me</span>
+        <span className="transition-colors group-hover:text-white">Remember me on this device</span>
       </label>
 
       {error && <p className={errorBoxClass}>{error}</p>}
 
       <button className={primaryButtonClass} type="submit" disabled={loading}>
         <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-        {loading ? 'Signing In...' : 'Sign In'}
+        <span className="relative">{loading ? 'Signing in…' : 'Continue to workspace'}</span>
       </button>
 
-      <div className="text-center text-sm font-medium text-blue-50">
-        Don't have an account?{' '}
+      <p className="text-center text-sm text-white/45">
+        New here?{' '}
         <button
           type="button"
           onClick={onSwitchToSignup}
           className="font-bold text-sky-300 transition hover:text-sky-200"
         >
-          Sign Up
+          Create a free account
         </button>
-      </div>
+      </p>
     </form>
   );
 }
