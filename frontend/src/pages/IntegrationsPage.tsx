@@ -2,6 +2,7 @@ import { Puzzle } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
+import { JobSiteTiles } from '../components/integrations/JobSiteTiles';
 import { GoogleSheetsSettingsSection } from '../components/settings/GoogleSheetsSettingsSection';
 import { PumbleSettingsSection } from '../components/settings/PumbleSettingsSection';
 import { card, headingText, mutedText, pagePad } from '../ui/tokens';
@@ -41,8 +42,17 @@ export function IntegrationsPage() {
         <PageHeader
           icon={Puzzle}
           title="Integrations"
-          description="Connect Google Sheets and Pumble to auto-post matching jobs by score, work mode, and excluded companies."
+          description="Connect job sites to pull openings into your pipeline, then post matches to Google Sheets or Pumble."
         />
+
+        <JobSiteTiles />
+
+        <div className="pt-2">
+          <h2 className={`text-sm font-bold ${headingText}`}>Post matching jobs</h2>
+          <p className={`mt-0.5 text-xs ${mutedText}`}>
+            After jobs are scored, auto-post matching URLs to a spreadsheet or a Pumble channel.
+          </p>
+        </div>
 
         <div className="grid items-start gap-3 sm:gap-4 xl:grid-cols-2">
           <IntegrationCard

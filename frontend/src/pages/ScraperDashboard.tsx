@@ -1,13 +1,14 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext, Link } from 'react-router-dom';
 import { useScraperStore } from '../stores/scraperStore';
 import { useJobsStore } from '../stores/jobsStore';
 import { apiClient } from '../api/client';
-import { btnPrimary, pagePad, toolbar } from '../ui/tokens';
+import { btnPrimary, btnSecondary, pagePad, toolbar } from '../ui/tokens';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
 import { ScraperStatsBar } from '../components/scraper/ScraperStatsBar';
+import { JobsFocusStats, type FocusKey } from '../components/scraper/JobsFocusStats';
 import { ScraperJobsTable } from '../components/scraper/ScraperJobsTable';
 import { SyncResultBanner } from '../components/scraper/SyncResultBanner';
 import { LlmProviderSelector } from '../components/scraper/LlmProviderSelector';
@@ -18,7 +19,7 @@ import { SearchInput } from '../components/shared/SearchInput';
 import { SubmitForm } from '../components/extraction/SubmitForm';
 import { DuplicatesModal } from '../components/scraper/DuplicatesModal';
 import type { AppShellOutletContext } from '../components/layout/AppShell';
-import { AlertTriangle, Briefcase, Building2, Wand2 } from 'lucide-react';
+import { AlertTriangle, BarChart3, Briefcase, Building2, Wand2 } from 'lucide-react';
 import { useResumeAiStore } from '../stores/resumeAiStore';
 import type { DashboardJob } from '../types/scraper';
 import type { DashboardView } from '../api/scraperApi';
@@ -249,20 +250,30 @@ export function ScraperDashboard() {
         description={
           isAdmin
             ? 'Fetch listings, auto-extract job descriptions, and track the live JD backlog.'
-            : 'Browse and manage processed job listings across all platforms.'
+            : 'Today’s pulse and your job list. Open Analysis for the full pipeline board and trends.'
         }
         actions={
           <div className="flex w-full flex-wrap items-start gap-2 sm:w-auto sm:justify-end">
             {!isAdmin && (
-              <button
-                type="button"
-                onClick={openResumeAiCenter}
-                title="Paste a job description and tailor your resume with AI"
-                className={`${btnPrimary} min-w-0 flex-1 sm:flex-none`}
-              >
-                <Wand2 size={15} className="shrink-0" />
-                <span className="truncate">Tailor with AI</span>
-              </button>
+              <>
+                <Link
+                  to="/job-analysis"
+                  className={`${btnSecondary} min-w-0 flex-1 sm:flex-none`}
+                  title="Open full job analysis dashboard"
+                >
+                  <BarChart3 size={15} className="shrink-0" />
+                  <span className="truncate">Analysis</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={openResumeAiCenter}
+                  title="Paste a job description and tailor your resume with AI"
+                  className={`${btnPrimary} min-w-0 flex-1 sm:flex-none`}
+                >
+                  <Wand2 size={15} className="shrink-0" />
+                  <span className="truncate">Tailor with AI</span>
+                </button>
+              </>
             )}
             <LlmProviderSelector />
           </div>
@@ -279,8 +290,9 @@ export function ScraperDashboard() {
 
       {/* z-0 keeps metric tiles below PageHeader menus (header is z-40). */}
       <div className="relative z-0">
+        {isAdmin ? (
         <ScraperStatsBar
-          variant={isAdmin ? 'admin' : 'applicant'}
+          variant="admin"
           stats={stats}
           adminStats={adminStats}
           loading={statsLoading}
@@ -360,6 +372,30 @@ export function ScraperDashboard() {
             })
           }
         />
+        ) : (
+          <JobsFocusStats
+            stats={stats}
+            loading={statsLoading}
+            onSelect={(key: FocusKey) => {
+              if (key === 'today') {
+                applyAgentDashboard({ reset: true, view: 'today', remote_only: false, min_match_score: 0 });
+              } else if (key === 'today_remote') {
+                applyAgentDashboard({ reset: true, view: 'today', remote_only: true, min_match_score: 0 });
+              } else if (key === 'today_ready') {
+                applyAgentDashboard({ reset: true, view: 'ready', remote_only: false, min_match_score: 0 });
+              } else if (key === 'applied_today') {
+                applyAgentDashboard({
+                  reset: true,
+                  view: 'applied_today',
+                  remote_only: false,
+                  min_match_score: 0,
+                });
+              } else {
+                applyAgentDashboard({ reset: true, view: 'available', remote_only: false, min_match_score: 0 });
+              }
+            }}
+          />
+        )}
       </div>
 
       <div className={`relative z-10 ${toolbar}`}>

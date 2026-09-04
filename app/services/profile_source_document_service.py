@@ -1,5 +1,7 @@
 """
 Upload, text extraction, and structured parsing of per-company project source documents (Option C).
+
+Accepted uploads: PDF (text extract), DOCX (paragraphs/tables), Markdown (.md / .markdown).
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ from app.models.profile_source_schemas import (
     SourceDocumentStructured,
 )
 from app.services.resume_parse_service import (
-    detect_resume_kind,
     docx_to_plain_text,
     pdf_to_plain_text_any,
 )
@@ -37,7 +38,12 @@ MAX_SOURCE_TEXT_CHARS = 200_000
 MAX_PARSE_TEXT_CHARS = 100_000
 MAX_PDF_PAGES = 50
 
+MARKDOWN_EXTENSIONS = (".md", ".markdown")
+UNSUPPORTED_SOURCE_TYPE_MSG = "Unsupported file type. Upload PDF, DOCX, or Markdown (.md)."
+
 SOURCE_PARSE_INSTRUCTIONS = """You extract structured project information from a candidate's detailed work/project document.
+
+The source may be PDF, Word, or Markdown. Markdown headings (#, ##), YAML front matter, and lists often mark project boundaries; use them, but still preserve factual wording.
 
 Return ONLY valid JSON:
 {
@@ -58,7 +64,7 @@ Rules:
 - Preserve factual wording from the source; do not invent metrics or technologies.
 - Split distinct projects into separate objects.
 - Include all substantive projects described in the document.
-- If company name appears in the document header or repeatedly, set company_name.
+- If company name appears in the document header, front matter, or repeatedly, set company_name.
 - Use [] for empty lists; use null only for unknown company_name.
 """
 
@@ -80,12 +86,69 @@ def _parse_json_object(content: str) -> dict[str, Any]:
     return data
 
 
-def extract_document_text(*, raw: bytes, filename: str) -> tuple[str, str, list[str]]:
+def _basename(filename: str) -> str:
+    name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    return name.lower()
+
+
+def is_markdown_filename(filename: str) -> bool:
+    name = _basename(filename)
+    return any(name.endswith(ext) for ext in MARKDOWN_EXTENSIONS)
+
+
+def _is_markdown_content_type(content_type: str | None) -> bool:
+    ct = (content_type or "").split(";", 1)[0].strip().lower()
+    return ct in {"text/markdown", "text/x-markdown"}
+
+
+def detect_source_document_kind(
+    raw: bytes,
+    filename: str,
+    content_type: str | None = None,
+) -> str:
+    """Classify a project source upload. Magic bytes win over the file extension."""
+    name = _basename(filename)
+    if raw[:4] == b"%PDF":
+        return "pdf"
+    if raw[:2] == b"PK" and (name.endswith(".docx") or "docx" in name):
+        return "docx"
+    if name.endswith(".docx"):
+        return "docx"
+    if name.endswith(".pdf"):
+        raise ValueError("File does not look like a valid PDF.")
+    if is_markdown_filename(name) or (
+        _is_markdown_content_type(content_type) and not name.endswith(".txt")
+    ):
+        return "markdown"
+    raise ValueError(UNSUPPORTED_SOURCE_TYPE_MSG)
+
+
+def markdown_to_plain_text(raw: bytes) -> str:
+    """Decode Markdown as text. Keep markup; headings and lists help structured parse."""
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        text = raw.decode("utf-16")
+    else:
+        if b"\x00" in raw[:8192]:
+            raise ValueError("Markdown file looks binary. Upload a UTF-8 .md file.")
+        payload = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            text = payload.decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def extract_document_text(
+    *,
+    raw: bytes,
+    filename: str,
+    content_type: str | None = None,
+) -> tuple[str, str, list[str]]:
     """Return (plain_text, source_kind, warnings)."""
     if len(raw) > MAX_SOURCE_BYTES:
         raise ValueError(f"File too large (max {MAX_SOURCE_BYTES // (1024 * 1024)} MB).")
 
-    kind = detect_resume_kind(raw, filename)
+    kind = detect_source_document_kind(raw, filename, content_type=content_type)
     warnings: list[str] = []
 
     if kind == "pdf":
@@ -98,8 +161,12 @@ def extract_document_text(*, raw: bytes, filename: str) -> tuple[str, str, list[
         text = docx_to_plain_text(raw)
         if not text.strip():
             raise ValueError("No text found in DOCX.")
+    elif kind == "markdown":
+        text = markdown_to_plain_text(raw)
+        if not text.strip():
+            raise ValueError("No text found in Markdown file.")
     else:
-        raise ValueError("Unsupported file type. Upload PDF or DOCX.")
+        raise ValueError(UNSUPPORTED_SOURCE_TYPE_MSG)
 
     if len(text) > MAX_SOURCE_TEXT_CHARS:
         text = text[:MAX_SOURCE_TEXT_CHARS]
@@ -233,10 +300,15 @@ async def upload_and_parse_source_document(
     raw: bytes,
     filename: str,
     company_name_hint: str | None = None,
+    content_type: str | None = None,
 ) -> ProfileSourceDocumentUploadResponse:
     from app.storage.user_repository import UserRepository
 
-    text, source_kind, warnings = extract_document_text(raw=raw, filename=filename)
+    text, source_kind, warnings = extract_document_text(
+        raw=raw,
+        filename=filename,
+        content_type=content_type,
+    )
 
     async with get_session() as session:
         user_repo = UserRepository(session)

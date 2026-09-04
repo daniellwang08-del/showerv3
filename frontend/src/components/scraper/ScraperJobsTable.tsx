@@ -2095,8 +2095,8 @@ export function ScraperJobsTable({
             {isAdmin
               ? 'Try another board filter, or Sync All if the pool is empty.'
               : canSync
-                ? 'Hit “Sync All” to pull listings, or add a company board under My Preferences → My job sites.'
-                : 'Jobs will appear here once an admin runs a sync, or after you add a job site in Preferences.'}
+                ? 'Hit “Sync All” to pull listings, or connect a job site under Integrations.'
+                : 'Jobs will appear here once an admin runs a sync, or after you connect a job site in Integrations.'}
           </p>
         </div>
       </div>

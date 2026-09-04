@@ -143,7 +143,11 @@ export function editorTextToContributions(text: string): string[] {
  * - Legacy arrays with no markers: every non-empty line is a bullet.
  */
 export function resumeBulletsFromContributions(contributions: string[] | null | undefined): string[] {
-  const list = contributions ?? [];
+  const list = Array.isArray(contributions)
+    ? contributions.map((c) => (typeof c === 'string' ? c : c == null ? '' : String(c)))
+    : typeof contributions === 'string'
+      ? [contributions]
+      : [];
   const marked = list
     .map((ln) => parseContributionsEditorLine(ln))
     .filter((ln): ln is Extract<ContributionsEditorLine, { kind: 'bullet' }> => ln.kind === 'bullet')

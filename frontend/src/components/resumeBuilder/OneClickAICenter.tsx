@@ -310,28 +310,33 @@ export function OneClickAILauncher({
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className={`oneclick-launcher-glow group relative flex w-full items-center gap-3 overflow-hidden rounded-xl border-2 border-indigo-300/80 bg-gradient-to-r from-indigo-50 via-violet-50 to-fuchsia-50 px-3 py-2.5 text-left shadow-lg shadow-indigo-500/20 transition hover:border-fuchsia-400 hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 ${
+        className={`oneclick-launcher-glow group relative flex w-full flex-col items-stretch gap-1.5 overflow-hidden rounded-xl border-2 border-indigo-300/80 bg-gradient-to-r from-indigo-50 via-violet-50 to-fuchsia-50 px-3 py-2.5 text-left shadow-lg shadow-indigo-500/20 transition hover:border-fuchsia-400 hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-fuchsia-300 ${
           open ? 'border-fuchsia-400 ring-2 ring-fuchsia-300/60' : ''
         } ${className}`}
       >
         <span className="oneclick-shimmer pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent opacity-70" />
-        <BrandMark mood={sending ? 'thinking' : open ? 'celebrate' : 'idle'} size="sm" />
-        <div className="relative min-w-0 flex-1">
-          <p className="truncate text-sm font-extrabold tracking-tight text-slate-900">
-            {AI_PRODUCT.oneClickTitle}
-          </p>
-          <p className="truncate text-[11px] font-semibold text-slate-600">
-            {open
-              ? sending
-                ? 'Working…'
-                : 'Session open'
-              : 'Match & tailor to a job'}
-          </p>
-        </div>
-        <span className="oneclick-shimmer relative inline-flex shrink-0 items-center gap-1 rounded-lg bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-md shadow-violet-500/40">
-          {open ? <ChevronDown size={13} /> : null}
-          {open ? 'Hide' : 'Open'}
+        <span className="relative flex w-full items-center gap-3">
+          <BrandMark mood={sending ? 'thinking' : open ? 'celebrate' : 'idle'} size="sm" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-extrabold tracking-tight text-slate-900">
+              {AI_PRODUCT.oneClickTitle}
+            </p>
+            <p className="truncate text-[11px] font-semibold text-slate-600">
+              {open
+                ? sending
+                  ? 'Working…'
+                  : 'Session open'
+                : 'Match & tailor to a job'}
+            </p>
+          </div>
+          <span className="oneclick-shimmer relative inline-flex shrink-0 items-center gap-1 rounded-lg bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-md shadow-violet-500/40">
+            {open ? <ChevronDown size={13} /> : null}
+            {open ? 'Hide' : 'Open'}
+          </span>
         </span>
+        <p className="relative text-[11px] font-medium leading-snug text-slate-600">
+          {AI_PRODUCT.oneClickHowTo}
+        </p>
       </button>
     );
   }
@@ -362,7 +367,7 @@ export function OneClickAILauncher({
         </div>
       </div>
       <p className="relative text-[12px] font-medium leading-snug text-slate-700">
-        Paste a job description to score your match and rewrite this resume for the role.
+        {AI_PRODUCT.oneClickHowTo}
       </p>
       <span className="oneclick-shimmer relative inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 px-3 py-2.5 text-xs font-bold text-white shadow-md shadow-fuchsia-500/35 transition group-hover:scale-[1.02] group-hover:shadow-lg">
         {open ? (

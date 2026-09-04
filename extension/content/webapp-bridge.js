@@ -126,6 +126,53 @@
     ackPage(requestId);
   });
 
+  const CAPTURE_EVENT = "atomspace-capture-session";
+  document.addEventListener(CAPTURE_EVENT, function (event) {
+    let detail = null;
+    try {
+      detail = JSON.parse(event.detail);
+    } catch (_e) {
+      return;
+    }
+    if (!detail || !detail.slug) return;
+    const requestId = detail.requestId || null;
+    const origins = Array.isArray(detail.origins) ? detail.origins : [];
+    const domains = Array.isArray(detail.domains) ? detail.domains : [];
+
+    try {
+      chrome.permissions.request(
+        { permissions: ["cookies"], origins: origins },
+        function (granted) {
+          if (!granted) {
+            reply(
+              "CAPTURE_JOB_SITE_SESSION_RESULT",
+              { requestId: requestId, ok: false, error: "permission_denied" },
+              "*",
+            );
+            return;
+          }
+          chrome.runtime.sendMessage(
+            { type: "GET_JOB_SITE_COOKIES", domains: domains, slug: detail.slug },
+            function (resp) {
+              void chrome.runtime.lastError;
+              reply(
+                "CAPTURE_JOB_SITE_SESSION_RESULT",
+                Object.assign({ requestId: requestId }, resp || { ok: false, error: "no_response" }),
+                "*",
+              );
+            },
+          );
+        },
+      );
+    } catch (_e) {
+      reply(
+        "CAPTURE_JOB_SITE_SESSION_RESULT",
+        { requestId: requestId, ok: false, error: "extension_error" },
+        "*",
+      );
+    }
+  });
+
   // Proactively announce presence for listeners that attach before their PING.
   reply("READY", {}, "*");
 

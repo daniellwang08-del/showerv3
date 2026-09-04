@@ -20,7 +20,7 @@ class SourceDocumentStructured(BaseModel):
 class ProfileSourceDocumentResponse(BaseModel):
     id: str
     filename: str
-    source_kind: str
+    source_kind: str = Field(description="pdf, docx, or markdown")
     company_name: str | None = None
     char_count: int = 0
     project_count: int = 0

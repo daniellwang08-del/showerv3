@@ -191,6 +191,79 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
   return ack;
 }
 
+export interface CapturedCookie {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: string;
+}
+
+/**
+ * Ask the installed extension to read live cookies for a job site.
+ * Must be called from a click handler so Chrome can prompt for cookie permission.
+ */
+export function captureJobSiteSession(
+  slug: string,
+  domains: string[],
+  origins: string[],
+  timeoutMs = 25000,
+): Promise<{ ok: boolean; cookies?: CapturedCookie[]; error?: string }> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve({ ok: false, error: 'unavailable' });
+  }
+  const requestId = randomId();
+  const CAPTURE_EVENT = 'atomspace-capture-session';
+
+  const ack = new Promise<{ ok: boolean; cookies?: CapturedCookie[]; error?: string }>((resolve) => {
+    let settled = false;
+    const finish = (result: { ok: boolean; cookies?: CapturedCookie[]; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('message', onMessage);
+      window.clearTimeout(timer);
+      resolve(result);
+    };
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as {
+        source?: string;
+        type?: string;
+        requestId?: string;
+        ok?: boolean;
+        cookies?: CapturedCookie[];
+        error?: string;
+      };
+      if (!data || data.source !== EXT_SOURCE) return;
+      if (data.type !== 'CAPTURE_JOB_SITE_SESSION_RESULT') return;
+      if (data.requestId && data.requestId !== requestId) return;
+      finish({
+        ok: Boolean(data.ok),
+        cookies: data.cookies,
+        error: data.error,
+      });
+    };
+    const timer = window.setTimeout(
+      () => finish({ ok: false, error: 'timed_out' }),
+      timeoutMs,
+    );
+    window.addEventListener('message', onMessage);
+  });
+
+  try {
+    document.dispatchEvent(
+      new CustomEvent(CAPTURE_EVENT, {
+        detail: JSON.stringify({ slug, domains, origins, requestId }),
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
+
+  return ack;
+}
+
 /** Forget a cached positive detection (e.g. to re-probe). */
 export function clearExtensionCache(): void {
   cachedInstalled = null;

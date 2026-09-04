@@ -41,7 +41,6 @@ import { prefsSaveBtnClass } from '../components/settings/prefsSaveButtonClass';
 import { EeoPreferencesSection } from '../components/preferences/EeoPreferencesSection';
 import { AddressPreferencesSection } from '../components/preferences/AddressPreferencesSection';
 import { CountryPreferencesSection } from '../components/preferences/CountryPreferencesSection';
-import { JobSourcesSection } from '../components/preferences/JobSourcesSection';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import { PageHeader } from '../components/layout/PageHeader';
 import { BrandedLoader } from '../components/layout/BrandedLoader';
@@ -833,13 +832,6 @@ export function MyPreferencesPage() {
                 <AddressPreferencesSection />
               </div>
               {settings && <CountryPreferencesSection settings={settings} onSaved={applySettings} />}
-            </PrefsSection>
-
-            <PrefsSection
-              title="Job sites"
-              description="Company boards to pull openings from automatically."
-            >
-              <JobSourcesSection />
             </PrefsSection>
 
             <PrefsSection

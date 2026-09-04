@@ -13,6 +13,7 @@ import {
   UserCog,
   Sparkles,
   ScrollText,
+  BarChart3,
 } from 'lucide-react';
 import { useThemeStore } from '../../stores/themeStore';
 import { useAgentStore } from '../../stores/agentStore';
@@ -75,6 +76,7 @@ function ThemeToggle() {
 
 const applicantNavItems = [
   { to: '/scraper', label: 'Jobs', icon: Briefcase },
+  { to: '/job-analysis', label: 'Job Analysis', icon: BarChart3 },
   { to: '/profile', label: 'Profile', icon: UserCircle },
   { to: '/preferences', label: 'My Preferences', icon: UserCog },
   { to: '/resume-builder', label: 'Resume Builder', icon: LayoutTemplate },

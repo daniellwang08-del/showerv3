@@ -48,6 +48,25 @@ export const emptyEEO = (): EEOPreferences => ({
 });
 
 /** Normalize a stored tri-state yes/no value into true | false | null. */
+function asRecord(x: unknown): Record<string, unknown> | null {
+  return x && typeof x === 'object' && !Array.isArray(x) ? (x as Record<string, unknown>) : null;
+}
+
+function asString(v: unknown): string {
+  return typeof v === 'string' ? v : v == null ? '' : String(v);
+}
+
+function asStringList(v: unknown): string[] {
+  if (typeof v === 'string') return v.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (!Array.isArray(v)) return [];
+  return v.map((item) => (typeof item === 'string' ? item : item == null ? '' : String(item)));
+}
+
+function asObjectList(v: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((item) => asRecord(item) ?? {});
+}
+
 function toTriState(v: unknown): boolean | null {
   if (v === true || v === false) return v;
   return null;
@@ -64,12 +83,10 @@ export const emptyAddress = (): AddressInfo => ({
 });
 
 function addressToForm(raw: UserProfile['address']): AddressInfo {
-  const a = (raw ?? {}) as Record<string, unknown>;
+  const a = asRecord(raw) ?? {};
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const hasAny = ['line1', 'line2', 'city', 'state', 'postal_code', 'country'].some((k) => str(a[k]).trim());
-  const prefsRaw = Array.isArray(a.local_preferences) ? a.local_preferences : [];
-  const local_preferences = prefsRaw
-    .filter((x): x is string => typeof x === 'string')
+  const local_preferences = asStringList(a.local_preferences)
     .map((x) => x.trim())
     .filter(Boolean)
     .slice(0, 30);
@@ -86,7 +103,7 @@ function addressToForm(raw: UserProfile['address']): AddressInfo {
 }
 
 function eeoToForm(raw: UserProfile['eeo_preferences']): EEOPreferences {
-  const e = (raw ?? {}) as Record<string, unknown>;
+  const e = asRecord(raw) ?? {};
   return {
     gender: typeof e.gender === 'string' ? e.gender : '',
     race: typeof e.race === 'string' ? e.race : '',
@@ -121,11 +138,16 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
       address: emptyAddress(),
     };
   }
-  const ts = (p.technical_skills?.length ? p.technical_skills : [emptyTechSkill()]) as TechnicalSkillBlock[];
-  const we = (p.work_experience?.length ? p.work_experience : [emptyWorkExp()]) as WorkExperienceBlock[];
-  const ed = (p.education?.length ? p.education : [emptyEducation()]) as EducationBlock[];
-  const cert = (p.certificates?.length ? p.certificates : [emptyCert()]) as CertificateBlock[];
-  const extra = p.extra?.length ? p.extra : [''];
+  const tsRows = asObjectList(p.technical_skills);
+  const weRows = asObjectList(p.work_experience);
+  const edRows = asObjectList(p.education);
+  const certRows = asObjectList(p.certificates);
+  const extraRows = asStringList(p.extra);
+  const ts = tsRows.length ? tsRows : [emptyTechSkill() as unknown as Record<string, unknown>];
+  const we = weRows.length ? weRows : [emptyWorkExp() as unknown as Record<string, unknown>];
+  const ed = edRows.length ? edRows : [emptyEducation() as unknown as Record<string, unknown>];
+  const cert = certRows.length ? certRows : [emptyCert() as unknown as Record<string, unknown>];
+  const extra = extraRows.length ? extraRows : [''];
   return {
     name_first: p.name_first ?? '',
     name_middle: p.name_middle ?? '',
@@ -137,42 +159,50 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
     linkedin_url: p.linkedin_url ?? '',
     github_url: p.github_url ?? '',
     profile_summary: p.profile_summary ?? '',
-    technical_skills: ts.map((x) => ({ category: (x as TechnicalSkillBlock).category ?? '', skills: (x as TechnicalSkillBlock).skills ?? '' })),
+    technical_skills: ts.map((x) => ({
+      category: asString(x.category),
+      skills: asString(x.skills),
+    })),
     work_experience: we.map((x) => {
-      const w = x as WorkExperienceBlock;
+      const w = {
+        company_name: asString(x.company_name),
+        job_title: asString(x.job_title),
+        period_start: asString(x.period_start),
+        period_end: asString(x.period_end),
+        location: asString(x.location),
+        job_type: asString(x.job_type),
+        employment_type: asString(x.employment_type),
+        project_title: asString(x.project_title),
+        project_intro: asString(x.project_intro),
+        contributions: asStringList(x.contributions),
+        used_skills: asString(x.used_skills),
+        description: asString(x.description),
+      };
       // Older imported/AI-parsed roles packed the project title, intro, and bullets
       // into a single `description` blob with empty structured fields. Derive the
       // structured pieces (the same way the resume preview does) so the editor shows
       // real values and the view renders proper bullets instead of one raw paragraph.
       const derived = deriveWorkContent(w);
       return {
-        company_name: w.company_name ?? '',
-        job_title: w.job_title ?? '',
-        period_start: w.period_start ?? '',
-        period_end: w.period_end ?? '',
-        location: w.location ?? '',
-        job_type: w.job_type ?? '',
-        employment_type: w.employment_type ?? '',
-        project_title: derived.projectTitle,
-        project_intro: derived.intro,
+        ...w,
+        project_title: derived.projectTitle || w.project_title,
+        project_intro: derived.intro || w.project_intro,
         contributions: derived.contributions.length ? derived.contributions : [''],
-        used_skills: w.used_skills ?? '',
-        description: w.description ?? '',
       };
     }),
     education: ed.map((x) => ({
-      university_name: (x as EducationBlock).university_name ?? '',
-      degree: (x as EducationBlock).degree ?? '',
-      mark: (x as EducationBlock).mark ?? '',
-      period_start: (x as EducationBlock).period_start ?? '',
-      period_end: (x as EducationBlock).period_end ?? '',
-      location: (x as EducationBlock).location ?? '',
-      description: (x as EducationBlock).description ?? '',
+      university_name: asString(x.university_name),
+      degree: asString(x.degree),
+      mark: asString(x.mark),
+      period_start: asString(x.period_start),
+      period_end: asString(x.period_end),
+      location: asString(x.location),
+      description: asString(x.description),
     })),
     certificates: cert.map((x) => ({
-      name: (x as CertificateBlock).name ?? '',
-      issued_at: coerceFlexibleDate((x as CertificateBlock).issued_at ?? ''),
-      url: (x as CertificateBlock).url ?? '',
+      name: asString(x.name),
+      issued_at: coerceFlexibleDate(asString(x.issued_at)),
+      url: asString(x.url),
     })),
     extra,
     eeo_preferences: eeoToForm(p.eeo_preferences),

@@ -75,6 +75,7 @@ from app.services.attachment_job_url_ai import extract_job_urls_from_text_combin
 from app.services.job_field_utils import resolve_display_work_mode, resolve_job_display_title
 from app.storage.repository import _utcnow
 from app.utils.date_bounds import day_bounds_for_timezone
+from app.utils.profile_errors import format_profile_unexpected_error
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -520,7 +521,35 @@ async def update_profile(
 
 # ---- User profile (single profile per account) ----
 
+def _as_dict_list(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    return [item if isinstance(item, dict) else {} for item in value]
+
+
+def _as_str_list(value) -> list[str]:
+    if isinstance(value, str):
+        return [ln.strip() for ln in value.splitlines() if ln.strip()]
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            out.append(item)
+    return out
+
+
+def _as_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
 def _user_to_profile_response(u) -> ProfileResponse:
+    """Build a ProfileResponse, coercing legacy / malformed JSON columns.
+
+    Stored JSON can predate schema changes (string ``extra``, non-dict skill
+    rows). Coercing here keeps GET /profile from raising a validation error
+    that would blank the profile page.
+    """
     name = _profile_display_name(getattr(u, "name_first", None), getattr(u, "name_middle", None), getattr(u, "name_last", None))
     return ProfileResponse(
         user_id=u.id,
@@ -535,13 +564,13 @@ def _user_to_profile_response(u) -> ProfileResponse:
         linkedin_url=getattr(u, "linkedin_url", None),
         github_url=getattr(u, "github_url", None),
         profile_summary=getattr(u, "profile_summary", None),
-        technical_skills=getattr(u, "technical_skills", None) or [],
-        work_experience=getattr(u, "work_experience", None) or [],
-        education=getattr(u, "education", None) or [],
-        certificates=getattr(u, "certificates", None) or [],
-        extra=getattr(u, "extra", None) or [],
-        eeo_preferences=getattr(u, "eeo_preferences", None) or {},
-        address=getattr(u, "address", None) or {},
+        technical_skills=_as_dict_list(getattr(u, "technical_skills", None)),
+        work_experience=_as_dict_list(getattr(u, "work_experience", None)),
+        education=_as_dict_list(getattr(u, "education", None)),
+        certificates=_as_dict_list(getattr(u, "certificates", None)),
+        extra=_as_str_list(getattr(u, "extra", None)),
+        eeo_preferences=_as_dict(getattr(u, "eeo_preferences", None)),
+        address=_as_dict(getattr(u, "address", None)),
         created_at=u.created_at,
         updated_at=u.updated_at,
     )
@@ -576,12 +605,21 @@ async def get_profile(current_user: dict = Depends(get_current_user)) -> Profile
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-    async with get_session() as session:
-        repo = UserRepository(session)
-        user = await repo.get_by_id(user_id)
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        return _user_to_profile_response(user)
+    try:
+        async with get_session() as session:
+            repo = UserRepository(session)
+            user = await repo.get_by_id(user_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            return _user_to_profile_response(user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_profile_failed", user_id=user_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=format_profile_unexpected_error(e, "Failed to load profile"),
+        )
 
 
 @router.put("/profile", response_model=ProfileResponse)
@@ -594,31 +632,40 @@ async def put_profile(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-    async with get_session() as session:
-        repo = UserRepository(session)
-        user, _ = await repo.update_profile(user_id, _request_to_profile_data(request))
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        await session.commit()
-
-    # Vector match engine: refresh the profile encoding (skips when unchanged).
     try:
-        from app.tasks.worker import enqueue_encode_user
+        async with get_session() as session:
+            repo = UserRepository(session)
+            user, _ = await repo.update_profile(user_id, _request_to_profile_data(request))
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            await session.commit()
 
-        await enqueue_encode_user(user_id)
-    except Exception as enc_err:
-        logger.warning(
-            "encode_user_enqueue_after_profile_save_failed",
-            user_id=user_id,
-            error=str(enc_err),
+        # Vector match engine: refresh the profile encoding (skips when unchanged).
+        try:
+            from app.tasks.worker import enqueue_encode_user
+
+            await enqueue_encode_user(user_id)
+        except Exception as enc_err:
+            logger.warning(
+                "encode_user_enqueue_after_profile_save_failed",
+                user_id=user_id,
+                error=str(enc_err),
+            )
+
+        async with get_session() as session:
+            repo = UserRepository(session)
+            user = await repo.get_by_id(user_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            return _user_to_profile_response(user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("put_profile_failed", user_id=user_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=format_profile_unexpected_error(e, "Failed to save profile"),
         )
-
-    async with get_session() as session:
-        repo = UserRepository(session)
-        user = await repo.get_by_id(user_id)
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        return _user_to_profile_response(user)
 
 
 async def _apply_detected_countries_from_resume(user_id: str, result) -> None:
@@ -692,18 +739,27 @@ async def resume_parse(
         )
         return result
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=format_profile_unexpected_error(e, str(e) or "Could not read this file"),
+        )
     except AIParsingError as e:
         logger.warning("resume_parse_ai_failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e) or "Résumé parsing failed. Check OPENAI_API_KEY and model access.",
+            detail=format_profile_unexpected_error(
+                e,
+                "Résumé parsing failed. Check your AI API key in My Preferences and try again.",
+            ),
         )
     except _openai_api_error() as e:
         logger.warning("resume_parse_openai_error", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Résumé parsing is temporarily unavailable. Please try again later.",
+            detail=format_profile_unexpected_error(
+                e,
+                "Résumé parsing is temporarily unavailable. Please try again later.",
+            ),
         )
     except ModuleNotFoundError as e:
         logger.exception("resume_parse_missing_dependency", error=str(e))
@@ -715,7 +771,7 @@ async def resume_parse(
         logger.exception("resume_parse_failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Résumé parsing failed. See server logs for details.",
+            detail=format_profile_unexpected_error(e, "Résumé parsing failed. See server logs for details."),
         )
 
 
@@ -760,7 +816,7 @@ async def upload_profile_source_document(
     company_name: str | None = Query(default=None, max_length=200),
     current_user: dict = Depends(get_current_user),
 ) -> ProfileSourceDocumentUploadResponse:
-    """Upload a PDF/DOCX with detailed per-company project descriptions."""
+    """Upload a PDF, DOCX, or Markdown (.md) file with detailed per-company project descriptions."""
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -775,6 +831,7 @@ async def upload_profile_source_document(
             raw=raw,
             filename=file.filename or "document",
             company_name_hint=company_name,
+            content_type=file.content_type,
         )
         logger.info(
             "profile_source_document_uploaded",
@@ -784,17 +841,20 @@ async def upload_profile_source_document(
         )
         return result
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=format_profile_unexpected_error(e, str(e) or "Could not read this file"),
+        )
     except AIParsingError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e) or "Document parsing failed.",
+            detail=format_profile_unexpected_error(e, "Document parsing failed."),
         )
     except Exception as e:
         logger.exception("profile_source_document_upload_failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Upload failed. See server logs for details.",
+            detail=format_profile_unexpected_error(e, "Upload failed. See server logs for details."),
         )
 
 

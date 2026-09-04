@@ -370,34 +370,39 @@ export function ResumeLibraryPanel() {
 
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex shrink-0 items-center justify-between gap-1 border-b border-slate-200 px-2 py-2">
-        <p className="truncate text-[11px] font-bold uppercase tracking-wide text-slate-500">Resumes</p>
-        <div className="flex shrink-0 items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => setSearchOpen((v) => !v)}
-            title={searchOpen ? 'Hide search' : 'Search resumes'}
-            aria-label={searchOpen ? 'Hide search' : 'Search resumes'}
-            aria-expanded={searchOpen}
-            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition ${
-              searchOpen
-                ? 'border-blue-300 bg-blue-50 text-blue-700'
-                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            {searchOpen ? <ChevronDown size={13} /> : <Search size={13} />}
-          </button>
-          <button
-            type="button"
-            onClick={() => void onNew()}
-            disabled={creating}
-            title="New resume"
-            aria-label="New resume"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-600 text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
-          >
-            {creating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-          </button>
+      <div className="shrink-0 border-b border-slate-200 px-2 py-2">
+        <div className="flex items-center justify-between gap-1">
+          <p className="truncate text-[11px] font-bold uppercase tracking-wide text-slate-500">Resumes</p>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setSearchOpen((v) => !v)}
+              title={searchOpen ? 'Hide search' : 'Search resumes'}
+              aria-label={searchOpen ? 'Hide search' : 'Search resumes'}
+              aria-expanded={searchOpen}
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition ${
+                searchOpen
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {searchOpen ? <ChevronDown size={13} /> : <Search size={13} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => void onNew()}
+              disabled={creating}
+              title="New resume"
+              aria-label="New resume"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-600 text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
+            >
+              {creating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+            </button>
+          </div>
         </div>
+        <p className="mt-1 text-[10px] font-medium leading-snug text-slate-500">
+          Click a resume to edit it. Search by company or role, or tap + to add a new version.
+        </p>
       </div>
 
       <div

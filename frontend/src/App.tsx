@@ -30,6 +30,9 @@ const SystemSettingsPage = lazy(() =>
 const SystemLogsPage = lazy(() =>
   import('./pages/SystemLogsPage').then((m) => ({ default: m.SystemLogsPage })),
 );
+const JobAnalysisPage = lazy(() =>
+  import('./pages/JobAnalysisPage').then((m) => ({ default: m.JobAnalysisPage })),
+);
 import { AuthScreen } from './components/extraction/AuthScreen';
 import { JobActionModal } from './components/extraction/JobActionModal';
 import { ConfirmDialog } from './components/extraction/ConfirmDialog';
@@ -342,6 +345,14 @@ function App() {
             element={
               <ApplicantOnly isAdmin={!!user?.is_admin}>
                 <ResumeBuilderPage />
+              </ApplicantOnly>
+            }
+          />
+          <Route
+            path="/job-analysis"
+            element={
+              <ApplicantOnly isAdmin={!!user?.is_admin}>
+                <JobAnalysisPage />
               </ApplicantOnly>
             }
           />

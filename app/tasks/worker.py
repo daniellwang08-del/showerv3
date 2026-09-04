@@ -1474,6 +1474,40 @@ async def cron_sync_user_job_sources(ctx: dict) -> dict:
     return await sync_user_job_sources_task(ctx)
 
 
+async def sync_user_job_site_connections_task(ctx: dict, connection_id: str | None = None) -> dict:
+    """Sync a connected job-site plugin into the user's pipeline.
+
+    With ``connection_id``: one connection (user pressed Connect / Sync now).
+    Without: cron pass over every enabled connection past its interval.
+    """
+    set_request_id(new_request_id())
+    bind_logging_context(
+        worker_job_type="sync_user_job_site_connections", connection_id=connection_id
+    )
+    try:
+        from app.services.job_site_connection_sync import (
+            sync_due_job_site_connections,
+            sync_user_job_site_connection,
+        )
+
+        if connection_id:
+            return await sync_user_job_site_connection(connection_id)
+        return await sync_due_job_site_connections()
+    except Exception as e:
+        logger.exception(
+            "sync_user_job_site_connections_task_failed",
+            connection_id=connection_id,
+            error=str(e),
+        )
+        return {"status": "failed", "error": str(e)}
+    finally:
+        clear_logging_context()
+
+
+async def cron_sync_user_job_site_connections(ctx: dict) -> dict:
+    return await sync_user_job_site_connections_task(ctx)
+
+
 def _redis_settings() -> RedisSettings:
     from app.core.redis_support import arq_redis_settings
 
@@ -1830,12 +1864,13 @@ class EncodingWorkerSettings:
 
 class ScraperWorkerSettings:
     """arq settings for the scraper crawl pipeline (subprocess-based Scrapy)."""
-    functions = [run_scraper_task, sync_user_job_sources_task]
+    functions = [run_scraper_task, sync_user_job_sources_task, sync_user_job_site_connections_task]
     cron_jobs = [
         # Dynamic schedules (interval hours / daily HH:MM + timezone) are evaluated here.
         cron(check_job_sync_schedule_task, minute=set(range(60)), unique=True),
         # Per-user job sources: twice-hourly pass syncs boards past their interval.
         cron(cron_sync_user_job_sources, minute={5, 35}, unique=True),
+        cron(cron_sync_user_job_site_connections, minute={8, 38}, unique=True),
     ]
     redis_settings = _redis_settings
     queue_name = SCRAPER_QUEUE

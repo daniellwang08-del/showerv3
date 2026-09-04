@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from datetime import datetime
 import re
 
@@ -207,11 +207,15 @@ def _phone_valid(v: str) -> str:
 
 
 class ResumeSkillBlock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     category: str | None = None
     skills: str | None = None
 
 
 class ResumeWorkBlock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     company_name: str | None = None
     job_title: str | None = None
     period_start: str | None = None
@@ -225,8 +229,15 @@ class ResumeWorkBlock(BaseModel):
     used_skills: str | None = None
     description: str | None = None
 
+    @field_validator("contributions", mode="before")
+    @classmethod
+    def normalize_contributions(cls, v):
+        return _coerce_str_list(v)
+
 
 class ResumeEducationBlock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     university_name: str | None = None
     degree: str | None = None
     mark: str | None = None
@@ -237,6 +248,8 @@ class ResumeEducationBlock(BaseModel):
 
 
 class ResumeCertBlock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str | None = None
     issued_at: str | None = None
     url: str | None = None
@@ -244,6 +257,8 @@ class ResumeCertBlock(BaseModel):
 
 class ResumeExtractedDraft(BaseModel):
     """Structured profile fields extracted from a résumé (all optional)."""
+
+    model_config = ConfigDict(extra="ignore")
 
     name_first: str | None = None
     name_middle: str | None = None
@@ -260,6 +275,11 @@ class ResumeExtractedDraft(BaseModel):
     education: list[ResumeEducationBlock] = Field(default_factory=list)
     certificates: list[ResumeCertBlock] = Field(default_factory=list)
     extra: list[str] = Field(default_factory=list)
+
+    @field_validator("extra", mode="before")
+    @classmethod
+    def normalize_extra(cls, v):
+        return _coerce_str_list(v)
 
 
 class ResumeParseResponse(BaseModel):

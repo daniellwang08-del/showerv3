@@ -13,6 +13,7 @@ import type { ProfileFormData } from '../../types/profile';
 import { computeProfileCompletion } from '../../utils/profileCompletion';
 import { formatProfileValidationSummary } from '../../utils/profileValidation';
 import { profileFormToPayload } from '../../utils/profilePayload';
+import { notifyProfileMessage, profileErrorFromUnknown } from '../../utils/profileErrors';
 
 type Props = {
   onBack: () => void;
@@ -40,6 +41,11 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
   const [error, setError] = useState('');
   const [saveOk, setSaveOk] = useState(false);
 
+  const showError = (msg: string) => {
+    setError(msg);
+    if (msg) notifyProfileMessage('error', msg, 10_000);
+  };
+
   useEffect(() => {
     const fetchProfile = async () => {
       try {
@@ -52,11 +58,7 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
         if (status === 404) {
           setProfile(null);
         } else {
-          const detail =
-            err && typeof err === 'object' && 'response' in err
-              ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-              : undefined;
-          setError(typeof detail === 'string' ? detail : 'Failed to load profile');
+          showError(profileErrorFromUnknown(err, 'Failed to load profile'));
         }
       } finally {
         setLoading(false);
@@ -83,22 +85,13 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
       const res = await apiClient.put<UserProfile>('/profile', profileFormToPayload(data));
       setProfile(res.data);
       setSaveOk(true);
+      notifyProfileMessage('success', 'Profile saved successfully.', 4000);
       // Refresh the authenticated user so the sidebar name/avatar reflect the
       // just-saved profile name without requiring a page reload.
       void onProfileSaved?.();
     } catch (err: unknown) {
-      let msg = 'Failed to save profile';
-      if (err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'ERR_NETWORK') {
-        msg = 'Network error. Is the server running?';
-      } else if (err && typeof err === 'object' && 'response' in err) {
-        const r = err as { response?: { data?: { detail?: unknown } } };
-        const detail = r.response?.data?.detail;
-        if (typeof detail === 'string') msg = detail;
-        else if (Array.isArray(detail) && detail.length > 0) {
-          msg = detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join('; ');
-        }
-      }
-      setError(msg);
+      const msg = profileErrorFromUnknown(err, 'Failed to save profile');
+      showError(msg);
       throw err instanceof Error ? err : new Error(msg);
     }
   };

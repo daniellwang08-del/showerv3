@@ -24,6 +24,7 @@ from app.models.profile_schemas import (
     ResumeWorkBlock,
 )
 from app.utils.flexible_date import coerce_flexible_date
+from app.utils.profile_errors import format_profile_unexpected_error
 
 logger = get_logger(__name__)
 
@@ -772,9 +773,129 @@ def _infer_job_type(
     return None
 
 
+_RESUME_DRAFT_KEYS = {
+    "name_first",
+    "name_middle",
+    "name_last",
+    "title",
+    "email",
+    "phone_country_code",
+    "phone_number",
+    "linkedin_url",
+    "github_url",
+    "profile_summary",
+    "technical_skills",
+    "work_experience",
+    "education",
+    "certificates",
+    "extra",
+}
+
+_WORK_KEYS = {
+    "company_name",
+    "job_title",
+    "period_start",
+    "period_end",
+    "location",
+    "job_type",
+    "employment_type",
+    "project_title",
+    "project_intro",
+    "contributions",
+    "used_skills",
+    "description",
+}
+
+_EDU_KEYS = {
+    "university_name",
+    "degree",
+    "mark",
+    "period_start",
+    "period_end",
+    "location",
+    "description",
+    "field_of_study",
+}
+
+_CERT_KEYS = {"name", "issued_at", "url"}
+_SKILL_KEYS = {"category", "skills"}
+
+
+def _listify(value: Any) -> list[Any]:
+    """Normalize LLM list-or-object-or-scalar payloads into a list."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, dict):
+        keys = list(value.keys())
+        if keys and all(str(k).isdigit() for k in keys):
+            return [value[k] for k in sorted(keys, key=lambda x: int(str(x)))]
+        return [value]
+    return [value]
+
+
+def _keep_known(obj: Any, allowed: set[str]) -> dict[str, Any]:
+    if not isinstance(obj, dict):
+        return {}
+    return {k: v for k, v in obj.items() if k in allowed}
+
+
+def _coerce_skill_rows(raw: Any) -> list[dict[str, Any]]:
+    if isinstance(raw, dict) and raw and not all(str(k).isdigit() for k in raw.keys()):
+        rows = []
+        for cat, skills in raw.items():
+            if isinstance(skills, (list, tuple)):
+                skill_text = ", ".join(str(s).strip() for s in skills if str(s).strip())
+            else:
+                skill_text = str(skills or "").strip()
+            rows.append({"category": str(cat).strip() or None, "skills": skill_text or None})
+        return rows
+    rows: list[dict[str, Any]] = []
+    for item in _listify(raw):
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                rows.append({"category": "Skills", "skills": text})
+            continue
+        if isinstance(item, dict):
+            rows.append(_keep_known(item, _SKILL_KEYS))
+    return rows
+
+
+def coerce_resume_payload(data: Any) -> dict[str, Any]:
+    """Strip unknown keys and coerce LLM types so draft validation does not raise."""
+    if not isinstance(data, dict):
+        raise ValueError("Resume JSON must be an object")
+    out: dict[str, Any] = {k: data[k] for k in _RESUME_DRAFT_KEYS if k in data}
+    if "technical_skills" in out:
+        out["technical_skills"] = _coerce_skill_rows(out["technical_skills"])
+    if "work_experience" in out:
+        out["work_experience"] = [
+            _keep_known(item, _WORK_KEYS) for item in _listify(out["work_experience"]) if isinstance(item, dict)
+        ]
+    if "education" in out:
+        out["education"] = [
+            _keep_known(item, _EDU_KEYS) for item in _listify(out["education"]) if isinstance(item, dict)
+        ]
+    if "certificates" in out:
+        out["certificates"] = [
+            _keep_known(item, _CERT_KEYS) for item in _listify(out["certificates"]) if isinstance(item, dict)
+        ]
+    return out
+
+
 def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     """Coerce loosely-typed LLM output into the draft model."""
-    draft = ResumeExtractedDraft.model_validate(data)
+    from pydantic import ValidationError
+
+    payload = coerce_resume_payload(data)
+    try:
+        draft = ResumeExtractedDraft.model_validate(payload)
+    except ValidationError as e:
+        raise ValueError(format_profile_unexpected_error(e, "Failed to parse extracted profile JSON")) from e
 
     def _clean(s: str | None) -> str | None:
         if s is None:
@@ -951,9 +1072,13 @@ async def _call_openai_resume(
         if not _draft_has_content(draft):
             raise AIParsingError("Could not extract meaningful profile data from this file")
         return draft
+    except AIParsingError:
+        raise
     except (json.JSONDecodeError, ValueError) as e:
         logger.warning("resume_parse_json_failed", error=str(e), preview=raw[:400])
-        raise AIParsingError("Failed to parse extracted profile JSON") from e
+        raise AIParsingError(
+            format_profile_unexpected_error(e, "Failed to parse extracted profile JSON")
+        ) from e
 
 
 def infer_country_preferences(draft) -> list[str]:

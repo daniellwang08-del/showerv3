@@ -23,6 +23,12 @@ import {
 import { formatProfileValidationSummary, validateProfileForSave } from '../../utils/profileValidation';
 import { profileToForm } from './ProfileForm';
 import { BrandedLoader } from '../layout/BrandedLoader';
+import { notifyProfileError, notifyProfileMessage } from '../../utils/profileErrors';
+import {
+  SOURCE_DOCUMENT_ACCEPT,
+  sourceDocumentFileError,
+  sourceKindLabel,
+} from '../../utils/sourceDocumentFile';
 
 type Props = {
   profile: UserProfile | null;
@@ -72,8 +78,10 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
     try {
       const docs = await listProfileSourceDocuments();
       setSourceDocs(docs);
-    } catch {
-      setSourceError('Could not load project source documents.');
+    } catch (err: unknown) {
+      const msg = 'Could not load project source documents.';
+      setSourceError(msg);
+      notifyProfileError(err, msg);
     } finally {
       setDocsLoading(false);
     }
@@ -108,6 +116,7 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
       if (Object.keys(validationErrors).length > 0) {
         const msg = formatProfileValidationSummary(validationErrors);
         setLocalError(msg);
+        notifyProfileMessage('error', msg, 10_000);
         onDraftToForm?.(merged, validationErrors);
         resetModal();
         if (inputRef.current) inputRef.current.value = '';
@@ -162,16 +171,15 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
         const res = await apiClient.post<ParseResponse>('/profile/resume-parse', fd);
         const data = res.data;
         if (!data?.draft) {
-          setLocalError('No data returned from parser.');
+          const msg = 'No data returned from parser.';
+          setLocalError(msg);
+          notifyProfileMessage('error', msg, 10_000);
           return;
         }
         await afterParse(data.draft, data.warnings ?? [], data.source_kind ?? 'unknown');
       } catch (err: unknown) {
-        const detail =
-          err && typeof err === 'object' && 'response' in err
-            ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-            : undefined;
-        setLocalError(typeof detail === 'string' ? detail : 'Could not parse résumé.');
+        const msg = notifyProfileError(err, 'Could not parse résumé.');
+        setLocalError(msg);
       } finally {
         setBusy(false);
       }
@@ -182,13 +190,9 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
   const onSourceFile = useCallback(
     async (file: File | null) => {
       if (!file || disabled) return;
-      const lower = file.name.toLowerCase();
-      if (!lower.endsWith('.pdf') && !lower.endsWith('.docx')) {
-        setSourceError('Please choose a PDF or DOCX file.');
-        return;
-      }
-      if (file.size > 10 * 1024 * 1024) {
-        setSourceError('Project source file must be 10 MB or smaller.');
+      const typeError = sourceDocumentFileError(file);
+      if (typeError) {
+        setSourceError(typeError);
         return;
       }
       setSourceBusy(true);
@@ -198,11 +202,8 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
         await loadSourceDocs();
         if (sourceInputRef.current) sourceInputRef.current.value = '';
       } catch (err: unknown) {
-        const detail =
-          err && typeof err === 'object' && 'response' in err
-            ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-            : undefined;
-        setSourceError(typeof detail === 'string' ? detail : 'Could not upload project source document.');
+        const msg = notifyProfileError(err, 'Could not upload project source document.');
+        setSourceError(msg);
       } finally {
         setSourceBusy(false);
       }
@@ -217,8 +218,9 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
     try {
       const updated = await updateProfileSourceDocumentCompany(docId, companyName);
       setSourceDocs((prev) => prev.map((d) => (d.id === docId ? updated : d)));
-    } catch {
-      setSourceError('Could not update company link.');
+    } catch (err: unknown) {
+      const msg = notifyProfileError(err, 'Could not update company link.');
+      setSourceError(msg);
     } finally {
       setRowBusyId(null);
     }
@@ -230,8 +232,9 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
     try {
       const updated = await reparseProfileSourceDocument(docId);
       setSourceDocs((prev) => prev.map((d) => (d.id === docId ? updated : d)));
-    } catch {
-      setSourceError('Re-parse failed.');
+    } catch (err: unknown) {
+      const msg = notifyProfileError(err, 'Re-parse failed.');
+      setSourceError(msg);
     } finally {
       setRowBusyId(null);
     }
@@ -243,8 +246,9 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
     try {
       await deleteProfileSourceDocument(docId);
       setSourceDocs((prev) => prev.filter((d) => d.id !== docId));
-    } catch {
-      setSourceError('Could not delete document.');
+    } catch (err: unknown) {
+      const msg = notifyProfileError(err, 'Could not delete document.');
+      setSourceError(msg);
     } finally {
       setRowBusyId(null);
     }
@@ -296,15 +300,15 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
             <div>
               <h3 className="text-base font-bold text-slate-900">Project source documents</h3>
               <p className="mt-1 text-sm text-slate-600">
-                Upload detailed per-company project write-ups (PDF or DOCX). These are parsed once and used when tailoring
-                résumés for each job - stronger bullets with real metrics and project depth.
+                Upload detailed per-company project write-ups (PDF, DOCX, or Markdown). These are parsed once and used when
+                tailoring résumés for each job - stronger bullets with real metrics and project depth.
               </p>
             </div>
             <div className="shrink-0">
               <input
                 ref={sourceInputRef}
                 type="file"
-                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                accept={SOURCE_DOCUMENT_ACCEPT}
                 className="hidden"
                 disabled={disabled || sourceBusy}
                 onChange={(e) => {
@@ -366,8 +370,13 @@ export function ResumeImportSection({ profile, accountEmail, applyProfile, onDra
                           : 'text-amber-700 bg-amber-50';
                     return (
                       <tr key={doc.id} className="hover:bg-slate-50/80">
-                        <td className="max-w-[180px] truncate px-3 py-2.5 font-medium text-slate-900" title={doc.filename}>
-                          {doc.filename}
+                        <td className="max-w-[220px] px-3 py-2.5 font-medium text-slate-900" title={doc.filename}>
+                          <div className="flex items-center gap-2">
+                            <span className="truncate">{doc.filename}</span>
+                            <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              {sourceKindLabel(doc.source_kind)}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-3 py-2.5">
                           <select

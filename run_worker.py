@@ -82,6 +82,7 @@ from app.tasks.worker import (
     build_resume_task,
     run_scraper_task,
     sync_user_job_sources_task,
+    sync_user_job_site_connections_task,
     encode_job_task,
     encode_user_task,
     backfill_encodings_task,
@@ -358,7 +359,7 @@ async def scraper_shutdown(ctx):
 class ScraperWorkerConfig(ScraperWorkerSettings):
     on_startup = scraper_startup
     on_shutdown = scraper_shutdown
-    functions = [run_scraper_task, sync_user_job_sources_task]
+    functions = [run_scraper_task, sync_user_job_sources_task, sync_user_job_site_connections_task]
     cron_jobs = ScraperWorkerSettings.cron_jobs
     queue_name = ScraperWorkerSettings.queue_name
     job_timeout = ScraperWorkerSettings.job_timeout

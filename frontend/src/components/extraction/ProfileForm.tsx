@@ -42,6 +42,7 @@ import {
   emptyCert,
 } from '../../utils/profileFormData';
 import { phoneValidationMessage, validatePhoneNumber } from '../../utils/phoneValidation';
+import { notifyProfileMessage } from '../../utils/profileErrors';
 
 export { profileToForm } from '../../utils/profileFormData';
 
@@ -172,6 +173,18 @@ function stripSectionErrors(section: SectionId): (prev: Record<string, string>) 
 
 function fieldRing(errors: Record<string, string>, key: string): string {
   return errors[key] ? ' ring-2 ring-rose-200/90 border-rose-400/70' : '';
+}
+
+function hasSavedCore(form: ProfileFormData): boolean {
+  return !!(
+    form.name_first.trim() &&
+    form.name_last.trim() &&
+    form.title.trim() &&
+    form.email.trim() &&
+    form.phone_number.trim() &&
+    form.linkedin_url.trim() &&
+    form.profile_summary.trim()
+  );
 }
 
 function buildPayload(form: ProfileFormData): ProfileFormData {
@@ -491,15 +504,29 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
     const draft = formRef.current;
     const merged = mergeSection(savedForm, draft, section);
     const all = collectErrors(merged);
-    const scoped = Object.fromEntries(Object.entries(all).filter(([k]) => errorInSection(k, section)));
+    const needsFullValidation = !hasSavedCore(savedForm);
+    const scoped = needsFullValidation
+      ? all
+      : Object.fromEntries(Object.entries(all).filter(([k]) => errorInSection(k, section)));
     setErrors((prev) => ({ ...stripSectionErrors(section)(prev), ...scoped }));
-    if (Object.keys(scoped).length > 0) return;
+    if (Object.keys(scoped).length > 0) {
+      if (needsFullValidation && Object.keys(all).some((k) => !errorInSection(k, section))) {
+        notifyProfileMessage(
+          'error',
+          'Complete the remaining required fields before the first save. Check highlighted sections below.',
+          10_000,
+        );
+      }
+      return;
+    }
     setSavingSection(section);
     try {
       await onSubmit(buildPayload(merged));
       setSavedForm(merged);
       setForm(merged);
       setSectionEditing((s) => ({ ...s, [section]: false }));
+    } catch {
+      // Parent (ProfilesManagementPage) already raised a notification.
     } finally {
       setSavingSection(null);
     }

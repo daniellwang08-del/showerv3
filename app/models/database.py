@@ -221,7 +221,7 @@ class ProfileSourceDocument(Base):
         index=True,
     )
     filename = Column(String(500), nullable=False)
-    source_kind = Column(String(20), nullable=False)
+    source_kind = Column(String(20), nullable=False)  # pdf | docx | markdown
     company_name = Column(String(200), nullable=True)
     # Large blobs — deferred for metadata list endpoints.
     extracted_text = deferred(Column(Text, nullable=True))
@@ -463,6 +463,33 @@ class UserJobSource(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "ats_type", "board_token", name="uq_user_job_source_board"),
+    )
+
+
+class UserJobSiteConnection(Base):
+    """A pluginable job-site a user connected (API key, session cookies, or enable-only)."""
+
+    __tablename__ = "user_job_site_connections"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    plugin_slug = Column(String(40), nullable=False)
+    credentials_encrypted = Column(Text, nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    last_synced_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    last_listing_count = Column(Integer, nullable=True)
+    last_new_jobs = Column(Integer, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "plugin_slug", name="uq_user_job_site_plugin"),
     )
 
 

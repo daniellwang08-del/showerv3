@@ -104,9 +104,11 @@ async def _enqueue_analysis(job_id: str, user_id: str, extraction_id: str | None
 
 async def _process_listing_job(
     board_job: BoardJob,
-    source: UserJobSource,
     *,
     user_id: str,
+    scraped_source: str,
+    company_fallback: str,
+    extra_meta: dict,
     chain_analysis: bool,
     skip_phase_b: bool,
 ) -> str:
@@ -169,17 +171,13 @@ async def _process_listing_job(
             normalized_url=url,
             domain=domain,
             title=board_job.title or None,
-            company=board_job.company or source.name or domain,
+            company=board_job.company or company_fallback or domain,
             location=board_job.location or None,
             extraction_id=extraction.id,
             status="active",
             raw_metadata={
-                "scraped_source": "user_site",
-                "user_job_source": {
-                    "source_id": source.id,
-                    "user_id": user_id,
-                    "ats_type": source.ats_type,
-                },
+                "scraped_source": scraped_source,
+                **extra_meta,
             },
         )
         session.add(job)
@@ -196,6 +194,49 @@ async def _process_listing_job(
         skip_phase_b=skip_phase_b,
     )
     return "created"
+
+
+async def ingest_board_jobs(
+    jobs: list[BoardJob],
+    *,
+    user_id: str,
+    scraped_source: str,
+    company_fallback: str,
+    extra_meta: dict,
+    chain_analysis: bool,
+    skip_phase_b: bool,
+    max_new: int = MAX_NEW_JOBS_PER_SYNC,
+) -> dict[str, int]:
+    """Feed discovered listing URLs through create/link/skip. Caps new jobs."""
+    created = linked = skipped = 0
+    for board_job in jobs:
+        if created >= max_new:
+            break
+        try:
+            outcome = await _process_listing_job(
+                board_job,
+                user_id=user_id,
+                scraped_source=scraped_source,
+                company_fallback=company_fallback,
+                extra_meta=extra_meta,
+                chain_analysis=chain_analysis,
+                skip_phase_b=skip_phase_b,
+            )
+        except Exception as e:
+            logger.warning(
+                "job_listing_ingest_failed",
+                scraped_source=scraped_source,
+                url=board_job.url,
+                error=str(e),
+            )
+            outcome = "skipped"
+        if outcome == "created":
+            created += 1
+        elif outcome == "linked":
+            linked += 1
+        else:
+            skipped += 1
+    return {"created": created, "linked": linked, "skipped": skipped}
 
 
 async def sync_user_job_source(source_id: str) -> dict:
@@ -246,32 +287,24 @@ async def sync_user_job_source(source_id: str) -> dict:
         )
         return {"source_id": source_id, "status": "fetch_failed", "error": error_text}
 
-    created = linked = skipped = 0
-    for board_job in listing.jobs:
-        if created >= MAX_NEW_JOBS_PER_SYNC:
-            break
-        try:
-            outcome = await _process_listing_job(
-                board_job,
-                _SourceView(source_id, ats_type, token, listing.company),
-                user_id=user_id,
-                chain_analysis=chain_analysis,
-                skip_phase_b=skip_phase_b,
-            )
-        except Exception as e:
-            logger.warning(
-                "job_source_listing_job_failed",
-                source_id=source_id,
-                url=board_job.url,
-                error=str(e),
-            )
-            outcome = "skipped"
-        if outcome == "created":
-            created += 1
-        elif outcome == "linked":
-            linked += 1
-        else:
-            skipped += 1
+    counts = await ingest_board_jobs(
+        listing.jobs,
+        user_id=user_id,
+        scraped_source="user_site",
+        company_fallback=listing.company or token,
+        extra_meta={
+            "user_job_source": {
+                "source_id": source_id,
+                "user_id": user_id,
+                "ats_type": ats_type,
+            },
+        },
+        chain_analysis=chain_analysis,
+        skip_phase_b=skip_phase_b,
+    )
+    created = counts["created"]
+    linked = counts["linked"]
+    skipped = counts["skipped"]
 
     async with get_session() as session:
         row = (
@@ -303,16 +336,6 @@ async def sync_user_job_source(source_id: str) -> dict:
         "linked": linked,
         "skipped": skipped,
     }
-
-
-class _SourceView:
-    """Detached, session-free view of a source passed into job creation."""
-
-    def __init__(self, source_id: str, ats_type: str, token: str, name: str):
-        self.id = source_id
-        self.ats_type = ats_type
-        self.board_token = token
-        self.name = name
 
 
 async def sync_due_job_sources() -> dict:
