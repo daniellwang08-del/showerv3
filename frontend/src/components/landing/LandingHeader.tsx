@@ -7,7 +7,6 @@ import {
   CTA_SIZE_LG,
   CTA_SIZE_SM,
   LANDING_CONTAINER,
-  ctaGhostClass,
   ctaPrimaryClass,
 } from './landingUi';
 
@@ -18,7 +17,6 @@ import {
 export function LandingHeader() {
   const location = useLocation();
   const onLanding = location.pathname === '/';
-  const onLogin = location.pathname === '/login';
   const onSignup = location.pathname === '/signup';
 
   const [scrolled, setScrolled] = useState(false);
@@ -119,19 +117,8 @@ export function LandingHeader() {
 
         <div className="hidden items-center gap-2.5 sm:flex">
           <Link
-            to="/login"
-            className={`${ctaGhostClass} ${CTA_SIZE_SM} ${
-              onLogin ? 'border-white/40 bg-white/15 text-white' : ''
-            }`}
-            aria-current={onLogin ? 'page' : undefined}
-          >
-            Sign in
-          </Link>
-          <Link
             to="/signup"
-            className={`${ctaPrimaryClass} ${CTA_SIZE_SM} ${
-              onSignup ? 'ring-2 ring-sky-300/50 ring-offset-2 ring-offset-[#05070f]' : ''
-            }`}
+            className={`${ctaPrimaryClass} ${CTA_SIZE_SM}`}
             aria-current={onSignup ? 'page' : undefined}
           >
             <span
@@ -139,7 +126,7 @@ export function LandingHeader() {
               className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full"
             />
             <span className="relative flex items-center gap-1.5">
-              Sign up
+              Get started
               <ArrowRight size={15} strokeWidth={2.75} />
             </span>
           </Link>
@@ -171,19 +158,12 @@ export function LandingHeader() {
             ))}
             <div className="mt-3 flex flex-col gap-2.5 sm:hidden">
               <Link
-                to="/login"
-                onClick={() => setMenuOpen(false)}
-                className={`${ctaGhostClass} ${CTA_SIZE_LG}`}
-              >
-                Sign in
-              </Link>
-              <Link
                 to="/signup"
                 onClick={() => setMenuOpen(false)}
                 className={`${ctaPrimaryClass} ${CTA_SIZE_LG}`}
               >
                 <span className="relative flex items-center gap-1.5">
-                  Sign up
+                  Get started
                   <ArrowRight size={15} strokeWidth={2.75} />
                 </span>
               </Link>

@@ -120,15 +120,6 @@ export function AuthShell({
             />
 
             <div className="relative overflow-hidden rounded-[28px] border border-white/12 bg-[#080d1c]/88 p-5 shadow-[0_40px_120px_-48px_rgba(2,6,23,0.95)] ring-1 ring-inset ring-white/10 backdrop-blur-2xl sm:p-7">
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent"
-              />
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-x-8 top-0 h-24 bg-gradient-to-b from-white/10 to-transparent"
-              />
-
               <div className="relative">
                 <div
                   className="mb-6 grid grid-cols-2 gap-1 rounded-full border border-white/12 bg-white/[0.04] p-1"
@@ -142,7 +133,7 @@ export function AuthShell({
                     onClick={() => onModeChange('login')}
                     className={`rounded-full px-3 py-2.5 text-sm font-bold transition ${
                       isLogin
-                        ? 'bg-white text-[#05070f] shadow-sm'
+                        ? 'bg-[#f8fafc] text-[#05070f] shadow-sm'
                         : 'text-white/55 hover:text-white'
                     }`}
                   >
