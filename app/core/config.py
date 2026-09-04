@@ -233,9 +233,9 @@ class Settings(BaseSettings):
     # llm    = Phase A scoring via LLM only (legacy behavior).
     # shadow = LLM stays authoritative; vector scorer runs alongside and the
     #          comparison is stored for calibration (no user-visible change).
-    # vector = vector scorer is authoritative; LLM used only for once-per-job
-    #          structured extraction (and Phase B tailoring, unchanged).
-    match_engine: Literal["llm", "shadow", "vector"] = "llm"
+    # vector = vector scorer is authoritative; Phase A never calls the LLM
+    #          (raw extraction text + encodings). Phase B tailoring unchanged.
+    match_engine: Literal["llm", "shadow", "vector"] = "vector"
     # Sentence-transformers model for section embeddings (CPU inference).
     # MiniLM-L6 (~90 MB, 384-dim) fits small VPS hosts; upgrade to
     # all-mpnet-base-v2 (~420 MB, 768-dim) via env on larger machines.

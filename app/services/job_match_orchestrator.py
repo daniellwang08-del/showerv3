@@ -225,34 +225,98 @@ async def _enqueue_missing_encodings(job_id: str, user_id: str) -> None:
         )
 
 
+async def _mark_extraction_ready_without_llm(ext_id: str) -> None:
+    """Advance extraction past Analyzing without an LLM structuring pass.
+
+    Vector mode scores from raw/extraction text via encodings; it does not
+    need Phase A structured_job. Marking is_job_posting=True keeps the Jobs
+    UI from staying on Analyzing forever.
+    """
+    async with get_session() as session:
+        extraction_repo = JobExtractionRepository(session)
+        await extraction_repo.update_is_job_posting(ext_id, True)
+        await extraction_repo.update_status(ext_id, ExtractionStatus.COMPLETED)
+    try:
+        await ExtractionCache().delete(ext_id)
+    except Exception:
+        pass
+
+
+async def _ensure_encodings_for_vector(job_id: str, user_id: str) -> bool:
+    """Encode job+user inline when missing so vector scoring can finish now.
+
+    Falls back to enqueueing the encoding worker if inline encode fails.
+    """
+    try:
+        from app.services.encoding_service import encode_job, encode_user
+
+        job_ok = await encode_job(job_id)
+        user_ok = await encode_user(user_id)
+        if job_ok and user_ok:
+            return True
+        logger.warning(
+            "vector_inline_encode_incomplete",
+            job_id=job_id,
+            user_id=user_id,
+            job_ok=job_ok,
+            user_ok=user_ok,
+        )
+    except Exception as e:
+        logger.warning(
+            "vector_inline_encode_failed",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(e),
+        )
+    await _enqueue_missing_encodings(job_id, user_id)
+    return False
+
+
 async def _try_vector_authoritative(
     job_id: str,
     user_id: str,
     ext_id: str,
 ) -> tuple[dict, bool] | None:
-    """Score with the vector engine when the job is already structured.
+    """Score with the vector engine from raw/extraction text + encodings.
 
-    Returns (match_result, is_job_posting) or None when the LLM path must run
-    (first-time structuring, or encodings not ready yet).
+    Never requires LLM structuring. Returns (match_result, is_job_posting) or
+    None when text/encodings are unavailable (caller must not fall back to LLM
+    in vector mode).
     """
     async with get_session() as session:
         extraction = await JobExtractionRepository(session).get_by_id(ext_id)
-    if (
-        extraction is None
-        or not (extraction.description or "").strip()
-        or extraction.is_job_posting is None
-    ):
-        # Needs the once-per-job LLM structuring pass first.
+    if extraction is None:
         return None
+
+    has_text = bool(
+        (extraction.description or "").strip()
+        or (getattr(extraction, "raw_plain_text", None) or "").strip()
+        or (extraction.title or "").strip()
+    )
+    if not has_text:
+        logger.warning("vector_match_no_extraction_text", job_id=job_id, extraction_id=ext_id)
+        return None
+
     if extraction.is_job_posting is False:
         return _zero_match_result("Not a job posting"), False
+
+    if extraction.is_job_posting is None:
+        await _mark_extraction_ready_without_llm(ext_id)
 
     from app.services.vector_match_service import compute_vector_match
 
     vector_result = await compute_vector_match(job_id, user_id)
     if vector_result is None:
-        await _enqueue_missing_encodings(job_id, user_id)
-        return None
+        if not await _ensure_encodings_for_vector(job_id, user_id):
+            return None
+        vector_result = await compute_vector_match(job_id, user_id)
+        if vector_result is None:
+            logger.warning(
+                "vector_match_unavailable_after_encode",
+                job_id=job_id,
+                user_id=user_id,
+            )
+            return None
     return vector_result, True
 
 
@@ -360,9 +424,9 @@ async def run_job_match_analysis(
         has_profile = bool((profile_text or "").strip())
 
         try:
-            engine = str(get_effective_value_sync("match_engine") or "llm")
+            engine = str(get_effective_value_sync("match_engine") or "vector")
         except Exception:
-            engine = "llm"
+            engine = "vector"
 
         # ── Phase 0 deterministic gate: security clearance (no LLM call) ──
         clearance_required, clearance_phrase = detect_security_clearance(job_text)
@@ -399,27 +463,42 @@ async def run_job_match_analysis(
                 engine="gate",
             )
 
-        # ── Vector engine (authoritative) when the job is already structured ──
-        if engine == "vector" and has_profile:
-            vector_outcome = await _try_vector_authoritative(job_id, user_id, ext_id)
-            if vector_outcome is not None:
-                result, is_job_posting = vector_outcome
-                logger.info(
-                    "job_match_vector_engine_complete",
+        # ── Vector engine: never falls through to LLM Phase A ──
+        if engine == "vector":
+            if not has_profile:
+                logger.warning(
+                    "job_match_vector_no_profile",
                     job_id=job_id,
                     user_id=user_id,
-                    score=result.get("overall_score"),
-                    is_job_posting=is_job_posting,
                 )
-                return _attach_result_metadata(
-                    result,
-                    ext_id=ext_id,
-                    is_job_posting=is_job_posting,
-                    has_profile=has_profile,
-                    skip_phase_b=skip_phase_b,
-                    structured_company=None,
-                    engine="vector",
+                await clear_job_match_progress(job_id, user_id)
+                return None
+            vector_outcome = await _try_vector_authoritative(job_id, user_id, ext_id)
+            if vector_outcome is None:
+                logger.warning(
+                    "job_match_vector_engine_failed",
+                    job_id=job_id,
+                    user_id=user_id,
                 )
+                await clear_job_match_progress(job_id, user_id)
+                return None
+            result, is_job_posting = vector_outcome
+            logger.info(
+                "job_match_vector_engine_complete",
+                job_id=job_id,
+                user_id=user_id,
+                score=result.get("overall_score"),
+                is_job_posting=is_job_posting,
+            )
+            return _attach_result_metadata(
+                result,
+                ext_id=ext_id,
+                is_job_posting=is_job_posting,
+                has_profile=has_profile,
+                skip_phase_b=skip_phase_b,
+                structured_company=None,
+                engine="vector",
+            )
 
         try:
             result, structured_job, is_job_posting = await analyze_job_match_phase_a(

@@ -805,7 +805,7 @@ export function SystemSettingsPage() {
           icon={Zap}
           iconClass="bg-gradient-to-br from-indigo-500 to-violet-600"
           title="Match engine"
-          description="Which engine scores job matches. Rollout: backfill encodings → shadow (collect comparisons) → vector (no LLM). Switching back to LLM is instant."
+          description="Which engine scores job matches. Vector (default) never calls the LLM for Phase A. Shadow keeps LLM scores while logging vector comparisons. LLM is legacy-only."
         >
           <div className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

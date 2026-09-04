@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 from sqlalchemy import select
+from sqlalchemy.orm import undefer
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -235,13 +236,17 @@ async def encode_job(job_id: str) -> bool:
         extraction = None
         raw_text = None
         if job.extraction_id:
+            # raw_plain_text is deferred — must undefer or async lazy-load explodes
+            # (MissingGreenlet) when compose reads the column.
             extraction = (
                 await session.execute(
-                    select(JobExtraction).where(JobExtraction.id == job.extraction_id)
+                    select(JobExtraction)
+                    .options(undefer(JobExtraction.raw_plain_text))
+                    .where(JobExtraction.id == job.extraction_id)
                 )
             ).scalar_one_or_none()
             if extraction is not None:
-                raw_text = getattr(extraction, "raw_plain_text", None)
+                raw_text = extraction.raw_plain_text
 
         title_text, content_text, full_text = _compose_job_texts(job, extraction, raw_text)
 
