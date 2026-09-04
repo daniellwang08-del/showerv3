@@ -192,8 +192,8 @@ def _years_from_experience(entries: list) -> float | None:
 
 def _compose_job_texts(
     job: Job, extraction: JobExtraction | None, raw_text: str | None
-) -> tuple[str, str, str]:
-    """(title_text, content_text, full_text_for_signals)."""
+) -> tuple[str, str, str, str]:
+    """(title_text, content_text, industry_text, full_text_for_signals)."""
     title = ""
     if extraction is not None and extraction.title:
         title = str(extraction.title)
@@ -217,11 +217,33 @@ def _compose_job_texts(
         parts.append(raw_text)
     content_text = "\n".join(parts).strip() or (raw_text or "")
 
+    company = ""
+    if extraction is not None and extraction.company:
+        company = str(extraction.company)
+    elif job.company:
+        company = str(job.company)
+    industry = str(job.industry or "").strip()
+    location = ""
+    if extraction is not None and extraction.location:
+        location = str(extraction.location)
+    elif job.location:
+        location = str(job.location)
+    industry_bits = [
+        b for b in (
+            f"Company: {company}" if company and company.lower() not in {"unknown", "n/a"} else "",
+            f"Industry: {industry}" if industry else "",
+            f"Location: {location}" if location else "",
+            f"Role family: {title}" if title else "",
+        )
+        if b
+    ]
+    industry_text = "\n".join(industry_bits).strip() or (company or title or content_text[:240])
+
     signal_parts = [content_text]
     if raw_text and raw_text not in content_text:
         signal_parts.append(raw_text)
     full_text = "\n".join(signal_parts)
-    return title, content_text, full_text
+    return title, content_text, industry_text, full_text
 
 
 async def encode_job(job_id: str) -> bool:
@@ -236,8 +258,6 @@ async def encode_job(job_id: str) -> bool:
         extraction = None
         raw_text = None
         if job.extraction_id:
-            # raw_plain_text is deferred — must undefer or async lazy-load explodes
-            # (MissingGreenlet) when compose reads the column.
             extraction = (
                 await session.execute(
                     select(JobExtraction)
@@ -248,7 +268,9 @@ async def encode_job(job_id: str) -> bool:
             if extraction is not None:
                 raw_text = extraction.raw_plain_text
 
-        title_text, content_text, full_text = _compose_job_texts(job, extraction, raw_text)
+        title_text, content_text, industry_text, full_text = _compose_job_texts(
+            job, extraction, raw_text
+        )
 
     if not content_text.strip():
         logger.warning("encode_job_no_text", job_id=job_id)
@@ -259,8 +281,10 @@ async def encode_job(job_id: str) -> bool:
     degree_required = extract_degree_required(full_text)
     clearance, _phrase = requires_security_clearance(full_text)
 
-    vecs = encode_texts([title_text or content_text[:200], content_text])
-    title_vec, content_vec = vecs[0], vecs[1]
+    vecs = encode_texts(
+        [title_text or content_text[:200], content_text, industry_text]
+    )
+    title_vec, content_vec, industry_vec = vecs[0], vecs[1], vecs[2]
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_session() as session:
@@ -275,6 +299,7 @@ async def encode_job(job_id: str) -> bool:
         row.model_version = model_version()
         row.title_vec = vec_to_bytes(title_vec)
         row.content_vec = vec_to_bytes(content_vec)
+        row.industry_vec = vec_to_bytes(industry_vec)
         row.skills = skills
         row.years_required = years_required
         row.degree_required = degree_required
@@ -287,13 +312,13 @@ async def encode_job(job_id: str) -> bool:
         skills=len(skills),
         years_required=years_required,
         clearance=clearance,
+        industry_chars=len(industry_text),
     )
     return True
 
 
 # ── User/profile encoding ───────────────────────────────────────────────────
 
-# Recency weight by work-experience index (newest first); older roles floor.
 _ROLE_RECENCY_WEIGHTS = (1.0, 1.0, 0.8, 0.6)
 _OLD_ROLE_WEIGHT = 0.5
 _PROFILE_WIDE_WEIGHT = 0.7
@@ -311,15 +336,89 @@ def _profile_hash(*chunks: str) -> str:
 def _entry_text(entry: dict) -> str:
     return " ".join(
         str(entry.get(key) or "")
-        for key in ("job_title", "company_name", "used_skills", "description",
-                    "project_title", "project_intro")
+        for key in (
+            "job_title", "company_name", "used_skills", "description",
+            "project_title", "project_intro", "industry", "location",
+        )
     )
+
+
+def build_prefs_proxy_text(
+    *,
+    explicit_prefs: str | None,
+    guidance: str | None,
+    work_experience: list | None,
+    country_preferences: list | None,
+) -> str:
+    """Always-non-empty preferences blob so prefs_vec is never left null."""
+    parts: list[str] = []
+    if (explicit_prefs or "").strip():
+        parts.append(explicit_prefs.strip())
+    if (guidance or "").strip():
+        parts.append(guidance.strip())
+
+    countries = [str(c).strip().upper() for c in (country_preferences or []) if str(c).strip()]
+    if countries:
+        parts.append("Preferred work countries: " + ", ".join(countries[:8]))
+
+    titles: list[str] = []
+    companies: list[str] = []
+    for entry in work_experience or []:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("job_title") or "").strip()
+        company = str(entry.get("company_name") or entry.get("company") or "").strip()
+        industry = str(entry.get("industry") or "").strip()
+        if title and title not in titles:
+            titles.append(title)
+        if company and company not in companies:
+            companies.append(company)
+        if industry:
+            parts.append(f"Industry experience: {industry}")
+        if len(titles) >= 5:
+            break
+    if titles:
+        parts.append("Target roles similar to: " + "; ".join(titles[:5]))
+    if companies:
+        parts.append("Companies / domains of interest: " + "; ".join(companies[:6]))
+
+    if not (explicit_prefs or "").strip():
+        parts.append(
+            "Prefer remote or hybrid roles when the posting allows it; "
+            "value strong product and engineering craft, clear ownership, "
+            "and modern software delivery practices."
+        )
+    text = "\n".join(p for p in parts if p).strip()
+    return text or "Open to strong engineering roles with clear impact."
+
+
+def build_domain_proxy_text(work_experience: list | None, education: list | None) -> str:
+    """Company / industry narrative for domain-fit embeddings."""
+    bits: list[str] = []
+    for entry in work_experience or []:
+        if not isinstance(entry, dict):
+            continue
+        company = str(entry.get("company_name") or entry.get("company") or "").strip()
+        industry = str(entry.get("industry") or "").strip()
+        title = str(entry.get("job_title") or "").strip()
+        loc = str(entry.get("location") or "").strip()
+        chunk = ", ".join(x for x in (title, company, industry, loc) if x)
+        if chunk:
+            bits.append(chunk)
+    for entry in education or []:
+        if not isinstance(entry, dict):
+            continue
+        school = str(entry.get("school") or entry.get("institution") or "").strip()
+        field = str(entry.get("field_of_study") or entry.get("degree") or "").strip()
+        chunk = ", ".join(x for x in (field, school) if x)
+        if chunk:
+            bits.append(chunk)
+    return "\n".join(bits[:12]).strip() or "General professional experience"
 
 
 async def encode_user(user_id: str, *, force: bool = False) -> bool:
     """Compute and upsert the UserEncoding row. Skips when profile unchanged."""
     async with get_session() as session:
-        # Profile JSON/text columns are deferred — must undefer under AsyncSession.
         user = (
             await session.execute(
                 select(User)
@@ -340,17 +439,29 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
         guidance = ""
         if (user.resume_tailoring_prompt_mode or "default") == "custom":
             guidance = (user.resume_tailoring_prompt_custom or "").strip()
+        country_prefs = list(getattr(user, "country_preferences", None) or [])
+        prefs_combined = build_prefs_proxy_text(
+            explicit_prefs=prefs_text,
+            guidance=guidance,
+            work_experience=work_experience,
+            country_preferences=country_prefs,
+        )
+        domain_text = build_domain_proxy_text(work_experience, education)
 
         existing = (
             await session.execute(
                 select(UserEncoding).where(UserEncoding.user_id == user_id)
             )
         ).scalar_one_or_none()
-        new_hash = _profile_hash(profile_text, prefs_text, guidance, model_version())
+        new_hash = _profile_hash(
+            profile_text, prefs_combined, domain_text, model_version(), "v2-domain-prefs"
+        )
         if (
             not force
             and existing is not None
             and existing.profile_hash == new_hash
+            and existing.prefs_vec is not None
+            and getattr(existing, "domain_vec", None) is not None
         ):
             logger.info("encode_user_unchanged", user_id=user_id)
             return True
@@ -359,7 +470,6 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
         logger.info("encode_user_no_profile", user_id=user_id)
         return False
 
-    # Titles (newest first) for max-cosine title similarity.
     titles: list[str] = []
     for entry in work_experience:
         if isinstance(entry, dict):
@@ -369,7 +479,6 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
         if len(titles) >= _MAX_TITLE_VECS:
             break
 
-    # Skills with recency weights.
     skills: dict[str, float] = {}
 
     def _merge(found: set[str], weight: float) -> None:
@@ -390,14 +499,14 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
     years_experience = _years_from_experience(work_experience)
     has_degree = bool(education) or None
 
-    prefs_combined = "\n".join(p for p in (prefs_text, guidance) if p)
-    to_encode = [profile_text] + titles + ([prefs_combined] if prefs_combined else [])
+    to_encode = [profile_text] + titles + [prefs_combined, domain_text]
     vecs = encode_texts(to_encode)
     experience_vec = vecs[0]
     title_vecs = [
         {"title": titles[i], "vec": vec_to_b64(vecs[1 + i])} for i in range(len(titles))
     ]
-    prefs_vec = vecs[1 + len(titles)] if prefs_combined else None
+    prefs_vec = vecs[1 + len(titles)]
+    domain_vec = vecs[2 + len(titles)]
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_session() as session:
@@ -412,6 +521,7 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
         row.model_version = model_version()
         row.experience_vec = vec_to_bytes(experience_vec)
         row.prefs_vec = vec_to_bytes(prefs_vec)
+        row.domain_vec = vec_to_bytes(domain_vec)
         row.title_vecs = title_vecs
         row.skills = skills
         row.years_experience = years_experience
@@ -422,8 +532,10 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
     logger.info(
         "user_encoded",
         user_id=user_id,
-        titles=len(title_vecs),
         skills=len(skills),
-        years=years_experience,
+        titles=len(title_vecs),
+        years_experience=years_experience,
+        prefs_chars=len(prefs_combined),
+        domain_chars=len(domain_text),
     )
     return True

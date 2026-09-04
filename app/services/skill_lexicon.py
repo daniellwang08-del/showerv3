@@ -298,7 +298,7 @@ SKILLS: dict[str, tuple[str, tuple[str, ...]]] = {
     "seo": ("practice", ("search engine optimization",)),
     "stripe": ("domain", ("payment processing", "payments", "billing systems")),
     "salesforce": ("domain", ("crm", "apex")),
-    "sap": ("domain", ("sap hana",)),
+    "sap": ("domain", ("sap hana", "sap ecc", "s/4hana", "s4hana")),
     "shopify": ("domain", ("e-commerce", "ecommerce")),
     "twilio": ("domain", ()),
     "blockchain": ("domain", ("web3", "smart contracts", "ethereum", "defi")),
@@ -309,6 +309,16 @@ SKILLS: dict[str, tuple[str, tuple[str, ...]]] = {
     "gaming": ("domain", ("unity", "unreal engine", "game development")),
     "cad": ("domain", ("autocad", "solidworks", "3d modeling")),
     "erp": ("domain", ("netsuite", "workday", "oracle erp")),
+    "data migration": ("data", ("data migration", "etl migration", "legacy migration")),
+    "data quality": ("data", ("data quality", "dq", "data cleansing", "data cleansing")),
+    "master data management": ("data", ("mdm", "master data", "master data management")),
+    "data governance": ("data", ("data governance", "data stewardship")),
+    "data analysis": ("data", ("data analysis", "data analytics", "analytical skills")),
+    "consulting": ("domain", ("management consulting", "technology consulting", "client facing")),
+    "stakeholder management": ("soft", ("stakeholder management", "client management")),
+    "technical leadership": ("soft", ("tech lead", "technical lead", "engineering leadership")),
+    "architecture": ("architecture", ("solution architecture", "system architecture", "software architecture")),
+    "statistics": ("data", ("statistical analysis", "statistical modelling", "statistical modeling")),
 }
 
 # Canonical names too ambiguous to match as bare English words; these are
@@ -319,12 +329,13 @@ _TOKEN_RE = re.compile(r"[a-z0-9+#.\-/]+")
 
 REQUIRED_HEADING_RE = re.compile(
     r"(requirements?|qualifications?|must[\s-]haves?|what\s+you(?:'|’)?ll\s+need|"
-    r"what\s+we(?:'|’)?re\s+looking\s+for|minimum\s+qualifications|required\s+skills)",
+    r"what\s+we(?:'|’)?re\s+looking\s+for|minimum\s+qualifications|required\s+skills|"
+    r"what\s+it\s+takes|you\s+(?:have|bring)|basic\s+qualifications)",
     re.IGNORECASE,
 )
 PREFERRED_HEADING_RE = re.compile(
     r"(nice[\s-]to[\s-]haves?|preferred(?:\s+qualifications?|\s+skills)?|bonus(?:\s+points)?|"
-    r"plus(?:es)?\b|good\s+to\s+have|desirable)",
+    r"plus(?:es)?\b|good\s+to\s+have|desirable|what\s+we\s+offer)",
     re.IGNORECASE,
 )
 

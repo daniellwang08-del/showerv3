@@ -8,12 +8,12 @@ JOB_MATCH_PREFERENCES_MAX_LENGTH = 4000
 # Industry/domain is elevated so company/env fit matters when the JD demands it.
 # Work mode (remote/hybrid/onsite) must never influence any dimension.
 MATCH_DIMENSION_WEIGHTS: dict[str, float] = {
-    "skills_match": 0.30,
-    "experience_match": 0.20,
+    "skills_match": 0.32,
+    "experience_match": 0.22,
     "job_title_similarity": 0.15,
-    "industry_domain_match": 0.18,
+    "industry_domain_match": 0.16,
     "education": 0.05,
-    "user_preferences": 0.12,
+    "user_preferences": 0.10,
 }
 
 JOB_MATCH_PHASE_A_SYSTEM_PROMPT = """You are an expert recruiter, career advisor, and job-posting structuring assistant.

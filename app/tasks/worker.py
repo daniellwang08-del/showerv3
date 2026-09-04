@@ -170,13 +170,23 @@ async def extract_job(
                 method=method,
                 content_length=content_length,
             )
-            # Vector match engine: encode the job once as soon as raw text exists
-            # (idempotent; re-encoded after Phase A structuring improves the text).
+            # Vector match engine: encode the job BEFORE chaining analysis so the
+            # analysis worker almost always hits a warm encoding (ms path).
             try:
                 async with get_session() as session:
                     _job_row = await JobRepository(session).get_by_extraction_id(job_id)
                 if _job_row:
-                    await enqueue_encode_job(_job_row.id)
+                    from app.services.encoding_service import encode_job
+
+                    try:
+                        await encode_job(_job_row.id)
+                    except Exception as inline_enc_err:
+                        logger.warning(
+                            "encode_inline_after_extract_failed",
+                            job_id=_job_row.id,
+                            error=str(inline_enc_err),
+                        )
+                        await enqueue_encode_job(_job_row.id)
             except Exception as enc_err:
                 logger.warning(
                     "encode_enqueue_after_extract_failed",
@@ -1782,6 +1792,8 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
                 .where(
                     (UserEncoding.user_id.is_(None))
                     | (UserEncoding.model_version != current_model)
+                    | (UserEncoding.domain_vec.is_(None))
+                    | (UserEncoding.prefs_vec.is_(None))
                 )
                 .where(User.is_active.is_(True))
             )
@@ -1802,6 +1814,7 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
                     .where(
                         (JobEncoding.job_id.is_(None))
                         | (JobEncoding.model_version != current_model)
+                        | (JobEncoding.industry_vec.is_(None))
                     )
                     .where(JobModel.status != "blocked")
                     .order_by(JobModel.id)

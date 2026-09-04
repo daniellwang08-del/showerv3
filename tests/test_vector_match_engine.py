@@ -162,6 +162,19 @@ def test_recommendation_thresholds_match_phase_a():
     assert _recommendation(10) == "poor_match"
 
 
+def test_build_prefs_proxy_always_nonempty():
+    from app.services.encoding_service import build_prefs_proxy_text
+
+    text = build_prefs_proxy_text(
+        explicit_prefs=None,
+        guidance=None,
+        work_experience=[{"job_title": "Staff Engineer", "company_name": "Acme"}],
+        country_preferences=["US", "CA"],
+    )
+    assert "US" in text and "Staff Engineer" in text
+    assert "remote" in text.lower()
+
+
 def test_score_skills_required_vs_preferred():
     job_skills = {"python": "required", "kubernetes": "required", "terraform": "preferred"}
     full_match, matched, missing = _score_skills(

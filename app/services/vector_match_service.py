@@ -25,11 +25,13 @@ from app.storage.database import get_session
 
 logger = get_logger(__name__)
 
-_IMPORTANCE_WEIGHTS = {"required": 1.0, "preferred": 0.5, "mentioned": 0.25}
-_SAME_CATEGORY_CREDIT = 0.6
+_IMPORTANCE_WEIGHTS = {"required": 1.2, "preferred": 0.5, "mentioned": 0.25}
+_SAME_CATEGORY_CREDIT = 0.55
 # Floor applied to user-skill recency weights so an old-but-real skill still
 # counts substantially toward overlap.
 _RECENCY_FLOOR = 0.5
+# Extra penalty applied after overlap when required skills are missing.
+_MISSING_REQUIRED_PENALTY = 8
 
 
 def _cos(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
@@ -52,12 +54,16 @@ def _cos_to_score(cos: float | None, points: tuple[tuple[float, float], ...]) ->
     return int(points[-1][1])
 
 
-# Calibration anchor points (cosine -> score). Starting values chosen for
-# all-mpnet-base-v2 similarity ranges; shadow-mode comparisons refine them.
-_EXPERIENCE_POINTS = ((0.05, 15), (0.25, 40), (0.45, 65), (0.60, 82), (0.75, 95))
-_TITLE_POINTS = ((0.20, 15), (0.40, 40), (0.55, 62), (0.70, 82), (0.85, 97))
-_INDUSTRY_POINTS = ((0.05, 25), (0.25, 45), (0.45, 68), (0.60, 84), (0.75, 95))
-_PREFS_POINTS = ((0.05, 30), (0.20, 45), (0.40, 62), (0.55, 78), (0.70, 92))
+# Calibration for all-MiniLM-L6-v2 (production). MiniLM same-domain cosines
+# typically sit higher/tighter than mpnet; these anchors stretch mid-band
+# matches and reserve ≥80 for clearly strong cosine overlap.
+_EXPERIENCE_POINTS = ((0.10, 18), (0.30, 42), (0.42, 62), (0.52, 78), (0.62, 90), (0.72, 97))
+_TITLE_POINTS = ((0.20, 18), (0.38, 42), (0.52, 68), (0.65, 85), (0.80, 97))
+# Industry uses an independent company/domain embedding vs user domain history.
+_INDUSTRY_POINTS = ((0.08, 20), (0.25, 42), (0.40, 65), (0.52, 80), (0.65, 92), (0.78, 97))
+_PREFS_POINTS = ((0.08, 25), (0.22, 45), (0.38, 65), (0.52, 80), (0.68, 93))
+
+SCORER_VERSION = "minilm-v2-domain-prefs"
 
 _RECOMMENDATION_THRESHOLDS = (
     (80, "strong_match"),
@@ -107,7 +113,10 @@ def _score_skills(
                 missing_required.append(skill)
     if total <= 0:
         return 50, [], []
-    return int(round(100 * got / total)), matched, missing_required
+    score = int(round(100 * got / total))
+    if missing_required:
+        score = max(0, score - _MISSING_REQUIRED_PENALTY * min(3, len(missing_required)))
+    return score, matched, missing_required
 
 
 def _score_experience(
@@ -211,6 +220,7 @@ async def load_encodings(
                 .options(
                     undefer(JobEncoding.title_vec),
                     undefer(JobEncoding.content_vec),
+                    undefer(JobEncoding.industry_vec),
                 )
                 .where(JobEncoding.job_id == job_id)
             )
@@ -221,6 +231,7 @@ async def load_encodings(
                 .options(
                     undefer(UserEncoding.experience_vec),
                     undefer(UserEncoding.prefs_vec),
+                    undefer(UserEncoding.domain_vec),
                 )
                 .where(UserEncoding.user_id == user_id)
             )
@@ -230,9 +241,11 @@ async def load_encodings(
         if job_enc is not None:
             job_enc.title_vec = job_enc.title_vec
             job_enc.content_vec = job_enc.content_vec
+            job_enc.industry_vec = job_enc.industry_vec
         if user_enc is not None:
             user_enc.experience_vec = user_enc.experience_vec
             user_enc.prefs_vec = user_enc.prefs_vec
+            user_enc.domain_vec = user_enc.domain_vec
         return job_enc, user_enc
 
 
@@ -259,6 +272,7 @@ def _build_explain(
     matched: list[str],
     missing_required: list[str],
     cos_experience: float | None,
+    cos_industry: float | None,
     cos_prefs: float | None,
     cos_title: float | None,
     job_skills: dict[str, str],
@@ -274,9 +288,13 @@ def _build_explain(
     }
     return {
         "model_version": job_enc.model_version,
+        "scorer_version": SCORER_VERSION,
         "cosines": {
             "experience_to_content": (
                 round(cos_experience, 4) if cos_experience is not None else None
+            ),
+            "domain_to_industry": (
+                round(cos_industry, 4) if cos_industry is not None else None
             ),
             "prefs_to_content": round(cos_prefs, 4) if cos_prefs is not None else None,
             "best_title": round(cos_title, 4) if cos_title is not None else None,
@@ -303,8 +321,8 @@ def _build_explain(
             "industry_points": list(_INDUSTRY_POINTS),
             "prefs_points": list(_PREFS_POINTS),
             "note": (
-                "experience_match and industry_domain_match both derive from "
-                "experience_to_content cosine (different calibration curves)."
+                "experience_match uses experience↔content; industry_domain_match "
+                "uses domain↔industry (independent embeddings)."
             ),
         },
     }
@@ -325,6 +343,7 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
         if explain:
             result["explain"] = {
                 "model_version": job_enc.model_version,
+                "scorer_version": SCORER_VERSION,
                 "gated": "security_clearance",
                 "signals": {
                     "requires_security_clearance": True,
@@ -336,11 +355,22 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
 
     job_title_vec = bytes_to_vec(job_enc.title_vec)
     job_content_vec = bytes_to_vec(job_enc.content_vec)
+    job_industry_vec = bytes_to_vec(getattr(job_enc, "industry_vec", None))
     experience_vec = bytes_to_vec(user_enc.experience_vec)
     prefs_vec = bytes_to_vec(user_enc.prefs_vec)
+    domain_vec = bytes_to_vec(getattr(user_enc, "domain_vec", None))
     title_vecs = list(user_enc.title_vecs or [])
 
     cos_experience = _cos(experience_vec, job_content_vec)
+    # Independent industry signal: user domain history ↔ job company/industry.
+    # Fall back to experience↔content only when industry/domain vecs are missing
+    # (pre-migration encodings); once re-encoded they diverge.
+    if job_industry_vec is not None and domain_vec is not None:
+        cos_industry = _cos(domain_vec, job_industry_vec)
+    elif job_industry_vec is not None and experience_vec is not None:
+        cos_industry = _cos(experience_vec, job_industry_vec)
+    else:
+        cos_industry = None
     cos_prefs = _cos(prefs_vec, job_content_vec) if prefs_vec is not None else None
     cos_title = _best_title_cosine(job_title_vec, title_vecs)
     job_skills = dict(job_enc.skills or {})
@@ -353,7 +383,10 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
             job_enc, cos_experience, user_enc.years_experience
         ),
         "job_title_similarity": _cos_to_score(cos_title, _TITLE_POINTS),
-        "industry_domain_match": _cos_to_score(cos_experience, _INDUSTRY_POINTS),
+        "industry_domain_match": _cos_to_score(
+            cos_industry if cos_industry is not None else cos_experience,
+            _INDUSTRY_POINTS,
+        ),
         "education": _score_education(job_enc, user_enc.has_degree),
         "user_preferences": (
             _cos_to_score(cos_prefs, _PREFS_POINTS) if cos_prefs is not None else 50
@@ -381,6 +414,7 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
             matched=matched,
             missing_required=missing_required,
             cos_experience=cos_experience,
+            cos_industry=cos_industry,
             cos_prefs=cos_prefs,
             cos_title=cos_title,
             job_skills=job_skills,

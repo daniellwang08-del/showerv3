@@ -401,6 +401,8 @@ class JobEncoding(Base):
     title_vec = deferred(Column(LargeBinary, nullable=True))
     # Embedding of the substantive JD body (description + requirements).
     content_vec = deferred(Column(LargeBinary, nullable=True))
+    # Embedding of company / industry / domain phrase (independent of JD body).
+    industry_vec = deferred(Column(LargeBinary, nullable=True))
     # {"skill": "required" | "preferred" | "mentioned", ...}
     skills = Column(JSON, default=dict, nullable=False)
     years_required = Column(Integer, nullable=True)
@@ -421,6 +423,8 @@ class UserEncoding(Base):
     experience_vec = deferred(Column(LargeBinary, nullable=True))
     # Embedding of job preferences + custom guidance (null when unset).
     prefs_vec = deferred(Column(LargeBinary, nullable=True))
+    # Embedding of industries / companies from work history (domain fit).
+    domain_vec = deferred(Column(LargeBinary, nullable=True))
     # [{"title": str, "vec": base64-float32}, ...] recent titles, newest first.
     title_vecs = Column(JSON, default=list, nullable=False)
     # {"skill": recency_weight 0..1, ...}
