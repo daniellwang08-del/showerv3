@@ -4,6 +4,7 @@ import { Bot, ChevronDown, Check, Loader2, RefreshCw } from 'lucide-react';
 import { fetchUserSettings, updateUserSettings } from '../../api/settingsApi';
 import { apiClient } from '../../api/client';
 import { LlmModelGlyph, llmModelFamilyLabel } from '../shared/LlmModelIcon';
+import { useUIStore } from '../../stores/uiStore';
 
 type DiscoveredModel = {
   id: string;
@@ -29,6 +30,27 @@ function shortModelLabel(id: string): string {
   return `${id.slice(0, 25)}…`;
 }
 
+function friendlyLlmError(raw: string): string {
+  const text = raw.trim();
+  if (!text) return 'Could not reach the AI model service.';
+  // OpenAI often returns a Python-dict-looking string; surface the message only.
+  const nested = text.match(/'message'\s*:\s*'((?:\\'|[^'])*)'/);
+  if (nested?.[1]) {
+    return nested[1].replace(/\\'/g, "'");
+  }
+  const nestedDq = text.match(/"message"\s*:\s*"((?:\\"|[^"])*)"/);
+  if (nestedDq?.[1]) {
+    return nestedDq[1].replace(/\\"/g, '"');
+  }
+  if (/account associated with this API key has been deactivated/i.test(text)) {
+    return 'Your OpenAI API key was deactivated. Update it in Preferences or ask an admin to refresh the server key.';
+  }
+  if (/401/.test(text) && /api key/i.test(text)) {
+    return 'AI authentication failed (invalid or deactivated API key). Update your key and try again.';
+  }
+  return text.length > 280 ? `${text.slice(0, 277)}…` : text;
+}
+
 export function LlmProviderSelector() {
   /** Explicit user choice; null = use system default. */
   const [userModel, setUserModel] = useState<string | null>(null);
@@ -38,14 +60,25 @@ export function LlmProviderSelector() {
   const [loading, setLoading] = useState(true);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [menuError, setMenuError] = useState('');
+  const notify = useUIStore((s) => s.notify);
   const mounted = useRef(true);
   const triggerRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const lastNotifiedError = useRef('');
+
+  const reportError = (raw: string, toast = true) => {
+    const message = friendlyLlmError(raw);
+    setMenuError(message);
+    if (toast && message && message !== lastNotifiedError.current) {
+      lastNotifiedError.current = message;
+      notify('error', message, 12_000);
+    }
+  };
 
   const loadModels = async () => {
     setModelsLoading(true);
-    setError('');
+    setMenuError('');
     try {
       const { data } = await apiClient.get<ModelsResponse>('/settings/llm/models');
       if (!mounted.current) return;
@@ -55,14 +88,15 @@ export function LlmProviderSelector() {
           : data.models?.length
             ? data.models
             : [];
-      // Hide gateway sandbox / test-* ids from the dashboard picker.
       const list = raw.filter((m) => {
         const id = (m.id || '').toLowerCase();
         return id && !id.startsWith('test-') && !id.startsWith('test_');
       });
       setModels(list);
       if (data.message && list.length === 0) {
-        setError(data.message);
+        reportError(data.message);
+      } else {
+        lastNotifiedError.current = '';
       }
     } catch (err: unknown) {
       if (!mounted.current) return;
@@ -70,7 +104,7 @@ export function LlmProviderSelector() {
         err && typeof err === 'object' && 'response' in err
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
           : null;
-      setError(typeof msg === 'string' ? msg : 'Failed to discover models.');
+      reportError(typeof msg === 'string' ? msg : 'Failed to discover models.');
       setModels([]);
     } finally {
       if (mounted.current) setModelsLoading(false);
@@ -101,7 +135,7 @@ export function LlmProviderSelector() {
 
   const handleSelect = async (next: string | null) => {
     setOpen(false);
-    setError('');
+    setMenuError('');
     const prev = userModel;
     setUserModel(next);
     setSaving(true);
@@ -119,7 +153,7 @@ export function LlmProviderSelector() {
         err && typeof err === 'object' && 'response' in err
           ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
           : null;
-      setError(typeof msg === 'string' ? msg : 'Failed to switch model.');
+      reportError(typeof msg === 'string' ? msg : 'Failed to switch model.');
     } finally {
       if (mounted.current) setSaving(false);
     }
@@ -193,7 +227,7 @@ export function LlmProviderSelector() {
                 ) : null}
                 {!modelsLoading && models.length === 0 ? (
                   <div className="px-3 py-3 text-xs leading-snug text-slate-500 dark:text-[#cbd5e1]">
-                    {error || 'No chat models discovered for this key.'}
+                    {menuError || 'No chat models discovered for this key.'}
                   </div>
                 ) : null}
                 <button
@@ -266,7 +300,7 @@ export function LlmProviderSelector() {
       : null;
 
   return (
-    <div className="flex flex-col items-start gap-1">
+    <div className="relative inline-flex">
       <div ref={triggerRef} className="relative inline-flex">
         <button
           type="button"
@@ -289,10 +323,6 @@ export function LlmProviderSelector() {
       </div>
 
       {menu}
-
-      {error && !open ? (
-        <p className="max-w-[16rem] text-right text-[11px] text-rose-600">{error}</p>
-      ) : null}
     </div>
   );
 }
