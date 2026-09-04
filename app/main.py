@@ -36,6 +36,7 @@ from app.api.agent_routes import agent_router
 from app.api.data_management_routes import router as data_management_router
 from app.api.admin_routes import router as admin_router
 from app.api.job_sources_routes import router as job_sources_router
+from app.api.logs_routes import router as logs_router
 from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
 from app.storage.database import init_database, close_database
@@ -81,7 +82,7 @@ def _install_windows_accept_noise_filter() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    setup_logging()
+    setup_logging(service="api")
     _install_windows_accept_noise_filter()
     logger.info("application_starting")
 
@@ -100,6 +101,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("database_init_failed", error=str(e))
         raise
+
+    try:
+        from app.services.log_sink import start_log_sink, purge_old_logs
+
+        await start_log_sink(service="api")
+        deleted = await purge_old_logs()
+        if deleted:
+            logger.info("system_logs_retention_purge", deleted=deleted, category="system")
+    except Exception as e:
+        logger.warning("log_sink_start_failed", error=str(e))
 
     # Clean up stale scrape_runs left in 'running' state from a previous
     # process that was killed before it could call PostgresPipeline.close_spider().
@@ -214,6 +225,13 @@ async def lifespan(app: FastAPI):
     logger.info("application_stopping")
 
     try:
+        from app.services.log_sink import stop_log_sink
+
+        await stop_log_sink()
+    except Exception:
+        pass
+
+    try:
         await ws_manager.stop_redis_subscriber()
     except Exception:
         pass
@@ -280,20 +298,26 @@ def create_app() -> FastAPI:
     if frontend_url:
         origin = frontend_url.rstrip("/")
         origins.append(origin)
-        # Also allow the www twin when FRONTEND_URL is the apex (or vice versa).
+        # Also allow the www twin when FRONTEND_URL is the apex (or vice versa),
+        # plus the logs subdomain used by the admin system-logs dashboard.
         try:
             from urllib.parse import urlparse
 
             parsed = urlparse(origin)
             host = parsed.hostname or ""
+            apex = host[4:] if host.startswith("www.") else host
             if host.startswith("www."):
-                twin = f"{parsed.scheme}://{host[4:]}"
+                twin = f"{parsed.scheme}://{apex}"
             elif host:
                 twin = f"{parsed.scheme}://www.{host}"
             else:
                 twin = ""
             if twin and twin not in origins:
                 origins.append(twin)
+            if apex and not apex.startswith("logs."):
+                logs_origin = f"{parsed.scheme}://logs.{apex}"
+                if logs_origin not in origins:
+                    origins.append(logs_origin)
         except Exception:
             pass
 
@@ -345,6 +369,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_router, prefix="/api/v1")
     app.include_router(data_management_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(logs_router, prefix="/api/v1")
     app.include_router(job_sources_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 

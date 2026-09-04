@@ -75,7 +75,7 @@ def _normalize_exceptions(_, __, event_dict):
     return event_dict
 
 
-def setup_logging() -> None:
+def setup_logging(*, service: str = "api") -> None:
     settings = get_settings()
     log_stream = sys.stderr
     use_json = not settings.debug
@@ -92,6 +92,10 @@ def setup_logging() -> None:
     handler.setFormatter(logging.Formatter("%(message)s"))
     root_logger.addHandler(handler)
 
+    from app.services.log_sink import configure_log_sink, persist_log_processor
+
+    configure_log_sink(service=service)
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -104,6 +108,8 @@ def setup_logging() -> None:
             _normalize_event_name,
             _redact_sensitive_fields,
             structlog.processors.TimeStamper(fmt="iso"),
+            # Persist AFTER redaction/timestamp so DB rows match console JSON.
+            persist_log_processor,
             structlog.processors.JSONRenderer()
             if use_json
             else structlog.dev.ConsoleRenderer(),

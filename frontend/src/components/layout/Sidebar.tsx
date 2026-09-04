@@ -12,6 +12,7 @@ import {
   Puzzle,
   UserCog,
   Sparkles,
+  ScrollText,
 } from 'lucide-react';
 import { useThemeStore } from '../../stores/themeStore';
 import { useAgentStore } from '../../stores/agentStore';
@@ -86,6 +87,7 @@ const adminNavItems = [
   { to: '/data-analysis', label: 'Data Analysis', icon: Database },
   { to: '/user-management', label: 'User Management', icon: Users },
   { to: '/system-settings', label: 'System Settings', icon: Cpu },
+  { to: '/system-logs', label: 'System Logs', icon: ScrollText },
 ];
 
 export function Sidebar({

@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # in any non-production environment regardless of this flag (see main.py).
     debug: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # Persist structured logs to system_log_events for the admin logs dashboard.
+    log_persist_enabled: bool = True
+    log_persist_min_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_retention_days: int = 14
 
     @field_validator("app_env")
     @classmethod
@@ -261,6 +265,9 @@ class Settings(BaseSettings):
     # is a comma-separated list (chrome-extension://…, https://www.…, etc.).
     frontend_url: str = Field(default="")
     cors_extra_origins: str = Field(default="")
+    # Cookie Domain for access_token so apex + logs subdomain share the session
+    # (e.g. ".atomspace.it.com"). Empty = host-only (local/dev default).
+    auth_cookie_domain: str = Field(default="")
 
     google_sheets_credentials_path: str = Field(default="google_credentials.json")
 

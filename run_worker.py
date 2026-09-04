@@ -30,9 +30,29 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-from app.core.logging import setup_logging
+from app.core.logging import setup_logging, get_logger
 
-setup_logging()
+# Default until the concrete worker mode is known in ``main`` / startup hooks.
+setup_logging(service="worker")
+logger = get_logger(__name__)
+
+
+async def _start_worker_log_sink(service: str) -> None:
+    try:
+        from app.services.log_sink import start_log_sink
+
+        await start_log_sink(service=service)
+    except Exception as e:
+        logger.warning("log_sink_start_failed", service=service, error=str(e))
+
+
+async def _stop_worker_log_sink() -> None:
+    try:
+        from app.services.log_sink import stop_log_sink
+
+        await stop_log_sink()
+    except Exception:
+        pass
 
 # Proactor is already the default on modern Windows/Python; setting the
 # deprecated WindowsProactorEventLoopPolicy warns on 3.14+.
@@ -72,9 +92,6 @@ from app.extractors.browser_extractor import (
     init_browser_pool,
     close_browser_pool,
 )
-from app.core.logging import get_logger
-
-logger = get_logger(__name__)
 
 # System Settings key that controls each worker's arq max_jobs.
 MODE_MAX_JOBS_SETTING = {
@@ -94,6 +111,7 @@ MODE_MAX_JOBS_SETTING = {
 async def extraction_startup(ctx):
     logger.info("extraction_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("extraction")
     await init_http_client()
     await init_browser_pool()
     from app.services.extraction_cache import init_redis_pool
@@ -108,6 +126,7 @@ async def extraction_startup(ctx):
 
 async def extraction_shutdown(ctx):
     logger.info("extraction_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     await close_browser_pool()
     await close_http_client()
     from app.services.extraction_cache import close_redis_pool
@@ -124,6 +143,7 @@ async def extraction_shutdown(ctx):
 async def analysis_startup(ctx):
     logger.info("analysis_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("analysis")
     from app.services.extraction_cache import init_redis_pool
     from app.core.redis_support import init_pubsub_redis_pool
     from app.services.pipeline_health import heal_stale_pipeline_state
@@ -136,6 +156,7 @@ async def analysis_startup(ctx):
 
 async def analysis_shutdown(ctx):
     logger.info("analysis_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     from app.services.extraction_cache import close_redis_pool
     from app.core.redis_support import close_pubsub_redis_pool
 
@@ -148,6 +169,7 @@ async def analysis_shutdown(ctx):
 async def tailoring_startup(ctx):
     logger.info("tailoring_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("tailoring")
     from app.services.extraction_cache import init_redis_pool
     from app.core.redis_support import init_pubsub_redis_pool
     from app.services.pipeline_health import heal_stale_pipeline_state
@@ -160,6 +182,7 @@ async def tailoring_startup(ctx):
 
 async def tailoring_shutdown(ctx):
     logger.info("tailoring_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     from app.services.extraction_cache import close_redis_pool
     from app.core.redis_support import close_pubsub_redis_pool
 
@@ -215,6 +238,7 @@ class TailoringWorkerConfig(TailoringWorkerSettings):
 async def save_startup(ctx):
     logger.info("save_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("save")
     from app.core.redis_support import init_pubsub_redis_pool
 
     await init_pubsub_redis_pool()
@@ -223,6 +247,7 @@ async def save_startup(ctx):
 
 async def save_shutdown(ctx):
     logger.info("save_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     from app.core.redis_support import close_pubsub_redis_pool
 
     await close_pubsub_redis_pool()
@@ -245,6 +270,7 @@ class SaveWorkerConfig(SaveWorkerSettings):
 async def autopost_startup(ctx):
     logger.info("autopost_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("autopost")
     from app.core.redis_support import init_pubsub_redis_pool
 
     await init_pubsub_redis_pool()
@@ -253,6 +279,7 @@ async def autopost_startup(ctx):
 
 async def autopost_shutdown(ctx):
     logger.info("autopost_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     from app.core.redis_support import close_pubsub_redis_pool
 
     await close_pubsub_redis_pool()
@@ -277,6 +304,7 @@ class AutoPostWorkerConfig(AutoPostWorkerSettings):
 async def resume_build_startup(ctx):
     logger.info("resume_build_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("resume")
     from app.core.redis_support import init_pubsub_redis_pool
 
     await init_pubsub_redis_pool()
@@ -285,6 +313,7 @@ async def resume_build_startup(ctx):
 
 async def resume_build_shutdown(ctx):
     logger.info("resume_build_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     from app.core.redis_support import close_pubsub_redis_pool
 
     await close_pubsub_redis_pool()
@@ -309,6 +338,7 @@ class ResumeBuildWorkerConfig(ResumeBuildWorkerSettings):
 async def scraper_startup(ctx):
     logger.info("scraper_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("scraper")
     from app.core.redis_support import init_pubsub_redis_pool
 
     await init_pubsub_redis_pool()
@@ -317,6 +347,7 @@ async def scraper_startup(ctx):
 
 async def scraper_shutdown(ctx):
     logger.info("scraper_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     from app.core.redis_support import close_pubsub_redis_pool
 
     await close_pubsub_redis_pool()
@@ -342,6 +373,7 @@ class ScraperWorkerConfig(ScraperWorkerSettings):
 async def encoding_startup(ctx):
     logger.info("encoding_worker_startup_begin")
     await init_database()
+    await _start_worker_log_sink("encoding")
     from app.core.redis_support import init_pubsub_redis_pool
 
     await init_pubsub_redis_pool()
@@ -354,6 +386,7 @@ async def encoding_startup(ctx):
 
 async def encoding_shutdown(ctx):
     logger.info("encoding_worker_shutdown_begin")
+    await _stop_worker_log_sink()
     from app.core.redis_support import close_pubsub_redis_pool
 
     await close_pubsub_redis_pool()

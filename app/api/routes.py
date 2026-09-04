@@ -206,6 +206,36 @@ def _extract_bearer_token(request: Request) -> str | None:
     return None
 
 
+def _auth_cookie_params(*, max_age: int | None = None) -> dict:
+    """Shared flags for access_token cookies across apex + logs subdomain."""
+    from urllib.parse import urlparse
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    params: dict = {
+        "httponly": True,
+        "samesite": "lax",
+        "secure": settings.app_env == "production",
+        "path": "/",
+    }
+    if max_age is not None:
+        params["max_age"] = max_age
+
+    domain = (settings.auth_cookie_domain or "").strip()
+    if not domain and settings.app_env == "production":
+        frontend = (settings.frontend_url or "").strip()
+        if frontend:
+            host = (urlparse(frontend).hostname or "").lower()
+            if host.startswith("www."):
+                host = host[4:]
+            if host and "." in host and not host.startswith("localhost"):
+                domain = f".{host}"
+    if domain:
+        params["domain"] = domain
+    return params
+
+
 async def get_current_user(request: Request):
     # Prefer the cookie (web app); fall back to a Bearer header (extension/API clients).
     token = request.cookies.get("access_token") or _extract_bearer_token(request)
@@ -247,6 +277,10 @@ async def get_current_user(request: Request):
             logger.warning("auth_required_inactive_user", user_id=user_id)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
         bind_logging_context(user_id=user.id, user_email=user.email)
+        try:
+            request.state.user_id = user.id
+        except Exception:
+            pass
         return {
             **payload,
             "user_id": user.id,
@@ -275,7 +309,6 @@ async def require_applicant(current_user: dict = Depends(get_current_user)) -> d
 @router.post("/auth/signup", response_model=AuthResponse)
 async def signup(request: SignupRequest, response: Response, http_request: Request) -> AuthResponse:
     """Register a new user with email and password"""
-    settings = get_settings()
     normalized_email = request.email.lower().strip()
 
     from app.api.rate_limit import enforce_auth_rate_limit
@@ -303,10 +336,7 @@ async def signup(request: SignupRequest, response: Response, http_request: Reque
             response.set_cookie(
                 key="access_token",
                 value=access_token,
-                httponly=True,
-                max_age=86400,
-                samesite="lax",
-                secure=settings.app_env == "production",
+                **_auth_cookie_params(max_age=86400),
             )
             
             logger.info("user_signup_success", email=user.email, user_id=user.id)
@@ -338,7 +368,6 @@ async def signup(request: SignupRequest, response: Response, http_request: Reque
 @router.post("/auth/login", response_model=AuthResponse)
 async def login(request: LoginRequest, response: Response, http_request: Request) -> AuthResponse:
     """Login with email and password"""
-    settings = get_settings()
     normalized_email = request.email.lower().strip()
 
     from app.api.rate_limit import enforce_auth_rate_limit
@@ -388,10 +417,7 @@ async def login(request: LoginRequest, response: Response, http_request: Request
         response.set_cookie(
             key="access_token",
             value=access_token,
-            httponly=True,
-            max_age=expires_seconds,
-            samesite="lax",
-            secure=settings.app_env == "production",
+            **_auth_cookie_params(max_age=expires_seconds),
         )
         
         logger.info("user_login_success", email=user.email, user_id=user.id, long_lived=request.long_lived)
@@ -409,8 +435,6 @@ async def login(request: LoginRequest, response: Response, http_request: Request
 
 @router.post("/auth/logout")
 async def logout(response: Response, request: Request):
-    settings = get_settings()
-
     # Revoke the presented token so a stolen/long-lived bearer (extension tokens
     # live up to 30 days) cannot be reused after logout. Best-effort/fail-open.
     token = request.cookies.get("access_token") or _extract_bearer_token(request)
@@ -427,8 +451,7 @@ async def logout(response: Response, request: Request):
 
     response.delete_cookie(
         key="access_token",
-        samesite="lax",
-        secure=settings.app_env == "production",
+        **{k: v for k, v in _auth_cookie_params().items() if k != "max_age"},
     )
     logger.info("user_logout")
     return {"message": "Logged out successfully"}

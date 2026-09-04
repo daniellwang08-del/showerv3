@@ -484,6 +484,41 @@ class MatchEngineComparison(Base):
     )
 
 
+class SystemLogEvent(Base):
+    """Persisted structured log for the admin logs dashboard.
+
+    Fed by the structlog sink — HTTP req/res lifecycle, worker tasks, and
+    process events share one table keyed by request_id for timelines.
+    """
+    __tablename__ = "system_log_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+    level = Column(String(20), nullable=False, index=True)
+    event = Column(String(200), nullable=False)
+    logger_name = Column(String(200), nullable=True)
+    # http | worker | process | system
+    category = Column(String(40), nullable=False, default="process", server_default="process", index=True)
+    # api | extraction | analysis | tailoring | save | resume | autopost | scraper | encoding
+    service = Column(String(40), nullable=False, default="api", server_default="api")
+    request_id = Column(String(64), nullable=True, index=True)
+    user_id = Column(String(36), nullable=True)
+    job_id = Column(String(36), nullable=True)
+    extraction_id = Column(String(36), nullable=True)
+    worker_job_type = Column(String(80), nullable=True)
+    method = Column(String(16), nullable=True)
+    path = Column(String(500), nullable=True, index=True)
+    status_code = Column(Integer, nullable=True)
+    duration_ms = Column(Float, nullable=True)
+    client_ip = Column(String(64), nullable=True)
+    message = Column(Text, nullable=True)
+    payload = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_system_log_events_level_created", "level", "created_at"),
+    )
+
+
 class ValidJobUserApplication(Base):
     """Per-user mark that the user applied to this job posting (UI + persistence)."""
     __tablename__ = "valid_job_user_applications"

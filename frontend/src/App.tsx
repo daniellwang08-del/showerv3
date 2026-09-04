@@ -27,13 +27,38 @@ const UserManagementPage = lazy(() =>
 const SystemSettingsPage = lazy(() =>
   import('./pages/SystemSettingsPage').then((m) => ({ default: m.SystemSettingsPage })),
 );
+const SystemLogsPage = lazy(() =>
+  import('./pages/SystemLogsPage').then((m) => ({ default: m.SystemLogsPage })),
+);
 import { AuthScreen } from './components/extraction/AuthScreen';
 import { JobActionModal } from './components/extraction/JobActionModal';
 import { ConfirmDialog } from './components/extraction/ConfirmDialog';
 import { NotificationToasts } from './components/shared/NotificationToasts';
 
+function isLogsHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname.toLowerCase();
+  return host === 'logs.atomspace.it.com' || host.startsWith('logs.');
+}
+
 function AdminOnly({ isAdmin, children }: { isAdmin: boolean; children: React.ReactNode }) {
   if (!isAdmin) {
+    if (isLogsHost()) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-center dark:bg-[var(--app-bg)]">
+          <div className="max-w-md space-y-2">
+            <p className="text-lg font-semibold text-slate-900 dark:text-white">Admins only</p>
+            <p className="text-sm text-slate-600 dark:text-[var(--app-muted)]">
+              System logs require an admin account. Sign in at{' '}
+              <a className="text-sky-700 underline dark:text-sky-300" href="https://atomspace.it.com/login">
+                atomspace.it.com
+              </a>{' '}
+              with an admin user, then open this site again.
+            </p>
+          </div>
+        </div>
+      );
+    }
     return <Navigate to="/scraper" replace />;
   }
   return <>{children}</>;
@@ -158,8 +183,39 @@ function App() {
     // auth mode so both are shareable. Any other path (an app route reached
     // with an expired session) still shows the form directly, so signing back
     // in returns the user to where they were.
+    // logs.* is admin-only: skip marketing and go straight to login.
+    const logsHost = isLogsHost();
     const gotoMode = (mode: 'login' | 'signup') =>
       navigate(mode === 'login' ? '/login' : '/signup');
+
+    if (logsHost) {
+      return (
+        <Routes>
+          <Route
+            path="/login"
+            element={
+              <AuthScreen
+                onAuthSuccess={onAuthSuccess}
+                initialMode="login"
+                onModeChange={() => navigate('/login')}
+                homeTo="/login"
+              />
+            }
+          />
+          <Route
+            path="*"
+            element={
+              <AuthScreen
+                onAuthSuccess={onAuthSuccess}
+                initialMode="login"
+                onModeChange={() => navigate('/login')}
+                homeTo="/login"
+              />
+            }
+          />
+        </Routes>
+      );
+    }
 
     return (
       <Routes>
@@ -193,6 +249,8 @@ function App() {
       </Routes>
     );
   }
+
+  const defaultAuthedPath = isLogsHost() ? '/system-logs' : '/scraper';
 
   return (
     <>
@@ -319,7 +377,16 @@ function App() {
               </AdminOnly>
             }
           />
-          <Route path="*" element={<Navigate to="/scraper" replace />} />
+          <Route
+            path="/system-logs"
+            element={
+              <AdminOnly isAdmin={!!user?.is_admin}>
+                <SystemLogsPage />
+              </AdminOnly>
+            }
+          />
+          <Route path="/" element={<Navigate to={defaultAuthedPath} replace />} />
+          <Route path="*" element={<Navigate to={defaultAuthedPath} replace />} />
         </Route>
       </Routes>
       </Suspense>
