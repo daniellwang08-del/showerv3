@@ -23,18 +23,9 @@ from app.core.logging import get_logger
 from app.models.database import JobEncoding, UserEncoding
 from app.prompts.job_match_phase_a_prompt import MATCH_DIMENSION_WEIGHTS
 from app.services.encoding_service import b64_to_vec, bytes_to_vec
-from app.services.skill_lexicon import skill_category
 from app.storage.database import get_session
 
 logger = get_logger(__name__)
-
-_IMPORTANCE_WEIGHTS = {"required": 1.2, "preferred": 0.5, "mentioned": 0.25}
-_SAME_CATEGORY_CREDIT = 0.55
-# Floor applied to user-skill recency weights so an old-but-real skill still
-# counts substantially toward overlap.
-_RECENCY_FLOOR = 0.5
-# Extra penalty applied after overlap when required skills are missing.
-_MISSING_REQUIRED_PENALTY = 8
 
 
 def _cos(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
@@ -45,7 +36,7 @@ def _cos(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
 
 
 def _cos_to_score(cos: float | None, points: tuple[tuple[float, float], ...]) -> int:
-    """Piecewise-linear map from cosine similarity to a 0-100 score."""
+    """Piecewise-linear map from a similarity in [0, 1] to a 0-100 score."""
     if cos is None:
         return 50
     if cos <= points[0][0]:
@@ -65,8 +56,23 @@ _TITLE_POINTS = ((0.20, 18), (0.38, 42), (0.52, 68), (0.65, 85), (0.80, 97))
 # Industry uses an independent company/domain embedding vs user domain history.
 _INDUSTRY_POINTS = ((0.08, 20), (0.25, 42), (0.40, 65), (0.52, 80), (0.65, 92), (0.78, 97))
 _PREFS_POINTS = ((0.08, 25), (0.22, 45), (0.38, 65), (0.52, 80), (0.68, 93))
+# Jaccard overlap runs far lower than the other similarities -- postings list
+# ~13 skills against profiles carrying 36-82, so even a strong match rarely
+# clears 0.25. These anchors are a quantile map measured against the previous
+# scorer's output, which keeps the visible score distribution and the absolute
+# recommendation and auto-post thresholds where they already are.
+_SKILLS_POINTS = (
+    (0.000, 0),
+    (0.014, 37),
+    (0.041, 45),
+    (0.095, 50),
+    (0.153, 64),
+    (0.202, 75),
+    (0.226, 80),
+    (0.439, 100),
+)
 
-SCORER_VERSION = "minilm-v2-domain-prefs"
+SCORER_VERSION = "minilm-v3-jaccard-skills"
 
 _RECOMMENDATION_THRESHOLDS = (
     (80, "strong_match"),
@@ -91,34 +97,30 @@ def _compute_overall(dims: dict[str, int]) -> int:
 def _score_skills(
     job_skills: dict[str, str], user_skills: dict[str, float]
 ) -> tuple[int, list[str], list[str]]:
-    """(score, matched_skills, missing_required_skills)."""
-    if not job_skills:
+    """(score, matched_skills, missing_required_skills).
+
+    Scored by Jaccard overlap -- intersection over union -- rather than by the
+    share of the posting's skills the profile happens to cover. Dividing by the
+    posting alone ignores how broad the profile is, and since profiles here
+    carry 36-82 skills against postings listing about 13, almost anything in a
+    user's field cleared the bar. Measured against real applications that cost
+    the dimension most of its discriminating power: 0.574 AUC for the old
+    scorer against 0.654 for this one.
+
+    An empty skill set on either side is missing information rather than a
+    mismatch, so it scores neutral instead of zero.
+    """
+    if not job_skills or not user_skills:
         return 50, [], []
 
-    user_categories = {skill_category(s) for s in user_skills}
-    matched: list[str] = []
-    missing_required: list[str] = []
-    got = 0.0
-    total = 0.0
-    for skill, importance in job_skills.items():
-        imp_w = _IMPORTANCE_WEIGHTS.get(importance, 0.25)
-        total += imp_w
-        if skill in user_skills:
-            recency = max(user_skills[skill], _RECENCY_FLOOR)
-            got += imp_w * recency
-            matched.append(skill)
-        else:
-            if skill_category(skill) in user_categories:
-                # Adjacent-stack credit (e.g. knows MySQL, JD wants PostgreSQL)…
-                got += imp_w * _SAME_CATEGORY_CREDIT
-            # …but a required skill without direct evidence is still a gap.
-            if importance == "required":
-                missing_required.append(skill)
-    if total <= 0:
-        return 50, [], []
-    score = int(round(100 * got / total))
-    if missing_required:
-        score = max(0, score - _MISSING_REQUIRED_PENALTY * min(3, len(missing_required)))
+    matched = [skill for skill in job_skills if skill in user_skills]
+    missing_required = [
+        skill
+        for skill, importance in job_skills.items()
+        if importance == "required" and skill not in user_skills
+    ]
+    union = len(set(job_skills) | set(user_skills))
+    score = _cos_to_score(len(matched) / union, _SKILLS_POINTS) if union else 50
     return score, matched, missing_required
 
 

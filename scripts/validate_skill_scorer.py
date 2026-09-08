@@ -1,21 +1,16 @@
-"""Decide whether the Jaccard skill scorer should replace the current one.
+"""Before/after check on the Jaccard skills scorer that shipped in v3.
 
-diagnose_skill_matching found that scoring the same stored skill sets by
-Jaccard ranks better than the current scorer at the dimension level. That is
-not enough to justify changing the scorer, for two reasons this script exists
-to settle:
+An earlier exploratory version of this script compared *raw* Jaccard against
+the old scorer and measured +0.016 overall. That number did not describe a
+shippable change: raw Jaccard has a median of 9.5 against the other
+dimensions' 50-60, so feeding it into the weighted sum quietly shrank the
+skills contribution, and the measurement conflated the new ordering with that
+scale change. The shipped scorer quantile-maps Jaccard back onto the previous
+distribution, so the effect has to be re-measured against what actually runs.
 
-  selection   Jaccard was the best of four variants measured on one dataset.
-              The gap needs an interval, not a point estimate, and the paired
-              bootstrap over the same resamples is what gives one.
-  dilution    skills_match is one of six dimensions carrying weight 0.32. A
-              dimension-level gain shrinks by roughly that factor, and shrinks
-              further to the extent the new scorer merely re-states what the
-              title and industry dimensions already say. Only the overall
-              score matters, so that is what gets measured here.
-
-The bar: the overall gain's 95% interval must exclude zero. A dimension-level
-win that does not survive dilution is not worth a scorer change.
+Baseline here is the v2 scorer, reproduced below rather than imported, because
+it no longer exists in the codebase. Candidate is whatever
+vector_match_service currently does, so this keeps working as the scorer moves.
 
 Read-only; no LLM calls, no writes.
 
@@ -26,9 +21,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import math
-from collections import Counter
-from typing import Callable
 
 import numpy as np
 from sqlalchemy import select, text
@@ -36,12 +28,44 @@ from sqlalchemy.orm import undefer
 
 from app.models.database import JobEncoding, UserEncoding
 from app.prompts.job_match_phase_a_prompt import MATCH_DIMENSION_WEIGHTS
-from app.services.vector_match_service import score_pair
+from app.services.skill_lexicon import skill_category
+from app.services.vector_match_service import SCORER_VERSION, _score_skills, score_pair
 from app.storage.database import close_database, get_session, init_database
 from scripts.fit_match_weights import _weighted_user_auc
 
 DIMENSIONS = list(MATCH_DIMENSION_WEIGHTS)
 SKILL_WEIGHT = MATCH_DIMENSION_WEIGHTS["skills_match"]
+
+_V2_IMPORTANCE = {"required": 1.2, "preferred": 0.5, "mentioned": 0.25}
+_V2_SAME_CATEGORY_CREDIT = 0.55
+_V2_RECENCY_FLOOR = 0.5
+_V2_MISSING_REQUIRED_PENALTY = 8
+
+
+def _legacy_score_skills(job_skills: dict, user_skills: dict) -> int:
+    """The v2 scorer, kept only so the change has a baseline to be measured against."""
+    if not job_skills:
+        return 50
+    user_categories = {skill_category(s) for s in user_skills}
+    missing_required: list[str] = []
+    got = 0.0
+    total = 0.0
+    for skill, importance in job_skills.items():
+        imp_w = _V2_IMPORTANCE.get(importance, 0.25)
+        total += imp_w
+        if skill in user_skills:
+            got += imp_w * max(user_skills[skill], _V2_RECENCY_FLOOR)
+        else:
+            if skill_category(skill) in user_categories:
+                got += imp_w * _V2_SAME_CATEGORY_CREDIT
+            if importance == "required":
+                missing_required.append(skill)
+    if total <= 0:
+        return 50
+    score = int(round(100 * got / total))
+    if missing_required:
+        score = max(0, score - _V2_MISSING_REQUIRED_PENALTY * min(3, len(missing_required)))
+    return score
 
 
 def _paired_bootstrap(
@@ -56,8 +80,8 @@ def _paired_bootstrap(
 
     Both sides are recomputed on the same resample, so the correlated part of
     their error cancels and the interval describes the gap rather than the two
-    AUCs separately. Resampling happens within each user because the reported
-    AUC is a per-user average.
+    AUCs separately. Resampling is within user because the reported AUC is a
+    per-user average.
     """
     rng = np.random.default_rng(seed)
     index_by_user = [np.flatnonzero(users == u) for u in np.unique(users)]
@@ -76,24 +100,6 @@ def _paired_bootstrap(
     arr = np.asarray(deltas)
     lo, hi = np.percentile(arr, [2.5, 97.5])
     return float(arr.mean()), float(lo), float(hi)
-
-
-def _jaccard(job_skills: dict, user_skills: dict) -> float:
-    union = set(job_skills) | set(user_skills)
-    if not union:
-        return 50.0
-    return 100.0 * len(set(job_skills) & set(user_skills)) / len(union)
-
-
-def _idf_scorer(document_frequency: Counter, corpus: int) -> Callable:
-    def score(job_skills: dict, user_skills: dict) -> float:
-        if not job_skills:
-            return 50.0
-        weight = lambda s: math.log(corpus / (1 + document_frequency.get(s, 0)))
-        total = sum(weight(s) for s in job_skills) or 1.0
-        return 100.0 * sum(weight(s) for s in job_skills if s in user_skills) / total
-
-    return score
 
 
 async def _run() -> None:
@@ -143,14 +149,7 @@ async def _run() -> None:
     finally:
         await close_database()
 
-    document_frequency: Counter = Counter()
-    for enc in job_encs.values():
-        document_frequency.update(dict(enc.skills or {}).keys())
-    idf_score = _idf_scorer(document_frequency, max(len(job_encs), 1))
-
-    current_skill, jaccard_skill, idf_skill = [], [], []
-    overall_current, overall_jaccard, overall_idf = [], [], []
-    features_jaccard: list[list[float]] = []
+    skills_v2, skills_v3, overall_v2, overall_v3 = [], [], [], []
     labels, owners = [], []
 
     for job_id, user_id, applied in pairs:
@@ -161,121 +160,65 @@ async def _run() -> None:
             continue
         dims = score_pair(job_enc, user_enc)["dimension_scores"]
         job_skills = dict(job_enc.skills or {})
-        user_skills = dict(user_enc.skills or {})
+        user_skills = {k: float(v) for k, v in dict(user_enc.skills or {}).items()}
 
-        base_skill = float(dims.get("skills_match", 0))
-        alt_j = _jaccard(job_skills, user_skills)
-        alt_i = idf_score(job_skills, user_skills)
+        new_skill = float(dims.get("skills_match", 0))
+        old_skill = float(_legacy_score_skills(job_skills, user_skills))
         total = sum(float(dims.get(d, 0)) * MATCH_DIMENSION_WEIGHTS[d] for d in DIMENSIONS)
 
         labels.append(int(bool(applied)))
         owners.append(user_id)
-        current_skill.append(base_skill)
-        jaccard_skill.append(alt_j)
-        idf_skill.append(alt_i)
-        overall_current.append(total)
-        # Swap only the skills term, leaving every other dimension and the
-        # weights untouched, so the comparison isolates the scorer change.
-        overall_jaccard.append(total + SKILL_WEIGHT * (alt_j - base_skill))
-        overall_idf.append(total + SKILL_WEIGHT * (alt_i - base_skill))
-        features_jaccard.append(
-            [
-                alt_j if d == "skills_match" else float(dims.get(d, 0))
-                for d in DIMENSIONS
-            ]
-        )
+        skills_v2.append(old_skill)
+        skills_v3.append(new_skill)
+        overall_v3.append(total)
+        overall_v2.append(total + SKILL_WEIGHT * (old_skill - new_skill))
 
     label_array = np.asarray(labels)
     owner_array = np.asarray(owners)
     print()
-    print("Validating the Jaccard skill scorer")
+    print(f"Before/after for scorer {SCORER_VERSION}")
     print(f"  pairs                       {len(labels)}")
     print(f"  applications                {int(label_array.sum())}")
     print(f"  users                       {len(np.unique(owner_array))}")
 
-    for heading, base, candidates in (
+    for heading, base, cand in (
+        ("Skills dimension alone", np.asarray(skills_v2), np.asarray(skills_v3)),
         (
-            "Skills dimension alone",
-            np.asarray(current_skill),
-            {"jaccard": np.asarray(jaccard_skill), "idf": np.asarray(idf_skill)},
-        ),
-        (
-            f"Overall match score (skills carries weight {SKILL_WEIGHT})",
-            np.asarray(overall_current),
-            {"jaccard": np.asarray(overall_jaccard), "idf": np.asarray(overall_idf)},
+            f"Overall match score (skills weight {SKILL_WEIGHT})",
+            np.asarray(overall_v2),
+            np.asarray(overall_v3),
         ),
     ):
         base_auc = _weighted_user_auc(base, label_array, owner_array)
+        cand_auc = _weighted_user_auc(cand, label_array, owner_array)
+        mean, lo, hi = _paired_bootstrap(base, cand, label_array, owner_array)
         print()
         print(f"  {heading}")
-        print(f"    {'scorer':<12} {'auc':>6} {'delta':>8} {'95% CI on gap':>20} {'verdict':>14}")
-        print(f"    {'current':<12} {(base_auc or 0):>6.3f} {'':>8} {'':>20} {'baseline':>14}")
-        for name, values in candidates.items():
-            auc = _weighted_user_auc(values, label_array, owner_array)
-            mean, lo, hi = _paired_bootstrap(base, values, label_array, owner_array)
-            verdict = "real gain" if lo > 0 else "within noise"
-            print(
-                f"    {name:<12} {(auc or 0):>6.3f} {mean:>+8.3f} "
-                f"{f'{lo:+.3f} to {hi:+.3f}':>20} {verdict:>14}"
-            )
-
-    _compound_with_weights(
-        np.asarray(features_jaccard),
-        np.asarray(overall_current),
-        label_array,
-        owner_array,
-    )
-
-    print()
-    print("  Ship only if the overall gain's interval excludes zero; a dimension-level")
-    print("  win that does not survive dilution is not worth changing the scorer for.")
-    print()
-
-
-def _compound_with_weights(
-    features: np.ndarray,
-    baseline_overall: np.ndarray,
-    labels: np.ndarray,
-    users: np.ndarray,
-) -> None:
-    """Does fixing the scorer change which weighting is best?
-
-    The current weights were chosen while skills_match was the weakest of the
-    six. A scorer that makes it competitive invalidates that tuning, so the two
-    changes may compound rather than each being separately marginal. Everything
-    is bootstrapped against the real production baseline -- current scorer and
-    current weights -- so the numbers are the total gain a user would see, not
-    a gain over some intermediate configuration.
-    """
-    current = np.array([MATCH_DIMENSION_WEIGHTS[d] for d in DIMENSIONS])
-    weightings = {
-        "current weights": current,
-        "equal weights": np.full(len(DIMENSIONS), 1.0 / len(DIMENSIONS)),
-        # Skills now carries real signal, so give it back parity with the other
-        # strong dimensions rather than the 0.32 it held when it was noise.
-        "skills at parity": np.array(
-            [0.20 if d == "skills_match" else w for d, w in
-             zip(DIMENSIONS, [MATCH_DIMENSION_WEIGHTS[x] for x in DIMENSIONS])]
-        ) / sum(
-            0.20 if d == "skills_match" else MATCH_DIMENSION_WEIGHTS[d]
-            for d in DIMENSIONS
-        ),
-    }
-
-    print()
-    print("  Jaccard scorer combined with alternative weightings")
-    print(f"    {'configuration':<20} {'auc':>6} {'delta':>8} {'95% CI on gap':>20} {'verdict':>14}")
-    base_auc = _weighted_user_auc(baseline_overall, labels, users)
-    print(f"    {'production today':<20} {(base_auc or 0):>6.3f} {'':>8} {'':>20} {'baseline':>14}")
-    for name, weights in weightings.items():
-        scores = features @ weights
-        auc = _weighted_user_auc(scores, labels, users)
-        mean, lo, hi = _paired_bootstrap(baseline_overall, scores, labels, users)
-        verdict = "real gain" if lo > 0 else "within noise"
+        print(f"    v2 (previous)   {(base_auc or 0):.3f}")
+        print(f"    v3 (shipped)    {(cand_auc or 0):.3f}")
         print(
-            f"    {name:<20} {(auc or 0):>6.3f} {mean:>+8.3f} "
-            f"{f'{lo:+.3f} to {hi:+.3f}':>20} {verdict:>14}"
+            f"    change          {mean:+.3f}   95% CI {lo:+.3f} to {hi:+.3f}"
+            f"   {'real gain' if lo > 0 else 'within noise'}"
         )
+
+    # The calibration exists to keep the visible numbers and the absolute
+    # recommendation/auto-post thresholds where they were. If this drifts, users
+    # see their scores move for reasons unrelated to ranking quality.
+    print()
+    print("  Score distribution, which the calibration is meant to preserve")
+    print(f"    {'':<10} {'mean':>7} {'sd':>7} {'p10':>7} {'p50':>7} {'p90':>7}")
+    for name, values in (
+        ("skills v2", np.asarray(skills_v2)),
+        ("skills v3", np.asarray(skills_v3)),
+        ("overall v2", np.asarray(overall_v2)),
+        ("overall v3", np.asarray(overall_v3)),
+    ):
+        print(
+            f"    {name:<10} {values.mean():>7.1f} {values.std():>7.1f} "
+            f"{np.percentile(values, 10):>7.1f} {np.percentile(values, 50):>7.1f} "
+            f"{np.percentile(values, 90):>7.1f}"
+        )
+    print()
 
 
 if __name__ == "__main__":

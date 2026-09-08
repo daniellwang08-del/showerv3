@@ -181,6 +181,7 @@ def test_score_skills_required_vs_preferred():
     full_match, matched, missing = _score_skills(
         job_skills, {"python": 1.0, "kubernetes": 1.0, "terraform": 1.0}
     )
+    # Identical skill sets are a Jaccard of 1.0, the top of the calibration.
     assert full_match == 100
     assert set(matched) == {"python", "kubernetes", "terraform"}
     assert missing == []
@@ -191,21 +192,30 @@ def test_score_skills_required_vs_preferred():
     assert "terraform" not in missing  # preferred is never a "missing required"
 
 
-def test_score_skills_same_category_partial_credit():
-    # User knows MySQL but not PostgreSQL: same 'database' category → partial credit.
-    with_neighbor, _, missing_with = _score_skills(
-        {"postgresql": "required"}, {"mysql": 1.0}
+def test_score_skills_penalises_profile_breadth():
+    """A broad profile should not match a posting as strongly as a focused one.
+
+    This is the defect the Jaccard scorer exists to fix: both profiles below
+    cover every skill the posting asks for, so any measure dividing by the
+    posting alone rates them identically, and in production almost everything
+    in a user's field cleared that bar.
+    """
+    job_skills = {"python": "required", "kubernetes": "required"}
+    focused, _, _ = _score_skills(job_skills, {"python": 1.0, "kubernetes": 1.0})
+    broad, _, _ = _score_skills(
+        job_skills,
+        {"python": 1.0, "kubernetes": 1.0, **{f"skill-{i}": 1.0 for i in range(30)}},
     )
-    without, _, missing_without = _score_skills({"postgresql": "required"}, {"figma-like": 1.0})
-    assert with_neighbor > without
-    # Score credit for the adjacent skill, but it is still reported as a gap.
-    assert "postgresql" in missing_with
-    assert "postgresql" in missing_without
+    assert focused > broad
 
 
-def test_score_skills_empty_job_skills_neutral():
-    score, matched, missing = _score_skills({}, {"python": 1.0})
-    assert score == 50 and matched == [] and missing == []
+def test_score_skills_neutral_when_either_side_has_no_skills():
+    # Absent information, not a mismatch — scoring it zero would drag down every
+    # job for a user whose profile produced no skills at all.
+    empty_job, matched, missing = _score_skills({}, {"python": 1.0})
+    assert empty_job == 50 and matched == [] and missing == []
+    empty_user, matched, missing = _score_skills({"python": "required"}, {})
+    assert empty_user == 50 and matched == [] and missing == []
 
 
 # ── Full pair scoring ───────────────────────────────────────────────────────
