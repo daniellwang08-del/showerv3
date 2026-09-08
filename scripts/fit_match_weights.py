@@ -47,7 +47,7 @@ from app.models.database import JobEncoding, UserEncoding
 from app.prompts.job_match_phase_a_prompt import MATCH_DIMENSION_WEIGHTS
 from app.services.vector_match_service import score_pair
 from app.storage.database import close_database, get_session, init_database
-from scripts.eval_match_ranking import roc_auc
+from scripts.eval_match_ranking import auc_interval, roc_auc
 
 DIMENSIONS = list(MATCH_DIMENSION_WEIGHTS)
 
@@ -76,6 +76,121 @@ def _weighted_user_auc(
         total += auc * weight
         total_weight += weight
     return total / total_weight if total_weight else None
+
+
+def _per_dimension(
+    features: np.ndarray, labels: np.ndarray, users: np.ndarray
+) -> list[dict[str, Any]]:
+    """How much signal each sub-score carries on its own.
+
+    A dimension can fail to contribute in two distinct ways, and the fix
+    differs: it can rank no better than chance (the signal is wrong), or it can
+    be saturated at one value (there is no signal to rank with, whatever its
+    weight). Both are invisible in the combined score.
+    """
+    n_pos = int(labels.sum())
+    n_neg = int(len(labels) - n_pos)
+    out: list[dict[str, Any]] = []
+    for i, dim in enumerate(DIMENSIONS):
+        column = features[:, i]
+        auc = _weighted_user_auc(column, labels, users)
+        values, counts = np.unique(column, return_counts=True)
+        out.append(
+            {
+                "dimension": dim,
+                "weight": MATCH_DIMENSION_WEIGHTS[dim],
+                "auc": auc,
+                # Approximate: ignores the per-user structure, adequate for
+                # screening a dimension as near-chance.
+                "ci": auc_interval(auc, n_pos, n_neg),
+                "mean": float(column.mean() * 100),
+                "std": float(column.std() * 100),
+                "distinct_values": int(len(values)),
+                "modal_share": float(counts.max() / len(column)),
+            }
+        )
+    out.sort(key=lambda e: -(e["auc"] or 0))
+    return out
+
+
+def _candidate_weightings(
+    per_dimension: list[dict[str, Any]]
+) -> dict[str, np.ndarray]:
+    """A few principled fixed weightings to compare against the current one.
+
+    The free logistic fit generalised worse, partly because it handed negative
+    coefficients to dimensions that cannot plausibly argue against a match.
+    These candidates stay non-negative and have at most one degree of freedom,
+    so they cannot overfit the way a six-parameter fit can.
+    """
+    auc_by_dim = {row["dimension"]: (row["auc"] or 0.5) for row in per_dimension}
+    signal = np.array([max(auc_by_dim[d] - 0.5, 0.0) for d in DIMENSIONS])
+    current = np.array([MATCH_DIMENSION_WEIGHTS[d] for d in DIMENSIONS])
+
+    # Education is near-constant across pairs, so its weight buys nothing;
+    # spread it over the rest in proportion to what they already carry.
+    without_education = current.copy()
+    idx = DIMENSIONS.index("education")
+    freed = without_education[idx]
+    without_education[idx] = 0.0
+    without_education += without_education / without_education.sum() * freed
+
+    return {
+        "current": current,
+        "equal": np.full(len(DIMENSIONS), 1.0 / len(DIMENSIONS)),
+        "signal_proportional": signal / signal.sum(),
+        "current_minus_education": without_education,
+        "halfway_to_signal": (current + signal / signal.sum()) / 2.0,
+    }
+
+
+def _paired_bootstrap(
+    features: np.ndarray,
+    labels: np.ndarray,
+    users: np.ndarray,
+    candidates: dict[str, np.ndarray],
+    iterations: int = 1000,
+    seed: int = 0,
+) -> dict[str, dict[str, float]]:
+    """Confidence interval on each candidate's AUC *difference* from current.
+
+    The candidates are compared on identical data, so their errors are highly
+    correlated and separate per-candidate intervals would overstate the
+    uncertainty of the gap. Resampling pairs within each user and recomputing
+    both sides on the same resample measures the difference directly.
+    """
+    rng = np.random.default_rng(seed)
+    user_indices = {u: np.flatnonzero(users == u) for u in np.unique(users)}
+    current = candidates["current"]
+    deltas: dict[str, list[float]] = {name: [] for name in candidates}
+
+    for _ in range(iterations):
+        drawn = np.concatenate(
+            [rng.choice(idx, size=len(idx), replace=True) for idx in user_indices.values()]
+        )
+        boot_labels, boot_users = labels[drawn], users[drawn]
+        boot_features = features[drawn]
+        base = _weighted_user_auc(boot_features @ current, boot_labels, boot_users)
+        if base is None:
+            continue
+        for name, weights in candidates.items():
+            auc = _weighted_user_auc(boot_features @ weights, boot_labels, boot_users)
+            if auc is not None:
+                deltas[name].append(auc - base)
+
+    out: dict[str, dict[str, float]] = {}
+    for name, values in deltas.items():
+        if not values:
+            continue
+        arr = np.asarray(values)
+        lo, hi = np.percentile(arr, [2.5, 97.5])
+        out[name] = {
+            "mean_delta": float(arr.mean()),
+            "lo": float(lo),
+            "hi": float(hi),
+            "beats_current": bool(lo > 0),
+        }
+    return out
 
 
 def _baseline_scores(features: np.ndarray) -> np.ndarray:
@@ -215,6 +330,46 @@ def _report(result: dict[str, Any]) -> None:
     print(f"  users             {result['users']}")
 
     print()
+    print("  Signal carried by each sub-score on its own")
+    print(
+        f"    {'dimension':<24} {'weight':>7} {'auc':>6} {'95% interval':>16} "
+        f"{'mean':>7} {'sd':>6} {'modal':>7}"
+    )
+    for row in result["per_dimension"]:
+        ci = row["ci"]
+        span = "n/a" if ci is None else f"{ci[0]:.3f} - {ci[1]:.3f}"
+        flag = "" if ci and ci[0] > 0.5 else "   <- at chance"
+        print(
+            f"    {row['dimension']:<24} {row['weight']:>7.2f} "
+            f"{(row['auc'] or 0):>6.3f} {span:>16} "
+            f"{row['mean']:>7.1f} {row['std']:>6.1f} "
+            f"{row['modal_share'] * 100:>6.0f}%{flag}"
+        )
+    print("    modal = share of pairs sitting on the single most common value")
+
+    print()
+    print("  Fixed candidate weightings (no fitting, so no overfitting)")
+    print(
+        f"    {'weighting':<26} {'auc':>6} {'vs current':>11} "
+        f"{'95% CI on gap':>18} {'verdict':>12}"
+    )
+    baseline = result["candidates"]["current"]["auc"] or 0
+    for name, entry in sorted(
+        result["candidates"].items(), key=lambda kv: -(kv[1]["auc"] or 0)
+    ):
+        auc = entry["auc"] or 0
+        boot = result["bootstrap"].get(name)
+        if name == "current":
+            print(f"    {name:<26} {auc:>6.3f} {'':>11} {'':>18} {'baseline':>12}")
+            continue
+        span = "n/a" if boot is None else f"{boot['lo']:+.3f} to {boot['hi']:+.3f}"
+        verdict = "real" if boot and boot["beats_current"] else "within noise"
+        print(
+            f"    {name:<26} {auc:>6.3f} {auc - baseline:>+11.3f} "
+            f"{span:>18} {verdict:>12}"
+        )
+
+    print()
     print("  Weights: current hand-picked vs fitted on all data")
     print(f"    {'dimension':<24} {'current':>8} {'fitted':>8} {'change':>8}")
     for dim in DIMENSIONS:
@@ -273,6 +428,9 @@ async def _run(min_positives: int) -> dict[str, Any]:
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import LeaveOneGroupOut, StratifiedKFold
 
+    per_dimension = _per_dimension(features, labels, users)
+    candidate_weights = _candidate_weightings(per_dimension)
+
     full = LogisticRegression(max_iter=2000, C=1.0).fit(features, labels)
     coefficients = full.coef_[0]
     # Normalise to sum 1 so they read on the same scale as the current weights.
@@ -296,6 +454,15 @@ async def _run(min_positives: int) -> dict[str, Any]:
         "pairs": int(len(labels)),
         "applications": int(labels.sum()),
         "users": int(len(np.unique(users))),
+        "per_dimension": per_dimension,
+        "candidates": {
+            name: {
+                "auc": _weighted_user_auc(features @ weights, labels, users),
+                "weights": {d: float(weights[i]) for i, d in enumerate(DIMENSIONS)},
+            }
+            for name, weights in candidate_weights.items()
+        },
+        "bootstrap": _paired_bootstrap(features, labels, users, candidate_weights),
         "fitted_weights": fitted_weights,
         "raw_coefficients": {
             dim: float(coefficients[i]) for i, dim in enumerate(DIMENSIONS)
