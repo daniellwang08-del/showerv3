@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import bind_logging_context, get_logger
 from app.models.database import Job
 from app.models.schemas import ExtractionStatus, JobDescriptionSchema
-from app.services.system_settings_service import get_effective_value_sync
+from app.services.system_settings_service import (
+    get_effective_value,
+    get_effective_value_sync,
+)
 from app.services.job_match_service import (
     analyze_job_match_phase_a,
     generate_tailored_content_phase_b,
@@ -487,7 +490,15 @@ async def run_job_match_analysis(
         )
 
         try:
-            engine = str(get_effective_value_sync("match_engine") or "vector")
+            # Deliberately the async read, not get_effective_value_sync. The
+            # sync accessor serves an in-process cache that only a warm-up call
+            # populates, and in a worker the only warm-up is the one llm_client
+            # does before an LLM call. Under match_engine=vector Phase A makes
+            # no LLM call, so the cache stays cold, the sync read falls back to
+            # the .env default of "vector", and the engine can never be moved
+            # off vector from the database -- which is why no shadow comparison
+            # was ever recorded.
+            engine = str(await get_effective_value("match_engine") or "vector")
         except Exception:
             engine = "vector"
         _mark("resolve_engine", engine=engine)
