@@ -44,7 +44,7 @@ function sessionConnectError(error: string | undefined, started: boolean): strin
     case 'no_bridge':
       return '';
     case 'permission_denied':
-      return 'Cookie permission was denied. Allow it when Chrome asks, then try again.';
+      return 'Cookie access was declined. Click Connect again and choose "Allow & continue" in the Atomspace side panel.';
     case 'tab_closed':
       return 'The sign-in tab was closed before we could capture a session.';
     case 'no_cookies':
@@ -178,13 +178,15 @@ export function JobSiteTiles() {
 
     const handle = startJobSiteConnect({
       slug: plugin.slug,
+      name: plugin.name,
       loginUrl: plugin.login_url || plugin.homepage,
       domains: plugin.cookie_domains,
       origins: plugin.host_origins || [],
       signedInUrlPatterns: plugin.signed_in_url_patterns || [],
       sessionCookieNames: plugin.session_cookie_names || [],
       loginPathPatterns: plugin.login_path_patterns || [],
-      onStarted: () => setSessionPhase('waiting'),
+      onStarted: ({ awaitingPermission }) =>
+        setSessionPhase(awaitingPermission ? 'permission' : 'waiting'),
     });
     sessionHandleRef.current = handle;
 
@@ -478,7 +480,7 @@ function JobSiteConnectModal({
 
   const sessionStatusText =
     sessionPhase === 'permission'
-      ? `Allow cookie access when Chrome asks, then sign in on the ${plugin.name} tab.`
+      ? `Allow cookie access in the Atomspace side panel, then sign in on the ${plugin.name} tab.`
       : sessionPhase === 'waiting'
         ? `Sign in on the ${plugin.name} tab we opened. We will capture the session and close that tab automatically.`
         : sessionPhase === 'saving'

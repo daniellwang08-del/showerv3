@@ -216,6 +216,8 @@ export interface JobSiteConnectHandle {
 
 export interface JobSiteConnectRequest {
   slug: string;
+  /** Display name, shown in the extension's cookie-access prompt. */
+  name?: string;
   loginUrl: string;
   domains: string[];
   origins: string[];
@@ -223,7 +225,11 @@ export interface JobSiteConnectRequest {
   sessionCookieNames?: string[];
   loginPathPatterns?: string[];
   timeoutMs?: number;
-  onStarted?: () => void;
+  /**
+   * `awaitingPermission` is true when the extension still needs the user to
+   * grant cookie access in its side panel before the login tab can open.
+   */
+  onStarted?: (info: { awaitingPermission: boolean }) => void;
 }
 
 const CONNECT_EVENT = 'atomspace-connect-job-site';
@@ -287,6 +293,7 @@ export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectH
       ok?: boolean;
       cookies?: CapturedCookie[];
       error?: string;
+      awaitingPermission?: boolean;
     };
     if (!data || data.source !== EXT_SOURCE) return;
     if (data.requestId !== requestId) return;
@@ -297,7 +304,7 @@ export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectH
         bridgeTimer = null;
       }
       try {
-        req.onStarted?.();
+        req.onStarted?.({ awaitingPermission: Boolean(data.awaitingPermission) });
       } catch {
         /* ignore */
       }
@@ -321,6 +328,7 @@ export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectH
 
   dispatchJsonEvent(CONNECT_EVENT, {
     slug: req.slug,
+    name: req.name || req.slug,
     loginUrl: req.loginUrl,
     domains: req.domains,
     origins: req.origins,

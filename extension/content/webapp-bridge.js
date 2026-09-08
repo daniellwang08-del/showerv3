@@ -140,25 +140,22 @@
     return out;
   }
 
-  function requestCookiePermission(origins, requestId, resultType, onGranted) {
-    try {
-      chrome.permissions.request(
-        { permissions: ["cookies"], origins: origins },
-        function (granted) {
-          if (!granted) {
-            reply(
-              resultType,
-              { requestId: requestId, ok: false, error: "permission_denied" },
-              "*",
-            );
-            return;
-          }
-          onGranted();
-        },
-      );
-    } catch (_e) {
-      reply(resultType, { requestId: requestId, ok: false, error: "extension_error" }, "*");
-    }
+  // Cookie access is deliberately NOT requested here.
+  //
+  // chrome.permissions is not one of the APIs Chrome exposes to content
+  // scripts — the isolated world only gets dom, i18n, storage and part of
+  // runtime. chrome.permissions.request() therefore threw a TypeError on every
+  // connect attempt, and the old catch reported it to the dashboard as the
+  // opaque "extension_error". Relaying it to the worker instead does not help:
+  // a gesture only survives a sendMessage hop when it starts in an extension
+  // UI context, not a content script.
+  //
+  // So the grant now happens in the side panel, which is an extension page and
+  // has both the API and a real click. The worker opens that panel using the
+  // gesture we are still holding inside this handler, which is why every relay
+  // below must stay synchronous — no await before sendMessage.
+  function describeError(err) {
+    return "extension_error: " + ((err && err.message) || String(err || "unknown"));
   }
 
   const CAPTURE_EVENT = "atomspace-capture-session";
@@ -174,9 +171,14 @@
     const origins = originsFor(detail);
     const domains = Array.isArray(detail.domains) ? detail.domains : [];
 
-    requestCookiePermission(origins, requestId, "CAPTURE_JOB_SITE_SESSION_RESULT", function () {
+    try {
       chrome.runtime.sendMessage(
-        { type: "GET_JOB_SITE_COOKIES", domains: domains, slug: detail.slug },
+        {
+          type: "GET_JOB_SITE_COOKIES",
+          domains: domains,
+          origins: origins,
+          slug: detail.slug,
+        },
         function (resp) {
           void chrome.runtime.lastError;
           reply(
@@ -186,7 +188,13 @@
           );
         },
       );
-    });
+    } catch (err) {
+      reply(
+        "CAPTURE_JOB_SITE_SESSION_RESULT",
+        { requestId: requestId, ok: false, error: describeError(err) },
+        "*",
+      );
+    }
   });
 
   const CONNECT_EVENT = "atomspace-connect-job-site";
@@ -201,54 +209,59 @@
     const requestId = detail.requestId || null;
     const origins = originsFor(detail);
 
-    requestCookiePermission(origins, requestId, "CONNECT_JOB_SITE_SESSION_RESULT", function () {
-      try {
-        chrome.runtime.sendMessage(
-          {
-            type: "START_JOB_SITE_CONNECT",
-            requestId: requestId,
-            slug: detail.slug,
-            loginUrl: detail.loginUrl || "",
-            domains: Array.isArray(detail.domains) ? detail.domains : [],
-            signedInUrlPatterns: Array.isArray(detail.signedInUrlPatterns)
-              ? detail.signedInUrlPatterns
-              : [],
-            sessionCookieNames: Array.isArray(detail.sessionCookieNames)
-              ? detail.sessionCookieNames
-              : [],
-            loginPathPatterns: Array.isArray(detail.loginPathPatterns)
-              ? detail.loginPathPatterns
-              : [],
-          },
-          function (resp) {
-            void chrome.runtime.lastError;
-            if (!resp || !resp.ok) {
-              reply(
-                "CONNECT_JOB_SITE_SESSION_RESULT",
-                {
-                  requestId: requestId,
-                  ok: false,
-                  error: (resp && resp.error) || "no_response",
-                },
-                "*",
-              );
-              return;
-            }
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: "START_JOB_SITE_CONNECT",
+          requestId: requestId,
+          slug: detail.slug,
+          name: detail.name || detail.slug,
+          loginUrl: detail.loginUrl || "",
+          origins: origins,
+          domains: Array.isArray(detail.domains) ? detail.domains : [],
+          signedInUrlPatterns: Array.isArray(detail.signedInUrlPatterns)
+            ? detail.signedInUrlPatterns
+            : [],
+          sessionCookieNames: Array.isArray(detail.sessionCookieNames)
+            ? detail.sessionCookieNames
+            : [],
+          loginPathPatterns: Array.isArray(detail.loginPathPatterns)
+            ? detail.loginPathPatterns
+            : [],
+        },
+        function (resp) {
+          void chrome.runtime.lastError;
+          if (!resp || !resp.ok) {
             reply(
-              "CONNECT_JOB_SITE_SESSION_STARTED",
-              { requestId: requestId, ok: true, loginTabId: resp.loginTabId || null },
+              "CONNECT_JOB_SITE_SESSION_RESULT",
+              {
+                requestId: requestId,
+                ok: false,
+                error: (resp && resp.error) || "no_response",
+              },
               "*",
             );
-          },
-        );
-      } catch (_e) {
-        reply(
-          "CONNECT_JOB_SITE_SESSION_RESULT",
-          { requestId: requestId, ok: false, error: "extension_error" },
-          "*",
-        );
-      }
-    });
+            return;
+          }
+          reply(
+            "CONNECT_JOB_SITE_SESSION_STARTED",
+            {
+              requestId: requestId,
+              ok: true,
+              loginTabId: resp.loginTabId || null,
+              awaitingPermission: Boolean(resp.awaitingPermission),
+            },
+            "*",
+          );
+        },
+      );
+    } catch (err) {
+      reply(
+        "CONNECT_JOB_SITE_SESSION_RESULT",
+        { requestId: requestId, ok: false, error: describeError(err) },
+        "*",
+      );
+    }
   });
 
   const ABORT_EVENT = "atomspace-abort-job-site-connect";

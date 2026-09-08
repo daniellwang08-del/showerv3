@@ -159,8 +159,20 @@ const PENDING_JOB_KEY = "pendingWebappJob";
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "GET_JOB_SITE_COOKIES") {
     const domains = Array.isArray(msg.domains) ? msg.domains : [];
+    const origins = Array.isArray(msg.origins) ? msg.origins.filter(Boolean) : [];
     (async () => {
       try {
+        // Without the grant chrome.cookies is not even defined here, which
+        // would surface as an opaque TypeError. Report it as something the UI
+        // can act on instead -- the side panel is where it can be granted.
+        const allowed = await chrome.permissions.contains({
+          permissions: ["cookies"],
+          origins,
+        });
+        if (!allowed) {
+          sendResponse({ ok: false, error: "permission_required" });
+          return;
+        }
         const cookies = [];
         for (const domain of domains) {
           const part = await chrome.cookies.getAll({ domain: String(domain) });

@@ -10,6 +10,10 @@
 // mid-login can resume from tabs.onUpdated / cookies.onChanged / webNavigation.
 
 const STORAGE_KEY = "pendingJobSiteConnect";
+// A connect request that is parked until the user grants cookie access in the
+// side panel. Kept separate from STORAGE_KEY because no login tab exists yet,
+// so none of the tab/cookie watchers below should act on it.
+const GRANT_KEY = "pendingJobSiteGrant";
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SESSION_NAMES = ["jwt", "token", "session", "auth", "sid", "SESSION_ID"];
 
@@ -33,6 +37,56 @@ async function setPending(state) {
     await chrome.storage.session.set({ [STORAGE_KEY]: state });
   } catch (err) {
     console.warn("jobSiteConnect persist failed", err);
+  }
+}
+
+async function getPendingGrant() {
+  try {
+    const data = await chrome.storage.session.get(GRANT_KEY);
+    return data[GRANT_KEY] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function setPendingGrant(state) {
+  try {
+    if (!state) {
+      await chrome.storage.session.remove(GRANT_KEY);
+      return;
+    }
+    await chrome.storage.session.set({ [GRANT_KEY]: state });
+  } catch (err) {
+    console.warn("jobSiteConnect grant persist failed", err);
+  }
+}
+
+// Cookie access cannot be requested from the dashboard's content script, so the
+// panel does the asking. Checking is fine anywhere, and when access is already
+// granted we skip the prompt entirely and go straight to the login tab.
+async function hasCookieAccess(origins) {
+  try {
+    return await chrome.permissions.contains({
+      permissions: ["cookies"],
+      origins: Array.isArray(origins) ? origins.filter(Boolean) : [],
+    });
+  } catch (err) {
+    console.warn("permissions.contains failed", err);
+    return false;
+  }
+}
+
+// Must be called synchronously from the onMessage listener: the bridge relays
+// the dashboard click, and Chrome drops the gesture at the first await.
+function openSidePanel(sender) {
+  const windowId = sender && sender.tab && sender.tab.windowId != null ? sender.tab.windowId : null;
+  if (windowId == null) return;
+  try {
+    chrome.sidePanel
+      .open({ windowId })
+      .catch((err) => console.warn("sidePanel.open (job site connect) failed", err));
+  } catch (err) {
+    console.warn("sidePanel.open (job site connect) threw", err);
   }
 }
 
@@ -246,6 +300,15 @@ async function abortPending(requestId, error) {
   return { ok: true, aborted: true };
 }
 
+async function abortPendingGrant(requestId, error) {
+  const grant = await getPendingGrant();
+  if (!grant) return { ok: true, aborted: false };
+  if (requestId && grant.requestId !== requestId) return { ok: true, aborted: false };
+  await setPendingGrant(null);
+  await notifyDashboard(grant, { ok: false, error: error || "cancelled" });
+  return { ok: true, aborted: true };
+}
+
 async function startJobSiteConnect(msg, sender) {
   const dashboardTabId = sender && sender.tab && sender.tab.id != null ? sender.tab.id : null;
   const loginUrl = String(msg.loginUrl || "").trim();
@@ -254,20 +317,61 @@ async function startJobSiteConnect(msg, sender) {
     return { ok: false, error: "bad_request" };
   }
 
+  const request = {
+    requestId: msg.requestId || null,
+    slug: String(msg.slug || ""),
+    name: String(msg.name || msg.slug || "this site"),
+    dashboardTabId,
+    loginUrl,
+    domains,
+    origins: Array.isArray(msg.origins) ? msg.origins.map(String).filter(Boolean) : [],
+    signedInUrlPatterns: Array.isArray(msg.signedInUrlPatterns) ? msg.signedInUrlPatterns : [],
+    sessionCookieNames: Array.isArray(msg.sessionCookieNames) ? msg.sessionCookieNames : [],
+    loginPathPatterns: Array.isArray(msg.loginPathPatterns) ? msg.loginPathPatterns : [],
+  };
+
   const existing = await getPending();
   if (existing) {
     await abortPending(existing.requestId, "superseded");
   }
+  const staleGrant = await getPendingGrant();
+  if (staleGrant) {
+    await abortPendingGrant(staleGrant.requestId, "superseded");
+  }
 
+  // Park the request until the side panel can ask. Opening the login tab first
+  // would be pointless: without cookie access we could never read the session
+  // the user creates there.
+  if (!(await hasCookieAccess(request.origins))) {
+    await setPendingGrant(request);
+    return { ok: true, started: true, awaitingPermission: true };
+  }
+
+  return await beginLogin(request);
+}
+
+async function resumeJobSiteConnect(requestId) {
+  const grant = await getPendingGrant();
+  if (!grant) return { ok: false, error: "no_pending_request" };
+  if (requestId && grant.requestId !== requestId) return { ok: false, error: "stale_request" };
+  await setPendingGrant(null);
+  const result = await beginLogin(grant);
+  if (!result.ok) {
+    await notifyDashboard(grant, { ok: false, error: result.error || "tab_open_failed" });
+  }
+  return result;
+}
+
+async function beginLogin(request) {
   watchCookies();
 
-  const cookiesAtStart = await collectCookies(domains);
-  const sessionAtStart = sessionNamedCookies(cookiesAtStart, msg.sessionCookieNames);
+  const cookiesAtStart = await collectCookies(request.domains);
+  const sessionAtStart = sessionNamedCookies(cookiesAtStart, request.sessionCookieNames);
   const hadSessionAtStart = sessionAtStart.length > 0;
 
   let loginTab;
   try {
-    loginTab = await chrome.tabs.create({ url: loginUrl, active: true });
+    loginTab = await chrome.tabs.create({ url: request.loginUrl, active: true });
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err || "tab_open_failed") };
   }
@@ -276,14 +380,14 @@ async function startJobSiteConnect(msg, sender) {
   }
 
   const pending = {
-    requestId: msg.requestId || null,
-    slug: String(msg.slug || ""),
-    dashboardTabId,
+    requestId: request.requestId,
+    slug: request.slug,
+    dashboardTabId: request.dashboardTabId,
     loginTabId: loginTab.id,
-    domains,
-    signedInUrlPatterns: Array.isArray(msg.signedInUrlPatterns) ? msg.signedInUrlPatterns : [],
-    sessionCookieNames: Array.isArray(msg.sessionCookieNames) ? msg.sessionCookieNames : [],
-    loginPathPatterns: Array.isArray(msg.loginPathPatterns) ? msg.loginPathPatterns : [],
+    domains: request.domains,
+    signedInUrlPatterns: request.signedInUrlPatterns,
+    sessionCookieNames: request.sessionCookieNames,
+    loginPathPatterns: request.loginPathPatterns,
     initialCookieNames: cookiesAtStart.map((c) => c.name),
     hadSessionAtStart,
     startedAt: Date.now(),
@@ -311,6 +415,11 @@ function watchCookies() {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "START_JOB_SITE_CONNECT") {
+    // FIRST, synchronously, before any await. The bridge relays this from
+    // inside the dashboard click, so the user gesture is still live right here
+    // and this is the only moment we can surface the panel where the cookie
+    // grant is possible. Everything after this point is async and gesture-free.
+    openSidePanel(sender);
     startJobSiteConnect(msg, sender)
       .then((resp) => sendResponse(resp))
       .catch((err) =>
@@ -318,9 +427,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       );
     return true;
   }
-  if (msg && msg.type === "ABORT_JOB_SITE_CONNECT") {
-    abortPending(msg.requestId || null, msg.error || "cancelled")
+  if (msg && msg.type === "RESUME_JOB_SITE_CONNECT") {
+    resumeJobSiteConnect(msg.requestId || null)
       .then((resp) => sendResponse(resp))
+      .catch((err) =>
+        sendResponse({ ok: false, error: String((err && err.message) || err) }),
+      );
+    return true;
+  }
+  if (msg && msg.type === "ABORT_JOB_SITE_CONNECT") {
+    const requestId = msg.requestId || null;
+    const error = msg.error || "cancelled";
+    // The request may be parked awaiting the grant or already in the login tab.
+    Promise.all([abortPendingGrant(requestId, error), abortPending(requestId, error)])
+      .then(([grant, pending]) =>
+        sendResponse({ ok: true, aborted: grant.aborted || pending.aborted }),
+      )
       .catch((err) =>
         sendResponse({ ok: false, error: String((err && err.message) || err) }),
       );
