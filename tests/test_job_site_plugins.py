@@ -27,8 +27,17 @@ def test_session_plugins_have_cookie_domains():
     rrs = get_plugin("remoterocketship")
     assert jobright is not None and jobright.auth_type == AuthType.SESSION
     assert "jobright.ai" in jobright.cookie_domains
+    assert jobright.login_url.endswith("/jobs/recommend")
+    assert any("jobright.ai/jobs" in p for p in jobright.signed_in_url_patterns)
+    assert "SESSION_ID" in jobright.session_cookie_names
+    catalog = jobright.catalog_dict()
+    assert catalog["signed_in_url_patterns"] == list(jobright.signed_in_url_patterns)
+    assert catalog["session_cookie_names"] == list(jobright.session_cookie_names)
+    assert catalog["login_path_patterns"] == list(jobright.login_path_patterns)
     assert rrs is not None and rrs.auth_type == AuthType.SESSION
     assert "remoterocketship.com" in rrs.cookie_domains
+    assert rrs.signed_in_url_patterns
+    assert rrs.session_cookie_names
 
 
 def test_linkedin_is_not_connectable():

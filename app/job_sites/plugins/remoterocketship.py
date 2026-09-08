@@ -144,6 +144,12 @@ register(
             "https://www.remoterocketship.com/*",
             "https://remoterocketship.com/*",
         ),
+        signed_in_url_patterns=(
+            "remoterocketship.com/remote-jobs",
+            "remoterocketship.com/jobs",
+        ),
+        session_cookie_names=("session", "token", "auth", "jwt", "sb-", "supabase"),
+        login_path_patterns=("/log-in", "/login", "/signin", "/sign-in"),
         fetch=_fetch,
     )
 )

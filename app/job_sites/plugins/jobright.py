@@ -78,12 +78,15 @@ register(
         name="Jobright",
         blurb="Pull your signed-in Jobright recommendations (best matches + newest roles).",
         homepage="https://jobright.ai/",
-        login_url="https://jobright.ai/",
+        login_url="https://jobright.ai/jobs/recommend",
         auth_type=AuthType.SESSION,
         logo_file="jobright.svg",
         sort_order=10,
         cookie_domains=("jobright.ai",),
         host_origins=("https://*.jobright.ai/*", "https://jobright.ai/*"),
+        signed_in_url_patterns=("jobright.ai/jobs",),
+        session_cookie_names=("SESSION_ID", "jwt"),
+        login_path_patterns=("/login", "/signin", "/sign-in", "/auth"),
         fetch=_fetch,
     )
 )

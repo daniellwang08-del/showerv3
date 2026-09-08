@@ -55,6 +55,9 @@ class JobSitePlugin:
     credential_fields: tuple[CredentialField, ...] = ()
     cookie_domains: tuple[str, ...] = ()
     host_origins: tuple[str, ...] = ()
+    signed_in_url_patterns: tuple[str, ...] = ()
+    session_cookie_names: tuple[str, ...] = ()
+    login_path_patterns: tuple[str, ...] = ()
     unavailable_reason: str = ""
     fetch: FetchFn | None = None
 
@@ -77,6 +80,9 @@ class JobSitePlugin:
             "sort_order": self.sort_order,
             "cookie_domains": list(self.cookie_domains),
             "host_origins": list(self.host_origins),
+            "signed_in_url_patterns": list(self.signed_in_url_patterns),
+            "session_cookie_names": list(self.session_cookie_names),
+            "login_path_patterns": list(self.login_path_patterns),
             "credential_fields": [
                 {
                     "key": f.key,

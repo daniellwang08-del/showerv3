@@ -201,6 +201,164 @@ export interface CapturedCookie {
   sameSite?: string;
 }
 
+export interface JobSiteConnectResult {
+  ok: boolean;
+  cookies?: CapturedCookie[];
+  error?: string;
+  started?: boolean;
+}
+
+export interface JobSiteConnectHandle {
+  requestId: string;
+  promise: Promise<JobSiteConnectResult>;
+  abort: (error?: string, notifyExtension?: boolean) => void;
+}
+
+export interface JobSiteConnectRequest {
+  slug: string;
+  loginUrl: string;
+  domains: string[];
+  origins: string[];
+  signedInUrlPatterns?: string[];
+  sessionCookieNames?: string[];
+  loginPathPatterns?: string[];
+  timeoutMs?: number;
+  onStarted?: () => void;
+}
+
+const CONNECT_EVENT = 'atomspace-connect-job-site';
+const ABORT_EVENT = 'atomspace-abort-job-site-connect';
+const CONNECT_STARTED = 'CONNECT_JOB_SITE_SESSION_STARTED';
+const CONNECT_RESULT = 'CONNECT_JOB_SITE_SESSION_RESULT';
+const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+const BRIDGE_WAIT_MS = 60_000;
+
+function dispatchJsonEvent(name: string, payload: Record<string, unknown>): void {
+  try {
+    document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(payload) }));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Open the job site in a new tab, wait until the user is signed in, then
+ * receive live cookies (including HttpOnly) from the extension.
+ *
+ * MUST be called synchronously from a click handler so Chrome can prompt for
+ * cookie permission. Do not await anything before calling this.
+ */
+export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectHandle {
+  const requestId = randomId();
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return {
+      requestId,
+      promise: Promise.resolve({ ok: false, error: 'unavailable' }),
+      abort: () => undefined,
+    };
+  }
+
+  let settled = false;
+  let started = false;
+  let abortTimer: number | null = null;
+  let bridgeTimer: number | null = null;
+
+  const cleanup = () => {
+    window.removeEventListener('message', onMessage);
+    if (abortTimer != null) window.clearTimeout(abortTimer);
+    if (bridgeTimer != null) window.clearTimeout(bridgeTimer);
+  };
+
+  let finish: (result: JobSiteConnectResult) => void = () => undefined;
+  const promise = new Promise<JobSiteConnectResult>((resolve) => {
+    finish = (result) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+  });
+
+  const onMessage = (event: MessageEvent) => {
+    const data = event.data as {
+      source?: string;
+      type?: string;
+      requestId?: string;
+      ok?: boolean;
+      cookies?: CapturedCookie[];
+      error?: string;
+    };
+    if (!data || data.source !== EXT_SOURCE) return;
+    if (data.requestId !== requestId) return;
+    if (data.type === CONNECT_STARTED) {
+      started = true;
+      if (bridgeTimer != null) {
+        window.clearTimeout(bridgeTimer);
+        bridgeTimer = null;
+      }
+      try {
+        req.onStarted?.();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (data.type !== CONNECT_RESULT) return;
+    finish({
+      ok: Boolean(data.ok),
+      cookies: data.cookies,
+      error: data.error || undefined,
+      started,
+    });
+  };
+
+  window.addEventListener('message', onMessage);
+
+  abortTimer = window.setTimeout(() => {
+    dispatchJsonEvent(ABORT_EVENT, { requestId, error: 'timed_out' });
+    finish({ ok: false, error: 'timed_out', started });
+  }, req.timeoutMs ?? LOGIN_TIMEOUT_MS);
+
+  dispatchJsonEvent(CONNECT_EVENT, {
+    slug: req.slug,
+    loginUrl: req.loginUrl,
+    domains: req.domains,
+    origins: req.origins,
+    signedInUrlPatterns: req.signedInUrlPatterns || [],
+    sessionCookieNames: req.sessionCookieNames || [],
+    loginPathPatterns: req.loginPathPatterns || [],
+    requestId,
+  });
+
+  void detectExtension(1000, true).then((info) => {
+    if (settled) return;
+    if (!info.installed) {
+      dispatchJsonEvent(ABORT_EVENT, { requestId, error: 'extension_missing' });
+      finish({ ok: false, error: 'extension_missing', started: false });
+    }
+  });
+
+  bridgeTimer = window.setTimeout(() => {
+    if (settled || started) return;
+    dispatchJsonEvent(ABORT_EVENT, { requestId, error: 'no_bridge' });
+    finish({ ok: false, error: 'no_bridge', started: false });
+  }, BRIDGE_WAIT_MS);
+
+  const abort = (error = 'cancelled', notifyExtension = true) => {
+    if (notifyExtension) {
+      dispatchJsonEvent(ABORT_EVENT, { requestId, error });
+    }
+    finish({ ok: false, error, started });
+  };
+
+  return { requestId, promise, abort };
+}
+
+export function abortJobSiteConnect(requestId?: string, error = 'cancelled'): void {
+  if (typeof document === 'undefined') return;
+  dispatchJsonEvent(ABORT_EVENT, { requestId: requestId || null, error });
+}
+
 /**
  * Ask the installed extension to read live cookies for a job site.
  * Must be called from a click handler so Chrome can prompt for cookie permission.

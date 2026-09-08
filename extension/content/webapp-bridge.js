@@ -126,6 +126,41 @@
     ackPage(requestId);
   });
 
+  function originsFor(detail) {
+    const origins = Array.isArray(detail.origins) ? detail.origins.filter(Boolean) : [];
+    if (origins.length) return origins;
+    const domains = Array.isArray(detail.domains) ? detail.domains : [];
+    const out = [];
+    for (const domain of domains) {
+      const host = String(domain || "").replace(/^\./, "");
+      if (!host) continue;
+      out.push("https://*." + host + "/*");
+      out.push("https://" + host + "/*");
+    }
+    return out;
+  }
+
+  function requestCookiePermission(origins, requestId, resultType, onGranted) {
+    try {
+      chrome.permissions.request(
+        { permissions: ["cookies"], origins: origins },
+        function (granted) {
+          if (!granted) {
+            reply(
+              resultType,
+              { requestId: requestId, ok: false, error: "permission_denied" },
+              "*",
+            );
+            return;
+          }
+          onGranted();
+        },
+      );
+    } catch (_e) {
+      reply(resultType, { requestId: requestId, ok: false, error: "extension_error" }, "*");
+    }
+  }
+
   const CAPTURE_EVENT = "atomspace-capture-session";
   document.addEventListener(CAPTURE_EVENT, function (event) {
     let detail = null;
@@ -136,41 +171,122 @@
     }
     if (!detail || !detail.slug) return;
     const requestId = detail.requestId || null;
-    const origins = Array.isArray(detail.origins) ? detail.origins : [];
+    const origins = originsFor(detail);
     const domains = Array.isArray(detail.domains) ? detail.domains : [];
 
-    try {
-      chrome.permissions.request(
-        { permissions: ["cookies"], origins: origins },
-        function (granted) {
-          if (!granted) {
-            reply(
-              "CAPTURE_JOB_SITE_SESSION_RESULT",
-              { requestId: requestId, ok: false, error: "permission_denied" },
-              "*",
-            );
-            return;
-          }
-          chrome.runtime.sendMessage(
-            { type: "GET_JOB_SITE_COOKIES", domains: domains, slug: detail.slug },
-            function (resp) {
-              void chrome.runtime.lastError;
-              reply(
-                "CAPTURE_JOB_SITE_SESSION_RESULT",
-                Object.assign({ requestId: requestId }, resp || { ok: false, error: "no_response" }),
-                "*",
-              );
-            },
+    requestCookiePermission(origins, requestId, "CAPTURE_JOB_SITE_SESSION_RESULT", function () {
+      chrome.runtime.sendMessage(
+        { type: "GET_JOB_SITE_COOKIES", domains: domains, slug: detail.slug },
+        function (resp) {
+          void chrome.runtime.lastError;
+          reply(
+            "CAPTURE_JOB_SITE_SESSION_RESULT",
+            Object.assign({ requestId: requestId }, resp || { ok: false, error: "no_response" }),
+            "*",
           );
         },
       );
+    });
+  });
+
+  const CONNECT_EVENT = "atomspace-connect-job-site";
+  document.addEventListener(CONNECT_EVENT, function (event) {
+    let detail = null;
+    try {
+      detail = JSON.parse(event.detail);
     } catch (_e) {
-      reply(
-        "CAPTURE_JOB_SITE_SESSION_RESULT",
-        { requestId: requestId, ok: false, error: "extension_error" },
-        "*",
-      );
+      return;
     }
+    if (!detail || !detail.slug) return;
+    const requestId = detail.requestId || null;
+    const origins = originsFor(detail);
+
+    requestCookiePermission(origins, requestId, "CONNECT_JOB_SITE_SESSION_RESULT", function () {
+      try {
+        chrome.runtime.sendMessage(
+          {
+            type: "START_JOB_SITE_CONNECT",
+            requestId: requestId,
+            slug: detail.slug,
+            loginUrl: detail.loginUrl || "",
+            domains: Array.isArray(detail.domains) ? detail.domains : [],
+            signedInUrlPatterns: Array.isArray(detail.signedInUrlPatterns)
+              ? detail.signedInUrlPatterns
+              : [],
+            sessionCookieNames: Array.isArray(detail.sessionCookieNames)
+              ? detail.sessionCookieNames
+              : [],
+            loginPathPatterns: Array.isArray(detail.loginPathPatterns)
+              ? detail.loginPathPatterns
+              : [],
+          },
+          function (resp) {
+            void chrome.runtime.lastError;
+            if (!resp || !resp.ok) {
+              reply(
+                "CONNECT_JOB_SITE_SESSION_RESULT",
+                {
+                  requestId: requestId,
+                  ok: false,
+                  error: (resp && resp.error) || "no_response",
+                },
+                "*",
+              );
+              return;
+            }
+            reply(
+              "CONNECT_JOB_SITE_SESSION_STARTED",
+              { requestId: requestId, ok: true, loginTabId: resp.loginTabId || null },
+              "*",
+            );
+          },
+        );
+      } catch (_e) {
+        reply(
+          "CONNECT_JOB_SITE_SESSION_RESULT",
+          { requestId: requestId, ok: false, error: "extension_error" },
+          "*",
+        );
+      }
+    });
+  });
+
+  const ABORT_EVENT = "atomspace-abort-job-site-connect";
+  document.addEventListener(ABORT_EVENT, function (event) {
+    let detail = null;
+    try {
+      detail = JSON.parse(event.detail || "{}");
+    } catch (_e) {
+      detail = {};
+    }
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: "ABORT_JOB_SITE_CONNECT",
+          requestId: (detail && detail.requestId) || null,
+          error: (detail && detail.error) || "cancelled",
+        },
+        function () {
+          void chrome.runtime.lastError;
+        },
+      );
+    } catch (_e) {
+      /* extension context invalidated */
+    }
+  });
+
+  chrome.runtime.onMessage.addListener(function (msg) {
+    if (!msg || msg.type !== "JOB_SITE_CONNECT_RESULT") return;
+    reply(
+      "CONNECT_JOB_SITE_SESSION_RESULT",
+      {
+        requestId: msg.requestId || null,
+        ok: Boolean(msg.ok),
+        cookies: msg.cookies || [],
+        error: msg.error || null,
+      },
+      "*",
+    );
   });
 
   // Proactively announce presence for listeners that attach before their PING.

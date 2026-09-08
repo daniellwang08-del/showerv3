@@ -24,6 +24,9 @@ export interface JobSitePlugin {
   sort_order: number;
   cookie_domains: string[];
   host_origins: string[];
+  signed_in_url_patterns?: string[];
+  session_cookie_names?: string[];
+  login_path_patterns?: string[];
   credential_fields: JobSiteCredentialField[];
 }
 

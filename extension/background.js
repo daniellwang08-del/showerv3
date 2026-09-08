@@ -3,6 +3,7 @@
 
 import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/store.js";
 import { isDashboardUrl } from "./src/backendOrigin.js";
+import "./src/jobSiteConnect.js";
 
 const BRIDGE_FILE = "content/webapp-bridge.js";
 

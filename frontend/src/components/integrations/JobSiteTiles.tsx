@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle,
@@ -23,7 +23,10 @@ import {
 import { InstallExtensionModal } from '../scraper/InstallExtensionModal';
 import { SettingsToggle } from '../shared/SettingsToggle';
 import { Z_INDEX } from '../../constants/zIndex';
-import { captureJobSiteSession, detectExtension } from '../../lib/extensionBridge';
+import {
+  startJobSiteConnect,
+  type JobSiteConnectHandle,
+} from '../../lib/extensionBridge';
 import {
   bodyText,
   btnDanger,
@@ -34,6 +37,31 @@ import {
   input,
   mutedText,
 } from '../../ui/tokens';
+
+function sessionConnectError(error: string | undefined, started: boolean): string {
+  switch (error) {
+    case 'extension_missing':
+    case 'no_bridge':
+      return '';
+    case 'permission_denied':
+      return 'Cookie permission was denied. Allow it when Chrome asks, then try again.';
+    case 'tab_closed':
+      return 'The sign-in tab was closed before we could capture a session.';
+    case 'no_cookies':
+      return 'Signed in, but no session cookies were readable. Allow cookie access and try again.';
+    case 'timed_out':
+      return started
+        ? 'Sign-in timed out. Open Connect again and finish signing in on the site.'
+        : 'The sign-in tab did not open. Reload this page after enabling the extension, then try again.';
+    case 'cancelled':
+    case 'superseded':
+      return '';
+    default:
+      return error
+        ? `Could not capture the session (${error}).`
+        : 'No session cookies found. Sign in on the site, then try again.';
+  }
+}
 
 function errorDetail(err: unknown, fallback: string): string {
   const detail =
@@ -66,6 +94,11 @@ export function JobSiteTiles() {
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [active, setActive] = useState<JobSitePlugin | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
+  const [sessionPhase, setSessionPhase] = useState<'idle' | 'permission' | 'waiting' | 'saving'>(
+    'idle',
+  );
+  const [sessionError, setSessionError] = useState('');
+  const sessionHandleRef = useRef<JobSiteConnectHandle | null>(null);
 
   const bySlug = useMemo(() => {
     const map = new Map<string, JobSiteConnection>();
@@ -124,6 +157,83 @@ export function JobSiteTiles() {
     }
   };
 
+  const abortSessionConnect = useCallback((error = 'cancelled') => {
+    const handle = sessionHandleRef.current;
+    sessionHandleRef.current = null;
+    handle?.abort(error);
+    setSessionPhase('idle');
+    setBusySlug(null);
+  }, []);
+
+  const beginSessionConnect = (plugin: JobSitePlugin) => {
+    const prev = sessionHandleRef.current;
+    sessionHandleRef.current = null;
+    prev?.abort('superseded', false);
+
+    setActive(plugin);
+    setBusySlug(plugin.slug);
+    setError('');
+    setSessionError('');
+    setSessionPhase('permission');
+
+    const handle = startJobSiteConnect({
+      slug: plugin.slug,
+      loginUrl: plugin.login_url || plugin.homepage,
+      domains: plugin.cookie_domains,
+      origins: plugin.host_origins || [],
+      signedInUrlPatterns: plugin.signed_in_url_patterns || [],
+      sessionCookieNames: plugin.session_cookie_names || [],
+      loginPathPatterns: plugin.login_path_patterns || [],
+      onStarted: () => setSessionPhase('waiting'),
+    });
+    sessionHandleRef.current = handle;
+
+    void (async () => {
+      const result = await handle.promise;
+      if (sessionHandleRef.current !== handle) return;
+      sessionHandleRef.current = null;
+
+      if (!result.ok || !result.cookies?.length) {
+        setBusySlug(null);
+        setSessionPhase('idle');
+        if (result.error === 'cancelled' || result.error === 'superseded') return;
+        if (result.error === 'extension_missing') {
+          setActive(null);
+          setInstallOpen(true);
+          return;
+        }
+        if (result.error === 'no_bridge') {
+          setSessionError(
+            'Reload the Atomspace extension and this tab, then click Connect again.',
+          );
+          return;
+        }
+        setSessionError(sessionConnectError(result.error, Boolean(result.started)));
+        return;
+      }
+
+      setSessionPhase('saving');
+      try {
+        const row = await connectJobSite(plugin.slug, { cookies: result.cookies });
+        setConnections((prevRows) => {
+          const next = prevRows.filter((c) => c.plugin_slug !== row.plugin_slug);
+          next.push(row);
+          return next;
+        });
+        setNotice(
+          `${plugin.name} connected — first sync started. New jobs appear on your dashboard shortly.`,
+        );
+        setActive(null);
+        setSessionError('');
+      } catch (err: unknown) {
+        setSessionError(errorDetail(err, `Failed to connect ${plugin.name}.`));
+      } finally {
+        setBusySlug(null);
+        setSessionPhase('idle');
+      }
+    })();
+  };
+
   const handleSync = async (plugin: JobSitePlugin) => {
     setBusySlug(plugin.slug);
     setError('');
@@ -163,7 +273,13 @@ export function JobSiteTiles() {
                 plugin={plugin}
                 connection={connection}
                 busy={busy}
-                onOpen={() => setActive(plugin)}
+                onOpen={() => {
+                  if (plugin.auth_type === 'session' && plugin.connectable && !connection) {
+                    beginSessionConnect(plugin);
+                    return;
+                  }
+                  setActive(plugin);
+                }}
                 onToggle={() => connection && void handleToggle(plugin, connection)}
                 onSync={() => void handleSync(plugin)}
               />
@@ -187,8 +303,15 @@ export function JobSiteTiles() {
           plugin={active}
           connection={bySlug.get(active.slug) ?? null}
           busy={busySlug === active.slug}
-          onClose={() => setActive(null)}
-          onNeedExtension={() => setInstallOpen(true)}
+          sessionPhase={sessionPhase}
+          sessionError={sessionError}
+          onClose={() => {
+            if (sessionPhase === 'saving') return;
+            abortSessionConnect();
+            setActive(null);
+            setSessionError('');
+          }}
+          onStartSession={() => beginSessionConnect(active)}
           onConnected={(row) => {
             setConnections((prev) => {
               const next = prev.filter((c) => c.plugin_slug !== row.plugin_slug);
@@ -292,7 +415,8 @@ function JobSiteTile({
             </button>
           </>
         ) : (
-          <button type="button" onClick={onOpen} className={`${btnPrimary} w-full`}>
+          <button type="button" onClick={onOpen} disabled={busy} className={`${btnPrimary} w-full`}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : null}
             Connect
           </button>
         )}
@@ -305,8 +429,10 @@ function JobSiteConnectModal({
   plugin,
   connection,
   busy,
+  sessionPhase,
+  sessionError,
   onClose,
-  onNeedExtension,
+  onStartSession,
   onConnected,
   onDisconnect,
   onBusy,
@@ -315,16 +441,18 @@ function JobSiteConnectModal({
   plugin: JobSitePlugin;
   connection: JobSiteConnection | null;
   busy: boolean;
+  sessionPhase: 'idle' | 'permission' | 'waiting' | 'saving';
+  sessionError: string;
   onClose: () => void;
-  onNeedExtension: () => void;
+  onStartSession: () => void;
   onConnected: (row: JobSiteConnection) => void;
   onDisconnect: () => void;
   onBusy: (slug: string | null) => void;
   onError: (msg: string) => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
-  const [capturing, setCapturing] = useState(false);
   const [localError, setLocalError] = useState('');
+  const sessionBusy = sessionPhase !== 'idle';
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -334,15 +462,12 @@ function JobSiteConnectModal({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
-  const submitCredentials = async (extra?: { cookies?: unknown[] }) => {
+  const submitCredentials = async () => {
     onBusy(plugin.slug);
     setLocalError('');
     onError('');
     try {
-      const row = await connectJobSite(plugin.slug, {
-        credentials: values,
-        ...(extra?.cookies ? { cookies: extra.cookies } : {}),
-      });
+      const row = await connectJobSite(plugin.slug, { credentials: values });
       onConnected(row);
     } catch (err: unknown) {
       setLocalError(errorDetail(err, `Failed to connect ${plugin.name}.`));
@@ -351,32 +476,14 @@ function JobSiteConnectModal({
     }
   };
 
-  const handleCapture = async () => {
-    setCapturing(true);
-    setLocalError('');
-    const result = await captureJobSiteSession(
-      plugin.slug,
-      plugin.cookie_domains,
-      plugin.host_origins,
-    );
-    if (!result.ok || !result.cookies?.length) {
-      const installed = await detectExtension(800, true);
-      if (!installed.installed || result.error === 'timed_out') {
-        setCapturing(false);
-        onNeedExtension();
-        return;
-      }
-      setCapturing(false);
-      setLocalError(
-        result.error === 'permission_denied'
-          ? 'Cookie permission was denied. Allow it when Chrome asks, then try again.'
-          : 'No session cookies found. Sign in on the site in this browser, then capture again.',
-      );
-      return;
-    }
-    await submitCredentials({ cookies: result.cookies });
-    setCapturing(false);
-  };
+  const sessionStatusText =
+    sessionPhase === 'permission'
+      ? `Allow cookie access when Chrome asks, then sign in on the ${plugin.name} tab.`
+      : sessionPhase === 'waiting'
+        ? `Sign in on the ${plugin.name} tab we opened. We will capture the session and close that tab automatically.`
+        : sessionPhase === 'saving'
+          ? 'Saving your session…'
+          : `Connect opens ${plugin.name} in a new tab. After you sign in, we capture the live session and close that tab.`;
 
   return createPortal(
     <div
@@ -385,7 +492,7 @@ function JobSiteConnectModal({
       role="dialog"
       aria-modal="true"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && !sessionBusy) onClose();
       }}
     >
       <div className={`w-full max-w-md p-5 ${card}`}>
@@ -403,24 +510,12 @@ function JobSiteConnectModal({
           {!plugin.connectable ? (
             <p className={mutedText}>{plugin.unavailable_reason}</p>
           ) : plugin.auth_type === 'session' ? (
-            <ol className={`list-decimal space-y-1.5 pl-4 text-xs ${mutedText}`}>
-              <li>Install the Atomspace extension if you have not already.</li>
-              <li>
-                Open {plugin.name} and sign in with your account.{' '}
-                {plugin.login_url ? (
-                  <a
-                    href={plugin.login_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-semibold text-sky-600 hover:underline"
-                  >
-                    Open sign-in
-                    <ExternalLink size={11} className="ml-0.5 inline" />
-                  </a>
-                ) : null}
-              </li>
-              <li>Return here and capture the live session cookies so we can pull your job list.</li>
-            </ol>
+            <p className={`flex items-start gap-2 text-xs leading-relaxed ${mutedText}`}>
+              {sessionBusy ? (
+                <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
+              ) : null}
+              <span>{sessionStatusText}</span>
+            </p>
           ) : plugin.auth_type === 'api_key' ? (
             <div className="space-y-2.5">
               {plugin.credential_fields.map((field) => (
@@ -435,6 +530,7 @@ function JobSiteConnectModal({
                         className="font-medium text-sky-600 hover:underline"
                       >
                         Get key
+                        <ExternalLink size={11} className="ml-0.5 inline" />
                       </a>
                     ) : null}
                   </span>
@@ -456,7 +552,7 @@ function JobSiteConnectModal({
             </p>
           )}
 
-          {connection ? (
+          {connection && plugin.auth_type !== 'session' ? (
             <p className={`text-xs ${mutedText}`}>
               {Object.entries(connection.credential_hints)
                 .map(([k, v]) => `${k}: ${v}`)
@@ -464,33 +560,47 @@ function JobSiteConnectModal({
             </p>
           ) : null}
 
-          {localError ? (
+          {connection && plugin.auth_type === 'session' && !sessionBusy ? (
+            <p className={`text-xs ${mutedText}`}>
+              {Object.entries(connection.credential_hints)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(' · ') || 'Connected'}
+            </p>
+          ) : null}
+
+          {sessionError || localError ? (
             <p className="flex items-start gap-1.5 text-sm font-medium text-rose-700 dark:text-rose-400">
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
-              {localError}
+              {sessionError || localError}
             </p>
           ) : null}
         </div>
 
         <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
-          {connection ? (
+          {connection && !sessionBusy ? (
             <button type="button" onClick={onDisconnect} disabled={busy} className={btnDanger}>
               <Unplug size={14} />
               Disconnect
             </button>
           ) : null}
-          <button type="button" onClick={onClose} className={btnSecondary}>
-            Close
+          <button type="button" onClick={onClose} className={btnSecondary} disabled={sessionPhase === 'saving'}>
+            {sessionBusy ? 'Cancel' : 'Close'}
           </button>
           {plugin.connectable && plugin.auth_type === 'session' ? (
             <button
               type="button"
-              onClick={() => void handleCapture()}
-              disabled={busy || capturing}
+              onClick={onStartSession}
+              disabled={busy || sessionBusy}
               className={btnPrimary}
             >
-              {busy || capturing ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
-              {connection ? 'Recapture session' : 'Capture session'}
+              {sessionBusy ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+              {sessionBusy
+                ? sessionPhase === 'saving'
+                  ? 'Saving…'
+                  : 'Waiting for sign-in…'
+                : connection
+                  ? 'Reconnect'
+                  : 'Open site & connect'}
             </button>
           ) : null}
           {plugin.connectable && plugin.auth_type === 'api_key' ? (
