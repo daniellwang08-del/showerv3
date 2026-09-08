@@ -511,6 +511,21 @@ async def run_post_analysis_dedup(
         )
 
 
+def _provenance_fields(match_data: dict) -> dict:
+    """Engine/version/fingerprint from a match result, for the stored row.
+
+    The LLM path supplies only ``match_engine``; the vector path also carries a
+    scorer version and an input fingerprint, which is what makes its scores
+    re-derivable.
+    """
+    return {
+        "match_engine": match_data.get("match_engine"),
+        "scorer_version": match_data.get("scorer_version"),
+        "model_version": match_data.get("model_version"),
+        "inputs_fingerprint": match_data.get("inputs_fingerprint"),
+    }
+
+
 async def _save_active(
     session,
     job_id: str,
@@ -529,6 +544,7 @@ async def _save_active(
         strengths=match_data.get("strengths", []),
         gaps=match_data.get("gaps", []),
         recommendation=match_data.get("recommendation", ""),
+        **_provenance_fields(match_data),
     )
 
     ujs_repo = UserJobStatusRepository(session)
@@ -572,6 +588,7 @@ async def _save_duplicated(
         strengths=match_data.get("strengths", []),
         gaps=match_data.get("gaps", []),
         recommendation=match_data.get("recommendation", ""),
+        **_provenance_fields(match_data),
     )
 
     ujs_repo = UserJobStatusRepository(session)

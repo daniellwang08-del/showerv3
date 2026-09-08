@@ -363,7 +363,16 @@ class JobMatchResult(Base):
     strengths = Column(JSON, default=list, nullable=False)
     gaps = Column(JSON, default=list, nullable=False)
     recommendation = Column(String(50), nullable=True)
+    # Provenance. Without these a stored score cannot be re-derived, and a
+    # re-score that disagrees is ambiguous between "the scorer changed" and
+    # "the encodings changed underneath it".
+    match_engine = Column(String(20), nullable=True)
+    scorer_version = Column(String(50), nullable=True)
+    model_version = Column(String(200), nullable=True)
+    # sha256 over every input the scorer read; see vector_match_service.
+    inputs_fingerprint = Column(String(64), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
 
     __table_args__ = (
         UniqueConstraint("job_id", "user_id", name="uq_job_match_job_user"),

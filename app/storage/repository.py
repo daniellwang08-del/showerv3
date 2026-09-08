@@ -450,6 +450,10 @@ class JobMatchRepository:
         strengths: list,
         gaps: list,
         recommendation: str,
+        match_engine: str | None = None,
+        scorer_version: str | None = None,
+        model_version: str | None = None,
+        inputs_fingerprint: str | None = None,
     ) -> JobMatchResult:
         existing = await self.get(job_id, user_id)
         if existing:
@@ -461,6 +465,10 @@ class JobMatchRepository:
             existing.recommendation = (
                 recommendation if recommendation is None else str(recommendation)[:50]
             )
+            existing.match_engine = match_engine
+            existing.scorer_version = scorer_version
+            existing.model_version = model_version
+            existing.inputs_fingerprint = inputs_fingerprint
             await self._session.flush()
             return existing
         rec = recommendation if recommendation is None else str(recommendation)[:50]
@@ -473,6 +481,10 @@ class JobMatchRepository:
             strengths=strengths,
             gaps=gaps,
             recommendation=rec,
+            match_engine=match_engine,
+            scorer_version=scorer_version,
+            model_version=model_version,
+            inputs_fingerprint=inputs_fingerprint,
         )
         self._session.add(row)
         await self._session.flush()

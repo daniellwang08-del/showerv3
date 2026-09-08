@@ -12,8 +12,13 @@ differ a lot between users, so a single pooled AUC would mostly measure
 between-user differences rather than ranking quality.
 
 The stored score on each row is evaluated alongside the freshly computed one.
-Stored scores are an unlabelled mix of LLM-era and vector-era results, so the
-comparison is indicative only -- it is not a clean engine-vs-engine A/B.
+Use --era to grade an engine only on the rows it wrote, which is the fairest
+head-to-head the historical data supports; otherwise the engine whose scores
+were on screen at decision time gets an unearned advantage.
+
+Where a stored inputs_fingerprint exists, the run also reports how many scores
+are no longer reproducible, split by whether the encodings moved or the scorer
+did.
 
 Caveat that no metric here can remove: users see the score in the dashboard and
 low-scoring jobs are surfaced less aggressively, so applications are partly a
@@ -30,7 +35,6 @@ import argparse
 import asyncio
 import json
 from collections import defaultdict
-from datetime import datetime
 from typing import Any, Iterable, Sequence
 
 from sqlalchemy import select, text
@@ -42,20 +46,14 @@ from app.storage.database import close_database, get_session, init_database
 
 TOP_K = (5, 10, 25, 50)
 
-# The vector scorer landed in 385f2d5 on 2026-09-02. job_match_results has no
-# engine column, so the commit date is the only way to tell which engine wrote
-# a given row: everything before this is LLM-scored, everything after is vector.
-ENGINE_CUTOVER = "2026-09-02"
-
 # Each era's *stored* score is the one that was actually displayed to the user
-# while they decided whether to apply. Comparing an engine on its own era is
-# the closest thing to a fair head-to-head available from historical data:
-# both engines then carry the same presentation bias rather than only one.
-ERAS = {
-    "all": (None, None),
-    "llm": (None, ENGINE_CUTOVER),
-    "vector": (ENGINE_CUTOVER, None),
-}
+# while they decided whether to apply. Grading an engine on its own era is the
+# closest thing to a fair head-to-head the historical data supports: both
+# engines then carry the same presentation bias rather than only one.
+#
+# job_match_results.match_engine is populated going forward and was backfilled
+# by migration 067 from the date the vector scorer landed (2026-09-02).
+ERAS = ("all", "llm", "vector")
 
 
 # ── metrics ──────────────────────────────────────────────────────────────────
@@ -152,15 +150,11 @@ async def _evaluate_inner(
             .all()
         }
 
-        since, until = ERAS[era]
-        clauses, params = [], {}
-        if since:
-            clauses.append("r.created_at >= :since")
-            params["since"] = datetime.fromisoformat(since)
-        if until:
-            clauses.append("r.created_at < :until")
-            params["until"] = datetime.fromisoformat(until)
-        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params: dict[str, Any] = {}
+        where = ""
+        if era != "all":
+            where = "WHERE r.match_engine = :engine"
+            params["engine"] = era
 
         rows = (
             await session.execute(
@@ -169,6 +163,7 @@ async def _evaluate_inner(
                     SELECT r.job_id,
                            r.user_id,
                            r.overall_score              AS stored_score,
+                           r.inputs_fingerprint         AS stored_fingerprint,
                            (a.id IS NOT NULL)           AS applied,
                            (e.encoded_at < j.updated_at) AS stale_encoding
                     FROM job_match_results r
@@ -190,11 +185,13 @@ async def _evaluate_inner(
             "stale_encoding": 0,
         }
         stale_seen = 0
+        # Drift accounting, only possible for rows written after migration 067.
+        drift = {"comparable": 0, "inputs_changed": 0, "scorer_changed": 0}
         per_user: dict[str, dict[str, list]] = defaultdict(
             lambda: {"fresh": [], "stored": [], "labels": []}
         )
 
-        for job_id, user_id, stored_score, applied, stale in rows:
+        for job_id, user_id, stored_score, stored_fp, applied, stale in rows:
             user_enc = user_encs.get(user_id)
             job_enc = job_encs.get(job_id)
             if user_enc is None:
@@ -212,8 +209,19 @@ async def _evaluate_inner(
                     skipped["stale_encoding"] += 1
                     continue
 
+            scored = score_pair(job_enc, user_enc)
+            fresh_score = float(scored["overall_score"])
+
+            if stored_fp:
+                drift["comparable"] += 1
+                if scored["inputs_fingerprint"] != stored_fp:
+                    drift["inputs_changed"] += 1
+                elif fresh_score != float(stored_score or 0):
+                    # Identical inputs, different score: the scorer itself moved.
+                    drift["scorer_changed"] += 1
+
             bucket = per_user[user_id]
-            bucket["fresh"].append(float(score_pair(job_enc, user_enc)["overall_score"]))
+            bucket["fresh"].append(fresh_score)
             bucket["stored"].append(float(stored_score or 0))
             bucket["labels"].append(bool(applied))
 
@@ -269,6 +277,7 @@ async def _evaluate_inner(
         "stale_encoding_pairs": stale_seen,
         "excluded_stale": exclude_stale,
         "mean_abs_diff_fresh_vs_stored": _mean(all_diffs),
+        "drift": drift,
         "auc_fresh_weighted": weighted("auc_fresh"),
         "auc_stored_weighted": weighted("auc_stored"),
         "auc_fresh_macro": _mean(e["auc_fresh"] for e in users),
@@ -309,6 +318,15 @@ def _print_report(report: dict[str, Any]) -> None:
         f"{' (excluded)' if s['excluded_stale'] else ' (included)'}"
     )
     print(f"  fresh vs stored   {_num(s['mean_abs_diff_fresh_vs_stored'], 1)} mean absolute point difference")
+    drift = s["drift"]
+    if drift["comparable"]:
+        print(
+            f"  reproducibility   {drift['comparable']} pairs have a stored fingerprint: "
+            f"{drift['inputs_changed']} encodings changed, "
+            f"{drift['scorer_changed']} scorer changed"
+        )
+    else:
+        print("  reproducibility   no stored fingerprints yet (rows predate migration 067)")
 
     print()
     print("  ROC-AUC (1.0 perfect, 0.5 random) - per user, weighted by applications")
@@ -366,9 +384,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--era",
-        choices=sorted(ERAS),
+        choices=ERAS,
         default="all",
-        help=f"restrict to scores written before/after the {ENGINE_CUTOVER} cutover",
+        help="restrict to rows whose match_engine column is llm or vector",
     )
     parser.add_argument("--json", help="also write the full report to this path")
     args = parser.parse_args()

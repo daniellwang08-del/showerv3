@@ -29,6 +29,7 @@ from app.services.vector_match_service import (
     _cos_to_score,
     _recommendation,
     _score_skills,
+    encoding_fingerprint,
     score_pair,
 )
 
@@ -268,6 +269,10 @@ def test_score_pair_shape_matches_phase_a_contract():
         "gaps",
         "recommendation",
         "requires_security_clearance",
+        # Provenance, so the score can be re-derived and drift is detectable.
+        "scorer_version",
+        "model_version",
+        "inputs_fingerprint",
     }
     assert set(result["dimension_scores"]) == set(MATCH_DIMENSION_WEIGHTS)
     assert 0 <= result["overall_score"] <= 100
@@ -283,6 +288,57 @@ def test_score_pair_shape_matches_phase_a_contract():
         )
     )
     assert result["overall_score"] == expected
+
+
+def test_fingerprint_is_stable_for_unchanged_encodings():
+    job, user = _make_pair()
+    assert encoding_fingerprint(job, user) == encoding_fingerprint(job, user)
+    assert score_pair(job, user)["inputs_fingerprint"] == encoding_fingerprint(job, user)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(
+            lambda job, user: setattr(job, "title_vec", vec_to_bytes(_unit(np.arange(384.0)))),
+            id="job_title_vec",
+        ),
+        pytest.param(
+            lambda job, user: setattr(job, "skills", {"rust": "required"}),
+            id="job_skills",
+        ),
+        pytest.param(
+            lambda job, user: setattr(job, "years_required", 9),
+            id="job_years",
+        ),
+        pytest.param(
+            lambda job, user: setattr(user, "skills", {"python": 0.2}),
+            id="user_skills",
+        ),
+        pytest.param(
+            lambda job, user: setattr(user, "has_degree", False),
+            id="user_degree",
+        ),
+    ],
+)
+def test_fingerprint_changes_when_any_scored_input_changes(mutate):
+    """Drift must be visible: any input the scorer reads moves the fingerprint.
+
+    This is what lets a later re-score tell "the encodings changed" apart from
+    "the scorer changed".
+    """
+    job, user = _make_pair()
+    before = encoding_fingerprint(job, user)
+    mutate(job, user)
+    assert encoding_fingerprint(job, user) != before
+
+
+def test_clearance_gated_result_still_carries_provenance():
+    job, user = _make_pair(clearance=True)
+    result = score_pair(job, user)
+    assert result["overall_score"] == 0
+    assert result["scorer_version"]
+    assert result["inputs_fingerprint"]
 
 
 def test_score_pair_explain_includes_cosines_and_contributions():

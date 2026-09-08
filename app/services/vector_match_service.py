@@ -12,6 +12,9 @@ pair).
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import undefer
@@ -328,6 +331,58 @@ def _build_explain(
     }
 
 
+def encoding_fingerprint(job_enc: JobEncoding, user_enc: UserEncoding) -> str:
+    """Stable hash over every input ``score_pair`` reads.
+
+    Stored alongside the score so a later re-score can tell the two failure
+    modes apart: same fingerprint with a different score means the scorer
+    changed, a different fingerprint means the encodings moved underneath it.
+    Without this the two are indistinguishable, and a tuning change cannot be
+    told apart from drift.
+    """
+    digest = hashlib.sha256()
+    for blob in (
+        job_enc.title_vec,
+        job_enc.content_vec,
+        getattr(job_enc, "industry_vec", None),
+        user_enc.experience_vec,
+        user_enc.prefs_vec,
+        getattr(user_enc, "domain_vec", None),
+    ):
+        digest.update(b"\x00" if blob is None else bytes(blob))
+        digest.update(b"|")
+    digest.update(
+        json.dumps(
+            {
+                "model": job_enc.model_version,
+                "job_skills": dict(sorted(dict(job_enc.skills or {}).items())),
+                "job_years": job_enc.years_required,
+                "job_degree": job_enc.degree_required,
+                "job_clearance": bool(job_enc.requires_security_clearance),
+                "user_skills": dict(sorted(dict(user_enc.skills or {}).items())),
+                "user_years": user_enc.years_experience,
+                "user_degree": user_enc.has_degree,
+                "user_titles": [
+                    item.get("vec")
+                    for item in (user_enc.title_vecs or [])
+                    if isinstance(item, dict)
+                ],
+            },
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8")
+    )
+    return digest.hexdigest()
+
+
+def _provenance(job_enc: JobEncoding, user_enc: UserEncoding) -> dict:
+    return {
+        "scorer_version": SCORER_VERSION,
+        "model_version": job_enc.model_version,
+        "inputs_fingerprint": encoding_fingerprint(job_enc, user_enc),
+    }
+
+
 def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = False) -> dict:
     """Score one user x job pair from loaded encodings (sync, pure math)."""
     if job_enc.requires_security_clearance:
@@ -339,6 +394,7 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
             "gaps": [],
             "recommendation": "poor_match",
             "requires_security_clearance": True,
+            **_provenance(job_enc, user_enc),
         }
         if explain:
             result["explain"] = {
@@ -404,6 +460,7 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
         "gaps": gaps,
         "recommendation": _recommendation(overall),
         "requires_security_clearance": False,
+        **_provenance(job_enc, user_enc),
     }
     if explain:
         result["explain"] = _build_explain(
