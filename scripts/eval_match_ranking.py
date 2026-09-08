@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 from collections import defaultdict
 from typing import Any, Iterable, Sequence
 
@@ -83,6 +84,28 @@ def roc_auc(scores: Sequence[float], labels: Sequence[bool]) -> float | None:
         return None
     positive_rank_sum = sum(r for r, label in zip(ranks, labels) if label)
     return (positive_rank_sum - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+
+
+def auc_interval(
+    auc: float | None, n_pos: int, n_neg: int, z: float = 1.96
+) -> tuple[float, float] | None:
+    """95% confidence interval for an AUC (Hanley & McNeil).
+
+    A handful of positives produces an interval so wide that the point estimate
+    carries no information. Reporting the estimate alone invites reading noise
+    as a defect and chasing a bug that is not there.
+    """
+    if auc is None or n_pos <= 0 or n_neg <= 0:
+        return None
+    q1 = auc / (2 - auc)
+    q2 = 2 * auc * auc / (1 + auc)
+    variance = (
+        auc * (1 - auc)
+        + (n_pos - 1) * (q1 - auc * auc)
+        + (n_neg - 1) * (q2 - auc * auc)
+    ) / (n_pos * n_neg)
+    se = math.sqrt(max(variance, 0.0))
+    return max(0.0, auc - z * se), min(1.0, auc + z * se)
 
 
 def precision_recall_at_k(
@@ -232,13 +255,18 @@ async def _evaluate_inner(
         n_pos = sum(1 for label in labels if label)
         if n_pos < min_positives or n_pos == len(labels):
             continue
+        auc_fresh = roc_auc(bucket["fresh"], labels)
+        ci = auc_interval(auc_fresh, n_pos, len(labels) - n_pos)
         entry: dict[str, Any] = {
             "user_id": user_id,
             "pool": len(labels),
             "applied": n_pos,
             "base_rate": n_pos / len(labels),
-            "auc_fresh": roc_auc(bucket["fresh"], labels),
+            "auc_fresh": auc_fresh,
             "auc_stored": roc_auc(bucket["stored"], labels),
+            "auc_fresh_ci": ci,
+            # A result is only informative if its interval excludes chance.
+            "conclusive": bool(ci and (ci[0] > 0.5 or ci[1] < 0.5)),
         }
         for k in TOP_K:
             for name, scores in (("fresh", bucket["fresh"]), ("stored", bucket["stored"])):
@@ -282,6 +310,10 @@ async def _evaluate_inner(
         "auc_stored_weighted": weighted("auc_stored"),
         "auc_fresh_macro": _mean(e["auc_fresh"] for e in users),
         "auc_stored_macro": _mean(e["auc_stored"] for e in users),
+        "conclusive_users": sum(1 for e in users if e["conclusive"]),
+        "auc_fresh_macro_conclusive": _mean(
+            e["auc_fresh"] for e in users if e["conclusive"]
+        ),
     }
     for k in TOP_K:
         summary[f"p@{k}_fresh"] = weighted(f"p@{k}_fresh")
@@ -335,6 +367,10 @@ def _print_report(report: dict[str, Any]) -> None:
         f"    stored ({s['stored_engine']}) as shown  {_num(s['auc_stored_weighted'])}"
         f"   (macro {_num(s['auc_stored_macro'])})"
     )
+    print(
+        f"    macro over the {s['conclusive_users']} users whose interval excludes chance: "
+        f"{_num(s['auc_fresh_macro_conclusive'])}"
+    )
 
     print()
     print("  Top-k precision / recall - current vector engine")
@@ -354,14 +390,21 @@ def _print_report(report: dict[str, Any]) -> None:
     print("  Per user")
     print(
         f"    {'user':>10}  {'pool':>6}  {'applied':>8}  {'base':>7}  "
-        f"{'auc':>6}  {'auc(st)':>8}  {'p@10':>7}  {'p@10(st)':>9}"
+        f"{'auc':>6}  {'95% interval':>16}  {'verdict':>12}"
     )
     for e in report["per_user"]:
+        ci = e["auc_fresh_ci"]
+        span = "n/a" if ci is None else f"{ci[0]:.3f} - {ci[1]:.3f}"
+        if not e["conclusive"]:
+            verdict = "inconclusive"
+        elif (e["auc_fresh"] or 0) > 0.5:
+            verdict = "better"
+        else:
+            verdict = "INVERTED"
         print(
             f"    {e['user_id'][:8]:>10}  {e['pool']:>6}  {e['applied']:>8}  "
             f"{_pct(e['base_rate'], 1):>7}  {_num(e['auc_fresh'], 3):>6}  "
-            f"{_num(e['auc_stored'], 3):>8}  {_pct(e['p@10_fresh']):>7}  "
-            f"{_pct(e['p@10_stored']):>9}"
+            f"{span:>16}  {verdict:>12}"
         )
     print()
     print("  Applications are partly caused by the score (users see it, and low")
