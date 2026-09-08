@@ -1,12 +1,8 @@
-"""Non-LLM job metadata hydration for Jobs table columns.
+"""Fast structured metadata hydration for Jobs table columns (no torch).
 
-ATS extractors historically stored only ``raw_plain_text`` and relied on LLM
-Phase A to fill title/company/location/etc. Vector mode never runs that pass,
-so the dashboard stayed on Untitled / Unknown even when the raw text already
-contained ``Title:`` / ``Location:`` labels (or the ATS API returned fields).
-
-This module parses those signals deterministically and patches both
-``job_extractions`` and ``jobs`` rows without calling an LLM.
+Uses ATS API fields and labeled ``Title:`` / ``Company:`` lines. Messy HTML
+embeds without those signals are filled later by MiniLM span ranking in
+``metadata_vector_extractor`` during ``encode_job`` — not by vendor page regex.
 """
 
 from __future__ import annotations
@@ -20,7 +16,6 @@ from app.core.logging import get_logger
 from app.models.schemas import JobDescriptionSchema
 from app.services.job_field_utils import (
     clean_optional_job_field,
-    infer_title_from_description,
     normalize_work_mode_display,
     resolve_display_work_mode,
 )
@@ -47,6 +42,9 @@ _LABEL_NAMES = (
     "Posted",
     "Posted (epoch ms)",
     "Date",
+    # Recognized so the header scan does not stop here; value is unused. The
+    # JSON-LD extractor emits Description between Title and Company.
+    "Description",
 )
 _LABEL_RE = re.compile(
     rf"^({'|'.join(re.escape(n) for n in _LABEL_NAMES)})\s*:\s*(.*)$",
@@ -73,14 +71,56 @@ _NAV_NOISE = frozenset(
         "search by location",
         "clear",
         "create alert",
+        "create a job alert",
         "apply now »",
         "apply now",
         "what we offer",
         "diversity and inclusion",
-        "core values",
-        "syniti gives back",
     }
 )
+
+# ATS hosts where the employer slug lives in the path, not the subdomain:
+# ats.rippling.com/<slug>/jobs/..., app.dover.com/apply/<Company>/...,
+# app.trinethire.com/companies/<id>-<slug>/jobs/..., comeet.com/jobs/<slug>/...
+_ATS_PATH_COMPANY = {
+    "ats.rippling.com": 0,
+    "careers-page.com": 0,
+    "app.dover.com": 1,
+    "app.trinethire.com": 1,
+    "comeet.com": 1,
+}
+_ATS_PATH_NOISE = frozenset({"apply", "jobs", "job", "companies", "careers"})
+_TRINET_ID_PREFIX_RE = re.compile(r"^\d+-")
+
+# Job boards / aggregators: the host is never the employer, so a hostname-derived
+# name here would label every posting with the board's own name.
+_NON_EMPLOYER_HOSTS = frozenset({
+    "www",
+    "app",
+    "job",
+    "jobs",
+    "careers",
+    "lever",
+    "greenhouse",
+    "ashbyhq",
+    "myworkdayjobs",
+    "ats",
+    "dice",
+    "indeed",
+    "ziprecruiter",
+    "fetchjobs",
+    "linkedin",
+    "glassdoor",
+    "monster",
+    "simplyhired",
+    "jobright",
+    "builtin",
+    "wellfound",
+    "lensa",
+    "adzuna",
+    "jooble",
+    "talent",
+})
 
 
 def _slug_to_company(slug: str | None) -> str | None:
@@ -109,6 +149,7 @@ def infer_company_from_url(url: str | None) -> str | None:
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower()
         query = parsed.query or ""
+        path_parts = [p for p in unquote(parsed.path or "").split("/") if p]
     except Exception:
         return None
     # Greenhouse embed: .../embed/job_app?for=boardtoken&token=JOBID
@@ -118,23 +159,20 @@ def infer_company_from_url(url: str | None) -> str | None:
                 tok = unquote(part.split("=", 1)[-1]).strip()
                 if tok and tok.lower() not in {"embed", "job_app"}:
                     return _slug_to_company(tok)
-    for prefix in ("jobs.", "careers.", "apply.", "boards.", "job-boards."):
+    # ATS hosts that carry the employer as a path segment rather than a subdomain.
+    for suffix, index in _ATS_PATH_COMPANY.items():
+        if host == suffix or host.endswith("." + suffix):
+            if len(path_parts) > index:
+                slug = _TRINET_ID_PREFIX_RE.sub("", path_parts[index]).strip()
+                if slug and slug.lower() not in _ATS_PATH_NOISE:
+                    return _slug_to_company(slug)
+            return None
+    for prefix in ("www.", "jobs.", "careers.", "apply.", "boards.", "job-boards."):
         if host.startswith(prefix):
             host = host[len(prefix) :]
             break
     root = host.split(".")[0] if host else ""
-    if root in {
-        "www",
-        "app",
-        "job",
-        "jobs",
-        "careers",
-        "lever",
-        "greenhouse",
-        "ashbyhq",
-        "myworkdayjobs",
-        "ats",
-    }:
+    if root in _NON_EMPLOYER_HOSTS:
         return None
     return _slug_to_company(root)
 
@@ -413,7 +451,12 @@ def build_metadata(
     existing_location: str | None = None,
     existing_work_mode: str | None = None,
 ) -> dict[str, Any]:
-    """Merge structured ATS fields + labeled text + URL heuristics."""
+    """Merge *structured* ATS fields for a fast hydrate (no torch).
+
+    Final title/company fill for messy HTML embeds is done by MiniLM span
+    ranking in ``metadata_vector_extractor`` during ``encode_job`` — not by
+    vendor-specific page-text regexes.
+    """
     labeled = parse_labeled_metadata(plain_text)
     structured = metadata_from_structured_data(structured_data)
     heading = parse_job_details_heading(plain_text)
@@ -423,9 +466,6 @@ def build_metadata(
         or clean_optional_job_field(labeled.get("title"))
         or clean_optional_job_field(heading.get("title"))
         or clean_optional_job_field(existing_title)
-        or infer_heading_title(plain_text)
-        or infer_title_from_url(source_url)
-        or infer_title_from_description(plain_text)
     )
     company = (
         clean_optional_job_field(structured.get("company"))
@@ -502,11 +542,16 @@ def build_metadata(
 def to_job_description_schema(meta: dict[str, Any]) -> JobDescriptionSchema | None:
     title = clean_optional_job_field(meta.get("title"))
     description = (meta.get("description") or "").strip()
-    if not title or len(description) < 10:
+    company = clean_optional_job_field(meta.get("company"))
+    if len(description) < 10:
+        return None
+    # Title may be empty until MiniLM fill in encode_job; still hydrate
+    # company / location / work_mode from structured or URL signals.
+    if not title and not company and not clean_optional_job_field(meta.get("location")):
         return None
     return JobDescriptionSchema(
-        title=title,
-        company=clean_optional_job_field(meta.get("company")),
+        title=title or "Untitled",
+        company=company,
         location=clean_optional_job_field(meta.get("location")),
         employment_type=clean_optional_job_field(meta.get("employment_type")),
         salary_range=clean_optional_job_field(meta.get("salary_range")),

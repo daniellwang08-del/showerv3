@@ -9,6 +9,7 @@ _INVALID_JOB_FIELD_VALUES = frozenset({
     "na",
     "unknown",
     "unknown position",
+    "untitled",
     "tbd",
     "not specified",
 })

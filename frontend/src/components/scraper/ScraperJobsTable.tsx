@@ -314,7 +314,11 @@ function ResumeDocCell({ job }: { job: DashboardJob }) {
   const building = isDocsBuilding(job);
   const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
 
-  if (!ready && building) {
+  // Re-runs leave prior PDFs marked completed while content_generation /
+  // resume_build flip back to pending|processing. Always show the first-start
+  // Building UI alone — never stack the spinner on top of stale doc icons
+  // (that overflows the narrow Resume column and wraps).
+  if (building) {
     return <DocsProcessingRing />;
   }
   if (!ready) {
@@ -322,17 +326,14 @@ function ResumeDocCell({ job }: { job: DashboardJob }) {
   }
 
   return (
-    <div className="inline-flex items-center gap-1">
-      {building && <DocsProcessingRing compact />}
-      <DocActionPair
-        fullLabel="Resume"
-        jobId={job.id}
-        filePath={job.resume_pdf_path}
-        fileType="resume_pdf"
-        docTitle={`Resume - ${jobLabel}`}
-        accent="violet"
-      />
-    </div>
+    <DocActionPair
+      fullLabel="Resume"
+      jobId={job.id}
+      filePath={job.resume_pdf_path}
+      fileType="resume_pdf"
+      docTitle={`Resume - ${jobLabel}`}
+      accent="violet"
+    />
   );
 }
 
@@ -341,7 +342,8 @@ function CoverDocCell({ job }: { job: DashboardJob }) {
   const building = isDocsBuilding(job);
   const jobLabel = [job.title, job.company].filter(Boolean).join(' · ') || 'Job';
 
-  if (!ready && building) {
+  // Match first-start: while docs are rebuilding, hide stale cover actions.
+  if (building) {
     return <span className="text-[11px] font-semibold text-emerald-600/80">…</span>;
   }
   if (!ready) {

@@ -82,7 +82,23 @@ class TestAPIDetector:
         assert result.raw_content is not None
         assert "Senior Software Engineer" in result.raw_content
         assert "Tech Corp" in result.raw_content
-        assert result.structured_data is None
+        assert result.structured_data == {
+            "title": "Senior Software Engineer",
+            "company": "Tech Corp",
+            "location": "San Francisco, CA, US",
+            "employment_type": "FULL_TIME",
+        }
+
+    @pytest.mark.asyncio
+    async def test_nested_org_name_labeled_company_not_title(self, extractor):
+        """hiringOrganization.name must not be relabeled as Title.
+
+        The nested walk previously emitted a bare ``Company:`` line followed by
+        ``Title: <employer>``, so the employer was never hydrated.
+        """
+        result = await extractor.extract("https://example.com/job", SAMPLE_HTML_WITH_JSON_LD)
+        assert "Company: Tech Corp" in result.raw_content
+        assert "Title: Tech Corp" not in result.raw_content
 
     @pytest.mark.asyncio
     async def test_extract_captures_all_fields(self, extractor):

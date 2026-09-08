@@ -272,8 +272,10 @@ async def encode_job(job_id: str) -> bool:
             job, extraction, raw_text
         )
         job_title = job.title
+        job_company = job.company
         job_location = job.location
         job_work_mode = job.work_mode
+        job_source_url = job.source_url
         job_extraction_id = job.extraction_id
         meta = job.raw_metadata if isinstance(job.raw_metadata, dict) else {}
         is_remote_flag = bool(meta.get("is_remote"))
@@ -281,6 +283,8 @@ async def encode_job(job_id: str) -> bool:
     if not content_text.strip():
         logger.warning("encode_job_no_text", job_id=job_id)
         return False
+
+    from app.services.job_field_utils import clean_optional_job_field
 
     skills = extract_skills_with_importance(full_text)
     years_required = extract_years_required(full_text)
@@ -292,10 +296,13 @@ async def encode_job(job_id: str) -> bool:
     )
     title_vec, content_vec, industry_vec = vecs[0], vecs[1], vecs[2]
 
-    # Vector work-mode fill: MiniLM prototypes when rules left mode empty.
+    # Vector work-mode + MiniLM title/company fill (encoding process only).
     work_mode_to_set: str | None = None
+    title_to_set: str | None = None
+    company_to_set: str | None = None
     try:
         from app.services.work_mode_classifier import classify_work_mode
+        from app.services.metadata_vector_extractor import extract_title_company_ml
 
         mode, explain = classify_work_mode(
             title=job_title or title_text,
@@ -314,8 +321,30 @@ async def encode_job(job_id: str) -> bool:
                 source=explain.get("source"),
                 best_cos=explain.get("best_cos"),
             )
-    except Exception as mode_err:
-        logger.warning("work_mode_classify_failed", job_id=job_id, error=str(mode_err))
+
+        need_title = clean_optional_job_field(job_title) is None
+        need_company = clean_optional_job_field(job_company) is None
+        if need_title or need_company:
+            ml = extract_title_company_ml(
+                full_text,
+                source_url=job_source_url,
+                existing_title=job_title,
+                existing_company=job_company,
+            )
+            if need_title and ml.get("title"):
+                title_to_set = ml["title"]
+            if need_company and ml.get("company"):
+                company_to_set = ml["company"]
+            if title_to_set or company_to_set:
+                logger.info(
+                    "metadata_ml_extracted",
+                    job_id=job_id,
+                    title=title_to_set,
+                    company=company_to_set,
+                    explain=ml.get("explain"),
+                )
+    except Exception as meta_err:
+        logger.warning("metadata_ml_classify_failed", job_id=job_id, error=str(meta_err))
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_session() as session:
@@ -337,20 +366,30 @@ async def encode_job(job_id: str) -> bool:
         row.requires_security_clearance = bool(clearance)
         row.encoded_at = now
 
-        if work_mode_to_set:
+        if work_mode_to_set or title_to_set or company_to_set:
             job_row = (
                 await session.execute(select(Job).where(Job.id == job_id))
             ).scalar_one_or_none()
-            if job_row is not None and not (job_row.work_mode or "").strip():
-                job_row.work_mode = work_mode_to_set
+            if job_row is not None:
+                if work_mode_to_set and not (job_row.work_mode or "").strip():
+                    job_row.work_mode = work_mode_to_set
+                if title_to_set and not clean_optional_job_field(job_row.title):
+                    job_row.title = title_to_set[:500]
+                if company_to_set and not clean_optional_job_field(job_row.company):
+                    job_row.company = company_to_set[:500]
             if job_extraction_id:
                 ext_row = (
                     await session.execute(
                         select(JobExtraction).where(JobExtraction.id == job_extraction_id)
                     )
                 ).scalar_one_or_none()
-                if ext_row is not None and not (ext_row.work_mode or "").strip():
-                    ext_row.work_mode = work_mode_to_set
+                if ext_row is not None:
+                    if work_mode_to_set and not (ext_row.work_mode or "").strip():
+                        ext_row.work_mode = work_mode_to_set
+                    if title_to_set and not clean_optional_job_field(ext_row.title):
+                        ext_row.title = title_to_set[:500]
+                    if company_to_set and not clean_optional_job_field(ext_row.company):
+                        ext_row.company = company_to_set[:500]
 
     logger.info(
         "job_encoded",
@@ -360,6 +399,8 @@ async def encode_job(job_id: str) -> bool:
         clearance=clearance,
         industry_chars=len(industry_text),
         work_mode=work_mode_to_set or job_work_mode,
+        title=title_to_set or job_title,
+        company=company_to_set or job_company,
     )
     return True
 

@@ -56,6 +56,19 @@ _LABEL_MAP: dict[str, str] = {
     "occupationalCategory": "Category",
 }
 
+# Nested schema.org objects carry their value under one of these keys. They must
+# be read inline: recursing instead re-labels ``hiringOrganization.name`` through
+# _LABEL_MAP as "Title", which hid the employer behind a bare "Company:" line.
+_INLINE_VALUE_KEYS = ("name", "value", "text")
+
+
+def _inline_value(obj: dict) -> str | None:
+    for key in _INLINE_VALUE_KEYS:
+        raw = obj.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
 
 class APIDetectorExtractor(BaseExtractor):
     @property
@@ -98,8 +111,73 @@ class APIDetectorExtractor(BaseExtractor):
             success=True,
             method=self.method,
             raw_content=plain_text,
-            structured_data=None,
+            structured_data=self._structured_fields(json_ld_data) or None,
         )
+
+    def _structured_fields(self, data: dict) -> dict[str, Any]:
+        """Map schema.org JobPosting keys to the hydrator's structured fields.
+
+        These are declared fields, so hydrate can fill title/company directly
+        without falling back to MiniLM span ranking over the page text.
+        """
+        out: dict[str, Any] = {}
+
+        for key in ("title", "name"):
+            raw = data.get(key)
+            if isinstance(raw, str) and raw.strip():
+                out["title"] = raw.strip()
+                break
+
+        org = data.get("hiringOrganization")
+        if isinstance(org, dict):
+            name = _inline_value(org)
+            if name:
+                out["company"] = name
+        elif isinstance(org, str) and org.strip():
+            out["company"] = org.strip()
+
+        location = self._location_text(data.get("jobLocation"))
+        if location:
+            out["location"] = location
+
+        employment = data.get("employmentType")
+        if isinstance(employment, list):
+            employment = ", ".join(e for e in employment if isinstance(e, str))
+        if isinstance(employment, str) and employment.strip():
+            out["employment_type"] = employment.strip()
+
+        if str(data.get("jobLocationType") or "").upper() == "TELECOMMUTE":
+            out["workplace"] = "remote"
+
+        return out
+
+    def _location_text(self, node: Any) -> str | None:
+        if isinstance(node, list):
+            for item in node:
+                found = self._location_text(item)
+                if found:
+                    return found
+            return None
+        if isinstance(node, str):
+            return node.strip() or None
+        if not isinstance(node, dict):
+            return None
+
+        address = node.get("address")
+        if isinstance(address, dict):
+            parts = [
+                address.get("addressLocality"),
+                address.get("addressRegion"),
+                address.get("addressCountry"),
+            ]
+            text = ", ".join(
+                p.strip() for p in parts if isinstance(p, str) and p.strip()
+            )
+            if text:
+                return text
+        if isinstance(address, str) and address.strip():
+            return address.strip()
+        return _inline_value(node)
 
     def _find_json_ld(self, html_content: str) -> dict | None:
         try:
@@ -194,6 +272,13 @@ class APIDetectorExtractor(BaseExtractor):
                     items = [v.strip() for v in value if v.strip()]
                     if items:
                         parts.append(f"{label}: {', '.join(items)}")
+                elif label and isinstance(value, dict) and _inline_value(value):
+                    parts.append(f"{label}: {_inline_value(value)}")
+                    rest = {
+                        k: v for k, v in value.items() if k not in _INLINE_VALUE_KEYS
+                    }
+                    if rest:
+                        self._walk(rest, parts, depth + 1)
                 else:
                     if label and isinstance(value, (dict, list)):
                         parts.append(f"{label}:")
