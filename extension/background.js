@@ -3,7 +3,6 @@
 
 import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/store.js";
 import { isDashboardUrl } from "./src/backendOrigin.js";
-import "./src/jobSiteConnect.js";
 
 const BRIDGE_FILE = "content/webapp-bridge.js";
 
@@ -155,38 +154,6 @@ function scriptsForEngine(engineId) {
 // Key under which we stash the job the dashboard asked us to apply to, so the
 // side panel can pick it up whether it is already open or opened afterwards.
 const PENDING_JOB_KEY = "pendingWebappJob";
-
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg && msg.type === "GET_JOB_SITE_COOKIES") {
-    const domains = Array.isArray(msg.domains) ? msg.domains : [];
-    const origins = Array.isArray(msg.origins) ? msg.origins.filter(Boolean) : [];
-    (async () => {
-      try {
-        // Without the grant chrome.cookies is not even defined here, which
-        // would surface as an opaque TypeError. Report it as something the UI
-        // can act on instead -- the side panel is where it can be granted.
-        const allowed = await chrome.permissions.contains({
-          permissions: ["cookies"],
-          origins,
-        });
-        if (!allowed) {
-          sendResponse({ ok: false, error: "permission_required" });
-          return;
-        }
-        const cookies = [];
-        for (const domain of domains) {
-          const part = await chrome.cookies.getAll({ domain: String(domain) });
-          cookies.push(...part);
-        }
-        sendResponse({ ok: cookies.length > 0, cookies, error: cookies.length ? null : "no_cookies" });
-      } catch (err) {
-        sendResponse({ ok: false, error: String((err && err.message) || err) });
-      }
-    })();
-    return true;
-  }
-  return false;
-});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "SYNC_BACKEND_URL" && msg.backendUrl) {

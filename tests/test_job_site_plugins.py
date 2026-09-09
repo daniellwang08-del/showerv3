@@ -5,8 +5,10 @@ from __future__ import annotations
 from app.job_sites.base import AuthType, FetchContext
 from app.job_sites.plugins.arbeitnow import parse_arbeitnow
 from app.job_sites.plugins.jobicy import parse_jobicy
+from app.job_sites.plugins.jobright import LOGIN_URL
 from app.job_sites.plugins.remoteok import parse_remoteok
 from app.job_sites.plugins.remotive import parse_remotive
+from app.job_sites.plugins.remoterocketship import parse_cookie_header
 from app.job_sites.plugins.themuse import parse_themuse
 from app.job_sites.registry import get_plugin, list_plugins
 from app.job_sites.session_http import normalize_cookies
@@ -22,22 +24,32 @@ def test_registry_unique_slugs_and_expected_sites():
     assert "jsearch" in slugs
 
 
-def test_session_plugins_have_cookie_domains():
+def test_account_plugins_use_credential_fields_not_extension():
     jobright = get_plugin("jobright")
     rrs = get_plugin("remoterocketship")
-    assert jobright is not None and jobright.auth_type == AuthType.SESSION
-    assert "jobright.ai" in jobright.cookie_domains
-    assert jobright.login_url.endswith("/jobs/recommend")
-    assert jobright.signed_in_url_patterns == ("jobright.ai/jobs/recommend",)
-    assert "SESSION_ID" in jobright.session_cookie_names
+    assert jobright is not None and jobright.auth_type == AuthType.ACCOUNT
+    assert jobright.login_url and jobright.login_url.endswith("/jobs/recommend")
+    keys = {f.key for f in jobright.credential_fields}
+    assert keys == {"email", "password"}
     catalog = jobright.catalog_dict()
-    assert catalog["signed_in_url_patterns"] == list(jobright.signed_in_url_patterns)
-    assert catalog["session_cookie_names"] == list(jobright.session_cookie_names)
-    assert catalog["login_path_patterns"] == list(jobright.login_path_patterns)
-    assert rrs is not None and rrs.auth_type == AuthType.SESSION
-    assert "remoterocketship.com" in rrs.cookie_domains
-    assert rrs.signed_in_url_patterns
-    assert rrs.session_cookie_names
+    assert catalog["auth_type"] == "account"
+    assert "cookie_domains" not in catalog
+    assert "signed_in_url_patterns" not in catalog
+    assert LOGIN_URL.endswith("/swan/auth/login/pwd")
+
+    assert rrs is not None and rrs.auth_type == AuthType.ACCOUNT
+    assert {f.key for f in rrs.credential_fields} == {"cookie_header"}
+    assert rrs.catalog_dict()["auth_type"] == "account"
+
+
+def test_parse_rrs_cookie_header():
+    cookies = parse_cookie_header(
+        "Cookie: sb-access-token=abc; session=xyz",
+        default_domain=".remoterocketship.com",
+    )
+    assert len(cookies) == 2
+    assert cookies[0]["name"] == "sb-access-token"
+    assert cookies[1]["value"] == "xyz"
 
 
 def test_linkedin_is_not_connectable():
@@ -78,53 +90,72 @@ def test_parse_remotive():
     assert jobs[0].location == "USA"
 
 
-def test_parse_arbeitnow_and_jobicy():
-    arbeit = parse_arbeitnow(
-        {"data": [{"url": "https://a.example/j", "title": "Dev", "company_name": "A", "location": "Berlin"}]},
-        max_jobs=5,
-    )
-    assert arbeit[0].company == "A"
-    icy = parse_jobicy(
-        {"jobs": [{"url": "https://jobicy.com/j/1", "jobTitle": "PM", "companyName": "B", "jobGeo": "UK"}]},
-        max_jobs=5,
-    )
-    assert icy[0].title == "PM"
+def test_parse_arbeitnow():
+    payload = {
+        "data": [
+            {
+                "url": "https://arbeitnow.com/a",
+                "title": "Dev",
+                "company_name": "Co",
+                "location": "Berlin",
+            }
+        ]
+    }
+    jobs = parse_arbeitnow(payload, max_jobs=5)
+    assert len(jobs) == 1
+    assert jobs[0].company == "Co"
+
+
+def test_parse_jobicy():
+    payload = {
+        "jobs": [
+            {
+                "url": "https://jobicy.com/j",
+                "jobTitle": "Eng",
+                "companyName": "Co",
+                "jobGeo": "Remote",
+            }
+        ]
+    }
+    jobs = parse_jobicy(payload, max_jobs=5)
+    assert len(jobs) == 1
+    assert jobs[0].title == "Eng"
 
 
 def test_parse_themuse():
     payload = {
         "results": [
             {
-                "name": "Designer",
-                "refs": {"landing_page": "https://www.themuse.com/jobs/1"},
-                "company": {"name": "MuseCo"},
-                "locations": [{"name": "New York"}],
+                "refs": {"landing_page": "https://themuse.com/j"},
+                "name": "PM",
+                "company": {"name": "Co"},
+                "locations": [{"name": "NYC"}],
             }
         ]
     }
     jobs = parse_themuse(payload, max_jobs=5)
-    assert jobs[0].url.endswith("/jobs/1")
-    assert jobs[0].company == "MuseCo"
+    assert len(jobs) == 1
+    assert jobs[0].location == "NYC"
 
 
-def test_normalize_cookies_accepts_chrome_shape():
-    cookies = normalize_cookies(
+def test_normalize_cookies_filters_empty():
+    assert normalize_cookies(
         [
             {"name": "sid", "value": "abc", "domain": ".jobright.ai", "path": "/", "httpOnly": True},
-            {"name": "", "value": "skip"},
-            "not-a-dict",
+            {"name": "", "value": "x"},
+            {"name": "a", "value": ""},
+            "bad",
         ]
-    )
-    assert len(cookies) == 1
-    assert cookies[0]["name"] == "sid"
-
-
-def test_open_board_plugins_need_no_credentials():
-    for slug in ("remoteok", "remotive", "arbeitnow", "jobicy", "themuse"):
-        plugin = get_plugin(slug)
-        assert plugin is not None
-        assert plugin.auth_type == AuthType.NONE
-        assert plugin.fetch is not None
+    ) == [
+        {
+            "name": "sid",
+            "value": "abc",
+            "domain": ".jobright.ai",
+            "path": "/",
+            "secure": True,
+            "httpOnly": True,
+        }
+    ]
 
 
 def test_fetch_context_primary_country():

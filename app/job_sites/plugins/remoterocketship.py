@@ -1,4 +1,4 @@
-"""RemoteRocketship — listing API with the user's logged-in cookies."""
+"""RemoteRocketship — listing API with a pasted browser session cookie header."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from typing import Any
 from urllib.parse import quote
 
-from app.job_sites.base import AuthType, FetchContext, JobSitePlugin
+from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin
 from app.job_sites.registry import register
 from app.job_sites.session_http import (
     cookies_for_domain,
@@ -20,6 +20,56 @@ HEADERS = {
     "Referer": "https://www.remoterocketship.com/",
     "Origin": "https://www.remoterocketship.com",
 }
+
+
+def parse_cookie_header(raw: str, *, default_domain: str) -> list[dict]:
+    """Parse a Cookie request header or `name=value; name2=value2` paste."""
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    # Allow users to paste the full "Cookie: a=b; c=d" line.
+    if text.lower().startswith("cookie:"):
+        text = text.split(":", 1)[1].strip()
+    out: list[dict] = []
+    for part in text.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name or not value:
+            continue
+        out.append(
+            {
+                "name": name,
+                "value": value,
+                "domain": default_domain,
+                "path": "/",
+                "secure": True,
+                "httpOnly": True,
+            }
+        )
+    return out
+
+
+def resolve_rrs_cookies(credentials: dict[str, Any]) -> list[dict]:
+    cookies = cookies_for_domain(
+        normalize_cookies(credentials.get("cookies")), "remoterocketship.com"
+    )
+    if cookies:
+        return cookies
+    pasted = parse_cookie_header(
+        str(credentials.get("cookie_header") or ""),
+        default_domain=".remoterocketship.com",
+    )
+    if pasted:
+        credentials["cookies"] = pasted
+        return pasted
+    raise ValueError(
+        "Paste your RemoteRocketship Cookie header from DevTools "
+        "(Application → Cookies, or the Cookie request header)."
+    )
 
 
 def _query(page: int) -> dict:
@@ -78,13 +128,7 @@ def _jobs_from_payload(payload: Any) -> list[dict]:
 
 
 async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJob]:
-    cookies = cookies_for_domain(
-        normalize_cookies(credentials.get("cookies")), "remoterocketship.com"
-    )
-    if not cookies:
-        raise ValueError(
-            "No RemoteRocketship session cookies. Sign in and capture your session."
-        )
+    cookies = resolve_rrs_cookies(credentials)
 
     q = quote(json.dumps(_query(1), separators=(",", ":")))
     payload = await get_json_with_cookies(
@@ -135,21 +179,18 @@ register(
         blurb="Pull remote roles from your RemoteRocketship account (newest first).",
         homepage="https://www.remoterocketship.com/",
         login_url="https://www.remoterocketship.com/log-in/",
-        auth_type=AuthType.SESSION,
+        auth_type=AuthType.ACCOUNT,
         logo_file="remoterocketship.svg",
         sort_order=20,
-        cookie_domains=("remoterocketship.com",),
-        host_origins=(
-            "https://*.remoterocketship.com/*",
-            "https://www.remoterocketship.com/*",
-            "https://remoterocketship.com/*",
+        credential_fields=(
+            CredentialField(
+                key="cookie_header",
+                label="Cookie header",
+                placeholder="Paste Cookie header after signing in (DevTools → Network → any request → Cookie)",
+                help_url="https://www.remoterocketship.com/log-in/",
+                secret=True,
+            ),
         ),
-        signed_in_url_patterns=(
-            "remoterocketship.com/remote-jobs",
-            "remoterocketship.com/jobs",
-        ),
-        session_cookie_names=("session", "token", "auth", "jwt", "sb-", "supabase"),
-        login_path_patterns=("/log-in", "/login", "/signin", "/sign-in"),
         fetch=_fetch,
     )
 )

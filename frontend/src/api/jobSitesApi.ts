@@ -1,6 +1,6 @@
 import { apiClient } from './client';
 
-export type JobSiteAuthType = 'none' | 'api_key' | 'session' | 'unavailable';
+export type JobSiteAuthType = 'none' | 'api_key' | 'account' | 'unavailable';
 
 export interface JobSiteCredentialField {
   key: string;
@@ -22,11 +22,6 @@ export interface JobSitePlugin {
   unavailable_reason: string | null;
   logo_src: string;
   sort_order: number;
-  cookie_domains: string[];
-  host_origins: string[];
-  signed_in_url_patterns?: string[];
-  session_cookie_names?: string[];
-  login_path_patterns?: string[];
   credential_fields: JobSiteCredentialField[];
 }
 

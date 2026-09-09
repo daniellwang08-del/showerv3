@@ -1,27 +1,12 @@
-"""One-time browser authentication for job platforms.
+"""Local Scrapy spider session helpers (disk cookies / Playwright setup).
 
-Primary flow (`capture`) — keep your current Chrome open:
-  1. Opens the site in your already-running Chrome session.
-  2. You sign in there (Cloudflare / Google / etc.).
-  3. A tiny local Chrome extension exports live cookies (including HttpOnly)
-     to this app via http://127.0.0.1:8765.
+Dashboard Integrations connect does NOT use this module or any extension:
+  • Jobright — email + password (server-side login)
+  • RemoteRocketship — pasted Cookie header
 
-Evidence for this design:
-  - Launching chrome.exe with only a URL reuses the active session
-    ("Opening in existing browser session").
-  - Chrome 136+ ignores CDP on the default User Data path.
-  - Chrome locks Cookies SQLite exclusively while running (WinError 32),
-    so Python cannot read HttpOnly cookies from disk until Chrome exits.
-  - chrome.cookies in an MV3 extension CAN read the live session.
-
-Usage (cmd.exe):
+CLI usage for offline spiders:
     python -m app.scraper.auth capture rrs
     python -m app.scraper.auth capture jobright
-
-One-time: Load unpacked extension from
-  app/scraper/session_export_extension
-in chrome://extensions (Developer mode).
-
     python -m app.scraper.auth status <platform>
     python -m app.scraper.auth clear <platform>
 
@@ -513,10 +498,6 @@ def open_url_in_existing_chrome(url: str) -> None:
     )
 
 
-def _extension_dir() -> Path:
-    return Path(__file__).resolve().parent / "session_export_extension"
-
-
 def _try_disk_cookie_export(cfg: dict) -> list[dict] | None:
     """Best-effort disk export (works when Chrome is closed / DB not exclusive-locked)."""
     try:
@@ -531,22 +512,21 @@ def _try_disk_cookie_export(cfg: dict) -> list[dict] | None:
 
 
 def capture_session(platform_key: str, *, timeout_sec: int = DEFAULT_LOGIN_TIMEOUT_SEC) -> bool:
-    """Open site in the active Chrome session and capture cookies without killing Chrome."""
-    from app.scraper.session_bridge import SessionBridge
+    """Capture cookies for local Scrapy spiders (disk export only).
 
+    Dashboard job-site connect no longer uses the browser extension:
+    Jobright uses email/password on Integrations; RemoteRocketship uses a
+    pasted Cookie header. This CLI path remains for offline Scrapy runs.
+    """
+    del timeout_sec  # kept for CLI signature compatibility
     cfg = _get_platform(platform_key)
-    ext_dir = _extension_dir()
 
-    print(f"\n=== {cfg['label']} Session Capture ===")
-    print("Chrome stays open. No taskkill. No CDP on your default profile.\n")
-    print("One-time setup (if you have not done it yet):")
-    print("  1) Open chrome://extensions")
-    print("  2) Enable Developer mode")
-    print("  3) Load unpacked → select this folder:")
-    print(f"     {ext_dir}")
+    print(f"\n=== {cfg['label']} Session Capture (CLI) ===")
+    print("Preferred for the web app: Integrations → Connect (no extension).")
+    print("  • Jobright: email + password")
+    print("  • RemoteRocketship: paste Cookie header from DevTools")
     print()
 
-    # Fast path: if disk cookies are readable, use them (Chrome closed / unlocked).
     disk_cookies = _try_disk_cookie_export(cfg)
     if disk_cookies:
         _save_session(disk_cookies, cfg["session_file"])
@@ -554,52 +534,10 @@ def capture_session(platform_key: str, *, timeout_sec: int = DEFAULT_LOGIN_TIMEO
         print(f"Location: {cfg['session_file']}\n")
         return True
 
-    def on_export(platform: str, cookies: list[dict]) -> dict:
-        filtered = _filter_platform_cookies(cookies, cfg)
-        if not filtered:
-            raise ValueError("No cookies for this platform were provided")
-        _save_session(filtered, cfg["session_file"])
-        return {
-            "ok": True,
-            "platform": platform,
-            "cookie_count": len(filtered),
-            "path": str(cfg["session_file"]),
-        }
-
-    bridge = SessionBridge(platform_key, on_export)
-    try:
-        bridge.start()
-    except OSError as e:
-        print(f"Could not start local bridge on 127.0.0.1:8765: {e}")
-        print("Close whatever is using that port, then retry.")
-        return False
-
-    print(f"Local bridge listening: {bridge.base_url}")
-    open_url_in_existing_chrome(cfg["login_url"])
-    print(f"Opened in your current Chrome session: {cfg['login_url']}")
-    print()
-    print("Now:")
-    print("  1) Finish login / Cloudflare in that Chrome tab")
-    print("  2) Click the 'Job Scraper Session Export' extension icon")
-    print(f"  3) Press 'Export {cfg['label']}'")
-    print("     (or wait — the extension also auto-exports while capture is running)")
-    print()
-
-    result = bridge.wait(timeout_sec=timeout_sec)
-    bridge.stop()
-
-    if not result or not result.get("ok"):
-        print("Capture timed out or failed.")
-        print("Make sure the extension is installed/enabled, then run capture again.")
-        _print_recovery_hints(platform_key)
-        return False
-
-    print(
-        f"\nSession saved successfully! ({result.get('cookie_count', 0)} cookies)"
-    )
-    print(f"Location: {result.get('path')}")
-    print("You can sync the spider now — Chrome can stay open.\n")
-    return True
+    print("Could not read cookies from the Chrome profile on disk.")
+    print("Close Chrome fully and retry, or use Integrations → Connect in the web app.")
+    _print_recovery_hints(platform_key)
+    return False
 
 
 def _resolve_user_data_dir(
@@ -835,12 +773,10 @@ def _local_timezone_id() -> str:
 
 
 def _print_recovery_hints(platform_key: str) -> None:
-    ext_dir = _extension_dir()
-    print("Recommended (keep Chrome open — no taskkill):")
-    print("  1) Load unpacked extension once:")
-    print(f"     {ext_dir}")
-    print(f"  2) python -m app.scraper.auth capture {platform_key}")
-    print("  3) Sign in in the opened Chrome tab, then Export via the extension")
+    print("Recovery options:")
+    print("  • Web app: Integrations → Connect (Jobright email/password, or RRS cookie paste)")
+    print(f"  • CLI disk export: close Chrome fully, then python -m app.scraper.auth capture {platform_key}")
+    print(f"  • Advanced: python -m app.scraper.auth setup {platform_key}")
 
 
 def _wait_for_login(

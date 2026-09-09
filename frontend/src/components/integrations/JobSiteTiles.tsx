@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle,
@@ -6,7 +6,6 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
-  Lock,
   RefreshCw,
   Unplug,
   WifiOff,
@@ -20,13 +19,8 @@ import {
   type JobSiteConnection,
   type JobSitePlugin,
 } from '../../api/jobSitesApi';
-import { InstallExtensionModal } from '../scraper/InstallExtensionModal';
 import { SettingsToggle } from '../shared/SettingsToggle';
 import { Z_INDEX } from '../../constants/zIndex';
-import {
-  startJobSiteConnect,
-  type JobSiteConnectHandle,
-} from '../../lib/extensionBridge';
 import {
   bodyText,
   btnDanger,
@@ -37,33 +31,6 @@ import {
   input,
   mutedText,
 } from '../../ui/tokens';
-
-function sessionConnectError(error: string | undefined, started: boolean): string {
-  switch (error) {
-    case 'extension_missing':
-    case 'no_bridge':
-      return '';
-    case 'permission_denied':
-      return 'Cookie access was declined. Click Connect again and choose "Allow & continue" in the Atomspace side panel.';
-    case 'cookies_unreadable':
-      return 'You appear to be signed in, but the extension cannot read that site\u2019s cookies. Open the Atomspace side panel and allow cookie access, or check the extension\u2019s site access in chrome://extensions.';
-    case 'tab_closed':
-      return 'The sign-in tab was closed before we could capture a session.';
-    case 'no_cookies':
-      return 'Signed in, but no session cookies were readable. Allow cookie access and try again.';
-    case 'timed_out':
-      return started
-        ? 'Sign-in timed out. Open Connect again and finish signing in on the site.'
-        : 'The sign-in tab did not open. Reload this page after enabling the extension, then try again.';
-    case 'cancelled':
-    case 'superseded':
-      return '';
-    default:
-      return error
-        ? `Could not capture the session (${error}).`
-        : 'No session cookies found. Sign in on the site, then try again.';
-  }
-}
 
 function errorDetail(err: unknown, fallback: string): string {
   const detail =
@@ -81,7 +48,7 @@ function formatSyncedAt(iso: string | null): string {
 }
 
 const AUTH_BADGE: Record<string, string> = {
-  session: 'Sign in',
+  account: 'Account',
   api_key: 'API key',
   none: 'Open',
   unavailable: 'Not available',
@@ -95,15 +62,6 @@ export function JobSiteTiles() {
   const [notice, setNotice] = useState('');
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [active, setActive] = useState<JobSitePlugin | null>(null);
-  const [installOpen, setInstallOpen] = useState(false);
-  const [sessionPhase, setSessionPhase] = useState<'idle' | 'permission' | 'waiting' | 'saving'>(
-    'idle',
-  );
-  const [sessionError, setSessionError] = useState('');
-  // Set after an already-present session was rejected, so the next attempt
-  // skips the shortcut and goes through the login tab.
-  const [forceLoginNext, setForceLoginNext] = useState(false);
-  const sessionHandleRef = useRef<JobSiteConnectHandle | null>(null);
 
   const bySlug = useMemo(() => {
     const map = new Map<string, JobSiteConnection>();
@@ -162,106 +120,6 @@ export function JobSiteTiles() {
     }
   };
 
-  const abortSessionConnect = useCallback((error = 'cancelled') => {
-    const handle = sessionHandleRef.current;
-    sessionHandleRef.current = null;
-    handle?.abort(error);
-    setSessionPhase('idle');
-    setBusySlug(null);
-  }, []);
-
-  // Declared as a function so it can call itself: a session the user already
-  // had may turn out to be stale, and the retry has to go through the login tab.
-  function beginSessionConnect(
-    plugin: JobSitePlugin,
-    { forceLogin = false }: { forceLogin?: boolean } = {},
-  ) {
-    const prev = sessionHandleRef.current;
-    sessionHandleRef.current = null;
-    prev?.abort('superseded', false);
-
-    setActive(plugin);
-    setBusySlug(plugin.slug);
-    setError('');
-    setSessionError('');
-    setForceLoginNext(false);
-    setSessionPhase('permission');
-
-    const handle = startJobSiteConnect({
-      slug: plugin.slug,
-      name: plugin.name,
-      loginUrl: plugin.login_url || plugin.homepage,
-      domains: plugin.cookie_domains,
-      origins: plugin.host_origins || [],
-      signedInUrlPatterns: plugin.signed_in_url_patterns || [],
-      sessionCookieNames: plugin.session_cookie_names || [],
-      loginPathPatterns: plugin.login_path_patterns || [],
-      forceLogin,
-      onStarted: ({ awaitingPermission }) =>
-        setSessionPhase(awaitingPermission ? 'permission' : 'waiting'),
-    });
-    sessionHandleRef.current = handle;
-
-    void (async () => {
-      const result = await handle.promise;
-      if (sessionHandleRef.current !== handle) return;
-      sessionHandleRef.current = null;
-
-      if (!result.ok || !result.cookies?.length) {
-        setBusySlug(null);
-        setSessionPhase('idle');
-        if (result.error === 'cancelled' || result.error === 'superseded') return;
-        if (result.error === 'extension_missing') {
-          setActive(null);
-          setInstallOpen(true);
-          return;
-        }
-        if (result.error === 'no_bridge') {
-          setSessionError(
-            'Reload the Atomspace extension and this tab, then click Connect again.',
-          );
-          return;
-        }
-        setSessionError(sessionConnectError(result.error, Boolean(result.started)));
-        return;
-      }
-
-      setSessionPhase('saving');
-      try {
-        const row = await connectJobSite(plugin.slug, { cookies: result.cookies });
-        setConnections((prevRows) => {
-          const next = prevRows.filter((c) => c.plugin_slug !== row.plugin_slug);
-          next.push(row);
-          return next;
-        });
-        setNotice(
-          `${plugin.name} connected — first sync started. New jobs appear on your dashboard shortly.`,
-        );
-        setActive(null);
-        setSessionError('');
-      } catch (err: unknown) {
-        const detail = errorDetail(err, `Failed to connect ${plugin.name}.`);
-        // Deliberately NOT reopening the login tab here. In the common case the
-        // user is already signed in, so a login tab changes nothing and they
-        // just watch "Waiting for sign-in" until it times out while the real
-        // reason for the failure is never shown. Report what the site actually
-        // said, and let the next click decide to re-authenticate.
-        if (result.preexisting) {
-          setForceLoginNext(true);
-          setSessionError(
-            `${detail} That used the ${plugin.name} session already in your browser. ` +
-              'If you have since signed out, click "Open site & connect" to capture a fresh one.',
-          );
-        } else {
-          setSessionError(detail);
-        }
-      } finally {
-        setBusySlug(null);
-        setSessionPhase('idle');
-      }
-    })();
-  }
-
   const handleSync = async (plugin: JobSitePlugin) => {
     setBusySlug(plugin.slug);
     setError('');
@@ -281,8 +139,8 @@ export function JobSiteTiles() {
       <div>
         <h2 className={`text-sm font-bold ${headingText}`}>Job sites</h2>
         <p className={`mt-0.5 text-xs ${mutedText}`}>
-          Connect boards with your account, API keys, or session cookies. New openings are pulled
-          into your pipeline automatically every few hours.
+          Connect boards with your account, API keys, or public feeds. New openings are pulled into
+          your pipeline automatically every few hours.
         </p>
       </div>
 
@@ -301,13 +159,7 @@ export function JobSiteTiles() {
                 plugin={plugin}
                 connection={connection}
                 busy={busy}
-                onOpen={() => {
-                  if (plugin.auth_type === 'session' && plugin.connectable && !connection) {
-                    beginSessionConnect(plugin);
-                    return;
-                  }
-                  setActive(plugin);
-                }}
+                onOpen={() => setActive(plugin)}
                 onToggle={() => connection && void handleToggle(plugin, connection)}
                 onSync={() => void handleSync(plugin)}
               />
@@ -331,15 +183,7 @@ export function JobSiteTiles() {
           plugin={active}
           connection={bySlug.get(active.slug) ?? null}
           busy={busySlug === active.slug}
-          sessionPhase={sessionPhase}
-          sessionError={sessionError}
-          onClose={() => {
-            if (sessionPhase === 'saving') return;
-            abortSessionConnect();
-            setActive(null);
-            setSessionError('');
-          }}
-          onStartSession={() => beginSessionConnect(active, { forceLogin: forceLoginNext })}
+          onClose={() => setActive(null)}
           onConnected={(row) => {
             setConnections((prev) => {
               const next = prev.filter((c) => c.plugin_slug !== row.plugin_slug);
@@ -356,12 +200,6 @@ export function JobSiteTiles() {
           onError={setError}
         />
       ) : null}
-
-      <InstallExtensionModal
-        open={installOpen}
-        onClose={() => setInstallOpen(false)}
-        onInstalled={() => setInstallOpen(false)}
-      />
     </div>
   );
 }
@@ -457,10 +295,7 @@ function JobSiteConnectModal({
   plugin,
   connection,
   busy,
-  sessionPhase,
-  sessionError,
   onClose,
-  onStartSession,
   onConnected,
   onDisconnect,
   onBusy,
@@ -469,10 +304,7 @@ function JobSiteConnectModal({
   plugin: JobSitePlugin;
   connection: JobSiteConnection | null;
   busy: boolean;
-  sessionPhase: 'idle' | 'permission' | 'waiting' | 'saving';
-  sessionError: string;
   onClose: () => void;
-  onStartSession: () => void;
   onConnected: (row: JobSiteConnection) => void;
   onDisconnect: () => void;
   onBusy: (slug: string | null) => void;
@@ -480,7 +312,6 @@ function JobSiteConnectModal({
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [localError, setLocalError] = useState('');
-  const sessionBusy = sessionPhase !== 'idle';
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -504,21 +335,8 @@ function JobSiteConnectModal({
     }
   };
 
-  const probesAuthViaLoginUrl = (plugin.signed_in_url_patterns || []).some((p) =>
-    (plugin.login_url || '').toLowerCase().includes(String(p).toLowerCase()),
-  );
-  const sessionStatusText =
-    sessionPhase === 'permission'
-      ? `Allow cookie access in the Atomspace side panel, then sign in on the ${plugin.name} tab.`
-      : sessionPhase === 'waiting'
-        ? probesAuthViaLoginUrl
-          ? `Sign in on the ${plugin.name} tab until the recommendations page finishes loading. If you are already signed in, that tab should stay on recommendations and close on its own.`
-          : `Sign in on the ${plugin.name} tab we opened. We will capture the session and close that tab automatically.`
-        : sessionPhase === 'saving'
-          ? 'Saving your session…'
-          : probesAuthViaLoginUrl
-            ? `Connect opens ${plugin.name} recommendations. Signed-in sessions stay there; otherwise sign in until recommendations load — we capture the session and close the tab.`
-            : `Connect opens ${plugin.name} in a new tab. After you sign in, we capture the live session and close that tab.`;
+  const usesCredentialForm =
+    plugin.auth_type === 'api_key' || plugin.auth_type === 'account';
 
   return createPortal(
     <div
@@ -527,7 +345,7 @@ function JobSiteConnectModal({
       role="dialog"
       aria-modal="true"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !sessionBusy) onClose();
+        if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
       <div className={`w-full max-w-md p-5 ${card}`}>
@@ -544,15 +362,43 @@ function JobSiteConnectModal({
         <div className={`mt-4 space-y-3 text-sm ${bodyText}`}>
           {!plugin.connectable ? (
             <p className={mutedText}>{plugin.unavailable_reason}</p>
-          ) : plugin.auth_type === 'session' ? (
-            <p className={`flex items-start gap-2 text-xs leading-relaxed ${mutedText}`}>
-              {sessionBusy ? (
-                <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
-              ) : null}
-              <span>{sessionStatusText}</span>
-            </p>
-          ) : plugin.auth_type === 'api_key' ? (
+          ) : usesCredentialForm ? (
             <div className="space-y-2.5">
+              {plugin.auth_type === 'account' && plugin.login_url ? (
+                <p className={`text-xs leading-relaxed ${mutedText}`}>
+                  {plugin.slug === 'remoterocketship' ? (
+                    <>
+                      Sign in on{' '}
+                      <a
+                        href={plugin.login_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-sky-600 hover:underline"
+                      >
+                        RemoteRocketship
+                        <ExternalLink size={11} className="ml-0.5 inline" />
+                      </a>
+                      , then paste the Cookie header from DevTools. We verify it against the live
+                      API — no browser extension required.
+                    </>
+                  ) : (
+                    <>
+                      Enter the same email and password you use on{' '}
+                      <a
+                        href={plugin.homepage}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-sky-600 hover:underline"
+                      >
+                        {plugin.name}
+                        <ExternalLink size={11} className="ml-0.5 inline" />
+                      </a>
+                      . We sign in server-side and verify against the live API — no browser
+                      extension required.
+                    </>
+                  )}
+                </p>
+              ) : null}
               {plugin.credential_fields.map((field) => (
                 <label key={field.key} className="block">
                   <span className={`mb-1 flex items-center justify-between text-xs font-semibold ${mutedText}`}>
@@ -564,19 +410,34 @@ function JobSiteConnectModal({
                         rel="noreferrer"
                         className="font-medium text-sky-600 hover:underline"
                       >
-                        Get key
+                        {plugin.auth_type === 'account' ? 'Open site' : 'Get key'}
                         <ExternalLink size={11} className="ml-0.5 inline" />
                       </a>
                     ) : null}
                   </span>
-                  <input
-                    type={field.secret ? 'password' : 'text'}
-                    value={values[field.key] ?? ''}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                    placeholder={field.placeholder}
-                    className={input}
-                    autoComplete="off"
-                  />
+                  {field.key === 'cookie_header' ? (
+                    <textarea
+                      value={values[field.key] ?? ''}
+                      onChange={(e) =>
+                        setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+                      }
+                      placeholder={field.placeholder}
+                      className={`${input} min-h-[88px] resize-y font-mono text-xs`}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  ) : (
+                    <input
+                      type={field.secret ? 'password' : field.key === 'email' ? 'email' : 'text'}
+                      value={values[field.key] ?? ''}
+                      onChange={(e) =>
+                        setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+                      }
+                      placeholder={field.placeholder}
+                      className={input}
+                      autoComplete={field.key === 'email' ? 'username' : 'off'}
+                    />
+                  )}
                 </label>
               ))}
             </div>
@@ -587,7 +448,7 @@ function JobSiteConnectModal({
             </p>
           )}
 
-          {connection && plugin.auth_type !== 'session' ? (
+          {connection ? (
             <p className={`text-xs ${mutedText}`}>
               {Object.entries(connection.credential_hints)
                 .map(([k, v]) => `${k}: ${v}`)
@@ -595,50 +456,25 @@ function JobSiteConnectModal({
             </p>
           ) : null}
 
-          {connection && plugin.auth_type === 'session' && !sessionBusy ? (
-            <p className={`text-xs ${mutedText}`}>
-              {Object.entries(connection.credential_hints)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join(' · ') || 'Connected'}
-            </p>
-          ) : null}
-
-          {sessionError || localError ? (
+          {localError ? (
             <p className="flex items-start gap-1.5 text-sm font-medium text-rose-700 dark:text-rose-400">
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
-              {sessionError || localError}
+              {localError}
             </p>
           ) : null}
         </div>
 
         <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
-          {connection && !sessionBusy ? (
+          {connection ? (
             <button type="button" onClick={onDisconnect} disabled={busy} className={btnDanger}>
               <Unplug size={14} />
               Disconnect
             </button>
           ) : null}
-          <button type="button" onClick={onClose} className={btnSecondary} disabled={sessionPhase === 'saving'}>
-            {sessionBusy ? 'Cancel' : 'Close'}
+          <button type="button" onClick={onClose} className={btnSecondary} disabled={busy}>
+            Close
           </button>
-          {plugin.connectable && plugin.auth_type === 'session' ? (
-            <button
-              type="button"
-              onClick={onStartSession}
-              disabled={busy || sessionBusy}
-              className={btnPrimary}
-            >
-              {sessionBusy ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
-              {sessionBusy
-                ? sessionPhase === 'saving'
-                  ? 'Saving…'
-                  : 'Waiting for sign-in…'
-                : connection
-                  ? 'Reconnect'
-                  : 'Open site & connect'}
-            </button>
-          ) : null}
-          {plugin.connectable && plugin.auth_type === 'api_key' ? (
+          {plugin.connectable && usesCredentialForm ? (
             <button
               type="button"
               onClick={() => void submitCredentials()}
@@ -646,7 +482,7 @@ function JobSiteConnectModal({
               className={btnPrimary}
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-              {connection ? 'Update keys' : 'Verify & connect'}
+              {connection ? 'Update & verify' : 'Verify & connect'}
             </button>
           ) : null}
           {plugin.connectable && plugin.auth_type === 'none' && !connection ? (

@@ -1,22 +1,17 @@
-// Bridge to the "Job Application Assistant" browser extension.
+// Bridge to the Atomspace browser extension (Apply Assistant + install detect).
 //
 // Detection strategy (most reliable first):
-//   1. web_accessible_resource probe against the extension's FIXED id. The page
-//      simply loads chrome-extension://<id>/installed.svg; if it loads, the
-//      extension is installed. This is independent of content-script injection,
-//      tab state, or page origin - so it works even for tabs that were already
-//      open when the extension was installed, and on LAN IPs / custom domains.
-//   2. content-script postMessage handshake (PING/PONG) as a fallback for pages
-//      whose CSP blocks loading extension subresources.
+//   1. web_accessible_resource probe against the extension's FIXED id.
+//   2. content-script postMessage handshake (PING/PONG) as a fallback.
 //
-// The apply hand-off still travels through the content-script bridge
+// The apply hand-off travels through the content-script bridge
 // (extension/content/webapp-bridge.js) -> background worker.
+//
+// Job-site account connect does NOT use the extension.
 
 const WEBAPP_SOURCE = 'atomspace-webapp';
 const EXT_SOURCE = 'atomspace-extension';
 
-// Fixed id derived from the "key" pinned in extension/manifest.json. If you ever
-// regenerate that key, update this to match (background logs the id on install).
 export const EXTENSION_ID = 'leemdaklomjjbdfmaepplhpbeomhifmn';
 const MARKER_URL = `chrome-extension://${EXTENSION_ID}/installed.svg`;
 
@@ -33,16 +28,12 @@ interface ExtMessage {
   jobId?: string;
 }
 
-// Positive detections are cached for the session (the extension can't be
-// uninstalled without a page reload). Negative results are NOT cached so a
-// user who installs mid-session succeeds on their next click.
 let cachedInstalled: ExtensionInfo | null = null;
 
 function randomId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-/** Direct probe: try to load the extension's web-accessible marker file. */
 function probeMarker(timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     if (typeof document === 'undefined') {
@@ -66,7 +57,6 @@ function probeMarker(timeoutMs: number): Promise<boolean> {
   });
 }
 
-/** Fallback: content-script PING/PONG handshake. */
 function handshake(timeoutMs: number): Promise<ExtensionInfo> {
   if (typeof window === 'undefined') return Promise.resolve({ installed: false });
   return new Promise<ExtensionInfo>((resolve) => {
@@ -98,10 +88,6 @@ function handshake(timeoutMs: number): Promise<ExtensionInfo> {
   });
 }
 
-/**
- * Detect the extension. Tries the direct resource probe first, then the
- * handshake. Resolves { installed: false } if neither responds in time.
- */
 export async function detectExtension(timeoutMs = 1000, force = false): Promise<ExtensionInfo> {
   if (cachedInstalled && !force) return cachedInstalled;
   if (typeof window === 'undefined') return { installed: false };
@@ -122,21 +108,7 @@ const ACK_ATTR = 'data-atomspace-apply-ack';
 
 /**
  * Hand a specific job to the extension AND open its side panel.
- *
- * IMPORTANT: call this synchronously inside the click handler (do NOT `await`
- * anything before it). It dispatches a synchronous DOM CustomEvent so the
- * extension can open the side panel while the user gesture is still valid -
- * user activation would be lost through window.postMessage or any async gap.
- *
- * Returns a promise that resolves `true` once the in-page bridge acknowledges
- * receipt, or `false` if no bridge answered in time (e.g. the dashboard tab
- * predates the extension and hasn't been reloaded) so the caller can fall back.
- *
- * ACK is primarily a synchronous DOM attribute set by the content script during
- * the CustomEvent dispatch. postMessage is only a backup — relying on it alone
- * caused a double-tab bug when the page ignored CS postMessage (`event.source`
- * checks) and then `window.open`'d after the background had already opened the
- * application URL.
+ * Call synchronously inside a click handler (do NOT await before it).
  */
 export function applyViaExtension(jobId: string, url: string | null, timeoutMs = 1200): Promise<boolean> {
   if (typeof window === 'undefined' || typeof document === 'undefined') return Promise.resolve(false);
@@ -158,8 +130,6 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
       resolve(v);
     };
     const onMessage = (event: MessageEvent) => {
-      // Do NOT require event.source === window: content-script postMessage
-      // source handling differs across Chrome builds and was rejecting valid ACKs.
       const data = event.data as ExtMessage | undefined;
       if (!data || data.source !== EXT_SOURCE) return;
       if (data.type === 'APPLY_ACK' && data.requestId === requestId) finish(true);
@@ -168,7 +138,6 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
     window.addEventListener('message', onMessage);
   });
 
-  // Synchronous dispatch - must run within the caller's user gesture.
   try {
     document.dispatchEvent(
       new CustomEvent(APPLY_EVENT, {
@@ -179,7 +148,6 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
     /* ignore */
   }
 
-  // Preferred ACK: content script sets this attribute inside the same turn.
   try {
     if (document.documentElement.getAttribute(ACK_ATTR) === requestId) {
       return Promise.resolve(true);
@@ -191,260 +159,6 @@ export function applyViaExtension(jobId: string, url: string | null, timeoutMs =
   return ack;
 }
 
-export interface CapturedCookie {
-  name: string;
-  value: string;
-  domain?: string;
-  path?: string;
-  secure?: boolean;
-  httpOnly?: boolean;
-  sameSite?: string;
-}
-
-export interface JobSiteConnectResult {
-  ok: boolean;
-  cookies?: CapturedCookie[];
-  error?: string;
-  started?: boolean;
-  /**
-   * True when these cookies came from a session the user already had, rather
-   * than one created in the login tab. They have not been validated yet - the
-   * backend's /connect call is what decides whether the session actually works.
-   */
-  preexisting?: boolean;
-}
-
-export interface JobSiteConnectHandle {
-  requestId: string;
-  promise: Promise<JobSiteConnectResult>;
-  abort: (error?: string, notifyExtension?: boolean) => void;
-}
-
-export interface JobSiteConnectRequest {
-  slug: string;
-  /** Display name, shown in the extension's cookie-access prompt. */
-  name?: string;
-  loginUrl: string;
-  domains: string[];
-  origins: string[];
-  signedInUrlPatterns?: string[];
-  sessionCookieNames?: string[];
-  loginPathPatterns?: string[];
-  timeoutMs?: number;
-  /**
-   * Skip the already-signed-in shortcut and go straight to the login tab. Set
-   * when a pre-existing session was already tried and the backend rejected it.
-   */
-  forceLogin?: boolean;
-  /**
-   * `awaitingPermission` is true when the extension still needs the user to
-   * grant cookie access in its side panel before the login tab can open.
-   */
-  onStarted?: (info: { awaitingPermission: boolean }) => void;
-}
-
-const CONNECT_EVENT = 'atomspace-connect-job-site';
-const ABORT_EVENT = 'atomspace-abort-job-site-connect';
-const CONNECT_STARTED = 'CONNECT_JOB_SITE_SESSION_STARTED';
-const CONNECT_RESULT = 'CONNECT_JOB_SITE_SESSION_RESULT';
-const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
-const BRIDGE_WAIT_MS = 60_000;
-
-function dispatchJsonEvent(name: string, payload: Record<string, unknown>): void {
-  try {
-    document.dispatchEvent(new CustomEvent(name, { detail: JSON.stringify(payload) }));
-  } catch {
-    /* ignore */
-  }
-}
-
-/**
- * Open the job site in a new tab, wait until the user is signed in, then
- * receive live cookies (including HttpOnly) from the extension.
- *
- * MUST be called synchronously from a click handler so Chrome can prompt for
- * cookie permission. Do not await anything before calling this.
- */
-export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectHandle {
-  const requestId = randomId();
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return {
-      requestId,
-      promise: Promise.resolve({ ok: false, error: 'unavailable' }),
-      abort: () => undefined,
-    };
-  }
-
-  let settled = false;
-  let started = false;
-  let abortTimer: number | null = null;
-  let bridgeTimer: number | null = null;
-
-  const cleanup = () => {
-    window.removeEventListener('message', onMessage);
-    if (abortTimer != null) window.clearTimeout(abortTimer);
-    if (bridgeTimer != null) window.clearTimeout(bridgeTimer);
-  };
-
-  let finish: (result: JobSiteConnectResult) => void = () => undefined;
-  const promise = new Promise<JobSiteConnectResult>((resolve) => {
-    finish = (result) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(result);
-    };
-  });
-
-  const onMessage = (event: MessageEvent) => {
-    const data = event.data as {
-      source?: string;
-      type?: string;
-      requestId?: string;
-      ok?: boolean;
-      cookies?: CapturedCookie[];
-      error?: string;
-      awaitingPermission?: boolean;
-      preexisting?: boolean;
-    };
-    if (!data || data.source !== EXT_SOURCE) return;
-    if (data.requestId !== requestId) return;
-    if (data.type === CONNECT_STARTED) {
-      started = true;
-      if (bridgeTimer != null) {
-        window.clearTimeout(bridgeTimer);
-        bridgeTimer = null;
-      }
-      try {
-        req.onStarted?.({ awaitingPermission: Boolean(data.awaitingPermission) });
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-    if (data.type !== CONNECT_RESULT) return;
-    finish({
-      ok: Boolean(data.ok),
-      cookies: data.cookies,
-      error: data.error || undefined,
-      started,
-      preexisting: Boolean(data.preexisting),
-    });
-  };
-
-  window.addEventListener('message', onMessage);
-
-  abortTimer = window.setTimeout(() => {
-    dispatchJsonEvent(ABORT_EVENT, { requestId, error: 'timed_out' });
-    finish({ ok: false, error: 'timed_out', started });
-  }, req.timeoutMs ?? LOGIN_TIMEOUT_MS);
-
-  dispatchJsonEvent(CONNECT_EVENT, {
-    slug: req.slug,
-    name: req.name || req.slug,
-    loginUrl: req.loginUrl,
-    forceLogin: Boolean(req.forceLogin),
-    domains: req.domains,
-    origins: req.origins,
-    signedInUrlPatterns: req.signedInUrlPatterns || [],
-    sessionCookieNames: req.sessionCookieNames || [],
-    loginPathPatterns: req.loginPathPatterns || [],
-    requestId,
-  });
-
-  void detectExtension(1000, true).then((info) => {
-    if (settled) return;
-    if (!info.installed) {
-      dispatchJsonEvent(ABORT_EVENT, { requestId, error: 'extension_missing' });
-      finish({ ok: false, error: 'extension_missing', started: false });
-    }
-  });
-
-  bridgeTimer = window.setTimeout(() => {
-    if (settled || started) return;
-    dispatchJsonEvent(ABORT_EVENT, { requestId, error: 'no_bridge' });
-    finish({ ok: false, error: 'no_bridge', started: false });
-  }, BRIDGE_WAIT_MS);
-
-  const abort = (error = 'cancelled', notifyExtension = true) => {
-    if (notifyExtension) {
-      dispatchJsonEvent(ABORT_EVENT, { requestId, error });
-    }
-    finish({ ok: false, error, started });
-  };
-
-  return { requestId, promise, abort };
-}
-
-export function abortJobSiteConnect(requestId?: string, error = 'cancelled'): void {
-  if (typeof document === 'undefined') return;
-  dispatchJsonEvent(ABORT_EVENT, { requestId: requestId || null, error });
-}
-
-/**
- * Ask the installed extension to read live cookies for a job site.
- * Must be called from a click handler so Chrome can prompt for cookie permission.
- */
-export function captureJobSiteSession(
-  slug: string,
-  domains: string[],
-  origins: string[],
-  timeoutMs = 25000,
-): Promise<{ ok: boolean; cookies?: CapturedCookie[]; error?: string }> {
-  if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return Promise.resolve({ ok: false, error: 'unavailable' });
-  }
-  const requestId = randomId();
-  const CAPTURE_EVENT = 'atomspace-capture-session';
-
-  const ack = new Promise<{ ok: boolean; cookies?: CapturedCookie[]; error?: string }>((resolve) => {
-    let settled = false;
-    const finish = (result: { ok: boolean; cookies?: CapturedCookie[]; error?: string }) => {
-      if (settled) return;
-      settled = true;
-      window.removeEventListener('message', onMessage);
-      window.clearTimeout(timer);
-      resolve(result);
-    };
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as {
-        source?: string;
-        type?: string;
-        requestId?: string;
-        ok?: boolean;
-        cookies?: CapturedCookie[];
-        error?: string;
-      };
-      if (!data || data.source !== EXT_SOURCE) return;
-      if (data.type !== 'CAPTURE_JOB_SITE_SESSION_RESULT') return;
-      if (data.requestId && data.requestId !== requestId) return;
-      finish({
-        ok: Boolean(data.ok),
-        cookies: data.cookies,
-        error: data.error,
-      });
-    };
-    const timer = window.setTimeout(
-      () => finish({ ok: false, error: 'timed_out' }),
-      timeoutMs,
-    );
-    window.addEventListener('message', onMessage);
-  });
-
-  try {
-    document.dispatchEvent(
-      new CustomEvent(CAPTURE_EVENT, {
-        detail: JSON.stringify({ slug, domains, origins, requestId }),
-      }),
-    );
-  } catch {
-    /* ignore */
-  }
-
-  return ack;
-}
-
-/** Forget a cached positive detection (e.g. to re-probe). */
 export function clearExtensionCache(): void {
   cachedInstalled = null;
 }

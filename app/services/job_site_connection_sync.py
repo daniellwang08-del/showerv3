@@ -54,11 +54,18 @@ def credential_hints(plugin_slug: str, credentials: dict) -> dict[str, str]:
     hints: dict[str, str] = {}
     if not plugin:
         return hints
-    if plugin.auth_type == AuthType.SESSION:
+    if plugin.auth_type == AuthType.ACCOUNT:
+        email = str(credentials.get("email") or "").strip()
+        if email:
+            hints["email"] = email
+        if credentials.get("password"):
+            hints["password"] = "••••••••"
         cookies = credentials.get("cookies")
         n = len(cookies) if isinstance(cookies, list) else 0
         if n:
             hints["cookies"] = f"{n} cookies"
+        if credentials.get("cookie_header"):
+            hints["cookie_header"] = "pasted"
         return hints
     for field in plugin.credential_fields:
         value = str(credentials.get(field.key) or "").strip()
@@ -88,20 +95,29 @@ async def verify_and_fetch(plugin_slug: str, credentials: dict, ctx: FetchContex
         raise ValueError(reason)
     if plugin.fetch is None:
         raise ValueError(f"{plugin.name} cannot fetch listings.")
-    if plugin.auth_type == AuthType.API_KEY:
+    if plugin.auth_type in (AuthType.API_KEY, AuthType.ACCOUNT):
         missing = []
         for field in plugin.credential_fields:
             if str(credentials.get(field.key) or "").strip():
                 continue
             if field.key == "email" and ctx.user_email:
                 continue
+            # Account plugins may supply cookies from a prior connect instead of
+            # the paste/password fields on every sync.
+            if plugin.auth_type == AuthType.ACCOUNT and (
+                isinstance(credentials.get("cookies"), list)
+                and credentials.get("cookies")
+            ):
+                continue
             missing.append(field.label)
-        if missing:
+        if missing and plugin.auth_type == AuthType.API_KEY:
             raise ValueError(f"Missing: {', '.join(missing)}")
-    if plugin.auth_type == AuthType.SESSION:
-        cookies = credentials.get("cookies")
-        if not isinstance(cookies, list) or not cookies:
-            raise ValueError("Sign in on the site, then capture your session cookies.")
+        if missing and plugin.auth_type == AuthType.ACCOUNT:
+            # Only require fields when there is no usable session material yet.
+            if not (
+                isinstance(credentials.get("cookies"), list) and credentials.get("cookies")
+            ):
+                raise ValueError(f"Missing: {', '.join(missing)}")
     return await plugin.fetch(credentials, ctx)
 
 
@@ -195,6 +211,11 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
             row.last_error = None
             row.last_listing_count = len(listing)
             row.last_new_jobs = counts["created"]
+            # Account plugins may refresh cookies during fetch (Jobright re-login).
+            try:
+                row.credentials_encrypted = encrypt_credentials(credentials)
+            except Exception:
+                pass
 
     logger.info(
         "job_site_connection_synced",

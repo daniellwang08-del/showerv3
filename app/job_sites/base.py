@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Awaitable, Callable
 
@@ -14,7 +14,7 @@ class AuthType(StrEnum):
 
     NONE = "none"  # public feed — enabling the tile is enough
     API_KEY = "api_key"  # user pastes a developer / publisher key
-    SESSION = "session"  # browser cookies captured via the Atomspace extension
+    ACCOUNT = "account"  # email/password or pasted session material (no extension)
     UNAVAILABLE = "unavailable"  # researched; no legitimate user-login fetch path
 
 
@@ -53,11 +53,6 @@ class JobSitePlugin:
     signup_url: str = ""
     login_url: str = ""
     credential_fields: tuple[CredentialField, ...] = ()
-    cookie_domains: tuple[str, ...] = ()
-    host_origins: tuple[str, ...] = ()
-    signed_in_url_patterns: tuple[str, ...] = ()
-    session_cookie_names: tuple[str, ...] = ()
-    login_path_patterns: tuple[str, ...] = ()
     unavailable_reason: str = ""
     fetch: FetchFn | None = None
 
@@ -78,11 +73,6 @@ class JobSitePlugin:
             "unavailable_reason": self.unavailable_reason or None,
             "logo_src": f"/integrations/job-sites/{self.logo_file}",
             "sort_order": self.sort_order,
-            "cookie_domains": list(self.cookie_domains),
-            "host_origins": list(self.host_origins),
-            "signed_in_url_patterns": list(self.signed_in_url_patterns),
-            "session_cookie_names": list(self.session_cookie_names),
-            "login_path_patterns": list(self.login_path_patterns),
             "credential_fields": [
                 {
                     "key": f.key,
@@ -134,3 +124,7 @@ COUNTRY_NAMES = {
     "IE": "Ireland",
     "NZ": "New Zealand",
 }
+
+
+def adzuna_country_path(country_code: str) -> str:
+    return COUNTRY_TO_ADZUNA.get((country_code or "US").upper(), "us")

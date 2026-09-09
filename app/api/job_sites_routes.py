@@ -1,4 +1,4 @@
-"""User job-site connections: pluginable boards (API keys / session cookies / public feeds)."""
+"""User job-site connections: pluginable boards (API keys / account / public feeds)."""
 
 from __future__ import annotations
 
