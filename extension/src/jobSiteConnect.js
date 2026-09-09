@@ -1,10 +1,14 @@
 // Auto-connect a session-based job site (Jobright, RemoteRocketship, …).
 //
 // Flow:
-//   dashboard click → content-script permissions.request (user gesture)
+//   dashboard click → side-panel permissions.request (user gesture)
 //   → START_JOB_SITE_CONNECT → open a dedicated login tab
 //   → watch URL + cookies until the user is signed in
 //   → POST cookies back to the dashboard tab → close the login tab.
+//
+// Jobright opens /jobs/recommend on purpose: signed-in users stay there;
+// unsigned users are redirected to the marketing homepage. That URL change
+// is the sign-in signal (signed_in_url_patterns), not a blind cookie handoff.
 //
 // Pending state lives in chrome.storage.session so an MV3 worker sleep
 // mid-login can resume from tabs.onUpdated / cookies.onChanged / webNavigation.
@@ -15,6 +19,10 @@ const STORAGE_KEY = "pendingJobSiteConnect";
 // so none of the tab/cookie watchers below should act on it.
 const GRANT_KEY = "pendingJobSiteGrant";
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+// Jobright (and similar SPAs) can briefly paint the authenticated URL before
+// bouncing unsigned users to the homepage. Require the signed-in URL to stick
+// before we capture cookies.
+const SIGNED_IN_CONFIRM_MS = 700;
 const DEFAULT_SESSION_NAMES = ["jwt", "token", "session", "auth", "sid", "SESSION_ID"];
 
 let finishing = false;
@@ -219,6 +227,11 @@ function cookieKey(cookie) {
   return String(cookie.name || "") + "=" + String(cookie.value == null ? "" : cookie.value);
 }
 
+function cookieSignatureChanged(pending, authed) {
+  const initial = new Set(pending.initialCookieSignature || []);
+  return authed.some((c) => !initial.has(cookieKey(c)));
+}
+
 function isSignedIn(pending, tab, cookies) {
   const url = (tab && tab.url) || "";
   if (!url || /^(chrome|chrome-extension|about|edge|devtools):/i.test(url)) return false;
@@ -229,13 +242,24 @@ function isSignedIn(pending, tab, cookies) {
   const urlSignedIn = urlMatchesAny(url, pending.signedInUrlPatterns);
   const complete = !tab || tab.status === "complete";
   if (!complete) return false;
-  if (urlSignedIn) return true;
+  // forceLogin means a prior session was rejected: staying on the signed-in
+  // URL with the same cookie values is not enough — wait for a refreshed
+  // session cookie (or fall through to the cookie-diff path below).
+  if (urlSignedIn) {
+    if (pending.requireFreshSession) return cookieSignatureChanged(pending, authed);
+    return true;
+  }
+  // Sites that declare signed_in_url_patterns (Jobright → /jobs/recommend)
+  // use navigation as the source of truth. Cookie-diff alone must not finish
+  // on the marketing homepage after an unsigned redirect.
+  if ((pending.signedInUrlPatterns || []).length) {
+    return false;
+  }
   // Compare name AND value. Signing in normally refreshes a cookie that is
   // already present (jwt, SESSION_ID) rather than introducing a new name, so
   // a name-only diff never fired for anyone who arrived carrying a stale
   // session -- the connect just sat there until the ten-minute timeout.
-  const initial = new Set(pending.initialCookieSignature || []);
-  return authed.some((c) => !initial.has(cookieKey(c)));
+  return cookieSignatureChanged(pending, authed);
 }
 
 async function focusDashboard(tabId) {
@@ -336,23 +360,43 @@ async function maybeFinish() {
     }
     const cookies = await collectCookies(pending.domains);
     if (!isSignedIn(pending, tab, cookies)) {
-      // A loaded page, on the site, off any login path, and yet not a single
-      // readable cookie: that is missing cookie access, not a user who has not
-      // signed in. Waiting cannot fix it, so fail with a reason instead of
-      // sitting on "waiting for sign-in" until the ten-minute timeout.
+      if (pending.confirmAt) {
+        pending.confirmAt = 0;
+        await setPending(pending);
+      }
+      // Only treat "no cookies" as a permission failure when the URL already
+      // looks signed-in. Jobright bounces unsigned users to the homepage
+      // (not /login); that is a normal waiting state, not cookies_unreadable.
       const url = (tab && tab.url) || "";
       const settled = Date.now() - Number(pending.startedAt || 0) > 8000;
       const complete = !tab || tab.status === "complete";
+      const urlLooksSignedIn = urlMatchesAny(url, pending.signedInUrlPatterns);
       if (
         settled &&
         complete &&
         !cookies.length &&
         hostMatches(url, pending.domains) &&
+        urlLooksSignedIn &&
         !urlMatchesAny(url, pending.loginPathPatterns)
       ) {
         await finish(pending, { ok: false, error: "cookies_unreadable" }, { closeTab: false });
         return;
       }
+      finishing = false;
+      return;
+    }
+    // Debounce: authenticated URLs can flash before an anonymous redirect.
+    const confirmAt = Number(pending.confirmAt || 0);
+    if (!confirmAt) {
+      pending.confirmAt = Date.now() + SIGNED_IN_CONFIRM_MS;
+      await setPending(pending);
+      finishing = false;
+      setTimeout(() => {
+        void maybeFinish();
+      }, SIGNED_IN_CONFIRM_MS + 50);
+      return;
+    }
+    if (Date.now() < confirmAt) {
       finishing = false;
       return;
     }
@@ -448,15 +492,17 @@ async function beginLogin(request) {
   const cookiesAtStart = await collectCookies(request.domains);
   const sessionAtStart = sessionNamedCookies(cookiesAtStart, request.sessionCookieNames);
 
-  // The user is often already signed in on the site. Don't send them through a
-  // login they don't need, and don't try to infer the state from the landing
-  // URL -- that only works when the site happens to redirect somewhere the
-  // plugin lists in signed_in_url_patterns. Hand over the cookies we already
-  // have instead: the dashboard's /connect performs a real authenticated fetch
-  // (verify_and_fetch), which is the only trustworthy signed-in check we have.
-  // If the session turns out to be stale it comes back with forceLogin set and
-  // we open the tab below.
-  if (sessionAtStart.length && !request.forceLogin) {
+  // When loginUrl itself is the authenticated destination (Jobright opens
+  // /jobs/recommend), probing that URL is how we learn sign-in state:
+  // signed-in users stay there; unsigned users are redirected to the default
+  // homepage. Blindly handing over preexisting cookies skips that signal and
+  // often captures a stale SESSION_ID. Only short-circuit when loginUrl is a
+  // dedicated login form (e.g. RemoteRocketship /log-in/).
+  const loginUrlProbesAuth = urlMatchesAny(
+    request.loginUrl,
+    request.signedInUrlPatterns,
+  );
+  if (sessionAtStart.length && !request.forceLogin && !loginUrlProbesAuth) {
     await notifyDashboard(request, {
       ok: true,
       cookies: cookiesAtStart,
@@ -485,6 +531,8 @@ async function beginLogin(request) {
     sessionCookieNames: request.sessionCookieNames,
     loginPathPatterns: request.loginPathPatterns,
     initialCookieSignature: cookiesAtStart.map(cookieKey),
+    requireFreshSession: Boolean(request.forceLogin),
+    confirmAt: 0,
     startedAt: Date.now(),
   };
   await setPending(pending);

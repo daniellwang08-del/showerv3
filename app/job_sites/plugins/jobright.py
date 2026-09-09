@@ -84,7 +84,10 @@ register(
         sort_order=10,
         cookie_domains=("jobright.ai",),
         host_origins=("https://*.jobright.ai/*", "https://jobright.ai/*"),
-        signed_in_url_patterns=("jobright.ai/jobs",),
+        # Signed-in users stay on /jobs/recommend; unsigned users are bounced to
+        # the marketing homepage. The extension uses that redirect as the
+        # sign-in signal (not the broader /jobs prefix, which is too loose).
+        signed_in_url_patterns=("jobright.ai/jobs/recommend",),
         session_cookie_names=("SESSION_ID", "jwt"),
         login_path_patterns=("/login", "/signin", "/sign-in", "/auth"),
         fetch=_fetch,

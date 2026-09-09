@@ -504,14 +504,21 @@ function JobSiteConnectModal({
     }
   };
 
+  const probesAuthViaLoginUrl = (plugin.signed_in_url_patterns || []).some((p) =>
+    (plugin.login_url || '').toLowerCase().includes(String(p).toLowerCase()),
+  );
   const sessionStatusText =
     sessionPhase === 'permission'
       ? `Allow cookie access in the Atomspace side panel, then sign in on the ${plugin.name} tab.`
       : sessionPhase === 'waiting'
-        ? `Sign in on the ${plugin.name} tab we opened. We will capture the session and close that tab automatically.`
+        ? probesAuthViaLoginUrl
+          ? `Sign in on the ${plugin.name} tab until the recommendations page finishes loading. If you are already signed in, that tab should stay on recommendations and close on its own.`
+          : `Sign in on the ${plugin.name} tab we opened. We will capture the session and close that tab automatically.`
         : sessionPhase === 'saving'
           ? 'Saving your session…'
-          : `Connect opens ${plugin.name} in a new tab. After you sign in, we capture the live session and close that tab.`;
+          : probesAuthViaLoginUrl
+            ? `Connect opens ${plugin.name} recommendations. Signed-in sessions stay there; otherwise sign in until recommendations load — we capture the session and close the tab.`
+            : `Connect opens ${plugin.name} in a new tab. After you sign in, we capture the live session and close that tab.`;
 
   return createPortal(
     <div

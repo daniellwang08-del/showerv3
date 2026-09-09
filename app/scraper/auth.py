@@ -92,11 +92,11 @@ PLATFORMS = {
     "jobright": {
         "label": "Jobright.ai",
         "session_file": SESSION_DIR / "jobright_session.json",
-        "login_url": "https://jobright.ai/",
+        "login_url": "https://jobright.ai/jobs/recommend",
         "cookie_domains": ("jobright.ai",),
         "done_markers": [],
         "done_cookies": ["jwt", "token", "session", "auth", "SESSION_ID"],
-        "done_urls": ["jobright.ai/jobs/"],
+        "done_urls": ["jobright.ai/jobs/recommend"],
         "login_markers": [],
         "login_paths": ["/login", "/signin", "/auth"],
     },

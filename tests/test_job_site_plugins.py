@@ -28,7 +28,7 @@ def test_session_plugins_have_cookie_domains():
     assert jobright is not None and jobright.auth_type == AuthType.SESSION
     assert "jobright.ai" in jobright.cookie_domains
     assert jobright.login_url.endswith("/jobs/recommend")
-    assert any("jobright.ai/jobs" in p for p in jobright.signed_in_url_patterns)
+    assert jobright.signed_in_url_patterns == ("jobright.ai/jobs/recommend",)
     assert "SESSION_ID" in jobright.session_cookie_names
     catalog = jobright.catalog_dict()
     assert catalog["signed_in_url_patterns"] == list(jobright.signed_in_url_patterns)
