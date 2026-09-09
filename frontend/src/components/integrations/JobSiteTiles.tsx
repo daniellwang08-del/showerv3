@@ -45,6 +45,8 @@ function sessionConnectError(error: string | undefined, started: boolean): strin
       return '';
     case 'permission_denied':
       return 'Cookie access was declined. Click Connect again and choose "Allow & continue" in the Atomspace side panel.';
+    case 'cookies_unreadable':
+      return 'You appear to be signed in, but the extension cannot read that site\u2019s cookies. Open the Atomspace side panel and allow cookie access, or check the extension\u2019s site access in chrome://extensions.';
     case 'tab_closed':
       return 'The sign-in tab was closed before we could capture a session.';
     case 'no_cookies':
@@ -98,6 +100,9 @@ export function JobSiteTiles() {
     'idle',
   );
   const [sessionError, setSessionError] = useState('');
+  // Set after an already-present session was rejected, so the next attempt
+  // skips the shortcut and goes through the login tab.
+  const [forceLoginNext, setForceLoginNext] = useState(false);
   const sessionHandleRef = useRef<JobSiteConnectHandle | null>(null);
 
   const bySlug = useMemo(() => {
@@ -179,6 +184,7 @@ export function JobSiteTiles() {
     setBusySlug(plugin.slug);
     setError('');
     setSessionError('');
+    setForceLoginNext(false);
     setSessionPhase('permission');
 
     const handle = startJobSiteConnect({
@@ -197,9 +203,6 @@ export function JobSiteTiles() {
     sessionHandleRef.current = handle;
 
     void (async () => {
-      // Set when we hand off to a login-tab retry, so the cleanup below does
-      // not immediately undo the state that retry just established.
-      let retrying = false;
       const result = await handle.promise;
       if (sessionHandleRef.current !== handle) return;
       sessionHandleRef.current = null;
@@ -237,21 +240,24 @@ export function JobSiteTiles() {
         setActive(null);
         setSessionError('');
       } catch (err: unknown) {
-        // These cookies came from a session the user already had and the
-        // backend could not actually use them, so the session is stale rather
-        // than valid. Send them through the login tab instead of reporting a
-        // failure they would have to interpret.
-        if (result.preexisting && !forceLogin) {
-          retrying = true;
-          beginSessionConnect(plugin, { forceLogin: true });
-          return;
+        const detail = errorDetail(err, `Failed to connect ${plugin.name}.`);
+        // Deliberately NOT reopening the login tab here. In the common case the
+        // user is already signed in, so a login tab changes nothing and they
+        // just watch "Waiting for sign-in" until it times out while the real
+        // reason for the failure is never shown. Report what the site actually
+        // said, and let the next click decide to re-authenticate.
+        if (result.preexisting) {
+          setForceLoginNext(true);
+          setSessionError(
+            `${detail} That used the ${plugin.name} session already in your browser. ` +
+              'If you have since signed out, click "Open site & connect" to capture a fresh one.',
+          );
+        } else {
+          setSessionError(detail);
         }
-        setSessionError(errorDetail(err, `Failed to connect ${plugin.name}.`));
       } finally {
-        if (!retrying) {
-          setBusySlug(null);
-          setSessionPhase('idle');
-        }
+        setBusySlug(null);
+        setSessionPhase('idle');
       }
     })();
   }
@@ -333,7 +339,7 @@ export function JobSiteTiles() {
             setActive(null);
             setSessionError('');
           }}
-          onStartSession={() => beginSessionConnect(active)}
+          onStartSession={() => beginSessionConnect(active, { forceLogin: forceLoginNext })}
           onConnected={(row) => {
             setConnections((prev) => {
               const next = prev.filter((c) => c.plugin_slug !== row.plugin_slug);

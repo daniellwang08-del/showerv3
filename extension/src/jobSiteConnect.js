@@ -286,6 +286,23 @@ async function maybeFinish() {
     }
     const cookies = await collectCookies(pending.domains);
     if (!isSignedIn(pending, tab, cookies)) {
+      // A loaded page, on the site, off any login path, and yet not a single
+      // readable cookie: that is missing cookie access, not a user who has not
+      // signed in. Waiting cannot fix it, so fail with a reason instead of
+      // sitting on "waiting for sign-in" until the ten-minute timeout.
+      const url = (tab && tab.url) || "";
+      const settled = Date.now() - Number(pending.startedAt || 0) > 8000;
+      const complete = !tab || tab.status === "complete";
+      if (
+        settled &&
+        complete &&
+        !cookies.length &&
+        hostMatches(url, pending.domains) &&
+        !urlMatchesAny(url, pending.loginPathPatterns)
+      ) {
+        await finish(pending, { ok: false, error: "cookies_unreadable" }, { closeTab: false });
+        return;
+      }
       finishing = false;
       return;
     }
