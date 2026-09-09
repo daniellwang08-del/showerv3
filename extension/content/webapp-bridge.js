@@ -217,6 +217,7 @@
           slug: detail.slug,
           name: detail.name || detail.slug,
           loginUrl: detail.loginUrl || "",
+          forceLogin: Boolean(detail.forceLogin),
           origins: origins,
           domains: Array.isArray(detail.domains) ? detail.domains : [],
           signedInUrlPatterns: Array.isArray(detail.signedInUrlPatterns)
@@ -297,6 +298,7 @@
         ok: Boolean(msg.ok),
         cookies: msg.cookies || [],
         error: msg.error || null,
+        preexisting: Boolean(msg.preexisting),
       },
       "*",
     );

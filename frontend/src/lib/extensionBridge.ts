@@ -206,6 +206,12 @@ export interface JobSiteConnectResult {
   cookies?: CapturedCookie[];
   error?: string;
   started?: boolean;
+  /**
+   * True when these cookies came from a session the user already had, rather
+   * than one created in the login tab. They have not been validated yet - the
+   * backend's /connect call is what decides whether the session actually works.
+   */
+  preexisting?: boolean;
 }
 
 export interface JobSiteConnectHandle {
@@ -225,6 +231,11 @@ export interface JobSiteConnectRequest {
   sessionCookieNames?: string[];
   loginPathPatterns?: string[];
   timeoutMs?: number;
+  /**
+   * Skip the already-signed-in shortcut and go straight to the login tab. Set
+   * when a pre-existing session was already tried and the backend rejected it.
+   */
+  forceLogin?: boolean;
   /**
    * `awaitingPermission` is true when the extension still needs the user to
    * grant cookie access in its side panel before the login tab can open.
@@ -294,6 +305,7 @@ export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectH
       cookies?: CapturedCookie[];
       error?: string;
       awaitingPermission?: boolean;
+      preexisting?: boolean;
     };
     if (!data || data.source !== EXT_SOURCE) return;
     if (data.requestId !== requestId) return;
@@ -316,6 +328,7 @@ export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectH
       cookies: data.cookies,
       error: data.error || undefined,
       started,
+      preexisting: Boolean(data.preexisting),
     });
   };
 
@@ -330,6 +343,7 @@ export function startJobSiteConnect(req: JobSiteConnectRequest): JobSiteConnectH
     slug: req.slug,
     name: req.name || req.slug,
     loginUrl: req.loginUrl,
+    forceLogin: Boolean(req.forceLogin),
     domains: req.domains,
     origins: req.origins,
     signedInUrlPatterns: req.signedInUrlPatterns || [],

@@ -165,7 +165,12 @@ export function JobSiteTiles() {
     setBusySlug(null);
   }, []);
 
-  const beginSessionConnect = (plugin: JobSitePlugin) => {
+  // Declared as a function so it can call itself: a session the user already
+  // had may turn out to be stale, and the retry has to go through the login tab.
+  function beginSessionConnect(
+    plugin: JobSitePlugin,
+    { forceLogin = false }: { forceLogin?: boolean } = {},
+  ) {
     const prev = sessionHandleRef.current;
     sessionHandleRef.current = null;
     prev?.abort('superseded', false);
@@ -185,12 +190,16 @@ export function JobSiteTiles() {
       signedInUrlPatterns: plugin.signed_in_url_patterns || [],
       sessionCookieNames: plugin.session_cookie_names || [],
       loginPathPatterns: plugin.login_path_patterns || [],
+      forceLogin,
       onStarted: ({ awaitingPermission }) =>
         setSessionPhase(awaitingPermission ? 'permission' : 'waiting'),
     });
     sessionHandleRef.current = handle;
 
     void (async () => {
+      // Set when we hand off to a login-tab retry, so the cleanup below does
+      // not immediately undo the state that retry just established.
+      let retrying = false;
       const result = await handle.promise;
       if (sessionHandleRef.current !== handle) return;
       sessionHandleRef.current = null;
@@ -228,13 +237,24 @@ export function JobSiteTiles() {
         setActive(null);
         setSessionError('');
       } catch (err: unknown) {
+        // These cookies came from a session the user already had and the
+        // backend could not actually use them, so the session is stale rather
+        // than valid. Send them through the login tab instead of reporting a
+        // failure they would have to interpret.
+        if (result.preexisting && !forceLogin) {
+          retrying = true;
+          beginSessionConnect(plugin, { forceLogin: true });
+          return;
+        }
         setSessionError(errorDetail(err, `Failed to connect ${plugin.name}.`));
       } finally {
-        setBusySlug(null);
-        setSessionPhase('idle');
+        if (!retrying) {
+          setBusySlug(null);
+          setSessionPhase('idle');
+        }
       }
     })();
-  };
+  }
 
   const handleSync = async (plugin: JobSitePlugin) => {
     setBusySlug(plugin.slug);

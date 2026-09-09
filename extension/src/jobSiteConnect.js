@@ -165,6 +165,10 @@ function sessionNamedCookies(cookies, names) {
   );
 }
 
+function cookieKey(cookie) {
+  return String(cookie.name || "") + "=" + String(cookie.value == null ? "" : cookie.value);
+}
+
 function isSignedIn(pending, tab, cookies) {
   const url = (tab && tab.url) || "";
   if (!url || /^(chrome|chrome-extension|about|edge|devtools):/i.test(url)) return false;
@@ -176,9 +180,12 @@ function isSignedIn(pending, tab, cookies) {
   const complete = !tab || tab.status === "complete";
   if (!complete) return false;
   if (urlSignedIn) return true;
-  if (pending.hadSessionAtStart) return false;
-  const initial = new Set(pending.initialCookieNames || []);
-  return authed.some((c) => !initial.has(c.name));
+  // Compare name AND value. Signing in normally refreshes a cookie that is
+  // already present (jwt, SESSION_ID) rather than introducing a new name, so
+  // a name-only diff never fired for anyone who arrived carrying a stale
+  // session -- the connect just sat there until the ten-minute timeout.
+  const initial = new Set(pending.initialCookieSignature || []);
+  return authed.some((c) => !initial.has(cookieKey(c)));
 }
 
 async function focusDashboard(tabId) {
@@ -201,6 +208,7 @@ async function notifyDashboard(pending, payload) {
     ok: Boolean(payload.ok),
     cookies: payload.cookies || [],
     error: payload.error || null,
+    preexisting: Boolean(payload.preexisting),
   };
   try {
     await chrome.tabs.sendMessage(pending.dashboardTabId, message);
@@ -228,6 +236,7 @@ async function notifyDashboard(pending, payload) {
           ok: message.ok,
           cookies: message.cookies,
           error: message.error,
+          preexisting: message.preexisting,
         },
       ],
     });
@@ -324,6 +333,9 @@ async function startJobSiteConnect(msg, sender) {
     dashboardTabId,
     loginUrl,
     domains,
+    // Set by the dashboard when a pre-existing session was rejected by the
+    // backend, so this attempt must go through the login tab.
+    forceLogin: Boolean(msg.forceLogin),
     origins: Array.isArray(msg.origins) ? msg.origins.map(String).filter(Boolean) : [],
     signedInUrlPatterns: Array.isArray(msg.signedInUrlPatterns) ? msg.signedInUrlPatterns : [],
     sessionCookieNames: Array.isArray(msg.sessionCookieNames) ? msg.sessionCookieNames : [],
@@ -367,7 +379,23 @@ async function beginLogin(request) {
 
   const cookiesAtStart = await collectCookies(request.domains);
   const sessionAtStart = sessionNamedCookies(cookiesAtStart, request.sessionCookieNames);
-  const hadSessionAtStart = sessionAtStart.length > 0;
+
+  // The user is often already signed in on the site. Don't send them through a
+  // login they don't need, and don't try to infer the state from the landing
+  // URL -- that only works when the site happens to redirect somewhere the
+  // plugin lists in signed_in_url_patterns. Hand over the cookies we already
+  // have instead: the dashboard's /connect performs a real authenticated fetch
+  // (verify_and_fetch), which is the only trustworthy signed-in check we have.
+  // If the session turns out to be stale it comes back with forceLogin set and
+  // we open the tab below.
+  if (sessionAtStart.length && !request.forceLogin) {
+    await notifyDashboard(request, {
+      ok: true,
+      cookies: cookiesAtStart,
+      preexisting: true,
+    });
+    return { ok: true, started: true, preexisting: true };
+  }
 
   let loginTab;
   try {
@@ -388,8 +416,7 @@ async function beginLogin(request) {
     signedInUrlPatterns: request.signedInUrlPatterns,
     sessionCookieNames: request.sessionCookieNames,
     loginPathPatterns: request.loginPathPatterns,
-    initialCookieNames: cookiesAtStart.map((c) => c.name),
-    hadSessionAtStart,
+    initialCookieSignature: cookiesAtStart.map(cookieKey),
     startedAt: Date.now(),
   };
   await setPending(pending);
