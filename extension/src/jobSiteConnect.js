@@ -49,13 +49,34 @@ async function getPendingGrant() {
   }
 }
 
+// The grant prompt lives in the side panel, which the user can easily miss or
+// close. Mark the toolbar icon while a request is parked so the pending action
+// is visible from anywhere, not only in the tab that started it.
+function setGrantBadge(pending) {
+  try {
+    chrome.action.setBadgeText({ text: pending ? "!" : "" });
+    if (pending) {
+      chrome.action.setBadgeBackgroundColor({ color: "#2563eb" });
+      chrome.action.setTitle({
+        title: "Atomspace — allow cookie access to finish connecting",
+      });
+    } else {
+      chrome.action.setTitle({ title: "Open Atomspace Assistant" });
+    }
+  } catch (err) {
+    console.warn("grant badge failed", err);
+  }
+}
+
 async function setPendingGrant(state) {
   try {
     if (!state) {
       await chrome.storage.session.remove(GRANT_KEY);
+      setGrantBadge(false);
       return;
     }
     await chrome.storage.session.set({ [GRANT_KEY]: state });
+    setGrantBadge(true);
   } catch (err) {
     console.warn("jobSiteConnect grant persist failed", err);
   }
@@ -76,17 +97,46 @@ async function hasCookieAccess(origins) {
   }
 }
 
+// Resolves to whether the panel actually opened, so a parked grant can fall
+// back to its own window rather than waiting on a prompt nobody can see.
+let sidePanelOpened = Promise.resolve(false);
+
 // Must be called synchronously from the onMessage listener: the bridge relays
 // the dashboard click, and Chrome drops the gesture at the first await.
 function openSidePanel(sender) {
   const windowId = sender && sender.tab && sender.tab.windowId != null ? sender.tab.windowId : null;
-  if (windowId == null) return;
+  if (windowId == null) {
+    sidePanelOpened = Promise.resolve(false);
+    return;
+  }
   try {
-    chrome.sidePanel
-      .open({ windowId })
-      .catch((err) => console.warn("sidePanel.open (job site connect) failed", err));
+    sidePanelOpened = chrome.sidePanel.open({ windowId }).then(
+      () => true,
+      (err) => {
+        console.warn("sidePanel.open (job site connect) failed", err);
+        return false;
+      },
+    );
   } catch (err) {
     console.warn("sidePanel.open (job site connect) threw", err);
+    sidePanelOpened = Promise.resolve(false);
+  }
+}
+
+// Without a visible prompt the request just sits there and the dashboard waits
+// on a click that can never happen, so open a small window instead.
+async function surfaceGrantPrompt() {
+  const opened = await sidePanelOpened.catch(() => false);
+  if (opened) return;
+  try {
+    await chrome.windows.create({
+      url: chrome.runtime.getURL("permission.html?standalone=1"),
+      type: "popup",
+      width: 420,
+      height: 340,
+    });
+  } catch (err) {
+    console.warn("permission window failed", err);
   }
 }
 
@@ -373,6 +423,7 @@ async function startJobSiteConnect(msg, sender) {
   // the user creates there.
   if (!(await hasCookieAccess(request.origins))) {
     await setPendingGrant(request);
+    await surfaceGrantPrompt();
     return { ok: true, started: true, awaitingPermission: true };
   }
 
@@ -525,3 +576,6 @@ if (chrome.webNavigation && chrome.webNavigation.onCompleted) {
 
 watchCookies();
 void maybeFinish();
+// Session storage is cleared on browser restart, so re-derive the badge rather
+// than leaving a stale "!" from a previous run.
+void getPendingGrant().then((grant) => setGrantBadge(Boolean(grant)));

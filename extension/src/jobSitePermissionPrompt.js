@@ -16,6 +16,18 @@
 const GRANT_KEY = "pendingJobSiteGrant";
 const HOST_ID = "atomspace-job-site-permission";
 
+// Loaded either inside the side panel or, when that could not be opened, as its
+// own popup window. In the standalone case the page exists only for this
+// prompt, so it closes itself once the request is resolved.
+const STANDALONE = new URLSearchParams(location.search).has("standalone");
+
+function dismiss() {
+  remove();
+  // Small delay so the outgoing runtime message is dispatched before the page
+  // that sent it goes away.
+  if (STANDALONE) setTimeout(() => window.close(), 150);
+}
+
 function readGrant() {
   return chrome.storage.session.get(GRANT_KEY).then(
     (data) => data[GRANT_KEY] || null,
@@ -38,7 +50,12 @@ function notifyWorker(message) {
 
 function render(grant) {
   remove();
-  if (!grant) return;
+  if (!grant) {
+    // Resolved elsewhere (or already gone) -- a standalone window has nothing
+    // left to show.
+    if (STANDALONE) window.close();
+    return;
+  }
 
   const host = document.createElement("div");
   host.id = HOST_ID;
@@ -99,12 +116,12 @@ function render(grant) {
     "padding:7px 12px;border-radius:8px;border:0;background:#2563eb;color:#fff;font-weight:600;cursor:pointer";
 
   cancel.addEventListener("click", () => {
-    remove();
     notifyWorker({
       type: "ABORT_JOB_SITE_CONNECT",
       requestId: grant.requestId || null,
       error: "permission_denied",
     });
+    dismiss();
   });
 
   allow.addEventListener("click", () => {
@@ -121,20 +138,20 @@ function render(grant) {
               : "Permission was declined.";
             error.style.display = "block";
             if (!failure) {
-              remove();
               notifyWorker({
                 type: "ABORT_JOB_SITE_CONNECT",
                 requestId: grant.requestId || null,
                 error: "permission_denied",
               });
+              dismiss();
             }
             return;
           }
-          remove();
           notifyWorker({
             type: "RESUME_JOB_SITE_CONNECT",
             requestId: grant.requestId || null,
           });
+          dismiss();
         },
       );
     } catch (err) {
