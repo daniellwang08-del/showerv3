@@ -28,7 +28,13 @@ from app.models.schemas import (
     DashboardSyncResponse,
 )
 from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
-from app.models.profile_schemas import ProfileResponse, ProfileCreateRequest, ResumeParseResponse
+from app.models.profile_schemas import (
+    ProfileResponse,
+    ProfileCreateRequest,
+    ResumeParseResponse,
+    EEOPreferences,
+    AddressInfo,
+)
 from app.models.profile_source_schemas import (
     ProfileSourceDocumentListResponse,
     ProfileSourceDocumentResponse,
@@ -680,6 +686,66 @@ async def put_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=format_profile_unexpected_error(e, "Failed to save profile"),
+        )
+
+
+@router.patch("/profile/eeo", response_model=ProfileResponse)
+async def patch_profile_eeo(
+    request: EEOPreferences,
+    current_user: dict = Depends(get_current_user),
+) -> ProfileResponse:
+    """Update only EEO / demographic answers.
+
+    Preferences UI must not re-submit the entire résumé: a full PUT validates
+    every work-experience field, and profiles whose description blobs get
+    derived into oversized project_intro / contributions would 422 even though
+    the EEO payload itself is valid.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        async with get_session() as session:
+            repo = UserRepository(session)
+            user = await repo.update_eeo_preferences(user_id, request.model_dump())
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            await session.commit()
+            return _user_to_profile_response(user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("patch_profile_eeo_failed", user_id=user_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=format_profile_unexpected_error(e, "Failed to save EEO preferences"),
+        )
+
+
+@router.patch("/profile/address", response_model=ProfileResponse)
+async def patch_profile_address(
+    request: AddressInfo,
+    current_user: dict = Depends(get_current_user),
+) -> ProfileResponse:
+    """Update only legal address / location preferences (same rationale as /eeo)."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        async with get_session() as session:
+            repo = UserRepository(session)
+            user = await repo.update_address(user_id, request.model_dump())
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            await session.commit()
+            return _user_to_profile_response(user)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("patch_profile_address_failed", user_id=user_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=format_profile_unexpected_error(e, "Failed to save location preferences"),
         )
 
 

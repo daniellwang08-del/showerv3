@@ -182,12 +182,23 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
       // into a single `description` blob with empty structured fields. Derive the
       // structured pieces (the same way the resume preview does) so the editor shows
       // real values and the view renders proper bullets instead of one raw paragraph.
+      //
+      // CRITICAL: only promote derived fields that still fit ProfileCreateRequest
+      // limits (project_intro ≤ 2000, contributions ≤ 40). Otherwise a Preferences
+      // save that round-trips the whole profile through PUT /profile 422s on
+      // work_experience even though EEO itself is valid — which is exactly how
+      // "Failed to save EEO preferences" appeared for profiles with long JD blobs.
       const derived = deriveWorkContent(w);
+      const nextTitle = derived.projectTitle || w.project_title;
+      const nextIntro = derived.intro || w.project_intro;
+      const nextContribs = derived.contributions.length ? derived.contributions : [''];
+      const introFits = nextIntro.length <= 2000;
+      const contribsFit = nextContribs.filter((c) => c.trim()).length <= 40;
       return {
         ...w,
-        project_title: derived.projectTitle || w.project_title,
-        project_intro: derived.intro || w.project_intro,
-        contributions: derived.contributions.length ? derived.contributions : [''],
+        project_title: nextTitle.length <= 300 ? nextTitle : w.project_title,
+        project_intro: introFits ? nextIntro : w.project_intro,
+        contributions: contribsFit ? nextContribs : w.contributions.length ? w.contributions : [''],
       };
     }),
     education: ed.map((x) => ({

@@ -3,10 +3,11 @@ import { AlertCircle, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
 import { SettingsCard } from '../settings/SettingsCard';
 import { prefsSaveBtnClass } from '../settings/prefsSaveButtonClass';
 import { BrandedLoader } from '../layout/BrandedLoader';
-import { fetchProfileForm, saveUserProfile } from '../../api/profileApi';
+import { fetchProfileForm, saveEeoPreferences } from '../../api/profileApi';
 import type { EEOPreferences, ProfileFormData } from '../../types/profile';
 import { GENDER_OPTIONS, RACE_OPTIONS, SEXUAL_ORIENTATION_OPTIONS } from '../../types/profile';
 import { emptyEEO } from '../../utils/profileFormData';
+import { extractApiErrorMessage } from '../../utils/profileErrors';
 import { sectionAccents } from '../../ui/tokens';
 
 const EEO_YESNO_FIELDS: Array<{
@@ -69,8 +70,7 @@ function TriStateToggle({
 }
 
 function errDetail(e: unknown, fallback: string): string {
-  const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-  return typeof msg === 'string' ? msg : fallback;
+  return extractApiErrorMessage(e, fallback);
 }
 
 export function EeoPreferencesSection() {
@@ -112,12 +112,10 @@ export function EeoPreferencesSection() {
     setSaving(true);
     setMsg(null);
     try {
-      const next = { ...baseForm, eeo_preferences: eeo };
-      const saved = await saveUserProfile(next);
+      await saveEeoPreferences(eeo);
       const form = await fetchProfileForm();
       setBaseForm(form);
       setEeo(form.eeo_preferences ?? emptyEEO());
-      void saved;
       setMsg({ ok: true, text: 'EEO preferences saved.' });
     } catch (e: unknown) {
       setMsg({ ok: false, text: errDetail(e, 'Failed to save EEO preferences') });

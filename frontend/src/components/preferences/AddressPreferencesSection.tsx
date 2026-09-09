@@ -3,9 +3,10 @@ import { AlertCircle, CheckCircle2, Loader2, MapPin, Plus, X } from 'lucide-reac
 import { SettingsCard } from '../settings/SettingsCard';
 import { prefsSaveBtnClass } from '../settings/prefsSaveButtonClass';
 import { BrandedLoader } from '../layout/BrandedLoader';
-import { fetchProfileForm, saveUserProfile } from '../../api/profileApi';
+import { fetchProfileForm, saveAddressPreferences } from '../../api/profileApi';
 import type { AddressInfo, ProfileFormData } from '../../types/profile';
 import { emptyAddress } from '../../utils/profileFormData';
+import { extractApiErrorMessage } from '../../utils/profileErrors';
 import { sectionAccents } from '../../ui/tokens';
 
 const MAX_LOCAL_PREFS = 30;
@@ -57,8 +58,7 @@ const ADDRESS_FIELDS: Array<{
 ];
 
 function errDetail(e: unknown, fallback: string): string {
-  const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-  return typeof msg === 'string' ? msg : fallback;
+  return extractApiErrorMessage(e, fallback);
 }
 
 function normalizePrefs(list: string[] | undefined): string[] {
@@ -150,8 +150,7 @@ export function AddressPreferencesSection() {
         ...address,
         local_preferences: normalizePrefs(address.local_preferences),
       };
-      const next = { ...baseForm, address: nextAddress };
-      await saveUserProfile(next);
+      await saveAddressPreferences(nextAddress);
       const form = await fetchProfileForm();
       setBaseForm(form);
       setAddress(form.address ?? emptyAddress());

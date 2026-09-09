@@ -218,6 +218,28 @@ class UserRepository:
         # Second tuple element kept for caller compatibility (no template reanalysis anymore).
         return user, False
 
+    async def update_eeo_preferences(self, user_id: str, eeo: dict) -> User | None:
+        """Update only EEO / demographic answers — leave the rest of the profile alone."""
+        user = await self.get_by_id(user_id)
+        if not user:
+            return None
+        user.eeo_preferences = eeo or {}
+        user.profile_openai_cache = user_profile_to_openai_text(user)
+        await self.session.flush()
+        logger.info("profile_eeo_updated", user_id=user_id)
+        return user
+
+    async def update_address(self, user_id: str, address: dict) -> User | None:
+        """Update only legal address / location preferences."""
+        user = await self.get_by_id(user_id)
+        if not user:
+            return None
+        user.address = address or {}
+        user.profile_openai_cache = user_profile_to_openai_text(user)
+        await self.session.flush()
+        logger.info("profile_address_updated", user_id=user_id)
+        return user
+
     async def get_profile_openai_text(self, user_id: str) -> str:
         """
         Get cached OpenAI-ready profile text. Uses cache if present,

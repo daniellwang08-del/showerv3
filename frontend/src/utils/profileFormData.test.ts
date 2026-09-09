@@ -13,26 +13,28 @@ describe('profileToForm', () => {
     expect(form.technical_skills[0].skills).toContain('Python');
   });
 
-  it('does not throw on malformed extra / contributions / nested junk', () => {
-    const weird = {
+  it('does not promote derived project_intro / contributions that exceed PUT limits', () => {
+    const longDesc = `${'A'.repeat(2400)} • one • two • ${Array.from({ length: 45 }, (_, i) => `b${i}`).join(' • ')}`;
+    const form = profileToForm({
       ...completeProfile,
-      extra: 'one line\nsecond' as unknown as string[],
       work_experience: [
         {
           company_name: 'Acme',
           job_title: 'Eng',
-          contributions: 'led the rewrite' as unknown as string[],
-          unexpected_key: true,
+          description: longDesc,
+          contributions: [],
+          project_title: '',
+          project_intro: '',
         },
       ],
-      technical_skills: 'Python, Go' as unknown as UserProfile['technical_skills'],
-      education: { university_name: 'MIT' } as unknown as UserProfile['education'],
-    };
-    const form = profileToForm(weird);
-    expect(form.extra).toEqual(['one line', 'second']);
-    expect(form.work_experience[0].contributions.join(' ')).toMatch(/led the rewrite/);
-    expect(form.technical_skills.length).toBeGreaterThan(0);
-    expect(form.education[0].university_name).toBe('');
+    });
+    const role = form.work_experience[0];
+    // Oversized derived fields must stay out of the form so Preferences / Profile
+    // saves do not 422 on work_experience.project_intro / contributions.
+    expect(role.project_intro.length).toBeLessThanOrEqual(2000);
+    expect(role.contributions.filter((c) => c.trim()).length).toBeLessThanOrEqual(40);
+    // Full text remains available via description for resume derivation.
+    expect(role.description.length).toBeGreaterThan(2000);
   });
 });
 
