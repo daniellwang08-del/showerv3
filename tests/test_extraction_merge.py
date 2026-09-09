@@ -40,3 +40,11 @@ def test_pick_best_text_min_threshold():
     assert len(text) == 50
     assert method == "api_json_ld"
     assert structured is None
+
+
+def test_pick_best_text_always_returns_three_values():
+    """Contract used by extraction_service browser-gate unpack (must be 3)."""
+    result = pick_best_text([("z" * 80, "static_html", {"title": "T"})])
+    assert len(result) == 3
+    empty = pick_best_text([])
+    assert len(empty) == 3

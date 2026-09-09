@@ -321,7 +321,7 @@ class ExtractionService:
                     last_error = html_result.error
 
             # 7. Browser rendering - try if available and no strong candidate yet
-            best_so_far, _ = pick_best_text(candidates)
+            best_so_far, _best_method, _best_structured = pick_best_text(candidates)
             needs_browser = len(best_so_far) < 500 and not (
                 is_wttj_job_url(url) and len(best_so_far) >= 300
             )
