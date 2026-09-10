@@ -85,10 +85,19 @@ def _login_sync(email: str, password: str) -> list[dict]:
             LOGIN_URL,
             json={"email": email, "password": password},
         )
+        payload: dict = {}
+        try:
+            payload = response.json() if response.content else {}
+        except Exception:
+            payload = {}
         if response.status_code in (401, 403):
-            raise PermissionError("Jobright rejected this email or password.")
+            msg = (
+                payload.get("errorMsg")
+                if isinstance(payload, dict)
+                else None
+            ) or "Jobright rejected this email or password."
+            raise PermissionError(str(msg))
         response.raise_for_status()
-        payload = response.json() if response.content else {}
         if isinstance(payload, dict) and payload.get("success") is False:
             raise ValueError(
                 payload.get("errorMsg") or "Jobright login failed. Check email and password."

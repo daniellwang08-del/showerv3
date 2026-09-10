@@ -15,6 +15,7 @@ from app.services.job_site_connection_sync import (
     credential_hints,
     decrypt_credentials,
     encrypt_credentials,
+    fetch_context_for_user,
     verify_and_fetch,
 )
 from app.storage.database import get_session
