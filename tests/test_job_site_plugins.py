@@ -24,7 +24,7 @@ def test_registry_unique_slugs_and_expected_sites():
     assert "jsearch" in slugs
 
 
-def test_account_plugins_use_credential_fields_not_extension():
+def test_account_plugins_expose_session_capture():
     jobright = get_plugin("jobright")
     rrs = get_plugin("remoterocketship")
     assert jobright is not None and jobright.auth_type == AuthType.ACCOUNT
@@ -33,12 +33,20 @@ def test_account_plugins_use_credential_fields_not_extension():
     assert keys == {"email", "password"}
     catalog = jobright.catalog_dict()
     assert catalog["auth_type"] == "account"
-    assert "cookie_domains" not in catalog
-    assert "signed_in_url_patterns" not in catalog
+    capture = catalog["session_capture"]
+    assert capture["cookie_domains"] == ["jobright.ai"]
+    # Connect lands on the root: Jobright's own redirect to the recommend page
+    # is what proves the user is already signed in.
+    assert capture["start_url"] == "https://jobright.ai/"
+    assert capture["verify_url"].endswith("/jobs/recommend")
+    assert "jobright.ai/jobs/recommend" in capture["signed_in_url_patterns"]
+    assert "SESSION_ID" in capture["session_cookie_names"]
     assert LOGIN_URL.endswith("/swan/auth/login/pwd")
 
     assert rrs is not None and rrs.auth_type == AuthType.ACCOUNT
     assert {f.key for f in rrs.credential_fields} == {"cookie_header"}
+    rrs_capture = rrs.catalog_dict()["session_capture"]
+    assert "remoterocketship.com" in rrs_capture["cookie_domains"]
     assert rrs.catalog_dict()["auth_type"] == "account"
 
 

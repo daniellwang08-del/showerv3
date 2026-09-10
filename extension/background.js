@@ -3,6 +3,7 @@
 
 import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/store.js";
 import { isDashboardUrl } from "./src/backendOrigin.js";
+import { attachMessageHandlers as attachJobSiteConnectHandlers } from "./src/jobSiteConnect.js";
 
 const BRIDGE_FILE = "content/webapp-bridge.js";
 
@@ -154,6 +155,8 @@ function scriptsForEngine(engineId) {
 // Key under which we stash the job the dashboard asked us to apply to, so the
 // side panel can pick it up whether it is already open or opened afterwards.
 const PENDING_JOB_KEY = "pendingWebappJob";
+
+attachJobSiteConnectHandlers();
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "SYNC_BACKEND_URL" && msg.backendUrl) {

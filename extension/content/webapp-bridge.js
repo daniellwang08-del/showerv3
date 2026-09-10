@@ -1,12 +1,12 @@
 // Web-app <-> extension bridge (content script).
 //
 // Runs on the Job-Scraper dashboard origin. It exists so the dashboard can:
-//   1. DETECT that this extension is installed (PING -> PONG handshake), and
+//   1. DETECT that this extension is installed (PING -> PONG handshake),
 //   2. HAND OFF a specific job to apply ("Apply with Assistant" button) AND open
-//      the side panel.
-//
-// Job-site account connect does NOT go through the extension — the dashboard
-// collects email/password or pasted cookies and the backend verifies them.
+//      the side panel, and
+//   3. CONNECT a job-site account: the worker opens the board in a real tab,
+//      tracks navigation until it settles, and captures the session when the
+//      final URL is the signed-in page (e.g. jobright.ai/jobs/recommend).
 //
 // WHY A CustomEvent (not postMessage) FOR APPLY:
 //   chrome.sidePanel.open() may only be called in response to a user gesture,
@@ -24,6 +24,10 @@
 //                    { detail: JSON.stringify({ jobId, url, requestId }) }))
 //                  bridge -> worker chrome.runtime.sendMessage {type:"WEBAPP_APPLY_JOB", jobId, url, openPanel:true}
 //                  bridge -> page  data-atomspace-apply-ack="<requestId>" (sync) + APPLY_ACK postMessage
+//   JOB SITE:      page postMessage START_JOB_SITE_CONNECT {session}
+//                  bridge -> worker; ACK START_JOB_SITE_CONNECT_ACK
+//                  worker -> page JOB_SITE_LOG | JOB_SITE_CONNECT_STATUS
+//                                 | JOB_SITE_SESSION
 //
 // IDEMPOTENCY (critical):
 //   background.js also executeScript-injects this file on install/startup.
@@ -76,15 +80,80 @@
     reply("APPLY_ACK", { requestId: requestId || null }, "*");
   }
 
-  // Detection handshake (async is fine here; no user gesture involved).
+  const JOB_SITE_PREFIX = "[atomspace:jobsite:bridge]";
+  const JOB_SITE_TYPES = {
+    START_JOB_SITE_CONNECT: true,
+    STOP_JOB_SITE_CONNECT: true,
+    CAPTURE_JOB_SITE_NOW: true,
+    FOCUS_JOB_SITE_TAB: true,
+  };
+
+  function forwardJobSite(data, targetOrigin) {
+    const type = data.type;
+    const requestId = data.requestId || null;
+    console.log(JOB_SITE_PREFIX + " page -> worker", { type: type, session: data.session || null });
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: type,
+          requestId: requestId,
+          session: data.session || null,
+          keepTab: data.keepTab === true,
+        },
+        function (response) {
+          void chrome.runtime.lastError;
+          const payload = response && typeof response === "object" ? response : { ok: false };
+          console.log(JOB_SITE_PREFIX + " worker -> page", { type: type, response: payload });
+          reply(type + "_ACK", Object.assign({ requestId: requestId }, payload), targetOrigin);
+        },
+      );
+    } catch (_e) {
+      console.warn(JOB_SITE_PREFIX + " extension context invalidated", type);
+      reply(
+        type + "_ACK",
+        {
+          requestId: requestId,
+          ok: false,
+          error: "Extension context invalidated. Reload the extension.",
+        },
+        targetOrigin,
+      );
+    }
+  }
+
+  // Detection handshake + job-site connect (async is fine; no user gesture).
   window.addEventListener("message", function (event) {
     if (event.source !== window) return;
     const data = event.data;
     if (!data || data.source !== WEBAPP_SOURCE || typeof data.type !== "string") return;
     if (data.type === "PING") {
       reply("PONG", { requestId: data.requestId || null }, event.origin || "*");
+      return;
+    }
+    if (JOB_SITE_TYPES[data.type]) {
+      forwardJobSite(data, event.origin || "*");
     }
   });
+
+  // Background → dashboard (navigation logs, status updates, captured session).
+  try {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      if (!msg || typeof msg.type !== "string") return;
+      if (msg.type.indexOf("JOB_SITE_") !== 0) return;
+      if (msg.type === "JOB_SITE_LOG") {
+        const line = JOB_SITE_PREFIX + " " + msg.event;
+        if (msg.level === "warn") console.warn(line, msg.detail);
+        else console.log(line, msg.detail);
+      } else {
+        console.log(JOB_SITE_PREFIX + " " + msg.type, msg);
+      }
+      const extra = Object.assign({}, msg);
+      delete extra.type;
+      reply(msg.type, extra, "*");
+    });
+  } catch (_e) {
+    /* extension context invalidated */
+  }
 
   // Apply hand-off. Runs SYNCHRONOUSLY inside the user's click, so the worker
   // can open the side panel. Do NOT await anything before sendMessage.

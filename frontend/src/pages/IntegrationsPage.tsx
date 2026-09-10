@@ -42,7 +42,7 @@ export function IntegrationsPage() {
         <PageHeader
           icon={Puzzle}
           title="Integrations"
-          description="Connect job sites to pull openings into your pipeline, then post matches to Google Sheets or Pumble."
+          description="Connect a job site to detect your existing login, capture the session, and pull openings into your pipeline. Then post matches to Google Sheets or Pumble."
         />
 
         <JobSiteTiles />

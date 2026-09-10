@@ -1,10 +1,9 @@
 """Local Scrapy spider session helpers (disk cookies / Playwright setup).
 
-Dashboard Integrations connect does NOT use this module or any extension:
-  • Jobright — email + password (server-side login)
-  • RemoteRocketship — pasted Cookie header
+Dashboard Integrations connect uses the Atomspace extension to iframe the
+board, detect a signed-in URL, and capture cookies. This module remains the
+CLI path for offline spiders:
 
-CLI usage for offline spiders:
     python -m app.scraper.auth capture rrs
     python -m app.scraper.auth capture jobright
     python -m app.scraper.auth status <platform>

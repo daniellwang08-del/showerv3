@@ -14,7 +14,7 @@ class AuthType(StrEnum):
 
     NONE = "none"  # public feed — enabling the tile is enough
     API_KEY = "api_key"  # user pastes a developer / publisher key
-    ACCOUNT = "account"  # email/password or pasted session material (no extension)
+    ACCOUNT = "account"  # browser session (iframe + extension) and/or credentials
     UNAVAILABLE = "unavailable"  # researched; no legitimate user-login fetch path
 
 
@@ -41,6 +41,38 @@ class FetchContext:
 FetchFn = Callable[[dict[str, Any], FetchContext], Awaitable[list[BoardJob]]]
 
 
+@dataclass(frozen=True)
+class SessionCapture:
+    """Browser-session connect: open the board in a tab, watch where it lands.
+
+    The extension opens ``start_url`` and tracks navigation until it settles.
+    The board's own redirect is the login test: an authenticated Jobright user
+    asking for ``https://jobright.ai/`` is sent to ``/jobs/recommend``, which
+    matches ``signed_in_url_patterns``. A signed-out user stays on the landing
+    or login page instead.
+
+    ``verify_url`` is the protected page we re-open once when the landing URL
+    is inconclusive but session cookies already exist.
+    """
+
+    cookie_domains: tuple[str, ...]
+    start_url: str = ""
+    verify_url: str = ""
+    signed_in_url_patterns: tuple[str, ...] = ()
+    logged_out_url_patterns: tuple[str, ...] = ()
+    session_cookie_names: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "cookie_domains": list(self.cookie_domains),
+            "start_url": self.start_url,
+            "verify_url": self.verify_url or self.start_url,
+            "signed_in_url_patterns": list(self.signed_in_url_patterns),
+            "logged_out_url_patterns": list(self.logged_out_url_patterns),
+            "session_cookie_names": list(self.session_cookie_names),
+        }
+
+
 @dataclass
 class JobSitePlugin:
     slug: str
@@ -54,6 +86,7 @@ class JobSitePlugin:
     login_url: str = ""
     credential_fields: tuple[CredentialField, ...] = ()
     unavailable_reason: str = ""
+    session_capture: SessionCapture | None = None
     fetch: FetchFn | None = None
 
     @property
@@ -61,6 +94,12 @@ class JobSitePlugin:
         return self.auth_type != AuthType.UNAVAILABLE
 
     def catalog_dict(self) -> dict[str, Any]:
+        capture = self.session_capture
+        start_url = ""
+        if capture and capture.start_url:
+            start_url = capture.start_url
+        elif self.login_url:
+            start_url = self.login_url
         return {
             "slug": self.slug,
             "name": self.name,
@@ -83,6 +122,14 @@ class JobSitePlugin:
                 }
                 for f in self.credential_fields
             ],
+            "session_capture": (
+                {
+                    **capture.as_dict(),
+                    "start_url": start_url or capture.start_url,
+                }
+                if capture
+                else None
+            ),
         }
 
 

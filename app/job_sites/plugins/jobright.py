@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin
+from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin, SessionCapture
 from app.job_sites.registry import register
 from app.job_sites.session_http import (
     BROWSER_HEADERS,
@@ -149,7 +149,10 @@ async def resolve_jobright_cookies(credentials: dict[str, Any]) -> list[dict]:
         return await login_jobright(email, password)
     if cookies:
         return cookies
-    raise ValueError("Enter your Jobright email and password.")
+    raise ValueError(
+        "No Jobright session. Click Connect to sign in through your browser, "
+        "or enter your Jobright email and password."
+    )
 
 
 async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJob]:
@@ -178,7 +181,10 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
         email = str(credentials.get("email") or "").strip()
         password = str(credentials.get("password") or "")
         if not (email and password):
-            raise
+            raise PermissionError(
+                "Your Jobright session expired. Open Integrations and click Connect "
+                "to sign in through your browser again."
+            )
         cookies = await login_jobright(email, password)
         payload = await _once(cookies)
 
@@ -191,7 +197,8 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
             payload = await _once(cookies)
         if not payload.get("success"):
             raise ValueError(
-                payload.get("errorMsg") or "Jobright rejected this session. Reconnect with your password."
+                payload.get("errorMsg")
+                or "Jobright rejected this session. Reconnect from Integrations."
             )
 
     # Stash refreshed cookies on the credentials dict so connect can persist them.
@@ -246,6 +253,23 @@ register(
                 placeholder="Jobright password",
                 secret=True,
             ),
+        ),
+        session_capture=SessionCapture(
+            cookie_domains=("jobright.ai",),
+            # Signed-in users asking for the root are redirected to their
+            # recommendations; signed-out users stay on the landing page.
+            start_url="https://jobright.ai/",
+            verify_url="https://jobright.ai/jobs/recommend",
+            signed_in_url_patterns=("jobright.ai/jobs/recommend",),
+            logged_out_url_patterns=(
+                "/login",
+                "/signin",
+                "/sign-in",
+                "/sign_in",
+                "/auth",
+                "/swan/auth",
+            ),
+            session_cookie_names=("SESSION_ID",),
         ),
         fetch=_fetch,
     )

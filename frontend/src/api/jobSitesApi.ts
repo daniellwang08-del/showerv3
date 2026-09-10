@@ -10,6 +10,17 @@ export interface JobSiteCredentialField {
   secret: boolean;
 }
 
+export interface JobSiteSessionCapture {
+  cookie_domains: string[];
+  /** Page the connect tab opens; the site's own redirect proves the login. */
+  start_url: string;
+  /** Protected page re-opened once when the landing URL is inconclusive. */
+  verify_url: string;
+  signed_in_url_patterns: string[];
+  logged_out_url_patterns: string[];
+  session_cookie_names: string[];
+}
+
 export interface JobSitePlugin {
   slug: string;
   name: string;
@@ -23,6 +34,7 @@ export interface JobSitePlugin {
   logo_src: string;
   sort_order: number;
   credential_fields: JobSiteCredentialField[];
+  session_capture: JobSiteSessionCapture | null;
 }
 
 export interface JobSiteConnection {
@@ -49,7 +61,14 @@ export async function fetchJobSites(): Promise<JobSiteCatalog> {
 
 export async function connectJobSite(
   slug: string,
-  body: { credentials?: Record<string, string>; cookies?: unknown[] },
+  body: {
+    credentials?: Record<string, string>;
+    cookies?: unknown[];
+    storage?: {
+      localStorage: Record<string, string>;
+      sessionStorage: Record<string, string>;
+    };
+  },
 ): Promise<JobSiteConnection> {
   const { data } = await apiClient.post<JobSiteConnection>(`/job-sites/${slug}/connect`, body);
   return data;

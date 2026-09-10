@@ -66,6 +66,13 @@ def credential_hints(plugin_slug: str, credentials: dict) -> dict[str, str]:
             hints["cookies"] = f"{n} cookies"
         if credentials.get("cookie_header"):
             hints["cookie_header"] = "pasted"
+        storage = credentials.get("storage")
+        if isinstance(storage, dict) and storage:
+            keys = sum(len(v) for v in storage.values() if isinstance(v, dict))
+            if keys:
+                hints["storage"] = f"{keys} keys"
+        if n and not credentials.get("password"):
+            hints["session"] = "captured from browser"
         return hints
     for field in plugin.credential_fields:
         value = str(credentials.get(field.key) or "").strip()

@@ -6,7 +6,7 @@ import json
 from typing import Any
 from urllib.parse import quote
 
-from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin
+from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin, SessionCapture
 from app.job_sites.registry import register
 from app.job_sites.session_http import (
     cookies_for_domain,
@@ -190,6 +190,20 @@ register(
                 help_url="https://www.remoterocketship.com/log-in/",
                 secret=True,
             ),
+        ),
+        session_capture=SessionCapture(
+            cookie_domains=("remoterocketship.com",),
+            # The log-in page bounces already-authenticated users to the jobs feed.
+            start_url="https://www.remoterocketship.com/log-in/",
+            verify_url="https://www.remoterocketship.com/remote-jobs",
+            signed_in_url_patterns=(
+                "remoterocketship.com/remote-jobs",
+                "remoterocketship.com/jobs",
+                "remoterocketship.com/?page=",
+                "remoterocketship.com/saved",
+            ),
+            logged_out_url_patterns=("/log-in", "/login", "/signin", "/sign-in"),
+            session_cookie_names=("sb-", "supabase", "access-token", "session"),
         ),
         fetch=_fetch,
     )

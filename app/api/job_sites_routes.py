@@ -28,6 +28,10 @@ router = APIRouter(prefix="/job-sites", tags=["job-sites"])
 class JobSiteConnectRequest(BaseModel):
     credentials: dict = Field(default_factory=dict)
     cookies: list[dict] | None = None
+    # Browser-session connect (extension capture): localStorage / sessionStorage
+    # snapshot from the signed-in page. Boards that keep a bearer token outside
+    # cookies need it; it is encrypted alongside the cookies.
+    storage: dict | None = None
 
 
 class JobSiteUpdateRequest(BaseModel):
@@ -114,9 +118,35 @@ def _merge_credentials(plugin, body: JobSiteConnectRequest) -> dict:
     creds = dict(body.credentials or {})
     if body.cookies is not None:
         creds["cookies"] = body.cookies
+    if body.storage:
+        creds["storage"] = _trim_storage(body.storage)
     if plugin.auth_type == AuthType.NONE:
         return {}
     return creds
+
+
+MAX_STORAGE_CHARS = 100_000
+
+
+def _trim_storage(storage: dict) -> dict:
+    """Keep the captured web-storage snapshot small enough to encrypt/store."""
+    out: dict[str, dict[str, str]] = {}
+    budget = MAX_STORAGE_CHARS
+    for bucket in ("localStorage", "sessionStorage"):
+        items = storage.get(bucket)
+        if not isinstance(items, dict):
+            continue
+        kept: dict[str, str] = {}
+        for key, value in items.items():
+            text = "" if value is None else str(value)
+            cost = len(str(key)) + len(text)
+            if cost > budget:
+                continue
+            budget -= cost
+            kept[str(key)] = text
+        if kept:
+            out[bucket] = kept
+    return out
 
 
 @router.get("", response_model=JobSiteCatalogResponse)

@@ -1,17 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import {
   AlertCircle,
-  CheckCircle2,
-  ExternalLink,
-  KeyRound,
   Loader2,
   RefreshCw,
-  Unplug,
   WifiOff,
 } from 'lucide-react';
 import {
-  connectJobSite,
   disconnectJobSite,
   fetchJobSites,
   syncJobSiteNow,
@@ -20,15 +14,12 @@ import {
   type JobSitePlugin,
 } from '../../api/jobSitesApi';
 import { SettingsToggle } from '../shared/SettingsToggle';
-import { Z_INDEX } from '../../constants/zIndex';
+import { JobSiteConnectModal } from './JobSiteConnectModal';
 import {
-  bodyText,
-  btnDanger,
   btnPrimary,
   btnSecondary,
   card,
   headingText,
-  input,
   mutedText,
 } from '../../ui/tokens';
 
@@ -139,8 +130,8 @@ export function JobSiteTiles() {
       <div>
         <h2 className={`text-sm font-bold ${headingText}`}>Job sites</h2>
         <p className={`mt-0.5 text-xs ${mutedText}`}>
-          Connect boards with your account, API keys, or public feeds. New openings are pulled into
-          your pipeline automatically every few hours.
+          Connect boards with your account, API keys, or public feeds. Account sites open in a new
+          tab — if you are already signed in there, we detect it and connect automatically.
         </p>
       </div>
 
@@ -288,217 +279,5 @@ function JobSiteTile({
         )}
       </div>
     </article>
-  );
-}
-
-function JobSiteConnectModal({
-  plugin,
-  connection,
-  busy,
-  onClose,
-  onConnected,
-  onDisconnect,
-  onBusy,
-  onError,
-}: {
-  plugin: JobSitePlugin;
-  connection: JobSiteConnection | null;
-  busy: boolean;
-  onClose: () => void;
-  onConnected: (row: JobSiteConnection) => void;
-  onDisconnect: () => void;
-  onBusy: (slug: string | null) => void;
-  onError: (msg: string) => void;
-}) {
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [localError, setLocalError] = useState('');
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
-  const submitCredentials = async () => {
-    onBusy(plugin.slug);
-    setLocalError('');
-    onError('');
-    try {
-      const row = await connectJobSite(plugin.slug, { credentials: values });
-      onConnected(row);
-    } catch (err: unknown) {
-      setLocalError(errorDetail(err, `Failed to connect ${plugin.name}.`));
-    } finally {
-      onBusy(null);
-    }
-  };
-
-  const usesCredentialForm =
-    plugin.auth_type === 'api_key' || plugin.auth_type === 'account';
-
-  return createPortal(
-    <div
-      className="fixed inset-0 flex items-center justify-center bg-slate-900/50 p-3 sm:p-4 backdrop-blur-sm"
-      style={{ zIndex: Z_INDEX.confirmDialog }}
-      role="dialog"
-      aria-modal="true"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
-    >
-      <div className={`w-full max-w-md p-5 ${card}`}>
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-50 ring-1 ring-slate-200/80 dark:bg-[var(--app-input)] dark:ring-white/10">
-            <img src={plugin.logo_src} alt="" className="h-7 w-7 object-contain" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className={`text-base font-bold ${headingText}`}>{plugin.name}</h3>
-            <p className={`mt-0.5 text-xs leading-snug ${mutedText}`}>{plugin.blurb}</p>
-          </div>
-        </div>
-
-        <div className={`mt-4 space-y-3 text-sm ${bodyText}`}>
-          {!plugin.connectable ? (
-            <p className={mutedText}>{plugin.unavailable_reason}</p>
-          ) : usesCredentialForm ? (
-            <div className="space-y-2.5">
-              {plugin.auth_type === 'account' && plugin.login_url ? (
-                <p className={`text-xs leading-relaxed ${mutedText}`}>
-                  {plugin.slug === 'remoterocketship' ? (
-                    <>
-                      Sign in on{' '}
-                      <a
-                        href={plugin.login_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-medium text-sky-600 hover:underline"
-                      >
-                        RemoteRocketship
-                        <ExternalLink size={11} className="ml-0.5 inline" />
-                      </a>
-                      , then paste the Cookie header from DevTools. We verify it against the live
-                      API — no browser extension required.
-                    </>
-                  ) : (
-                    <>
-                      Enter the same email and password you use on{' '}
-                      <a
-                        href={plugin.homepage}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-medium text-sky-600 hover:underline"
-                      >
-                        {plugin.name}
-                        <ExternalLink size={11} className="ml-0.5 inline" />
-                      </a>
-                      . We sign in server-side and verify against the live API — no browser
-                      extension required.
-                    </>
-                  )}
-                </p>
-              ) : null}
-              {plugin.credential_fields.map((field) => (
-                <label key={field.key} className="block">
-                  <span className={`mb-1 flex items-center justify-between text-xs font-semibold ${mutedText}`}>
-                    {field.label}
-                    {field.help_url ? (
-                      <a
-                        href={field.help_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-medium text-sky-600 hover:underline"
-                      >
-                        {plugin.auth_type === 'account' ? 'Open site' : 'Get key'}
-                        <ExternalLink size={11} className="ml-0.5 inline" />
-                      </a>
-                    ) : null}
-                  </span>
-                  {field.key === 'cookie_header' ? (
-                    <textarea
-                      value={values[field.key] ?? ''}
-                      onChange={(e) =>
-                        setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
-                      }
-                      placeholder={field.placeholder}
-                      className={`${input} min-h-[88px] resize-y font-mono text-xs`}
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                  ) : (
-                    <input
-                      type={field.secret ? 'password' : field.key === 'email' ? 'email' : 'text'}
-                      value={values[field.key] ?? ''}
-                      onChange={(e) =>
-                        setValues((prev) => ({ ...prev, [field.key]: e.target.value }))
-                      }
-                      placeholder={field.placeholder}
-                      className={input}
-                      autoComplete={field.key === 'email' ? 'username' : 'off'}
-                    />
-                  )}
-                </label>
-              ))}
-            </div>
-          ) : (
-            <p className={mutedText}>
-              This board publishes a public job feed. Connecting enables automatic sync into your
-              pipeline — no account required.
-            </p>
-          )}
-
-          {connection ? (
-            <p className={`text-xs ${mutedText}`}>
-              {Object.entries(connection.credential_hints)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join(' · ') || 'Connected'}
-            </p>
-          ) : null}
-
-          {localError ? (
-            <p className="flex items-start gap-1.5 text-sm font-medium text-rose-700 dark:text-rose-400">
-              <AlertCircle size={16} className="mt-0.5 shrink-0" />
-              {localError}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
-          {connection ? (
-            <button type="button" onClick={onDisconnect} disabled={busy} className={btnDanger}>
-              <Unplug size={14} />
-              Disconnect
-            </button>
-          ) : null}
-          <button type="button" onClick={onClose} className={btnSecondary} disabled={busy}>
-            Close
-          </button>
-          {plugin.connectable && usesCredentialForm ? (
-            <button
-              type="button"
-              onClick={() => void submitCredentials()}
-              disabled={busy}
-              className={btnPrimary}
-            >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-              {connection ? 'Update & verify' : 'Verify & connect'}
-            </button>
-          ) : null}
-          {plugin.connectable && plugin.auth_type === 'none' && !connection ? (
-            <button
-              type="button"
-              onClick={() => void submitCredentials()}
-              disabled={busy}
-              className={btnPrimary}
-            >
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-              Enable
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>,
-    document.body,
   );
 }
