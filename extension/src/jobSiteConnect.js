@@ -23,6 +23,16 @@
 
 const LOG_PREFIX = "[atomspace:jobsite]";
 const WATCH_SCRIPT_ID = "atomspace-job-site-watch";
+
+/**
+ * Bumped whenever this module's message contract changes. Every ack carries it
+ * so the dashboard can tell "connect failed" apart from "the service worker is
+ * still running a previously-loaded build". An MV3 worker keeps executing the
+ * module graph it was registered with — editing this file on disk does NOT
+ * restart it — while content scripts are re-read on every page load. That mix
+ * produces confusing, impossible-looking errors without this stamp.
+ */
+export const CONNECT_BUILD = "2026.09.10-tab-redirect";
 const STATE_KEY = "jobSiteConnectState";
 const SETTLE_MS = 1800;
 const MAX_STORAGE_BYTES = 96 * 1024;
@@ -677,14 +687,14 @@ export async function startConnect(rawSession, sender) {
   log("tab:opened", { tabId: active.siteTabId, url: active.startUrl });
 
   setPhase("navigating", active.startUrl);
-  return { ok: true, slug: active.slug, tabId: active.siteTabId };
+  return { ok: true, build: CONNECT_BUILD, slug: active.slug, tabId: active.siteTabId };
 }
 
 export async function stopConnect({ keepTab = false, silent = false, focusDashboard = true } = {}) {
   const state = await ensureActive();
   if (!state) {
     if (!silent) console.log(`${LOG_PREFIX} stop:noop`);
-    return { ok: true };
+    return { ok: true, build: CONNECT_BUILD };
   }
   if (!silent) {
     log("stop", {
@@ -718,7 +728,7 @@ export async function stopConnect({ keepTab = false, silent = false, focusDashbo
       /* dashboard tab gone */
     }
   }
-  return { ok: true };
+  return { ok: true, build: CONNECT_BUILD };
 }
 
 export async function captureNow() {
@@ -733,7 +743,7 @@ export async function captureNow() {
     await persist();
     throw new Error("No signed-in session found yet. Finish signing in, then try again.");
   }
-  return { ok: true };
+  return { ok: true, build: CONNECT_BUILD };
 }
 
 export async function focusSiteTab() {
@@ -748,11 +758,11 @@ export async function focusSiteTab() {
     }
   }
   log("tab:focused", { tabId: state.siteTabId });
-  return { ok: true };
+  return { ok: true, build: CONNECT_BUILD };
 }
 
 export function attachMessageHandlers() {
-  console.log(`${LOG_PREFIX} handlers:attached`);
+  console.log(`${LOG_PREFIX} handlers:attached`, { build: CONNECT_BUILD });
   bindListeners();
   void ensureActive();
 
@@ -766,7 +776,7 @@ export function attachMessageHandlers() {
         } catch (err) {
           const error = String((err && err.message) || err);
           console.error(`${LOG_PREFIX} connect:failed`, error);
-          sendResponse({ ok: false, error });
+          sendResponse({ ok: false, build: CONNECT_BUILD, error });
         }
       })();
       return true;
@@ -777,7 +787,7 @@ export function attachMessageHandlers() {
         try {
           sendResponse(await stopConnect({ keepTab: Boolean(msg.keepTab) }));
         } catch (err) {
-          sendResponse({ ok: false, error: String((err && err.message) || err) });
+          sendResponse({ ok: false, build: CONNECT_BUILD, error: String((err && err.message) || err) });
         }
       })();
       return true;
@@ -790,7 +800,7 @@ export function attachMessageHandlers() {
         } catch (err) {
           const error = String((err && err.message) || err);
           console.warn(`${LOG_PREFIX} capture:manual_failed`, error);
-          sendResponse({ ok: false, error });
+          sendResponse({ ok: false, build: CONNECT_BUILD, error });
         }
       })();
       return true;
@@ -801,7 +811,7 @@ export function attachMessageHandlers() {
         try {
           sendResponse(await focusSiteTab());
         } catch (err) {
-          sendResponse({ ok: false, error: String((err && err.message) || err) });
+          sendResponse({ ok: false, build: CONNECT_BUILD, error: String((err && err.message) || err) });
         }
       })();
       return true;

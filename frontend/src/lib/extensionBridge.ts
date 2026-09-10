@@ -194,6 +194,36 @@ export interface JobSiteConnectAck {
   error?: string;
 }
 
+/**
+ * Must match CONNECT_BUILD in extension/src/jobSiteConnect.js.
+ *
+ * An MV3 service worker keeps running the module graph it was registered with,
+ * so editing the extension's files does not restart it — while content scripts
+ * ARE re-read on every page load. A stale worker therefore answers with a
+ * contract the dashboard no longer knows, which looks like an impossible bug.
+ * Comparing build stamps turns that into a plain "reload the extension".
+ */
+export const EXPECTED_CONNECT_BUILD = '2026.09.10-tab-redirect';
+
+const STALE_EXTENSION_MESSAGE =
+  'The Atomspace extension is running an older build than this dashboard. ' +
+  'Open chrome://extensions, remove Atomspace, then Load unpacked from the ' +
+  "project's extension folder and accept the permission prompt.";
+
+/** Turn an extension ack into something a person can act on. */
+function ackErrorMessage(ack: {
+  build?: string;
+  error?: string;
+  hint?: string;
+}): string {
+  if (ack.build !== EXPECTED_CONNECT_BUILD) {
+    return `${STALE_EXTENSION_MESSAGE} (extension build: ${ack.build || 'unknown'}, expected: ${EXPECTED_CONNECT_BUILD})`;
+  }
+  const parts = [ack.error || 'Connect failed.'];
+  if (ack.hint) parts.push(ack.hint);
+  return parts.join(' ');
+}
+
 export interface JobSiteConnectStatusEvent {
   slug?: string;
   state: string;
@@ -248,20 +278,28 @@ function waitForExtType<T extends ExtMessage>(
 
 const JOB_SITE_LOG_PREFIX = '[atomspace:jobsite:web]';
 
+type ExtensionAck = ExtMessage & {
+  ok?: boolean;
+  error?: string;
+  hint?: string;
+  build?: string;
+  tabId?: number | null;
+};
+
 async function requestExtension(
   type: string,
   extra: Record<string, unknown> | undefined,
   timeoutMs: number,
-): Promise<(ExtMessage & { ok?: boolean; error?: string; tabId?: number | null }) | null> {
+): Promise<ExtensionAck | null> {
   if (typeof window === 'undefined') return null;
   const requestId = postToExtension(type, extra);
   console.log(`${JOB_SITE_LOG_PREFIX} page -> extension`, { type, extra });
-  const ack = await waitForExtType<ExtMessage & { ok?: boolean; error?: string; tabId?: number | null }>(
-    `${type}_ACK`,
-    requestId,
-    timeoutMs,
-  );
-  console.log(`${JOB_SITE_LOG_PREFIX} extension -> page`, { type, ack });
+  const ack = await waitForExtType<ExtensionAck>(`${type}_ACK`, requestId, timeoutMs);
+  console.log(`${JOB_SITE_LOG_PREFIX} extension -> page`, {
+    type,
+    ack,
+    expectedBuild: EXPECTED_CONNECT_BUILD,
+  });
   return ack;
 }
 
@@ -277,7 +315,20 @@ export async function startJobSiteConnect(
   if (!ack) {
     return { ok: false, error: 'Atomspace extension did not respond. Reload it and try again.' };
   }
-  return { ok: Boolean(ack.ok), tabId: ack.tabId ?? null, error: ack.error };
+  // A stale worker can answer ok:true with an obsolete contract, so the build
+  // stamp is checked on success as well as failure.
+  if (ack.build !== EXPECTED_CONNECT_BUILD) {
+    console.warn(`${JOB_SITE_LOG_PREFIX} extension:stale_build`, {
+      got: ack.build || null,
+      expected: EXPECTED_CONNECT_BUILD,
+      ack,
+    });
+    return { ok: false, tabId: ack.tabId ?? null, error: ackErrorMessage(ack) };
+  }
+  if (!ack.ok) {
+    return { ok: false, tabId: ack.tabId ?? null, error: ackErrorMessage(ack) };
+  }
+  return { ok: true, tabId: ack.tabId ?? null };
 }
 
 /** End the watch. `keepTab` leaves the board tab open (used on failure). */
@@ -290,7 +341,8 @@ export function stopJobSiteConnect(keepTab = false): void {
 export async function captureJobSiteNow(timeoutMs = 8000): Promise<{ ok: boolean; error?: string }> {
   const ack = await requestExtension('CAPTURE_JOB_SITE_NOW', undefined, timeoutMs);
   if (!ack) return { ok: false, error: 'Atomspace extension did not respond.' };
-  return { ok: Boolean(ack.ok), error: ack.error };
+  if (ack.ok) return { ok: true };
+  return { ok: false, error: ackErrorMessage(ack) };
 }
 
 export async function focusJobSiteTab(timeoutMs = 2500): Promise<boolean> {

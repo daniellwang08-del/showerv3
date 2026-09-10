@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Atomspace",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Atomspace browser assistant — sign in with your account to autofill applications and get AI help tailored to each job.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt0ON3WuqLhSQrnqtIytemjIu2bpyd5cCONAeyizYe0nFhKCfRySwXlwLWOsyMo8btFyHEloymbInWDlJ3csRoWEPC6OYQefKjreB3QNCMPjjIGjiwbv8EmM1qZ4F03VD9EzGIYghr9E35oOY7NkFvb4oj6fb8Gde9J4cVZSwbVofHe0UoSARHxUVEMTaoIDabTAVW5oD/sCBfQZZaUtXvDyZZgPF2eqI4H0ZBuSgEVknAKftdECG69eC0zGZl3SVMYn6t7+frwXuFgoRWc90OEdz09dvRxXCNWmcKEdeksnJRpfUMCH0cvRmw4i3QjVRyJjqGWMncGGY1oVBny9CewIDAQAB",
   "permissions": [

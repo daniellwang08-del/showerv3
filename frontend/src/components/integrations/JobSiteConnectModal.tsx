@@ -85,6 +85,8 @@ function statusCopy(state: string, siteName: string): string {
       return `The ${siteName} tab was closed before sign-in finished.`;
     case 'need_extension':
       return 'Install the Atomspace extension to detect your login automatically.';
+    case 'start_failed':
+      return `The extension could not open ${siteName}. See the error below.`;
     default:
       return `Connecting ${siteName}…`;
   }
@@ -206,6 +208,9 @@ export function JobSiteConnectModal({
       if (cancelled) return;
       pushLog(ack.ok ? 'log' : 'error', 'connect:ack', ack);
       if (!ack.ok) {
+        // Leaving liveState on 'navigating' here would keep the spinner
+        // claiming the tab opened when it never did.
+        setLiveState('start_failed');
         setLocalError(ack.error || 'Could not open the job site. Reload the Atomspace extension.');
       }
     })();
@@ -506,7 +511,7 @@ function StatusPanel({
   busy: boolean;
 }) {
   const done = state === 'signed_in' || state === 'capturing' || state === 'connecting';
-  const failed = state === 'cancelled' || state === 'need_extension';
+  const failed = state === 'cancelled' || state === 'need_extension' || state === 'start_failed';
   const spinning = busy || (!failed && !done && state !== 'signed_out');
 
   return (
