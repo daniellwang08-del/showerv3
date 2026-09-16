@@ -196,7 +196,14 @@ async def connect_job_site(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+        # The *job board* rejected the captured session — this is NOT about the
+        # user's Atomspace session. Returning 401 here made the dashboard's
+        # global axios interceptor treat the caller as signed out and bounce
+        # them to the Atomspace login page. Use 422 so a downstream auth failure
+        # can never masquerade as an Atomspace auth failure.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        ) from e
     except Exception as e:
         logger.warning("job_site_connect_verify_failed", slug=plugin.slug, error=str(e))
         raise HTTPException(
