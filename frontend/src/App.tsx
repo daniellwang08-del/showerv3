@@ -13,6 +13,7 @@ import { ScraperDashboard } from './pages/ScraperDashboard';
 import { ProfilePage } from './pages/ProfilePage';
 import { MyPreferencesPage } from './pages/MyPreferencesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
+import { BillingPage } from './pages/BillingPage';
 // Code-split the heaviest / role-gated pages so applicants never download the
 // admin bundles (System Settings + User Management) and vice-versa.
 const ResumeBuilderPage = lazy(() =>
@@ -337,6 +338,14 @@ function App() {
             element={
               <ApplicantOnly isAdmin={!!user?.is_admin}>
                 <IntegrationsPage />
+              </ApplicantOnly>
+            }
+          />
+          <Route
+            path="/billing"
+            element={
+              <ApplicantOnly isAdmin={!!user?.is_admin}>
+                <BillingPage />
               </ApplicantOnly>
             }
           />

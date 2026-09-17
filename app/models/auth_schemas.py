@@ -59,6 +59,14 @@ class UserResponse(BaseModel):
     is_active: bool
     is_admin: bool = False
     created_at: datetime
+    # Subscription snapshot (mirrored from Stripe) so the SPA can gate UI and
+    # show billing status without a second request. Defaults keep every other
+    # place that builds a UserResponse working unchanged.
+    is_subscribed: bool = False
+    subscription_plan: str | None = None
+    subscription_status: str | None = None
+    subscription_current_period_end: datetime | None = None
+    subscription_cancel_at_period_end: bool = False
 
 
 class ProfileUpdateRequest(BaseModel):

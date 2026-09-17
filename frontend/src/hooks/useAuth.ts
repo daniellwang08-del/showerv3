@@ -12,6 +12,12 @@ export type AuthUser = {
   is_active?: boolean;
   is_admin?: boolean;
   created_at?: string;
+  // Subscription snapshot mirrored from Stripe (see /auth/me).
+  is_subscribed?: boolean;
+  subscription_plan?: string | null;
+  subscription_status?: string | null;
+  subscription_current_period_end?: string | null;
+  subscription_cancel_at_period_end?: boolean;
 };
 
 export function useAuth() {

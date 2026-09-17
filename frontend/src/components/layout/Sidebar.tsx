@@ -14,6 +14,7 @@ import {
   Sparkles,
   ScrollText,
   BarChart3,
+  CreditCard,
 } from 'lucide-react';
 import { useThemeStore } from '../../stores/themeStore';
 import { useAgentStore } from '../../stores/agentStore';
@@ -81,6 +82,7 @@ const applicantNavItems = [
   { to: '/preferences', label: 'My Preferences', icon: UserCog },
   { to: '/resume-builder', label: 'Resume Builder', icon: LayoutTemplate },
   { to: '/integrations', label: 'Integrations', icon: Puzzle },
+  { to: '/billing', label: 'Subscription', icon: CreditCard },
 ];
 
 /** Platform ops only — Integrations and AI Assistant are applicant tools. */

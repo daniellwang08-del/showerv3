@@ -269,6 +269,24 @@ class Settings(BaseSettings):
     # (e.g. ".atomspace.it.com"). Empty = host-only (local/dev default).
     auth_cookie_domain: str = Field(default="")
 
+    # ── Stripe billing / subscriptions ───────────────────────────────────
+    # Server-side secret key (sk_live_… / sk_test_…). Empty = billing disabled;
+    # the /billing endpoints report "not configured" instead of erroring.
+    stripe_secret_key: str = Field(default="")
+    # Publishable key (pk_…). Not required for hosted Checkout (we redirect to the
+    # session URL) but exposed to the SPA for completeness / future Elements use.
+    stripe_publishable_key: str = Field(default="")
+    # Webhook signing secret (whsec_…) for POST /billing/webhook. Without it the
+    # webhook refuses every event so forged subscription updates are impossible.
+    stripe_webhook_secret: str = Field(default="")
+    # Recurring Price IDs (price_…) created in the Stripe dashboard, one per plan.
+    stripe_price_monthly: str = Field(default="")
+    stripe_price_quarterly: str = Field(default="")
+    stripe_price_yearly: str = Field(default="")
+    # Where Stripe Checkout / Customer Portal returns the user. Empty = derive
+    # from frontend_url (…/billing), falling back to the local dev SPA origin.
+    stripe_billing_return_url: str = Field(default="")
+
     google_sheets_credentials_path: str = Field(default="google_credentials.json")
 
     # Default GPA written to optional "Overall Result (GPA)" application fields when
