@@ -85,6 +85,22 @@ def _extract_price_id(sub: dict[str, Any]) -> str | None:
     return plan.get("id")
 
 
+def _extract_period_end(sub: dict[str, Any]) -> Any:
+    """Read the current period end regardless of Stripe API version.
+
+    API versions >= 2025-03-31.basil (incl. 2026-08-26.dahlia) removed
+    ``current_period_end`` from the top-level Subscription and moved it onto each
+    subscription item; older versions keep it at the top level. Check both.
+    """
+    top = sub.get("current_period_end")
+    if top not in (None, ""):
+        return top
+    items = (sub.get("items") or {}).get("data") or []
+    if items:
+        return items[0].get("current_period_end")
+    return None
+
+
 async def upsert_subscription_from_stripe(
     session: AsyncSession, sub: dict[str, Any]
 ) -> UserSubscription | None:
@@ -123,7 +139,7 @@ async def upsert_subscription_from_stripe(
     row.plan = plan_slug
     row.price_id = price_id
     row.status = str(sub.get("status") or "incomplete")
-    row.current_period_end = _period_end_to_dt(sub.get("current_period_end"))
+    row.current_period_end = _period_end_to_dt(_extract_period_end(sub))
     row.cancel_at_period_end = bool(sub.get("cancel_at_period_end"))
     await session.flush()
 

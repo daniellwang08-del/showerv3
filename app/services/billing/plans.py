@@ -88,9 +88,9 @@ PLANS: tuple[Plan, ...] = (
     Plan(
         slug="yearly",
         name="Yearly",
-        tagline="Billed $960 a year — best value at $80/mo.",
+        tagline="Billed $500 a year — best value at ~$42/mo.",
         price_setting="stripe_price_yearly",
-        amount_cents=96000,
+        amount_cents=50000,
         currency="usd",
         interval="year",
         interval_count=1,

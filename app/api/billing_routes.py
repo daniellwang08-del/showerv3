@@ -1,8 +1,9 @@
 """Subscription billing: plans, Stripe Checkout, Customer Portal, and webhooks.
 
-Payment details never touch this server — the browser is redirected to Stripe's
-hosted Checkout and Customer Portal. Entitlement is driven entirely by signed
-webhook events, which are the only writer of "active/canceled" truth.
+Payment details never touch this server — checkout runs in Stripe's embedded
+form (an iframe mounted in the billing page) and the Customer Portal is hosted
+by Stripe. Entitlement is driven entirely by signed webhook events, which are
+the only writer of "active/canceled" truth.
 """
 
 from __future__ import annotations
@@ -138,8 +139,9 @@ async def create_checkout(
             price_id=price_id,
             user_id=user_id,
             plan_slug=plan.slug,
-            success_url=f"{base}?status=success&session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{base}?status=cancelled",
+            # Embedded checkout: Stripe navigates the top window here once the
+            # in-page form completes. No cancel_url in embedded mode.
+            return_url=f"{base}?status=success&session_id={{CHECKOUT_SESSION_ID}}",
         )
     except stripe_service.BillingNotConfiguredError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -151,10 +153,12 @@ async def create_checkout(
             status_code=502, detail="Could not start checkout. Please try again."
         ) from e
 
-    url = checkout.get("url")
-    if not url:
-        raise HTTPException(status_code=502, detail="Stripe did not return a checkout URL.")
-    return {"url": url}
+    client_secret = checkout.get("client_secret")
+    if not client_secret:
+        raise HTTPException(
+            status_code=502, detail="Stripe did not return a checkout client secret."
+        )
+    return {"client_secret": client_secret, "session_id": checkout.get("id")}
 
 
 @router.post("/portal")

@@ -45,10 +45,16 @@ export async function fetchSubscription(): Promise<{
   return data;
 }
 
-/** Start Checkout for a plan; returns the Stripe-hosted URL to redirect to. */
-export async function startCheckout(plan: PlanSlug): Promise<string> {
-  const { data } = await apiClient.post<{ url: string }>('/billing/checkout', { plan });
-  return data.url;
+export interface CheckoutSession {
+  /** Client secret used to mount Stripe's embedded checkout form in-page. */
+  client_secret: string;
+  session_id: string | null;
+}
+
+/** Create an embedded Checkout Session for a plan; returns its client secret. */
+export async function createCheckoutSession(plan: PlanSlug): Promise<CheckoutSession> {
+  const { data } = await apiClient.post<CheckoutSession>('/billing/checkout', { plan });
+  return data;
 }
 
 /** Open the Stripe Customer Portal (manage/cancel/update payment). */

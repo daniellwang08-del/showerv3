@@ -65,19 +65,25 @@ async def create_checkout_session(
     price_id: str,
     user_id: str,
     plan_slug: str,
-    success_url: str,
-    cancel_url: str,
+    return_url: str,
 ) -> dict[str, Any]:
-    """Create a subscription-mode Checkout Session and return it."""
+    """Create an embedded subscription Checkout Session and return it.
+
+    ``ui_mode='embedded'`` makes Stripe return a ``client_secret`` the browser
+    uses to mount the checkout form *inside* our billing page (an iframe to
+    checkout.stripe.com — no card data touches our server). ``return_url`` is
+    where Stripe navigates the top window once payment completes; there is no
+    ``cancel_url`` in embedded mode (the user simply closes the form).
+    """
 
     def _run() -> dict[str, Any]:
         stripe = _stripe()
         session = stripe.checkout.Session.create(
             mode="subscription",
+            ui_mode="embedded",
             customer=customer_id,
             line_items=[{"price": price_id, "quantity": 1}],
-            success_url=success_url,
-            cancel_url=cancel_url,
+            return_url=return_url,
             client_reference_id=user_id,
             # Attach identity to BOTH the session and the resulting subscription
             # so any webhook can resolve the owner without a DB lookup by email.

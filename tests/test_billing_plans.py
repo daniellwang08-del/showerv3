@@ -43,9 +43,9 @@ def test_plan_amounts_and_cadence() -> None:
     assert quarterly.interval == "month" and quarterly.interval_count == 3
     assert quarterly.period_label == "every 3 months"
 
-    assert yearly is not None and yearly.amount_cents == 96000
+    assert yearly is not None and yearly.amount_cents == 50000
     assert yearly.interval == "year" and yearly.interval_count == 1
-    assert yearly.amount_display == "$960"
+    assert yearly.amount_display == "$500"
 
 
 def test_get_plan_is_case_insensitive_and_unknown_is_none() -> None:

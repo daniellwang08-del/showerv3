@@ -1,17 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, CheckCircle2, CreditCard, Loader2, Sparkles } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CreditCard, Loader2, Sparkles, X } from 'lucide-react';
+import { loadStripe, type Stripe } from '@stripe/stripe-js';
+import {
+  EmbeddedCheckout,
+  EmbeddedCheckoutProvider,
+} from '@stripe/react-stripe-js';
 import { PageHeader } from '../components/layout/PageHeader';
 import { PageScrollArea } from '../components/layout/PageScrollArea';
 import {
+  createCheckoutSession,
   fetchBillingPlans,
   openBillingPortal,
-  startCheckout,
   type BillingPlan,
   type BillingPlansResponse,
   type PlanSlug,
   type SubscriptionState,
 } from '../api/billingApi';
+
+// Cache the Stripe.js loader per publishable key so we call loadStripe once,
+// not on every render. The key only becomes known after /billing/plans returns.
+let stripeCache: { key: string; promise: Promise<Stripe | null> } | null = null;
+function getStripe(publishableKey: string): Promise<Stripe | null> {
+  if (!stripeCache || stripeCache.key !== publishableKey) {
+    stripeCache = { key: publishableKey, promise: loadStripe(publishableKey) };
+  }
+  return stripeCache.promise;
+}
 import {
   brandChipGradient,
   btnPrimary,
@@ -160,11 +175,62 @@ function PlanCard({
   );
 }
 
+function EmbeddedCheckoutPanel({
+  publishableKey,
+  plan,
+  planName,
+  onClose,
+}: {
+  publishableKey: string;
+  plan: PlanSlug;
+  planName: string;
+  onClose: () => void;
+}) {
+  const stripePromise = useMemo(() => getStripe(publishableKey), [publishableKey]);
+  // A fresh secret per plan; remounting the provider (via key={plan}) reruns this.
+  const fetchClientSecret = useCallback(
+    () => createCheckoutSession(plan).then((res) => res.client_secret),
+    [plan],
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/60 p-4 backdrop-blur-sm sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Subscribe to the ${planName} plan`}
+    >
+      <div className={`relative my-6 w-full max-w-xl ${card} p-4 sm:p-5`}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className={`text-sm font-bold ${headingText}`}>
+            Subscribe — {planName} plan
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close checkout"
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${mutedText} hover:bg-slate-100 dark:hover:bg-slate-800`}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <EmbeddedCheckoutProvider
+          key={plan}
+          stripe={stripePromise}
+          options={{ fetchClientSecret }}
+        >
+          <EmbeddedCheckout />
+        </EmbeddedCheckoutProvider>
+      </div>
+    </div>
+  );
+}
+
 export function BillingPage() {
   const [data, setData] = useState<BillingPlansResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [checkoutBusy, setCheckoutBusy] = useState<PlanSlug | null>(null);
+  const [checkoutPlan, setCheckoutPlan] = useState<PlanSlug | null>(null);
   const [managing, setManaging] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -206,17 +272,17 @@ export function BillingPage() {
   const subscription = data?.subscription ?? null;
   const activePlanSlug = subscription?.is_active ? subscription.plan : null;
 
-  const handleSubscribe = useCallback(async (slug: PlanSlug) => {
-    setError('');
-    setCheckoutBusy(slug);
-    try {
-      const url = await startCheckout(slug);
-      window.location.assign(url);
-    } catch (err) {
-      setError(errorDetail(err, 'Could not start checkout. Please try again.'));
-      setCheckoutBusy(null);
-    }
-  }, []);
+  const handleSubscribe = useCallback(
+    (slug: PlanSlug) => {
+      setError('');
+      if (!data?.publishable_key) {
+        setError('Billing is not fully configured yet. Please try again later.');
+        return;
+      }
+      setCheckoutPlan(slug);
+    },
+    [data?.publishable_key],
+  );
 
   const handleManage = useCallback(async () => {
     setError('');
@@ -288,8 +354,8 @@ export function BillingPage() {
                   plan={plan}
                   highlighted={plan.slug === highlightSlug}
                   currentActive={activePlanSlug === plan.slug}
-                  busy={checkoutBusy === plan.slug}
-                  disabled={checkoutBusy !== null}
+                  busy={false}
+                  disabled={checkoutPlan !== null}
                   onSubscribe={handleSubscribe}
                 />
               ))}
@@ -302,6 +368,15 @@ export function BillingPage() {
           </>
         )}
       </div>
+
+      {checkoutPlan && data?.publishable_key ? (
+        <EmbeddedCheckoutPanel
+          publishableKey={data.publishable_key}
+          plan={checkoutPlan}
+          planName={data.plans.find((p) => p.slug === checkoutPlan)?.name ?? 'Selected'}
+          onClose={() => setCheckoutPlan(null)}
+        />
+      ) : null}
     </PageScrollArea>
   );
 }
