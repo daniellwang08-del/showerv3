@@ -179,19 +179,31 @@ function EmbeddedCheckoutPanel({
   publishableKey,
   plan,
   planName,
+  instanceKey,
   onClose,
+  onError,
 }: {
   publishableKey: string;
   plan: PlanSlug;
   planName: string;
+  instanceKey: number;
   onClose: () => void;
+  onError: (message: string) => void;
 }) {
   const stripePromise = useMemo(() => getStripe(publishableKey), [publishableKey]);
-  // A fresh secret per plan; remounting the provider (via key={plan}) reruns this.
-  const fetchClientSecret = useCallback(
-    () => createCheckoutSession(plan).then((res) => res.client_secret),
-    [plan],
-  );
+  // Fetch a fresh client secret for this open. If Stripe rejects the session
+  // (e.g. the account can't take live charges yet), surface the reason and close
+  // the modal instead of leaving a blank box + an uncaught promise rejection.
+  const fetchClientSecret = useCallback(async () => {
+    try {
+      const res = await createCheckoutSession(plan);
+      return res.client_secret;
+    } catch (err) {
+      onError(errorDetail(err, 'Could not start checkout. Please try again.'));
+      onClose();
+      throw err;
+    }
+  }, [plan, onClose, onError]);
 
   return (
     <div
@@ -215,7 +227,7 @@ function EmbeddedCheckoutPanel({
           </button>
         </div>
         <EmbeddedCheckoutProvider
-          key={plan}
+          key={instanceKey}
           stripe={stripePromise}
           options={{ fetchClientSecret }}
         >
@@ -231,6 +243,9 @@ export function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [checkoutPlan, setCheckoutPlan] = useState<PlanSlug | null>(null);
+  // Bumped on every open so each embedded checkout mounts as a fresh subtree,
+  // avoiding "multiple Embedded Checkout objects" on open→close→reopen.
+  const [checkoutEpoch, setCheckoutEpoch] = useState(0);
   const [managing, setManaging] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -279,6 +294,7 @@ export function BillingPage() {
         setError('Billing is not fully configured yet. Please try again later.');
         return;
       }
+      setCheckoutEpoch((n) => n + 1);
       setCheckoutPlan(slug);
     },
     [data?.publishable_key],
@@ -374,7 +390,9 @@ export function BillingPage() {
           publishableKey={data.publishable_key}
           plan={checkoutPlan}
           planName={data.plans.find((p) => p.slug === checkoutPlan)?.name ?? 'Selected'}
+          instanceKey={checkoutEpoch}
           onClose={() => setCheckoutPlan(null)}
+          onError={setError}
         />
       ) : null}
     </PageScrollArea>
