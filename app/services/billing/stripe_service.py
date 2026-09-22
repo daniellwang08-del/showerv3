@@ -11,6 +11,7 @@ only talks to Stripe. Persisting the results is the subscription service's job.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from app.core.config import get_settings
@@ -21,6 +22,17 @@ logger = get_logger(__name__)
 
 class BillingNotConfiguredError(RuntimeError):
     """Raised when a Stripe call is attempted without a configured secret key."""
+
+
+def _to_plain(resource: Any) -> dict[str, Any]:
+    """Deep-convert a Stripe resource object into a plain nested dict.
+
+    stripe-python 15.x removed ``dict(resource)``/``.get()`` on resource objects
+    and made the recursive converter private, so a JSON round-trip is the stable
+    public path to a guaranteed-deep plain dict (every nested StripeObject
+    flattened). The rest of the app then consumes it with ordinary dict access.
+    """
+    return json.loads(json.dumps(resource, default=lambda o: o.to_dict()))
 
 
 def billing_configured() -> bool:
@@ -69,18 +81,22 @@ async def create_checkout_session(
 ) -> dict[str, Any]:
     """Create an embedded subscription Checkout Session and return it.
 
-    ``ui_mode='embedded'`` makes Stripe return a ``client_secret`` the browser
-    uses to mount the checkout form *inside* our billing page (an iframe to
-    checkout.stripe.com — no card data touches our server). ``return_url`` is
+    ``ui_mode='embedded_page'`` makes Stripe return a ``client_secret`` the
+    browser uses to mount the checkout form *inside* our billing page (an iframe
+    to checkout.stripe.com — no card data touches our server). ``return_url`` is
     where Stripe navigates the top window once payment completes; there is no
     ``cancel_url`` in embedded mode (the user simply closes the form).
+
+    Note: the API version 2026-08-26.dahlia renamed the embedded ui_mode from
+    ``embedded`` to ``embedded_page`` (valid values: hosted_page, embedded_page,
+    elements, form).
     """
 
     def _run() -> dict[str, Any]:
         stripe = _stripe()
         session = stripe.checkout.Session.create(
             mode="subscription",
-            ui_mode="embedded",
+            ui_mode="embedded_page",
             customer=customer_id,
             line_items=[{"price": price_id, "quantity": 1}],
             return_url=return_url,
@@ -91,7 +107,7 @@ async def create_checkout_session(
             subscription_data={"metadata": {"user_id": user_id, "plan": plan_slug}},
             allow_promotion_codes=True,
         )
-        return dict(session)
+        return _to_plain(session)
 
     session = await asyncio.to_thread(_run)
     logger.info(
@@ -114,7 +130,7 @@ async def create_billing_portal_session(
             customer=customer_id,
             return_url=return_url,
         )
-        return dict(session)
+        return _to_plain(session)
 
     return await asyncio.to_thread(_run)
 
@@ -124,7 +140,7 @@ async def retrieve_subscription(subscription_id: str) -> dict[str, Any]:
 
     def _run() -> dict[str, Any]:
         stripe = _stripe()
-        return dict(stripe.Subscription.retrieve(subscription_id))
+        return _to_plain(stripe.Subscription.retrieve(subscription_id))
 
     return await asyncio.to_thread(_run)
 
@@ -144,4 +160,4 @@ def construct_webhook_event(payload: bytes, sig_header: str) -> dict[str, Any]:
     import stripe
 
     event = stripe.Webhook.construct_event(payload, sig_header, secret)
-    return dict(event)
+    return _to_plain(event)
