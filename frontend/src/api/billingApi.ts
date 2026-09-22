@@ -1,6 +1,6 @@
 import { apiClient } from './client';
 
-export type PlanSlug = 'monthly' | 'quarterly' | 'yearly';
+export type PlanSlug = 'trial' | 'monthly' | 'quarterly' | 'yearly';
 
 export interface BillingPlan {
   slug: PlanSlug;

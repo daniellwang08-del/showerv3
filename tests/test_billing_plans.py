@@ -19,21 +19,28 @@ from app.services.billing.subscription_service import (
 
 def _settings_with_prices() -> SimpleNamespace:
     return SimpleNamespace(
+        stripe_price_trial="price_t",
         stripe_price_monthly="price_m",
         stripe_price_quarterly="price_q",
         stripe_price_yearly="price_y",
     )
 
 
-def test_catalog_has_three_expected_plans() -> None:
+def test_catalog_has_expected_plans() -> None:
     slugs = [p.slug for p in PLANS]
-    assert slugs == ["monthly", "quarterly", "yearly"]
+    assert slugs == ["trial", "monthly", "quarterly", "yearly"]
 
 
 def test_plan_amounts_and_cadence() -> None:
+    trial = get_plan("trial")
     monthly = get_plan("monthly")
     quarterly = get_plan("quarterly")
     yearly = get_plan("yearly")
+
+    assert trial is not None and trial.amount_cents == 2000
+    assert trial.interval == "week" and trial.interval_count == 1
+    assert trial.period_label == "per week"
+    assert trial.amount_display == "$20"
 
     assert monthly is not None and monthly.amount_cents == 12000
     assert monthly.interval == "month" and monthly.interval_count == 1
@@ -65,15 +72,21 @@ def test_plan_for_price_id_reverse_maps() -> None:
 
 def test_catalog_marks_availability_from_configured_prices() -> None:
     configured = {p["slug"]: p["available"] for p in catalog(_settings_with_prices())}
-    assert configured == {"monthly": True, "quarterly": True, "yearly": True}
+    assert configured == {"trial": True, "monthly": True, "quarterly": True, "yearly": True}
 
     none_configured = SimpleNamespace(
+        stripe_price_trial="",
         stripe_price_monthly="",
         stripe_price_quarterly="",
         stripe_price_yearly="",
     )
     unavailable = {p["slug"]: p["available"] for p in catalog(none_configured)}
-    assert unavailable == {"monthly": False, "quarterly": False, "yearly": False}
+    assert unavailable == {
+        "trial": False,
+        "monthly": False,
+        "quarterly": False,
+        "yearly": False,
+    }
 
 
 def _sub(status: str, *, period_end=None, cancel=False, plan="monthly") -> SimpleNamespace:

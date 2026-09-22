@@ -280,6 +280,7 @@ class Settings(BaseSettings):
     # webhook refuses every event so forged subscription updates are impossible.
     stripe_webhook_secret: str = Field(default="")
     # Recurring Price IDs (price_…) created in the Stripe dashboard, one per plan.
+    stripe_price_trial: str = Field(default="")
     stripe_price_monthly: str = Field(default="")
     stripe_price_quarterly: str = Field(default="")
     stripe_price_yearly: str = Field(default="")

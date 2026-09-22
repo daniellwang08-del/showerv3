@@ -25,7 +25,7 @@ class Plan:
     amount_cents: int
     currency: str
     # Billing cadence, mirrored from how the Stripe Price is configured.
-    interval: str  # "month" | "year"
+    interval: str  # "week" | "month" | "year"
     interval_count: int
 
     @property
@@ -65,6 +65,16 @@ class Plan:
 
 # Order here is the order shown on the pricing page.
 PLANS: tuple[Plan, ...] = (
+    Plan(
+        slug="trial",
+        name="Trial",
+        tagline="Billed $20/week. Try Atomspace, cancel anytime.",
+        price_setting="stripe_price_trial",
+        amount_cents=2000,
+        currency="usd",
+        interval="week",
+        interval_count=1,
+    ),
     Plan(
         slug="monthly",
         name="Monthly",
