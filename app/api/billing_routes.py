@@ -28,6 +28,11 @@ class CheckoutRequest(BaseModel):
     plan: str
 
 
+def _billing_active() -> bool:
+    """Billing works only when the feature is enabled AND Stripe is configured."""
+    return bool(get_settings().billing_enabled) and stripe_service.billing_configured()
+
+
 def _billing_base_url() -> str:
     """Absolute URL of the SPA billing page Stripe returns the user to."""
     settings = get_settings()
@@ -72,9 +77,12 @@ async def list_plans(current_user: dict = Depends(get_current_user)) -> dict:
     user_id = current_user.get("user_id")
     async with get_session() as session:
         row = await subscription_service.get_subscription_row(session, user_id)
+    active = _billing_active()
     return {
-        "configured": stripe_service.billing_configured(),
-        "publishable_key": (settings.stripe_publishable_key or "").strip() or None,
+        "configured": active,
+        "publishable_key": (
+            ((settings.stripe_publishable_key or "").strip() or None) if active else None
+        ),
         "plans": plan_catalog.catalog(settings),
         "subscription": subscription_service.serialize_subscription(row),
     }
@@ -97,10 +105,10 @@ async def get_subscription(current_user: dict = Depends(get_current_user)) -> di
 async def create_checkout(
     body: CheckoutRequest, current_user: dict = Depends(get_current_user)
 ) -> dict:
-    if not stripe_service.billing_configured():
+    if not _billing_active():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Billing is not configured yet. Please try again later.",
+            detail="Subscriptions are currently unavailable.",
         )
 
     plan = plan_catalog.get_plan(body.plan)
@@ -163,8 +171,8 @@ async def create_checkout(
 
 @router.post("/portal")
 async def create_portal(current_user: dict = Depends(get_current_user)) -> dict:
-    if not stripe_service.billing_configured():
-        raise HTTPException(status_code=503, detail="Billing is not configured yet.")
+    if not _billing_active():
+        raise HTTPException(status_code=503, detail="Subscriptions are currently unavailable.")
 
     user_id = current_user.get("user_id")
     async with get_session() as session:

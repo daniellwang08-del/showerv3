@@ -270,6 +270,11 @@ class Settings(BaseSettings):
     auth_cookie_domain: str = Field(default="")
 
     # ── Stripe billing / subscriptions ───────────────────────────────────
+    # Master switch for the whole subscription feature. Set BILLING_ENABLED=false
+    # to disable payments (checkout/portal return 503, the pricing page reports
+    # "not available") WITHOUT discarding the Stripe keys below, so it can be
+    # flipped back on later with a single env change + restart.
+    billing_enabled: bool = Field(default=True)
     # Server-side secret key (sk_live_… / sk_test_…). Empty = billing disabled;
     # the /billing endpoints report "not configured" instead of erroring.
     stripe_secret_key: str = Field(default="")
