@@ -43,7 +43,7 @@ import {
   mutedText,
 } from '../../ui/tokens';
 
-const LOG_PREFIX = '[atomspace:jobsite:modal]';
+const LOG_PREFIX = '[nao:jobsite:modal]';
 const MAX_LOG_LINES = 200;
 
 interface LogLine {
@@ -84,7 +84,7 @@ function statusCopy(state: string, siteName: string): string {
     case 'cancelled':
       return `The ${siteName} tab was closed before sign-in finished.`;
     case 'need_extension':
-      return 'Install the Atomspace extension to detect your login automatically.';
+      return 'Install the NAO extension to detect your login automatically.';
     case 'start_failed':
       return `The extension could not open ${siteName}. See the error below.`;
     default:
@@ -211,7 +211,7 @@ export function JobSiteConnectModal({
         // Leaving liveState on 'navigating' here would keep the spinner
         // claiming the tab opened when it never did.
         setLiveState('start_failed');
-        setLocalError(ack.error || 'Could not open the job site. Reload the Atomspace extension.');
+        setLocalError(ack.error || 'Could not open the job site. Reload the NAO extension.');
       }
     })();
 

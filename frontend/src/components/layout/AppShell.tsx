@@ -107,9 +107,9 @@ export function AppShell({ userEmail, userName, isAdmin, onLogout }: AppShellPro
             <Menu size={20} />
           </button>
           <div className="flex min-w-0 items-center gap-2">
-            <img src="/atomspace-logo.png" alt="" className="h-7 w-auto object-contain" />
+            <img src="/nao-logo.png" alt="" className="h-7 w-auto object-contain" />
             <span className="truncate text-sm font-bold tracking-tight text-slate-900 dark:text-white">
-              Atomspace
+              NAO
             </span>
           </div>
         </div>

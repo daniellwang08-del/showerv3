@@ -9,10 +9,10 @@
 (function () {
   "use strict";
 
-  if (globalThis.__ATOMSPACE_JOB_SITE_WATCH__) return;
-  globalThis.__ATOMSPACE_JOB_SITE_WATCH__ = true;
+  if (globalThis.__NAO_JOB_SITE_WATCH__) return;
+  globalThis.__NAO_JOB_SITE_WATCH__ = true;
 
-  var PREFIX = "[atomspace:jobsite:page]";
+  var PREFIX = "[nao:jobsite:page]";
   var POLL_MS = 500;
   var lastUrl = "";
   var lastReadyState = "";

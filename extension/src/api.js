@@ -94,7 +94,7 @@ export async function apiFetch(path, { method = "GET", body, headers, auth = tru
     res = await fetch(url, { method, headers: h, body: payload, ...FETCH_CREDS });
   } catch (networkErr) {
     throw new ApiError(
-      "Cannot reach the backend. Open the Atomspace dashboard in this browser first (it syncs the server address), or set DEFAULT_BACKEND_URL in extension/config.js.",
+      "Cannot reach the backend. Open the NAO dashboard in this browser first (it syncs the server address), or set DEFAULT_BACKEND_URL in extension/config.js.",
       0
     );
   }

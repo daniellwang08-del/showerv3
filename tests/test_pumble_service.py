@@ -8,7 +8,7 @@ from app.services import pumble_service as ps
 
 
 def test_daily_parent_text():
-    assert ps._daily_parent_text(date(2026, 7, 9)) == "7/9/2026 (Atomspace post)"
+    assert ps._daily_parent_text(date(2026, 7, 9)) == "7/9/2026 (NAO post)"
 
 
 def test_clamp_auto_post_threshold():

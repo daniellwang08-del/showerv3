@@ -288,7 +288,7 @@ async def run_resume_ai_chat(
 
     if intent == "chat":
         reply = route["reply"] or (
-            "I'm Atomspace OneClick AI. Paste a job description and I'll tailor your "
+            "I'm NAO OneClick AI. Paste a job description and I'll tailor your "
             "resume to it, score your match, or refine the result on request."
         )
         return ResumeAiChatResponse(reply=reply, intent="chat", action="none")

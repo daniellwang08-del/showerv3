@@ -353,7 +353,7 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return JSONResponse({
-            "message": "Atomspace API",
+            "message": "NAO API",
             "version": settings.app_version,
             "docs": "/docs",
             "health": "/api/v1/health"

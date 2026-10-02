@@ -1,6 +1,6 @@
 """Local Scrapy spider session helpers (disk cookies / Playwright setup).
 
-Dashboard Integrations connect uses the Atomspace extension to iframe the
+Dashboard Integrations connect uses the NAO extension to iframe the
 board, detect a signed-in URL, and capture cookies. This module remains the
 CLI path for offline spiders:
 

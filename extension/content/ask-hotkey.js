@@ -2,8 +2,8 @@
 // On match, sends the current text selection to the extension assistant chat.
 
 (function () {
-  if (window.__ATOMSPACE_ASK_HOTKEY__) return;
-  window.__ATOMSPACE_ASK_HOTKEY__ = true;
+  if (window.__NAO_ASK_HOTKEY__) return;
+  window.__NAO_ASK_HOTKEY__ = true;
 
   const DEFAULT = { ctrl: false, alt: true, shift: false, meta: false, key: "a" };
 

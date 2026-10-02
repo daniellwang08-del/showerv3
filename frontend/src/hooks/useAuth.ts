@@ -49,10 +49,10 @@ export function useAuth() {
     const interceptor = apiClient.interceptors.response.use(
       (response) => response,
       (error) => {
-        // A 401 should sign the user out ONLY when it is about the Atomspace
+        // A 401 should sign the user out ONLY when it is about the NAO
         // session itself. Third-party integration endpoints (e.g. connecting a
         // job board) can return 401/downstream-auth errors that say nothing
-        // about the Atomspace token — treating those as a logout wrongly
+        // about the NAO token — treating those as a logout wrongly
         // bounced the user to the sign-in page. Never force-logout for those.
         const url: string = error.config?.url ?? '';
         const isIntegrationAuthError = url.includes('/job-sites/');

@@ -44,7 +44,7 @@
           if (!WD || !WD.steps) {
             reply({
               ok: false,
-              error: "WD.steps missing — click Start/Again in Atomspace first (injects Workday engine)",
+              error: "WD.steps missing — click Start/Again in NAO first (injects Workday engine)",
             });
             return;
           }

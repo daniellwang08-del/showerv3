@@ -9,7 +9,7 @@ type BrandedLoaderProps = {
 };
 
 /** Professional, branded loading state shown while a page's data is still loading.
- *  A spinning accent ring wraps the Atomspace mark so every screen shares one
+ *  A spinning accent ring wraps the NAO mark so every screen shares one
  *  consistent, on-brand loading experience in light and dark mode. */
 export function BrandedLoader({
   label = 'Loading…',
@@ -49,7 +49,7 @@ export function BrandedLoader({
         />
         <span className="absolute inset-0 flex items-center justify-center">
           <img
-            src="/atomspace-logo.png"
+            src="/nao-logo.png"
             alt=""
             className={`${logo} object-contain drop-shadow-sm motion-safe:animate-pulse`}
           />
@@ -65,7 +65,7 @@ export function BrandedLoader({
         </span>
         {!compact ? (
           <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-            Atomspace
+            NAO
           </span>
         ) : null}
       </div>

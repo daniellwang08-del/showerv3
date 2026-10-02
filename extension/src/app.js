@@ -2254,7 +2254,7 @@ async function postJobsToPumble(jobIds) {
   const ids = [...new Set((jobIds || []).map((id) => String(id)).filter(Boolean))];
   if (!ids.length) return;
   if (!state.pumbleConfigured) {
-    toast("Configure Pumble in Atomspace Settings first.");
+    toast("Configure Pumble in NAO Settings first.");
     return;
   }
   setState({ postingToPumble: true, error: null });
@@ -5222,9 +5222,9 @@ function renderLogin() {
   inner.appendChild(
     el("div", { class: "login-brand" }, [
       el("div", { class: "login-logo-wrap" }, [
-        el("img", { class: "login-logo", src: "atomspace-logo.png", alt: "Atomspace" }),
+        el("img", { class: "login-logo", src: "nao-logo.png", alt: "NAO" }),
       ]),
-      el("h1", { class: "login-title" }, "Atomspace"),
+      el("h1", { class: "login-title" }, "NAO"),
       el("p", { class: "login-subtitle" }, "Your AI job application workspace"),
     ])
   );
@@ -7520,7 +7520,7 @@ function renderSettings() {
       el(
         "p",
         { class: "muted small settings-hint" },
-        "AI provider, models, and API keys are managed in Atomspace System Settings on the dashboard — not here."
+        "AI provider, models, and API keys are managed in NAO System Settings on the dashboard — not here."
       ),
       el("div", { class: "settings-field" }, [
         el("label", { class: "settings-field-label" }, "Default chat tone"),
@@ -7554,7 +7554,7 @@ function renderAskHotkeySettings() {
     el(
       "p",
       { class: "muted small settings-hint" },
-      "On an application page, select a question (or any text), then press your hotkey. Atomspace pastes it into chat and asks the assistant automatically. Chat history clears each time you open an application."
+      "On an application page, select a question (or any text), then press your hotkey. NAO pastes it into chat and asks the assistant automatically. Chat history clears each time you open an application."
     ),
     el("div", { class: "settings-hotkey-row" }, [
       el("div", { class: "settings-hotkey-current" }, [
@@ -8286,7 +8286,7 @@ function renderPager(tabId, page, totalPages, total, start, shown) {
 
 function renderHeader() {
   return el("div", { class: "header" }, [
-    el("div", { class: "header-title" }, "Atomspace"),
+    el("div", { class: "header-title" }, "NAO"),
     el("div", { class: "header-right" }, [
       renderAutoSubmitToggle(),
       el("span", { class: "muted small" }, state.user ? state.user.email : ""),

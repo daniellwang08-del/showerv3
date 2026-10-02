@@ -376,7 +376,7 @@
 
   // Use console.info (not console.debug): Chrome DevTools hides Verbose/Debug by
   // default. WD.aa() is the auto-advance step tracer — always stringified + mirrored
-  // to the Atomspace Debug log so investigation does not depend on page DevTools.
+  // to the NAO Debug log so investigation does not depend on page DevTools.
   let aaSeq = 0;
   let lastDetectLog = { step: null, at: 0 };
 

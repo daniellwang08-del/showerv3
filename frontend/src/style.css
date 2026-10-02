@@ -489,7 +489,7 @@ html.dark {
 .animate-oneclick-modal-out    { animation: oneclick-modal-out 0.2s ease-in forwards; }
 .animate-oneclick-backdrop-out { animation: oneclick-backdrop-out 0.2s ease-in forwards; }
 
-/* ── Atomspace brand + OneClick AI motion ── */
+/* ── NAO brand + OneClick AI motion ── */
 @keyframes brand-breathe {
   0%, 100% { transform: translateY(0) scale(1); filter: brightness(1); }
   50%      { transform: translateY(-3px) scale(1.05); filter: brightness(1.12); }

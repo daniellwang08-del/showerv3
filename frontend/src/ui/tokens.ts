@@ -1,5 +1,5 @@
 /**
- * Atomspace shared UI tokens — one brand language for app, auth, and landing CTAs.
+ * NAO shared UI tokens — one brand language for app, auth, and landing CTAs.
  *
  * Landing stays cinematic-dark (fixed hex / white-alpha) so the app's slate
  * dark-mode remap cannot invert marketing copy. Auth and app import these

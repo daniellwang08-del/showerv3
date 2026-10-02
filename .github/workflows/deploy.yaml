@@ -111,17 +111,38 @@ jobs:
 
             echo "Applying nginx security hardening (TLS-safe conf.d drop-in)..."
             # Installs only an http-scope drop-in (security headers + auth
-            # rate-limit zone). It never rewrites the certbot-managed vhost, so
-            # TLS stays intact. Fully guarded: a bad config removes the drop-in
-            # and keeps the previous nginx config, and never fails the deploy.
+            # rate-limit zone). It never replaces the certbot-managed vhost, so
+            # TLS stays intact. Fully guarded: a bad config restores every file
+            # touched here, keeps the previous nginx config, and never fails the deploy.
+            #
+            # Pre-rebrand servers carry atomspace-hardening.conf, and their live
+            # vhosts reference zone=atomspace_auth. Both must move together:
+            # leaving the old drop-in duplicates every security header, and
+            # dropping it alone leaves the vhosts pointing at a missing zone.
+            # Only the zone name inside the vhost is edited; TLS blocks are untouched.
             if [ -d /etc/nginx/conf.d ]; then
-              cp deploy/nginx/conf.d/atomspace-hardening.conf /etc/nginx/conf.d/atomspace-hardening.conf || true
+              LEGACY_DROPIN=/etc/nginx/conf.d/atomspace-hardening.conf
+              NGINX_BACKUP=$(mktemp -d)
+              LEGACY_VHOSTS=$(grep -rlE 'zone=atomspace_auth\b' /etc/nginx/sites-available /etc/nginx/sites-enabled 2>/dev/null | xargs -r readlink -f | sort -u || true)
+              [ -f "$LEGACY_DROPIN" ] && cp "$LEGACY_DROPIN" "$NGINX_BACKUP/legacy-dropin.conf"
+              for f in $LEGACY_VHOSTS; do
+                cp "$f" "$NGINX_BACKUP/$(echo "$f" | tr / _)"
+                sed -i 's/zone=atomspace_auth\b/zone=nao_auth/' "$f"
+                echo "Migrated rate-limit zone in $f"
+              done
+              rm -f "$LEGACY_DROPIN"
+              cp deploy/nginx/conf.d/nao-hardening.conf /etc/nginx/conf.d/nao-hardening.conf || true
               if nginx -t; then
                 systemctl reload nginx || echo "nginx reload failed; previous config still serving"
               else
-                echo "nginx -t failed; reverting drop-in and keeping previous config"
-                rm -f /etc/nginx/conf.d/atomspace-hardening.conf || true
+                echo "nginx -t failed; reverting drop-in and vhost changes, keeping previous config"
+                rm -f /etc/nginx/conf.d/nao-hardening.conf || true
+                [ -f "$NGINX_BACKUP/legacy-dropin.conf" ] && cp "$NGINX_BACKUP/legacy-dropin.conf" "$LEGACY_DROPIN"
+                for f in $LEGACY_VHOSTS; do
+                  cp "$NGINX_BACKUP/$(echo "$f" | tr / _)" "$f" || true
+                done
               fi
+              rm -rf "$NGINX_BACKUP"
             else
               echo "no /etc/nginx/conf.d; skipping nginx hardening"
             fi

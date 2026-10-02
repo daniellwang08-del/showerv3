@@ -13,7 +13,7 @@
  *   5. Once signed in we capture cookies + localStorage + sessionStorage and
  *      hand them to the dashboard, which posts them to the backend.
  *
- * Every step console.logs under [atomspace:jobsite] in the service-worker
+ * Every step console.logs under [nao:jobsite] in the service-worker
  * console and is mirrored to the dashboard page console via JOB_SITE_LOG.
  *
  * SERVICE-WORKER LIFETIME: signing in takes longer than the MV3 idle timeout,
@@ -21,8 +21,8 @@
  * registered at worker start — a restart mid-login resumes the same watch.
  */
 
-const LOG_PREFIX = "[atomspace:jobsite]";
-const WATCH_SCRIPT_ID = "atomspace-job-site-watch";
+const LOG_PREFIX = "[nao:jobsite]";
+const WATCH_SCRIPT_ID = "nao-job-site-watch";
 
 /**
  * Bumped whenever this module's message contract changes. Every ack carries it
@@ -32,7 +32,7 @@ const WATCH_SCRIPT_ID = "atomspace-job-site-watch";
  * restart it — while content scripts are re-read on every page load. That mix
  * produces confusing, impossible-looking errors without this stamp.
  */
-export const CONNECT_BUILD = "2026.09.10-tab-redirect";
+export const CONNECT_BUILD = "2026.10.02-nao-rebrand";
 const STATE_KEY = "jobSiteConnectState";
 const SETTLE_MS = 1800;
 const MAX_STORAGE_BYTES = 96 * 1024;

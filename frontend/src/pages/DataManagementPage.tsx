@@ -12,7 +12,7 @@ export function DataAnalysisManagementPage() {
         <PageHeader
           icon={ChartColumnIncreasing}
           title="Data Analysis"
-          description="Review jobs added to Atomspace, user activity, and scrape platforms — then purge stale or unwanted jobs by age or regex pattern."
+          description="Review jobs added to NAO, user activity, and scrape platforms — then purge stale or unwanted jobs by age or regex pattern."
         />
         <DataManagementAnalyticsSection />
         <JobCleanupSection />

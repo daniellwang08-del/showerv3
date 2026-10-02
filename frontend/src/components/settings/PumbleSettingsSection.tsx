@@ -401,7 +401,7 @@ export function PumbleSettingsSection({ variant = 'standalone' }: PumbleSettings
               <>
                 <h2 className="text-base font-bold text-slate-900">Pumble integration</h2>
                 <p className="mt-0.5 text-sm leading-snug text-slate-500">
-                  Post job URLs to one or more Pumble channels as thread replies under a daily Atomspace
+                  Post job URLs to one or more Pumble channels as thread replies under a daily NAO
                   header message.
                 </p>
               </>
@@ -546,7 +546,7 @@ export function PumbleSettingsSection({ variant = 'standalone' }: PumbleSettings
 
                     <p className="text-xs text-violet-800">
                       Daily header format:{' '}
-                      <code className="rounded bg-white/80 px-1">M/D/YYYY (Atomspace post)</code>
+                      <code className="rounded bg-white/80 px-1">M/D/YYYY (NAO post)</code>
                     </p>
 
                     <button

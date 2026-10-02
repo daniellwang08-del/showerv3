@@ -68,7 +68,7 @@ PLANS: tuple[Plan, ...] = (
     Plan(
         slug="trial",
         name="Trial",
-        tagline="Billed $20/week. Try Atomspace, cancel anytime.",
+        tagline="Billed $20/week. Try NAO, cancel anytime.",
         price_setting="stripe_price_trial",
         amount_cents=2000,
         currency="usd",

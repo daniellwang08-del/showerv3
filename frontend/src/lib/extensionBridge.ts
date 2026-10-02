@@ -1,4 +1,4 @@
-// Bridge to the Atomspace browser extension (Apply Assistant + install detect).
+// Bridge to the NAO browser extension (Apply Assistant + install detect).
 //
 // Detection strategy (most reliable first):
 //   1. web_accessible_resource probe against the extension's FIXED id.
@@ -12,8 +12,8 @@
 // (e.g. jobright.ai/jobs/recommend) means the user was already logged in, so
 // the worker captures cookies + storage and sends them back here.
 
-const WEBAPP_SOURCE = 'atomspace-webapp';
-const EXT_SOURCE = 'atomspace-extension';
+const WEBAPP_SOURCE = 'nao-webapp';
+const EXT_SOURCE = 'nao-extension';
 
 export const EXTENSION_ID = 'leemdaklomjjbdfmaepplhpbeomhifmn';
 const MARKER_URL = `chrome-extension://${EXTENSION_ID}/installed.svg`;
@@ -106,8 +106,8 @@ export async function detectExtension(timeoutMs = 1000, force = false): Promise<
   return viaHandshake;
 }
 
-const APPLY_EVENT = 'atomspace-apply';
-const ACK_ATTR = 'data-atomspace-apply-ack';
+const APPLY_EVENT = 'nao-apply';
+const ACK_ATTR = 'data-nao-apply-ack';
 
 /**
  * Hand a specific job to the extension AND open its side panel.
@@ -203,11 +203,11 @@ export interface JobSiteConnectAck {
  * contract the dashboard no longer knows, which looks like an impossible bug.
  * Comparing build stamps turns that into a plain "reload the extension".
  */
-export const EXPECTED_CONNECT_BUILD = '2026.09.10-tab-redirect';
+export const EXPECTED_CONNECT_BUILD = '2026.10.02-nao-rebrand';
 
 const STALE_EXTENSION_MESSAGE =
-  'The Atomspace extension is running an older build than this dashboard. ' +
-  'Open chrome://extensions, remove Atomspace, then Load unpacked from the ' +
+  'The NAO extension is running an older build than this dashboard. ' +
+  'Open chrome://extensions, remove NAO, then Load unpacked from the ' +
   "project's extension folder and accept the permission prompt.";
 
 /** Turn an extension ack into something a person can act on. */
@@ -276,7 +276,7 @@ function waitForExtType<T extends ExtMessage>(
   });
 }
 
-const JOB_SITE_LOG_PREFIX = '[atomspace:jobsite:web]';
+const JOB_SITE_LOG_PREFIX = '[nao:jobsite:web]';
 
 type ExtensionAck = ExtMessage & {
   ok?: boolean;
@@ -313,7 +313,7 @@ export async function startJobSiteConnect(
 ): Promise<JobSiteConnectAck> {
   const ack = await requestExtension('START_JOB_SITE_CONNECT', { session }, timeoutMs);
   if (!ack) {
-    return { ok: false, error: 'Atomspace extension did not respond. Reload it and try again.' };
+    return { ok: false, error: 'NAO extension did not respond. Reload it and try again.' };
   }
   // A stale worker can answer ok:true with an obsolete contract, so the build
   // stamp is checked on success as well as failure.
@@ -340,7 +340,7 @@ export function stopJobSiteConnect(keepTab = false): void {
 
 export async function captureJobSiteNow(timeoutMs = 8000): Promise<{ ok: boolean; error?: string }> {
   const ack = await requestExtension('CAPTURE_JOB_SITE_NOW', undefined, timeoutMs);
-  if (!ack) return { ok: false, error: 'Atomspace extension did not respond.' };
+  if (!ack) return { ok: false, error: 'NAO extension did not respond.' };
   if (ack.ok) return { ok: true };
   return { ok: false, error: ackErrorMessage(ack) };
 }

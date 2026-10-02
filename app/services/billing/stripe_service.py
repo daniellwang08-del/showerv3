@@ -51,7 +51,7 @@ def _stripe():
 
     stripe.api_key = secret
     # Pin the app identifier so events are attributable in the Stripe dashboard.
-    stripe.set_app_info("Atomspace", version=settings.app_version)
+    stripe.set_app_info("NAO", version=settings.app_version)
     return stripe
 
 

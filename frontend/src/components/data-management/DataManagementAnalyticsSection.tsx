@@ -537,7 +537,7 @@ export function DataManagementAnalyticsSection() {
         <div className="min-w-0">
           <h2 className="text-base font-bold text-slate-900">Analysis</h2>
           <p className="mt-0.5 text-sm text-slate-500">
-            Platform-wide metrics for {timezone}. Fetched means jobs created on Atomspace — not
+            Platform-wide metrics for {timezone}. Fetched means jobs created on NAO — not
             employer post date.
           </p>
         </div>

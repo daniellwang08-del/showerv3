@@ -1,6 +1,6 @@
 # Job Application Assistant - Browser Extension
 
-Manifest V3 side-panel for [Atomspace](https://atomspace.it.com/). Sign in with
+Manifest V3 side-panel for [NAO](https://atomspace.it.com/). Sign in with
 your account, cache profile/settings, and autofill applications with AI help.
 
 No build step. Load this folder unpacked in Chrome/Edge.

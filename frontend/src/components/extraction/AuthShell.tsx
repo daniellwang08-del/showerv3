@@ -91,7 +91,7 @@ export function AuthShell({
 
             <p className="mt-5 max-w-md text-pretty text-[15px] leading-relaxed text-white/65 sm:text-base">
               {isLogin
-                ? 'Sign in to pick up matches, tailored documents, and autofill — the same Atomspace you left, ready on this device.'
+                ? 'Sign in to pick up matches, tailored documents, and autofill — the same NAO you left, ready on this device.'
                 : 'Create an account to sync five job networks, score roles against your profile, and open applications with the form already filled.'}
             </p>
 
@@ -156,7 +156,7 @@ export function AuthShell({
 
                 <div className="mb-5">
                   <h2 className="text-xl font-black tracking-tight text-white sm:text-2xl">
-                    {isLogin ? 'Sign in to Atomspace' : 'Create your free account'}
+                    {isLogin ? 'Sign in to NAO' : 'Create your free account'}
                   </h2>
                   <p className="mt-1.5 text-sm text-white/50">
                     {isLogin
@@ -170,7 +170,7 @@ export function AuthShell({
                 <p className="mt-6 flex items-start gap-2 text-[11px] leading-relaxed text-white/35">
                   <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-400/80" />
                   <span>
-                    By continuing you agree to use Atomspace for your own applications. Autofill never
+                    By continuing you agree to use NAO for your own applications. Autofill never
                     submits without you.
                     <span className="mt-1 flex items-center gap-1 text-white/45">
                       Prefer the tour first?

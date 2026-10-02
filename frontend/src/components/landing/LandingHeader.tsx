@@ -81,19 +81,19 @@ export function LandingHeader() {
         Now live · 5 job networks · 14 ATS engines · you keep the final click
       </PromoRibbon>
       <div className={`${LANDING_CONTAINER} flex h-16 items-center justify-between gap-6 sm:h-18`}>
-        <Link to="/" className="group flex items-center gap-2.5" aria-label="Atomspace home">
+        <Link to="/" className="group flex items-center gap-2.5" aria-label="NAO home">
           <span className="relative flex h-9 w-9 items-center justify-center">
             <span
               aria-hidden="true"
               className="absolute inset-0 rounded-full bg-sky-400/25 blur-lg transition group-hover:bg-sky-300/40"
             />
             <img
-              src="/atomspace-logo.png"
+              src="/nao-logo.png"
               alt=""
               className="relative h-8 w-8 object-contain drop-shadow-[0_2px_10px_rgba(56,189,248,0.5)]"
             />
           </span>
-          <span className="text-[17px] font-black tracking-tight text-white">Atomspace</span>
+          <span className="text-[17px] font-black tracking-tight text-white">NAO</span>
         </Link>
 
         <nav className="hidden items-center gap-1 lg:flex" aria-label="Sections">

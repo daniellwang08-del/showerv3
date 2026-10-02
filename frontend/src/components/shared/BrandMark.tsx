@@ -8,9 +8,9 @@ const SIZE: Record<Size, { wrap: string; logo: string; ring: string }> = {
   lg: { wrap: 'h-16 w-16', logo: 'h-8 w-8', ring: 'border-[3px]' },
 };
 
-const LOGO_SRC = '/atomspace-logo.png';
+const LOGO_SRC = '/nao-logo.png';
 
-/** Atomspace logo mark for AI surfaces (OneClick, job assistant). */
+/** NAO logo mark for AI surfaces (OneClick, job assistant). */
 export function BrandMark({
   mood = 'idle',
   size = 'md',
@@ -28,7 +28,7 @@ export function BrandMark({
     <div
       className={`relative shrink-0 ${s.wrap} ${className}`}
       role="img"
-      aria-label="Atomspace AI"
+      aria-label="NAO AI"
     >
       {thinking && (
         <>

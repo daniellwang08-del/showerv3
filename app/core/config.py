@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # arq workers watch app/ when True (independent of reload; default off).
     worker_reload: bool = False
 
-    app_name: str = "Atomspace"
+    app_name: str = "NAO"
     app_version: str = "1.0.0"
     # Secure by default: debug must be explicitly enabled (DEBUG=true) for local
     # dev. Leaving it off in production keeps /docs closed and the permissive

@@ -454,7 +454,7 @@ export function OneClickAICenter() {
           leaving ? 'animate-oneclick-modal-out' : 'animate-modal-in'
         }`}
       >
-        {/* Product header - Atomspace brand chrome */}
+        {/* Product header - NAO brand chrome */}
         <div className="shrink-0 border-b border-violet-200/80 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-500 px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">

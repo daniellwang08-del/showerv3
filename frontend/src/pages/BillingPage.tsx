@@ -320,7 +320,7 @@ export function BillingPage() {
         <PageHeader
           icon={CreditCard}
           title="Subscription"
-          description="Choose a plan to unlock Atomspace. Payments are handled securely by Stripe — cancel or change anytime."
+          description="Choose a plan to unlock NAO. Payments are handled securely by Stripe — cancel or change anytime."
         />
 
         {checkoutStatus === 'success' ? (

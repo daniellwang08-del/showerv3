@@ -179,7 +179,7 @@ function App() {
   useWebSocket(!!isAuthenticated, handleWsEvent);
 
   if (isAuthenticated === null) {
-    return <BrandedLoader fullscreen label="Starting Atomspace…" />;
+    return <BrandedLoader fullscreen label="Starting NAO…" />;
   }
 
   if (!isAuthenticated) {

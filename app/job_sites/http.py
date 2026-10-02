@@ -9,7 +9,7 @@ import httpx
 _TIMEOUT = httpx.Timeout(25.0)
 _HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (compatible; Atomspace/1.0; +https://atomspace.it.com)"
+        "Mozilla/5.0 (compatible; NAO/1.0; +https://atomspace.it.com)"
     ),
     "Accept": "application/json",
 }

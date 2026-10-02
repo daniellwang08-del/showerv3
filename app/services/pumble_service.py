@@ -2,7 +2,7 @@
 Pumble integration service.
 
 Posts job URLs to a user-configured Pumble channel as thread replies under a
-daily parent message (e.g. "7/9/2026 (Atomspace post)").
+daily parent message (e.g. "7/9/2026 (NAO post)").
 
 Uses the Pumble API Keys addon:
 https://pumble-api-keys.addons.marketplace.cake.com
@@ -31,7 +31,7 @@ from app.utils.secret_encryption import decrypt_secret, encrypt_secret, mask_api
 logger = get_logger(__name__)
 
 _BASE_URL = "https://pumble-api-keys.addons.marketplace.cake.com"
-_BRAND_NAME = "Atomspace"
+_BRAND_NAME = "NAO"
 _REPLY_GAP = 0.05  # seconds between thread replies
 
 

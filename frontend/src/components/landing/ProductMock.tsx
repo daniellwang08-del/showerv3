@@ -191,7 +191,7 @@ export function ProductMock() {
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
           <span className="ml-2 truncate text-[12px] font-bold tracking-tight text-white/50 sm:ml-3">
-            Atomspace · Jobs
+            NAO · Jobs
           </span>
           <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300">
             <span className="landing-pulse-dot h-1.5 w-1.5 rounded-full bg-emerald-300" />
@@ -202,9 +202,9 @@ export function ProductMock() {
         <div className="relative z-10 grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[4.25rem_minmax(0,1fr)] xl:grid-cols-[9.5rem_minmax(0,1fr)]">
           <aside className="hidden flex-col border-r border-white/8 bg-white/[0.02] px-2 py-3 lg:flex xl:px-3 xl:py-4">
             <div className="mb-3 flex items-center justify-center gap-2 px-1 xl:justify-start xl:px-2">
-              <img src="/atomspace-logo.png" alt="" className="h-6 w-auto object-contain" />
+              <img src="/nao-logo.png" alt="" className="h-6 w-auto object-contain" />
               <span className="hidden text-[12px] font-bold tracking-tight text-white xl:inline">
-                Atomspace
+                NAO
               </span>
             </div>
             <p className="hidden px-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/30 xl:block">

@@ -1,5 +1,5 @@
 // Detects when the user successfully submits a job application on the live page,
-// then notifies the Atomspace side panel so it can Complete & Next automatically.
+// then notifies the NAO side panel so it can Complete & Next automatically.
 // Injected into all frames while an application session is open.
 //
 // Safety: we do NOT fire on Continue/Next, and we do NOT assume success from a
@@ -7,8 +7,8 @@
 // post-submit navigation away from the form (validation failures stay put).
 
 (function () {
-  if (window.__ATOMSPACE_SUBMIT_WATCH__) return;
-  window.__ATOMSPACE_SUBMIT_WATCH__ = true;
+  if (window.__NAO_SUBMIT_WATCH__) return;
+  window.__NAO_SUBMIT_WATCH__ = true;
 
   let lastNotifyAt = 0;
   let pendingTimer = null;

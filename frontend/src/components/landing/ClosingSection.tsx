@@ -67,8 +67,8 @@ export function ClosingSection() {
         <div className={`${LANDING_CONTAINER} flex flex-col gap-10 py-14 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <Link to="/" className="flex items-center gap-2.5">
-              <img src="/atomspace-logo.png" alt="" className="h-7 w-7 object-contain" />
-              <span className="text-[15px] font-black tracking-tight text-white">Atomspace</span>
+              <img src="/nao-logo.png" alt="" className="h-7 w-7 object-contain" />
+              <span className="text-[15px] font-black tracking-tight text-white">NAO</span>
             </Link>
             <p className="mt-3 max-w-sm text-[13px] leading-relaxed text-white/40">
               An AI workspace that sources, scores and prepares job applications end to end.
@@ -99,7 +99,7 @@ export function ClosingSection() {
 
         <div className={`${LANDING_CONTAINER} border-t border-white/5 py-6`}>
           <p className="text-[12px] font-semibold text-white/30">
-            © {new Date().getFullYear()} Atomspace. All rights reserved.
+            © {new Date().getFullYear()} NAO. All rights reserved.
           </p>
         </div>
       </footer>

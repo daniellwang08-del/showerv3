@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 export type Theme = 'light' | 'dark';
 
-const STORAGE_KEY = 'atomspace-theme';
+const STORAGE_KEY = 'nao-theme';
 
 function getInitialTheme(): Theme {
   if (typeof window === 'undefined') return 'light';

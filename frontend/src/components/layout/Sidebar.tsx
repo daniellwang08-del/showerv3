@@ -115,9 +115,9 @@ export function Sidebar({
       className={`flex h-full w-60 max-w-full flex-col border-r bg-white dark:bg-[var(--app-card)] ${borderSubtle} ${className}`.trim()}
     >
       <div className={`flex items-center gap-2.5 border-b px-5 py-4 ${borderSubtle}`}>
-        <img src="/atomspace-logo.png" alt="Atomspace" className="h-8 w-auto object-contain" />
+        <img src="/nao-logo.png" alt="NAO" className="h-8 w-auto object-contain" />
         <span className="text-[15px] font-bold tracking-tight text-slate-900 dark:text-white">
-          Atomspace
+          NAO
         </span>
       </div>
 

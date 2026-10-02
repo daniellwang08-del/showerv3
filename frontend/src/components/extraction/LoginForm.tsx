@@ -14,7 +14,7 @@ interface LoginFormProps {
   onSwitchToSignup: () => void;
 }
 
-const REMEMBER_EMAIL_KEY = 'atomspace_remember_email';
+const REMEMBER_EMAIL_KEY = 'nao_remember_email';
 
 function readRememberedEmail(): string {
   if (typeof window === 'undefined') return '';

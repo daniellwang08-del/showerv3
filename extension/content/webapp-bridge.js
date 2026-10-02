@@ -18,12 +18,12 @@
 //   world cleanly.
 //
 // Contract:
-//   PING (detect): page window.postMessage {source:"atomspace-webapp",type:"PING",requestId}
-//                  bridge window.postMessage {source:"atomspace-extension",type:"PONG",version,requestId}
-//   APPLY (open):  page document.dispatchEvent(new CustomEvent("atomspace-apply",
+//   PING (detect): page window.postMessage {source:"nao-webapp",type:"PING",requestId}
+//                  bridge window.postMessage {source:"nao-extension",type:"PONG",version,requestId}
+//   APPLY (open):  page document.dispatchEvent(new CustomEvent("nao-apply",
 //                    { detail: JSON.stringify({ jobId, url, requestId }) }))
 //                  bridge -> worker chrome.runtime.sendMessage {type:"WEBAPP_APPLY_JOB", jobId, url, openPanel:true}
-//                  bridge -> page  data-atomspace-apply-ack="<requestId>" (sync) + APPLY_ACK postMessage
+//                  bridge -> page  data-nao-apply-ack="<requestId>" (sync) + APPLY_ACK postMessage
 //   JOB SITE:      page postMessage START_JOB_SITE_CONNECT {session}
 //                  bridge -> worker; ACK START_JOB_SITE_CONNECT_ACK
 //                  worker -> page JOB_SITE_LOG | JOB_SITE_CONNECT_STATUS
@@ -39,19 +39,19 @@
   "use strict";
 
   // Same isolated world for this extension — survives repeated executeScript.
-  if (globalThis.__ATOMSPACE_WEBAPP_BRIDGE_INSTALLED__) return;
-  globalThis.__ATOMSPACE_WEBAPP_BRIDGE_INSTALLED__ = true;
+  if (globalThis.__NAO_WEBAPP_BRIDGE_INSTALLED__) return;
+  globalThis.__NAO_WEBAPP_BRIDGE_INSTALLED__ = true;
 
-  const WEBAPP_SOURCE = "atomspace-webapp";
-  const EXT_SOURCE = "atomspace-extension";
-  const APPLY_EVENT = "atomspace-apply";
-  const ACK_ATTR = "data-atomspace-apply-ack";
+  const WEBAPP_SOURCE = "nao-webapp";
+  const EXT_SOURCE = "nao-extension";
+  const APPLY_EVENT = "nao-apply";
+  const ACK_ATTR = "data-nao-apply-ack";
   const APPLY_DEDUPE_MS = 2500;
 
   // Shared across any bridge copies that somehow still share this world.
   const applyDedupe =
-    globalThis.__ATOMSPACE_APPLY_DEDUPE__ ||
-    (globalThis.__ATOMSPACE_APPLY_DEDUPE__ = { jobId: null, at: 0 });
+    globalThis.__NAO_APPLY_DEDUPE__ ||
+    (globalThis.__NAO_APPLY_DEDUPE__ = { jobId: null, at: 0 });
 
   let version = "";
   try {
@@ -80,7 +80,7 @@
     reply("APPLY_ACK", { requestId: requestId || null }, "*");
   }
 
-  const JOB_SITE_PREFIX = "[atomspace:jobsite:bridge]";
+  const JOB_SITE_PREFIX = "[nao:jobsite:bridge]";
   const JOB_SITE_TYPES = {
     START_JOB_SITE_CONNECT: true,
     STOP_JOB_SITE_CONNECT: true,

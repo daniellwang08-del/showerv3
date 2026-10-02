@@ -169,7 +169,7 @@ function jobsCatalogLocalKey(userId) {
   return `jobsCatalog_${userId}`;
 }
 
-const IDB_NAME = "atomspace_jobs";
+const IDB_NAME = "nao_jobs";
 const IDB_STORE = "catalogs";
 
 function openJobsIdb() {
