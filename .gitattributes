@@ -1,0 +1,4 @@
+# Bash in WSL/Linux breaks on CRLF.
+*.sh text eol=lf
+env.wsl.example text eol=lf
+deploy/supervisor/*.conf text eol=lf

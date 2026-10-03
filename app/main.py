@@ -180,7 +180,10 @@ async def lifespan(app: FastAPI):
         # returns, so a slow browser launch would leave port 8000 unbound and
         # make the frontend WS proxy log ECONNREFUSED until it finished. The
         # browser extractor lazily awaits this warm-up on first use.
-        start_browser_pool_warmup()
+        if get_settings().browser_pool_warmup:
+            start_browser_pool_warmup()
+        else:
+            logger.info("browser_pool_warmup_skipped", reason="BROWSER_POOL_WARMUP disabled")
     except Exception as e:
         err_msg = str(e) or f"{type(e).__name__}"
         logger.warning("browser_pool_warmup_start_failed", error=err_msg)

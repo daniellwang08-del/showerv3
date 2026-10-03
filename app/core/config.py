@@ -207,6 +207,11 @@ class Settings(BaseSettings):
     browser_pool_size: int = 12
     browser_timeout_ms: int = 30000
     browser_headless: bool = True
+    # When False (default), Chromium launches with --disable-gpu.
+    browser_use_gpu: bool = False
+    # API lifespan pre-launches Chromium in the background. Turn off when the
+    # extraction worker owns the pool; the API then launches lazily on first use.
+    browser_pool_warmup: bool = True
 
     http_timeout_seconds: float = 30.0
     http_max_retries: int = 3
@@ -236,13 +241,21 @@ class Settings(BaseSettings):
     # vector = vector scorer is authoritative; Phase A never calls the LLM
     #          (raw extraction text + encodings). Phase B tailoring unchanged.
     match_engine: Literal["llm", "shadow", "vector"] = "vector"
-    # Sentence-transformers model for section embeddings (CPU inference).
+    # Sentence-transformers model for section embeddings.
     # MiniLM-L6 (~90 MB, 384-dim) fits small VPS hosts; upgrade to
     # all-mpnet-base-v2 (~420 MB, 768-dim) via env on larger machines.
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     # Where model weights are cached on disk (persists across deploys).
     embedding_model_cache_dir: str = Field(default="./model_cache")
+    # auto = CUDA when torch reports it available, else CPU. An explicit
+    # "cuda" without a usable GPU falls back to CPU with a warning.
+    embedding_device: Literal["auto", "cpu", "cuda"] = "auto"
+    # When unset, the effective batch size is 64 on CUDA and 16 on CPU.
     embedding_batch_size: int = Field(default=16, ge=1, le=256)
+    # Encode inline in extraction/analysis processes (True) or always defer to
+    # the encoding worker (False) so only that process loads torch.
+    # None = auto (False for APP_ENV=local|dev|development, True otherwise).
+    embedding_inline: bool | None = Field(default=None)
     # Concurrent arq jobs for the encoding worker (model inference is CPU bound;
     # keep low so it never starves the other workers).
     encoding_worker_max_jobs: int = 2

@@ -149,21 +149,27 @@ class BrowserPool:
             return
 
         try:
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+            ]
+            if not self._settings.browser_use_gpu:
+                launch_args.append("--disable-gpu")
+            launch_args.append("--disable-software-rasterizer")
             self._playwright = await async_playwright().start()
             self._browser = await self._playwright.chromium.launch(
                 headless=self._settings.browser_headless,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-gpu",
-                    "--disable-software-rasterizer",
-                ],
+                args=launch_args,
             )
             self._semaphore = asyncio.Semaphore(self._settings.browser_pool_size)
             self._initialized = True
-            logger.info("browser_pool_initialized", pool_size=self._settings.browser_pool_size)
+            logger.info(
+                "browser_pool_initialized",
+                pool_size=self._settings.browser_pool_size,
+                use_gpu=self._settings.browser_use_gpu,
+            )
         except Exception as e:
             err_msg = str(e) or f"{type(e).__name__}"
             logger.warning("browser_pool_init_failed", error=err_msg)
@@ -286,6 +292,9 @@ async def ensure_browser_pool() -> BrowserPool | None:
     if _browser_pool is not None and _browser_pool._initialized:
         return _browser_pool
     task = _warmup_task
+    if task is None:
+        # No warm-up was started (BROWSER_POOL_WARMUP=0): launch lazily now.
+        task = start_browser_pool_warmup()
     if task is not None:
         try:
             await task

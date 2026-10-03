@@ -1,9 +1,11 @@
 """Once-per-job / once-per-profile encoding for the non-LLM match engine.
 
-Embeddings are computed with a CPU sentence-transformers model that is loaded
+Embeddings are computed with a sentence-transformers model that is loaded
 lazily and only in the process that actually encodes (the ``encoding`` arq
-worker and the backfill task). Scoring processes (analysis worker) never load
-the model — they read stored float32 vectors and do pure numpy math.
+worker and the backfill task, plus extraction/analysis when inline encoding is
+enabled). The device comes from ``EMBEDDING_DEVICE`` (auto | cpu | cuda).
+Scoring itself never needs the model — it reads stored float32 vectors and
+does pure numpy math.
 
 Storage format: L2-normalized float32 arrays as raw bytes, so cosine
 similarity is a dot product.
@@ -30,31 +32,97 @@ from app.storage.database import get_session
 logger = get_logger(__name__)
 
 _model = None
+_model_device: str | None = None
 
 # Sentence-transformers truncates inputs to the model's max sequence length
 # (~384 tokens for all-mpnet-base-v2), so we front-load informative content
 # and cap raw characters to keep tokenization cheap.
 _MAX_EMBED_CHARS = 3000
 
+_CUDA_DEFAULT_BATCH_SIZE = 64
+_LOCAL_APP_ENVS = ("local", "dev", "development")
+
+
+def _cuda_available() -> bool:
+    try:
+        import torch
+    except Exception:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def resolve_embedding_device() -> str:
+    """Map EMBEDDING_DEVICE (auto | cpu | cuda) to a usable torch device."""
+    requested = get_settings().embedding_device
+    if requested == "cpu":
+        return "cpu"
+    if _cuda_available():
+        return "cuda"
+    if requested == "cuda":
+        logger.warning("embedding_cuda_unavailable_fallback_cpu", requested=requested)
+    return "cpu"
+
+
+def effective_embedding_batch_size(device: str | None = None) -> int:
+    """EMBEDDING_BATCH_SIZE when set explicitly, else 64 on CUDA / default on CPU."""
+    settings = get_settings()
+    if "embedding_batch_size" in settings.model_fields_set:
+        return settings.embedding_batch_size
+    if (device or _model_device) == "cuda":
+        return _CUDA_DEFAULT_BATCH_SIZE
+    return settings.embedding_batch_size
+
+
+def embedding_inline_enabled() -> bool:
+    """Whether extraction/analysis may encode in-process instead of enqueueing."""
+    settings = get_settings()
+    if settings.embedding_inline is not None:
+        return settings.embedding_inline
+    return settings.app_env.strip().lower() not in _LOCAL_APP_ENVS
+
 
 def get_embedding_model():
     """Lazy singleton. Heavy import stays out of non-encoding processes."""
-    global _model
+    global _model, _model_device
     if _model is None:
         from sentence_transformers import SentenceTransformer
 
         settings = get_settings()
+        device = resolve_embedding_device()
         logger.info(
             "embedding_model_loading",
             model=settings.embedding_model_name,
             cache_dir=settings.embedding_model_cache_dir,
+            device=device,
         )
         _model = SentenceTransformer(
             settings.embedding_model_name,
             cache_folder=settings.embedding_model_cache_dir,
-            device="cpu",
+            device=device,
         )
-        logger.info("embedding_model_loaded", model=settings.embedding_model_name)
+        _model_device = device
+        gpu_info: dict = {}
+        if device == "cuda":
+            try:
+                import torch
+
+                props = torch.cuda.get_device_properties(0)
+                gpu_info = {
+                    "gpu_name": props.name,
+                    "gpu_total_vram_mb": int(props.total_memory // (1024 * 1024)),
+                }
+            except Exception as gpu_err:
+                gpu_info = {"gpu_info_error": str(gpu_err)}
+        logger.info(
+            "embedding_model_loaded",
+            model=settings.embedding_model_name,
+            device=device,
+            batch_size=effective_embedding_batch_size(device),
+            **gpu_info,
+        )
     return _model
 
 
@@ -68,7 +136,7 @@ def encode_texts(texts: list[str]) -> np.ndarray:
     clipped = [(t or "")[:_MAX_EMBED_CHARS] for t in texts]
     vecs = model.encode(
         clipped,
-        batch_size=get_settings().embedding_batch_size,
+        batch_size=effective_embedding_batch_size(),
         normalize_embeddings=True,
         show_progress_bar=False,
     )

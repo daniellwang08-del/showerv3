@@ -271,11 +271,87 @@ async def _mark_extraction_ready_without_llm(ext_id: str, job_id: str | None = N
         pass
 
 
+_ENCODING_WAIT_SECONDS = 30.0
+_ENCODING_POLL_SECONDS = 1.0
+
+
+async def _encodings_present(job_id: str, user_id: str) -> bool:
+    from app.models.database import JobEncoding, UserEncoding
+    from app.services.encoding_service import model_version
+
+    current_model = model_version()
+    async with get_session() as session:
+        job_row = (
+            await session.execute(
+                select(JobEncoding.job_id).where(
+                    JobEncoding.job_id == job_id,
+                    JobEncoding.model_version == current_model,
+                )
+            )
+        ).first()
+        if job_row is None:
+            return False
+        user_row = (
+            await session.execute(
+                select(UserEncoding.user_id).where(
+                    UserEncoding.user_id == user_id,
+                    UserEncoding.model_version == current_model,
+                )
+            )
+        ).first()
+        return user_row is not None
+
+
+async def _wait_for_worker_encodings(job_id: str, user_id: str) -> bool:
+    """Enqueue job+user encoding and briefly wait for the encoding worker."""
+    try:
+        from app.tasks.worker import enqueue_encode_job, enqueue_encode_user
+
+        enqueued = await enqueue_encode_job(job_id)
+        enqueued = await enqueue_encode_user(user_id) and enqueued
+    except Exception as e:
+        logger.warning(
+            "encoding_enqueue_from_match_failed",
+            job_id=job_id,
+            user_id=user_id,
+            error=str(e),
+        )
+        return False
+    if not enqueued:
+        return False
+    deadline = time.monotonic() + _ENCODING_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        await asyncio.sleep(_ENCODING_POLL_SECONDS)
+        try:
+            if await _encodings_present(job_id, user_id):
+                return True
+        except Exception as e:
+            logger.warning(
+                "vector_encoding_wait_check_failed",
+                job_id=job_id,
+                user_id=user_id,
+                error=str(e),
+            )
+            return False
+    logger.warning(
+        "vector_encoding_wait_timeout",
+        job_id=job_id,
+        user_id=user_id,
+        waited_seconds=_ENCODING_WAIT_SECONDS,
+    )
+    return False
+
+
 async def _ensure_encodings_for_vector(job_id: str, user_id: str) -> bool:
     """Encode job+user inline when missing so vector scoring can finish now.
 
-    Falls back to enqueueing the encoding worker if inline encode fails.
+    Falls back to enqueueing the encoding worker if inline encode fails. With
+    EMBEDDING_INLINE off, enqueues and waits briefly for the encoding worker.
     """
+    from app.services.encoding_service import embedding_inline_enabled
+
+    if not embedding_inline_enabled():
+        return await _wait_for_worker_encodings(job_id, user_id)
     try:
         from app.services.encoding_service import encode_job, encode_user
 

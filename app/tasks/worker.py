@@ -176,17 +176,23 @@ async def extract_job(
                 async with get_session() as session:
                     _job_row = await JobRepository(session).get_by_extraction_id(job_id)
                 if _job_row:
-                    from app.services.encoding_service import encode_job
+                    from app.services.encoding_service import (
+                        embedding_inline_enabled,
+                        encode_job,
+                    )
 
-                    try:
-                        await encode_job(_job_row.id)
-                    except Exception as inline_enc_err:
-                        logger.warning(
-                            "encode_inline_after_extract_failed",
-                            job_id=_job_row.id,
-                            error=str(inline_enc_err),
-                        )
+                    if not embedding_inline_enabled():
                         await enqueue_encode_job(_job_row.id)
+                    else:
+                        try:
+                            await encode_job(_job_row.id)
+                        except Exception as inline_enc_err:
+                            logger.warning(
+                                "encode_inline_after_extract_failed",
+                                job_id=_job_row.id,
+                                error=str(inline_enc_err),
+                            )
+                            await enqueue_encode_job(_job_row.id)
             except Exception as enc_err:
                 logger.warning(
                     "encode_enqueue_after_extract_failed",

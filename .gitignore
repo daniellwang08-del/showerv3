@@ -67,6 +67,10 @@ resume_output/
 # Per-user uploaded resume template DOCX files
 user_templates/
 
+# WSL stack runtime (supervisor logs) and downloaded embedding weights
+.run/
+model_cache/
+
 # Local debug dumps and scratch scripts
 ashby_response.html
 debug_*.py
