@@ -579,10 +579,14 @@ async def list_models_for_env_provider(
     else:
         raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}'")
     if not api_key.strip():
-        raise HTTPException(
-            status_code=400,
-            detail=f"No {provider} API key configured in server environment.",
-        )
+        # Every provider is probed on page load; a missing key is a normal state, not an error.
+        return {
+            "provider": provider,
+            "models": [],
+            "chat_models": [],
+            "count": 0,
+            "message": f"No {provider} API key configured in server environment.",
+        }
     try:
         return await list_models_for_api_key(provider=provider, api_key=api_key)
     except ValueError as exc:

@@ -62,6 +62,7 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
               navigate(isApplicant ? '/app' : '/admin');
               onNavigate?.();
             }}
+            aria-label="NAO home"
             className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-1 hover:bg-sidebar-accent"
           >
             <NaoWordmark className="h-[18px] text-foreground" />

@@ -1,10 +1,8 @@
 /**
  * Public stock used only on the marketing page.
  *
- * Unsplash License (https://unsplash.com/license) and Pexels License
- * (https://www.pexels.com/license/) allow hotlinking these files. Wikimedia
- * Commons GIFs are used where an actual looping gif is the right texture.
- * Nothing here is a customer photo or a fabricated testimonial.
+ * The Unsplash License (https://unsplash.com/license) allows hotlinking these
+ * files. Nothing here is a customer photo or a fabricated testimonial.
  */
 
 const UNSPLASH = 'https://images.unsplash.com';
@@ -15,19 +13,6 @@ function photo(id: string, w: number, extra = '') {
 
 /** Brand key art without text: planet horizon, blue rim light, sun cresting at top center (arc top at about 46% height). */
 export const BRAND_HORIZON = '/brand/nao-horizon.jpg';
-
-/** Auth screen backdrop (`AuthShell`). The landing hero uses `BRAND_HORIZON`. */
-export const HERO_VIDEO =
-  'https://videos.pexels.com/video-files/3129671/3129671-hd_1920_1080_30fps.mp4';
-
-export const HERO_POSTER = photo('photo-1517694712202-14dd9538aa97', 1920);
-
-/** Subtle looping gif overlay for the auth backdrop, digital rain, Wikimedia Commons. */
-export const HERO_GIF =
-  'https://upload.wikimedia.org/wikipedia/commons/2/21/Matrix_digital_rain_animation_small_letters_only.gif';
-
-export const AUTOFILL_VIDEO =
-  'https://videos.pexels.com/video-files/7687651/7687651-hd_1920_1080_25fps.mp4';
 
 export const AUTOFILL_POSTER = photo('photo-1486312338219-ce68d2c6f44d', 1400);
 

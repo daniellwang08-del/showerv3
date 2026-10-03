@@ -69,7 +69,7 @@ const TABS: { id: Tab; label: string; icon: typeof Palette }[] = [
   { id: 'content', label: 'Content', icon: PenLine },
 ];
 
-const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const ZOOM_STEPS = [0.3, 0.4, 0.5, 0.67, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const CANVAS_PAD = 48;
 const LETTER_SAVE_DEBOUNCE_MS = 700;
 
@@ -164,6 +164,9 @@ export function ResumeStudioPage() {
       dir > 0 ? ZOOM_STEPS.find((z) => z > cur + 0.001) : [...ZOOM_STEPS].reverse().find((z) => z < cur - 0.001);
     if (next) setZoom(next);
   };
+
+  const canZoomOut = scale > ZOOM_STEPS[0] + 0.001;
+  const canZoomIn = scale < ZOOM_STEPS[ZOOM_STEPS.length - 1] - 0.001;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -294,7 +297,7 @@ export function ResumeStudioPage() {
   };
 
   const controlPanel = (
-    <aside className="flex min-h-0 min-w-0 flex-col border-r bg-background max-lg:border-r-0">
+    <aside className="flex min-h-0 min-w-0 flex-1 flex-col border-r bg-background max-lg:border-r-0">
       <div role="tablist" aria-label="Studio panels" className="grid shrink-0 grid-cols-4 gap-1 border-b p-2">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
@@ -318,7 +321,7 @@ export function ResumeStudioPage() {
   );
 
   const canvas = (
-    <section className="relative flex min-h-0 min-w-0 flex-col bg-muted/60" aria-label="Live pages">
+    <section className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-muted/60" aria-label="Live pages">
       <div ref={setCanvasEl} className="studio-canvas scrollbar-thin min-h-0 flex-1 overflow-auto px-6 py-6">
         <div className="mx-auto w-max">
           <ResumePageStack
@@ -338,7 +341,7 @@ export function ResumeStudioPage() {
 
       <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
         <div className="pointer-events-auto flex items-center gap-1 rounded-full border bg-popover/95 p-1 text-popover-foreground shadow-lg backdrop-blur">
-          <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Zoom out" onClick={() => stepZoom(-1)}>
+          <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Zoom out" disabled={!canZoomOut} onClick={() => stepZoom(-1)}>
             <Minus />
           </Button>
           <button
@@ -352,7 +355,7 @@ export function ResumeStudioPage() {
           >
             {Math.round(scale * 100)}%
           </button>
-          <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Zoom in" onClick={() => stepZoom(1)}>
+          <Button variant="ghost" size="icon-sm" className="rounded-full" aria-label="Zoom in" disabled={!canZoomIn} onClick={() => stepZoom(1)}>
             <Plus />
           </Button>
           <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
@@ -371,7 +374,7 @@ export function ResumeStudioPage() {
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-background px-3 py-2.5 sm:px-4">
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="inline-flex h-9 min-w-0 max-w-[18rem] flex-1 items-center sm:flex-none gap-2 rounded-lg px-2 text-left outline-none transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
+            className="inline-flex h-9 min-w-0 max-w-[18rem] flex-1 items-center gap-2 sm:flex-none rounded-lg px-2 text-left outline-none transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 data-popup-open:bg-muted"
             aria-label="Switch resume"
           >
             <LayoutTemplate className="size-4 shrink-0 text-brand" />

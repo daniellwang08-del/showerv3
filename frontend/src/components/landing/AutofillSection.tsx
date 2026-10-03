@@ -1,7 +1,7 @@
 import { Check, Chrome, MousePointerClick } from 'lucide-react';
 import { ATS_PLATFORMS, AUTOFILL_POINTS, INTEGRATIONS } from './landingData';
 import { AutofillDemo } from './AutofillDemo';
-import { AUTOFILL_POSTER, AUTOFILL_VIDEO } from './landingMedia';
+import { AUTOFILL_POSTER } from './landingMedia';
 import { Chip, Eyebrow, ICON_TILE, LANDING_CONTAINER, SectionShell, SurfaceCard } from './landingUi';
 
 export function AutofillSection() {
@@ -28,22 +28,7 @@ export function AutofillSection() {
                 <span className="ml-2 text-[11px] font-bold text-white/50">workday · application</span>
               </div>
               <div className="relative h-56 sm:h-72" aria-hidden="true">
-                <img
-                  src={AUTOFILL_POSTER}
-                  alt=""
-                  className="hidden h-full w-full object-cover grayscale motion-reduce:block"
-                />
-                <video
-                  className="h-full w-full object-cover grayscale motion-reduce:hidden"
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                  preload="metadata"
-                  poster={AUTOFILL_POSTER}
-                >
-                  <source src={AUTOFILL_VIDEO} type="video/mp4" />
-                </video>
+                <img src={AUTOFILL_POSTER} alt="" className="h-full w-full object-cover grayscale" />
                 <span className="absolute inset-0 bg-[#3D74FF]/45 mix-blend-color" />
                 <span className="absolute inset-0 bg-[#04060F]/40" />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#04060F] via-[#04060F]/30 to-transparent" />
