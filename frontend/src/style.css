@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/theme.css";
 
 /* Carlito: metric-compatible with Calibri and OFL-licensed, so the resume preview can
    render with the EXACT same font the generated .docx/PDF uses (LibreOffice ships /
@@ -40,7 +41,7 @@
   --app-bg: #f8fafc;
   --app-card: #ffffff;
   --app-input: #ffffff;
-  --app-fg: #0f172a;
+  --app-fg: #1a1b1f;
   --app-muted: #64748b;
 }
 
@@ -48,10 +49,6 @@ html,
 body,
 #root {
   height: 100%;
-  /* Floor for the web platform when the browser (or extension side panel)
-     shrinks the tab. Below this width the page scrolls horizontally instead
-     of crushing the jobs dashboard layout without limit. */
-  min-width: 1400px;
   /* Vertical scroll lives in .page-scroll-y. Horizontal scroll unlocks the
      min-width floor when the viewport is narrower (e.g. side panel open). */
   overflow-x: auto;
@@ -76,10 +73,10 @@ html.dark { color-scheme: dark; }
 
 .dark {
   /* Neutral scale inverted: light surfaces -> dark, dark text -> light */
-  --color-slate-50: #0f172a;
-  --color-slate-100: #1e293b;
-  --color-slate-200: #334155;
-  --color-slate-300: #475569;
+  --color-slate-50: #1a1b1f;
+  --color-slate-100: #25262b;
+  --color-slate-200: #36383e;
+  --color-slate-300: #4b4e55;
   --color-slate-400: #64748b;
   --color-slate-500: #94a3b8;
   --color-slate-600: #cbd5e1;
@@ -88,10 +85,10 @@ html.dark { color-scheme: dark; }
   --color-slate-900: #f8fafc;
   --color-slate-950: #ffffff;
 
-  --color-gray-50: #0f172a;
-  --color-gray-100: #1e293b;
-  --color-gray-200: #334155;
-  --color-gray-300: #475569;
+  --color-gray-50: #1a1b1f;
+  --color-gray-100: #25262b;
+  --color-gray-200: #36383e;
+  --color-gray-300: #4b4e55;
   --color-gray-400: #64748b;
   --color-gray-500: #94a3b8;
   --color-gray-600: #cbd5e1;
@@ -100,9 +97,9 @@ html.dark { color-scheme: dark; }
   --color-gray-900: #f8fafc;
   --color-gray-950: #ffffff;
 
-  --color-zinc-50: #0f172a;
-  --color-zinc-100: #1e293b;
-  --color-zinc-200: #334155;
+  --color-zinc-50: #1a1b1f;
+  --color-zinc-100: #25262b;
+  --color-zinc-200: #36383e;
   --color-zinc-800: #eef2f7;
   --color-zinc-900: #f8fafc;
 
@@ -130,9 +127,9 @@ html.dark { color-scheme: dark; }
 }
 
 html.dark {
-  --app-bg: #0b1220;
-  --app-card: #141d31;
-  --app-input: #0f172a;
+  --app-bg: #17181b;
+  --app-card: #1d1e22;
+  --app-input: #1a1b1f;
   --app-fg: #e2e8f0;
   --app-muted: #94a3b8;
 }
@@ -148,50 +145,50 @@ html.dark {
 
 /* White surfaces -> dark glass. text-white / border-white are left intact
    (they sit on accent buttons and glass), so only backgrounds change. */
-.dark .bg-white { background-color: #141d31; }
-.dark .bg-white\/95 { background-color: rgba(20, 29, 49, 0.95); }
-.dark .bg-white\/90 { background-color: rgba(20, 29, 49, 0.9); }
-.dark .bg-white\/85 { background-color: rgba(20, 29, 49, 0.85); }
-.dark .bg-white\/80 { background-color: rgba(20, 29, 49, 0.8); }
-.dark .bg-white\/75 { background-color: rgba(20, 29, 49, 0.75); }
-.dark .bg-white\/70 { background-color: rgba(20, 29, 49, 0.7); }
-.dark .bg-white\/65 { background-color: rgba(20, 29, 49, 0.65); }
-.dark .bg-white\/60 { background-color: rgba(20, 29, 49, 0.6); }
-.dark .bg-white\/55 { background-color: rgba(30, 41, 59, 0.5); }
-.dark .bg-white\/50 { background-color: rgba(20, 29, 49, 0.5); }
-.dark .bg-white\/45 { background-color: rgba(30, 41, 59, 0.42); }
-.dark .bg-white\/40 { background-color: rgba(30, 41, 59, 0.4); }
-.dark .bg-white\/35 { background-color: rgba(30, 41, 59, 0.34); }
-.dark .bg-white\/30 { background-color: rgba(30, 41, 59, 0.3); }
-.dark .bg-white\/25 { background-color: rgba(30, 41, 59, 0.25); }
-.dark .bg-white\/20 { background-color: rgba(30, 41, 59, 0.2); }
-.dark .hover\:bg-white:hover { background-color: #1b2740; }
+.dark .bg-white { background-color: #1d1e22; }
+.dark .bg-white\/95 { background-color: rgba(29, 30, 34, 0.95); }
+.dark .bg-white\/90 { background-color: rgba(29, 30, 34, 0.9); }
+.dark .bg-white\/85 { background-color: rgba(29, 30, 34, 0.85); }
+.dark .bg-white\/80 { background-color: rgba(29, 30, 34, 0.8); }
+.dark .bg-white\/75 { background-color: rgba(29, 30, 34, 0.75); }
+.dark .bg-white\/70 { background-color: rgba(29, 30, 34, 0.7); }
+.dark .bg-white\/65 { background-color: rgba(29, 30, 34, 0.65); }
+.dark .bg-white\/60 { background-color: rgba(29, 30, 34, 0.6); }
+.dark .bg-white\/55 { background-color: rgba(37, 38, 43, 0.5); }
+.dark .bg-white\/50 { background-color: rgba(29, 30, 34, 0.5); }
+.dark .bg-white\/45 { background-color: rgba(37, 38, 43, 0.42); }
+.dark .bg-white\/40 { background-color: rgba(37, 38, 43, 0.4); }
+.dark .bg-white\/35 { background-color: rgba(37, 38, 43, 0.34); }
+.dark .bg-white\/30 { background-color: rgba(37, 38, 43, 0.3); }
+.dark .bg-white\/25 { background-color: rgba(37, 38, 43, 0.25); }
+.dark .bg-white\/20 { background-color: rgba(37, 38, 43, 0.2); }
+.dark .hover\:bg-white:hover { background-color: #26272c; }
 /* Focus-driven white surfaces (e.g. the agent composer that flips to bg-white
    on focus-within) are a distinct utility class, so the .bg-white override
    above does not reach them - map them to the same dark surface. */
-.dark .focus-within\:bg-white:focus-within { background-color: #1b2740; }
-.dark .focus\:bg-white:focus { background-color: #1b2740; }
+.dark .focus-within\:bg-white:focus-within { background-color: #26272c; }
+.dark .focus\:bg-white:focus { background-color: #26272c; }
 
 /* Modal/overlay scrims use bg-slate-900/xx; keep them dark (the palette
    inversion would otherwise flip them to a light wash). */
-.dark .bg-slate-900\/40 { background-color: rgba(2, 6, 23, 0.55); }
-.dark .bg-slate-900\/45 { background-color: rgba(2, 6, 23, 0.58); }
-.dark .bg-slate-900\/50 { background-color: rgba(2, 6, 23, 0.62); }
-.dark .bg-slate-900\/55 { background-color: rgba(2, 6, 23, 0.65); }
-.dark .bg-slate-900\/60 { background-color: rgba(2, 6, 23, 0.7); }
+.dark .bg-slate-900\/40 { background-color: rgba(10, 10, 12, 0.55); }
+.dark .bg-slate-900\/45 { background-color: rgba(10, 10, 12, 0.58); }
+.dark .bg-slate-900\/50 { background-color: rgba(10, 10, 12, 0.62); }
+.dark .bg-slate-900\/55 { background-color: rgba(10, 10, 12, 0.65); }
+.dark .bg-slate-900\/60 { background-color: rgba(10, 10, 12, 0.7); }
 
 /* Solid dark buttons (bg-slate-900 + text-white) and dark code blocks
    (bg-slate-900 + text-slate-100) must stay dark with light text. */
 .dark .bg-slate-900.text-white,
 .dark .bg-slate-800.text-white {
-  background-color: #1e293b;
+  background-color: #25262b;
 }
 .dark .bg-slate-900.text-white:hover,
 .dark .bg-slate-800.text-white:hover {
-  background-color: #334155;
+  background-color: #36383e;
 }
 .dark .bg-slate-900.text-slate-100 {
-  background-color: #0b1220;
+  background-color: #17181b;
   color: #e2e8f0;
 }
 
@@ -200,20 +197,20 @@ html.dark {
    like the solid bg-slate-900 buttons above. Without this, the neutral palette
    remap flips the 700/800/900 gradient stops to near-white and a white icon on
    top disappears into a white box. */
-.dark .from-slate-700 { --tw-gradient-from: #1e293b var(--tw-gradient-from-position); }
-.dark .from-slate-800 { --tw-gradient-from: #1e293b var(--tw-gradient-from-position); }
-.dark .from-slate-900 { --tw-gradient-from: #0f172a var(--tw-gradient-from-position); }
-.dark .via-slate-800 { --tw-gradient-via: #1e293b var(--tw-gradient-via-position); }
-.dark .via-slate-900 { --tw-gradient-via: #0f172a var(--tw-gradient-via-position); }
-.dark .to-slate-800 { --tw-gradient-to: #1e293b var(--tw-gradient-to-position); }
-.dark .to-slate-900 { --tw-gradient-to: #0f172a var(--tw-gradient-to-position); }
+.dark .from-slate-700 { --tw-gradient-from: #25262b var(--tw-gradient-from-position); }
+.dark .from-slate-800 { --tw-gradient-from: #25262b var(--tw-gradient-from-position); }
+.dark .from-slate-900 { --tw-gradient-from: #1a1b1f var(--tw-gradient-from-position); }
+.dark .via-slate-800 { --tw-gradient-via: #25262b var(--tw-gradient-via-position); }
+.dark .via-slate-900 { --tw-gradient-via: #1a1b1f var(--tw-gradient-via-position); }
+.dark .to-slate-800 { --tw-gradient-to: #25262b var(--tw-gradient-to-position); }
+.dark .to-slate-900 { --tw-gradient-to: #1a1b1f var(--tw-gradient-to-position); }
 
 /* White gradient stops -> dark surface so light-to-white gradients stay dark. */
-.dark .from-white { --tw-gradient-from: #141d31 var(--tw-gradient-from-position); }
-.dark .via-white { --tw-gradient-via: #141d31 var(--tw-gradient-via-position); }
-.dark .to-white { --tw-gradient-to: #141d31 var(--tw-gradient-to-position); }
-.dark .from-white\/90 { --tw-gradient-from: rgba(20, 29, 49, 0.9) var(--tw-gradient-from-position); }
-.dark .to-white\/90 { --tw-gradient-to: rgba(20, 29, 49, 0.9) var(--tw-gradient-to-position); }
+.dark .from-white { --tw-gradient-from: #1d1e22 var(--tw-gradient-from-position); }
+.dark .via-white { --tw-gradient-via: #1d1e22 var(--tw-gradient-via-position); }
+.dark .to-white { --tw-gradient-to: #1d1e22 var(--tw-gradient-to-position); }
+.dark .from-white\/90 { --tw-gradient-from: rgba(29, 30, 34, 0.9) var(--tw-gradient-from-position); }
+.dark .to-white\/90 { --tw-gradient-to: rgba(29, 30, 34, 0.9) var(--tw-gradient-to-position); }
 
 /* Blue chips stay as background-only overrides (blue 50/100 vars double as
    light text on the auth + agent surfaces, so they are NOT remapped above). */
@@ -230,7 +227,7 @@ html.dark {
 .dark .via-blue-100 { --tw-gradient-via: rgba(59, 130, 246, 0.2) var(--tw-gradient-via-position); }
 .dark .from-blue-50, .dark .from-blue-50\/40, .dark .from-blue-50\/50, .dark .from-blue-50\/70, .dark .from-blue-50\/80, .dark .from-blue-50\/90, .dark .from-blue-50\/95, .dark .hover\:from-blue-50:hover { --tw-gradient-from: rgba(59, 130, 246, 0.12) var(--tw-gradient-from-position); }
 .dark .to-blue-50\/80, .dark .to-blue-50\/50, .dark .hover\:to-blue-50\/80:hover { --tw-gradient-to: rgba(59, 130, 246, 0.14) var(--tw-gradient-to-position); }
-.dark .to-white\/60 { --tw-gradient-to: rgba(20, 29, 49, 0.6) var(--tw-gradient-to-position); }
+.dark .to-white\/60 { --tw-gradient-to: rgba(29, 30, 34, 0.6) var(--tw-gradient-to-position); }
 .dark .border-blue-200 { border-color: rgba(59, 130, 246, 0.35); }
 .dark .border-blue-100\/70, .dark .border-blue-100\/80, .dark .border-blue-100\/60 { border-color: rgba(59, 130, 246, 0.22); }
 /* Dim the brighter 200 accent borders (200 is not remapped above). */
@@ -1016,7 +1013,7 @@ html.dark {
   color: #fff;
 }
 .dark .resume-page-badge {
-  background: rgba(15, 23, 42, 0.92);
+  background: rgba(26, 27, 31, 0.92);
   color: #fff;
 }
 
@@ -1105,24 +1102,24 @@ html.dark {
 /* Long-form page scrollbars */
 .dark .page-scroll-y,
 .dark .page-scroll-y-auto {
-  scrollbar-color: rgba(100, 116, 139, 0.55) rgba(15, 23, 42, 0.6);
+  scrollbar-color: rgba(100, 116, 139, 0.55) rgba(26, 27, 31, 0.6);
 }
 .dark .page-scroll-y::-webkit-scrollbar-track,
 .dark .page-scroll-y-auto::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: rgba(26, 27, 31, 0.6);
   border-left: 1px solid rgba(51, 65, 85, 0.7);
 }
 .dark .page-scroll-y::-webkit-scrollbar-thumb,
 .dark .page-scroll-y-auto::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, rgba(100, 116, 139, 0.65), rgba(71, 85, 105, 0.8));
-  border: 1px solid rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(26, 27, 31, 0.6);
   background-clip: padding-box;
 }
 
 .dark .timeline-scroll {
-  scrollbar-color: rgba(96, 165, 250, 0.5) rgba(15, 23, 42, 0.6);
+  scrollbar-color: rgba(96, 165, 250, 0.5) rgba(26, 27, 31, 0.6);
 }
-.dark .timeline-scroll::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+.dark .timeline-scroll::-webkit-scrollbar-track { background: rgba(26, 27, 31, 0.6); }
 
 .dark .builder-scroll {
   scrollbar-color: rgba(100, 116, 139, 0.55) transparent;
@@ -1142,7 +1139,7 @@ html.dark {
 }
 
 /* Dashboard battery / pipeline tracks default to a light slate fill; darken them */
-.dark .today-battery-track { background-color: rgba(30, 41, 59, 0.7) !important; }
+.dark .today-battery-track { background-color: rgba(37, 38, 43, 0.7) !important; }
 
 /* Native form controls and date pickers */
 .dark input,
@@ -1160,12 +1157,12 @@ html.dark {
 .dark select option,
 .dark select optgroup {
   color: #e2e8f0;
-  background-color: #0f172a;
+  background-color: #1a1b1f;
 }
 
 html:not(.dark) select option,
 html:not(.dark) select optgroup {
-  color: #0f172a;
+  color: #1a1b1f;
   background-color: #ffffff;
 }
 
@@ -1174,7 +1171,7 @@ html:not(.dark) select optgroup {
 
 /* Custom glass surfaces (auth panels) */
 .dark .glass-panel {
-  background: linear-gradient(160deg, rgba(30, 41, 59, 0.86), rgba(15, 23, 42, 0.8));
+  background: linear-gradient(160deg, rgba(37, 38, 43, 0.86), rgba(26, 27, 31, 0.8));
   border-color: rgba(59, 130, 246, 0.25);
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
@@ -1182,13 +1179,13 @@ html:not(.dark) select optgroup {
 /* Blue outline input */
 .dark .blue-outline-input {
   border-color: rgba(59, 130, 246, 0.4);
-  background: rgba(20, 29, 49, 0.85);
+  background: rgba(29, 30, 34, 0.85);
   color: #e2e8f0;
 }
 .dark .blue-outline-input:focus {
   border-color: rgba(96, 165, 250, 0.95);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
-  background: #0f172a;
+  background: #1a1b1f;
 }
 
 /* Range sliders: native unfilled track is often stark white in dark mode.
@@ -1203,7 +1200,7 @@ html:not(.dark) select optgroup {
 .dark input[type='range']::-webkit-slider-runnable-track {
   height: 0.375rem;
   border-radius: 9999px;
-  background: #334155;
+  background: #36383e;
 }
 
 .dark input[type='range']::-webkit-slider-thumb {
@@ -1213,7 +1210,7 @@ html:not(.dark) select optgroup {
   height: 1rem;
   margin-top: -0.3125rem;
   border-radius: 9999px;
-  border: 2px solid #0b1220;
+  border: 2px solid #17181b;
   background: currentColor;
   box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35);
   cursor: pointer;
@@ -1222,7 +1219,7 @@ html:not(.dark) select optgroup {
 .dark input[type='range']::-moz-range-track {
   height: 0.375rem;
   border-radius: 9999px;
-  background: #334155;
+  background: #36383e;
   border: none;
 }
 
@@ -1236,7 +1233,7 @@ html:not(.dark) select optgroup {
   width: 1rem;
   height: 1rem;
   border-radius: 9999px;
-  border: 2px solid #0b1220;
+  border: 2px solid #17181b;
   background: currentColor;
   box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35);
   cursor: pointer;

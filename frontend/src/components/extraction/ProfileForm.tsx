@@ -1461,7 +1461,7 @@ export function ProfileForm({ profile, onSubmit, importDraft, importErrors, onIm
 
       <p className="xl:col-span-2 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
         EEO demographics and location preferences (legal address) for application autofill live in{' '}
-        <Link to="/preferences" className="font-semibold text-blue-700 hover:underline">
+        <Link to="/app/preferences" className="font-semibold text-blue-700 hover:underline">
           My Preferences
         </Link>
         .

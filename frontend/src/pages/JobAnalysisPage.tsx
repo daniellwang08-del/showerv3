@@ -61,7 +61,7 @@ export function JobAnalysisPage() {
 
   const goJobs = (filters: Parameters<typeof applyAgentDashboard>[0]) => {
     applyAgentDashboard({ reset: true, ...filters });
-    navigate('/scraper');
+    navigate('/app/jobs');
   };
 
   const trendRows = useMemo(() => {
@@ -167,7 +167,7 @@ export function JobAnalysisPage() {
                 {statsLoading ? <Loader2 size={15} className="animate-spin" /> : null}
                 Refresh
               </button>
-              <Link to="/scraper" className={btnPrimary}>
+              <Link to="/app/jobs" className={btnPrimary}>
                 Open Jobs
                 <ArrowRight size={15} />
               </Link>

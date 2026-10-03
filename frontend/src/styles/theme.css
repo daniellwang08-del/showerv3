@@ -1,0 +1,191 @@
+/* NAO design tokens (shadcn/ui semantic variables + product semantics).
+   Neutral, low-chrome surfaces in the style of modern AI workspaces; the NAO
+   indigo is reserved for focus, selection and AI affordances. */
+
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+:root {
+  --background: oklch(0.995 0 0);
+  --foreground: oklch(0.2 0.006 265);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.006 265);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.006 265);
+  --primary: oklch(0.22 0.006 265);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.965 0.002 265);
+  --secondary-foreground: oklch(0.22 0.006 265);
+  --muted: oklch(0.965 0.002 265);
+  --muted-foreground: oklch(0.52 0.01 265);
+  --accent: oklch(0.955 0.004 265);
+  --accent-foreground: oklch(0.22 0.006 265);
+  --destructive: oklch(0.577 0.215 27);
+  --border: oklch(0.915 0.003 265);
+  --input: oklch(0.905 0.003 265);
+  --ring: oklch(0.6 0.17 268);
+  --radius: 0.75rem;
+
+  --brand: oklch(0.56 0.19 268);
+  --brand-foreground: oklch(0.985 0 0);
+  --brand-soft: oklch(0.955 0.03 268);
+
+  --match-strong: oklch(0.6 0.15 155);
+  --match-good: oklch(0.6 0.14 240);
+  --match-fair: oklch(0.72 0.15 75);
+  --match-weak: oklch(0.6 0.02 265);
+
+  --status-new: oklch(0.6 0.14 240);
+  --status-preparing: oklch(0.7 0.15 75);
+  --status-ready: oklch(0.6 0.15 155);
+  --status-applied: oklch(0.56 0.19 268);
+  --status-failed: oklch(0.6 0.2 27);
+
+  --chart-1: oklch(0.56 0.19 268);
+  --chart-2: oklch(0.6 0.15 155);
+  --chart-3: oklch(0.72 0.15 75);
+  --chart-4: oklch(0.6 0.14 240);
+  --chart-5: oklch(0.6 0.2 27);
+
+  --sidebar: oklch(0.975 0.002 265);
+  --sidebar-foreground: oklch(0.3 0.008 265);
+  --sidebar-primary: oklch(0.22 0.006 265);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.935 0.004 265);
+  --sidebar-accent-foreground: oklch(0.2 0.006 265);
+  --sidebar-border: oklch(0.92 0.003 265);
+  --sidebar-ring: oklch(0.6 0.17 268);
+
+  --row-height: 3.25rem;
+  --cell-px: 0.875rem;
+}
+
+.dark {
+  --background: oklch(0.185 0.004 265);
+  --foreground: oklch(0.95 0.002 265);
+  --card: oklch(0.215 0.005 265);
+  --card-foreground: oklch(0.95 0.002 265);
+  --popover: oklch(0.235 0.005 265);
+  --popover-foreground: oklch(0.95 0.002 265);
+  --primary: oklch(0.95 0.002 265);
+  --primary-foreground: oklch(0.2 0.006 265);
+  --secondary: oklch(0.26 0.006 265);
+  --secondary-foreground: oklch(0.95 0.002 265);
+  --muted: oklch(0.255 0.006 265);
+  --muted-foreground: oklch(0.7 0.01 265);
+  --accent: oklch(0.27 0.007 265);
+  --accent-foreground: oklch(0.95 0.002 265);
+  --destructive: oklch(0.68 0.19 25);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.66 0.17 268);
+
+  --brand: oklch(0.66 0.17 268);
+  --brand-soft: oklch(0.3 0.06 268);
+
+  --match-strong: oklch(0.72 0.15 155);
+  --match-good: oklch(0.72 0.12 240);
+  --match-fair: oklch(0.8 0.14 80);
+  --match-weak: oklch(0.65 0.02 265);
+
+  --status-new: oklch(0.72 0.12 240);
+  --status-preparing: oklch(0.8 0.14 80);
+  --status-ready: oklch(0.72 0.15 155);
+  --status-applied: oklch(0.7 0.15 268);
+  --status-failed: oklch(0.7 0.18 25);
+
+  --sidebar: oklch(0.16 0.004 265);
+  --sidebar-foreground: oklch(0.85 0.005 265);
+  --sidebar-primary: oklch(0.95 0.002 265);
+  --sidebar-primary-foreground: oklch(0.2 0.006 265);
+  --sidebar-accent: oklch(0.24 0.006 265);
+  --sidebar-accent-foreground: oklch(0.97 0 0);
+  --sidebar-border: oklch(1 0 0 / 7%);
+  --sidebar-ring: oklch(0.66 0.17 268);
+}
+
+[data-density="compact"] {
+  --row-height: 2.5rem;
+  --cell-px: 0.625rem;
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+
+  --color-match-strong: var(--match-strong);
+  --color-match-good: var(--match-good);
+  --color-match-fair: var(--match-fair);
+  --color-match-weak: var(--match-weak);
+  --color-status-new: var(--status-new);
+  --color-status-preparing: var(--status-preparing);
+  --color-status-ready: var(--status-ready);
+  --color-status-applied: var(--status-applied);
+  --color-status-failed: var(--status-failed);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-feature-settings: "cv11", "ss01";
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--foreground) 18%, transparent) transparent;
+}

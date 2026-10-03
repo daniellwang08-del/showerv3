@@ -1,43 +1,44 @@
-import { lazy, Suspense, useCallback } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { lazy, Suspense, useCallback, useEffect, type ReactNode } from 'react';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { useWebSocket, type WsEvent } from './hooks/useWebSocket';
 import { useScraperStore } from './stores/scraperStore';
 import { useJobsStore } from './stores/jobsStore';
 import { useModalStore } from './stores/modalStore';
 import { useUIStore } from './stores/uiStore';
-import { AppShell } from './components/layout/AppShell';
+import { useShellStore } from './stores/shellStore';
+import { useAgentStore } from './stores/agentStore';
 import { BrandedLoader } from './components/layout/BrandedLoader';
-import { LandingPage } from './pages/LandingPage';
-import { ScraperDashboard } from './pages/ScraperDashboard';
-import { ProfilePage } from './pages/ProfilePage';
-import { MyPreferencesPage } from './pages/MyPreferencesPage';
-import { IntegrationsPage } from './pages/IntegrationsPage';
-import { BillingPage } from './pages/BillingPage';
-// Code-split the heaviest / role-gated pages so applicants never download the
-// admin bundles (System Settings + User Management) and vice-versa.
-const ResumeBuilderPage = lazy(() =>
-  import('./pages/ResumeBuilderPage').then((m) => ({ default: m.ResumeBuilderPage })),
-);
-const DataAnalysisManagementPage = lazy(() =>
-  import('./pages/DataManagementPage').then((m) => ({ default: m.DataAnalysisManagementPage })),
-);
-const UserManagementPage = lazy(() =>
-  import('./pages/UserManagementPage').then((m) => ({ default: m.UserManagementPage })),
-);
-const SystemSettingsPage = lazy(() =>
-  import('./pages/SystemSettingsPage').then((m) => ({ default: m.SystemSettingsPage })),
-);
-const SystemLogsPage = lazy(() =>
-  import('./pages/SystemLogsPage').then((m) => ({ default: m.SystemLogsPage })),
-);
-const JobAnalysisPage = lazy(() =>
-  import('./pages/JobAnalysisPage').then((m) => ({ default: m.JobAnalysisPage })),
-);
-import { AuthScreen } from './components/extraction/AuthScreen';
-import { JobActionModal } from './components/extraction/JobActionModal';
-import { ConfirmDialog } from './components/extraction/ConfirmDialog';
-import { NotificationToasts } from './components/shared/NotificationToasts';
+import { WorkspaceShell } from './shells/WorkspaceShell';
+import { LegacyPage } from './shells/LegacyPage';
+import { adminNav, applicantNav, legacyRedirects } from './shells/nav';
+import { coalesce } from './lib/coalesce';
+import { queryClient } from './lib/queryClient';
+import { Skeleton } from './components/ui/skeleton';
+import { PageTitle } from './components/app/PageTitle';
+
+const named = <T extends Record<string, unknown>>(loader: () => Promise<T>, name: keyof T) =>
+  lazy(() => loader().then((m) => ({ default: m[name] as React.ComponentType<any> })));
+
+const AuthScreen = named(() => import('./components/extraction/AuthScreen'), 'AuthScreen');
+const JobActionModal = named(() => import('./components/extraction/JobActionModal'), 'JobActionModal');
+const ConfirmDialog = named(() => import('./components/extraction/ConfirmDialog'), 'ConfirmDialog');
+const LandingPage = named(() => import('./pages/LandingPage'), 'LandingPage');
+const HomePage = named(() => import('./features/home/HomePage'), 'HomePage');
+const OnboardingPage = named(() => import('./features/onboarding/OnboardingPage'), 'OnboardingPage');
+const AssistantPage = named(() => import('./features/assistant/AssistantPage'), 'AssistantPage');
+const JobsPage = named(() => import('./features/jobs/JobsPage'), 'JobsPage');
+const ScraperDashboard = named(() => import('./pages/ScraperDashboard'), 'ScraperDashboard');
+const ProfilePage = named(() => import('./features/profile/ProfilePage'), 'ProfilePage');
+const PreferencesPage = named(() => import('./features/settings/PreferencesPage'), 'PreferencesPage');
+const IntegrationsPage = named(() => import('./features/integrations/IntegrationsPage'), 'IntegrationsPage');
+const InsightsPage = named(() => import('./features/insights/InsightsPage'), 'InsightsPage');
+const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
+const ResumeBuilderPage = named(() => import('./pages/ResumeBuilderPage'), 'ResumeBuilderPage');
+const DataAnalysisManagementPage = named(() => import('./pages/DataManagementPage'), 'DataAnalysisManagementPage');
+const UserManagementPage = named(() => import('./pages/UserManagementPage'), 'UserManagementPage');
+const SystemSettingsPage = named(() => import('./pages/SystemSettingsPage'), 'SystemSettingsPage');
+const SystemLogsPage = named(() => import('./pages/SystemLogsPage'), 'SystemLogsPage');
 
 function isLogsHost(): boolean {
   if (typeof window === 'undefined') return false;
@@ -45,35 +46,143 @@ function isLogsHost(): boolean {
   return host === 'logs.atomspace.it.com' || host.startsWith('logs.');
 }
 
-function AdminOnly({ isAdmin, children }: { isAdmin: boolean; children: React.ReactNode }) {
-  if (!isAdmin) {
-    if (isLogsHost()) {
-      return (
-        <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-center dark:bg-[var(--app-bg)]">
-          <div className="max-w-md space-y-2">
-            <p className="text-lg font-semibold text-slate-900 dark:text-white">Admins only</p>
-            <p className="text-sm text-slate-600 dark:text-[var(--app-muted)]">
-              System logs require an admin account. Sign in at{' '}
-              <a className="text-sky-700 underline dark:text-sky-300" href="https://atomspace.it.com/login">
-                atomspace.it.com
-              </a>{' '}
-              with an admin user, then open this site again.
-            </p>
-          </div>
-        </div>
-      );
-    }
-    return <Navigate to="/scraper" replace />;
-  }
-  return <>{children}</>;
+function AdminsOnlyNotice() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+      <div className="max-w-md space-y-2">
+        <p className="text-lg font-semibold">Admins only</p>
+        <p className="text-sm text-muted-foreground">
+          System logs require an admin account. Sign in at{' '}
+          <a className="text-brand underline" href="https://atomspace.it.com/login">
+            atomspace.it.com
+          </a>{' '}
+          with an admin user, then open this site again.
+        </p>
+      </div>
+    </div>
+  );
 }
 
-/** Applicant-only tools — admins prepare shared jobs and manage the platform. */
-function ApplicantOnly({ isAdmin, children }: { isAdmin: boolean; children: React.ReactNode }) {
-  if (isAdmin) {
-    return <Navigate to="/scraper" replace />;
+function PageFallback() {
+  return (
+    <div className="space-y-4 p-6">
+      <Skeleton className="h-8 w-56" />
+      <Skeleton className="h-4 w-80" />
+      <Skeleton className="h-64 w-full" />
+    </div>
+  );
+}
+
+function Page({ children, legacy, title }: { children: ReactNode; legacy?: boolean; title?: string }) {
+  const content = (
+    <Suspense fallback={<PageFallback />}>
+      {title ? <PageTitle title={title} /> : null}
+      {children}
+    </Suspense>
+  );
+  return legacy ? <LegacyPage>{content}</LegacyPage> : content;
+}
+
+function LegacyRedirect({ to }: { to: string }) {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace />;
+}
+
+const SESSION_CACHE_KEYS = ['applicant_scraper_stats_v1', 'admin_scraper_stats_v1'];
+
+/** Per-user data cached in this browser (recent jobs, chat, stats) must not carry over to another account. */
+function claimBrowserData(userId: string | null) {
+  const shell = useShellStore.getState();
+  if (shell.owner === userId) return;
+  useAgentStore.getState().clear();
+  for (const key of SESSION_CACHE_KEYS) sessionStorage.removeItem(key);
+  shell.setOwner(userId);
+}
+
+// Pipeline events arrive in bursts (several per job); collapse the resulting
+// refetches to at most one per 2 s per target.
+const refresh = {
+  jobs: coalesce(() => useScraperStore.getState().bgRefreshJobs()),
+  stats: coalesce(() => void useScraperStore.getState().loadStats({ silent: true })),
+  lists: coalesce(() => void useJobsStore.getState().refreshLists({ showLoading: false, reset: false })),
+  afterSubmit: coalesce(() => void useScraperStore.getState().refreshAfterJobSubmit()),
+  queries: coalesce(() => void queryClient.invalidateQueries({ queryKey: ['jobs'] })),
+};
+
+const SCRAPER_EVENTS = new Set([
+  'sync_started',
+  'sync_spider_started',
+  'sync_activity',
+  'sync_progress',
+  'sync_completed',
+  'sync_failed',
+]);
+
+const PIPELINE_EVENTS = new Set([
+  'extraction_completed',
+  'extraction_failed',
+  'match_started',
+  'match_completed',
+  'match_failed',
+  'tailored_content_started',
+  'tailored_content_completed',
+  'tailored_content_failed',
+  'resume_build_started',
+  'resume_build_completed',
+  'resume_build_failed',
+  'resume_file_processing',
+  'resume_file_ready',
+  'resume_file_failed',
+]);
+
+function handleWsEvent(event: WsEvent) {
+  const scraper = useScraperStore.getState();
+
+  if (SCRAPER_EVENTS.has(event.type)) {
+    scraper.handleSyncWsEvent(event);
+    if (event.type === 'sync_completed' || event.type === 'sync_failed') {
+      refresh.afterSubmit();
+      refresh.queries();
+      scraper.checkSyncStatus();
+    }
+    return;
   }
-  return <>{children}</>;
+
+  if (event.type === 'scrape_promoted' || event.type === 'job_submitted') {
+    refresh.afterSubmit();
+    refresh.lists();
+  }
+
+  if (event.type === 'job_excluded_for_user' || event.type === 'extraction_failed') {
+    refresh.lists();
+    refresh.jobs();
+  }
+
+  if (event.type === 'match_failed') {
+    const detail = (event.error || event.message || 'Match analysis failed').trim();
+    useUIStore.getState().notify('error', detail, 8000);
+    refresh.lists();
+  }
+
+  if (event.type === 'extraction_failed' && (event.error || event.message)) {
+    const detail = String(event.error || event.message).trim();
+    if (detail) useUIStore.getState().notify('error', detail, 8000);
+  }
+
+  if (PIPELINE_EVENTS.has(event.type)) {
+    refresh.jobs();
+    refresh.stats();
+    const detailJobId = event.valid_job_id || event.job_id;
+    if (detailJobId) scraper.bumpAnalysisPanelRefresh(detailJobId);
+  }
+
+  if (event.type === 'company_policy_reconcile_completed') {
+    refresh.jobs();
+    refresh.stats();
+    refresh.lists();
+  }
+
+  refresh.queries();
 }
 
 function App() {
@@ -98,85 +207,20 @@ function App() {
   const closeBatchDeleteConfirm = useJobsStore((s) => s.closeBatchDeleteConfirm);
   const executeBatchDeleteInvalid = useJobsStore((s) => s.executeBatchDeleteInvalid);
 
-  const handleWsEvent = useCallback((event: WsEvent) => {
-    const scraperEvents = [
-      'sync_started',
-      'sync_spider_started',
-      'sync_activity',
-      'sync_progress',
-      'sync_completed',
-      'sync_failed',
-    ];
-    if (scraperEvents.includes(event.type)) {
-      useScraperStore.getState().handleSyncWsEvent(event);
-      if (event.type === 'sync_completed' || event.type === 'sync_failed') {
-        void useScraperStore.getState().refreshAfterJobSubmit();
-        useScraperStore.getState().checkSyncStatus();
-      }
-      return;
-    }
+  const onWsEvent = useCallback((event: WsEvent) => handleWsEvent(event), []);
+  useWebSocket(!!isAuthenticated, onWsEvent);
 
-    if (event.type === 'scrape_promoted') {
-      void useScraperStore.getState().refreshAfterJobSubmit();
-      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
-    }
+  useEffect(() => {
+    if (user?.id) claimBrowserData(user.id);
+  }, [user?.id]);
 
-    if (event.type === 'job_submitted') {
-      void useScraperStore.getState().refreshAfterJobSubmit();
-      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
-    }
-
-    if (event.type === 'job_excluded_for_user' || event.type === 'extraction_failed') {
-      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
-      useScraperStore.getState().bgRefreshJobs();
-    }
-
-    if (event.type === 'match_failed') {
-      const detail = (event.error || event.message || 'Match analysis failed').trim();
-      useUIStore.getState().notify('error', detail, 8000);
-      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
-    }
-
-    if (event.type === 'extraction_failed' && (event.error || event.message)) {
-      const detail = String(event.error || event.message).trim();
-      if (detail) {
-        useUIStore.getState().notify('error', detail, 8000);
-      }
-    }
-
-    const pipelineEvents = [
-      'extraction_completed',
-      'extraction_failed',
-      'match_started',
-      'match_completed',
-      'match_failed',
-      'tailored_content_started',
-      'tailored_content_completed',
-      'tailored_content_failed',
-      'resume_build_started',
-      'resume_build_completed',
-      'resume_build_failed',
-      'resume_file_processing',
-      'resume_file_ready',
-      'resume_file_failed',
-    ];
-    if (pipelineEvents.includes(event.type)) {
-      useScraperStore.getState().bgRefreshJobs();
-      void useScraperStore.getState().loadStats({ silent: true });
-      const detailJobId = event.valid_job_id || event.job_id;
-      if (detailJobId) {
-        useScraperStore.getState().bumpAnalysisPanelRefresh(detailJobId);
-      }
-    }
-
-    if (event.type === 'company_policy_reconcile_completed') {
-      useScraperStore.getState().bgRefreshJobs();
-      void useScraperStore.getState().loadStats({ silent: true });
-      void useJobsStore.getState().refreshLists({ showLoading: false, reset: false });
-    }
-  }, []);
-
-  useWebSocket(!!isAuthenticated, handleWsEvent);
+  const handleLogout = useCallback(async () => {
+    await logout();
+    queryClient.clear();
+    claimBrowserData(null);
+    // In-memory stores still hold the previous account's jobs; start the next session clean.
+    window.location.replace('/login');
+  }, [logout]);
 
   if (isAuthenticated === null) {
     return <BrandedLoader fullscreen label="Starting NAO…" />;
@@ -186,79 +230,58 @@ function App() {
     // Visitors land on the public marketing page; /login and /signup own the
     // auth mode so both are shareable. Any other path (an app route reached
     // with an expired session) still shows the form directly, so signing back
-    // in returns the user to where they were.
-    // logs.* is admin-only: skip marketing and go straight to login.
-    const logsHost = isLogsHost();
-    const gotoMode = (mode: 'login' | 'signup') =>
-      navigate(mode === 'login' ? '/login' : '/signup');
-
-    if (logsHost) {
+    // in returns the user to where they were. logs.* skips marketing.
+    if (isLogsHost()) {
+      const loginScreen = (
+        <AuthScreen
+          onAuthSuccess={onAuthSuccess}
+          initialMode="login"
+          onModeChange={() => navigate('/login')}
+          homeTo="/login"
+        />
+      );
       return (
-        <Routes>
-          <Route
-            path="/login"
-            element={
-              <AuthScreen
-                onAuthSuccess={onAuthSuccess}
-                initialMode="login"
-                onModeChange={() => navigate('/login')}
-                homeTo="/login"
-              />
-            }
-          />
-          <Route
-            path="*"
-            element={
-              <AuthScreen
-                onAuthSuccess={onAuthSuccess}
-                initialMode="login"
-                onModeChange={() => navigate('/login')}
-                homeTo="/login"
-              />
-            }
-          />
-        </Routes>
+        <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
+          <Routes>
+            <Route path="*" element={loginScreen} />
+          </Routes>
+        </Suspense>
       );
     }
 
+    const gotoMode = (mode: 'login' | 'signup') => navigate(mode === 'login' ? '/login' : '/signup');
     return (
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route
-          path="/login"
-          element={
-            <AuthScreen
-              onAuthSuccess={onAuthSuccess}
-              initialMode="login"
-              onModeChange={gotoMode}
-              homeTo="/"
-            />
-          }
-        />
-        <Route
-          path="/signup"
-          element={
-            <AuthScreen
-              onAuthSuccess={onAuthSuccess}
-              initialMode="signup"
-              onModeChange={gotoMode}
-              homeTo="/"
-            />
-          }
-        />
-        <Route
-          path="*"
-          element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode={authPage} homeTo="/" />}
-        />
-      </Routes>
+      <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route
+            path="/login"
+            element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode="login" onModeChange={gotoMode} homeTo="/" />}
+          />
+          <Route
+            path="/signup"
+            element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode="signup" onModeChange={gotoMode} homeTo="/" />}
+          />
+          <Route path="*" element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode={authPage} homeTo="/" />} />
+        </Routes>
+      </Suspense>
     );
   }
 
-  const defaultAuthedPath = isLogsHost() ? '/system-logs' : '/scraper';
+  const isAdmin = !!user?.is_admin;
+  const logsHost = isLogsHost();
+  const home = isAdmin ? (logsHost ? '/admin/logs' : '/admin') : '/app';
+  const shellUser = { name: user?.name || user?.display_name, email: user?.email };
+  const firstName = (user?.name || (user?.display_name?.includes('@') ? '' : user?.display_name) || '')
+    .trim()
+    .split(/\s+/)[0] || undefined;
+
+  if (logsHost && !isAdmin) return <AdminsOnlyNotice />;
 
   return (
     <>
-      <NotificationToasts />
+      <Suspense fallback={null}>
+      {modal ? (
       <JobActionModal
         modal={modal}
         modalUrl={modalUrl}
@@ -272,7 +295,9 @@ function App() {
         onClose={closeModal}
         onConfirm={confirmModal}
       />
+      ) : null}
 
+      {batchDeletePending != null ? (
       <ConfirmDialog
         open={batchDeletePending != null}
         title="Dismiss duplicate entries?"
@@ -295,121 +320,74 @@ function App() {
         onConfirm={() => void executeBatchDeleteInvalid()}
         onCancel={closeBatchDeleteConfirm}
       />
+      ) : null}
+      </Suspense>
 
-      <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
       <Routes>
         <Route
+          path="/onboarding"
           element={
-            <AppShell
-              userEmail={user?.email}
-              userName={user?.name || user?.display_name || undefined}
-              isAdmin={!!user?.is_admin}
-              onLogout={logout}
-            />
+            isAdmin ? (
+              <Navigate to="/admin" replace />
+            ) : (
+              <Suspense fallback={<PageFallback />}>
+                <OnboardingPage userId={user?.id} accountEmail={user?.email} onProfileSaved={refreshUser} />
+              </Suspense>
+            )
+          }
+        />
+        <Route
+          path="/app"
+          element={
+            isAdmin ? (
+              <Navigate to="/admin" replace />
+            ) : (
+              <WorkspaceShell variant="applicant" nav={applicantNav} user={shellUser} onLogout={handleLogout} />
+            )
           }
         >
-          <Route path="/scraper" element={<ScraperDashboard />} />
+          <Route index element={<Page><HomePage firstName={firstName} userId={user?.id} /></Page>} />
+          <Route path="assistant" element={<Page><AssistantPage /></Page>} />
+          <Route path="jobs" element={<Page title="Jobs"><JobsPage /></Page>} />
+          <Route path="analysis" element={<Page><InsightsPage /></Page>} />
+          <Route path="documents" element={<Page legacy title="Documents"><ResumeBuilderPage /></Page>} />
           <Route
-            path="/profile"
+            path="profile"
             element={
-              <ApplicantOnly isAdmin={!!user?.is_admin}>
-                <ProfilePage user={user} onLogout={logout} onProfileSaved={refreshUser} />
-              </ApplicantOnly>
+              <Page>
+                <ProfilePage accountEmail={user?.email} onProfileSaved={refreshUser} />
+              </Page>
             }
           />
-          <Route
-            path="/preferences"
-            element={
-              <ApplicantOnly isAdmin={!!user?.is_admin}>
-                <MyPreferencesPage />
-              </ApplicantOnly>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ApplicantOnly isAdmin={!!user?.is_admin}>
-                <Navigate to="/preferences" replace />
-              </ApplicantOnly>
-            }
-          />
-          <Route
-            path="/integrations"
-            element={
-              <ApplicantOnly isAdmin={!!user?.is_admin}>
-                <IntegrationsPage />
-              </ApplicantOnly>
-            }
-          />
-          <Route
-            path="/billing"
-            element={
-              <ApplicantOnly isAdmin={!!user?.is_admin}>
-                <BillingPage />
-              </ApplicantOnly>
-            }
-          />
-          <Route
-            path="/resume-builder"
-            element={
-              <ApplicantOnly isAdmin={!!user?.is_admin}>
-                <ResumeBuilderPage />
-              </ApplicantOnly>
-            }
-          />
-          <Route
-            path="/job-analysis"
-            element={
-              <ApplicantOnly isAdmin={!!user?.is_admin}>
-                <JobAnalysisPage />
-              </ApplicantOnly>
-            }
-          />
-          <Route
-            path="/data-analysis"
-            element={
-              <AdminOnly isAdmin={!!user?.is_admin}>
-                <DataAnalysisManagementPage />
-              </AdminOnly>
-            }
-          />
-          <Route
-            path="/data-management"
-            element={
-              <AdminOnly isAdmin={!!user?.is_admin}>
-                <DataAnalysisManagementPage />
-              </AdminOnly>
-            }
-          />
-          <Route
-            path="/user-management"
-            element={
-              <AdminOnly isAdmin={!!user?.is_admin}>
-                <UserManagementPage />
-              </AdminOnly>
-            }
-          />
-          <Route
-            path="/system-settings"
-            element={
-              <AdminOnly isAdmin={!!user?.is_admin}>
-                <SystemSettingsPage />
-              </AdminOnly>
-            }
-          />
-          <Route
-            path="/system-logs"
-            element={
-              <AdminOnly isAdmin={!!user?.is_admin}>
-                <SystemLogsPage />
-              </AdminOnly>
-            }
-          />
-          <Route path="/" element={<Navigate to={defaultAuthedPath} replace />} />
-          <Route path="*" element={<Navigate to={defaultAuthedPath} replace />} />
+          <Route path="preferences" element={<Page><PreferencesPage /></Page>} />
+          <Route path="integrations" element={<Page><IntegrationsPage /></Page>} />
+          <Route path="billing" element={<Page legacy title="Billing"><BillingPage /></Page>} />
+          <Route path="*" element={<Navigate to="/app" replace />} />
         </Route>
+
+        <Route
+          path="/admin"
+          element={
+            isAdmin ? (
+              <WorkspaceShell variant="admin" nav={adminNav} user={shellUser} onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/app" replace />
+            )
+          }
+        >
+          <Route index element={<Page legacy title="Jobs pipeline"><ScraperDashboard /></Page>} />
+          <Route path="data" element={<Page legacy title="Data"><DataAnalysisManagementPage /></Page>} />
+          <Route path="users" element={<Page legacy title="Users"><UserManagementPage /></Page>} />
+          <Route path="settings" element={<Page legacy title="System settings"><SystemSettingsPage /></Page>} />
+          <Route path="logs" element={<Page legacy title="Logs"><SystemLogsPage /></Page>} />
+          <Route path="*" element={<Navigate to="/admin" replace />} />
+        </Route>
+
+        {Object.entries(legacyRedirects).map(([from, to]) => (
+          <Route key={from} path={from} element={<LegacyRedirect to={isAdmin ? to.admin : to.applicant} />} />
+        ))}
+        <Route path="*" element={<Navigate to={home} replace />} />
       </Routes>
-      </Suspense>
     </>
   );
 }

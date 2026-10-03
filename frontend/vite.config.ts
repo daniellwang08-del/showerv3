@@ -2,6 +2,7 @@ import { defineConfig, loadEnv, createLogger } from 'vite'
 import type { ProxyOptions } from 'vite'
 import react from '@vitejs/plugin-react'
 import os from 'node:os'
+import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 
@@ -132,7 +133,32 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react()],
+    plugins: [
+      react({
+        babel: { plugins: [['babel-plugin-react-compiler', {}]] },
+      }),
+    ],
+    resolve: {
+      alias: { '@': path.resolve(__dirname, './src') },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          // Only vendors every route needs get named chunks; route-only libraries
+          // (recharts, markdown, stripe) must stay unassigned so Rollup keeps them
+          // behind their lazy pages instead of hoisting them into the entry.
+          manualChunks(id) {
+            const m = /node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(id)
+            if (!m) return undefined
+            const pkg = m[1].replace('\\', '/')
+            if (pkg === 'react' || pkg === 'react-dom' || pkg === 'scheduler') return 'react'
+            if (pkg === 'react-router' || pkg === 'react-router-dom' || pkg.startsWith('@tanstack/query') || pkg === '@tanstack/react-query') return 'framework'
+            if (pkg.startsWith('@base-ui/') || pkg.startsWith('@floating-ui/') || pkg === 'sonner') return 'ui'
+            return undefined
+          },
+        },
+      },
+    },
     customLogger: createQuietLogger(),
     server: {
       host: '0.0.0.0',

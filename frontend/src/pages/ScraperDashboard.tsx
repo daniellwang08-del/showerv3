@@ -46,7 +46,7 @@ export function ScraperDashboard() {
   const navigate = useNavigate();
   const openResumeAiCenter = useCallback(() => {
     useResumeAiStore.getState().requestOpen();
-    navigate('/resume-builder');
+    navigate('/app/documents');
   }, [navigate]);
 
   // Show the branded loader only on the very first load, not on later filter refreshes.
@@ -157,7 +157,7 @@ export function ScraperDashboard() {
     }
   }, [isAdmin, applyAgentDashboard]);
 
-  // Poll every 6 s while any job is mid-pipeline so dots/badges update live.
+  // Fallback poll while any job is mid-pipeline; WebSocket events drive live updates.
   useEffect(() => {
     const EXTRACTION_IN_PROGRESS = new Set(['pending', 'processing']);
     const RESUME_IN_PROGRESS     = new Set(['pending', 'processing']);
@@ -187,7 +187,7 @@ export function ScraperDashboard() {
         void bgRefreshJobs();
         // Only refresh stats when extraction backlog exists (admin) or jobs are mid-pipeline.
         refreshStats({ silent: true });
-      }, 6000);
+      }, 20000);
     }
 
     return () => {
@@ -200,7 +200,7 @@ export function ScraperDashboard() {
     const id = window.setInterval(() => {
       void checkSyncStatus();
       if (isAdmin) refreshStats({ silent: true });
-    }, 10000);
+    }, 20000);
     return () => window.clearInterval(id);
   }, [syncing, checkSyncStatus, isAdmin, refreshStats]);
 
@@ -257,7 +257,7 @@ export function ScraperDashboard() {
             {!isAdmin && (
               <>
                 <Link
-                  to="/job-analysis"
+                  to="/app/analysis"
                   className={`${btnSecondary} min-w-0 flex-1 sm:flex-none`}
                   title="Open full job analysis dashboard"
                 >

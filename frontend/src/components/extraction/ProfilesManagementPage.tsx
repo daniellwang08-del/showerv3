@@ -222,7 +222,7 @@ export function ProfilesManagementPage({ userEmail, onProfileSaved }: Props) {
             {!loading && (
               <p className="text-xs text-slate-500">
                 API keys, match scoring, EEO, and address are in{' '}
-                <Link to="/preferences" className="font-medium text-blue-600 hover:text-blue-800">
+                <Link to="/app/preferences" className="font-medium text-blue-600 hover:text-blue-800">
                   My Preferences
                 </Link>
                 .

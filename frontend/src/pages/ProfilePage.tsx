@@ -12,7 +12,7 @@ export function ProfilePage({ user, onLogout, onProfileSaved }: ProfilePageProps
   return (
     <ProfilesPage
       onBack={() => {
-        window.location.href = '/scraper';
+        window.location.href = '/';
       }}
       onLogout={onLogout}
       userEmail={user?.email}

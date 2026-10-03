@@ -214,7 +214,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         if (event.action === 'update_dashboard') {
           const scraper = useScraperStore.getState();
           const snapshot = scraper.captureAgentDashboardSnapshot();
-          agentNavigate('/scraper');
+          agentNavigate('/app/jobs');
           scraper.applyAgentDashboard(event.filters || {});
           update((prev) => attachDashboardDiscard(prev, snapshot));
         }
