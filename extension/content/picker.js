@@ -699,7 +699,7 @@
   }
 
   // Classify a field label into a stable identity / EEO / work-authorization /
-  // consent category, or null. MUST stay identical to the copy in src/app.js so
+  // consent category, or null. MUST stay identical to the copy in src/panel/autofill/form.js so
   // remembered keys line up. Order matters (work_auth keywords overlap citizen).
   function answerCategory(label) {
     const s = (label || "").toLowerCase();
@@ -2247,14 +2247,25 @@
     // section answers, so its real count wins over empty frames.
     if (msg.type === "AF_GH_PREP") {
       const hasEdu = !!document.querySelector('.education--container, .education--form, [id^="school--"]');
-      if (!hasEdu) return;
+      if (!hasEdu) return false;
       runExclusive(async () => {
         const entries = Array.isArray(msg.entries) ? msg.entries : [];
         const count = await ensureEducationBlocks(entries.length || 1);
         await fillEducationRows(entries, msg.discipline);
         return count;
-      });
-      return;
+      }).then(
+        (count) => {
+          try {
+            sendResponse({ ok: true, count });
+          } catch {}
+        },
+        () => {
+          try {
+            sendResponse({ ok: false });
+          } catch {}
+        }
+      );
+      return true;
     }
     // RecruiterFlow pre-pass: add a repeating Experience/Education row per profile
     // entry (Workday-style), fill them + Country deterministically, and tick the

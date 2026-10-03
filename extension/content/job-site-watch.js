@@ -17,7 +17,10 @@
   var lastUrl = "";
   var lastReadyState = "";
 
+  var stopped = false;
+
   function send(source) {
+    if (stopped) return;
     var url = String(location.href || "");
     var readyState = document.readyState;
     console.log(PREFIX + " report", { source: source, url: url, readyState: readyState });
@@ -30,14 +33,22 @@
           readyState: readyState,
           title: document.title || "",
         },
-        function () {
+        function (resp) {
           void chrome.runtime.lastError;
+          // The connect finished or was cancelled; nothing listens any more.
+          if (resp && resp.watching === false) stop();
         },
       );
     } catch (_e) {
       // Extension reloaded/disabled, stop polling so we don't spam the page.
-      if (pollTimer) clearInterval(pollTimer);
+      stop();
     }
+  }
+
+  function stop() {
+    stopped = true;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = 0;
   }
 
   console.log(PREFIX + " attached", { url: location.href });

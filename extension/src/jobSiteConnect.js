@@ -128,6 +128,10 @@ async function ensureActive() {
         phase: active.phase,
         lastUrl: active.lastUrl,
       });
+      const pending = active.pendingSettle;
+      if (pending && pending.url && !settleTimer) {
+        scheduleSettle(pending.url, `${pending.source || "settle"}:restored`, Math.max(0, Number(pending.at) - Date.now()));
+      }
     }
   } catch (err) {
     console.warn(`${LOG_PREFIX} state:restore_failed`, err);
@@ -442,18 +446,22 @@ async function gotoVerifyUrl(reason) {
   }
 }
 
-function scheduleSettle(url, source) {
+function scheduleSettle(url, source, delayMs = SETTLE_MS) {
   if (!active) return;
   if (settleTimer) clearTimeout(settleTimer);
-  log("settle:scheduled", { url, source, delayMs: SETTLE_MS });
+  log("settle:scheduled", { url, source, delayMs });
+  // Persisted so a worker restart before it fires can re-arm it.
+  active.pendingSettle = { url, source, at: Date.now() + delayMs };
+  void persist();
   settleTimer = setTimeout(() => {
     settleTimer = 0;
     withActive(async (state) => {
+      delete state.pendingSettle;
       const finalUrl = state.lastUrl || url;
       log("settle:fired", { url: finalUrl, source });
       await evaluateSettled(finalUrl);
     });
-  }, SETTLE_MS);
+  }, delayMs);
 }
 
 // ── listeners (registered once per worker start) ───────────────────
@@ -818,9 +826,13 @@ export function attachMessageHandlers() {
     }
 
     if (msg.type === "JOB_SITE_PAGE_REPORT") {
-      onPageReport(msg, sender);
-      sendResponse({ ok: true });
-      return false;
+      void ensureActive().then((state) => {
+        const tabId = sender && sender.tab ? sender.tab.id : null;
+        const watching = !!state && tabId != null && tabId === state.siteTabId;
+        if (watching) onPageReport(msg, sender);
+        sendResponse({ ok: true, watching });
+      });
+      return true;
     }
 
     return false;

@@ -16,7 +16,7 @@
 //
 // To add a dedicated engine later (e.g. Workday): register its bundle in
 // background.js (ENGINE_SCRIPTS), add an ENGINES entry keyed by the platform id
-// with available:true and its mode, and implement that mode in app.js. The
+// with available:true and its mode, and implement that mode in src/panel/autofill/. The
 // router will pick it up automatically.
 
 function hostOf(url) {
@@ -124,7 +124,7 @@ export const ENGINES = {
   // auto-discover flow; a small prep step reveals the hidden resume file input.
   applytojob: {
     id: "applytojob",
-    label: "ApplyToJob",
+    label: "JazzHR",
     mode: "select",
     scripts: "greenhouse",
     available: true,
@@ -138,7 +138,7 @@ export const ENGINES = {
   // fills them deterministically, sets Country, and ticks the consent box.
   recruiterflow: {
     id: "recruiterflow",
-    label: "RecruiterFlow",
+    label: "Recruiterflow",
     mode: "select",
     scripts: "greenhouse",
     available: true,
@@ -280,7 +280,7 @@ export const ENGINES = {
   // dropdown widget, which hides its <select> behind an <a id="X_icimsDropdown">
   // and fetches options over the network (drivers/icims-dropdown.js owns those).
   // Reuses the greenhouse bundle + auto-discover. TWO things are iCIMS-specific
-  // and handled in app.js: the resume is uploaded FIRST (its onchange submits the
+  // and handled in src/panel/autofill/platforms.js: the resume is uploaded FIRST (its onchange submits the
   // form and iCIMS re-renders the page pre-filled from the parsed resume), and
   // the "Create a login" block is written deterministically with a generated
   // password saved to extension storage.
@@ -298,7 +298,7 @@ export const ENGINES = {
   // driver/LLM bundle; consent "I ACCEPT" prep lives in picker AF_GENERIC_PREP.
   generic: {
     id: "generic",
-    label: "Generic (best-effort)",
+    label: "Career site",
     mode: "select",
     scripts: "greenhouse",
     available: true,

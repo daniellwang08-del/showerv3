@@ -1,55 +1,143 @@
-// API client for the Job Scraper backend. Authenticates with a Bearer token
-// (returned by /auth/login) rather than the web app's HttpOnly cookie.
+// HTTP client for the NAO backend. Authenticates with the long-lived Bearer
+// token from /auth/login, never the dashboard cookie: Chrome can attach that
+// cookie to extension fetches, and an expired one would 401 a valid request.
 
-import {
-  getToken,
-  setToken,
-  clearToken,
-  getBackendUrl,
-  setBackendUrl,
-  setCurrentUser,
-  normalizeBackendUrl,
-} from "./store.js";
+import { clearToken, getBackendUrl, getToken, setCurrentUser, setToken } from "./storage.js";
+
+const API_PREFIX = "/api/v1";
+const DEFAULT_TIMEOUT_MS = 20_000;
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  /**
+   * @param {string} message
+   * @param {number} status HTTP status, or 0 for network / timeout failures
+   * @param {"network"|"timeout"|"auth"|"http"} kind
+   */
+  constructor(message, status, kind = "http") {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.kind = kind;
   }
 }
 
-const API_PREFIX = "/api/v1";
+let unauthorizedHandler = null;
 
-// Request the optional host permission for the configured backend origin so the
-// extension can call it (and stream SSE) cross-origin. Must run on a user gesture.
+/** Called once when a request comes back 401 with a token attached. */
+export function onUnauthorized(fn) {
+  unauthorizedHandler = fn;
+}
+
+async function handleUnauthorized() {
+  await clearToken();
+  if (unauthorizedHandler) unauthorizedHandler();
+}
+
+/** Request the optional host permission for the server origin (needs a user gesture). */
 export async function ensureHostPermission(backendUrl) {
   try {
-    const u = new URL(normalizeBackendUrl(backendUrl));
+    const u = new URL(backendUrl);
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    const origin = u.origin + "/*";
-    const has = await chrome.permissions.contains({ origins: [origin] });
-    if (has) return true;
-    return await chrome.permissions.request({ origins: [origin] });
-  } catch (err) {
-    console.warn("ensureHostPermission failed", err);
+    const origins = [`${u.origin}/*`];
+    if (await chrome.permissions.contains({ origins })) return true;
+    return await chrome.permissions.request({ origins });
+  } catch {
     return false;
   }
 }
 
-async function buildUrl(path) {
+function errorDetail(data, fallback) {
+  const detail = data && typeof data === "object" ? data.detail : null;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail) && detail.length) {
+    const first = detail[0];
+    if (typeof first === "string") return first;
+    if (first && first.msg) return String(first.msg);
+  }
+  if (typeof data === "string" && data.trim() && data.length < 300) return data.trim();
+  return fallback;
+}
+
+async function hostLabel() {
+  try {
+    return new URL(await getBackendUrl()).host;
+  } catch {
+    return "the server";
+  }
+}
+
+/**
+ * Low-level fetch with auth, timeout and uniform errors. Returns the Response.
+ * @param {string} path API path below /api/v1
+ * @param {{ method?: string, body?: any, auth?: boolean, timeoutMs?: number, signal?: AbortSignal, accept?: string }} [opts]
+ */
+async function send(path, { method = "GET", body, auth = true, timeoutMs = DEFAULT_TIMEOUT_MS, signal, accept } = {}) {
   const base = await getBackendUrl();
-  return `${base}${API_PREFIX}${path}`;
+  const headers = {};
+  if (accept) headers.Accept = accept;
+  if (auth) {
+    const token = await getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  let payload;
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    payload = JSON.stringify(body);
+  }
+
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort(signal.reason);
+  if (signal) {
+    if (signal.aborted) ctrl.abort(signal.reason);
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+  const timer = timeoutMs > 0 ? setTimeout(() => ctrl.abort(new DOMException("timeout", "TimeoutError")), timeoutMs) : null;
+
+  try {
+    return await fetch(`${base}${API_PREFIX}${path}`, {
+      method,
+      headers,
+      body: payload,
+      credentials: "omit",
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    if (signal && signal.aborted) throw err;
+    if (ctrl.signal.aborted) {
+      throw new ApiError(`${await hostLabel()} took too long to respond. Try again.`, 0, "timeout");
+    }
+    throw new ApiError(`Can't reach ${await hostLabel()}. Check your connection or the server address in Settings.`, 0, "network");
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onAbort);
+  }
 }
 
-async function authHeaders(extra = {}) {
-  const token = await getToken();
-  const headers = { ...extra };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
+async function checkStatus(res, auth) {
+  if (res.ok) return;
+  let data = null;
+  try {
+    const text = await res.text();
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    /* non-JSON error body */
+  }
+  if (res.status === 401) {
+    if (auth) {
+      await handleUnauthorized();
+      throw new ApiError("Your session expired. Sign in again.", 401, "auth");
+    }
+    throw new ApiError(errorDetail(data, "Incorrect email or password."), 401, "auth");
+  }
+  throw new ApiError(errorDetail(data, `Request failed (${res.status}).`), res.status, "http");
 }
 
-function parseJsonBody(text) {
+export async function apiFetch(path, opts = {}) {
+  const auth = opts.auth !== false;
+  const res = await send(path, opts);
+  await checkStatus(res, auth);
+  if (res.status === 204) return null;
+  const text = await res.text();
   if (!text) return null;
   try {
     return JSON.parse(text);
@@ -58,88 +146,42 @@ function parseJsonBody(text) {
   }
 }
 
-function errorDetail(data, fallback) {
-  if (data && typeof data === "object" && data.detail != null) {
-    if (typeof data.detail === "string") return data.detail;
-    if (Array.isArray(data.detail) && data.detail.length) {
-      const first = data.detail[0];
-      if (typeof first === "string") return first;
-      if (first && typeof first === "object" && first.msg) return String(first.msg);
-    }
-    try {
-      return JSON.stringify(data.detail);
-    } catch {
-      /* fall through */
-    }
+const qs = (params) => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v === undefined || v === null || v === "" || v === false) continue;
+    q.set(k, v === true ? "true" : String(v));
   }
-  if (typeof data === "string" && data.trim()) return data.trim();
-  return fallback;
-}
+  const s = q.toString();
+  return s ? `?${s}` : "";
+};
 
-// Never send the dashboard cookie. Chrome can attach it to extension fetches
-// that match host_permissions, and an expired/revoked cookie would 401 a
-// request that already has a valid Bearer token.
-const FETCH_CREDS = { credentials: "omit" };
+// ── auth ─────────────────────────────────────────────────────────────────────
 
-export async function apiFetch(path, { method = "GET", body, headers, auth = true } = {}) {
-  const url = await buildUrl(path);
-  const h = auth ? await authHeaders(headers || {}) : { ...(headers || {}) };
-  let payload = body;
-  if (body !== undefined && !(body instanceof FormData)) {
-    h["Content-Type"] = "application/json";
-    payload = JSON.stringify(body);
-  }
-  let res;
-  try {
-    res = await fetch(url, { method, headers: h, body: payload, ...FETCH_CREDS });
-  } catch (networkErr) {
-    throw new ApiError(
-      "Cannot reach the backend. Open the NAO dashboard in this browser first (it syncs the server address), or set DEFAULT_BACKEND_URL in extension/config.js.",
-      0
-    );
-  }
-  if (res.status === 204) return null;
-  const data = parseJsonBody(await res.text());
-  if (res.status === 401) {
-    // Sign-in itself returns 401 for bad credentials / unknown account.
-    // That is not an expired session, the user is trying to create one.
-    if (auth) {
-      await clearToken();
-      throw new ApiError("Your session expired. Please sign in again.", 401);
-    }
-    throw new ApiError(errorDetail(data, "Sign in failed."), 401);
-  }
-  if (!res.ok) {
-    throw new ApiError(errorDetail(data, `Request failed (${res.status})`), res.status);
-  }
-  return data;
-}
-
-// ── auth ──────────────────────────────────────────────────────────────────
-
-export async function login(backendUrl, email, password) {
-  await setBackendUrl(backendUrl);
-  // Drop any leftover bearer so a previous expiry cannot ride along on login.
+export async function login(email, password) {
   await clearToken();
   const data = await apiFetch("/auth/login", {
     method: "POST",
     body: { email, password, long_lived: true },
     auth: false,
   });
-  if (!data || !data.access_token) {
-    throw new ApiError("Login did not return a token. Update the backend to the latest version.", 500);
-  }
+  if (!data || !data.access_token) throw new ApiError("Sign in did not return a session. Update the server.", 500);
   await setToken(data.access_token);
   const user = { user_id: data.user_id, email: data.email };
   await setCurrentUser(user);
   return user;
 }
 
-export async function logout() {
-  await clearToken();
+export const logout = () => clearToken();
+
+/** WebSocket URL for live events (token in the query string, as the dashboard does). */
+export async function liveEventsUrl() {
+  const [base, token] = await Promise.all([getBackendUrl(), getToken()]);
+  if (!token) return null;
+  return `${base.replace(/^http/i, "ws")}${API_PREFIX}/ws?token=${encodeURIComponent(token)}`;
 }
 
-// ── data ──────────────────────────────────────────────────────────────────
+// ── account ──────────────────────────────────────────────────────────────────
 
 export const getProfile = () => apiFetch("/profile");
 export const getProfileText = () => apiFetch("/profile/openai-text");
@@ -147,413 +189,203 @@ export const getSettings = () => apiFetch("/settings");
 export const updateSettings = (body) => apiFetch("/settings", { method: "PUT", body });
 export const getDataVersion = () => apiFetch("/me/data-version");
 
-export const getDashboard = (params = {}) => {
-  const q = new URLSearchParams({
-    page: String(params.page || 1),
-    per_page: String(params.per_page || 50),
-    sort: params.sort || "created_at",
-    order: params.order || "desc",
-    view: params.view || "all",
-    ...(params.q ? { q: params.q } : {}),
-    ...(params.timezone ? { timezone: params.timezone } : {}),
-    ...(params.min_match_score != null && params.min_match_score !== ""
-      ? { min_match_score: String(params.min_match_score) }
-      : {}),
-    ...(params.remote_only ? { remote_only: "true" } : {}),
-    ...(params.title ? { title: params.title } : {}),
-    ...(params.company ? { company: params.company } : {}),
-    ...(params.source ? { source: params.source } : {}),
-  });
-  return apiFetch(`/jobs/dashboard?${q.toString()}`);
-};
+// ── home + lists ─────────────────────────────────────────────────────────────
 
-export const getDashboardRevision = (params = {}) => {
-  const q = new URLSearchParams({
-    ...(params.min_match_score != null && params.min_match_score !== ""
-      ? { min_match_score: String(params.min_match_score) }
-      : {}),
-  });
-  const qs = q.toString();
-  return apiFetch(`/jobs/dashboard/revision${qs ? `?${qs}` : ""}`);
-};
+export const getHome = (timezone) => apiFetch(`/extension/home${qs({ timezone })}`);
+export const getRevision = () => apiFetch("/extension/revision", { timeoutMs: 10_000 });
 
 /**
- * Incremental catalog sync.
- * @param {{ since?: string, timezone?: string, min_match_score?: number, known_ids?: string[] }} [params]
+ * @param {{ view?: string, page?: number, per_page?: number, sort?: string, order?: string, q?: string,
+ *   source?: string, remote_only?: boolean, min_match_score?: number, timezone?: string }} params
  */
-export const getDashboardSync = (params = {}) => {
-  const q = new URLSearchParams({
-    ...(params.since ? { since: params.since } : {}),
-    ...(params.timezone ? { timezone: params.timezone } : {}),
-    ...(params.min_match_score != null && params.min_match_score !== ""
-      ? { min_match_score: String(params.min_match_score) }
-      : {}),
-  });
-  // Cap known_ids to keep the query string reasonable; server also caps.
-  if (Array.isArray(params.known_ids) && params.known_ids.length) {
-    q.set("known_ids", params.known_ids.slice(0, 2000).join(","));
-  }
-  return apiFetch(`/jobs/dashboard/sync?${q.toString()}`);
-};
+export const getJobs = (params = {}, { signal } = {}) =>
+  apiFetch(
+    `/jobs/dashboard${qs({
+      page: params.page || 1,
+      per_page: params.per_page || 25,
+      sort: params.sort || "created_at",
+      order: params.order || "desc",
+      view: params.view || "all",
+      q: params.q,
+      source: params.source,
+      remote_only: params.remote_only,
+      min_match_score: params.min_match_score || undefined,
+      timezone: params.timezone,
+    })}`,
+    { signal }
+  );
 
-export const getDashboardCounts = (params = {}) => {
-  const q = new URLSearchParams({
-    ...(params.q ? { q: params.q } : {}),
-    ...(params.timezone ? { timezone: params.timezone } : {}),
-    ...(params.min_match_score != null && params.min_match_score !== ""
-      ? { min_match_score: String(params.min_match_score) }
-      : {}),
-  });
-  return apiFetch(`/jobs/dashboard/counts?${q.toString()}`);
-};
+export const getWeeklyProgress = ({ days = 7, timezone } = {}) =>
+  apiFetch(`/jobs/dashboard/weekly-progress${qs({ days, timezone })}`);
 
-export const getWeeklyProgress = (params = {}) => {
-  const q = new URLSearchParams({
-    days: String(params.days || 7),
-    ...(params.timezone ? { timezone: params.timezone } : {}),
-  });
-  return apiFetch(`/jobs/dashboard/weekly-progress?${q.toString()}`);
-};
+export const getScraperStats = (timezone) => apiFetch(`/scraper/stats${qs({ timezone })}`);
 
-export const getScraperStats = (params = {}) => {
-  const q = new URLSearchParams({
-    ...(params.timezone ? { timezone: params.timezone } : {}),
-  });
-  const qs = q.toString();
-  return apiFetch(`/scraper/stats${qs ? `?${qs}` : ""}`);
-};
+// ── applications ─────────────────────────────────────────────────────────────
 
-export const getExtraction = (jobId) => apiFetch(`/extract/${jobId}`);
-export const triggerMatch = (jobId) =>
-  apiFetch(`/jobs/valid/${jobId}/match`, { method: "POST" });
-
-// ── application sessions ────────────────────────────────────────────────────
-
-export const listSessions = (status) =>
-  apiFetch(`/assistant/sessions${status ? `?status=${status}` : ""}`);
-export const createSession = (jobId) =>
-  apiFetch("/assistant/sessions", { method: "POST", body: { job_id: jobId } });
-export const getSessionDetail = (jobId) => apiFetch(`/assistant/sessions/${jobId}`);
+export const listSessions = (status, limit = 100) => apiFetch(`/assistant/sessions${qs({ status, limit })}`);
+export const openSession = (jobId, { fresh = true } = {}) =>
+  apiFetch(`/assistant/sessions/${encodeURIComponent(jobId)}/open`, { method: "POST", body: { fresh } });
+export const getSessionDocs = (jobId) => apiFetch(`/assistant/sessions/${encodeURIComponent(jobId)}/docs`);
 export const updateSession = (jobId, status) =>
-  apiFetch(`/assistant/sessions/${jobId}`, { method: "PATCH", body: { status } });
-export const deleteSession = (jobId) =>
-  apiFetch(`/assistant/sessions/${jobId}`, { method: "DELETE" });
+  apiFetch(`/assistant/sessions/${encodeURIComponent(jobId)}`, { method: "PATCH", body: { status } });
 
-/** Wipe assistant chat turns for one job (session row kept). */
-export const clearSessionMessages = (jobId) =>
-  apiFetch(`/assistant/sessions/${jobId}/messages`, { method: "DELETE" });
-
-/**
- * Next job after Complete & Next.
- * @param {string} [after] job id just completed
- * @param {{ view?: string, remote_only?: boolean, min_match_score?: number, timezone?: string }} [opts]
- */
-export const nextJob = (after, opts = {}) => {
-  const q = new URLSearchParams();
-  if (after) q.set("after", after);
-  if (opts.view) q.set("view", opts.view);
-  if (opts.remote_only) q.set("remote_only", "true");
-  if (opts.min_match_score != null && opts.min_match_score !== "") {
-    q.set("min_match_score", String(opts.min_match_score));
-  }
-  if (opts.timezone) q.set("timezone", opts.timezone);
-  const qs = q.toString();
-  return apiFetch(`/assistant/next-job${qs ? `?${qs}` : ""}`);
-};
+export const nextJob = (after, { view, remote_only, min_match_score, timezone } = {}) =>
+  apiFetch(`/assistant/next-job${qs({ after, view, remote_only, min_match_score: min_match_score || undefined, timezone })}`);
 
 export const markApplied = (jobIds) =>
   apiFetch("/jobs/valid/applied/batch", { method: "POST", body: { job_ids: jobIds } });
 
-export const getPumbleConfig = () => apiFetch("/pumble/config");
-
-export const postJobsToPumble = (jobIds, integrationIds) =>
-  apiFetch("/pumble/post-jobs", {
-    method: "POST",
-    body: {
-      job_ids: jobIds,
-      integration_ids: integrationIds?.length ? integrationIds : undefined,
-    },
-  });
-
-// Hide a job from the active list (e.g. the posting expired / link is dead).
 export const reportJobInvalid = (jobId, reason) =>
-  apiFetch(`/jobs/valid/${jobId}/report-invalid`, {
+  apiFetch(`/jobs/valid/${encodeURIComponent(jobId)}/report-invalid`, {
     method: "POST",
     body: { duplication_reason: reason },
   });
 
-// ── autofill ────────────────────────────────────────────────────────────────
+export const triggerMatch = (jobId) => apiFetch(`/jobs/valid/${encodeURIComponent(jobId)}/match`, { method: "POST" });
 
-// fields: structured per-control specs. preferences: { answer_strategy?, resume_source? }
-// -> { results: [{ handle, controls: [{ cid, value, kind, option?, file_role?, needs_user, reason? }] }] }
+export const postJobsToPumble = (jobIds) =>
+  apiFetch("/pumble/post-jobs", { method: "POST", body: { job_ids: jobIds }, timeoutMs: 60_000 });
+
+export const submitJobUrl = (url) => apiFetch("/jobs/submit", { method: "POST", body: { url } });
+
+// ── autofill ─────────────────────────────────────────────────────────────────
+
+/** fields: per-control specs -> { results: [{ handle, controls: [{ cid, value, ... }] }] } */
 export const autofill = (jobId, fields, preferences) =>
   apiFetch("/assistant/autofill", {
     method: "POST",
     body: { job_id: jobId, fields, ...(preferences ? { preferences } : {}) },
+    timeoutMs: 180_000,
   });
 
-// Canonical structured profile for deterministic platform engines (Workday).
-// resumeSource: "original" | "tailored". Returns the merged profile object the
-// Workday engine maps to fixed selectors.
+/** Canonical structured profile for deterministic engines (Workday) and cover letters. */
 export const getAutofillProfile = (jobId, resumeSource = "original") =>
-  apiFetch(`/assistant/autofill-profile?job_id=${encodeURIComponent(jobId)}&resume_source=${encodeURIComponent(resumeSource)}`);
+  apiFetch(`/assistant/autofill-profile${qs({ job_id: jobId, resume_source: resumeSource })}`, { timeoutMs: 45_000 });
 
-// Download a generated resume/cover-letter file as base64 (for attaching to a
-// page's <input type=file> via DataTransfer in the content script).
-// fileType: resume_pdf | resume_docx | cover_letter_pdf | cover_letter_docx
+/**
+ * Generated resume / cover letter as base64, for page file inputs and downloads.
+ * @param {"resume_pdf"|"resume_docx"|"cover_letter_pdf"|"cover_letter_docx"} fileType
+ */
 export async function downloadResumeFile(jobId, fileType) {
-  const url = await buildUrl(`/jobs/valid/${jobId}/resume-build/download/${fileType}`);
-  const h = await authHeaders({});
-  let res;
-  try {
-    res = await fetch(url, { method: "GET", headers: h, ...FETCH_CREDS });
-  } catch (networkErr) {
-    // Name the origin actually in use so the hint stays correct across
-    // domain changes and localhost switches.
-    let origin = "the dashboard";
-    try {
-      origin = new URL(url).origin;
-    } catch {
-      /* keep the generic wording */
-    }
-    throw new ApiError(
-      `Cannot download ${fileType}: backend unreachable. Confirm the extension is signed in to ${origin} (reload the extension after switching off localhost).`,
-      0
-    );
-  }
-  if (res.status === 401) {
-    await clearToken();
-    throw new ApiError("Your session expired. Please sign in again.", 401);
-  }
-  if (!res.ok) {
-    let detail = `Could not fetch ${fileType} (${res.status}).`;
-    try {
-      const body = await res.json();
-      if (body && body.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
-    } catch {
-      /* ignore non-JSON error bodies */
-    }
-    throw new ApiError(detail, res.status);
-  }
+  const res = await send(`/jobs/valid/${encodeURIComponent(jobId)}/resume-build/download/${fileType}`, {
+    timeoutMs: 60_000,
+  });
+  await checkStatus(res, true);
   const buf = await res.arrayBuffer();
-  if (!buf || buf.byteLength < 8) {
-    throw new ApiError(`${fileType} download was empty.`, res.status || 500);
-  }
+  if (!buf || buf.byteLength < 8) throw new ApiError("The file is empty.", 500);
   const bytes = new Uint8Array(buf);
   const isPdf = fileType.endsWith("_pdf");
-  if (isPdf) {
-    const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]);
-    if (magic !== "%PDF-") {
-      throw new ApiError(
-        `${fileType} download was not a PDF (server may have returned an error page). Re-login to the extension and retry.`,
-        500
-      );
-    }
+  if (isPdf && String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-") {
+    throw new ApiError("The server did not return a PDF. Sign in again and retry.", 500);
   }
-  const base64 = arrayBufferToBase64(buf);
-  let filename = `${fileType}${isPdf ? ".pdf" : ".docx"}`;
-  const disp = res.headers.get("Content-Disposition") || "";
-  // Prefer RFC 5987 filename*=, then plain filename=
-  const star = /filename\*\s*=\s*(?:UTF-8''|utf-8'')([^;]+)/i.exec(disp);
-  const plain = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^";]+)/i.exec(disp);
-  if (star) {
-    try {
-      filename = decodeURIComponent(star[1].trim().replace(/["']/g, ""));
-    } catch {
-      filename = star[1].trim().replace(/["']/g, "");
-    }
-  } else if (plain) {
-    filename = (plain[1] || plain[2] || filename).trim().replace(/["']/g, "");
-  }
-  const mime = isPdf
-    ? "application/pdf"
-    : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  return { base64, filename, mime };
+  return {
+    base64: bytesToBase64(bytes),
+    filename: filenameFromDisposition(res.headers.get("Content-Disposition"), `${fileType}${isPdf ? ".pdf" : ".docx"}`),
+    mime: isPdf ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  };
 }
 
-function arrayBufferToBase64(buf) {
-  const bytes = new Uint8Array(buf);
+export function filenameFromDisposition(header, fallback) {
+  const disp = header || "";
+  const star = /filename\*\s*=\s*(?:UTF-8''|utf-8'')([^;]+)/i.exec(disp);
+  if (star) {
+    const raw = star[1].trim().replace(/["']/g, "");
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+  const plain = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^";]+)/i.exec(disp);
+  return plain ? (plain[1] || plain[2]).trim() : fallback;
+}
+
+function bytesToBase64(bytes) {
   let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   }
   return btoa(binary);
 }
 
-// ── job submission ──────────────────────────────────────────────────────────
+// ── resume library / tailoring ───────────────────────────────────────────────
 
-export const submitJobUrl = (url) =>
-  apiFetch("/jobs/submit", { method: "POST", body: { url } });
-
-// User settings live at GET/PUT /settings (same as webapp).
-export const getUserSettings = () => apiFetch("/settings");
-
-export const updateUserSettings = (body) =>
-  apiFetch("/settings", { method: "PUT", body });
-
-// ── streaming chat (SSE over fetch, so we can send the Authorization header) ──
-
-export async function chatStream(reqBody, { onDelta, onDone, onError, signal }) {
-  const url = await buildUrl("/assistant/chat");
-  const h = await authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" });
-  let res;
-  try {
-    res = await fetch(url, { method: "POST", headers: h, body: JSON.stringify(reqBody), signal, ...FETCH_CREDS });
-  } catch (err) {
-    if (err && err.name === "AbortError") return;
-    onError && onError("Cannot reach the backend.");
-    return;
-  }
-  if (res.status === 401) {
-    await clearToken();
-    onError && onError("Your session expired. Please sign in again.");
-    return;
-  }
-  if (!res.ok || !res.body) {
-    onError && onError(`Assistant request failed (${res.status}).`);
-    return;
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      // SSE events are separated by a blank line.
-      let idx;
-      while ((idx = buffer.indexOf("\n\n")) >= 0) {
-        const rawEvent = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        handleSseEvent(rawEvent, { onDelta, onDone, onError });
-      }
-    }
-  } catch (err) {
-    if (err && err.name === "AbortError") return;
-    onError && onError("The assistant stream was interrupted.");
-  }
-}
-
-function handleSseEvent(rawEvent, { onDelta, onDone, onError }) {
-  const dataLines = rawEvent
-    .split("\n")
-    .filter((l) => l.startsWith("data:"))
-    .map((l) => l.slice(5).trim());
-  if (dataLines.length === 0) return;
-  const payload = dataLines.join("\n");
-  let obj;
-  try {
-    obj = JSON.parse(payload);
-  } catch {
-    return;
-  }
-  if (obj.delta) onDelta && onDelta(obj.delta);
-  if (obj.error) onError && onError(obj.error);
-  if (obj.done) onDone && onDone();
-}
-
-// ── resume builder / tailor ─────────────────────────────────────────────────
-
-export const listResumeLibrary = () => apiFetch("/resume-builder/resumes");
-
-export const searchResumeLibrary = (params = {}) => {
-  const q = new URLSearchParams({
-    ...(params.company ? { company: params.company } : {}),
-    ...(params.job_title ? { job_title: params.job_title } : {}),
-    limit: String(params.limit || 100),
-  });
-  return apiFetch(`/resume-builder/resumes/search?${q.toString()}`);
-};
-
+export const searchResumeLibrary = ({ company, job_title, limit = 100 } = {}) =>
+  apiFetch(`/resume-builder/resumes/search${qs({ company, job_title, limit })}`);
 export const saveAiTailoredResume = ({ content, job_title, company, activate = true }) =>
-  apiFetch("/resume-builder/resumes/from-ai-content", {
-    method: "POST",
-    body: { content, job_title, company, activate },
-  });
-
+  apiFetch("/resume-builder/resumes/from-ai-content", { method: "POST", body: { content, job_title, company, activate } });
 export const openJobBuildResume = (buildId) =>
-  apiFetch(`/resume-builder/resumes/from-job-build/${buildId}`, { method: "POST" });
-
+  apiFetch(`/resume-builder/resumes/from-job-build/${encodeURIComponent(buildId)}`, { method: "POST" });
 export const activateResume = (resumeId) =>
-  apiFetch(`/resume-builder/resumes/${resumeId}/activate`, { method: "POST" });
-
+  apiFetch(`/resume-builder/resumes/${encodeURIComponent(resumeId)}/activate`, { method: "POST" });
 export const triggerResumeBuild = (jobId) =>
-  apiFetch(`/jobs/valid/${jobId}/resume-build/trigger`, { method: "POST" });
+  apiFetch(`/jobs/valid/${encodeURIComponent(jobId)}/resume-build/trigger`, { method: "POST" });
 
-export const getResumeBuildStatus = (jobId) => apiFetch(`/jobs/valid/${jobId}/resume-build`);
+// ── streaming (SSE over fetch so the Authorization header can be sent) ───────
 
-/** OneClick AI tailor stream (same SSE contract as the Resume Builder). */
-export async function streamResumeAiChat(messages, lastJobDescription, { onStage, signal } = {}) {
-  const url = await buildUrl("/resume-builder/ai/chat");
-  const h = await authHeaders({
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-  });
-  let res;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: h,
-      body: JSON.stringify({ messages, last_job_description: lastJobDescription }),
-      signal,
-      ...FETCH_CREDS,
-    });
-  } catch (err) {
-    if (err && err.name === "AbortError") throw err;
-    throw new ApiError("Cannot reach the backend.", 0);
-  }
-  if (res.status === 401) {
-    await clearToken();
-    throw new ApiError("Your session expired. Please sign in again.", 401);
-  }
-  if (!res.ok || !res.body) {
-    throw new ApiError(`Resume AI chat failed (${res.status}).`, res.status);
-  }
-
+/** Reads a `data:` SSE stream and calls onEvent with each parsed JSON frame. */
+export async function readSse(res, onEvent) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let result = null;
-  let errorMessage = null;
-
-  const handleFrame = (raw) => {
+  const flush = (raw) => {
     const data = raw
       .split("\n")
       .filter((l) => l.startsWith("data:"))
       .map((l) => l.slice(5).trim())
       .join("\n");
     if (!data) return;
-    let parsed;
     try {
-      parsed = JSON.parse(data);
+      onEvent(JSON.parse(data));
     } catch {
-      return;
-    }
-    if (parsed.stage === "done" && parsed.result) {
-      result = parsed.result;
-    } else if (parsed.stage === "error") {
-      errorMessage = parsed.message || "Failed to process request.";
-    } else if (parsed.stage) {
-      onStage && onStage({ stage: parsed.stage, label: parsed.label });
+      /* ignore malformed frames */
     }
   };
-
-  while (true) {
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let idx;
-    while ((idx = buffer.indexOf("\n\n")) !== -1) {
-      handleFrame(buffer.slice(0, idx));
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      flush(buffer.slice(0, idx));
       buffer = buffer.slice(idx + 2);
     }
   }
-  if (buffer.trim()) handleFrame(buffer);
+  if (buffer.trim()) flush(buffer);
+}
 
-  if (errorMessage) throw new ApiError(errorMessage, 500);
-  if (!result) throw new ApiError("Resume AI chat returned no result.", 500);
+async function openStream(path, body, signal) {
+  const res = await send(path, { method: "POST", body, signal, timeoutMs: 0, accept: "text/event-stream" });
+  await checkStatus(res, true);
+  if (!res.body) throw new ApiError("The server sent an empty response.", res.status);
+  return res;
+}
+
+/**
+ * Job assistant chat. Resolves when the stream ends; throws ApiError on failure
+ * and AbortError when `signal` is aborted.
+ */
+export async function chatStream(reqBody, { onDelta, signal }) {
+  const res = await openStream("/assistant/chat", reqBody, signal);
+  let error = null;
+  await readSse(res, (frame) => {
+    if (frame.delta) onDelta(frame.delta);
+    if (frame.error) error = frame.error;
+  });
+  if (error) throw new ApiError(String(error), 500);
+}
+
+/** Resume Builder AI tailor stream: reports stages, resolves with the final result. */
+export async function streamResumeAiChat(messages, lastJobDescription, { onStage, signal } = {}) {
+  const res = await openStream("/resume-builder/ai/chat", { messages, last_job_description: lastJobDescription }, signal);
+  let result = null;
+  let error = null;
+  await readSse(res, (frame) => {
+    if (frame.stage === "done" && frame.result) result = frame.result;
+    else if (frame.stage === "error") error = frame.message || "Tailoring failed.";
+    else if (frame.stage && onStage) onStage({ stage: frame.stage, label: frame.label });
+  });
+  if (error) throw new ApiError(error, 500);
+  if (!result) throw new ApiError("Tailoring returned no result.", 500);
   return result;
 }

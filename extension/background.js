@@ -1,7 +1,7 @@
 // Dashboard origins: production (atomspace.it.com), localhost, and private LAN.
 // Chrome match patterns ignore ports, so LAN inject covers any Vite port (e.g. :5173).
 
-import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/store.js";
+import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/storage.js";
 import { isDashboardUrl } from "./src/backendOrigin.js";
 import { attachMessageHandlers as attachJobSiteConnectHandlers } from "./src/jobSiteConnect.js";
 
