@@ -103,7 +103,7 @@
         function (response) {
           void chrome.runtime.lastError;
           const payload = response && typeof response === "object" ? response : { ok: false };
-          console.log(JOB_SITE_PREFIX + " worker -> page", { type: type, response: payload });
+          console.log(JOB_SITE_PREFIX + " worker -> page", { type: type, ok: payload.ok === true });
           reply(type + "_ACK", Object.assign({ requestId: requestId }, payload), targetOrigin);
         },
       );

@@ -1671,13 +1671,6 @@
     // while degree/school - written later - survived).
     await wbDelay(200);
     let n = 0;
-    console.log("[autofill] WB edu entry payload", {
-      school: e.school || "",
-      degree: e.degree || "",
-      field_of_study: e.field_of_study || "",
-      start: e.start || "",
-      end: e.end || "",
-    });
     // Optional fields first; required School last so a later write cannot drop it
     // from React state while the DOM still shows the typed value.
     if (e.field_of_study && (await wbSetField(editor.querySelector('[name="field_of_study"]'), e.field_of_study))) n++;
@@ -1717,15 +1710,6 @@
     // education note above - React drops the first field on an unstable editor).
     await wbDelay(200);
     let n = 0;
-    console.log("[autofill] WB exp entry payload", {
-      title: e.title || "",
-      company: e.company || "",
-      industry: e.industry || "",
-      start: e.start || "",
-      end: e.end || "",
-      current: !!e.current,
-      descLen: (e.description || "").length,
-    });
     // Optional fields first; required Title last (see education note above).
     if (e.company && (await wbSetField(editor.querySelector('[name="company"]'), e.company))) n++;
     if (e.industry && (await wbSetField(editor.querySelector('[name="industry"]'), e.industry))) n++;
