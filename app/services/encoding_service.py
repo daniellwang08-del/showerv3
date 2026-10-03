@@ -604,9 +604,13 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
         )
         domain_text = build_domain_proxy_text(work_experience, education)
 
+        # Vector columns are deferred; the unchanged-profile check below reads them,
+        # and a lazy load is impossible under the async session.
         existing = (
             await session.execute(
-                select(UserEncoding).where(UserEncoding.user_id == user_id)
+                select(UserEncoding)
+                .options(undefer("*"))
+                .where(UserEncoding.user_id == user_id)
             )
         ).scalar_one_or_none()
         new_hash = _profile_hash(
