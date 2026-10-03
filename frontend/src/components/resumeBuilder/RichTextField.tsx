@@ -59,13 +59,13 @@ export function RichTextField({
   };
 
   const btn =
-    'inline-flex h-6 w-6 items-center justify-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-800';
+    'inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-muted hover:text-foreground';
 
   return (
     <div>
-      {label ? <div className="mb-1 text-xs font-medium text-slate-600">{label}</div> : null}
-      <div className="rounded-lg border border-slate-200 bg-white focus-within:border-blue-400">
-        <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1">
+      {label ? <div className="mb-1 text-xs font-medium text-foreground/80">{label}</div> : null}
+      <div className="rounded-lg border border-input bg-background focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+        <div className="flex items-center gap-0.5 border-b px-1.5 py-1">
           <button type="button" className={btn} title="Bold (**)" onMouseDown={(e) => e.preventDefault()} onClick={() => apply('bold')}>
             <Bold size={13} />
           </button>
@@ -75,7 +75,7 @@ export function RichTextField({
           <button type="button" className={btn} title="Underline (__)" onMouseDown={(e) => e.preventDefault()} onClick={() => apply('underline')}>
             <Underline size={13} />
           </button>
-          <span className="ml-auto text-[10px] text-slate-300">{hint || 'select text, then format'}</span>
+          <span className="ml-auto text-[10px] text-muted-foreground/70">{hint || 'select text, then format'}</span>
         </div>
         <textarea
           ref={ref}
@@ -83,7 +83,7 @@ export function RichTextField({
           rows={rows}
           placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
-          className="block w-full resize-y rounded-b-lg bg-transparent px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-300 focus:outline-none"
+          className="block w-full resize-y rounded-b-lg bg-transparent px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
         />
       </div>
     </div>
@@ -103,13 +103,13 @@ export function PlainField({
 }) {
   return (
     <label className="block">
-      {label ? <div className="mb-1 text-xs font-medium text-slate-600">{label}</div> : null}
+      {label ? <div className="mb-1 text-xs font-medium text-foreground/80">{label}</div> : null}
       <input
         type="text"
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-300 focus:border-blue-400 focus:outline-none"
+        className="block w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
       />
     </label>
   );

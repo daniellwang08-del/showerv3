@@ -66,8 +66,8 @@ export function ExperienceControls({
         ]}
       />
 
-      <div className="space-y-2 border-t border-slate-100 pt-3">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Show items</p>
+      <div className="space-y-2 border-t pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Show items</p>
         <Toggle label="Employment type" checked={style.show_employment_type} onChange={(v) => onChange({ show_employment_type: v })} />
         <Toggle label="Work arrangement" checked={style.show_arrangement} onChange={(v) => onChange({ show_arrangement: v })} />
         <Toggle label="Project title" checked={style.show_project_title} onChange={(v) => onChange({ show_project_title: v })} />

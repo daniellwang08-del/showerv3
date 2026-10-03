@@ -7,8 +7,10 @@ Every résumé and cover letter is rendered from the user's Resume Builder desig
 (``ResumeDesign``); users who never opened the builder fall back to the default theme.
 There is no uploaded-.docx-template path anymore.
 
-DOCX fills run in parallel (resume + cover letter), then PDF conversions
-``asyncio.gather`` - both are CPU/IO bound and independent once inputs are loaded.
+DOCX fills run in parallel (resume + cover letter). PDFs are printed by the shared
+Chromium document renderer from the same templates the Resume studio shows, so the
+file matches the design exactly; dxpdf (DOCX -> PDF) is only a fallback when the
+renderer is unavailable.
 """
 
 from __future__ import annotations
@@ -36,6 +38,12 @@ from app.services.resume_context_builder import build_render_context
 from app.services.resume_design_compiler import compile_design
 from app.services.resume_design_service import load_design_for_render
 from app.api.websocket import publish_resume_event
+from app.services.document_content import tailored_design
+from app.services.document_renderer import (
+    profile_payload,
+    render_cover_letter_pdf,
+    render_resume_pdf,
+)
 
 logger = get_logger(__name__)
 
@@ -222,6 +230,9 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
 
             results: dict[str, str | None] = {}
             render_context = build_render_context(user, tailored, job)
+            profile = profile_payload(user)
+            job_design = tailored_design(design, profile, tailored)
+            display_name = " ".join(p for p in (first, last) if p) or "Resume"
             build_id = build.id
             has_cover_body = bool(cover_data and cover_data.get("body"))
 
@@ -303,7 +314,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                         log_event=f"{file_type}_build_failed",
                     )
 
-            # --- Parallel PDF conversions (dxpdf is process-safe / no shared binary) ---
+            # --- PDFs: Chromium print of the studio templates (dxpdf fallback) ---
             pdf_jobs: list[tuple[str, Path, Path]] = []
             if results.get("resume_docx"):
                 await _mark_processing(
@@ -328,6 +339,22 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                 async def _pdf_task(
                     file_type: str, docx_path: Path, pdf_path: Path,
                 ) -> tuple[str, Path | None, str | None]:
+                    try:
+                        if file_type == "resume_pdf":
+                            rendered = await render_resume_pdf(
+                                job_design, profile, title=f"{display_name} - Resume",
+                            )
+                        else:
+                            rendered = await render_cover_letter_pdf(
+                                design, profile, cover_body, title=f"{display_name} - Cover Letter",
+                            )
+                        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                        pdf_path.write_bytes(rendered.pdf)
+                        return (file_type, pdf_path, None)
+                    except Exception as render_err:  # noqa: BLE001 - fall back to dxpdf
+                        logger.warning(
+                            "document_render_fallback_dxpdf", file_type=file_type, error=str(render_err),
+                        )
                     try:
                         out = await asyncio.to_thread(convert_docx_to_pdf, docx_path, pdf_path)
                         return (file_type, out, None)

@@ -37,20 +37,20 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <div
         role="alert"
-        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-center dark:bg-[#0b1220]"
+        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-muted/50 p-6 text-center"
       >
         <div className="max-w-md space-y-3">
-          <h1 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+          <h1 className="text-lg font-semibold text-foreground">
             Something went wrong
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-sm text-muted-foreground">
             The page hit an unexpected error. Reloading usually fixes it. If it keeps
             happening, please report it.
           </p>
           <button
             type="button"
             onClick={this.handleReload}
-            className="mt-2 inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+            className="mt-2 inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
           >
             Reload page
           </button>

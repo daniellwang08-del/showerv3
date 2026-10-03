@@ -1,0 +1,53 @@
+/* Resume faces. Loaded by the app (studio preview) AND the print bundle that the
+   server's Chromium uses for PDFs, so both lay out text with the same bytes.
+   Families carry a "NAO " prefix so an installed system font can never win. */
+@font-face { font-family: "NAO Carlito"; font-style: normal; font-weight: 400; font-display: block; src: url("/fonts/Carlito-Regular.ttf") format("truetype"); }
+@font-face { font-family: "NAO Carlito"; font-style: normal; font-weight: 700; font-display: block; src: url("/fonts/Carlito-Bold.ttf") format("truetype"); }
+@font-face { font-family: "NAO Carlito"; font-style: italic; font-weight: 400; font-display: block; src: url("/fonts/Carlito-Italic.ttf") format("truetype"); }
+@font-face { font-family: "NAO Carlito"; font-style: italic; font-weight: 700; font-display: block; src: url("/fonts/Carlito-BoldItalic.ttf") format("truetype"); }
+
+@font-face { font-family: "NAO Liberation Sans"; font-style: normal; font-weight: 400; font-display: block; src: url("/fonts/LiberationSans-Regular.ttf") format("truetype"); }
+@font-face { font-family: "NAO Liberation Sans"; font-style: normal; font-weight: 700; font-display: block; src: url("/fonts/LiberationSans-Bold.ttf") format("truetype"); }
+@font-face { font-family: "NAO Liberation Sans"; font-style: italic; font-weight: 400; font-display: block; src: url("/fonts/LiberationSans-Italic.ttf") format("truetype"); }
+@font-face { font-family: "NAO Liberation Sans"; font-style: italic; font-weight: 700; font-display: block; src: url("/fonts/LiberationSans-BoldItalic.ttf") format("truetype"); }
+
+@font-face { font-family: "NAO Liberation Serif"; font-style: normal; font-weight: 400; font-display: block; src: url("/fonts/LiberationSerif-Regular.ttf") format("truetype"); }
+@font-face { font-family: "NAO Liberation Serif"; font-style: normal; font-weight: 700; font-display: block; src: url("/fonts/LiberationSerif-Bold.ttf") format("truetype"); }
+@font-face { font-family: "NAO Liberation Serif"; font-style: italic; font-weight: 400; font-display: block; src: url("/fonts/LiberationSerif-Italic.ttf") format("truetype"); }
+@font-face { font-family: "NAO Liberation Serif"; font-style: italic; font-weight: 700; font-display: block; src: url("/fonts/LiberationSerif-BoldItalic.ttf") format("truetype"); }
+
+@font-face { font-family: "NAO Caladea"; font-style: normal; font-weight: 400; font-display: block; src: url("/fonts/Caladea-Regular.ttf") format("truetype"); }
+@font-face { font-family: "NAO Caladea"; font-style: normal; font-weight: 700; font-display: block; src: url("/fonts/Caladea-Bold.ttf") format("truetype"); }
+@font-face { font-family: "NAO Caladea"; font-style: italic; font-weight: 400; font-display: block; src: url("/fonts/Caladea-Italic.ttf") format("truetype"); }
+@font-face { font-family: "NAO Caladea"; font-style: italic; font-weight: 700; font-display: block; src: url("/fonts/Caladea-BoldItalic.ttf") format("truetype"); }
+
+@font-face { font-family: "NAO Gelasio"; font-style: normal; font-weight: 400 700; font-display: block; src: url("/fonts/Gelasio-VF.ttf") format("truetype"); }
+@font-face { font-family: "NAO Gelasio"; font-style: italic; font-weight: 400 700; font-display: block; src: url("/fonts/Gelasio-Italic-VF.ttf") format("truetype"); }
+
+@font-face { font-family: "NAO EB Garamond"; font-style: normal; font-weight: 400 800; font-display: block; src: url("/fonts/EBGaramond-VF.ttf") format("truetype"); }
+@font-face { font-family: "NAO EB Garamond"; font-style: italic; font-weight: 400 800; font-display: block; src: url("/fonts/EBGaramond-Italic-VF.ttf") format("truetype"); }
+
+/* Reset every inherited text property: the studio (inside the app shell) and the
+   server's bare print page must lay the document out identically. */
+.resume-doc {
+  font-family: "NAO Liberation Sans", Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  font-style: normal;
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+  line-height: 1.5;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-transform: none;
+  text-indent: 0;
+  text-align: left;
+  white-space: normal;
+  color: #000;
+  font-synthesis: none;
+  font-kerning: normal;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}

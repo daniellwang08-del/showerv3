@@ -62,7 +62,7 @@ export function CertificatesControls({
       />
 
       {style.layout === 'chips' ? (
-        <div className="space-y-2 border-t border-slate-100 pt-3">
+        <div className="space-y-2 border-t pt-3">
           <Toggle label="Accent chips" checked={style.accent_chips} onChange={(v) => onChange({ accent_chips: v })} />
         </div>
       ) : null}

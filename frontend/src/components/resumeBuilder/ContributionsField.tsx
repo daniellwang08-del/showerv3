@@ -39,7 +39,7 @@ function lineBounds(value: string, caret: number): { start: number; end: number;
 }
 
 function bulletPrefixLength(line: string): number {
-  const m = line.match(/^(\s*(?:[-*▪‣◦∙·●•]|\d+[.)])\s*)/);
+  const m = line.match(/^(\s*(?:[-▪‣◦∙·●•]|(?:\*|\d+[.)])(?=\s|$))\s*)/);
   return m ? m[1].length : 0;
 }
 
@@ -176,15 +176,15 @@ export function ContributionsField({
   };
 
   const btn =
-    'inline-flex h-6 w-6 items-center justify-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-800';
+    'inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-muted hover:text-foreground';
 
   const displayValue = value.trim() ? value : '- ';
 
   return (
     <div>
-      {label ? <div className="mb-1 text-xs font-medium text-slate-600">{label}</div> : null}
-      <div className="rounded-lg border border-slate-200 bg-white focus-within:border-blue-400">
-        <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1">
+      {label ? <div className="mb-1 text-xs font-medium text-foreground/80">{label}</div> : null}
+      <div className="rounded-lg border border-input bg-background focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+        <div className="flex items-center gap-0.5 border-b px-1.5 py-1">
           <button type="button" className={btn} title="Bold (**)" onMouseDown={(e) => e.preventDefault()} onClick={() => apply('bold')}>
             <Bold size={13} />
           </button>
@@ -194,7 +194,7 @@ export function ContributionsField({
           <button type="button" className={btn} title="Underline (__)" onMouseDown={(e) => e.preventDefault()} onClick={() => apply('underline')}>
             <Underline size={13} />
           </button>
-          <span className="ml-auto text-[10px] text-slate-300">Enter = new bullet</span>
+          <span className="ml-auto text-[10px] text-muted-foreground/70">Enter = new bullet</span>
         </div>
         <textarea
           ref={ref}
@@ -206,7 +206,7 @@ export function ContributionsField({
           onFocus={() => {
             if (!value.trim()) onChange('- ');
           }}
-          className="block w-full resize-y break-words rounded-b-lg bg-transparent px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-300 focus:outline-none"
+          className="block w-full resize-y break-words rounded-b-lg bg-transparent px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
           style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
         />
       </div>

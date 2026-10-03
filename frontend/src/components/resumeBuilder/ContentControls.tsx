@@ -62,7 +62,7 @@ function RowTools({
   onRemove: () => void;
   label: string;
 }) {
-  const ico = 'inline-flex h-6 w-6 items-center justify-center rounded text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30 disabled:hover:bg-transparent';
+  const ico = 'inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent';
   return (
     <div className="flex items-center gap-0.5">
       <button type="button" className={ico} title="Move up" disabled={index === 0} onClick={() => onMove(-1)}>
@@ -71,7 +71,7 @@ function RowTools({
       <button type="button" className={ico} title="Move down" disabled={index === count - 1} onClick={() => onMove(1)}>
         <ChevronDown size={14} />
       </button>
-      <button type="button" className={`${ico} hover:text-red-600`} title={`Remove ${label}`} onClick={onRemove}>
+      <button type="button" className={`${ico} hover:text-destructive`} title={`Remove ${label}`} onClick={onRemove}>
         <Trash2 size={13} />
       </button>
     </div>
@@ -83,7 +83,7 @@ function AddButton({ onClick, label }: { onClick: () => void; label: string }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:border-blue-400 hover:text-blue-600"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-input px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:border-brand hover:text-brand"
     >
       <Plus size={13} /> {label}
     </button>
@@ -93,18 +93,18 @@ function AddButton({ onClick, label }: { onClick: () => void; label: string }) {
 function Collapsible({ title, subtitle, tools, children, defaultOpen = false }: { title: string; subtitle?: string; tools: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/60">
+    <div className="rounded-xl border bg-muted/50">
       <div className="flex items-center gap-2 px-2.5 py-2">
         <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-          {open ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
+          {open ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
           <span className="min-w-0">
-            <span className="block truncate text-xs font-semibold text-slate-800">{title || 'Untitled'}</span>
-            {subtitle ? <span className="block truncate text-[11px] text-slate-400">{subtitle}</span> : null}
+            <span className="block truncate text-xs font-semibold text-foreground">{title || 'Untitled'}</span>
+            {subtitle ? <span className="block truncate text-[11px] text-muted-foreground">{subtitle}</span> : null}
           </span>
         </button>
         {tools}
       </div>
-      {open ? <div className="space-y-2.5 border-t border-slate-200 px-2.5 py-2.5">{children}</div> : null}
+      {open ? <div className="space-y-2.5 border-t px-2.5 py-2.5">{children}</div> : null}
     </div>
   );
 }
@@ -220,10 +220,10 @@ function WorkExperienceEditor({
 
       <div
         className={`sticky bottom-1 flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 ${
-          dirty ? 'border-amber-200 bg-amber-50/90' : 'border-slate-200 bg-white/90'
+          dirty ? 'border-status-preparing/40 bg-popover' : 'bg-popover'
         }`}
       >
-        <span className={`min-w-0 flex-1 text-[11px] font-medium ${dirty ? 'text-amber-800' : 'text-slate-500'}`}>
+        <span className={`min-w-0 flex-1 text-[11px] font-medium ${dirty ? 'text-status-preparing' : 'text-muted-foreground'}`}>
           {dirty
             ? 'Unsaved changes in this role, preview updates after Save'
             : 'Role saved to this resume'}
@@ -232,7 +232,7 @@ function WorkExperienceEditor({
           <button
             type="button"
             onClick={discard}
-            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            className="inline-flex h-8 items-center rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground hover:bg-muted"
           >
             Discard
           </button>
@@ -243,8 +243,8 @@ function WorkExperienceEditor({
           disabled={!dirty}
           className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold shadow-sm disabled:opacity-40 ${
             dirty
-              ? 'border border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
-              : 'border border-slate-200 bg-slate-50 text-slate-500'
+              ? 'border border-brand bg-brand text-brand-foreground hover:bg-brand/90'
+              : 'border bg-muted text-muted-foreground'
           }`}
         >
           <Save size={13} />
@@ -303,9 +303,9 @@ export function ContentControls({
     <ControlCard icon={Wrench} title="Technical skills">
       <div className="space-y-2">
         {content.technical_skills.map((s: Skill, i) => (
-          <div key={i} className="rounded-xl border border-slate-200 bg-slate-50/60 p-2.5">
+          <div key={i} className="rounded-xl border bg-muted/50 p-2.5">
             <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Category {i + 1}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Category {i + 1}</span>
               <RowTools
                 index={i}
                 count={content.technical_skills.length}
@@ -401,7 +401,7 @@ export function ContentControls({
     <ControlCard icon={Award} title="Certifications">
       <div className="space-y-2">
         {content.certificates.map((cert, i) => (
-          <div key={i} className="rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+          <div key={i} className="rounded-lg border bg-muted/50 p-2.5">
             <div className="flex items-start gap-1.5">
               <div className="min-w-0 flex-1 space-y-2">
                 <PlainField
@@ -444,7 +444,7 @@ export function ContentControls({
 
   return (
     <div className="space-y-4 pb-20">
-      <div className="flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-[11px] leading-snug text-blue-700">
+      <div className="flex items-start gap-2 rounded-xl border border-brand/20 bg-brand-soft px-3 py-2 text-[11px] leading-snug text-foreground [&>svg]:text-brand">
         <ListChecks size={14} className="mt-0.5 shrink-0" />
         <span>
           Edits here apply to <strong>this resume design</strong>. Work experience roles use a local draft, click{' '}
@@ -459,15 +459,15 @@ export function ContentControls({
       {education}
       {certificates}
 
-      <div className="sticky bottom-2 z-10 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm">
+      <div className="sticky bottom-2 z-10 rounded-xl border bg-popover p-3 text-popover-foreground shadow-lg">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0 flex-1 text-xs text-slate-600">
+          <div className="min-w-0 flex-1 text-xs text-muted-foreground">
             {saving ? (
-              <span className="font-medium text-blue-700">Saving content…</span>
+              <span className="font-medium text-brand">Saving content…</span>
             ) : dirty ? (
-              <span className="font-medium text-amber-800">Unsaved content changes</span>
+              <span className="font-medium text-status-preparing">Unsaved content changes</span>
             ) : lastSavedAt ? (
-              <span className="font-medium text-emerald-700">Content saved</span>
+              <span className="font-medium text-status-ready">Content saved</span>
             ) : (
               <span>Save to keep this resume’s content</span>
             )}
@@ -478,8 +478,8 @@ export function ContentControls({
             disabled={!dirty || saving}
             className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-4 text-sm font-semibold shadow-sm disabled:opacity-40 ${
               dirty
-                ? 'border border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
-                : 'border border-slate-200 bg-slate-50 text-slate-500'
+                ? 'border border-brand bg-brand text-brand-foreground hover:bg-brand/90'
+                : 'border bg-muted text-muted-foreground'
             }`}
           >
             {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}

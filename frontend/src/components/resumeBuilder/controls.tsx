@@ -13,10 +13,10 @@ export function ControlCard({
   children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-4">
+    <section className="min-w-0 rounded-2xl border bg-card p-3.5 text-card-foreground shadow-sm sm:p-4">
       <div className="mb-3 flex min-w-0 items-center gap-2">
-        <Icon size={16} className="shrink-0 text-slate-500" />
-        <h3 className="min-w-0 truncate text-sm font-bold text-slate-900">{title}</h3>
+        <Icon size={16} className="shrink-0 text-muted-foreground" />
+        <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">{title}</h3>
       </div>
       <div className="min-w-0 space-y-3">{children}</div>
     </section>
@@ -66,9 +66,9 @@ export function Slider({
 
   return (
     <label className="block">
-      <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-600">
+      <div className="mb-1 flex items-center justify-between text-xs font-medium text-foreground/80">
         <span>{label}</span>
-        <span className="tabular-nums text-slate-500">{format ? format(value) : `${value}${suffix ?? ''}`}</span>
+        <span className="tabular-nums text-muted-foreground">{format ? format(value) : `${value}${suffix ?? ''}`}</span>
       </div>
       <input
         ref={inputRef}
@@ -78,7 +78,7 @@ export function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-200 accent-blue-600 sm:h-1.5"
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-muted accent-brand sm:h-1.5"
       />
     </label>
   );
@@ -95,19 +95,19 @@ export function Toggle({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-xs font-medium text-slate-600">{label}</span>
+      <span className="text-xs font-medium text-foreground/80">{label}</span>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-transparent p-0 transition-colors sm:h-5 sm:w-9 ${
-          checked ? 'bg-blue-600' : 'bg-slate-300'
+        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-transparent p-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-5 sm:w-9 ${
+          checked ? 'bg-brand' : 'bg-input'
         }`}
       >
         <span
           aria-hidden="true"
-          className={`pointer-events-none inline-block h-[1.125rem] w-[1.125rem] transform rounded-full bg-white shadow transition-transform duration-200 sm:h-4 sm:w-4 ${
+          className={`pointer-events-none inline-block h-[1.125rem] w-[1.125rem] transform rounded-full bg-brand-foreground shadow transition-transform duration-200 sm:h-4 sm:w-4 ${
             checked ? 'translate-x-[22px] sm:translate-x-[18px]' : 'translate-x-[3px] sm:translate-x-[2px]'
           }`}
         />
@@ -133,11 +133,11 @@ export function Segmented<T extends string | number>({
   // sidebar. Wrap + min-w-0 + flexible basis keeps every option usable.
   return (
     <div className="min-w-0">
-      <div className="mb-1 text-xs font-medium text-slate-600">{label}</div>
+      <div className="mb-1 text-xs font-medium text-foreground/80">{label}</div>
       <div
         role="group"
         aria-label={label}
-        className="flex w-full min-w-0 flex-wrap gap-0.5 rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+        className="flex w-full min-w-0 flex-wrap gap-0.5 rounded-lg border bg-muted p-0.5"
       >
         {options.map((opt) => (
           <button
@@ -146,7 +146,9 @@ export function Segmented<T extends string | number>({
             onClick={() => onChange(opt.value)}
             title={opt.label}
             className={`min-w-0 flex-1 basis-[3.75rem] rounded-md px-1.5 py-1.5 text-center text-[11px] font-medium leading-tight transition sm:basis-[4.25rem] sm:px-2 sm:text-xs ${
-              value === opt.value ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              value === opt.value
+                ? 'bg-card text-brand shadow-sm ring-1 ring-border'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <span className="block truncate">{opt.label}</span>
@@ -202,16 +204,16 @@ export function BoxSidesField({
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-medium text-slate-600">
+        <span className="text-xs font-medium text-foreground/80">
           {label}
-          {suffix ? <span className="text-slate-400">{suffix}</span> : null}
+          {suffix ? <span className="text-muted-foreground">{suffix}</span> : null}
         </span>
         <button
           type="button"
           onClick={() => setLinked((x) => !x)}
           title={linked ? 'Sides linked - edits apply to all four' : 'Sides independent'}
           className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition ${
-            linked ? 'bg-blue-50 text-blue-700' : 'text-slate-400 hover:text-slate-600'
+            linked ? 'bg-brand-soft text-brand' : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           {linked ? <Link2 size={12} /> : <Unlink2 size={12} />}
@@ -221,7 +223,7 @@ export function BoxSidesField({
       <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
         {fields.map(({ side, short }) => (
           <label key={side} className="flex flex-col gap-0.5">
-            <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{short}</span>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{short}</span>
             <input
               type="number"
               min={min}
@@ -229,7 +231,7 @@ export function BoxSidesField({
               step={step}
               value={Math.round(values[side] * 10) / 10}
               onChange={(e) => commit(side, Number(e.target.value))}
-              className="w-full rounded-md border border-slate-200 bg-white px-1.5 py-1 text-center text-xs tabular-nums text-slate-700 focus:border-blue-400 focus:outline-none"
+              className="w-full rounded-md border border-input bg-background px-1.5 py-1 text-center text-xs tabular-nums text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
             />
           </label>
         ))}
@@ -249,14 +251,14 @@ export function ColorField({
 }) {
   return (
     <label className="flex items-center justify-between gap-2">
-      <span className="text-xs font-medium text-slate-600">{label}</span>
+      <span className="text-xs font-medium text-foreground/80">{label}</span>
       <span className="flex items-center gap-2">
-        <span className="font-mono text-[11px] uppercase text-slate-400">{value}</span>
+        <span className="font-mono text-[11px] uppercase text-muted-foreground">{value}</span>
         <input
           type="color"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="h-7 w-9 cursor-pointer rounded border border-slate-200 bg-white p-0.5"
+          className="h-7 w-9 cursor-pointer rounded border border-input bg-background p-0.5"
         />
       </span>
     </label>

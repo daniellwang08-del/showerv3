@@ -34,7 +34,8 @@ const PreferencesPage = named(() => import('./features/settings/PreferencesPage'
 const IntegrationsPage = named(() => import('./features/integrations/IntegrationsPage'), 'IntegrationsPage');
 const InsightsPage = named(() => import('./features/insights/InsightsPage'), 'InsightsPage');
 const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
-const ResumeBuilderPage = named(() => import('./pages/ResumeBuilderPage'), 'ResumeBuilderPage');
+const DocumentsPage = named(() => import('./features/documents/DocumentsPage'), 'DocumentsPage');
+const ResumeStudioPage = named(() => import('./features/studio/ResumeStudioPage'), 'ResumeStudioPage');
 const AdminDataPage = named(() => import('./features/admin/data/AdminDataPage'), 'AdminDataPage');
 const AdminUsersPage = named(() => import('./features/admin/users/AdminUsersPage'), 'AdminUsersPage');
 const AdminSystemPage = named(() => import('./features/admin/system/AdminSystemPage'), 'AdminSystemPage');
@@ -304,7 +305,7 @@ function App() {
         description={
           batchDeletePending && batchDeletePending.length > 0 ? (
             <>
-              <span className="font-semibold tabular-nums text-slate-800">{batchDeletePending.length}</span>{' '}
+              <span className="font-semibold tabular-nums text-foreground">{batchDeletePending.length}</span>{' '}
               duplicate entr{batchDeletePending.length === 1 ? 'y' : 'ies'} will be hidden from your list.
               The underlying jobs are preserved and other users are not affected.
             </>
@@ -350,7 +351,8 @@ function App() {
           <Route path="assistant" element={<Page><AssistantPage /></Page>} />
           <Route path="jobs" element={<Page title="Jobs"><JobsPage /></Page>} />
           <Route path="analysis" element={<Page><InsightsPage /></Page>} />
-          <Route path="documents" element={<Page legacy title="Documents"><ResumeBuilderPage /></Page>} />
+          <Route path="documents" element={<Page><DocumentsPage /></Page>} />
+          <Route path="studio" element={<Page><ResumeStudioPage /></Page>} />
           <Route
             path="profile"
             element={

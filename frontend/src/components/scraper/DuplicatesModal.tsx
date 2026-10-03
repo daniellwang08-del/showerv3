@@ -36,7 +36,7 @@ export function DuplicatesModal({ onClose, isAdmin = false }: Props) {
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px]"
+        className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
         style={{ zIndex: Z_INDEX.duplicatesModalBackdrop, animation: 'modal-backdrop-in 0.18s ease-out both' }}
         onClick={() => {
           const batchPending = useJobsStore.getState().batchDeletePending;
@@ -56,7 +56,7 @@ export function DuplicatesModal({ onClose, isAdmin = false }: Props) {
         style={{ zIndex: Z_INDEX.duplicatesModal }}
       >
         <div
-          className="pointer-events-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+          className="pointer-events-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl"
           style={{
             height: 'min(88dvh, 860px)',
             animation: 'modal-in 0.2s ease-out both',

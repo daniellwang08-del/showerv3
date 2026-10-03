@@ -163,8 +163,12 @@ export interface LayoutMetrics {
   measured_at_px: number | null;
 }
 
+export type PaperSize = 'letter' | 'a4';
+
 export interface LayoutConfig {
   columns: 1 | 2;
+  /** Page size for the preview, PDF and .docx. Missing means US Letter. */
+  paper?: PaperSize;
   margin_pt: number;
   section_gap_pt: number;
   margin_top_pt?: number | null;

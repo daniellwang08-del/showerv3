@@ -493,8 +493,13 @@ async def open_job_build_as_library_resume(user_id: str, build_id: str) -> dict[
         job_title = (getattr(job, "title", None) or "").strip() or None if job else None
 
         base_design = await _resolve_base_design(session, user)
+        from app.services.document_content import with_profile_content
+        from app.services.document_renderer import profile_payload
+
+        base_design = with_profile_content(base_design, profile_payload(user))
         design = _merge_tailored_into_design(base_design, build.tailored_resume_data)
         name = " - ".join([p for p in (job_title, company) if p]) or "Tailored resume"
+        cover = build.cover_letter_data if isinstance(build.cover_letter_data, dict) else {}
 
         doc = await _upsert_tailored_library_doc(
             session,
@@ -503,6 +508,7 @@ async def open_job_build_as_library_resume(user_id: str, build_id: str) -> dict[
             company=company,
             job_title=job_title,
             design=design,
+            cover_letter=(str(cover.get("body") or "").strip() or None),
         )
 
         user.active_resume_id = doc.id
@@ -544,6 +550,7 @@ async def _upsert_tailored_library_doc(
     company: str | None,
     job_title: str | None,
     design: ResumeDesign,
+    cover_letter: str | None = None,
 ):
     from app.storage.resume_document_repository import ResumeDocumentRepository
 
@@ -563,6 +570,8 @@ async def _upsert_tailored_library_doc(
         existing.job_title = job_title
         existing.design = design.model_dump(mode="json")
         existing.status = "draft"
+        if cover_letter is not None:
+            existing.cover_letter = cover_letter
         return existing
 
     return await rrepo.create(
@@ -573,6 +582,7 @@ async def _upsert_tailored_library_doc(
         job_title=job_title,
         company=company,
         design=design.model_dump(mode="json"),
+        cover_letter=cover_letter,
     )
 
 
@@ -583,6 +593,7 @@ async def save_ai_tailored_as_library_resume(
     job_title: str | None = None,
     company: str | None = None,
     activate: bool = True,
+    cover_letter: str | None = None,
 ) -> dict[str, Any]:
     """Persist OneClick / extension AI-tailored sections into the resume library.
 
@@ -604,6 +615,10 @@ async def save_ai_tailored_as_library_resume(
             raise ValueError("User not found")
 
         base_design = await _resolve_base_design(session, user)
+        from app.services.document_content import with_profile_content
+        from app.services.document_renderer import profile_payload
+
+        base_design = with_profile_content(base_design, profile_payload(user))
         design = _merge_tailored_into_design(base_design, content)
         doc = await _upsert_tailored_library_doc(
             session,
@@ -612,6 +627,7 @@ async def save_ai_tailored_as_library_resume(
             company=company_n,
             job_title=title_n,
             design=design,
+            cover_letter=(cover_letter or "").strip() or None,
         )
         if activate:
             user.active_resume_id = doc.id
@@ -849,19 +865,34 @@ async def generate_design_preview_docx(user_id: str, design: ResumeDesign) -> Pa
     return preview_path
 
 
-async def generate_design_preview_pdf_bytes(user_id: str, design: ResumeDesign) -> tuple[bytes, str]:
-    """Compile → dxpdf and return ``(pdf_bytes, cache_key)`` for the native viewer.
-
-    Hits an in-process LRU when the same user+design was rendered recently.
-    """
+async def render_design_pdf(user_id: str, design: ResumeDesign) -> tuple[bytes, int | None]:
+    """Print ``design`` with the Chromium document renderer (the same templates the
+    Resume studio shows). Returns ``(pdf_bytes, page_count)``; falls back to the
+    DOCX -> dxpdf path (page count unknown) when the renderer is unavailable."""
     import asyncio
 
+    from app.services.document_content import with_profile_content
+    from app.services.document_renderer import profile_payload, render_resume_pdf
     from app.services.resume_builder_service import convert_docx_to_pdf
 
-    cache_key = _design_cache_key(user_id, design)
-    cached = _preview_pdf_cache_get(cache_key)
-    if cached is not None:
-        return cached, cache_key
+    async with get_session() as session:
+        from app.storage.user_repository import UserRepository
+
+        user = await UserRepository(session).get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+        profile = profile_payload(user)
+        title = " ".join(
+            p for p in ((user.name_first or "").strip(), (user.name_last or "").strip()) if p
+        ) or "Resume"
+
+    try:
+        rendered = await render_resume_pdf(
+            with_profile_content(design, profile), profile, title=f"{title} - Resume",
+        )
+        return rendered.pdf, rendered.page_count
+    except Exception as e:  # noqa: BLE001 - fall back to the DOCX pipeline
+        logger.warning("document_render_fallback_dxpdf", file_type="design_preview", error=str(e))
 
     docx_path = await generate_design_preview_docx(user_id, design)
     pdf_path = docx_path.with_suffix(".pdf")
@@ -870,7 +901,20 @@ async def generate_design_preview_pdf_bytes(user_id: str, design: ResumeDesign) 
         convert_docx_to_pdf(docx_path, pdf_path)
         return pdf_path.read_bytes()
 
-    pdf_bytes = await asyncio.to_thread(_convert)
+    return await asyncio.to_thread(_convert), None
+
+
+async def generate_design_preview_pdf_bytes(user_id: str, design: ResumeDesign) -> tuple[bytes, str]:
+    """Render ``design`` to PDF and return ``(pdf_bytes, cache_key)``.
+
+    Hits an in-process LRU when the same user+design was rendered recently.
+    """
+    cache_key = _design_cache_key(user_id, design)
+    cached = _preview_pdf_cache_get(cache_key)
+    if cached is not None:
+        return cached, cache_key
+
+    pdf_bytes, _pages = await render_design_pdf(user_id, design)
     if not pdf_bytes.startswith(b"%PDF"):
         raise RuntimeError("Preview PDF is not a valid PDF document")
     _preview_pdf_cache_put(cache_key, pdf_bytes)

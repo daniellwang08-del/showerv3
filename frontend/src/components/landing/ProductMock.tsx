@@ -11,6 +11,7 @@ import {
   UserCog,
   Wand2,
 } from 'lucide-react';
+import { NaoMark, NaoWordmark } from '@/components/brand/NaoLogo';
 import { TOASTS } from './landingMedia';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
@@ -20,9 +21,9 @@ import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
  */
 
 const TILES = [
-  { label: 'Ready to apply', value: 12, accent: 'text-emerald-300', glow: 'from-emerald-400/25' },
-  { label: 'Matched today', value: 34, accent: 'text-sky-300', glow: 'from-sky-400/25' },
-  { label: 'Applied', value: 9, accent: 'text-violet-300', glow: 'from-violet-400/25' },
+  { label: 'Ready to apply', value: 12, accent: 'text-[#BFD6FF]' },
+  { label: 'Matched today', value: 34, accent: 'text-white' },
+  { label: 'Applied', value: 9, accent: 'text-white' },
 ];
 
 const ROWS = [
@@ -93,7 +94,7 @@ function ScoreRing({ score, id }: { score: number; id: string }) {
   return (
     <div className="relative h-11 w-11 shrink-0">
       <svg viewBox="0 0 40 40" className="h-full w-full -rotate-90">
-        <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="3.25" />
+        <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3.25" />
         <circle
           cx="20"
           cy="20"
@@ -107,8 +108,8 @@ function ScoreRing({ score, id }: { score: number; id: string }) {
         />
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#38bdf8" />
-            <stop offset="100%" stopColor="#818cf8" />
+            <stop offset="0%" stopColor="#3D74FF" />
+            <stop offset="100%" stopColor="#BFD6FF" />
           </linearGradient>
         </defs>
       </svg>
@@ -125,23 +126,23 @@ function AutofillCard({
   fill: (typeof AUTOFILL_STATUS)[number];
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+    <div className="rounded-2xl border border-white/10 bg-[#0A1030] p-4">
       <div className="flex items-center gap-2.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-indigo-900/50">
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#2C5BF5] text-white">
           <Wand2 size={14} strokeWidth={2.5} />
         </span>
         <div className="min-w-0">
           <p className="text-[12px] font-black text-white">Autofill · Workday</p>
-          <p className="text-[10px] font-semibold text-white/45">{fill.note}</p>
+          <p className="text-[10px] font-semibold text-white/55">{fill.note}</p>
         </div>
       </div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
         <span
-          className="block h-full rounded-full bg-gradient-to-r from-sky-400 to-indigo-500 transition-[width] duration-700"
+          className="block h-full rounded-full bg-[#6F9BFF] transition-[width] duration-700"
           style={{ width: `${fill.progress}%` }}
         />
       </div>
-      <p className="mt-2 text-[10px] font-semibold text-emerald-300">{fill.label}</p>
+      <p className="mt-2 text-[10px] font-semibold text-[#BFD6FF]">{fill.label}</p>
     </div>
   );
 }
@@ -178,36 +179,27 @@ export function ProductMock() {
 
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col">
-      <span
-        aria-hidden="true"
-        className="landing-glow-pulse pointer-events-none absolute -inset-8 rounded-[40px] bg-gradient-to-br from-sky-500/35 via-blue-500/25 to-indigo-500/30 opacity-90 blur-3xl"
-      />
-
-      <div className="landing-dash relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-white/12 bg-[#080d1c]/92 shadow-[0_40px_120px_-40px_rgba(2,6,23,0.95)] ring-1 ring-inset ring-white/10 backdrop-blur-2xl sm:rounded-[28px]">
-        <span aria-hidden="true" className="landing-scanline pointer-events-none absolute inset-0" />
-
+      <div className="landing-dash relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[22px] border border-white/12 bg-[#070B1C]/95 shadow-[0_40px_120px_-40px_rgba(0,0,0,0.95),0_0_0_1px_rgba(111,155,255,0.06)] sm:rounded-[28px]">
         <div className="relative z-10 flex shrink-0 items-center gap-2 border-b border-white/10 px-4 py-2.5 sm:px-5">
-          <span className="h-2.5 w-2.5 rounded-full bg-rose-400/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
-          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
-          <span className="ml-2 truncate text-[12px] font-bold tracking-tight text-white/50 sm:ml-3">
+          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+          <span className="ml-2 truncate text-[12px] font-bold tracking-tight text-white/55 sm:ml-3">
             NAO · Jobs
           </span>
-          <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300">
-            <span className="landing-pulse-dot h-1.5 w-1.5 rounded-full bg-emerald-300" />
+          <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[#6F9BFF]/30 bg-[#3D74FF]/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#BFD6FF]">
+            <span className="landing-pulse-dot h-1.5 w-1.5 rounded-full bg-[#6F9BFF]" />
             Live
           </span>
         </div>
 
         <div className="relative z-10 grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[4.25rem_minmax(0,1fr)] xl:grid-cols-[9.5rem_minmax(0,1fr)]">
-          <aside className="hidden flex-col border-r border-white/8 bg-white/[0.02] px-2 py-3 lg:flex xl:px-3 xl:py-4">
-            <div className="mb-3 flex items-center justify-center gap-2 px-1 xl:justify-start xl:px-2">
-              <img src="/nao-logo.png" alt="" className="h-6 w-auto object-contain" />
-              <span className="hidden text-[12px] font-bold tracking-tight text-white xl:inline">
-                NAO
-              </span>
+          <aside className="hidden flex-col border-r border-white/8 bg-[#04060F]/50 px-2 py-3 lg:flex xl:px-3 xl:py-4">
+            <div className="mb-3 flex items-center justify-center px-1 xl:justify-start xl:px-2">
+              <NaoMark className="size-6 xl:hidden" />
+              <NaoWordmark className="hidden h-4 text-white xl:block" />
             </div>
-            <p className="hidden px-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/30 xl:block">
+            <p className="hidden px-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/45 xl:block">
               Workspace
             </p>
             <nav className="mt-2 space-y-1 xl:mt-3" aria-hidden="true">
@@ -219,8 +211,8 @@ export function ProductMock() {
                     title={item.label}
                     className={`flex items-center justify-center gap-2.5 rounded-xl px-2 py-2 text-[12px] font-bold xl:justify-start xl:px-2.5 ${
                       item.active
-                        ? 'bg-sky-400/15 text-white shadow-[inset_0_0_0_1px_rgba(125,211,252,0.25)]'
-                        : 'text-white/40'
+                        ? 'bg-[#3D74FF]/15 text-white shadow-[inset_0_0_0_1px_rgba(111,155,255,0.3)]'
+                        : 'text-white/50'
                     }`}
                   >
                     <Icon size={14} strokeWidth={2.4} />
@@ -229,9 +221,9 @@ export function ProductMock() {
                 );
               })}
             </nav>
-            <div className="mt-auto hidden rounded-xl border border-white/8 bg-white/[0.04] px-2.5 py-2.5 xl:block">
+            <div className="mt-auto hidden rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-2.5 xl:block">
               <p className="text-[11px] font-black text-white">Alex Rivera</p>
-              <p className="text-[10px] font-semibold text-white/40">Profile synced</p>
+              <p className="text-[10px] font-semibold text-white/50">Profile synced</p>
             </div>
           </aside>
 
@@ -240,13 +232,9 @@ export function ProductMock() {
               {TILES.map((tile) => (
                 <div
                   key={tile.label}
-                  className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.05] px-2.5 py-2.5 sm:rounded-2xl sm:px-3.5 sm:py-3"
+                  className="rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-2.5 sm:rounded-2xl sm:px-3.5 sm:py-3"
                 >
-                  <span
-                    aria-hidden="true"
-                    className={`pointer-events-none absolute -right-6 -top-8 h-16 w-16 rounded-full bg-gradient-to-br ${tile.glow} to-transparent blur-xl`}
-                  />
-                  <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-white/45 sm:text-[10px]">
+                  <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-white/55 sm:text-[10px]">
                     {tile.label}
                   </p>
                   <p className={`mt-0.5 text-xl font-black tabular-nums sm:text-2xl ${tile.accent}`}>
@@ -257,7 +245,7 @@ export function ProductMock() {
             </div>
 
             <div className="mt-3 flex shrink-0 items-center gap-2 px-3 sm:px-4">
-              <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-1">
+              <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] p-1">
                 {VIEWS.map((item) => (
                   <button
                     key={item}
@@ -267,14 +255,14 @@ export function ProductMock() {
                     className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
                       view === item
                         ? 'bg-white/12 text-white'
-                        : 'text-white/40 hover:text-white/70'
+                        : 'text-white/50 hover:text-white/80'
                     }`}
                   >
                     {item}
                   </button>
                 ))}
               </div>
-              <div className="ml-auto hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-white/35 sm:inline-flex">
+              <div className="ml-auto hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-white/45 sm:inline-flex">
                 <Search size={12} strokeWidth={2.5} />
                 <span className="text-[11px] font-semibold">Search roles</span>
               </div>
@@ -286,21 +274,21 @@ export function ProductMock() {
                   key={row.title}
                   className={`flex items-center gap-3 rounded-2xl border px-3 py-2.5 transition duration-500 sm:gap-4 sm:px-4 sm:py-3 ${
                     highlight === index
-                      ? 'landing-dash-row border-sky-300/40 bg-sky-400/[0.1] shadow-[0_0_24px_-8px_rgba(56,189,248,0.55)]'
-                      : 'border-white/10 bg-white/[0.04]'
+                      ? 'landing-dash-row border-[#6F9BFF]/35 bg-[#3D74FF]/10'
+                      : 'border-white/8 bg-white/[0.03]'
                   }`}
                 >
                   <ScoreRing score={row.score} id={row.company.replace(/\s+/g, '-')} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-bold text-white sm:text-sm">{row.title}</p>
-                    <p className="mt-0.5 truncate text-[11px] font-semibold text-white/45">
+                    <p className="mt-0.5 truncate text-[11px] font-semibold text-white/55">
                       {row.company} · {row.mode}
                     </p>
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       {row.stages.map((stage) => (
                         <span
                           key={stage}
-                          className="inline-flex items-center gap-1 rounded-full border border-white/12 bg-white/5 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em] text-white/60 sm:text-[10px]"
+                          className="inline-flex items-center gap-1 rounded-full border border-white/12 bg-white/[0.04] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em] text-white/65 sm:text-[10px]"
                         >
                           <FileText size={9} strokeWidth={3} />
                           {stage}
@@ -309,13 +297,13 @@ export function ProductMock() {
                     </div>
                   </div>
                   {row.ready ? (
-                    <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1.5 text-[11px] font-bold text-emerald-300 sm:inline-flex">
+                    <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-[#6F9BFF]/35 bg-[#3D74FF]/15 px-2.5 py-1.5 text-[11px] font-bold text-[#BFD6FF] sm:inline-flex">
                       <CheckCircle2 size={13} strokeWidth={2.75} />
                       Ready
                     </span>
                   ) : (
-                    <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-2.5 py-1.5 text-[11px] font-bold text-sky-300 sm:inline-flex">
-                      <Sparkles size={13} strokeWidth={2.75} className="landing-spin-slow" />
+                    <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] px-2.5 py-1.5 text-[11px] font-bold text-white/70 sm:inline-flex">
+                      <Sparkles size={13} strokeWidth={2.75} />
                       Working
                     </span>
                   )}
@@ -323,23 +311,22 @@ export function ProductMock() {
               ))}
               <span
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-x-3 bottom-0 h-12 bg-gradient-to-t from-[#080d1c] to-transparent sm:inset-x-4"
+                className="pointer-events-none absolute inset-x-3 bottom-0 h-12 bg-gradient-to-t from-[#070B1C] to-transparent sm:inset-x-4"
               />
             </div>
           </div>
-
         </div>
 
         <div className="pointer-events-none absolute bottom-3 right-3 z-20 w-[min(100%-1.5rem,15rem)] sm:bottom-4 sm:right-4">
-          <div className="pointer-events-auto shadow-[0_18px_40px_-20px_rgba(2,6,23,0.9)]">
+          <div className="pointer-events-auto shadow-[0_18px_40px_-20px_rgba(0,0,0,0.9)]">
             <AutofillCard fill={fill} />
           </div>
         </div>
 
         <div className="pointer-events-none absolute left-3 top-[4.25rem] z-20 hidden w-44 sm:block lg:left-auto lg:right-3 lg:top-14">
-          <div className="pointer-events-none space-y-1.5 rounded-xl border border-white/10 bg-[#080d1c]/88 p-2 backdrop-blur-md">
-            <p className="mb-1 flex items-center gap-1.5 px-1 text-[9px] font-black uppercase tracking-[0.14em] text-emerald-300">
-              <span className="landing-pulse-dot h-1.5 w-1.5 rounded-full bg-emerald-300" />
+          <div className="pointer-events-none space-y-1.5 rounded-xl border border-white/10 bg-[#0A1030]/95 p-2">
+            <p className="mb-1 flex items-center gap-1.5 px-1 text-[9px] font-black uppercase tracking-[0.14em] text-[#BFD6FF]">
+              <span className="landing-pulse-dot h-1.5 w-1.5 rounded-full bg-[#6F9BFF]" />
               Live pipeline
             </p>
             {TOASTS.slice(0, 2).map((toast, index) => (
@@ -347,12 +334,12 @@ export function ProductMock() {
                 key={toast.title}
                 className={`rounded-lg border px-2 py-1.5 transition duration-500 ${
                   toastIndex === index
-                    ? 'border-emerald-300/30 bg-emerald-400/10'
-                    : 'border-white/8 bg-white/[0.03] opacity-55'
+                    ? 'border-[#6F9BFF]/30 bg-[#3D74FF]/10'
+                    : 'border-white/8 bg-white/[0.03] opacity-60'
                 }`}
               >
                 <p className="truncate text-[11px] font-black text-white">{toast.title}</p>
-                <p className="truncate text-[9px] font-semibold text-white/50">{toast.detail}</p>
+                <p className="truncate text-[9px] font-semibold text-white/55">{toast.detail}</p>
               </div>
             ))}
           </div>

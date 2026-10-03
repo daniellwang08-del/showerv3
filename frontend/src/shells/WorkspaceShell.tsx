@@ -13,6 +13,7 @@ import { AppSidebar } from './AppSidebar';
 import type { NavSection } from './nav';
 import type { ShellUser } from './UserMenu';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { NaoWordmark } from '@/components/brand/NaoLogo';
 
 const AssistantPanel = lazy(() =>
   import('@/features/assistant/AssistantPanel').then((m) => ({ default: m.AssistantPanel })),
@@ -111,8 +112,9 @@ export function WorkspaceShell({ variant, nav, user, onLogout }: WorkspaceShellP
           <Button variant="ghost" size="icon" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}>
             <Menu />
           </Button>
-          <img src="/nao-logo.png" alt="" className="h-6 w-auto" />
-          <span className="flex-1 text-sm font-semibold">NAO</span>
+          <span className="flex flex-1 items-center">
+            <NaoWordmark className="h-4 text-foreground" />
+          </span>
           <Button
             variant="ghost"
             size="icon"

@@ -50,26 +50,26 @@ const EXCLUSION_TYPE_LABELS: Record<NonNullable<ExclusionType>, string> = {
 };
 
 const EXCLUSION_TYPE_COLORS: Record<NonNullable<ExclusionType>, string> = {
-  applied_company: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  lower_score: 'bg-amber-100 text-amber-800 border-amber-200',
-  superseded_by_higher: 'bg-purple-100 text-purple-800 border-purple-200',
-  no_score_comparison: 'bg-slate-100 text-slate-600 border-slate-200',
-  below_min_score: 'bg-rose-100 text-rose-800 border-rose-200',
-  strict_similarity: 'bg-blue-100 text-blue-800 border-blue-200',
-  same_url: 'bg-cyan-100 text-cyan-800 border-cyan-200',
-  extraction_failed: 'bg-slate-200 text-slate-800 border-slate-300',
-  non_us_location: 'bg-orange-100 text-orange-800 border-orange-200',
-  outside_preferred_countries: 'bg-orange-100 text-orange-800 border-orange-200',
-  location_unknown: 'bg-amber-100 text-amber-900 border-amber-200',
-  blocked_domain: 'bg-zinc-200 text-zinc-800 border-zinc-300',
-  manual_invalid: 'bg-rose-100 text-rose-800 border-rose-200',
-  manual_duplicate: 'bg-orange-100 text-orange-800 border-orange-200',
+  applied_company: 'bg-status-ready/10 text-foreground border-status-ready/30',
+  lower_score: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
+  superseded_by_higher: 'bg-brand-soft text-brand border-brand/30',
+  no_score_comparison: 'bg-muted text-muted-foreground border-border',
+  below_min_score: 'bg-destructive/10 text-destructive border-destructive/30',
+  strict_similarity: 'bg-brand-soft text-brand border-brand/30',
+  same_url: 'bg-brand-soft text-brand border-brand/30',
+  extraction_failed: 'bg-muted text-foreground border-border',
+  non_us_location: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
+  outside_preferred_countries: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
+  location_unknown: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
+  blocked_domain: 'bg-muted text-foreground border-border',
+  manual_invalid: 'bg-destructive/10 text-destructive border-destructive/30',
+  manual_duplicate: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
 };
 
 function ExclusionBadge({ type }: { type: ExclusionType }) {
   if (!type) {
     return (
-      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
+      <span className="inline-flex items-center rounded-full border border-brand/30 bg-brand-soft px-1.5 py-0.5 text-[10px] font-semibold text-brand">
         Content
       </span>
     );
@@ -123,28 +123,28 @@ const DUP_TABS: { id: DupTabId; label: string; icon: LucideIcon; accent: AccentK
 
 const TAB_ACCENT: Record<AccentKey, { active: string; icon: string; badgeActive: string; badgeIdle: string }> = {
   blue: {
-    active: 'border-blue-300 bg-blue-50 text-blue-700 shadow-sm',
-    icon: 'text-blue-600',
-    badgeActive: 'bg-blue-600 text-white',
-    badgeIdle: 'bg-slate-100 text-slate-500',
+    active: 'border-brand/30 bg-brand-soft text-brand shadow-sm',
+    icon: 'text-brand',
+    badgeActive: 'bg-primary text-primary-foreground',
+    badgeIdle: 'bg-muted text-muted-foreground',
   },
   orange: {
-    active: 'border-orange-300 bg-orange-50 text-orange-700 shadow-sm',
-    icon: 'text-orange-600',
-    badgeActive: 'bg-orange-600 text-white',
-    badgeIdle: 'bg-slate-100 text-slate-500',
+    active: 'border-status-preparing/50 bg-status-preparing/10 text-foreground shadow-sm',
+    icon: 'text-status-preparing',
+    badgeActive: 'bg-status-preparing text-background',
+    badgeIdle: 'bg-muted text-muted-foreground',
   },
   rose: {
-    active: 'border-rose-300 bg-rose-50 text-rose-700 shadow-sm',
-    icon: 'text-rose-600',
-    badgeActive: 'bg-rose-600 text-white',
-    badgeIdle: 'bg-slate-100 text-slate-500',
+    active: 'border-destructive/50 bg-destructive/10 text-destructive shadow-sm',
+    icon: 'text-destructive',
+    badgeActive: 'bg-destructive/10 text-destructive',
+    badgeIdle: 'bg-muted text-muted-foreground',
   },
   slate: {
-    active: 'border-slate-300 bg-slate-100 text-slate-800 shadow-sm',
-    icon: 'text-slate-600',
-    badgeActive: 'bg-slate-700 text-white',
-    badgeIdle: 'bg-slate-100 text-slate-500',
+    active: 'border-border bg-muted text-foreground shadow-sm',
+    icon: 'text-muted-foreground',
+    badgeActive: 'bg-primary text-primary-foreground',
+    badgeIdle: 'bg-muted text-muted-foreground',
   },
 };
 
@@ -235,14 +235,14 @@ function DuplicateActionsMenuPortal({
 
   return createPortal(
     <div
-      className="fixed w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+      className="fixed w-56 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl"
       style={{ top: pos.top, left: pos.left, zIndex: Z_INDEX.duplicateContextMenu }}
       data-job-menu-root="true"
       role="menu"
     >
       <button
         type="button"
-        className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50"
+        className="block w-full border-b border-border px-3 py-2 text-left text-sm text-foreground hover:bg-brand-soft"
         onClick={() => {
           onCloseMenu();
           onCompare(item);
@@ -255,7 +255,7 @@ function DuplicateActionsMenuPortal({
       </button>
       <button
         type="button"
-        className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-blue-50"
+        className="block w-full border-b border-border px-3 py-2 text-left text-sm text-foreground hover:bg-brand-soft"
         onClick={() => {
           onCloseMenu();
           onReplace(item);
@@ -268,33 +268,33 @@ function DuplicateActionsMenuPortal({
       </button>
       <button
         type="button"
-        className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-indigo-700 hover:bg-indigo-50"
+        className="block w-full border-b border-border px-3 py-2 text-left text-sm text-brand hover:bg-brand-soft"
         onClick={() => {
           onCloseMenu();
           onRestore(item);
         }}
       >
         <span className="inline-flex items-center gap-2">
-          <RotateCcw className="h-4 w-4 text-indigo-600" />
+          <RotateCcw className="h-4 w-4 text-brand" />
           Restore to active pool
         </span>
       </button>
       <button
         type="button"
-        className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-emerald-50"
+        className="block w-full border-b border-border px-3 py-2 text-left text-sm text-foreground hover:bg-status-ready/20"
         onClick={() => {
           onCloseMenu();
           onReportAsValid(item);
         }}
       >
         <span className="inline-flex items-center gap-2">
-          <ClipboardCheck className="h-4 w-4 text-emerald-600" />
+          <ClipboardCheck className="h-4 w-4 text-status-ready" />
           Report as valid job
         </span>
       </button>
       <button
         type="button"
-        className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+        className="block w-full px-3 py-2 text-left text-sm text-destructive hover:bg-destructive/20"
         onClick={() => {
           onCloseMenu();
           onDelete(item);
@@ -491,15 +491,15 @@ export function DuplicateJobsPanel({
     <>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {/* Header */}
-        <div className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-white via-white to-slate-50/60 px-5 pt-5 pb-4">
+        <div className="shrink-0 border-b border-border bg-card px-5 pt-5 pb-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-800 to-slate-900 text-white shadow-sm">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
                 <Layers className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="text-xl font-bold tracking-tight text-slate-900">Hidden jobs</h2>
-                <p className="mt-0.5 text-sm text-slate-500">
+                <h2 className="text-xl font-bold tracking-tight text-foreground">Hidden jobs</h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">
                   Review duplicates, other-country, low-match, and failed extractions - restore, replace, or dismiss.
                 </p>
               </div>
@@ -507,7 +507,7 @@ export function DuplicateJobsPanel({
             <button
               type="button"
               onClick={onClosePanel}
-              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+              className="rounded-lg border border-border bg-card p-2 text-muted-foreground shadow-sm transition hover:bg-muted/50 hover:text-foreground"
               aria-label="Close duplicates panel"
             >
               <X className="h-4 w-4" />
@@ -533,10 +533,10 @@ export function DuplicateJobsPanel({
                     'flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition',
                     isActive
                       ? accent.active
-                      : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700',
+                      : 'border-border bg-card text-muted-foreground hover:border-input hover:text-foreground',
                   ].join(' ')}
                 >
-                  <Icon className={`h-4 w-4 shrink-0 ${isActive ? accent.icon : 'text-slate-400'}`} />
+                  <Icon className={`h-4 w-4 shrink-0 ${isActive ? accent.icon : 'text-muted-foreground'}`} />
                   <span className="truncate">{tab.label}</span>
                   <span
                     className={[
@@ -553,22 +553,22 @@ export function DuplicateJobsPanel({
         </div>
 
         {/* Toolbar */}
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-white px-5 py-2.5">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-5 py-2.5">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={toggleSelectAll}
               disabled={items.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-semibold text-foreground shadow-sm transition hover:border-input hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {allSelected ? (
                 <>
-                  <CheckSquare className="h-3.5 w-3.5 text-blue-600" aria-hidden />
+                  <CheckSquare className="h-3.5 w-3.5 text-brand" aria-hidden />
                   Deselect all
                 </>
               ) : (
                 <>
-                  <Square className="h-3.5 w-3.5 text-slate-500" aria-hidden />
+                  <Square className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
                   Select all
                 </>
               )}
@@ -577,22 +577,22 @@ export function DuplicateJobsPanel({
               <button
                 type="button"
                 onClick={handleBatchDelete}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-700 shadow-sm transition hover:bg-red-100"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs font-bold text-destructive shadow-sm transition hover:bg-destructive/20"
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
                 Dismiss ({selectedIds.size})
               </button>
             )}
           </div>
-          <div className="text-[11px] text-slate-500">
-            <span className="font-semibold tabular-nums text-slate-700">{loadedCount}</span> loaded
-            {tabCount > loadedCount ? <span className="text-slate-400"> · {tabCount} total</span> : null}
+          <div className="text-[11px] text-muted-foreground">
+            <span className="font-semibold tabular-nums text-foreground">{loadedCount}</span> loaded
+            {tabCount > loadedCount ? <span className="text-muted-foreground"> · {tabCount} total</span> : null}
             {duplicateListHasMoreActive ? (
-              <span className="ml-1 inline-flex items-center gap-0.5 font-semibold text-indigo-600">
+              <span className="ml-1 inline-flex items-center gap-0.5 font-semibold text-brand">
                 <ChevronDown className="h-3 w-3" aria-hidden /> scroll for more
               </span>
             ) : items.length > 0 ? (
-              <span className="text-slate-400"> · all loaded</span>
+              <span className="text-muted-foreground"> · all loaded</span>
             ) : null}
           </div>
         </div>
@@ -600,16 +600,16 @@ export function DuplicateJobsPanel({
         {children}
 
         {/* List */}
-        <div ref={dupScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 px-4 py-4">
+        <div ref={dupScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-muted/50 px-4 py-4">
           {loadingLists ? (
             <BrandedLoader compact label="Loading…" className="py-16" />
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-300 shadow-sm ring-1 ring-slate-200">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-card text-muted-foreground/70 shadow-sm ring-1 ring-border">
                 <activeMeta.icon className="h-6 w-6" />
               </div>
-              <p className="mt-3 text-sm font-semibold text-slate-700">No {activeMeta.noun}.</p>
-              <p className="mt-1 max-w-sm text-xs text-slate-500">{activeMeta.emptyHint}</p>
+              <p className="mt-3 text-sm font-semibold text-foreground">No {activeMeta.noun}.</p>
+              <p className="mt-1 max-w-sm text-xs text-muted-foreground">{activeMeta.emptyHint}</p>
             </div>
           ) : (
             <ul className="space-y-2">
@@ -619,10 +619,10 @@ export function DuplicateJobsPanel({
                   <li key={item.id} className="group" data-job-menu-root="true">
                     <div
                       className={[
-                        'relative flex items-start gap-3 rounded-xl border bg-white px-3 py-3 shadow-sm transition',
+                        'relative flex items-start gap-3 rounded-xl border bg-card px-3 py-3 shadow-sm transition',
                         selected
-                          ? 'border-blue-300 ring-1 ring-inset ring-blue-200'
-                          : 'border-slate-200 hover:border-slate-300 hover:shadow',
+                          ? 'border-brand/30 ring-1 ring-inset ring-brand/30'
+                          : 'border-border hover:border-input hover:shadow',
                       ].join(' ')}
                       onContextMenu={(e) => {
                         e.preventDefault();
@@ -640,12 +640,12 @@ export function DuplicateJobsPanel({
                           e.stopPropagation();
                           toggleRow(item.id);
                         }}
-                        className="mt-0.5 shrink-0 rounded-md p-0.5 text-slate-400 transition hover:text-slate-700"
+                        className="mt-0.5 shrink-0 rounded-md p-0.5 text-muted-foreground transition hover:text-foreground"
                         aria-label={selected ? 'Deselect row' : 'Select row'}
                         aria-pressed={selected}
                       >
                         {selected ? (
-                          <CheckSquare className="h-5 w-5 text-blue-600" aria-hidden />
+                          <CheckSquare className="h-5 w-5 text-brand" aria-hidden />
                         ) : (
                           <Square className="h-5 w-5" aria-hidden />
                         )}
@@ -655,9 +655,9 @@ export function DuplicateJobsPanel({
                         <div className="flex flex-wrap items-center gap-2">
                           <ExclusionBadge type={item.exclusion_type ?? null} />
                           {item.company && (
-                            <span className="truncate text-xs font-semibold text-slate-700">{item.company}</span>
+                            <span className="truncate text-xs font-semibold text-foreground">{item.company}</span>
                           )}
-                          <span className="ml-auto shrink-0 text-[11px] text-slate-400">
+                          <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
                             {new Date(item.created_at_ms).toLocaleDateString(undefined, {
                               month: 'short',
                               day: 'numeric',
@@ -677,20 +677,20 @@ export function DuplicateJobsPanel({
                           <div
                             className={[
                               'truncate text-sm font-semibold',
-                              item.title ? 'text-slate-900 group-hover/link:text-blue-700' : 'italic text-slate-500',
+                              item.title ? 'text-foreground group-hover/link:text-brand' : 'italic text-muted-foreground',
                             ].join(' ')}
                           >
                             {item.title || 'Untitled job'}
                           </div>
-                          <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-400 group-hover/link:text-blue-500">
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground group-hover/link:text-brand">
                             <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
                             <span className="truncate">{item.url}</span>
                           </div>
                         </a>
 
                         {item.duplication_reason && (
-                          <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
-                            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+                          <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground">
+                            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
                             <span className="line-clamp-2">{item.duplication_reason}</span>
                           </div>
                         )}
@@ -699,7 +699,7 @@ export function DuplicateJobsPanel({
                       <button
                         type="button"
                         data-dup-menu-anchor={item.id}
-                        className="shrink-0 rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 shadow-sm transition hover:bg-slate-100 hover:text-slate-800"
+                        className="shrink-0 rounded-lg border border-border bg-card p-1.5 text-muted-foreground shadow-sm transition hover:bg-muted hover:text-foreground"
                         aria-label="Actions"
                         aria-expanded={openMenuId === item.id}
                         onClick={(e) => {
@@ -721,15 +721,15 @@ export function DuplicateJobsPanel({
           {duplicateListHasMoreActive && items.length > 0 ? (
             <div
               ref={dupSentinelRef}
-              className="mt-2 flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white px-3 py-3"
+              className="mt-2 flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card px-3 py-3"
             >
               {loadingMoreActive ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" aria-hidden />
-                  <span className="text-xs font-medium text-slate-600">Loading more…</span>
+                  <Loader2 className="h-4 w-4 animate-spin text-brand" aria-hidden />
+                  <span className="text-xs font-medium text-muted-foreground">Loading more…</span>
                 </>
               ) : (
-                <span className="text-xs text-slate-400">Scroll for more {activeMeta.noun}</span>
+                <span className="text-xs text-muted-foreground">Scroll for more {activeMeta.noun}</span>
               )}
             </div>
           ) : null}

@@ -106,3 +106,6 @@ Desktop.ini
 ehthumbs.db
 
 frontend/stats.html
+
+# Generated print bundle (npm run build:print)
+app/assets/print/

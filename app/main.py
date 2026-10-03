@@ -38,6 +38,7 @@ from app.api.admin_routes import router as admin_router
 from app.api.job_sources_routes import router as job_sources_router
 from app.api.job_sites_routes import router as job_sites_router
 from app.api.billing_routes import router as billing_router
+from app.api.document_routes import router as document_router
 from app.api.logs_routes import router as logs_router
 from app.api.websocket import ws_router, manager as ws_manager
 from app.api.middleware import RequestLoggingMiddleware, ErrorHandlerMiddleware
@@ -247,6 +248,13 @@ async def lifespan(app: FastAPI):
         pass
 
     try:
+        from app.services.document_renderer import close_document_renderer
+
+        await close_document_renderer()
+    except Exception:
+        pass
+
+    try:
         await close_http_client()
     except Exception:
         pass
@@ -378,6 +386,7 @@ def create_app() -> FastAPI:
     app.include_router(job_sources_router, prefix="/api/v1")
     app.include_router(job_sites_router, prefix="/api/v1")
     app.include_router(billing_router, prefix="/api/v1")
+    app.include_router(document_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 
     return app

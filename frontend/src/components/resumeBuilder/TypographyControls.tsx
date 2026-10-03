@@ -15,11 +15,11 @@ export function TypographyControls({
   return (
     <ControlCard icon={Type} title="Typography">
       <label className="block">
-        <div className="mb-1 text-xs font-medium text-slate-600">Font family</div>
+        <div className="mb-1 text-xs font-medium text-foreground/80">Font family</div>
         <select
           value={t.font_family}
           onChange={(e) => onChange({ font_family: e.target.value })}
-          className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
         >
           {fonts.map((f) => (
             <option key={f.id} value={f.family}>

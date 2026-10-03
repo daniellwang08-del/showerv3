@@ -53,8 +53,8 @@ export function EducationControls({
         ]}
       />
 
-      <div className="space-y-2 border-t border-slate-100 pt-3">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Show items</p>
+      <div className="space-y-2 border-t pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Show items</p>
         <Toggle label="Dates" checked={style.show_period} onChange={(v) => onChange({ show_period: v })} />
         <Toggle label="Grade / GPA" checked={style.show_mark} onChange={(v) => onChange({ show_mark: v })} />
         <Toggle label="Location" checked={style.show_location} onChange={(v) => onChange({ show_location: v })} />

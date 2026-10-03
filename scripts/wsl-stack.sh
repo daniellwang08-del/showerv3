@@ -126,6 +126,11 @@ cmd_up() {
   log "alembic upgrade head"
   (cd "$NAO_ROOT" && "$VENV_DIR/bin/python" -m alembic upgrade head)
 
+  # The API prints resume/cover-letter PDFs from this bundle (app/assets/print).
+  log "building resume print bundle"
+  (cd "$NAO_ROOT/frontend" && npm run --silent build:print >/dev/null) \
+    || log "print bundle build failed, PDFs fall back to the DOCX converter"
+
   if supervisord_running; then
     log "supervisord already running, applying config and starting autostart programs"
     ctl update

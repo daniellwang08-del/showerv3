@@ -123,9 +123,10 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
     .slice(0, 5);
 
   return (
-    <div className="scrollbar-thin h-full overflow-y-auto">
+    <div className="scrollbar-thin relative h-full overflow-y-auto">
       <PageTitle title="Home" />
-      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 pt-[10vh] pb-10">
+      <div aria-hidden className="nao-horizon" />
+      <div className="relative z-10 mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 pt-[clamp(11rem,22vh,14rem)] pb-10">
         <h1 className="text-center text-3xl font-semibold tracking-tight sm:text-4xl">
           {greeting()}
           {firstName ? `, ${firstName}` : ''}

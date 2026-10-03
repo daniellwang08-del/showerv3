@@ -5,7 +5,7 @@ import {
   Database,
   FileText,
   Home,
-  MessageSquare,
+  LayoutTemplate,
   Puzzle,
   ScrollText,
   SlidersHorizontal,
@@ -29,10 +29,10 @@ export const applicantNav: NavSection[] = [
   {
     items: [
       { to: '/app', label: 'Home', icon: Home, end: true, keywords: ['start', 'composer'] },
-      { to: '/app/assistant', label: 'Assistant', icon: MessageSquare, keywords: ['chat', 'ai', 'ask'] },
       { to: '/app/jobs', label: 'Jobs', icon: Briefcase, keywords: ['dashboard', 'list', 'scraper'] },
       { to: '/app/analysis', label: 'Insights', icon: BarChart3, keywords: ['analysis', 'pipeline', 'trends'] },
-      { to: '/app/documents', label: 'Documents', icon: FileText, keywords: ['resume', 'cover letter', 'builder'] },
+      { to: '/app/documents', label: 'Documents', icon: FileText, keywords: ['resume', 'cover letter', 'tailor', 'downloads'] },
+      { to: '/app/studio', label: 'Resume studio', icon: LayoutTemplate, keywords: ['builder', 'template', 'design', 'theme'] },
     ],
   },
   {
@@ -71,7 +71,7 @@ export const legacyRedirects: Record<string, { applicant: string; admin: string 
   '/settings': { applicant: '/app/preferences', admin: '/admin/settings' },
   '/integrations': { applicant: '/app/integrations', admin: '/admin' },
   '/billing': { applicant: '/app/billing', admin: '/admin' },
-  '/resume-builder': { applicant: '/app/documents', admin: '/admin' },
+  '/resume-builder': { applicant: '/app/studio', admin: '/admin' },
   '/data-analysis': { applicant: '/app', admin: '/admin/data' },
   '/data-management': { applicant: '/app', admin: '/admin/data' },
   '/user-management': { applicant: '/app', admin: '/admin/users' },

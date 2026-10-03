@@ -1,7 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { LayoutMetrics, ResumeDesign } from '../../types/resumeDesign';
+import type { LayoutMetrics, PaperSize, ResumeDesign } from '../../types/resumeDesign';
 import type { UserProfile } from '../../types/profile';
-import { PT_TO_PX, ResumePreview, resumeHasHeaderBand, resumeVerticalMarginsPx } from './ResumePreview';
+import {
+  PT_TO_PX,
+  ResumePreview,
+  resumeHasHeaderBand,
+  resumeVerticalMarginsPx,
+  type CoverLetterBody,
+} from './ResumePreview';
 
 /** Exact header-band geometry measured from the rendered preview (points). */
 export interface MeasuredHeaderMetrics {
@@ -29,16 +35,22 @@ const LAYOUT_FIELDS: (keyof LayoutMetrics)[] = [
   'cert_row_pt',
 ];
 
-const LETTER_RATIO = 11 / 8.5; // height / width for US Letter
-/** Native layout width used to lay out and measure the resume. Every instance
- *  (main preview and thumbnail rail) renders at this width and is then scaled,
- *  so page breaks are identical regardless of the on-screen size.
- *
- *  This MUST equal a true US-Letter page width at 96 dpi (8.5 in × 96 = 816 px,
- *  i.e. 612 pt × PT_TO_PX). Elements are sized in px via PT_TO_PX = 1.3333, so any
- *  other reference width would scale text/margins relative to the page differently
- *  than the LibreOffice-rendered PDF and shift every line break. */
-export const RESUME_REF_WIDTH = 816;
+/** Leaf roles that must not end a page (they introduce the block after them). */
+const KEEP_WITH_NEXT = new Set(['heading', 'exp-head', 'exp-lead', 'exp-label']);
+
+/** Page geometry in CSS px at 96 dpi. The PDF renderer prints frames of exactly this
+ *  size onto pages of exactly this size, so each on-screen page is one PDF page. */
+export const PAPER_SIZES: Record<PaperSize, { label: string; widthPx: number; heightPx: number; css: string }> = {
+  letter: { label: 'US Letter', widthPx: 816, heightPx: 1056, css: '8.5in 11in' },
+  a4: { label: 'A4', widthPx: (210 / 25.4) * 96, heightPx: (297 / 25.4) * 96, css: '210mm 297mm' },
+};
+
+export function paperOf(design: ResumeDesign): PaperSize {
+  return design.layout.paper === 'a4' ? 'a4' : 'letter';
+}
+
+/** Native width of a US Letter page; galleries and thumbnails lay out at this width. */
+export const RESUME_REF_WIDTH = PAPER_SIZES.letter.widthPx;
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 /** Treat two (possibly null) pt values as equal within ~0.4 pt, so sub-pixel jitter
@@ -52,68 +64,80 @@ interface Page {
   offset: number; // native px into the content flow where this page starts
   height: number; // native px of content shown on this page
   topMargin: number; // native px white margin above the content on this page
+  visible: boolean[]; // per [data-block] (document order): painted on this page
+}
+
+export interface ResumeLayoutInfo {
+  pageCount: number;
+  /** Flow offsets (native px) where pages 2..n start. */
+  breaks: number[];
+  paper: PaperSize;
 }
 
 interface Props {
   design: ResumeDesign;
   profile: UserProfile | null;
-  /** On-screen width of each page, in CSS pixels (already includes any zoom). */
-  displayWidth: number;
+  letter?: CoverLetterBody | null;
+  /** On-screen width of each page, in CSS pixels (already includes any zoom). Ignored in print mode. */
+  displayWidth?: number;
   gap?: number;
   showBadges?: boolean;
+  /** `print` renders bare, unscaled page frames that the PDF renderer prints 1:1. */
+  mode?: 'screen' | 'print';
   /** Prefix for each page's DOM id, so a thumbnail can scroll to it. */
   idPrefix?: string;
   onPageCount?: (count: number) => void;
+  onLayout?: (info: ResumeLayoutInfo) => void;
   onSelect?: (index: number) => void;
-  /** Reports the exact rendered header-band geometry (pt) so the compiler can pin the
-   *  .docx band to the same height the browser drew. Wire this on a single instance
-   *  (the main preview) only. */
+  /** Reports the exact rendered header-band geometry (pt) so the .docx export can pin
+   *  its band to the same height. Wire this on a single instance only. */
   onMeasureHeader?: (m: MeasuredHeaderMetrics) => void;
-  /** Reports the realized per-role body gaps (pt) so the compiler/fill engine reproduce
-   *  the exact spacing the user designed. Wire on the main preview only. */
+  /** Reports the realized per-role body gaps (pt) for the .docx export. */
   onMeasureLayout?: (m: MeasuredLayoutMetrics) => void;
-  /** When true, only run the offscreen measure pass (no visible HTML pages). Used while
-   *  the builder shows accurate PDF page images as the primary preview. */
+  /** Only run the offscreen measure pass (no visible pages). */
   measureOnly?: boolean;
 }
 
 /**
- * Renders the live resume preview split into discrete US-Letter page frames,
- * stacked vertically like the page view in Word / the slide list in
- * PowerPoint.
+ * The one paginator behind every resume surface: the studio preview, thumbnails and
+ * the server-side PDF (which loads this same component in Chromium in `print` mode).
  *
- * The resume is laid out once (hidden) at RESUME_REF_WIDTH with the vertical
- * page margin removed; its `[data-block]` elements (section headings, entry
- * heads, individual bullets, ...) are measured so a page break prefers to fall
- * BETWEEN blocks. Each visible page reserves a real top + bottom margin, then
- * shows the matching content slice via a clipped viewport - so a long work
- * experience naturally flows onto the next page instead of being kept whole.
+ * The resume is laid out once (hidden) at the paper's native width with the vertical
+ * page margin removed. Leaf `[data-block]` elements (headings, entry heads, single
+ * bullets, letter paragraphs) are measured and a page break is moved up to the top
+ * of any leaf that would cross the bottom edge. Each page then shows its slice of
+ * the flow through a clipped viewport, and every block that does not overlap the
+ * slice is hidden, so a PDF page never carries invisible text from another page.
  * A full-bleed header band keeps a zero top margin on page 1 only.
  */
 export function ResumePageStack({
   design,
   profile,
+  letter = null,
   displayWidth,
   gap = 20,
   showBadges = true,
+  mode = 'screen',
   idPrefix,
   onPageCount,
+  onLayout,
   onSelect,
   onMeasureHeader,
   onMeasureLayout,
   measureOnly = false,
 }: Props) {
   const measureRef = useRef<HTMLDivElement>(null);
-  const [pages, setPages] = useState<Page[]>([{ offset: 0, height: 0, topMargin: 0 }]);
-  // Last reported band geometry, so we only fire onMeasureHeader on a real change
-  // (otherwise reporting → store update → re-render → re-measure would loop).
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [pages, setPages] = useState<Page[]>([{ offset: 0, height: 0, topMargin: 0, visible: [] }]);
+  // Last reported geometry, so callbacks only fire on a real change (otherwise
+  // reporting -> store update -> re-render -> re-measure would loop).
   const lastReported = useRef<MeasuredHeaderMetrics | null>(null);
-  // Same idempotency guard for the per-role body spacing manifest.
   const lastReportedLayout = useRef<MeasuredLayoutMetrics | null>(null);
 
+  const paper = paperOf(design);
+  const { widthPx: nativeW, heightPx: nativeH } = PAPER_SIZES[paper];
   const { top: marginTop, bottom: marginBottom } = resumeVerticalMarginsPx(design);
   const hasBand = resumeHasHeaderBand(design);
-  const nativePageH = RESUME_REF_WIDTH * LETTER_RATIO;
 
   useLayoutEffect(() => {
     const root = measureRef.current;
@@ -124,11 +148,10 @@ export function ResumePageStack({
       const band = rootEl.querySelector('[data-header-band]') as HTMLElement | null;
       let next: MeasuredHeaderMetrics;
       if (!band) {
-        next = { band_pt: null, gap_pt: null, measured_at_px: RESUME_REF_WIDTH };
+        next = { band_pt: null, gap_pt: null, measured_at_px: nativeW };
       } else {
         const bandRect = band.getBoundingClientRect();
         const bandBottom = bandRect.bottom - rootTopPx;
-        // First content block after the band (the band itself is a [data-block]).
         let firstTop = Infinity;
         for (const el of Array.from(rootEl.querySelectorAll('[data-block]')) as HTMLElement[]) {
           if (el === band || band.contains(el)) continue;
@@ -136,26 +159,16 @@ export function ResumePageStack({
           if (top > bandBottom - 1 && top < firstTop) firstTop = top;
         }
         const gapPx = firstTop === Infinity ? null : Math.max(0, firstTop - bandBottom);
-        // Clamp absurd geometry. Do NOT null band_pt, a null pin lets dxpdf size the
-        // first-page header from nested contact tables, which can grow past the page
-        // and shove the Technical two-column body onto page 2 (blank page-1 body).
-        const twoCol = design.layout.columns === 2;
-        const bandCap = twoCol ? 110 : 220;
-        const gapCap = twoCol ? 16 : 48;
         const rawBand = round1(bandRect.height / PT_TO_PX);
         const rawGap = gapPx == null ? null : round1(gapPx / PT_TO_PX);
         next = {
-          band_pt: Math.min(rawBand, bandCap),
-          gap_pt: rawGap == null ? null : Math.min(rawGap, gapCap),
-          measured_at_px: RESUME_REF_WIDTH,
+          band_pt: Math.min(rawBand, 220),
+          gap_pt: rawGap == null ? null : Math.min(rawGap, 48),
+          measured_at_px: nativeW,
         };
       }
       const prev = lastReported.current;
-      const changed =
-        !prev ||
-        !nearlyEqual(prev.band_pt, next.band_pt) ||
-        !nearlyEqual(prev.gap_pt, next.gap_pt);
-      if (changed) {
+      if (!prev || !nearlyEqual(prev.band_pt, next.band_pt) || !nearlyEqual(prev.gap_pt, next.gap_pt)) {
         lastReported.current = next;
         onMeasureHeader(next);
       }
@@ -163,27 +176,14 @@ export function ResumePageStack({
 
     const reportLayoutMetrics = (rootEl: HTMLElement, rootTopPx: number) => {
       if (!onMeasureLayout) return;
-      // Flat, document-ordered list of the *leaf* gap-role blocks (a tagged element
-      // that contains no other tagged element). Measuring leaves keeps the vertical
-      // sequence non-nested, so `top - prevBottom` is the true inter-paragraph gap.
       const leaves = (Array.from(rootEl.querySelectorAll('[data-gap-role]')) as HTMLElement[])
         .filter((el) => !el.querySelector('[data-gap-role]'))
         .map((el) => {
           const r = el.getBoundingClientRect();
-          return {
-            role: el.dataset.gapRole ?? '',
-            top: r.top - rootTopPx,
-            bottom: r.bottom - rootTopPx,
-            left: r.left,
-            right: r.right,
-          };
+          return { role: el.dataset.gapRole ?? '', top: r.top - rootTopPx, bottom: r.bottom - rootTopPx, left: r.left, right: r.right };
         });
 
-      // In a 2-column layout the left and right column leaves interleave in `top`
-      // order, so a flat top-sort would measure meaningless cross-column "gaps".
-      // Partition leaves into columns by horizontal overlap, then measure vertical
-      // gaps only *within* a column. A single-column layout collapses to one group,
-      // so this is a no-op there.
+      // Measure vertical gaps only within a column (a 2-column layout interleaves).
       type Leaf = (typeof leaves)[number];
       const columns: { left: number; right: number; items: Leaf[] }[] = [];
       for (const leaf of leaves.slice().sort((a, b) => a.left - b.left)) {
@@ -209,47 +209,46 @@ export function ResumePageStack({
         for (let i = 1; i < ordered.length; i++) {
           const prev = ordered[i - 1];
           const cur = ordered[i];
-          const gap = Math.max(0, cur.top - prev.bottom) / PT_TO_PX;
+          const g = Math.max(0, cur.top - prev.bottom) / PT_TO_PX;
           const afterHeading = prev.role === 'heading';
           switch (cur.role) {
             case 'heading':
-              add('heading_before_pt', gap);
+              add('heading_before_pt', g);
               break;
             case 'skill':
-              add(afterHeading ? 'heading_after_pt' : 'skill_row_pt', gap);
+              add(afterHeading ? 'heading_after_pt' : 'skill_row_pt', g);
               break;
             case 'edu':
-              add(afterHeading ? 'heading_after_pt' : 'edu_entry_pt', gap);
+              add(afterHeading ? 'heading_after_pt' : 'edu_entry_pt', g);
               break;
             case 'cert':
-              add(afterHeading ? 'heading_after_pt' : 'cert_row_pt', gap);
+              add(afterHeading ? 'heading_after_pt' : 'cert_row_pt', g);
               break;
             case 'exp-head':
-              add(afterHeading ? 'heading_after_pt' : 'exp_company_pt', gap);
+              add(afterHeading ? 'heading_after_pt' : 'exp_company_pt', g);
               break;
             case 'exp-lead':
-              add('exp_lead_pt', gap);
+              add('exp_lead_pt', g);
               break;
             case 'exp-label':
-              add('exp_label_pt', gap);
+              add('exp_label_pt', g);
               break;
             case 'exp-bull':
-              add('exp_bullet_pt', gap);
+              add('exp_bullet_pt', g);
               break;
             case 'exp-used':
-              add('exp_used_pt', gap);
+              add('exp_used_pt', g);
               break;
           }
         }
       }
-      const next = { measured_at_px: RESUME_REF_WIDTH } as MeasuredLayoutMetrics;
+      const next = { measured_at_px: nativeW } as MeasuredLayoutMetrics;
       for (const f of LAYOUT_FIELDS) {
         const a = acc[f];
         next[f] = a ? round1(a.sum / a.n) : null;
       }
       const prev = lastReportedLayout.current;
-      const changed = !prev || LAYOUT_FIELDS.some((f) => !nearlyEqual(prev[f], next[f]));
-      if (changed) {
+      if (!prev || LAYOUT_FIELDS.some((f) => !nearlyEqual(prev[f], next[f]))) {
         lastReportedLayout.current = next;
         onMeasureLayout(next);
       }
@@ -261,134 +260,158 @@ export function ResumePageStack({
 
       reportHeaderMetrics(root, rootTop);
       reportLayoutMetrics(root, rootTop);
-
       if (measureOnly) return;
 
-      const ranges = (Array.from(root.querySelectorAll('[data-block]')) as HTMLElement[])
-        .map((el) => {
-          const r = el.getBoundingClientRect();
-          return { top: r.top - rootTop, bottom: r.bottom - rootTop };
-        })
-        .sort((a, b) => a.top - b.top);
+      const blocks = (Array.from(root.querySelectorAll('[data-block]')) as HTMLElement[]).map((el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          top: r.top - rootTop,
+          bottom: r.bottom - rootTop,
+          leaf: !el.querySelector('[data-block]'),
+          keepNext: KEEP_WITH_NEXT.has(el.dataset.gapRole ?? '') || el.hasAttribute('data-keep-next'),
+        };
+      });
+      const leaves = blocks.filter((b) => b.leaf && b.bottom - b.top > 0.5);
 
-      const result: Page[] = [];
+      const slices: Omit<Page, 'visible'>[] = [];
       let start = 0;
       let pageIndex = 0;
       let guard = 0;
       while (start < total - 0.5 && guard++ < 500) {
         const topMargin = pageIndex === 0 && hasBand ? 0 : marginTop;
-        const areaH = Math.max(40, nativePageH - topMargin - marginBottom);
+        const areaH = Math.max(40, nativeH - topMargin - marginBottom);
         let target = start + areaH;
-
         if (target >= total) {
-          result.push({ offset: start, height: total - start, topMargin });
-          start = total;
+          slices.push({ offset: start, height: total - start, topMargin });
           break;
         }
-
-        // If a block starts inside this page but crosses the bottom edge, move
-        // the break up to its top so it begins the next page. Blocks that begin
-        // before the page (taller than the area) are allowed to split instead.
+        // A leaf that starts on this page but crosses the bottom edge moves the break
+        // up to its top. A leaf taller than a whole page is allowed to split.
         let cut = Infinity;
-        for (const rg of ranges) {
-          if (rg.top > start + 0.5 && rg.top < target && rg.bottom > target + 0.5) {
-            cut = Math.min(cut, rg.top);
-          }
+        for (const b of leaves) {
+          if (b.top > start + 0.5 && b.top < target && b.bottom > target + 0.5) cut = Math.min(cut, b.top);
         }
         if (cut !== Infinity && cut > start + 0.5) target = cut;
-        if (target <= start) target = start + areaH; // always make progress
-
-        result.push({ offset: start, height: target - start, topMargin });
+        // Never end a page on a heading or label: carry it over with what it introduces.
+        for (let k = 0; k < 6; k++) {
+          let last: (typeof leaves)[number] | null = null;
+          for (const b of leaves) {
+            if (b.top >= start - 0.5 && b.bottom <= target + 0.5 && (!last || b.bottom > last.bottom)) last = b;
+          }
+          if (!last || !last.keepNext || last.top <= start + 0.5) break;
+          target = last.top;
+        }
+        if (target <= start) target = start + areaH;
+        slices.push({ offset: start, height: target - start, topMargin });
         start = target;
         pageIndex += 1;
       }
+      if (!slices.length) slices.push({ offset: 0, height: total, topMargin: hasBand ? 0 : marginTop });
 
-      setPages(result.length ? result : [{ offset: 0, height: total, topMargin: hasBand ? 0 : marginTop }]);
+      const next: Page[] = slices.map((s) => {
+        const end = s.offset + s.height;
+        return { ...s, visible: blocks.map((b) => b.top < end - 0.5 && b.bottom > s.offset + 0.5) };
+      });
+      setPages((prev) => (samePages(prev, next) ? prev : next));
     };
 
     compute();
     const ro = new ResizeObserver(compute);
     ro.observe(root);
     return () => ro.disconnect();
-  }, [design, profile, marginTop, marginBottom, hasBand, nativePageH, onMeasureHeader, onMeasureLayout, measureOnly]);
+  }, [design, profile, letter, marginTop, marginBottom, hasBand, nativeW, nativeH, onMeasureHeader, onMeasureLayout, measureOnly]);
 
-  const scale = displayWidth / RESUME_REF_WIDTH;
-  const dispW = displayWidth;
-  const dispH = nativePageH * scale;
+  // Hide every block that belongs to another page. Inherited `visibility` keeps
+  // non-block wrappers hidden too, and hidden content is never painted into the PDF.
+  useLayoutEffect(() => {
+    if (measureOnly) return;
+    pages.forEach((page, i) => {
+      const host = pageRefs.current[i];
+      if (!host) return;
+      host.style.visibility = 'hidden';
+      const els = host.querySelectorAll<HTMLElement>('[data-block]');
+      els.forEach((el, idx) => {
+        el.style.visibility = page.visible[idx] ? 'visible' : 'hidden';
+      });
+    });
+  }, [pages, measureOnly]);
+
   const pageCount = pages.length;
-
   useEffect(() => {
     if (measureOnly) return;
     onPageCount?.(pageCount);
-  }, [pageCount, onPageCount, measureOnly]);
+    onLayout?.({ pageCount, breaks: pages.slice(1).map((p) => Math.round(p.offset * 10) / 10), paper });
+  }, [pages, pageCount, paper, onPageCount, onLayout, measureOnly]);
 
-  if (measureOnly) {
-    return (
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed left-[-99999px] top-0 overflow-hidden opacity-0"
-        style={{ width: RESUME_REF_WIDTH }}
-      >
-        <div ref={measureRef}>
-          <ResumePreview design={design} profile={profile} paged />
+  const measurer = (
+    <div
+      aria-hidden="true"
+      className="resume-doc"
+      style={{ position: 'absolute', left: -99999, top: 0, width: nativeW, visibility: 'hidden', pointerEvents: 'none' }}
+    >
+      <div ref={measureRef}>
+        <ResumePreview design={design} profile={profile} letter={letter} paged />
+      </div>
+    </div>
+  );
+
+  if (measureOnly) return measurer;
+
+  const renderPageBody = (page: Page, i: number) => (
+    <div style={{ width: nativeW, height: nativeH, position: 'relative', overflow: 'hidden', background: '#ffffff' }}>
+      {/* Content viewport: this page's slice of the flow, inset by the top margin. */}
+      <div style={{ position: 'absolute', top: page.topMargin, left: 0, width: nativeW, height: page.height, overflow: 'hidden' }}>
+        <div
+          ref={(el) => {
+            pageRefs.current[i] = el;
+          }}
+          style={{ position: 'absolute', top: -page.offset, left: 0, width: nativeW }}
+        >
+          <ResumePreview design={design} profile={profile} letter={letter} paged />
         </div>
+      </div>
+    </div>
+  );
+
+  if (mode === 'print') {
+    return (
+      <div className="resume-doc">
+        {measurer}
+        {pages.map((page, i) => (
+          <div
+            key={i}
+            data-print-page={i + 1}
+            style={{ width: nativeW, height: nativeH, overflow: 'hidden', breakAfter: i < pages.length - 1 ? 'page' : 'auto' }}
+          >
+            {renderPageBody(page, i)}
+          </div>
+        ))}
       </div>
     );
   }
 
+  const dispW = displayWidth ?? nativeW;
+  const scale = dispW / nativeW;
+  const dispH = nativeH * scale;
   const interactive = Boolean(onSelect);
   const Frame = interactive ? 'button' : 'div';
 
   return (
-    <div className="flex w-full flex-col items-center" style={{ gap }}>
-      {/* Hidden measuring instance at native width (vertical margin removed). */}
-      <div
-        aria-hidden="true"
-        style={{ position: 'absolute', left: -99999, top: 0, width: RESUME_REF_WIDTH, visibility: 'hidden', pointerEvents: 'none' }}
-      >
-        <div ref={measureRef}>
-          <ResumePreview design={design} profile={profile} paged />
-        </div>
-      </div>
-
+    <div className="resume-doc flex w-full flex-col items-center" style={{ gap }}>
+      {measurer}
       {pages.map((page, i) => (
         <Frame
           key={i}
           id={idPrefix ? `${idPrefix}-${i}` : undefined}
           type={interactive ? 'button' : undefined}
           onClick={interactive ? () => onSelect?.(i) : undefined}
-          className={`relative block shrink-0 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-slate-900/10 ${
-            interactive ? 'cursor-pointer transition hover:ring-2 hover:ring-blue-400' : ''
+          className={`relative block shrink-0 overflow-hidden rounded-[3px] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_8px_24px_-8px_rgba(15,23,42,0.18)] ring-1 ring-black/5 ${
+            interactive ? 'cursor-pointer transition hover:ring-2 hover:ring-ring' : ''
           }`}
           style={{ width: dispW, height: dispH }}
         >
-          <div
-            style={{
-              width: RESUME_REF_WIDTH,
-              height: nativePageH,
-              transform: `scale(${scale})`,
-              transformOrigin: 'top left',
-              position: 'relative',
-              overflow: 'hidden',
-              background: '#ffffff',
-            }}
-          >
-            {/* Content viewport: clipped to this page's slice, inset by the top
-                margin. The white page shows through above and below as margins. */}
-            <div
-              style={{
-                position: 'absolute',
-                top: page.topMargin,
-                left: 0,
-                width: RESUME_REF_WIDTH,
-                height: page.height,
-                overflow: 'hidden',
-              }}
-            >
-              <div style={{ position: 'absolute', top: -page.offset, left: 0, width: RESUME_REF_WIDTH }}>
-                <ResumePreview design={design} profile={profile} paged />
-              </div>
-            </div>
+          <div style={{ width: nativeW, height: nativeH, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+            {renderPageBody(page, i)}
           </div>
           {showBadges && (
             <span className="resume-page-badge pointer-events-none absolute bottom-1.5 right-1.5 z-10 min-w-[1.125rem] rounded px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none tabular-nums shadow-sm">
@@ -399,4 +422,18 @@ export function ResumePageStack({
       ))}
     </div>
   );
+}
+
+function samePages(a: Page[], b: Page[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((p, i) => {
+    const q = b[i];
+    return (
+      Math.abs(p.offset - q.offset) < 0.25 &&
+      Math.abs(p.height - q.height) < 0.25 &&
+      p.topMargin === q.topMargin &&
+      p.visible.length === q.visible.length &&
+      p.visible.every((v, j) => v === q.visible[j])
+    );
+  });
 }

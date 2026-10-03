@@ -4,7 +4,7 @@ import { brandChipGradient, card, headingText, mutedText } from '../../ui/tokens
 
 interface PageHeaderProps {
   icon: LucideIcon;
-  /** Tailwind gradient classes for the icon chip, e.g. "from-sky-500 to-indigo-600". */
+  /** Tailwind gradient classes for the icon chip. Defaults to the brand blue chip. */
   gradient?: string;
   title: string;
   description: string;

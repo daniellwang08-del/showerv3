@@ -34,6 +34,7 @@ import { profileToForm } from '@/utils/profileFormData';
 import { validateProfileForSave } from '@/utils/profileValidation';
 import { mergeResumeImport, type ResumeDraft } from '@/utils/resumeMerge';
 import { ONBOARDING_STEPS, readOnboarding, writeOnboarding, type OnboardingStatus } from './onboardingState';
+import { NaoWordmark } from '@/components/brand/NaoLogo';
 
 const STEP_LABELS = ['Résumé', 'Essentials', 'Preferences', 'First jobs'];
 const ESSENTIAL_FIELDS = [
@@ -116,10 +117,7 @@ export function OnboardingPage({
     <div className="flex min-h-dvh flex-col bg-background">
       <PageTitle title="Get started" />
       <header className="flex h-14 shrink-0 items-center justify-between px-4 sm:px-6">
-        <div className="flex items-center gap-2">
-          <img src="/nao-logo.png" alt="" className="h-6 w-auto" />
-          <span className="text-[15px] font-semibold tracking-tight">NAO</span>
-        </div>
+        <NaoWordmark className="h-[18px] text-foreground" />
         <Button variant="ghost" size="sm" onClick={() => leave('skipped', '/app')}>
           Skip for now
         </Button>

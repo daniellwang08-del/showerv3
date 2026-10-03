@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { STEPS } from './landingData';
 import { STEP_VISUALS } from './landingMedia';
-import { LANDING_CONTAINER, SectionHeading, SectionShell } from './landingUi';
+import { LANDING_CONTAINER, SectionHeading, SectionShell, TonedImage } from './landingUi';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 
 export function HowItWorksSection() {
@@ -50,30 +50,30 @@ export function HowItWorksSection() {
                     type="button"
                     onClick={() => setActive(index)}
                     aria-pressed={selected}
-                    className={`group relative flex w-full flex-col overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left transition duration-500 ${
+                    className={`group relative flex w-full flex-col overflow-hidden rounded-2xl border px-3.5 py-3.5 text-left transition duration-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6F9BFF]/70 ${
                       selected
-                        ? 'border-sky-300/40 bg-sky-400/12 shadow-[0_0_32px_-12px_rgba(56,189,248,0.7)]'
-                        : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
+                        ? 'border-[#6F9BFF]/40 bg-[#3D74FF]/10'
+                        : 'border-white/10 bg-[#070B1C] hover:border-white/20'
                     }`}
                   >
                     {selected ? (
                       <span
                         aria-hidden="true"
-                        className={`landing-step-progress pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-sky-400 to-indigo-400 ${
+                        className={`landing-step-progress pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-[#6F9BFF] ${
                           paused ? '[animation-play-state:paused]' : ''
                         }`}
                       />
                     ) : null}
                     <span
                       className={`text-[11px] font-black tabular-nums tracking-[0.16em] ${
-                        selected ? 'text-sky-200' : 'text-white/30'
+                        selected ? 'text-[#BFD6FF]' : 'text-white/50'
                       }`}
                     >
                       {item.step}
                     </span>
                     <span
                       className={`mt-1.5 text-[13px] font-black leading-snug ${
-                        selected ? 'text-white' : 'text-white/55'
+                        selected ? 'text-white' : 'text-white/65'
                       }`}
                     >
                       {item.title}
@@ -84,34 +84,27 @@ export function HowItWorksSection() {
             })}
           </ol>
 
-          <div className="mt-5 grid overflow-hidden rounded-[28px] border border-white/10 bg-white/[0.04] backdrop-blur-xl lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+          <div className="mt-5 grid overflow-hidden rounded-[28px] border border-white/10 bg-[#070B1C] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
             <div className="flex flex-col justify-center p-7 sm:p-10">
-              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-sky-200/80">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#BFD6FF]">
                 Stage {step.step}
               </p>
               <h3 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-3xl">
                 {step.title}
               </h3>
-              <p className="mt-4 max-w-xl text-pretty text-[15px] leading-relaxed text-white/60">
+              <p className="mt-4 max-w-xl text-pretty text-[15px] leading-relaxed text-white/65">
                 {step.body}
               </p>
-              <p className="mt-6 text-[11px] font-bold uppercase tracking-[0.14em] text-sky-200/70">
+              <p className="mt-6 text-[11px] font-bold uppercase tracking-[0.14em] text-white/55">
                 {step.detail}
               </p>
             </div>
 
             {visual ? (
               <figure className="relative min-h-[16rem] overflow-hidden sm:min-h-[20rem]">
-                <img
-                  key={visual.src}
-                  src={visual.src}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  className="landing-ken-burns absolute inset-0 h-full w-full object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-r from-[#070b16] via-[#070b16]/25 to-transparent lg:from-transparent" />
-                <figcaption className="absolute bottom-5 left-5 rounded-full border border-white/15 bg-[#05070f]/70 px-3.5 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white backdrop-blur-md">
+                <TonedImage key={visual.src} src={visual.src} className="absolute inset-0" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#070B1C] via-transparent to-transparent lg:bg-gradient-to-r" />
+                <figcaption className="absolute bottom-5 left-5 rounded-full border border-white/15 bg-[#04060F]/80 px-3.5 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white">
                   {visual.caption}
                 </figcaption>
               </figure>

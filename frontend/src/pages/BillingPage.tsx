@@ -27,15 +27,16 @@ function getStripe(publishableKey: string): Promise<Stripe | null> {
   }
   return stripeCache.promise;
 }
-import {
-  brandChipGradient,
-  btnPrimary,
-  btnSecondary,
-  card,
-  headingText,
-  mutedText,
-  pagePad,
-} from '../ui/tokens';
+import { pagePad } from '../ui/tokens';
+
+const card = 'rounded-2xl border bg-card text-card-foreground shadow-sm';
+const headingText = 'text-foreground';
+const mutedText = 'text-muted-foreground';
+const btnBase =
+  'inline-flex h-10 items-center justify-center gap-1.5 rounded-xl px-3.5 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
+const btnBrand = `${btnBase} bg-brand text-brand-foreground shadow-sm hover:bg-brand/90`;
+const btnSecondary = `${btnBase} border bg-background text-foreground hover:bg-muted`;
+const btnCurrent = `${btnBase} border border-brand/30 bg-brand-soft text-brand disabled:opacity-100`;
 
 function errorDetail(err: unknown, fallback: string): string {
   const detail =
@@ -82,9 +83,7 @@ function CurrentPlanBanner({
     <section className={`p-4 sm:p-5 ${card}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${brandChipGradient} text-white shadow-sm`}
-          >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
             <CheckCircle2 size={20} />
           </div>
           <div className="min-w-0">
@@ -94,8 +93,8 @@ function CurrentPlanBanner({
                 <span
                   className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                     subscription.is_active
-                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
-                      : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
+                      ? 'bg-status-ready/10 text-status-ready'
+                      : 'bg-status-preparing/10 text-status-preparing'
                   }`}
                 >
                   {statusLabel}
@@ -135,16 +134,23 @@ function PlanCard({
   disabled: boolean;
   onSubscribe: (slug: PlanSlug) => void;
 }) {
+  const buttonClass = currentActive ? btnCurrent : highlighted ? btnBrand : btnSecondary;
   return (
     <section
       className={`relative flex flex-col p-5 ${card} ${
-        highlighted ? 'ring-2 ring-sky-400 dark:ring-sky-500/60' : ''
+        currentActive
+          ? 'border-brand ring-1 ring-brand'
+          : highlighted
+            ? 'border-brand/50'
+            : ''
       }`}
     >
-      {highlighted ? (
-        <span
-          className={`absolute -top-2.5 left-5 inline-flex items-center gap-1 rounded-full bg-gradient-to-r ${brandChipGradient} px-2.5 py-0.5 text-[11px] font-semibold text-white shadow-sm`}
-        >
+      {currentActive ? (
+        <span className="absolute -top-2.5 left-5 inline-flex items-center gap-1 rounded-full bg-brand px-2.5 py-0.5 text-[11px] font-semibold text-brand-foreground shadow-sm">
+          <CheckCircle2 size={11} /> Your plan
+        </span>
+      ) : highlighted ? (
+        <span className="absolute -top-2.5 left-5 inline-flex items-center gap-1 rounded-full bg-brand px-2.5 py-0.5 text-[11px] font-semibold text-brand-foreground shadow-sm">
           <Sparkles size={11} /> Best value
         </span>
       ) : null}
@@ -161,7 +167,7 @@ function PlanCard({
 
       <button
         type="button"
-        className={btnPrimary}
+        className={buttonClass}
         disabled={busy || disabled || !plan.available || currentActive}
         onClick={() => onSubscribe(plan.slug)}
       >
@@ -207,7 +213,7 @@ function EmbeddedCheckoutPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/60 p-4 backdrop-blur-sm sm:p-6"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-label={`Subscribe to the ${planName} plan`}
@@ -221,7 +227,7 @@ function EmbeddedCheckoutPanel({
             type="button"
             onClick={onClose}
             aria-label="Close checkout"
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${mutedText} hover:bg-slate-100 dark:hover:bg-slate-800`}
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${mutedText} transition hover:bg-muted hover:text-foreground`}
           >
             <X size={16} />
           </button>
@@ -324,19 +330,19 @@ export function BillingPage() {
         />
 
         {checkoutStatus === 'success' ? (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-400/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+          <div className="flex items-center gap-2 rounded-xl border border-status-ready/30 bg-status-ready/10 px-3 py-2 text-sm text-foreground [&>svg]:text-status-ready">
             <CheckCircle2 size={16} className="shrink-0" />
             Payment received. Your subscription is being activated…
           </div>
         ) : null}
         {checkoutStatus === 'cancelled' ? (
-          <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-200">
+          <div className="flex items-center gap-2 rounded-xl border border-status-preparing/30 bg-status-preparing/10 px-3 py-2 text-sm text-foreground [&>svg]:text-status-preparing">
             <AlertCircle size={16} className="shrink-0" />
             Checkout cancelled. You have not been charged.
           </div>
         ) : null}
         {error ? (
-          <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-400/30 dark:bg-rose-500/10 dark:text-rose-300">
+          <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             <AlertCircle size={16} className="shrink-0" />
             {error}
           </div>

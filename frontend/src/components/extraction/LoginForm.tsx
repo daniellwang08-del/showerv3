@@ -112,7 +112,7 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
           <button
             type="button"
             onClick={() => setShowPassword((s) => !s)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-white/55 transition-colors hover:text-sky-300"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded text-white/50 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6F9BFF]/70"
             aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -120,7 +120,7 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
         </div>
       </div>
 
-      <label className="group flex w-fit cursor-pointer select-none items-center gap-2.5 text-sm font-semibold text-white/65">
+      <label className="group flex w-fit cursor-pointer select-none items-center gap-2.5 text-sm font-medium text-white/70">
         <span className="relative inline-flex h-5 w-5 items-center justify-center">
           <input
             type="checkbox"
@@ -128,7 +128,7 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
             onChange={(e) => setRemember(e.target.checked)}
             className="peer sr-only"
           />
-          <span className="absolute inset-0 rounded-md border border-white/25 bg-white/10 shadow-inner backdrop-blur-md transition-all duration-200 group-hover:border-white/45 peer-checked:border-sky-300 peer-checked:bg-gradient-to-br peer-checked:from-sky-400 peer-checked:to-indigo-500 peer-checked:shadow-[0_0_10px_rgba(56,189,248,0.55)] peer-focus-visible:ring-2 peer-focus-visible:ring-sky-400/60 peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-transparent" />
+          <span className="absolute inset-0 rounded-md border border-white/25 bg-white/[0.04] transition-colors duration-200 group-hover:border-white/45 peer-checked:border-[#2C5BF5] peer-checked:bg-[#2C5BF5] peer-focus-visible:ring-2 peer-focus-visible:ring-[#6F9BFF]/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[#070B1C]" />
           <Check
             size={13}
             strokeWidth={3.5}
@@ -141,16 +141,15 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
       {error && <p className={errorBoxClass}>{error}</p>}
 
       <button className={primaryButtonClass} type="submit" disabled={loading}>
-        <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
         <span className="relative">{loading ? 'Signing in…' : 'Continue to workspace'}</span>
       </button>
 
-      <p className="text-center text-sm text-white/45">
+      <p className="text-center text-sm text-white/60">
         New here?{' '}
         <button
           type="button"
           onClick={onSwitchToSignup}
-          className="font-bold text-sky-300 transition hover:text-sky-200"
+          className="rounded font-semibold text-[#9DB9FF] transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6F9BFF]/70"
         >
           Create a free account
         </button>

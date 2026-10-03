@@ -32,13 +32,28 @@ import { formatFlexibleDate, formatFlexiblePeriod } from '../../utils/flexibleDa
 
 export const PT_TO_PX = 1.3333;
 
-/** Maps a designed font family to the bundled web font actually rendered, so the live
- *  preview uses the exact same typeface as the generated .docx/PDF. Carlito is the
- *  metric-compatible, OFL-licensre ed stand-in for Calibri that LibreOffice renders. */
+/** Maps a designed font family to the bundled face that is actually rendered (see
+ *  `styles/resumeFonts.css`). The studio and the server-side PDF renderer load the
+ *  same files, so glyph metrics, line wraps and page breaks are identical. Every face
+ *  except EB Garamond is metric-compatible with the original, so the .docx keeps the
+ *  original family name without reflowing. */
 export const RESUME_FONT_RENDER: Record<string, string> = {
-  Calibri: 'Carlito',
-  Carlito: 'Carlito',
+  Calibri: 'NAO Carlito',
+  Carlito: 'NAO Carlito',
+  Arial: 'NAO Liberation Sans',
+  Helvetica: 'NAO Liberation Sans',
+  'Times New Roman': 'NAO Liberation Serif',
+  Cambria: 'NAO Caladea',
+  Georgia: 'NAO Gelasio',
+  Garamond: 'NAO EB Garamond',
 };
+
+/** A cover letter rendered with the resume's letterhead and summary styling. */
+export interface CoverLetterBody {
+  title?: string;
+  /** Paragraphs in order; a single `\n` inside one is a soft line break. */
+  paragraphs: string[];
+}
 
 interface ResumePreviewProps {
   design: ResumeDesign;
@@ -46,6 +61,8 @@ interface ResumePreviewProps {
   /** When true, the vertical page margin is omitted so the paginator can add a
    *  real top/bottom margin to every page. Horizontal margins stay intact. */
   paged?: boolean;
+  /** Render a cover letter (letterhead + one titled body) instead of resume sections. */
+  letter?: CoverLetterBody | null;
 }
 
 /** Vertical page margins (top/bottom) in CSS px, shared with the paginator. */
@@ -275,18 +292,23 @@ export function SummaryBlock({
   text,
   marginTop = 0,
   tagBlock = false,
+  title,
+  paragraphs,
 }: {
   design: ResumeDesign;
   style: SummaryStyle;
   text: string;
   marginTop?: number;
   tagBlock?: boolean;
+  title?: string;
+  /** Multi-paragraph body (cover letters); each paragraph is its own page-break unit. */
+  paragraphs?: string[];
 }) {
   const { typography: t, colors: c } = design;
   const base = t.base_font_pt * PT_TO_PX;
   const st = style ?? DEFAULT_SUMMARY_STYLE;
   const upper = t.uppercase_headings;
-  const titleText = SECTION_LABELS.summary;
+  const titleText = title ?? SECTION_LABELS.summary;
   const padPx = st.pad_pt * PT_TO_PX;
   const onSolid = st.surface === 'solid' || st.surface === 'gradient';
   const hasBox = st.surface !== 'none' || st.border !== 'none';
@@ -339,18 +361,28 @@ export function SummaryBlock({
     lineHeight: 1.2,
   };
 
-  const bodyP = (
-    <p
-      style={{
-        margin: 0,
-        lineHeight: t.line_spacing,
-        textAlign: st.align,
-        fontStyle: st.italic ? 'italic' : 'normal',
-        color: textColor,
-      }}
-    >
-      {renderRich(text)}
-    </p>
+  const pStyle: CSSProperties = {
+    margin: 0,
+    lineHeight: t.line_spacing,
+    textAlign: st.align,
+    fontStyle: st.italic ? 'italic' : 'normal',
+    color: textColor,
+  };
+  const bodyP = paragraphs ? (
+    <div>
+      {paragraphs.map((para, i) => (
+        <p key={i} data-block style={{ ...pStyle, marginTop: i === 0 ? 0 : base * t.line_spacing * 0.75 }}>
+          {para.split('\n').map((line, j) => (
+            <span key={j}>
+              {j > 0 && <br />}
+              {line}
+            </span>
+          ))}
+        </p>
+      ))}
+    </div>
+  ) : (
+    <p style={pStyle}>{renderRich(text)}</p>
   );
 
   function stdTitle(center: boolean): ReactNode {
@@ -1006,7 +1038,7 @@ export function ExperienceBlock({
 
     return (
       <div key={idx} style={wrap}>
-        <div data-block>
+        <div data-block data-keep-next>
           <div data-gap-role="exp-head">{header}</div>
           {projectEl}
           {introEl}
@@ -1334,7 +1366,7 @@ export function CertificatesBlock({
   return Object.keys(surface).length > 0 ? <div data-block style={surface}>{content}</div> : <div data-block>{content}</div>;
 }
 
-export function ResumePreview({ design, profile, paged = false }: ResumePreviewProps) {
+export function ResumePreview({ design, profile, paged = false, letter = null }: ResumePreviewProps) {
   const { typography: t, colors: c, layout: l, sections: opts } = design;
   const base = t.base_font_pt * PT_TO_PX;
   const mSides = marginSides(l);
@@ -1361,7 +1393,7 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
   const education = asArray<EducationBlock>(profile?.education).filter((e) => (e.university_name || e.degree));
   const certificates = asArray<CertificateBlock>(profile?.certificates).filter((e) => e.name);
 
-  const order = l.section_order.filter((s) => !l.hidden_sections.includes(s));
+  const order: SectionId[] = letter ? ['summary'] : l.section_order.filter((s) => !l.hidden_sections.includes(s));
   const visible = order.filter((s) => {
     if (s === 'skills') return skills.length > 0;
     if (s === 'education') return education.length > 0;
@@ -1402,6 +1434,8 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
             }
             marginTop={l.section_gap_pt * PT_TO_PX}
             tagBlock
+            title={letter ? letter.title ?? 'Cover Letter' : undefined}
+            paragraphs={letter ? letter.paragraphs : undefined}
           />
         );
       case 'skills':
@@ -1582,7 +1616,7 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
   const sidebarSet: SectionId[] = ['skills', 'education', 'certificates'];
 
   const body =
-    l.columns === 2 ? (
+    l.columns === 2 && !letter ? (
       <div style={{ display: 'flex', gap: 18, minWidth: 0, maxWidth: '100%' }}>
         {/* minWidth:0 is required so flex children can shrink below content intrinsic width */}
         <div style={{ flex: '0 0 34%', minWidth: 0, maxWidth: '34%' }}>

@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { PanelLeft, Search, Sparkles } from 'lucide-react';
+import { NaoWordmark } from '@/components/brand/NaoLogo';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -38,6 +39,7 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const setPaletteOpen = useShellStore((s) => s.setPaletteOpen);
   const toggleAssistant = useShellStore((s) => s.toggleAssistant);
   const assistantDocked = useShellStore((s) => s.assistantDocked);
+  const setAssistantDocked = useShellStore((s) => s.setAssistantDocked);
   const recentJobs = useShellStore((s) => s.recentJobs);
   const timeline = useAgentStore((s) => s.timeline);
   const openJob = useOpenJob();
@@ -62,8 +64,7 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
             }}
             className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-1 hover:bg-sidebar-accent"
           >
-            <img src="/nao-logo.png" alt="" className="h-6 w-auto" />
-            <span className="truncate text-[15px] font-semibold tracking-tight">NAO</span>
+            <NaoWordmark className="h-[18px] text-foreground" />
             {variant === 'admin' ? (
               <span className="rounded-md bg-brand-soft px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-brand uppercase">
                 Admin
@@ -168,7 +169,7 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
                 key={p.id}
                 type="button"
                 onClick={() => {
-                  navigate('/app/assistant');
+                  setAssistantDocked(true);
                   onNavigate?.();
                 }}
                 className="flex h-8 w-full items-center rounded-lg px-2.5 text-left text-sm text-sidebar-foreground/90 hover:bg-sidebar-accent"

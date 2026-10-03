@@ -244,6 +244,8 @@ class ResumeDocument(Base):
     # For tailored resumes: the role this was tailored to (used for naming/labels).
     job_title = Column(String(300), nullable=True)
     company = Column(String(300), nullable=True)
+    # Cover letter body generated alongside a tailored resume (plain text, blank-line paragraphs).
+    cover_letter = deferred(Column(Text, nullable=True))
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

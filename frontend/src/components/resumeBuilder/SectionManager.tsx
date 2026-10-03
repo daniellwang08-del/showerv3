@@ -19,7 +19,7 @@ export function SectionManager({
 
   return (
     <ControlCard icon={ListOrdered} title="Sections">
-      <p className="-mt-1 text-xs text-slate-500">Reorder and toggle sections. Summary and experience are required.</p>
+      <p className="-mt-1 text-xs text-muted-foreground">Reorder and toggle sections. Summary and experience are required.</p>
       <ul className="space-y-1.5">
         {order.map((id, idx) => {
           const isHidden = hidden.has(id);
@@ -28,7 +28,7 @@ export function SectionManager({
             <li
               key={id}
               className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${
-                isHidden ? 'border-slate-100 bg-slate-50' : 'border-slate-200 bg-white'
+                isHidden ? 'border-dashed bg-muted/60' : 'bg-card'
               }`}
             >
               <div className="flex flex-col">
@@ -36,7 +36,7 @@ export function SectionManager({
                   type="button"
                   disabled={idx === 0}
                   onClick={() => onMove(id, -1)}
-                  className="text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                  className="text-muted-foreground hover:text-foreground disabled:opacity-30"
                   aria-label="Move up"
                 >
                   <ChevronUp size={14} />
@@ -45,13 +45,13 @@ export function SectionManager({
                   type="button"
                   disabled={idx === order.length - 1}
                   onClick={() => onMove(id, 1)}
-                  className="text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                  className="text-muted-foreground hover:text-foreground disabled:opacity-30"
                   aria-label="Move down"
                 >
                   <ChevronDown size={14} />
                 </button>
               </div>
-              <span className={`flex-1 text-sm font-medium ${isHidden ? 'text-slate-400' : 'text-slate-800'}`}>
+              <span className={`flex-1 text-sm font-medium ${isHidden ? 'text-muted-foreground' : 'text-foreground'}`}>
                 {SECTION_LABELS[id]}
               </span>
               <button
@@ -61,10 +61,10 @@ export function SectionManager({
                 title={locked ? 'Required section' : isHidden ? 'Show section' : 'Hide section'}
                 className={`rounded-md p-1 transition ${
                   locked
-                    ? 'cursor-not-allowed text-slate-300'
+                    ? 'cursor-not-allowed text-muted-foreground/50'
                     : isHidden
-                      ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'
-                      : 'text-blue-600 hover:bg-blue-50'
+                      ? 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      : 'text-brand hover:bg-brand-soft'
                 }`}
               >
                 {isHidden ? <EyeOff size={15} /> : <Eye size={15} />}

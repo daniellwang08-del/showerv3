@@ -143,13 +143,13 @@ export function FlexibleDatePicker({
 
   const triggerCls =
     size === 'md'
-      ? 'blue-outline-input w-full rounded-xl px-4 py-2.5 text-sm font-medium text-slate-900 outline-none transition'
-      : 'block w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-800 outline-none transition focus:border-blue-400';
+      ? 'w-full rounded-xl border border-input bg-card focus:border-ring focus:ring-3 focus:ring-ring/30 dark:bg-input/30 px-4 py-2.5 text-sm font-medium text-foreground outline-none transition'
+      : 'block w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none transition focus:border-ring';
 
   const checkCls =
     size === 'md'
-      ? 'h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500'
-      : 'h-3 w-3 rounded border-slate-300 text-blue-600 focus:ring-blue-500';
+      ? 'h-3.5 w-3.5 rounded border-border text-brand focus:ring-ring/50'
+      : 'h-3 w-3 rounded border-border text-brand focus:ring-ring/50';
 
   const dim = daysInMonth(viewYear, viewMonth);
   const firstDow = new Date(viewYear, viewMonth - 1, 1).getDay(); // 0 Sun
@@ -158,7 +158,7 @@ export function FlexibleDatePicker({
     <div className={`relative ${className}`} ref={rootRef}>
       {(label || allowPresent) && (
         <div className="mb-1 flex items-center justify-between gap-2">
-          {label ? <div className="text-xs font-medium text-slate-600">{label}</div> : <span />}
+          {label ? <div className="text-xs font-medium text-muted-foreground">{label}</div> : <span />}
           {allowPresent ? (
             <label className="inline-flex cursor-pointer items-center gap-1.5 select-none">
               <input
@@ -167,7 +167,7 @@ export function FlexibleDatePicker({
                 onChange={(e) => setPresent(e.target.checked)}
                 className={checkCls}
               />
-              <span className={`font-semibold text-slate-600 ${size === 'md' ? 'text-xs' : 'text-[11px]'}`}>
+              <span className={`font-semibold text-muted-foreground ${size === 'md' ? 'text-xs' : 'text-[11px]'}`}>
                 Present
               </span>
             </label>
@@ -183,38 +183,38 @@ export function FlexibleDatePicker({
         }}
         disabled={isPresent}
         className={`${triggerCls} flex items-center justify-between gap-2 text-left${
-          hasError ? ' ring-2 ring-rose-200/90 border-rose-400/70' : ''
-        }${isPresent ? ' cursor-default bg-slate-50 text-slate-700' : ''}`}
+          hasError ? ' ring-2 ring-destructive/30 border-destructive/40' : ''
+        }${isPresent ? ' cursor-default bg-muted/50 text-foreground' : ''}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-disabled={isPresent}
       >
         <span className="inline-flex min-w-0 items-center gap-2">
-          <CalendarDays className={`shrink-0 text-slate-400 ${size === 'md' ? 'h-4 w-4' : 'h-3.5 w-3.5'}`} />
-          <span className={`truncate ${hasValue ? 'text-slate-900' : 'text-slate-400'}`}>{triggerLabel}</span>
+          <CalendarDays className={`shrink-0 text-muted-foreground ${size === 'md' ? 'h-4 w-4' : 'h-3.5 w-3.5'}`} />
+          <span className={`truncate ${hasValue ? 'text-foreground' : 'text-muted-foreground'}`}>{triggerLabel}</span>
         </span>
         {!isPresent ? (
-          <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition ${open ? 'rotate-180' : ''}`} />
         ) : null}
       </button>
 
       {open && !isPresent && (
-        <div className="glass-panel absolute left-0 z-40 mt-1.5 w-[280px] rounded-xl border border-blue-200/80 p-3 shadow-xl">
+        <div className="absolute bg-popover text-popover-foreground left-0 z-40 mt-1.5 w-[280px] rounded-xl border border-border p-3 shadow-xl">
           {allowPresent ? (
-            <label className="mb-2.5 flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 select-none">
+            <label className="mb-2.5 flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2 select-none">
               <input
                 type="checkbox"
                 checked={false}
                 onChange={(e) => {
                   if (e.target.checked) setPresent(true);
                 }}
-                className="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                className="h-3.5 w-3.5 rounded border-border text-brand focus:ring-ring/50"
               />
-              <span className="text-xs font-semibold text-slate-700">Present (current role)</span>
+              <span className="text-xs font-semibold text-foreground">Present (current role)</span>
             </label>
           ) : null}
 
-          <div className="mb-2.5 inline-flex w-full rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+          <div className="mb-2.5 inline-flex w-full rounded-lg border border-border bg-muted/50 p-0.5">
             {([
               ['year', 'Year'],
               ['month', 'Month'],
@@ -225,7 +225,7 @@ export function FlexibleDatePicker({
                 type="button"
                 onClick={() => switchPrecision(id)}
                 className={`flex-1 rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                  precision === id ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  precision === id ? 'bg-card text-brand shadow-sm' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {text}
@@ -237,7 +237,7 @@ export function FlexibleDatePicker({
             <button
               type="button"
               onClick={() => setViewYear((y) => y - 1)}
-              className="rounded-lg border border-blue-200/80 bg-white/90 p-1.5 text-slate-600 hover:bg-blue-50"
+              className="rounded-lg border border-border bg-card p-1.5 text-muted-foreground hover:bg-brand-soft"
               aria-label="Previous year"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -249,8 +249,8 @@ export function FlexibleDatePicker({
               }}
               className={`rounded-lg px-2 py-1 text-sm font-bold transition ${
                 precision === 'year' && parsed?.year === viewYear && parsed.precision === 'year'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-800 hover:bg-blue-50'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-foreground hover:bg-brand-soft'
               }`}
             >
               {viewYear}
@@ -258,7 +258,7 @@ export function FlexibleDatePicker({
             <button
               type="button"
               onClick={() => setViewYear((y) => y + 1)}
-              className="rounded-lg border border-blue-200/80 bg-white/90 p-1.5 text-slate-600 hover:bg-blue-50"
+              className="rounded-lg border border-border bg-card p-1.5 text-muted-foreground hover:bg-brand-soft"
               aria-label="Next year"
             >
               <ChevronRight className="h-4 w-4" />
@@ -281,10 +281,10 @@ export function FlexibleDatePicker({
                     onClick={() => pickMonth(monthNum)}
                     className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
                       isActive
-                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-400/40'
+                        ? 'bg-primary text-primary-foreground shadow-sm'
                         : isView
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-white/90 text-slate-700 hover:bg-blue-50'
+                          ? 'bg-brand-soft text-brand'
+                          : 'bg-card/90 text-foreground hover:bg-brand-soft'
                     }`}
                   >
                     {m}
@@ -296,7 +296,7 @@ export function FlexibleDatePicker({
 
           {precision === 'day' && (
             <div className="mb-1">
-              <div className="mb-1 grid grid-cols-7 gap-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              <div className="mb-1 grid grid-cols-7 gap-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
                   <span key={d}>{d}</span>
                 ))}
@@ -318,8 +318,8 @@ export function FlexibleDatePicker({
                       onClick={() => pickDay(day)}
                       className={`rounded-md py-1.5 text-xs font-semibold transition ${
                         isActive
-                          ? 'bg-blue-600 text-white shadow-sm'
-                          : 'text-slate-700 hover:bg-blue-50'
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'text-foreground hover:bg-brand-soft'
                       }`}
                     >
                       {day}
@@ -340,7 +340,7 @@ export function FlexibleDatePicker({
                   setOpen(false);
                 }
               }}
-              className="font-semibold text-slate-500 hover:text-slate-700"
+              className="font-semibold text-muted-foreground hover:text-foreground"
             >
               {allowPresent ? 'Present' : 'Clear'}
             </button>
@@ -354,7 +354,7 @@ export function FlexibleDatePicker({
                 setViewMonth(t.getMonth() + 1);
                 setOpen(false);
               }}
-              className="font-semibold text-blue-700 hover:text-blue-800"
+              className="font-semibold text-brand hover:text-brand/80"
             >
               {precision === 'year' ? 'This year' : precision === 'month' ? 'This month' : 'Today'}
             </button>

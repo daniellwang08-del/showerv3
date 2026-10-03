@@ -28,6 +28,7 @@ from app.services.resume_design_compiler import (
     _render_header_band,
     _render_summary,
     _strip_headers,
+    apply_paper_size,
 )
 
 COVER_LETTER_BODY_TAG = "{{COVER_LETTER_BODY}}"
@@ -49,6 +50,7 @@ def compile_cover_letter_design(design: ResumeDesign, user: User, out_path: Path
 
     doc = Document()
     section = doc.sections[0]
+    apply_paper_size(section, design)
     section.top_margin = Pt(design.layout.m_top)
     section.bottom_margin = Pt(design.layout.m_bottom)
     section.left_margin = Pt(design.layout.m_left)

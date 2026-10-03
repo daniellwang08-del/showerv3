@@ -44,7 +44,7 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
   const canSubmit = emailValid && passwordValid && confirmValid && !loading;
 
   const strengthLabel = ['Too weak', 'Weak', 'Fair', 'Good', 'Strong'][passedCount];
-  const strengthColor = ['bg-rose-500', 'bg-rose-500', 'bg-amber-400', 'bg-sky-400', 'bg-emerald-400'][passedCount];
+  const strengthColor = ['bg-rose-500', 'bg-rose-500', 'bg-amber-400', 'bg-[#6F9BFF]', 'bg-emerald-400'][passedCount];
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -70,13 +70,13 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
   };
 
   const emailBorder = !emailTouched
-    ? 'border-white/25 focus:border-sky-300/70'
+    ? 'border-white/15 focus:border-[#6F9BFF]'
     : emailValid
       ? 'border-emerald-400/60 focus:border-emerald-300'
       : 'border-rose-400/60 focus:border-rose-300';
 
   const confirmBorder = !confirmTouched
-    ? 'border-white/25 focus:border-sky-300/70'
+    ? 'border-white/15 focus:border-[#6F9BFF]'
     : confirmValid
       ? 'border-emerald-400/60 focus:border-emerald-300'
       : 'border-rose-400/60 focus:border-rose-300';
@@ -131,7 +131,7 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
           <button
             type="button"
             onClick={() => setShowPassword((s) => !s)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-white/55 transition-colors hover:text-sky-300"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded text-white/50 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6F9BFF]/70"
             aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -140,7 +140,7 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
 
         {/* Strength meter + live requirement checklist */}
         {password.length > 0 && (
-          <div className="mt-2.5 rounded-xl border border-white/15 bg-white/5 p-3 backdrop-blur-md">
+          <div className="mt-2.5 rounded-xl border border-white/10 bg-white/[0.03] p-3">
             <div className="mb-2 flex items-center gap-2">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/15">
                 <div
@@ -148,8 +148,8 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
                   style={{ width: `${(passedCount / passwordChecks.length) * 100}%` }}
                 />
               </div>
-              <span className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-blue-50">
-                <ShieldCheck size={13} className="text-sky-300" />
+              <span className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-white/80">
+                <ShieldCheck size={13} className="text-[#9DB9FF]" />
                 {strengthLabel}
               </span>
             </div>
@@ -158,7 +158,7 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
                 <li
                   key={c.label}
                   className={`flex items-center gap-2 text-xs font-medium transition-colors ${
-                    c.ok ? 'text-emerald-300' : 'text-blue-100/70'
+                    c.ok ? 'text-emerald-300' : 'text-white/60'
                   }`}
                 >
                   <span
@@ -209,16 +209,15 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
       {error && <p className={errorBoxClass}>{error}</p>}
 
       <button className={primaryButtonClass} type="submit" disabled={!canSubmit}>
-        <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
         <span className="relative">{loading ? 'Creating account…' : 'Create free account'}</span>
       </button>
 
-      <p className="text-center text-sm text-white/45">
+      <p className="text-center text-sm text-white/60">
         Already have a workspace?{' '}
         <button
           type="button"
           onClick={onSwitchToLogin}
-          className="font-bold text-sky-300 transition hover:text-sky-200"
+          className="rounded font-semibold text-[#9DB9FF] transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6F9BFF]/70"
         >
           Sign in
         </button>

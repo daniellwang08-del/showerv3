@@ -120,22 +120,22 @@ export function DocumentPreviewModal({
       aria-label={title}
     >
       <div
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-[3px]"
+        className="absolute inset-0 bg-black/60 backdrop-blur-[3px]"
         onClick={onClose}
         aria-hidden="true"
       />
 
       <div
-        className="relative z-10 flex h-[min(90dvh,960px)] w-full max-w-[1500px] animate-modal-in flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10 sm:w-[min(94vw,1500px)]"
+        className="relative z-10 flex h-[min(90dvh,960px)] w-full max-w-[1500px] animate-modal-in flex-col overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-2xl ring-1 ring-border sm:w-[min(94vw,1500px)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2.5 sm:px-4 sm:py-3">
-          <h2 className="min-w-0 truncate text-sm font-semibold text-slate-800">{title}</h2>
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2.5 sm:px-4 sm:py-3">
+          <h2 className="min-w-0 truncate text-sm font-semibold text-foreground">{title}</h2>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => void handleDownload()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground hover:border-brand/30 hover:bg-brand-soft hover:text-brand"
             >
               <Download size={14} />
               Download
@@ -146,8 +146,8 @@ export function DocumentPreviewModal({
                 onClick={handleCopyPath}
                 className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition ${
                   copied
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                    ? 'border-status-ready/30 bg-status-ready/10 text-foreground'
+                    : 'border-border bg-card text-muted-foreground hover:border-input hover:bg-muted/50'
                 }`}
               >
                 {copied ? <CheckCircle2 size={14} /> : <ClipboardCopy size={14} />}
@@ -158,19 +158,19 @@ export function DocumentPreviewModal({
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-destructive/20 hover:text-destructive hover:border-destructive/30"
             >
               <X size={16} />
             </button>
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 bg-slate-100">
+        <div className="min-h-0 flex-1 bg-muted">
           {loading && (
             <BrandedLoader compact label="Loading document…" className="h-full" />
           )}
           {error && !loading && (
-            <div className="flex h-full items-center justify-center px-6 text-sm text-red-600">
+            <div className="flex h-full items-center justify-center px-6 text-sm text-destructive">
               {error}
             </div>
           )}
@@ -178,7 +178,7 @@ export function DocumentPreviewModal({
             <iframe
               title={title}
               src={blobUrl}
-              className="h-full w-full border-0 bg-white"
+              className="h-full w-full border-0 bg-card"
             />
           )}
         </div>

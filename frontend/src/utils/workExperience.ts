@@ -11,8 +11,9 @@ const INLINE_BULLET_RE = /[•▪‣◦∙·●]/;
 const LINE_BULLET_RE = /^\s*(?:[-*▪‣◦∙·●]|\d+[.)])\s+(.*)$/;
 const PROJECT_LINE_RE = /^\s*project\s*[:\-\u2013\u2014]\s*/i;
 
-/** A line that starts a markdown-style bullet (`-`, `*`, `•`, or `1.`). */
-export const EDITOR_BULLET_LINE_RE = /^\s*(?:[-*▪‣◦∙·●•]|\d+[.)])\s*(.*)$/;
+/** A line that starts a markdown-style bullet (`-`, `*`, `•`, or `1.`). `*` and numbered
+ *  markers need a following space so `**bold** lead` and `3.5x faster` stay text. */
+export const EDITOR_BULLET_LINE_RE = /^\s*(?:[-▪‣◦∙·●•]|(?:\*|\d+[.)])(?=\s|$))\s*(.*)$/;
 
 export function splitProjectLead(lead: string): { projectTitle: string | null; description: string } {
   const segments = lead.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -105,7 +106,7 @@ export function ensureBulletLines(text: string): string {
     .map((ln) => {
       if (!ln.trim()) return '- ';
       if (lineIsBullet(ln)) {
-        const body = ln.replace(/^\s*(?:[-*▪‣◦∙·●•]|\d+[.)])\s*/, '');
+        const body = ln.replace(/^\s*(?:[-▪‣◦∙·●•]|(?:\*|\d+[.)])(?=\s|$))\s*/, '');
         return `- ${body}`;
       }
       return `- ${ln.replace(/^\s+/, '')}`;

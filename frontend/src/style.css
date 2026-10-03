@@ -1,38 +1,6 @@
 @import "tailwindcss";
 @import "./styles/theme.css";
-
-/* Carlito: metric-compatible with Calibri and OFL-licensed, so the resume preview can
-   render with the EXACT same font the generated .docx/PDF uses (LibreOffice ships /
-   embeds Carlito). Bundling it guarantees identical glyph metrics -> identical line
-   wrapping and page breaks between the live preview and the rendered PDF. */
-@font-face {
-  font-family: "Carlito";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/Carlito-Regular.ttf") format("truetype");
-}
-@font-face {
-  font-family: "Carlito";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/Carlito-Bold.ttf") format("truetype");
-}
-@font-face {
-  font-family: "Carlito";
-  font-style: italic;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/Carlito-Italic.ttf") format("truetype");
-}
-@font-face {
-  font-family: "Carlito";
-  font-style: italic;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/Carlito-BoldItalic.ttf") format("truetype");
-}
+@import "./styles/resumeFonts.css";
 
 /* Enable class-based dark mode (toggled by adding `.dark` to <html>). */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -41,7 +9,7 @@
   --app-bg: #f8fafc;
   --app-card: #ffffff;
   --app-input: #ffffff;
-  --app-fg: #1a1b1f;
+  --app-fg: #0b0f19;
   --app-muted: #64748b;
 }
 
@@ -73,10 +41,10 @@ html.dark { color-scheme: dark; }
 
 .dark {
   /* Neutral scale inverted: light surfaces -> dark, dark text -> light */
-  --color-slate-50: #1a1b1f;
-  --color-slate-100: #25262b;
-  --color-slate-200: #36383e;
-  --color-slate-300: #4b4e55;
+  --color-slate-50: #0b0f19;
+  --color-slate-100: #161b28;
+  --color-slate-200: #252c3d;
+  --color-slate-300: #3a4256;
   --color-slate-400: #64748b;
   --color-slate-500: #94a3b8;
   --color-slate-600: #cbd5e1;
@@ -85,10 +53,10 @@ html.dark { color-scheme: dark; }
   --color-slate-900: #f8fafc;
   --color-slate-950: #ffffff;
 
-  --color-gray-50: #1a1b1f;
-  --color-gray-100: #25262b;
-  --color-gray-200: #36383e;
-  --color-gray-300: #4b4e55;
+  --color-gray-50: #0b0f19;
+  --color-gray-100: #161b28;
+  --color-gray-200: #252c3d;
+  --color-gray-300: #3a4256;
   --color-gray-400: #64748b;
   --color-gray-500: #94a3b8;
   --color-gray-600: #cbd5e1;
@@ -97,9 +65,9 @@ html.dark { color-scheme: dark; }
   --color-gray-900: #f8fafc;
   --color-gray-950: #ffffff;
 
-  --color-zinc-50: #1a1b1f;
-  --color-zinc-100: #25262b;
-  --color-zinc-200: #36383e;
+  --color-zinc-50: #0b0f19;
+  --color-zinc-100: #161b28;
+  --color-zinc-200: #252c3d;
   --color-zinc-800: #eef2f7;
   --color-zinc-900: #f8fafc;
 
@@ -127,9 +95,9 @@ html.dark { color-scheme: dark; }
 }
 
 html.dark {
-  --app-bg: #17181b;
-  --app-card: #1d1e22;
-  --app-input: #1a1b1f;
+  --app-bg: #080c15;
+  --app-card: #0e121d;
+  --app-input: #0b0f19;
   --app-fg: #e2e8f0;
   --app-muted: #94a3b8;
 }
@@ -145,50 +113,50 @@ html.dark {
 
 /* White surfaces -> dark glass. text-white / border-white are left intact
    (they sit on accent buttons and glass), so only backgrounds change. */
-.dark .bg-white { background-color: #1d1e22; }
-.dark .bg-white\/95 { background-color: rgba(29, 30, 34, 0.95); }
-.dark .bg-white\/90 { background-color: rgba(29, 30, 34, 0.9); }
-.dark .bg-white\/85 { background-color: rgba(29, 30, 34, 0.85); }
-.dark .bg-white\/80 { background-color: rgba(29, 30, 34, 0.8); }
-.dark .bg-white\/75 { background-color: rgba(29, 30, 34, 0.75); }
-.dark .bg-white\/70 { background-color: rgba(29, 30, 34, 0.7); }
-.dark .bg-white\/65 { background-color: rgba(29, 30, 34, 0.65); }
-.dark .bg-white\/60 { background-color: rgba(29, 30, 34, 0.6); }
-.dark .bg-white\/55 { background-color: rgba(37, 38, 43, 0.5); }
-.dark .bg-white\/50 { background-color: rgba(29, 30, 34, 0.5); }
-.dark .bg-white\/45 { background-color: rgba(37, 38, 43, 0.42); }
-.dark .bg-white\/40 { background-color: rgba(37, 38, 43, 0.4); }
-.dark .bg-white\/35 { background-color: rgba(37, 38, 43, 0.34); }
-.dark .bg-white\/30 { background-color: rgba(37, 38, 43, 0.3); }
-.dark .bg-white\/25 { background-color: rgba(37, 38, 43, 0.25); }
-.dark .bg-white\/20 { background-color: rgba(37, 38, 43, 0.2); }
-.dark .hover\:bg-white:hover { background-color: #26272c; }
+.dark .bg-white { background-color: #0e121d; }
+.dark .bg-white\/95 { background-color: rgba(14, 18, 29, 0.95); }
+.dark .bg-white\/90 { background-color: rgba(14, 18, 29, 0.9); }
+.dark .bg-white\/85 { background-color: rgba(14, 18, 29, 0.85); }
+.dark .bg-white\/80 { background-color: rgba(14, 18, 29, 0.8); }
+.dark .bg-white\/75 { background-color: rgba(14, 18, 29, 0.75); }
+.dark .bg-white\/70 { background-color: rgba(14, 18, 29, 0.7); }
+.dark .bg-white\/65 { background-color: rgba(14, 18, 29, 0.65); }
+.dark .bg-white\/60 { background-color: rgba(14, 18, 29, 0.6); }
+.dark .bg-white\/55 { background-color: rgba(22, 27, 40, 0.5); }
+.dark .bg-white\/50 { background-color: rgba(14, 18, 29, 0.5); }
+.dark .bg-white\/45 { background-color: rgba(22, 27, 40, 0.42); }
+.dark .bg-white\/40 { background-color: rgba(22, 27, 40, 0.4); }
+.dark .bg-white\/35 { background-color: rgba(22, 27, 40, 0.34); }
+.dark .bg-white\/30 { background-color: rgba(22, 27, 40, 0.3); }
+.dark .bg-white\/25 { background-color: rgba(22, 27, 40, 0.25); }
+.dark .bg-white\/20 { background-color: rgba(22, 27, 40, 0.2); }
+.dark .hover\:bg-white:hover { background-color: #1b2131; }
 /* Focus-driven white surfaces (e.g. the agent composer that flips to bg-white
    on focus-within) are a distinct utility class, so the .bg-white override
    above does not reach them - map them to the same dark surface. */
-.dark .focus-within\:bg-white:focus-within { background-color: #26272c; }
-.dark .focus\:bg-white:focus { background-color: #26272c; }
+.dark .focus-within\:bg-white:focus-within { background-color: #1b2131; }
+.dark .focus\:bg-white:focus { background-color: #1b2131; }
 
 /* Modal/overlay scrims use bg-slate-900/xx; keep them dark (the palette
    inversion would otherwise flip them to a light wash). */
-.dark .bg-slate-900\/40 { background-color: rgba(10, 10, 12, 0.55); }
-.dark .bg-slate-900\/45 { background-color: rgba(10, 10, 12, 0.58); }
-.dark .bg-slate-900\/50 { background-color: rgba(10, 10, 12, 0.62); }
-.dark .bg-slate-900\/55 { background-color: rgba(10, 10, 12, 0.65); }
-.dark .bg-slate-900\/60 { background-color: rgba(10, 10, 12, 0.7); }
+.dark .bg-slate-900\/40 { background-color: rgba(3, 5, 12, 0.55); }
+.dark .bg-slate-900\/45 { background-color: rgba(3, 5, 12, 0.58); }
+.dark .bg-slate-900\/50 { background-color: rgba(3, 5, 12, 0.62); }
+.dark .bg-slate-900\/55 { background-color: rgba(3, 5, 12, 0.65); }
+.dark .bg-slate-900\/60 { background-color: rgba(3, 5, 12, 0.7); }
 
 /* Solid dark buttons (bg-slate-900 + text-white) and dark code blocks
    (bg-slate-900 + text-slate-100) must stay dark with light text. */
 .dark .bg-slate-900.text-white,
 .dark .bg-slate-800.text-white {
-  background-color: #25262b;
+  background-color: #161b28;
 }
 .dark .bg-slate-900.text-white:hover,
 .dark .bg-slate-800.text-white:hover {
-  background-color: #36383e;
+  background-color: #252c3d;
 }
 .dark .bg-slate-900.text-slate-100 {
-  background-color: #17181b;
+  background-color: #080c15;
   color: #e2e8f0;
 }
 
@@ -197,20 +165,20 @@ html.dark {
    like the solid bg-slate-900 buttons above. Without this, the neutral palette
    remap flips the 700/800/900 gradient stops to near-white and a white icon on
    top disappears into a white box. */
-.dark .from-slate-700 { --tw-gradient-from: #25262b var(--tw-gradient-from-position); }
-.dark .from-slate-800 { --tw-gradient-from: #25262b var(--tw-gradient-from-position); }
-.dark .from-slate-900 { --tw-gradient-from: #1a1b1f var(--tw-gradient-from-position); }
-.dark .via-slate-800 { --tw-gradient-via: #25262b var(--tw-gradient-via-position); }
-.dark .via-slate-900 { --tw-gradient-via: #1a1b1f var(--tw-gradient-via-position); }
-.dark .to-slate-800 { --tw-gradient-to: #25262b var(--tw-gradient-to-position); }
-.dark .to-slate-900 { --tw-gradient-to: #1a1b1f var(--tw-gradient-to-position); }
+.dark .from-slate-700 { --tw-gradient-from: #161b28 var(--tw-gradient-from-position); }
+.dark .from-slate-800 { --tw-gradient-from: #161b28 var(--tw-gradient-from-position); }
+.dark .from-slate-900 { --tw-gradient-from: #0b0f19 var(--tw-gradient-from-position); }
+.dark .via-slate-800 { --tw-gradient-via: #161b28 var(--tw-gradient-via-position); }
+.dark .via-slate-900 { --tw-gradient-via: #0b0f19 var(--tw-gradient-via-position); }
+.dark .to-slate-800 { --tw-gradient-to: #161b28 var(--tw-gradient-to-position); }
+.dark .to-slate-900 { --tw-gradient-to: #0b0f19 var(--tw-gradient-to-position); }
 
 /* White gradient stops -> dark surface so light-to-white gradients stay dark. */
-.dark .from-white { --tw-gradient-from: #1d1e22 var(--tw-gradient-from-position); }
-.dark .via-white { --tw-gradient-via: #1d1e22 var(--tw-gradient-via-position); }
-.dark .to-white { --tw-gradient-to: #1d1e22 var(--tw-gradient-to-position); }
-.dark .from-white\/90 { --tw-gradient-from: rgba(29, 30, 34, 0.9) var(--tw-gradient-from-position); }
-.dark .to-white\/90 { --tw-gradient-to: rgba(29, 30, 34, 0.9) var(--tw-gradient-to-position); }
+.dark .from-white { --tw-gradient-from: #0e121d var(--tw-gradient-from-position); }
+.dark .via-white { --tw-gradient-via: #0e121d var(--tw-gradient-via-position); }
+.dark .to-white { --tw-gradient-to: #0e121d var(--tw-gradient-to-position); }
+.dark .from-white\/90 { --tw-gradient-from: rgba(14, 18, 29, 0.9) var(--tw-gradient-from-position); }
+.dark .to-white\/90 { --tw-gradient-to: rgba(14, 18, 29, 0.9) var(--tw-gradient-to-position); }
 
 /* Blue chips stay as background-only overrides (blue 50/100 vars double as
    light text on the auth + agent surfaces, so they are NOT remapped above). */
@@ -227,7 +195,7 @@ html.dark {
 .dark .via-blue-100 { --tw-gradient-via: rgba(59, 130, 246, 0.2) var(--tw-gradient-via-position); }
 .dark .from-blue-50, .dark .from-blue-50\/40, .dark .from-blue-50\/50, .dark .from-blue-50\/70, .dark .from-blue-50\/80, .dark .from-blue-50\/90, .dark .from-blue-50\/95, .dark .hover\:from-blue-50:hover { --tw-gradient-from: rgba(59, 130, 246, 0.12) var(--tw-gradient-from-position); }
 .dark .to-blue-50\/80, .dark .to-blue-50\/50, .dark .hover\:to-blue-50\/80:hover { --tw-gradient-to: rgba(59, 130, 246, 0.14) var(--tw-gradient-to-position); }
-.dark .to-white\/60 { --tw-gradient-to: rgba(29, 30, 34, 0.6) var(--tw-gradient-to-position); }
+.dark .to-white\/60 { --tw-gradient-to: rgba(14, 18, 29, 0.6) var(--tw-gradient-to-position); }
 .dark .border-blue-200 { border-color: rgba(59, 130, 246, 0.35); }
 .dark .border-blue-100\/70, .dark .border-blue-100\/80, .dark .border-blue-100\/60 { border-color: rgba(59, 130, 246, 0.22); }
 /* Dim the brighter 200 accent borders (200 is not remapped above). */
@@ -1139,7 +1107,7 @@ html.dark {
 }
 
 /* Dashboard battery / pipeline tracks default to a light slate fill; darken them */
-.dark .today-battery-track { background-color: rgba(37, 38, 43, 0.7) !important; }
+.dark .today-battery-track { background-color: rgba(22, 27, 40, 0.7) !important; }
 
 /* Native form controls and date pickers */
 .dark input,
@@ -1157,12 +1125,12 @@ html.dark {
 .dark select option,
 .dark select optgroup {
   color: #e2e8f0;
-  background-color: #1a1b1f;
+  background-color: #0b0f19;
 }
 
 html:not(.dark) select option,
 html:not(.dark) select optgroup {
-  color: #1a1b1f;
+  color: #0b0f19;
   background-color: #ffffff;
 }
 
@@ -1171,7 +1139,7 @@ html:not(.dark) select optgroup {
 
 /* Custom glass surfaces (auth panels) */
 .dark .glass-panel {
-  background: linear-gradient(160deg, rgba(37, 38, 43, 0.86), rgba(26, 27, 31, 0.8));
+  background: linear-gradient(160deg, rgba(22, 27, 40, 0.86), rgba(26, 27, 31, 0.8));
   border-color: rgba(59, 130, 246, 0.25);
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
@@ -1179,13 +1147,13 @@ html:not(.dark) select optgroup {
 /* Blue outline input */
 .dark .blue-outline-input {
   border-color: rgba(59, 130, 246, 0.4);
-  background: rgba(29, 30, 34, 0.85);
+  background: rgba(14, 18, 29, 0.85);
   color: #e2e8f0;
 }
 .dark .blue-outline-input:focus {
   border-color: rgba(96, 165, 250, 0.95);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
-  background: #1a1b1f;
+  background: #0b0f19;
 }
 
 /* Range sliders: native unfilled track is often stark white in dark mode.
@@ -1200,7 +1168,7 @@ html:not(.dark) select optgroup {
 .dark input[type='range']::-webkit-slider-runnable-track {
   height: 0.375rem;
   border-radius: 9999px;
-  background: #36383e;
+  background: #252c3d;
 }
 
 .dark input[type='range']::-webkit-slider-thumb {
@@ -1210,7 +1178,7 @@ html:not(.dark) select optgroup {
   height: 1rem;
   margin-top: -0.3125rem;
   border-radius: 9999px;
-  border: 2px solid #17181b;
+  border: 2px solid #080c15;
   background: currentColor;
   box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35);
   cursor: pointer;
@@ -1219,7 +1187,7 @@ html:not(.dark) select optgroup {
 .dark input[type='range']::-moz-range-track {
   height: 0.375rem;
   border-radius: 9999px;
-  background: #36383e;
+  background: #252c3d;
   border: none;
 }
 
@@ -1233,7 +1201,7 @@ html:not(.dark) select optgroup {
   width: 1rem;
   height: 1rem;
   border-radius: 9999px;
-  border: 2px solid #17181b;
+  border: 2px solid #080c15;
   background: currentColor;
   box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35);
   cursor: pointer;
@@ -1300,15 +1268,6 @@ html.landing-theme body {
   scroll-margin-top: 7rem;
 }
 
-.landing-grid {
-  background-image:
-    linear-gradient(to right, rgba(148, 163, 184, 0.07) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
-  background-size: 64px 64px;
-  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
-  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 30%, transparent 75%);
-}
-
 .landing-reveal {
   opacity: 0;
   transform: translateY(20px);
@@ -1321,215 +1280,27 @@ html.landing-theme body {
   transform: none;
 }
 
-@keyframes landing-aurora {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: 0.55; }
-  50%      { transform: translate3d(0, -26px, 0) scale(1.1); opacity: 0.85; }
-}
-.landing-aurora { animation: landing-aurora 13s ease-in-out infinite; }
-.landing-aurora-delay { animation-delay: -6s; }
-
 @keyframes landing-marquee {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
 }
-.landing-marquee { animation: landing-marquee 34s linear infinite; }
+.landing-marquee { animation: landing-marquee 44s linear infinite; }
+.landing-marquee-fast { animation: landing-marquee 40s linear infinite; }
 .landing-marquee-mask {
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
   mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
 }
-
-@keyframes landing-float {
-  0%, 100% { transform: translate3d(0, 0, 0); }
-  50%      { transform: translate3d(0, -8px, 0); }
-}
-.landing-float { animation: landing-float 7s ease-in-out infinite; }
-.landing-float-slow { animation: landing-float 9s ease-in-out infinite; animation-delay: -3s; }
-
-@keyframes landing-score-arc {
-  from { stroke-dasharray: 0 999; }
-}
-.landing-score-arc { animation: landing-score-arc 1.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
-
-@keyframes landing-pulse-dot {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(110, 231, 183, 0.6); }
-  50%      { opacity: 0.65; box-shadow: 0 0 0 5px rgba(110, 231, 183, 0); }
-}
-.landing-pulse-dot { animation: landing-pulse-dot 2s ease-in-out infinite; }
-
-@keyframes landing-progress {
-  0%   { width: 18%; }
-  100% { width: 76%; }
-}
-.landing-progress { animation: landing-progress 2.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
-
-.landing-marquee-fast { animation: landing-marquee 28s linear infinite; }
-
-@keyframes landing-ken-burns {
-  0%   { transform: scale(1.05); }
-  50%  { transform: scale(1.14) translate(-1.2%, -0.8%); }
-  100% { transform: scale(1.05); }
-}
-.landing-ken-burns { animation: landing-ken-burns 22s ease-in-out infinite; }
-
-@keyframes landing-word-swap {
-  0%   { opacity: 0; transform: translateY(10px); filter: blur(6px); }
-  12%  { opacity: 1; transform: none; filter: none; }
-  84%  { opacity: 1; transform: none; filter: none; }
-  100% { opacity: 0; transform: translateY(-8px); filter: blur(6px); }
-}
-.landing-word-swap { animation: landing-word-swap 2.8s ease-in-out both; }
-.landing-headline-cycle {
-  display: grid;
-  justify-items: start;
-  overflow: hidden;
-}
-.landing-headline-cycle > * {
-  grid-area: 1 / 1;
+.landing-marquee-mask:hover .landing-marquee {
+  animation-play-state: paused;
 }
 
-@keyframes landing-cta-pulse {
-  0%, 100% {
-    box-shadow: 0 14px 40px -12px rgba(37, 99, 235, 0.9), 0 0 0 0 rgba(56, 189, 248, 0.5);
-  }
-  50% {
-    box-shadow: 0 18px 55px -10px rgba(56, 189, 248, 0.95), 0 0 0 12px rgba(56, 189, 248, 0);
-  }
-}
-.landing-cta-pulse { animation: landing-cta-pulse 2.4s ease-in-out infinite; }
-.landing-cta-pulse::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
-  animation: landing-cta-shine 2.6s ease-in-out infinite;
-}
-@keyframes landing-cta-shine {
-  from { transform: translateX(-120%); }
-  to   { transform: translateX(120%); }
-}
-
-@keyframes landing-play {
-  0%, 100% { transform: scale(1); opacity: 0.75; }
-  50%      { transform: scale(1.12); opacity: 1; }
-}
-.landing-play-pulse { animation: landing-play 1.8s ease-in-out infinite; }
-
-@keyframes landing-scan {
-  from { transform: translateY(-30%); opacity: 0; }
-  12%  { opacity: 1; }
-  to   { transform: translateY(280%); opacity: 0; }
-}
-.landing-scanline {
-  background: linear-gradient(to bottom, transparent, rgba(125, 211, 252, 0.14), transparent);
-  height: 38%;
-  animation: landing-scan 5.5s linear infinite;
-}
-
-.landing-grain {
-  background-image: radial-gradient(rgba(255, 255, 255, 0.14) 0.6px, transparent 0.6px);
-  background-size: 3px 3px;
-  animation: landing-grain 0.35s steps(2) infinite;
-}
-@keyframes landing-grain {
-  0%   { transform: translate(0, 0); }
-  100% { transform: translate(-2px, 1px); }
-}
-
-.landing-pointer-glow {
-  --glow-x: 50%;
-  --glow-y: 28%;
-}
-.landing-pointer-glow::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: radial-gradient(
-    620px circle at var(--glow-x) var(--glow-y),
-    rgba(56, 189, 248, 0.16),
-    transparent 42%
-  );
-}
-
-@keyframes landing-orbit {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-10px); }
-}
-.landing-orbit { animation: landing-orbit 5.5s ease-in-out infinite; }
-.landing-orbit-1 { top: 2%; left: 0; animation-delay: 0s; }
-.landing-orbit-2 { top: 22%; right: 0; animation-delay: -1.1s; }
-.landing-orbit-3 { bottom: 26%; left: 0; animation-delay: -2.2s; }
-.landing-orbit-4 { top: -2%; right: 22%; animation-delay: -3s; }
-.landing-orbit-5 { bottom: 10%; right: 2%; animation-delay: -4s; }
-.landing-orbit-6 { top: 48%; left: 2%; animation-delay: -4.8s; }
-
-@keyframes landing-toast-copy {
-  from { opacity: 0; transform: translateY(10px); }
+/* Brand key art settles into place once on load. */
+@keyframes landing-horizon-rise {
+  from { opacity: 0; transform: translate3d(0, 3%, 0) scale(1.03); }
   to   { opacity: 1; transform: none; }
 }
-.landing-toast-copy { animation: landing-toast-copy 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
-
-@keyframes landing-ribbon-shine {
-  from { transform: translateX(-100%); }
-  to   { transform: translateX(180%); }
-}
-.landing-ribbon-shine {
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  animation: landing-ribbon-shine 4.2s ease-in-out infinite;
-}
-
-.landing-tilt {
-  transform: perspective(1400px) rotateX(7deg) rotateY(-9deg);
-  transform-style: preserve-3d;
-  transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.landing-tilt:hover {
-  transform: perspective(1400px) rotateX(0deg) rotateY(0deg) scale(1.02);
-}
-
-@keyframes landing-glow-pulse {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50%      { opacity: 0.95; transform: scale(1.06); }
-}
-.landing-glow-pulse { animation: landing-glow-pulse 5s ease-in-out infinite; }
-
-@keyframes landing-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-.landing-spin-slow { animation: landing-spin 5s linear infinite; }
-
-@keyframes landing-caret {
-  50% { opacity: 0; }
-}
-.landing-caret { animation: landing-caret 1s steps(1) infinite; }
-
-.landing-pipeline-line {
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    rgba(56, 189, 248, 0.55),
-    rgba(129, 140, 248, 0.35),
-    transparent
-  );
-  background-size: 100% 220%;
-  animation: landing-pipeline 5s linear infinite;
-}
-@keyframes landing-pipeline {
-  from { background-position: 0 -80%; }
-  to   { background-position: 0 180%; }
-}
-
-@keyframes landing-cta-orbit {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-.landing-cta-orbit {
-  background: conic-gradient(from 80deg, transparent 0 70%, rgba(125, 211, 252, 0.35), transparent 88%);
-  animation: landing-cta-orbit 10s linear infinite;
-  filter: blur(18px);
+.landing-horizon {
+  animation: landing-horizon-rise 1.8s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .landing-hero {
@@ -1541,9 +1312,45 @@ html.landing-theme body {
   min-height: 0;
 }
 
+@keyframes landing-score-arc {
+  from { stroke-dasharray: 0 999; }
+}
+.landing-score-arc { animation: landing-score-arc 1.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes landing-pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(111, 155, 255, 0.55); }
+  50%      { opacity: 0.7; box-shadow: 0 0 0 5px rgba(111, 155, 255, 0); }
+}
+.landing-pulse-dot { animation: landing-pulse-dot 2.4s ease-in-out infinite; }
+
+@keyframes landing-word-swap {
+  0%   { opacity: 0; transform: translateY(8px); }
+  12%  { opacity: 1; transform: none; }
+  84%  { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+.landing-word-swap { animation: landing-word-swap 2.8s ease-in-out both; }
+.landing-headline-cycle {
+  display: grid;
+  justify-items: start;
+  overflow: hidden;
+}
+.landing-headline-cycle > * {
+  grid-area: 1 / 1;
+}
+
+@keyframes landing-toast-copy {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
 .landing-dash-row {
   animation: landing-toast-copy 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+@keyframes landing-caret {
+  50% { opacity: 0; }
+}
+.landing-caret { animation: landing-caret 1s steps(1) infinite; }
 
 @keyframes landing-step-progress {
   from { transform: scaleX(0); }
@@ -1554,45 +1361,18 @@ html.landing-theme body {
   animation: landing-step-progress 4.2s linear both;
 }
 
-.landing-marquee-mask:hover .landing-marquee {
-  animation-play-state: paused;
-}
-
 @media (prefers-reduced-motion: reduce) {
   html.public-viewport { scroll-behavior: auto; }
   .landing-reveal { opacity: 1; transform: none; transition: none; }
-  .landing-aurora,
   .landing-marquee,
   .landing-marquee-fast,
-  .landing-float,
-  .landing-float-slow,
+  .landing-horizon,
   .landing-score-arc,
   .landing-pulse-dot,
-  .landing-progress,
-  .landing-ken-burns,
   .landing-word-swap,
-  .landing-cta-pulse,
-  .landing-play-pulse,
-  .landing-scanline,
-  .landing-grain,
-  .landing-orbit,
-  .landing-toast-copy,
-  .landing-ribbon-shine,
-  .landing-glow-pulse,
-  .landing-spin-slow,
+  .landing-dash-row,
   .landing-caret,
-  .landing-pipeline-line,
-  .landing-cta-orbit,
-  .landing-step-progress,
-  .landing-dash-row {
+  .landing-step-progress {
     animation: none !important;
-  }
-  .landing-cta-pulse::before,
-  .landing-pointer-glow::after {
-    display: none;
-  }
-  .landing-tilt,
-  .landing-tilt:hover {
-    transform: none;
   }
 }

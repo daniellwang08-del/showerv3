@@ -54,11 +54,27 @@ SIDEBAR_SECTIONS = {"skills", "education", "certificates"}
 # US Letter page width in EMU (8.5 in × 914_400 EMU/in = 612 pt). Used to place the
 # right-aligned date tab stop at the true right text edge so it matches the preview.
 _LETTER_WIDTH_EMU = 7_772_400
+_LETTER_HEIGHT_EMU = 10_058_400
+_A4_WIDTH_EMU = 7_560_310
+_A4_HEIGHT_EMU = 10_692_130
+
+
+def _page_width_emu(design: ResumeDesign) -> int:
+    return _A4_WIDTH_EMU if getattr(design.layout, "paper", "letter") == "a4" else _LETTER_WIDTH_EMU
+
+
+def apply_paper_size(section, design: ResumeDesign) -> None:
+    """Set the .docx page size to the design's paper (Letter or A4)."""
+    from docx.shared import Emu
+
+    a4 = getattr(design.layout, "paper", "letter") == "a4"
+    section.page_width = Emu(_A4_WIDTH_EMU if a4 else _LETTER_WIDTH_EMU)
+    section.page_height = Emu(_A4_HEIGHT_EMU if a4 else _LETTER_HEIGHT_EMU)
 
 
 def _page_usable_emu(design: ResumeDesign) -> int:
     """Full-page content width (page minus left/right margins) in EMU."""
-    return max(int(_LETTER_WIDTH_EMU - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
+    return max(int(_page_width_emu(design) - (design.layout.m_left + design.layout.m_right) * 12_700), 1_000_000)
 
 
 def _container_usable_emu(container: Any, design: ResumeDesign) -> int:
@@ -1152,7 +1168,7 @@ def _render_header(
                 # Preview stacked gap ≈ 2px (~1.5 pt); keep a 1 pt bottom margin.
                 _set_cell_margins(host, top=0, bottom=20, left=0, right=0)
                 if design.layout.header_align == "center":
-                    page_pt = _LETTER_WIDTH_EMU / 12_700.0
+                    page_pt = _page_width_emu(design) / 12_700.0
                     contain_tw = int(
                         round(
                             (
@@ -1180,7 +1196,7 @@ def _render_header(
         else:
             for i in range(1, len(col_widths)):
                 col_widths[i] += gap_tw
-            page_pt = _LETTER_WIDTH_EMU / 12_700.0
+            page_pt = _page_width_emu(design) / 12_700.0
             contain_tw = int(
                 round(
                     (page_pt - design.layout.hp_left - design.layout.hp_right - pad_left - pad_right)
@@ -2136,6 +2152,7 @@ def compile_design(
 
     doc = Document()
     section = doc.sections[0]
+    apply_paper_size(section, design)
     section.top_margin = Pt(design.layout.m_top)
     section.bottom_margin = Pt(design.layout.m_bottom)
     section.left_margin = Pt(design.layout.m_left)

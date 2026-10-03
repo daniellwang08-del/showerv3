@@ -147,10 +147,10 @@ const FILE_BADGE_META: { key: keyof ResumeBuildStatus; label: string; downloadTy
 ];
 
 function statusDotClass(status: string): string {
-  if (status === 'completed') return 'bg-emerald-500';
-  if (status === 'processing') return 'bg-amber-400 animate-pulse';
-  if (status === 'failed') return 'bg-red-500';
-  return 'bg-slate-300';
+  if (status === 'completed') return 'bg-status-ready';
+  if (status === 'processing') return 'bg-status-preparing animate-pulse';
+  if (status === 'failed') return 'bg-destructive';
+  return 'bg-border';
 }
 
 function ResumeBuildBadges({
@@ -167,7 +167,7 @@ function ResumeBuildBadges({
   const cg = build.content_generation_status;
   if (cg === 'pending' || cg === 'processing') {
     return (
-      <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-700 animate-pulse">
+      <span className="rounded-md border border-status-ready/30 bg-status-ready/10 px-2 py-1 text-[10px] font-medium text-foreground animate-pulse">
         Generating resume…
       </span>
     );
@@ -176,7 +176,7 @@ function ResumeBuildBadges({
     return (
       <div className="flex items-center gap-1.5">
         <span
-          className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-medium text-red-700"
+          className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] font-medium text-destructive"
           title={build.content_generation_error || 'Content generation failed'}
         >
           Resume generation failed
@@ -186,7 +186,7 @@ function ResumeBuildBadges({
             type="button"
             disabled={retrying}
             onClick={onRetry}
-            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10px] font-medium text-foreground hover:bg-muted/50 disabled:opacity-60"
           >
             <RefreshCw className={`h-3 w-3 ${retrying ? 'animate-spin' : ''}`} />
             {retrying ? 'Retrying…' : 'Retry'}
@@ -198,7 +198,7 @@ function ResumeBuildBadges({
   if (cg === 'skipped') {
     return (
       <span
-        className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-medium text-slate-600"
+        className="rounded-md border border-border bg-muted/50 px-2 py-1 text-[10px] font-medium text-muted-foreground"
         title={build.content_generation_error || 'Tailoring was skipped for this job'}
       >
         Tailoring skipped
@@ -246,12 +246,12 @@ function ResumeBuildBadges({
             title={`${label}: ${status}${isReady ? ' - click to download' : ''}`}
             className={`group relative flex h-7 items-center gap-1 rounded-md border px-1.5 text-[10px] font-medium leading-none transition-colors ${
               isReady
-                ? 'border-emerald-300/80 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer'
+                ? 'border-status-ready/40 bg-status-ready/10 text-foreground hover:bg-status-ready/20 cursor-pointer'
                 : status === 'processing'
-                  ? 'border-amber-300/80 bg-amber-50 text-amber-700 cursor-wait'
+                  ? 'border-status-preparing/40 bg-status-preparing/10 text-foreground cursor-wait'
                   : status === 'failed'
-                    ? 'border-red-300/80 bg-red-50 text-red-700 cursor-not-allowed'
-                    : 'border-slate-200 bg-slate-50 text-slate-400 cursor-default'
+                    ? 'border-destructive/40 bg-destructive/10 text-destructive cursor-not-allowed'
+                    : 'border-border bg-muted/50 text-muted-foreground cursor-default'
             }`}
           >
             <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusDotClass(status)}`} />
@@ -268,29 +268,29 @@ function ResumeBuildBadges({
 /** Large overall score - same band language as `MatchScoreChip` */
 function matchScoreHeroClass(score: number): string {
   if (score >= 75) {
-    return 'border border-emerald-300/95 bg-gradient-to-b from-emerald-100 to-emerald-50/95 text-emerald-900 shadow-md shadow-emerald-900/12';
+    return 'border border-status-ready/40 bg-status-ready/15 text-foreground shadow-md';
   }
   if (score >= 45) {
-    return 'border border-sky-300/90 bg-gradient-to-b from-sky-100 to-slate-50 text-sky-900 shadow-md shadow-sky-900/10';
+    return 'border border-brand/40 bg-brand-soft text-brand shadow-md';
   }
-  return 'border border-amber-300/95 bg-gradient-to-b from-amber-100 to-amber-50/95 text-amber-900 shadow-md shadow-amber-900/12';
+  return 'border border-status-preparing/40 bg-status-preparing/15 text-foreground shadow-md';
 }
 
 /** Per-dimension mini badges - mid-strength tints */
 function matchScoreDimensionBadgeClass(score: number): string {
   if (score >= 80) {
-    return 'border border-emerald-300/85 bg-gradient-to-b from-emerald-100 to-emerald-50 text-emerald-900 shadow-sm';
+    return 'border border-status-ready/40 bg-status-ready/10 text-foreground shadow-sm';
   }
   if (score >= 65) {
-    return 'border border-green-300/85 bg-gradient-to-b from-green-100 to-green-50 text-green-900 shadow-sm';
+    return 'border border-status-ready/40 bg-status-ready/10 text-foreground shadow-sm';
   }
   if (score >= 50) {
-    return 'border border-amber-300/85 bg-gradient-to-b from-amber-100 to-amber-50 text-amber-900 shadow-sm';
+    return 'border border-status-preparing/40 bg-status-preparing/10 text-foreground shadow-sm';
   }
   if (score >= 35) {
-    return 'border border-orange-300/85 bg-gradient-to-b from-orange-100 to-orange-50 text-orange-900 shadow-sm';
+    return 'border border-status-preparing/40 bg-status-preparing/10 text-foreground shadow-sm';
   }
-  return 'border border-red-300/85 bg-gradient-to-b from-red-100 to-red-50 text-red-900 shadow-sm';
+  return 'border border-destructive/40 bg-destructive/10 text-destructive shadow-sm';
 }
 
 function MetaTile({
@@ -307,21 +307,21 @@ function MetaTile({
 }) {
   return (
     <div
-      className={`flex items-start gap-3 rounded-xl border border-blue-200/55 bg-gradient-to-br from-white/90 to-blue-50/50 p-3 shadow-sm ring-1 ring-blue-100/40 transition hover:border-blue-300/70 hover:shadow-md ${
+      className={`flex items-start gap-3 rounded-xl border border-border bg-card p-3 shadow-sm transition hover:border-brand/40 hover:shadow-md ${
         wide ? 'sm:col-span-2' : ''
       }`}
     >
       <span
-        className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-100/90 text-blue-600 shadow-sm"
+        className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft/90 text-brand shadow-sm"
         aria-hidden
       >
         <Icon className="h-4 w-4" strokeWidth={2} />
       </span>
       <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-[#94a3b8]">
+        <div className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
           {label}
         </div>
-        <div className="min-w-0 text-sm font-medium leading-snug text-slate-800 dark:text-[#e2e8f0]">
+        <div className="min-w-0 text-sm font-medium leading-snug text-foreground">
           {children}
         </div>
       </div>
@@ -331,8 +331,8 @@ function MetaTile({
 
 function SectionLabel({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-2 font-semibold text-slate-600 dark:text-[#cbd5e1]">
-      <Icon className="h-4 w-4 shrink-0 text-blue-600 dark:text-[#93c5fd]" strokeWidth={2} aria-hidden />
+    <span className="inline-flex items-center gap-2 font-semibold text-muted-foreground">
+      <Icon className="h-4 w-4 shrink-0 text-brand" strokeWidth={2} aria-hidden />
       {children}
     </span>
   );
@@ -348,7 +348,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
               href={sourceUrl}
               target="_blank"
               rel="noreferrer"
-              className="break-all font-medium text-blue-600 hover:text-blue-800 hover:underline dark:text-[#93c5fd] dark:hover:text-[#bfdbfe]"
+              className="break-all font-medium text-brand hover:text-brand/80 hover:underline"
             >
               {sourceUrl}
             </a>
@@ -400,14 +400,14 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
       </div>
       <div>
         <SectionLabel icon={FileText}>Description</SectionLabel>
-        <div className="mt-2 max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-inner">
+        <div className="mt-2 max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-foreground shadow-inner">
           {data.description}
         </div>
       </div>
       {data.responsibilities?.length > 0 && (
         <div>
           <SectionLabel icon={ListChecks}>Responsibilities</SectionLabel>
-          <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-slate-800">
+          <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-foreground">
             {data.responsibilities.map((r, i) => (
               <li key={i}>{r}</li>
             ))}
@@ -417,7 +417,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
       {data.requirements?.length > 0 && (
         <div>
           <SectionLabel icon={ClipboardList}>Requirements</SectionLabel>
-          <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-slate-800">
+          <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-foreground">
             {data.requirements.map((r, i) => (
               <li key={i}>{r}</li>
             ))}
@@ -427,7 +427,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
       {data.benefits?.length > 0 && (
         <div>
           <SectionLabel icon={Gift}>Benefits</SectionLabel>
-          <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-slate-800">
+          <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-foreground">
             {data.benefits.map((b, i) => (
               <li key={i}>{b}</li>
             ))}
@@ -682,33 +682,33 @@ export function DetailContentPanel({
   };
 
   return (
-    <div className="animate-detail-panel-in flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+    <div className="animate-detail-panel-in flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/50 px-4 py-3">
         <button
           type="button"
           onClick={onClose}
-          className="flex items-center gap-1 rounded-lg p-1.5 text-slate-600 transition hover:bg-blue-100/80 hover:text-slate-900"
+          className="flex items-center gap-1 rounded-lg p-1.5 text-muted-foreground transition hover:bg-brand-soft/80 hover:text-foreground"
           aria-label="Close panel"
         >
           <ChevronLeft className="h-5 w-5" />
           <span className="text-sm font-medium">Back</span>
         </button>
-        <div className="flex min-w-0 flex-1 items-center justify-between gap-2 border-l border-blue-200/60 pl-3">
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-2 border-l border-brand/40 pl-3">
           <div className="flex min-w-0 items-center gap-2">
-            <Target className="h-5 w-5 shrink-0 text-blue-600" />
-            <span className="text-base font-bold text-slate-900 dark:text-[#f8fafc]">
+            <Target className="h-5 w-5 shrink-0 text-brand" />
+            <span className="text-base font-bold text-foreground">
               {isAdmin ? 'Job description' : 'Job match analysis'}
             </span>
           </div>
           {analysis?.promotion ? (
             <div
-              className="max-w-[min(300px,46vw)] shrink-0 rounded-xl border border-emerald-200/80 bg-emerald-50/95 px-2.5 py-1.5 text-emerald-900 shadow-sm"
+              className="max-w-[min(300px,46vw)] shrink-0 rounded-xl border border-status-ready/40 bg-status-ready/10 px-2.5 py-1.5 text-foreground shadow-sm"
               title={`${analysis.promotion.reason}\nBy ${analysis.promotion.promoted_by}${
                 analysis.promotion.promoted_at ? `\n${formatPromotedAt(analysis.promotion.promoted_at)}` : ''
               }`}
             >
               <div className="truncate text-xs font-semibold leading-tight">{analysis.promotion.reason}</div>
-              <div className="mt-0.5 truncate text-[10px] font-normal leading-tight text-emerald-800/90">
+              <div className="mt-0.5 truncate text-[10px] font-normal leading-tight text-foreground/90">
                 By {analysis.promotion.promoted_by}
                 {analysis.promotion.promoted_at
                   ? ` · ${formatPromotedAt(analysis.promotion.promoted_at)}`
@@ -725,7 +725,7 @@ export function DetailContentPanel({
         )}
 
         {loadError && (
-          <div className="animate-content-in rounded-xl border border-red-200 bg-red-50/90 px-4 py-3 text-sm text-red-700">
+          <div className="animate-content-in rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {loadError}
           </div>
         )}
@@ -733,18 +733,18 @@ export function DetailContentPanel({
         {!initialLoading && !loadError && analysis && (
           <div className="animate-content-in space-y-6 text-sm">
             {!isAdmin && (
-            <section className="relative overflow-hidden rounded-2xl border border-sky-200/70 bg-gradient-to-br from-sky-50/95 via-white to-slate-50/50 p-5 shadow-md shadow-sky-900/5 ring-1 ring-sky-100/70">
+            <section className="relative overflow-hidden rounded-2xl border border-brand/30 bg-gradient-to-br from-brand-soft/70 to-card p-5 shadow-sm">
               <div
                 aria-hidden
-                className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-gradient-to-br from-sky-300/25 to-indigo-200/15 blur-2xl"
+                className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-brand/10 blur-2xl"
               />
-              <div className="relative mb-4 flex flex-wrap items-center gap-2 border-b border-sky-200/55 pb-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/80 bg-gradient-to-b from-sky-100 to-sky-50 text-sky-800 shadow-sm">
+              <div className="relative mb-4 flex flex-wrap items-center gap-2 border-b border-border pb-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand/40 bg-brand-soft text-brand shadow-sm">
                   <Target className="h-4 w-4" strokeWidth={2.25} aria-hidden />
                 </span>
                 <div className="flex-1">
-                  <h3 className="text-base font-semibold text-slate-900">Profile match</h3>
-                  <p className="text-xs text-slate-500">How well this role fits your profile</p>
+                  <h3 className="text-base font-semibold text-foreground">Profile match</h3>
+                  <p className="text-xs text-muted-foreground">How well this role fits your profile</p>
                 </div>
                 {analysis.resume_build && (
                   <ResumeBuildBadges
@@ -759,19 +759,19 @@ export function DetailContentPanel({
               {analysis.match_in_progress && !analysis.match && (
                 <div className="flex flex-col items-center gap-3 py-6">
                   <div
-                    className="h-9 w-9 animate-spinner rounded-full border-2 border-blue-200 border-t-blue-600"
+                    className="h-9 w-9 animate-spinner rounded-full border-2 border-brand/30 border-t-brand"
                     aria-hidden
                   />
-                  <p className="text-center text-slate-600">Running AI profile match…</p>
-                  <p className="text-center text-xs text-slate-500">
+                  <p className="text-center text-muted-foreground">Running AI profile match…</p>
+                  <p className="text-center text-xs text-muted-foreground">
                     Job details below update automatically when structured data is ready.
                   </p>
                 </div>
               )}
 
               {!analysis.match_in_progress && !analysis.match && jdReady && (
-                <p className="flex items-start gap-2 text-slate-600">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" aria-hidden />
+                <p className="flex items-start gap-2 text-muted-foreground">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-brand" aria-hidden />
                   <span>
                     No match score yet. Use Analyze on this job in the list to start analysis.
                   </span>
@@ -779,12 +779,12 @@ export function DetailContentPanel({
               )}
 
               {!analysis.match_in_progress && !analysis.match && extractionBusy && (
-                <p className="text-slate-500">Match analysis will be available after extraction completes.</p>
+                <p className="text-muted-foreground">Match analysis will be available after extraction completes.</p>
               )}
 
               {analysis.match && analysis.resume_build?.content_generation_status === 'failed' && (
                 <div className="space-y-2">
-                  <p className="flex items-start gap-2 text-sm text-red-600">
+                  <p className="flex items-start gap-2 text-sm text-destructive">
                     <Sparkles className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                     <span>
                       {analysis.resume_build.content_generation_error ||
@@ -795,18 +795,18 @@ export function DetailContentPanel({
                     type="button"
                     disabled={retryingBuild}
                     onClick={() => void retryResumeBuild()}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 disabled:opacity-60"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:opacity-60"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${retryingBuild ? 'animate-spin' : ''}`} />
                     {retryingBuild ? 'Retrying…' : 'Retry resume generation'}
                   </button>
-                  {retryError && <p className="text-xs text-red-600">{retryError}</p>}
+                  {retryError && <p className="text-xs text-destructive">{retryError}</p>}
                 </div>
               )}
 
               {analysis.match && analysis.resume_build?.content_generation_status === 'skipped' && (
-                <p className="flex items-start gap-2 text-sm text-slate-600">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                <p className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span>
                     {analysis.resume_build.content_generation_error ||
                       'Tailoring was skipped for this job (for example empty profile or non-job posting).'}
@@ -817,8 +817,8 @@ export function DetailContentPanel({
               {analysis.match && analysis.resume_build &&
                 (analysis.resume_build.content_generation_status === 'pending' ||
                   analysis.resume_build.content_generation_status === 'processing') && (
-                <p className="flex items-start gap-2 text-sm text-slate-600">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500 animate-pulse" aria-hidden />
+                <p className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-status-ready animate-pulse" aria-hidden />
                   <span>Generating tailored resume and cover letter…</span>
                 </p>
               )}
@@ -832,21 +832,21 @@ export function DetailContentPanel({
                       {analysis.match.overall_score}
                     </div>
                     <div>
-                      <span className="text-base font-semibold text-slate-800">
+                      <span className="text-base font-semibold text-foreground">
                         {RECOMMENDATION_LABELS[analysis.match.recommendation] || analysis.match.recommendation}
                       </span>
                     </div>
                   </div>
                   <div>
                     <SectionLabel icon={AlignLeft}>Summary</SectionLabel>
-                    <p className="mt-2 leading-relaxed text-slate-800">{analysis.match.summary}</p>
+                    <p className="mt-2 leading-relaxed text-foreground">{analysis.match.summary}</p>
                   </div>
                   <div>
                     <SectionLabel icon={LayoutList}>Dimension scores</SectionLabel>
                     <ul className="mt-2 space-y-1.5">
                       {Object.entries(analysis.match.dimension_scores || {}).map(([key, value]) => (
                         <li key={key} className="flex items-center gap-2">
-                          <span className="w-44 text-slate-700">{DIMENSION_LABELS[key] || key}:</span>
+                          <span className="w-44 text-foreground">{DIMENSION_LABELS[key] || key}:</span>
                           <span
                             className={`rounded-md px-2.5 py-0.5 text-xs font-semibold tabular-nums ${matchScoreDimensionBadgeClass(value)}`}
                           >
@@ -859,7 +859,7 @@ export function DetailContentPanel({
                   {analysis.match.strengths?.length > 0 && (
                     <div>
                       <SectionLabel icon={ThumbsUp}>Strengths</SectionLabel>
-                      <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-slate-800">
+                      <ul className="mt-2 list-inside list-disc space-y-0.5 pl-1 text-foreground">
                         {analysis.match.strengths.map((s, i) => (
                           <li key={i}>{s}</li>
                         ))}
@@ -869,9 +869,9 @@ export function DetailContentPanel({
                   {analysis.match.gaps?.length > 0 && (
                     <div>
                       <SectionLabel icon={AlertCircle}>Gaps</SectionLabel>
-                      <ul className="mt-2 list-outside list-disc space-y-3 pl-5 text-slate-800 leading-relaxed">
+                      <ul className="mt-2 list-outside list-disc space-y-3 pl-5 text-foreground leading-relaxed">
                         {analysis.match.gaps.map((g, i) => (
-                          <li key={i} className="marker:text-slate-400">
+                          <li key={i} className="marker:text-muted-foreground">
                             {g}
                           </li>
                         ))}
@@ -883,17 +883,17 @@ export function DetailContentPanel({
             </section>
             )}
 
-            <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand/30 bg-brand-soft text-brand">
                   <FileText className="h-4 w-4" strokeWidth={2} aria-hidden />
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-base font-semibold text-slate-900 dark:text-[#f8fafc]">
+                  <h3 className="text-base font-semibold text-foreground">
                     {isAdmin ? 'Extracted job description' : 'Job details'}
                   </h3>
                   {analysis.content_enriched_by_ai && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-800">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand">
                       <Sparkles className="h-3 w-3" />
                       Structured by AI
                     </span>
@@ -908,7 +908,7 @@ export function DetailContentPanel({
                       href={analysis.source_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="break-all font-medium text-blue-600 hover:text-blue-800 hover:underline dark:text-[#93c5fd] dark:hover:text-[#bfdbfe]"
+                      className="break-all font-medium text-brand hover:text-brand/80 hover:underline"
                     >
                       {analysis.source_url}
                     </a>
@@ -917,13 +917,13 @@ export function DetailContentPanel({
               )}
 
               {!analysis.extraction_id && !isAdmin && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2 text-slate-700">
+                <div className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-foreground">
                   Extraction has not started for this job yet.
                 </div>
               )}
 
               {extractionBusy && (
-                <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-900">
+                <div className="rounded-lg border border-status-preparing/40 bg-status-preparing/10 px-3 py-2 text-foreground">
                   {extractionStatus === 'processing'
                     ? 'Extracting job content from the posting…'
                     : 'Job extraction is queued. Content will appear here when ready.'}
@@ -931,7 +931,7 @@ export function DetailContentPanel({
               )}
 
               {extractionStatus === 'failed' && !editingJd && (
-                <div className="mb-3 rounded-lg border border-red-200/80 bg-red-50/90 px-3 py-2 text-red-800">
+                <div className="mb-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive">
                   {isAdmin
                     ? 'Extraction failed. Open the posting URL above, then paste the job description here, or delete the job from the table.'
                     : 'Extraction failed. Try re-scraping from the job row menu.'}
@@ -951,7 +951,7 @@ export function DetailContentPanel({
                       <button
                         type="button"
                         onClick={startEditJd}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-800"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm transition hover:border-brand/30 hover:bg-brand-soft hover:text-brand"
                       >
                         <Pencil className="h-3.5 w-3.5" />
                         Edit JD
@@ -967,17 +967,17 @@ export function DetailContentPanel({
                         rows={16}
                         placeholder="Paste the full job description text from the posting…"
                         disabled={savingJd}
-                        className="w-full resize-y rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-inner outline-none ring-blue-500/30 placeholder:text-slate-400 focus:border-blue-300 focus:ring-2 disabled:opacity-60 dark:border-[rgba(148,163,184,0.28)] dark:bg-[#0b1220] dark:text-[#e2e8f0] dark:placeholder:text-[#94a3b8]"
+                        className="w-full resize-y rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-foreground shadow-inner outline-none ring-brand/30 placeholder:text-muted-foreground focus:border-ring focus:ring-2 disabled:opacity-60"
                       />
                       {saveJdError && (
-                        <p className="text-sm text-red-600">{saveJdError}</p>
+                        <p className="text-sm text-destructive">{saveJdError}</p>
                       )}
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           disabled={savingJd}
                           onClick={() => void saveManualJd()}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
                         >
                           {savingJd ? 'Saving…' : 'Save JD'}
                         </button>
@@ -985,22 +985,22 @@ export function DetailContentPanel({
                           type="button"
                           disabled={savingJd}
                           onClick={cancelEditJd}
-                          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                          className="inline-flex items-center rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted/50 disabled:opacity-60"
                         >
                           Cancel
                         </button>
                       </div>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-muted-foreground">
                         Saving marks this job as extracted. The pasted text is used as the shared raw job description.
                       </p>
                     </div>
                   ) : hasAdminRawJd ? (
-                    <div className="max-h-[min(36rem,55vh)] overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-800 shadow-inner dark:border-[rgba(148,163,184,0.28)] dark:bg-[#0b1220] dark:text-[#e2e8f0]">
+                    <div className="max-h-[min(36rem,55vh)] overflow-y-auto whitespace-pre-wrap rounded-xl border border-border bg-muted/50 p-4 text-sm leading-relaxed text-foreground shadow-inner">
                       {adminRawJd}
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-6 text-center dark:border-[rgba(148,163,184,0.35)] dark:bg-[#0b1220]/70">
-                      <p className="text-sm text-slate-600 dark:text-[#cbd5e1]">
+                    <div className="rounded-xl border border-dashed border-border bg-muted/50 px-4 py-6 text-center">
+                      <p className="text-sm text-muted-foreground">
                         {extractionFailed
                           ? 'No job description was extracted. Paste it manually after checking the posting.'
                           : extractionStatus === 'completed' || extractionStatus === 'extracted'
@@ -1010,7 +1010,7 @@ export function DetailContentPanel({
                       <button
                         type="button"
                         onClick={startAddJd}
-                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         Add JD
@@ -1024,11 +1024,11 @@ export function DetailContentPanel({
               {!isAdmin && analysis.job_data && jdReady && postingBody(analysis.job_data, null)}
 
               {!isAdmin && !analysis.job_data && jdReady && (
-                <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-amber-900">
+                <div className="rounded-lg border border-status-preparing/40 bg-status-preparing/10 px-3 py-2 text-foreground">
                   {analysis.raw_plain_text ? (
                     <div>
                       <p className="mb-2 font-medium">Extracted posting text</p>
-                      <div className="max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-lg border border-amber-100 bg-white p-3 text-slate-800">
+                      <div className="max-h-[28rem] overflow-y-auto whitespace-pre-wrap rounded-lg border border-status-preparing/30 bg-card p-3 text-foreground">
                         {analysis.raw_plain_text}
                       </div>
                     </div>
@@ -1039,10 +1039,10 @@ export function DetailContentPanel({
               )}
 
               {analysis.job_data && analysis.extraction_method != null && (
-                <div className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500 flex items-center gap-2">
+                <div className="mt-4 border-t border-border pt-3 text-xs text-muted-foreground flex items-center gap-2">
                   <span>Method: {analysis.extraction_method}</span>
                   {analysis.is_job_posting === false && (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">
+                    <span className="rounded bg-status-preparing/10 px-1.5 py-0.5 text-foreground font-medium">
                       Not a job posting
                     </span>
                   )}

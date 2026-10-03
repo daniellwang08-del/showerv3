@@ -140,6 +140,7 @@ class LayoutMetrics(BaseModel):
 
 class LayoutConfig(BaseModel):
     columns: Literal[1, 2] = 1
+    paper: Literal["letter", "a4"] = "letter"
     # ``margin_pt`` / ``header_padding_pt`` remain as the legacy single-value source so
     # older saved designs still parse; the per-side fields override them when present.
     margin_pt: float = Field(default=54, ge=9, le=160)

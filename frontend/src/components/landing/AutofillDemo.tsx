@@ -52,16 +52,16 @@ function FieldRow({
     <div
       className={`rounded-xl border px-3.5 py-2.5 transition duration-500 ${
         active
-          ? 'border-sky-300/40 bg-sky-400/10'
+          ? 'border-[#6F9BFF]/40 bg-[#3D74FF]/10'
           : done
-            ? 'border-emerald-300/25 bg-emerald-400/8'
+            ? 'border-[#6F9BFF]/20 bg-[#3D74FF]/[0.05]'
             : 'border-white/10 bg-white/[0.03]'
       }`}
     >
-      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/55">{label}</p>
       <p className="mt-1 min-h-[1.25rem] font-mono text-[13px] font-semibold text-white">
         {done && !active ? value : typed}
-        {active ? <span className="landing-caret ml-0.5 inline-block h-3.5 w-px bg-sky-300" /> : null}
+        {active ? <span className="landing-caret ml-0.5 inline-block h-3.5 w-px bg-[#BFD6FF]" /> : null}
       </p>
     </div>
   );
@@ -96,16 +96,16 @@ export function AutofillDemo() {
       <div
         className={`flex items-center gap-3 rounded-xl border px-3.5 py-3 transition duration-500 ${
           step > FIELDS.length
-            ? 'border-emerald-300/30 bg-emerald-400/10'
+            ? 'border-[#6F9BFF]/35 bg-[#3D74FF]/10'
             : 'border-white/10 bg-white/[0.03]'
         }`}
       >
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 text-white">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2C5BF5] text-white">
           {step > FIELDS.length ? <Check size={15} strokeWidth={3} /> : <FileUp size={15} strokeWidth={2.5} />}
         </span>
         <div>
           <p className="text-[12px] font-black text-white">Alex_Rivera_Platform_Engineer.pdf</p>
-          <p className="text-[10px] font-semibold text-white/45">
+          <p className="text-[10px] font-semibold text-white/55">
             {step > FIELDS.length ? 'Résumé attached' : 'Waiting to attach tailored résumé'}
           </p>
         </div>

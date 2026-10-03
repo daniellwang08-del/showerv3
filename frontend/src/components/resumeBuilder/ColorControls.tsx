@@ -27,7 +27,7 @@ export function ColorControls({
               title={p.label}
               onClick={() => onApplyPreset(p)}
               className={`flex h-8 w-8 items-center justify-center rounded-full border-2 transition ${
-                active ? 'border-slate-800' : 'border-transparent hover:border-slate-300'
+                active ? 'border-brand' : 'border-transparent hover:border-border'
               }`}
               style={{ backgroundColor: p.colors.accent }}
             >
@@ -36,7 +36,7 @@ export function ColorControls({
           );
         })}
       </div>
-      <div className="space-y-2 border-t border-slate-100 pt-2">
+      <div className="space-y-2 border-t pt-2">
         <ColorField label="Accent" value={c.accent} onChange={(v) => onChange({ accent: v })} />
         <ColorField label="Heading" value={c.heading} onChange={(v) => onChange({ heading: v })} />
         <ColorField label="Body text" value={c.text} onChange={(v) => onChange({ text: v })} />

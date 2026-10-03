@@ -104,7 +104,6 @@ export type Feature = {
     | 'chart';
   title: string;
   body: string;
-  accent: 'sky' | 'indigo' | 'violet' | 'emerald' | 'amber' | 'rose';
 };
 
 export const FEATURES: Feature[] = [
@@ -112,55 +111,46 @@ export const FEATURES: Feature[] = [
     icon: 'radar',
     title: 'Sourcing that runs without you',
     body: 'Spiders crawl on a schedule, respect posted-date windows, survive bot walls, and hand off clean postings. You open the app to new matches, not to a search box.',
-    accent: 'sky',
   },
   {
     icon: 'target',
     title: 'Match scoring with your rules',
     body: 'Set a minimum score, describe what you want in plain language, and let the analysis hide the noise. Every score comes with the reasoning behind it.',
-    accent: 'indigo',
   },
   {
     icon: 'layout',
     title: 'A résumé builder you control',
     body: 'Design the template once: themes, typography, colour, sections, header image. Every tailored résumé compiles into that exact design, never a generic export.',
-    accent: 'violet',
   },
   {
     icon: 'wand',
     title: 'Cover letters that stay yours',
     body: 'The AI writes only the body. Your letterhead, greeting and signature come from your own template, so the letter looks like you wrote it in your own file.',
-    accent: 'amber',
   },
   {
     icon: 'activity',
     title: 'A pipeline you can watch live',
     body: 'Extraction, scoring, tailoring and document builds stream to the dashboard over websockets, so you always know which stage a job is in.',
-    accent: 'emerald',
   },
   {
     icon: 'shield',
     title: 'Duplicate and repeat guards',
     body: 'Company policies, a recycle window and applied-company rules stop you re-applying to the same role or spamming a company you already contacted.',
-    accent: 'rose',
   },
   {
     icon: 'bot',
     title: 'An assistant that acts',
     body: 'Ask for remote roles above 80 and your board re-filters. The assistant runs real actions on your data and asks for confirmation before anything changes.',
-    accent: 'sky',
   },
   {
     icon: 'plug',
     title: 'Your keys, your models',
     body: 'Run on the platform key or bring your own OpenAI, Anthropic or Gemini key and pick the model. Keys are stored encrypted, per account.',
-    accent: 'indigo',
   },
   {
     icon: 'chart',
     title: 'Progress you can prove',
     body: 'Weekly charts track what was scraped, matched, tailored and applied, with Google Sheets export and Pumble alerts when you want the numbers elsewhere.',
-    accent: 'violet',
   },
 ];
 

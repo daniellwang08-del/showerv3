@@ -99,8 +99,8 @@ export function LayoutControls({
         onChange={(v) => onLayout({ contact_icons: v as LayoutConfig['contact_icons'] })}
       />
       {l.contact_icons !== 'none' && (
-        <div className="space-y-2 rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-2">
-          <p className="text-[11px] font-medium text-slate-500">
+        <div className="space-y-2 rounded-lg border bg-muted/60 px-2.5 py-2">
+          <p className="text-[11px] font-medium text-muted-foreground">
             Icon position (pt), nudge until the PDF matches the preview
           </p>
           <Slider
@@ -139,7 +139,7 @@ export function LayoutControls({
         onChange={(v) => onLayout({ section_gap_pt: v })} />
       <Toggle label="Accent rule under headings" checked={l.accent_rule}
         onChange={(v) => onLayout({ accent_rule: v })} />
-      <div className="space-y-2 border-t border-slate-100 pt-2">
+      <div className="space-y-2 border-t pt-2">
         <Toggle label="Show role dates" checked={s.show_period} onChange={(v) => onSections({ show_period: v })} />
         <Toggle label="Show role location" checked={s.show_location} onChange={(v) => onSections({ show_location: v })} />
       </div>

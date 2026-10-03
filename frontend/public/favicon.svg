@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111A3F"/>
+      <stop offset="1" stop-color="#04060F"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="6" y1="28" x2="27" y2="5" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1D3FD6"/>
+      <stop offset="0.55" stop-color="#3D74FF"/>
+      <stop offset="1" stop-color="#BFD6FF"/>
+    </linearGradient>
+    <radialGradient id="dot" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.45" stop-color="#CFE0FF"/>
+      <stop offset="1" stop-color="#5B8CFF" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="cut">
+      <rect width="32" height="32" fill="white"/>
+      <circle cx="17.1" cy="14.9" r="9.1" fill="black"/>
+    </mask>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#tile)"/>
+  <g transform="translate(4 4) scale(0.75)">
+    <circle cx="16" cy="16" r="11.5" fill="url(#ring)" mask="url(#cut)"/>
+    <circle cx="24.4" cy="7.6" r="5" fill="url(#dot)"/>
+    <circle cx="24.4" cy="7.6" r="1.9" fill="#FFFFFF"/>
+  </g>
+</svg>

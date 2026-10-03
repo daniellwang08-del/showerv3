@@ -13,12 +13,16 @@ function photo(id: string, w: number, extra = '') {
   return `${UNSPLASH}/${id}?auto=format&fit=crop&w=${w}&q=80${extra}`;
 }
 
+/** Brand key art without text: planet horizon, blue rim light, sun cresting at top center (arc top at about 46% height). */
+export const BRAND_HORIZON = '/brand/nao-horizon.jpg';
+
+/** Auth screen backdrop (`AuthShell`). The landing hero uses `BRAND_HORIZON`. */
 export const HERO_VIDEO =
   'https://videos.pexels.com/video-files/3129671/3129671-hd_1920_1080_30fps.mp4';
 
-export const HERO_POSTER = photo('photo-1498050108023-c4e6cde34c31', 1920);
+export const HERO_POSTER = photo('photo-1517694712202-14dd9538aa97', 1920);
 
-/** Subtle looping gif overlay, digital rain, Wikimedia Commons. */
+/** Subtle looping gif overlay for the auth backdrop, digital rain, Wikimedia Commons. */
 export const HERO_GIF =
   'https://upload.wikimedia.org/wikipedia/commons/2/21/Matrix_digital_rain_animation_small_letters_only.gif';
 
@@ -27,17 +31,13 @@ export const AUTOFILL_VIDEO =
 
 export const AUTOFILL_POSTER = photo('photo-1486312338219-ce68d2c6f44d', 1400);
 
-export const FEATURES_BAND = photo('photo-1551288049-bebda4e38f71', 1600);
-
-export const CLOSING_IMAGE = photo('photo-1600880292203-757bb62b4baf', 1920);
-
 export const STEP_VISUALS = [
   {
     src: photo('photo-1519389950473-47ba0277781c', 900),
     caption: 'Fresh roles, every cycle',
   },
   {
-    src: photo('photo-1498050108023-c4e6cde34c31', 900),
+    src: photo('photo-1517694712202-14dd9538aa97', 900),
     caption: 'The real posting, not a preview',
   },
   {
@@ -71,7 +71,7 @@ export const CAST = [
   { src: photo('photo-1573496359142-b8d87734a5a2', 240), role: 'Live' },
   { src: photo('photo-1472099645785-5658abf4ff4e', 240), role: '88' },
   { src: photo('photo-1534528741775-53994a69daeb', 240), role: 'Apply' },
-  { src: photo('photo-1500648767791-11c2d608db6a', 240), role: '81' },
+  { src: photo('photo-1506794778202-cad84cf45f1d', 240), role: '81' },
 ] as const;
 
 export const TOASTS = [

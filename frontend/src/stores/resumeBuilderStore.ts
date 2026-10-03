@@ -4,7 +4,6 @@ import {
   deleteCustomResumeTheme,
   fetchResumeDesign,
   fetchResumeThemeCatalog,
-  invalidateResumeDesignPreviewCache,
   saveCustomResumeTheme,
   saveResumeDesign,
   toggleResumeThemeLove,
@@ -349,7 +348,6 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
       const lib = await activateResume(id);
       const active = lib.resume ?? lib.resumes.find((r) => r.id === lib.active_id) ?? null;
       const nextDesign = active ? hydrateDesign(active.design) : get().design;
-      invalidateResumeDesignPreviewCache();
       set({
         resumes: lib.resumes,
         activeResumeId: lib.active_id,
@@ -377,7 +375,6 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
       const lib = await openJobBuildResume(buildId);
       const active = lib.resume ?? lib.resumes.find((r) => r.id === lib.active_id) ?? null;
       const nextDesign = active ? hydrateDesign(active.design) : get().design;
-      invalidateResumeDesignPreviewCache();
       set({
         resumes: lib.resumes,
         activeResumeId: lib.active_id,
@@ -411,7 +408,6 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
       const created = lib.resume ?? null;
       if (activate && created) {
         const nextDesign = hydrateDesign(created.design);
-        invalidateResumeDesignPreviewCache();
         set({
           resumes: lib.resumes,
           activeResumeId: lib.active_id,
@@ -469,7 +465,6 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
         const active = lib.resumes.find((r) => r.id === lib.active_id) ?? null;
         if (active) {
           const nextDesign = hydrateDesign(active.design);
-          invalidateResumeDesignPreviewCache();
           patch.design = nextDesign;
           patch.baseline = JSON.stringify(nextDesign);
         }
@@ -499,6 +494,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
         contact_icon_offset_y_pt: current.layout.contact_icon_offset_y_pt ?? 0,
         section_order: current.layout.section_order,
         hidden_sections: current.layout.hidden_sections,
+        paper: current.layout.paper ?? 'letter',
         header_image: keepImage,
         header_background: keepImage ? 'image' : theme.design.layout.header_background,
         header_metrics: null,

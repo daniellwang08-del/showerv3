@@ -125,10 +125,10 @@ def emphasize_keywords_in_text(text: str, keywords: Iterable[str]) -> str:
         if not parts:
             continue
         if len(parts) == 1:
-            pattern = re.compile(rf"(?<![\\w*])({parts[0]})(?![\\w*])", re.IGNORECASE)
+            pattern = re.compile(rf"(?<![\w*])({parts[0]})(?![\w*])", re.IGNORECASE)
         else:
             pattern = re.compile(
-                rf"(?<![\\w*])({'[ \\t]+'.join(parts)})(?![\\w*])",
+                rf"(?<![\w*])({'[ \\t]+'.join(parts)})(?![\w*])",
                 re.IGNORECASE,
             )
 
