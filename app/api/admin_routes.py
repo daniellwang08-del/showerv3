@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import ColumnElement, and_, func, or_, select, text
+from sqlalchemy import ColumnElement, and_, func, literal_column, or_, select, text
 
 from app.api.routes import _purge_job_cascade, health_check, require_admin
 from app.core.logging import get_logger
@@ -966,6 +966,11 @@ async def match_engine_shadow_stats(
     days = max(1, min(int(days or 30), 365))
     since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     delta = MatchEngineComparison.vector_overall - MatchEngineComparison.llm_overall
+    # Bounds are inlined so SELECT and GROUP BY render the same expression;
+    # bound parameters get distinct placeholders and Postgres rejects the grouping.
+    bucket = func.width_bucket(
+        func.abs(delta), literal_column("0"), literal_column("50"), literal_column("5")
+    )
 
     async with get_session() as session:
         agg = (
@@ -982,12 +987,9 @@ async def match_engine_shadow_stats(
 
         buckets_rows = (
             await session.execute(
-                select(
-                    func.width_bucket(func.abs(delta), 0, 50, 5),
-                    func.count(MatchEngineComparison.id),
-                )
+                select(bucket, func.count(MatchEngineComparison.id))
                 .where(MatchEngineComparison.created_at >= since)
-                .group_by(func.width_bucket(func.abs(delta), 0, 50, 5))
+                .group_by(bucket)
             )
         ).all()
 
