@@ -39,10 +39,21 @@ class PostgresPipeline:
         # Stash Scrapy's close reason on the spider as soon as the engine starts
         # closing so finalize does not default SIGTERM/shutdown to "success".
         pipe._patch_engine_close_reason(crawler)
+        from scrapy import signals
+
+        # Receivers are held weakly, so this must be a bound method of the live pipeline.
+        crawler.signals.connect(pipe._on_engine_started, signal=signals.engine_started)
         return pipe
 
+    def _on_engine_started(self) -> None:
+        self._patch_engine_close_reason(self.crawler)
+
     def _patch_engine_close_reason(self, crawler) -> None:
-        engine = getattr(crawler, "engine", None)
+        # Scrapy 2.13+ raises RuntimeError (not AttributeError) before the engine exists.
+        try:
+            engine = getattr(crawler, "engine", None)
+        except RuntimeError:
+            return
         if engine is None or getattr(engine, "_postgres_close_reason_patched", False):
             return
 

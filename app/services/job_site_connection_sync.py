@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from sqlalchemy import select
 
 from app.core.logging import get_logger
@@ -44,6 +45,26 @@ def decrypt_credentials(token: str | None) -> dict:
     raw = decrypt_secret(token)
     data = json.loads(raw)
     return data if isinstance(data, dict) else {}
+
+
+def describe_fetch_error(exc: Exception) -> str:
+    """User-facing reason for a failed board fetch.
+
+    httpx errors embed the request URL, which carries query-string API keys for
+    some boards, so they must never be echoed to the client, stored, or logged.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in (401, 403):
+            return f"the site rejected these credentials ({code}). Check the values and try again."
+        if code == 429:
+            return "the site is rate limiting requests (429). Try again in a few minutes."
+        return f"the site responded with HTTP {code}."
+    if isinstance(exc, httpx.TimeoutException):
+        return "the site took too long to respond."
+    if isinstance(exc, httpx.RequestError):
+        return "the site could not be reached."
+    return str(exc) or type(exc).__name__
 
 
 def credential_hints(plugin_slug: str, credentials: dict) -> dict[str, str]:
@@ -165,7 +186,7 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
     try:
         listing = await verify_and_fetch(plugin_slug, credentials, ctx)
     except Exception as e:
-        error_text = f"{type(e).__name__}: {e}"[:500]
+        error_text = describe_fetch_error(e)[:500]
         async with get_session() as session:
             row = (
                 await session.execute(
@@ -264,7 +285,7 @@ async def sync_due_job_site_connections() -> dict:
             logger.warning(
                 "job_site_connection_sync_failed",
                 connection_id=connection_id,
-                error=str(e),
+                error=describe_fetch_error(e),
             )
     if due_ids:
         logger.info("job_site_connections_sync_pass_complete", **results)

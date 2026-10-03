@@ -14,6 +14,7 @@ from app.models.database import User, UserJobSiteConnection
 from app.services.job_site_connection_sync import (
     credential_hints,
     decrypt_credentials,
+    describe_fetch_error,
     encrypt_credentials,
     fetch_context_for_user,
     verify_and_fetch,
@@ -149,6 +150,7 @@ def _trim_storage(storage: dict) -> dict:
     return out
 
 
+
 @router.get("", response_model=JobSiteCatalogResponse)
 async def list_job_sites(
     current_user: dict = Depends(get_current_user),
@@ -205,10 +207,11 @@ async def connect_job_site(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
         ) from e
     except Exception as e:
-        logger.warning("job_site_connect_verify_failed", slug=plugin.slug, error=str(e))
+        reason = describe_fetch_error(e)
+        logger.warning("job_site_connect_verify_failed", slug=plugin.slug, error=reason)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Could not fetch jobs from {plugin.name}: {e}",
+            detail=f"Could not fetch jobs from {plugin.name}: {reason}",
         ) from e
 
     encrypted = encrypt_credentials(credentials) if credentials else None
