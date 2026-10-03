@@ -333,7 +333,7 @@ class ExtractionService:
 
                     # Re-run vendor extractors on browser-rendered HTML - many
                     # SPAs only reveal Greenhouse/Lever/Ashby tokens after JS runs.
-                    rendered_html = browser_result.raw_content
+                    rendered_html = browser_result.html or browser_result.raw_content
 
                     if await self.greenhouse_board_extractor.can_extract(url, rendered_html):
                         gh_br = await self.greenhouse_board_extractor.extract(url, rendered_html)

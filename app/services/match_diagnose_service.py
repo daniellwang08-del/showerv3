@@ -234,11 +234,19 @@ async def diagnose_job_match(
     else:
         timer.mark("inline_encode_skipped", encode_if_missing=encode_if_missing)
 
-    vector_result = await compute_vector_match(job_id, user_id, explain=True)
+    from app.services.vector_match_service import ProfileTooThinError
+
+    try:
+        vector_result = await compute_vector_match(job_id, user_id, explain=True)
+    except ProfileTooThinError:
+        vector_result = None
+        out["errors"].append("profile_too_thin")
+        out["warnings"].append("Profile has no skills or job titles to match against")
     out["vector_result"] = vector_result
     if vector_result is None:
-        out["errors"].append("vector_score_unavailable")
-        out["warnings"].append("Encodings missing or model versions mismatched")
+        if "profile_too_thin" not in out["errors"]:
+            out["errors"].append("vector_score_unavailable")
+            out["warnings"].append("Encodings missing or model versions mismatched")
     else:
         out["ok"] = True
         explain = vector_result.get("explain") or {}

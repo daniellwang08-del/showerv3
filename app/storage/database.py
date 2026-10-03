@@ -13,7 +13,9 @@ _session_factory = None
 _initialized = False
 
 
-async def init_database() -> None:
+async def init_database(*, pool_size: int | None = None, max_overflow: int | None = None) -> None:
+    """Create the engine. Workers pass a pool sized to their own concurrency;
+    the API uses ``DATABASE_POOL_SIZE`` / ``DATABASE_MAX_OVERFLOW``."""
     global _engine, _session_factory, _initialized
     settings = get_settings()
 
@@ -21,8 +23,10 @@ async def init_database() -> None:
         "echo": settings.sqlalchemy_echo,
     }
 
-    engine_kwargs["pool_size"] = settings.database_pool_size
-    engine_kwargs["max_overflow"] = settings.database_max_overflow
+    engine_kwargs["pool_size"] = pool_size if pool_size is not None else settings.database_pool_size
+    engine_kwargs["max_overflow"] = (
+        max_overflow if max_overflow is not None else settings.database_max_overflow
+    )
     engine_kwargs["pool_pre_ping"] = True
     engine_kwargs["pool_recycle"] = 3600
 
@@ -34,7 +38,18 @@ async def init_database() -> None:
     # dashboard "Today" filter drop jobs fetched today. Forcing UTC keeps every
     # timestamp on one convention regardless of the host's local time zone.
     if "asyncpg" in settings.database_url:
-        engine_kwargs["connect_args"] = {"server_settings": {"timezone": "UTC"}}
+        engine_kwargs["connect_args"] = {
+            "server_settings": {
+                "timezone": "UTC",
+                # JIT compiles plans for tens of ms; OLTP queries here run in
+                # single-digit ms, so it only ever adds latency.
+                "jit": "off",
+                "statement_timeout": str(settings.database_statement_timeout_ms),
+                "idle_in_transaction_session_timeout": str(
+                    settings.database_idle_in_transaction_timeout_ms
+                ),
+            },
+        }
     elif "psycopg" in settings.database_url:
         engine_kwargs["connect_args"] = {"options": "-c timezone=UTC"}
 

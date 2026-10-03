@@ -120,12 +120,13 @@ async def _process_listing_job(
     domain = URLManager.extract_domain(url)
     if blocked_domains_service.get_blocked_reason(domain):
         return "skipped"
+    norm = URLManager.normalize_url(url)
 
     async with get_session() as session:
         existing = (
             await session.execute(
                 select(Job).where(
-                    Job.normalized_url == url,
+                    Job.normalized_url.in_({url, norm}),
                     Job.status == "active",
                 )
                 .order_by(Job.created_at.asc())
@@ -163,12 +164,12 @@ async def _process_listing_job(
         # New job for the platform: create Job + extraction + visibility row.
         extraction = await JobExtractionRepository(session).create(
             source_url=url,
-            normalized_url=url,
+            normalized_url=norm,
             domain=domain,
         )
         job = Job(
             source_url=url,
-            normalized_url=url,
+            normalized_url=norm,
             domain=domain,
             title=board_job.title or None,
             company=board_job.company or company_fallback or domain,

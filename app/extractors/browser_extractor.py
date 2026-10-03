@@ -355,8 +355,9 @@ class BrowserExtractor(BaseExtractor):
                 error="Browser extraction not available on this platform",
             )
 
+        render_budget_s = self._settings.browser_timeout_ms / 1000 * 2 + 15
         try:
-            async with pool.acquire_page(url) as page:
+            async with pool.acquire_page(url) as page, asyncio.timeout(render_budget_s):
                 is_wttj = WTTJ_HOST_MARKER in (url or "").lower()
                 wait_until = "networkidle" if is_wttj else "domcontentloaded"
                 await page.goto(
@@ -373,6 +374,10 @@ class BrowserExtractor(BaseExtractor):
                     await asyncio.sleep(2.5)
 
                 plain_text = await self._extract_all_frames_text(page)
+                try:
+                    rendered_html = await page.content()
+                except Exception:
+                    rendered_html = None
 
                 if not plain_text or len(plain_text) < 50:
                     return ExtractionResult(
@@ -392,10 +397,11 @@ class BrowserExtractor(BaseExtractor):
                     method=self.method,
                     raw_content=plain_text,
                     structured_data=None,
+                    html=rendered_html,
                 )
 
-        except asyncio.TimeoutError:
-            logger.error("browser_extraction_timeout", url=url)
+        except TimeoutError:
+            logger.error("browser_extraction_timeout", url=url, budget_s=render_budget_s)
             return ExtractionResult(
                 success=False,
                 method=self.method,
@@ -429,12 +435,10 @@ class BrowserExtractor(BaseExtractor):
             "main",
         ]
 
-        for selector in content_selectors:
-            try:
-                await page.wait_for_selector(selector, timeout=4000, state="attached")
-                break
-            except Exception:
-                continue
+        try:
+            await page.wait_for_selector(", ".join(content_selectors), timeout=4000, state="attached")
+        except Exception:
+            pass
 
         try:
             await page.wait_for_load_state("networkidle", timeout=4000)
@@ -539,7 +543,7 @@ class BrowserExtractor(BaseExtractor):
         job_app_fallback: list[str] = []
 
         main_html = await page.content()
-        main_text = plain_text_from_document_html(main_html)
+        main_text = await asyncio.to_thread(plain_text_from_document_html, main_html)
         if main_text:
             primary.append(main_text)
 
@@ -556,7 +560,7 @@ class BrowserExtractor(BaseExtractor):
                     if not is_ats:
                         continue
                     fh = await frame.content()
-                    frame_text = plain_text_from_document_html(fh)
+                    frame_text = await asyncio.to_thread(plain_text_from_document_html, fh)
                     if not frame_text or len(frame_text) < 50:
                         continue
                     if "job_app" in flow or "/embed/job_app" in flow:

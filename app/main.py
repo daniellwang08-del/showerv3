@@ -28,7 +28,7 @@ _load_dotenv(_Path(__file__).resolve().parent.parent / ".env")
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, ORJSONResponse
 from app.api.routes import router
 from app.api.scraper_routes import scraper_router
 from app.api.assistant_routes import assistant_router
@@ -119,19 +119,40 @@ async def lifespan(app: FastAPI):
     # process that was killed before it could call PostgresPipeline.close_spider().
     # Without this, GET /scraper/sync/status returns "running" forever after
     # a hard app restart, keeping the sync button stuck in the loading state.
+    # Spiders run in the scraper worker, so a run whose scrape_lock:{spider} key
+    # still exists is alive and must not be marked interrupted by an API restart.
     try:
         from app.storage.database import get_session
+        from app.core.redis_support import init_broker_redis_pool as _init_broker
         from sqlalchemy import text as _sa_text
         async with get_session() as _sess:
-            result = await _sess.execute(
-                _sa_text(
-                    "UPDATE scrape_runs "
-                    "SET status = 'interrupted', "
-                    "    finished_at = now() "
-                    "WHERE status = 'running'"
+            running = (
+                await _sess.execute(
+                    _sa_text("SELECT id, spider_name FROM scrape_runs WHERE status = 'running'")
                 )
-            )
-            rows = result.rowcount
+            ).all()
+            stale_ids = [r.id for r in running]
+            if running:
+                try:
+                    _broker = await _init_broker()
+                    stale_ids = [
+                        r.id for r in running
+                        if not await _broker.exists(f"scrape_lock:{r.spider_name}")
+                    ]
+                except Exception as e:
+                    logger.warning("startup_stale_runs_lock_check_failed", error=str(e))
+            rows = 0
+            if stale_ids:
+                result = await _sess.execute(
+                    _sa_text(
+                        "UPDATE scrape_runs "
+                        "SET status = 'interrupted', "
+                        "    finished_at = now() "
+                        "WHERE status = 'running' AND id = ANY(:ids)"
+                    ),
+                    {"ids": stale_ids},
+                )
+                rows = result.rowcount
             await _sess.commit()
             if rows:
                 logger.warning(
@@ -292,6 +313,8 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=settings.app_version,
         lifespan=lifespan,
+        # orjson serialises the large dashboard payloads several times faster.
+        default_response_class=ORJSONResponse,
         docs_url="/docs" if (settings.debug or settings.app_env != "production") else None,
         redoc_url="/redoc" if (settings.debug or settings.app_env != "production") else None,
     )

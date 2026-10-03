@@ -702,15 +702,29 @@ def tailored_resume_quality_issues(
             issues.append("profile_summary_missing_role_domain_cues")
 
     anchors = [a for a in (job_anchor_terms or []) if isinstance(a, str) and a.strip()]
-    if anchors:
+    # Callers pass only anchors the candidate's own profile supports, so most of
+    # them belong in the summary, recent roles and skills. Too few to judge: skip.
+    if len(anchors) >= _MIN_SUPPORTED_ANCHORS:
         blob = " ".join(recent_blob_parts)
         hits = sum(1 for term in anchors if term.lower() in blob)
-        # Target ~ high coverage of tech anchors in summary + recent roles + skills.
-        coverage = hits / max(len(anchors), 1)
-        need = max(4, int(0.55 * len(anchors) + 0.999))
-        if hits < need or coverage < 0.55:
+        if hits / len(anchors) < _SUPPORTED_ANCHOR_COVERAGE:
             issues.append("insufficient_job_keyword_alignment")
     return issues
+
+
+_MIN_SUPPORTED_ANCHORS = 3
+_SUPPORTED_ANCHOR_COVERAGE = 0.7
+
+
+def supported_job_anchors(anchors: list[str], *evidence: str) -> list[str]:
+    """JD anchor terms that the candidate's own material actually mentions.
+
+    Coverage against every JD term rewards weaving in technologies the person
+    never used. Measuring only the supported ones keeps the check (and the
+    retry prompt) on the truthful side.
+    """
+    blob = " ".join(e for e in evidence if e).lower()
+    return [a for a in anchors if isinstance(a, str) and a.strip() and a.lower() in blob]
 
 
 def _pick_better_tailored_resume(
@@ -1049,6 +1063,7 @@ async def generate_tailored_content_phase_b(
         project_evidence_context=evidence_truncated,
     )
     job_anchors = _job_anchor_terms(structured_block, job_truncated, must_cover)
+    truthful_anchors = supported_job_anchors(job_anchors, profile_truncated, evidence_truncated)
     role_cues = _role_domain_cues_from_context(structured_block, job_truncated)
     phase_b_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_b_max_tokens")))
     phase_b_max = min(phase_b_max, 32768)
@@ -1078,7 +1093,7 @@ async def generate_tailored_content_phase_b(
 
     quality_issues = tailored_resume_quality_issues(
         tailored_resume,
-        job_anchor_terms=job_anchors,
+        job_anchor_terms=truthful_anchors,
         role_domain_cues=role_cues,
     )
     if quality_issues or not cover_letter:
@@ -1086,9 +1101,11 @@ async def generate_tailored_content_phase_b(
             "phase_b_quality_soft_retry",
             issues=quality_issues,
             cover_letter_missing=not bool(cover_letter),
+            supported_anchors=len(truthful_anchors),
+            jd_anchors=len(job_anchors),
             coverage=round(
                 tailored_resume_coverage_score(
-                    tailored_resume, job_anchor_terms=job_anchors
+                    tailored_resume, job_anchor_terms=truthful_anchors
                 ),
                 3,
             ),
@@ -1104,10 +1121,11 @@ async def generate_tailored_content_phase_b(
             "available. Map Must-cover requirements into the two most recent roles when the "
             "background supports them. Never invent employers, dates, or technologies."
         )
-        if job_anchors:
+        if truthful_anchors:
             retry_user += (
-                "\nPriority job technologies/terms to weave in truthfully: "
-                + ", ".join(job_anchors[:16])
+                "\nJob technologies/terms the candidate's background supports; "
+                "surface them where the evidence is: "
+                + ", ".join(truthful_anchors[:16])
                 + "."
             )
         parsed_retry = await _call_openai_json(
@@ -1126,14 +1144,14 @@ async def generate_tailored_content_phase_b(
         chosen = _pick_better_tailored_resume(
             first_resume,
             retry_resume,
-            job_anchor_terms=job_anchors,
+            job_anchor_terms=truthful_anchors,
             role_domain_cues=role_cues,
         )
         if chosen is not None:
             tailored_resume = chosen
         remaining = tailored_resume_quality_issues(
             tailored_resume,
-            job_anchor_terms=job_anchors,
+            job_anchor_terms=truthful_anchors,
             role_domain_cues=role_cues,
         )
         if remaining:
@@ -1142,7 +1160,7 @@ async def generate_tailored_content_phase_b(
                 issues=remaining,
                 coverage=round(
                     tailored_resume_coverage_score(
-                        tailored_resume, job_anchor_terms=job_anchors
+                        tailored_resume, job_anchor_terms=truthful_anchors
                     ),
                     3,
                 ),

@@ -482,10 +482,27 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
     return result
 
 
+def user_encoding_is_scorable(user_enc: UserEncoding) -> bool:
+    """True when the profile carries evidence the scorer can compare.
+
+    With no skills and no job titles, four of six dimensions fall back to a
+    neutral 50 and every posting lands in the same mid-40s band. That number
+    looks like a judgement but is noise, so such profiles are not scored.
+    """
+    return bool(user_enc.skills) or bool(user_enc.title_vecs)
+
+
+class ProfileTooThinError(Exception):
+    """The user's encoding has no skills and no titles to match against."""
+
+
 async def compute_vector_match(
     job_id: str, user_id: str, *, explain: bool = False
 ) -> dict | None:
-    """Load encodings and score. None when encodings are missing/stale."""
+    """Load encodings and score. None when encodings are missing/stale.
+
+    Raises ``ProfileTooThinError`` when the profile cannot be scored at all.
+    """
     job_enc, user_enc = await load_encodings(job_id, user_id)
     if job_enc is None or user_enc is None:
         logger.info(
@@ -496,6 +513,9 @@ async def compute_vector_match(
             have_user=user_enc is not None,
         )
         return None
+    if not user_encoding_is_scorable(user_enc):
+        logger.info("vector_match_profile_too_thin", job_id=job_id, user_id=user_id)
+        raise ProfileTooThinError(user_id)
     if job_enc.model_version != user_enc.model_version:
         logger.warning(
             "vector_match_model_version_mismatch",

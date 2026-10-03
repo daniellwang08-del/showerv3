@@ -13,9 +13,14 @@ similarity is a dot product.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
+import queue
 import re
+import threading
+import time
+from concurrent.futures import Future
 from datetime import datetime, timezone
 
 import numpy as np
@@ -33,6 +38,7 @@ logger = get_logger(__name__)
 
 _model = None
 _model_device: str | None = None
+_model_lock = threading.Lock()
 
 # Sentence-transformers truncates inputs to the model's max sequence length
 # (~384 tokens for all-mpnet-base-v2), so we front-load informative content
@@ -87,7 +93,11 @@ def embedding_inline_enabled() -> bool:
 def get_embedding_model():
     """Lazy singleton. Heavy import stays out of non-encoding processes."""
     global _model, _model_device
-    if _model is None:
+    if _model is not None:
+        return _model
+    with _model_lock:
+        if _model is not None:
+            return _model
         from sentence_transformers import SentenceTransformer
 
         settings = get_settings()
@@ -98,11 +108,15 @@ def get_embedding_model():
             cache_dir=settings.embedding_model_cache_dir,
             device=device,
         )
-        _model = SentenceTransformer(
-            settings.embedding_model_name,
-            cache_folder=settings.embedding_model_cache_dir,
-            device=device,
-        )
+        kwargs = {"cache_folder": settings.embedding_model_cache_dir, "device": device}
+        try:
+            # Cached weights load without Hub round trips (saves 10s+ per start).
+            model = SentenceTransformer(settings.embedding_model_name, local_files_only=True, **kwargs)
+        except Exception:
+            model = SentenceTransformer(settings.embedding_model_name, **kwargs)
+        if device == "cuda" and settings.embedding_fp16:
+            model.half()
+        _model = model
         _model_device = device
         gpu_info: dict = {}
         if device == "cuda":
@@ -130,17 +144,102 @@ def model_version() -> str:
     return get_settings().embedding_model_name
 
 
-def encode_texts(texts: list[str]) -> np.ndarray:
-    """Encode texts to L2-normalized float32 vectors (rows)."""
+def _encode_now(texts: list[str]) -> np.ndarray:
     model = get_embedding_model()
-    clipped = [(t or "")[:_MAX_EMBED_CHARS] for t in texts]
     vecs = model.encode(
-        clipped,
+        texts,
         batch_size=effective_embedding_batch_size(),
         normalize_embeddings=True,
         show_progress_bar=False,
     )
     return np.asarray(vecs, dtype=np.float32)
+
+
+class _EncodeBatcher:
+    """Single model thread that merges concurrent encode requests.
+
+    A model call costs a fixed 30-80 ms plus a few ms per text, so encoding
+    the 3-5 short texts of many concurrent jobs in one call is several times
+    faster than one call per job. Callers block on a future from any thread.
+    """
+
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue[tuple[list[str], Future] | None] = queue.SimpleQueue()
+        self._thread: threading.Thread | None = None
+        self._start_lock = threading.Lock()
+
+    def _ensure_thread(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        with self._start_lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="embed-batcher", daemon=True)
+                self._thread.start()
+
+    def submit(self, texts: list[str]) -> Future:
+        fut: Future = Future()
+        if threading.current_thread() is self._thread:
+            fut.set_result(_encode_now(texts))
+            return fut
+        self._ensure_thread()
+        self._queue.put((texts, fut))
+        return fut
+
+    def _run(self) -> None:
+        settings = get_settings()
+        window = settings.embedding_batch_window_ms / 1000.0
+        cap = settings.embedding_max_batch_texts
+        while True:
+            first = self._queue.get()
+            if first is None:
+                return
+            batch = [first]
+            size = len(first[0])
+            deadline = time.monotonic() + window
+            while size < cap:
+                timeout = deadline - time.monotonic()
+                try:
+                    item = self._queue.get(timeout=timeout) if timeout > 0 else self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    self._queue.put(None)
+                    break
+                batch.append(item)
+                size += len(item[0])
+            flat = [t for texts, _ in batch for t in texts]
+            try:
+                vecs = _encode_now(flat) if flat else np.zeros((0, 0), dtype=np.float32)
+            except BaseException as exc:  # deliver to every waiter, keep the thread alive
+                for _, fut in batch:
+                    if not fut.done():
+                        fut.set_exception(exc)
+                continue
+            offset = 0
+            for texts, fut in batch:
+                fut.set_result(vecs[offset : offset + len(texts)])
+                offset += len(texts)
+            if len(batch) > 1:
+                logger.debug("embed_batch", requests=len(batch), texts=len(flat))
+
+
+_batcher = _EncodeBatcher()
+
+
+def encode_texts(texts: list[str]) -> np.ndarray:
+    """Encode texts to L2-normalized float32 vectors (rows). Blocks the caller."""
+    clipped = [(t or "")[:_MAX_EMBED_CHARS] for t in texts]
+    if not clipped:
+        return np.zeros((0, 0), dtype=np.float32)
+    return _batcher.submit(clipped).result()
+
+
+async def encode_texts_async(texts: list[str]) -> np.ndarray:
+    """Event-loop friendly ``encode_texts``; merges with concurrent requests."""
+    clipped = [(t or "")[:_MAX_EMBED_CHARS] for t in texts]
+    if not clipped:
+        return np.zeros((0, 0), dtype=np.float32)
+    return await asyncio.wrap_future(_batcher.submit(clipped))
 
 
 def vec_to_bytes(vec: np.ndarray | None) -> bytes | None:
@@ -314,44 +413,20 @@ def _compose_job_texts(
     return title, content_text, industry_text, full_text
 
 
-async def encode_job(job_id: str) -> bool:
-    """Compute and upsert the JobEncoding row. Returns True on success."""
-    async with get_session() as session:
-        job = (
-            await session.execute(select(Job).where(Job.id == job_id))
-        ).scalar_one_or_none()
-        if not job:
-            logger.warning("encode_job_missing_job", job_id=job_id)
-            return False
-        extraction = None
-        raw_text = None
-        if job.extraction_id:
-            extraction = (
-                await session.execute(
-                    select(JobExtraction)
-                    .options(undefer(JobExtraction.raw_plain_text))
-                    .where(JobExtraction.id == job.extraction_id)
-                )
-            ).scalar_one_or_none()
-            if extraction is not None:
-                raw_text = extraction.raw_plain_text
-
-        title_text, content_text, industry_text, full_text = _compose_job_texts(
-            job, extraction, raw_text
-        )
-        job_title = job.title
-        job_company = job.company
-        job_location = job.location
-        job_work_mode = job.work_mode
-        job_source_url = job.source_url
-        job_extraction_id = job.extraction_id
-        meta = job.raw_metadata if isinstance(job.raw_metadata, dict) else {}
-        is_remote_flag = bool(meta.get("is_remote"))
-
-    if not content_text.strip():
-        logger.warning("encode_job_no_text", job_id=job_id)
-        return False
-
+def _analyze_job_text(
+    job_id: str,
+    title_text: str,
+    content_text: str,
+    industry_text: str,
+    full_text: str,
+    job_title: str | None,
+    job_company: str | None,
+    job_location: str | None,
+    job_work_mode: str | None,
+    job_source_url: str | None,
+    is_remote_flag: bool,
+):
+    """CPU and model work for ``encode_job``; runs in a worker thread."""
     from app.services.job_field_utils import clean_optional_job_field
 
     skills = extract_skills_with_importance(full_text)
@@ -359,10 +434,7 @@ async def encode_job(job_id: str) -> bool:
     degree_required = extract_degree_required(full_text)
     clearance, _phrase = requires_security_clearance(full_text)
 
-    vecs = encode_texts(
-        [title_text or content_text[:200], content_text, industry_text]
-    )
-    title_vec, content_vec, industry_vec = vecs[0], vecs[1], vecs[2]
+    vecs = encode_texts([title_text or content_text[:200], content_text, industry_text])
 
     # Vector work-mode + MiniLM title/company fill (encoding process only).
     work_mode_to_set: str | None = None
@@ -414,6 +486,82 @@ async def encode_job(job_id: str) -> bool:
     except Exception as meta_err:
         logger.warning("metadata_ml_classify_failed", job_id=job_id, error=str(meta_err))
 
+    return (
+        skills,
+        years_required,
+        degree_required,
+        clearance,
+        (vecs[0], vecs[1], vecs[2]),
+        work_mode_to_set,
+        title_to_set,
+        company_to_set,
+    )
+
+
+async def encode_job(job_id: str) -> bool:
+    """Compute and upsert the JobEncoding row. Returns True on success."""
+    async with get_session() as session:
+        job = (
+            await session.execute(select(Job).where(Job.id == job_id))
+        ).scalar_one_or_none()
+        if not job:
+            logger.warning("encode_job_missing_job", job_id=job_id)
+            return False
+        extraction = None
+        raw_text = None
+        if job.extraction_id:
+            extraction = (
+                await session.execute(
+                    select(JobExtraction)
+                    .options(undefer(JobExtraction.raw_plain_text))
+                    .where(JobExtraction.id == job.extraction_id)
+                )
+            ).scalar_one_or_none()
+            if extraction is not None:
+                raw_text = extraction.raw_plain_text
+
+        title_text, content_text, industry_text, full_text = _compose_job_texts(
+            job, extraction, raw_text
+        )
+        job_title = job.title
+        job_company = job.company
+        job_location = job.location
+        job_work_mode = job.work_mode
+        job_source_url = job.source_url
+        job_extraction_id = job.extraction_id
+        meta = job.raw_metadata if isinstance(job.raw_metadata, dict) else {}
+        is_remote_flag = bool(meta.get("is_remote"))
+
+    if not content_text.strip():
+        logger.warning("encode_job_no_text", job_id=job_id)
+        return False
+
+    from app.services.job_field_utils import clean_optional_job_field
+
+    (
+        skills,
+        years_required,
+        degree_required,
+        clearance,
+        (title_vec, content_vec, industry_vec),
+        work_mode_to_set,
+        title_to_set,
+        company_to_set,
+    ) = await asyncio.to_thread(
+        _analyze_job_text,
+        job_id,
+        title_text,
+        content_text,
+        industry_text,
+        full_text,
+        job_title,
+        job_company,
+        job_location,
+        job_work_mode,
+        job_source_url,
+        is_remote_flag,
+    )
+
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_session() as session:
         row = (
@@ -434,30 +582,25 @@ async def encode_job(job_id: str) -> bool:
         row.requires_security_clearance = bool(clearance)
         row.encoded_at = now
 
-        if work_mode_to_set or title_to_set or company_to_set:
-            job_row = (
-                await session.execute(select(Job).where(Job.id == job_id))
-            ).scalar_one_or_none()
-            if job_row is not None:
-                if work_mode_to_set and not (job_row.work_mode or "").strip():
-                    job_row.work_mode = work_mode_to_set
-                if title_to_set and not clean_optional_job_field(job_row.title):
-                    job_row.title = title_to_set[:500]
-                if company_to_set and not clean_optional_job_field(job_row.company):
-                    job_row.company = company_to_set[:500]
-            if job_extraction_id:
-                ext_row = (
-                    await session.execute(
-                        select(JobExtraction).where(JobExtraction.id == job_extraction_id)
-                    )
+    # One row per transaction: extraction and save workers lock jobs and
+    # job_extractions in the other order, so holding both here deadlocks.
+    if work_mode_to_set or title_to_set or company_to_set:
+        targets = [(Job, job_id)]
+        if job_extraction_id:
+            targets.append((JobExtraction, job_extraction_id))
+        for model, row_id in targets:
+            async with get_session() as session:
+                target = (
+                    await session.execute(select(model).where(model.id == row_id))
                 ).scalar_one_or_none()
-                if ext_row is not None:
-                    if work_mode_to_set and not (ext_row.work_mode or "").strip():
-                        ext_row.work_mode = work_mode_to_set
-                    if title_to_set and not clean_optional_job_field(ext_row.title):
-                        ext_row.title = title_to_set[:500]
-                    if company_to_set and not clean_optional_job_field(ext_row.company):
-                        ext_row.company = company_to_set[:500]
+                if target is None:
+                    continue
+                if work_mode_to_set and not (target.work_mode or "").strip():
+                    target.work_mode = work_mode_to_set
+                if title_to_set and not clean_optional_job_field(target.title):
+                    target.title = title_to_set[:500]
+                if company_to_set and not clean_optional_job_field(target.company):
+                    target.company = company_to_set[:500]
 
     logger.info(
         "job_encoded",
@@ -660,7 +803,7 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
     has_degree = bool(education) or None
 
     to_encode = [profile_text] + titles + [prefs_combined, domain_text]
-    vecs = encode_texts(to_encode)
+    vecs = await encode_texts_async(to_encode)
     experience_vec = vecs[0]
     title_vecs = [
         {"title": titles[i], "vec": vec_to_b64(vecs[1 + i])} for i in range(len(titles))

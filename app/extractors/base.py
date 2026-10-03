@@ -11,6 +11,8 @@ class ExtractionResult:
     raw_content: str | None = None
     structured_data: dict[str, Any] | None = None
     error: str | None = None
+    # Rendered DOM from the browser pass, for vendor detectors that need markup.
+    html: str | None = None
 
 
 class BaseExtractor(ABC):

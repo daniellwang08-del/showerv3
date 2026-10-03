@@ -1,12 +1,11 @@
 import asyncio
 import traceback
-from arq import create_pool, cron, func
+from arq import Retry, create_pool, cron, func
 from arq.connections import RedisSettings, ArqRedis
 from app.core.config import get_settings
 from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
 from app.models.schemas import ExtractionStatus
 from app.models.database import Job
-from app.services.extraction_service import ExtractionService
 from app.services.job_match_orchestrator import clear_job_match_progress
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, JobRepository, JobMatchInProgressRepository
@@ -158,7 +157,9 @@ async def extract_job(
 
     pending_match_progress: tuple[str, str] | None = None
     try:
-        service: ExtractionService = ctx.get("extraction_service") or ExtractionService()
+        from app.services.extraction_service import ExtractionService
+
+        service = ctx.get("extraction_service") or ExtractionService()
         result = await service.process_job(job_id, url)
 
         if result.get("status") == "extracted":
@@ -328,6 +329,19 @@ async def extract_job(
         clear_logging_context()
 
 
+_TRANSIENT_MAX_TRIES = 3
+
+
+def _is_transient_infra_error(exc: BaseException) -> bool:
+    """DB connection drops and pool timeouts clear on their own; retry those."""
+    from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
+    from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+
+    if isinstance(exc, (OperationalError, InterfaceError, PoolTimeoutError, ConnectionError)):
+        return True
+    return isinstance(exc, DBAPIError) and bool(getattr(exc, "connection_invalidated", False))
+
+
 async def analyze_job_match(
     ctx: dict,
     valid_job_id: str,
@@ -423,6 +437,16 @@ async def analyze_job_match(
         await clear_job_match_progress(valid_job_id, user_id)
         raise
     except Exception as e:
+        job_try = int(ctx.get("job_try") or 1)
+        if _is_transient_infra_error(e) and job_try < _TRANSIENT_MAX_TRIES:
+            logger.warning(
+                "worker_analyze_job_match_transient_retry",
+                valid_job_id=valid_job_id,
+                user_id=user_id,
+                job_try=job_try,
+                error=str(e)[:300],
+            )
+            raise Retry(defer=2 * job_try) from e
         logger.exception("worker_analyze_job_match_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
         await clear_job_match_progress(valid_job_id, user_id)
         await publish_ws_event({
@@ -436,189 +460,205 @@ async def analyze_job_match(
         clear_logging_context()
 
 
+SAVE_DRAIN_BATCH = 25
+
+
+def _save_queue_key(user_id: str) -> str:
+    return f"job_save_queue:{user_id}"
+
+
+async def _schedule_save_drain(user_id: str, attempt: int) -> None:
+    """One deferred payload-free drain per ~poll window; ids collapse bursts."""
+    import time
+
+    from app.core.redis_support import pipeline_job_id
+
+    if attempt and (attempt == SAVE_LOCK_MAX_ATTEMPTS or attempt % SAVE_LOCK_MAX_ATTEMPTS == 0):
+        logger.warning(
+            "save_lock_still_busy",
+            user_id=user_id,
+            lock_attempt=attempt,
+            waited_approx_seconds=round(attempt * SAVE_LOCK_POLL_SECONDS),
+        )
+    bucket = int(time.time() / SAVE_LOCK_POLL_SECONDS)
+    pool = await get_save_pool()
+    await pool.enqueue_job(
+        "save_analyzed_job",
+        None,
+        user_id,
+        None,
+        None,
+        attempt,
+        _job_id=pipeline_job_id("savedrain", user_id, str(bucket)),
+        _defer_by=SAVE_LOCK_POLL_SECONDS,
+    )
+
+
+async def _save_one(job_id: str, user_id: str, extraction_id: str | None, match_data: dict):
+    from app.services.post_analysis_dedup import run_post_analysis_dedup
+
+    dedup_result = await run_post_analysis_dedup(job_id, user_id, match_data, extraction_id)
+    action = dedup_result.get("action", "saved_active")
+    logger.info("worker_save_analyzed_job_completed", job_id=job_id, user_id=user_id, action=action)
+    return dedup_result, action
+
+
 async def save_analyzed_job(
     ctx: dict,
+    job_id: str | None,
+    user_id: str,
+    extraction_id: str | None,
+    match_data: dict | None,
+    lock_attempt: int = 0,
+) -> dict | None:
+    """Persist analyzed match results for one user through a per-user drain.
+
+    Each call pushes its payload once onto ``job_save_queue:{user_id}``. Whoever
+    holds ``job_save_lock:{user_id}`` saves queued items in order (dedup must be
+    serialized per user), releases the lock, then runs WS / Phase B / auto-post
+    for that batch outside the lock. A caller that finds the lock busy only
+    schedules a deferred payload-free drain, so a burst of N saves costs one
+    lock holder instead of N independent pollers re-enqueueing their payloads.
+
+    A completed analysis is never discarded: transient DB failures push the item
+    back and schedule another drain.
+    """
+    import pickle
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="save_analyzed_job", job_id=job_id, user_id=user_id)
+    redis = ctx.get("redis")
+    queue_key = _save_queue_key(user_id)
+
+    if not redis:
+        if match_data is None:
+            clear_logging_context()
+            return None
+        try:
+            dedup_result, action = await _save_one(job_id, user_id, extraction_id, match_data)
+        except Exception as e:
+            logger.exception("worker_save_analyzed_job_failed", job_id=job_id, error=str(e))
+            await _publish_save_failed(job_id, user_id, str(e))
+            clear_logging_context()
+            return None
+        await _after_save(job_id, user_id, extraction_id, match_data, dedup_result, action)
+        clear_logging_context()
+        return dedup_result
+
+    if match_data is not None:
+        await redis.rpush(queue_key, pickle.dumps((job_id, extraction_id, match_data)))
+        await redis.expire(queue_key, 86400)
+        logger.info("worker_save_analyzed_job_queued", job_id=job_id, user_id=user_id)
+
+    lock_key = f"job_save_lock:{user_id}"
+    saved = failed = 0
+    while True:
+        if not await redis.set(lock_key, "1", nx=True, ex=SAVE_LOCK_TTL_SECONDS):
+            try:
+                await _schedule_save_drain(user_id, max(0, int(lock_attempt or 0)) + 1)
+            except Exception as e:
+                logger.error("save_lock_defer_enqueue_failed", user_id=user_id, error=str(e))
+            clear_logging_context()
+            return {"deferred": "lock_busy", "saved": saved, "failed": failed}
+
+        batch: list[tuple[str, str | None, dict, dict, str]] = []
+        requeue = False
+        try:
+            for _ in range(SAVE_DRAIN_BATCH):
+                raw = await redis.lpop(queue_key)
+                if raw is None:
+                    break
+                item_job_id, item_ext_id, item_data = pickle.loads(raw)
+                try:
+                    dedup_result, action = await _save_one(item_job_id, user_id, item_ext_id, item_data)
+                    batch.append((item_job_id, item_ext_id, item_data, dedup_result, action))
+                except Exception as e:
+                    if _is_transient_infra_error(e):
+                        logger.warning("worker_save_transient_requeued", job_id=item_job_id, error=str(e)[:200])
+                        await redis.lpush(queue_key, raw)
+                        requeue = True
+                        break
+                    failed += 1
+                    logger.exception("worker_save_analyzed_job_failed", job_id=item_job_id, error=str(e))
+                    await _publish_save_failed(item_job_id, user_id, str(e))
+        finally:
+            await redis.delete(lock_key)
+
+        for item_job_id, item_ext_id, item_data, dedup_result, action in batch:
+            await _after_save(item_job_id, user_id, item_ext_id, item_data, dedup_result, action)
+        saved += len(batch)
+
+        if requeue:
+            await _schedule_save_drain(user_id, 0)
+            break
+        if not batch and not await redis.llen(queue_key):
+            break
+
+    clear_logging_context()
+    return {"saved": saved, "failed": failed}
+
+
+async def _publish_save_failed(job_id: str, user_id: str, error: str) -> None:
+    await clear_job_match_progress(job_id, user_id)
+    await publish_ws_event({
+        "type": "match_failed",
+        "user_id": user_id,
+        "valid_job_id": job_id,
+        "error": error,
+    })
+
+
+async def _after_save(
     job_id: str,
     user_id: str,
     extraction_id: str | None,
     match_data: dict,
-    lock_attempt: int = 0,
-) -> dict | None:
-    """Save analyzed job match result with per-user dedup lock.
-
-    Lock contention re-enqueues with ``_defer_by`` instead of sleeping so waiters
-    do not occupy a save ``max_jobs`` slot. Dedup runs under the lock; Phase B
-    enqueue, WS events, and auto-post run after the lock is released.
-
-    Critical: a completed Phase A result must never be discarded because the
-    per-user lock is busy, keep deferring until the save succeeds.
-    """
+    dedup_result: dict | None,
+    action: str,
+) -> None:
+    """WS + Phase B + auto-post for one saved result (outside the per-user lock)."""
     from app.core.redis_support import pipeline_job_id
-    from app.services.post_analysis_dedup import run_post_analysis_dedup
 
-    set_request_id(new_request_id())
-    bind_logging_context(worker_job_type="save_analyzed_job", job_id=job_id, user_id=user_id)
-    logger.info(
-        "worker_save_analyzed_job_started",
-        job_id=job_id,
-        user_id=user_id,
-        lock_attempt=lock_attempt,
-    )
+    await clear_job_match_progress(job_id, user_id)
 
-    redis = ctx.get("redis")
-    lock_key = f"job_save_lock:{user_id}"
-    lock_ttl = SAVE_LOCK_TTL_SECONDS
-    lock_held = False
-    dedup_result: dict | None = None
-    action: str | None = None
+    await publish_ws_event({
+        "type": "match_completed",
+        "user_id": user_id,
+        "valid_job_id": job_id,
+        "overall_score": match_data.get("overall_score"),
+        "recommendation": match_data.get("recommendation"),
+    })
 
-    if redis:
-        acquired = await redis.set(lock_key, "1", nx=True, ex=lock_ttl)
-        if not acquired:
-            attempt = max(0, int(lock_attempt or 0))
-            next_attempt = attempt + 1
-            if next_attempt == SAVE_LOCK_MAX_ATTEMPTS or (
-                next_attempt > SAVE_LOCK_MAX_ATTEMPTS and next_attempt % SAVE_LOCK_MAX_ATTEMPTS == 0
-            ):
-                # Soft warning only, still keep waiting; never drop match_data.
-                logger.warning(
-                    "save_lock_still_busy",
-                    job_id=job_id,
-                    user_id=user_id,
-                    lock_attempt=next_attempt,
-                    waited_approx_seconds=round(next_attempt * SAVE_LOCK_POLL_SECONDS),
-                )
-            try:
-                pool = await get_save_pool()
-                # Unique id per attempt so a running waiter can schedule the next poll
-                # after it returns (stable ids would collide with the in-flight job).
-                await pool.enqueue_job(
-                    "save_analyzed_job",
-                    job_id,
-                    user_id,
-                    extraction_id,
-                    match_data,
-                    next_attempt,
-                    _job_id=pipeline_job_id("save", job_id, user_id, f"lock{next_attempt}"),
-                    _defer_by=SAVE_LOCK_POLL_SECONDS,
-                )
-                logger.info(
-                    "save_lock_deferred",
-                    job_id=job_id,
-                    user_id=user_id,
-                    lock_attempt=next_attempt,
-                    defer_by=SAVE_LOCK_POLL_SECONDS,
-                )
-            except Exception as e:
-                logger.error(
-                    "save_lock_defer_enqueue_failed",
-                    job_id=job_id,
-                    user_id=user_id,
-                    error=str(e),
-                )
-                # Last resort: try once more with a unique suffix before failing.
-                try:
-                    pool = await get_save_pool()
-                    await pool.enqueue_job(
-                        "save_analyzed_job",
-                        job_id,
-                        user_id,
-                        extraction_id,
-                        match_data,
-                        next_attempt,
-                        _job_id=pipeline_job_id(
-                            "save", job_id, user_id, f"lockretry{next_attempt}"
-                        ),
-                        _defer_by=SAVE_LOCK_POLL_SECONDS * 2,
-                    )
-                    clear_logging_context()
-                    return {"deferred": "lock_busy_retry", "lock_attempt": next_attempt}
-                except Exception as e2:
-                    logger.error(
-                        "save_lock_defer_retry_failed",
-                        job_id=job_id,
-                        user_id=user_id,
-                        error=str(e2),
-                    )
-                    await clear_job_match_progress(job_id, user_id)
-                    await publish_ws_event({
-                        "type": "match_failed",
-                        "user_id": user_id,
-                        "valid_job_id": job_id,
-                        "error": "Failed to requeue while waiting for save lock",
-                    })
-                    clear_logging_context()
-                    return None
-            clear_logging_context()
-            return {"deferred": "lock_busy", "lock_attempt": next_attempt}
-        lock_held = True
-
-    try:
-        dedup_result = await run_post_analysis_dedup(
-            job_id, user_id, match_data, extraction_id,
-        )
-        action = dedup_result.get("action", "saved_active")
-        logger.info("worker_save_analyzed_job_completed", job_id=job_id, action=action)
-    except Exception as e:
-        logger.exception("worker_save_analyzed_job_failed", job_id=job_id, error=str(e))
-        await clear_job_match_progress(job_id, user_id)
+    if action == "saved_duplicated":
         await publish_ws_event({
-            "type": "match_failed",
+            "type": "job_excluded_for_user",
             "user_id": user_id,
             "valid_job_id": job_id,
-            "error": str(e),
-        })
-        dedup_result = None
-        action = None
-    finally:
-        if redis and lock_held:
-            await redis.delete(lock_key)
-
-    # Outside the per-user lock: WS + Phase B + auto-post (do not serialize peers).
-    if action is not None:
-        await clear_job_match_progress(job_id, user_id)
-
-        await publish_ws_event({
-            "type": "match_completed",
-            "user_id": user_id,
-            "valid_job_id": job_id,
-            "overall_score": match_data.get("overall_score"),
-            "recommendation": match_data.get("recommendation"),
+            "exclusion_type": (dedup_result or {}).get("exclusion_type"),
+            "reason": (dedup_result or {}).get("reason"),
         })
 
-        if action == "saved_duplicated":
-            await publish_ws_event({
-                "type": "job_excluded_for_user",
-                "user_id": user_id,
-                "valid_job_id": job_id,
-                "exclusion_type": (dedup_result or {}).get("exclusion_type"),
-                "reason": (dedup_result or {}).get("reason"),
-            })
-
-        if action == "saved_active" and match_data.get("should_run_phase_b"):
-            try:
-                pool = await get_tailoring_pool()
-                await pool.enqueue_job(
-                    "generate_tailored_content",
-                    job_id,
-                    user_id,
-                    extraction_id,
-                    _job_id=pipeline_job_id("tailor", job_id, user_id),
-                )
-            except Exception as e:
-                logger.warning(
-                    "tailored_content_enqueue_from_save_failed",
-                    job_id=job_id,
-                    error=str(e),
-                )
-
-        if action == "saved_active":
-            await _enqueue_or_run_auto_posts(
-                user_id, job_id, match_data.get("overall_score"),
+    if action == "saved_active" and match_data.get("should_run_phase_b"):
+        try:
+            pool = await get_tailoring_pool()
+            await pool.enqueue_job(
+                "generate_tailored_content",
+                job_id,
+                user_id,
+                extraction_id,
+                _job_id=pipeline_job_id("tailor", job_id, user_id),
+            )
+        except Exception as e:
+            logger.warning(
+                "tailored_content_enqueue_from_save_failed",
+                job_id=job_id,
+                error=str(e),
             )
 
-    clear_logging_context()
-    return dedup_result
+    if action == "saved_active":
+        await _enqueue_or_run_auto_posts(
+            user_id, job_id, match_data.get("overall_score"),
+        )
 
 
 async def _enqueue_or_run_auto_posts(
@@ -1089,7 +1129,10 @@ async def run_scraper_task(
                 "total": total,
                 "success": result.get("success", False),
             })
-            if result.get("success"):
+            # Partial runs (timeout, write errors) still saved rows worth promoting.
+            if result.get("success") or (
+                result.get("scrape_run_id") and result.get("error") in ("timeout", "error")
+            ):
                 promotions[name] = await _promote_and_publish(
                     spider_name=name,
                     scrape_run_id=result.get("scrape_run_id"),
@@ -1536,6 +1579,8 @@ def _keep_result() -> int:
 
 async def _extraction_worker_startup(ctx: dict) -> None:
     """Pre-create a singleton ExtractionService for reuse across jobs."""
+    from app.services.extraction_service import ExtractionService
+
     ctx["extraction_service"] = ExtractionService()
     from app.services.extraction_cache import init_redis_pool
     from app.core.redis_support import init_pubsub_redis_pool
@@ -1859,6 +1904,17 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
         clear_logging_context()
 
 
+async def purge_old_logs_task(ctx: dict) -> int:
+    """Hourly retention pass over system_log_events (was API-startup only)."""
+    from app.services.log_sink import purge_old_logs
+
+    try:
+        return await purge_old_logs()
+    except Exception as e:
+        logger.warning("purge_old_logs_failed", error=str(e))
+        return 0
+
+
 async def _encoding_worker_startup(ctx: dict) -> None:
     """Load the embedding model once per worker process."""
     from app.core.redis_support import init_pubsub_redis_pool
@@ -1892,10 +1948,12 @@ class ScraperWorkerSettings:
         # Per-user job sources: twice-hourly pass syncs boards past their interval.
         cron(cron_sync_user_job_sources, minute={5, 35}, unique=True),
         cron(cron_sync_user_job_site_connections, minute={8, 38}, unique=True),
+        cron(purge_old_logs_task, minute={17}, unique=True),
     ]
     redis_settings = _redis_settings
     queue_name = SCRAPER_QUEUE
-    job_timeout = 3600
+    # Parallel spiders each get scraper_spider_timeout_seconds; leave room for promotion.
+    job_timeout = get_settings().scraper_spider_timeout_seconds + 1800
     max_jobs = get_settings().scraper_worker_max_jobs
     max_tries = 1
     keep_result = _keep_result()

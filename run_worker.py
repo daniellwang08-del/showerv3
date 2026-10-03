@@ -62,6 +62,14 @@ if sys.platform == "win32" and sys.version_info < (3, 14):
     except Exception:
         pass
 
+if sys.platform != "win32":
+    try:
+        import uvloop
+
+        uvloop.install()
+    except ImportError:
+        pass
+
 from arq import run_worker
 from arq import func
 from app.tasks.worker import (
@@ -109,9 +117,21 @@ MODE_MAX_JOBS_SETTING = {
 
 # ── Extraction worker lifecycle ────────────────────────────────────────────
 
+def _worker_pool(max_jobs_attr: str) -> dict:
+    """One DB connection per concurrent job (capped) plus a little overflow.
+
+    Sizing every process from one global DATABASE_POOL_SIZE either starves the
+    busy workers or, summed over the fleet, overruns Postgres max_connections.
+    """
+    from app.core.config import get_settings
+
+    jobs = int(getattr(get_settings(), max_jobs_attr, 4) or 4)
+    return {"pool_size": max(2, min(jobs, 10)), "max_overflow": 2}
+
+
 async def extraction_startup(ctx):
     logger.info("extraction_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("extraction_worker_max_jobs"))
     await _start_worker_log_sink("extraction")
     await init_http_client()
     await init_browser_pool()
@@ -143,7 +163,7 @@ async def extraction_shutdown(ctx):
 
 async def analysis_startup(ctx):
     logger.info("analysis_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("analysis_worker_max_jobs"))
     await _start_worker_log_sink("analysis")
     from app.services.extraction_cache import init_redis_pool
     from app.core.redis_support import init_pubsub_redis_pool
@@ -169,7 +189,7 @@ async def analysis_shutdown(ctx):
 
 async def tailoring_startup(ctx):
     logger.info("tailoring_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("tailoring_worker_max_jobs"))
     await _start_worker_log_sink("tailoring")
     from app.services.extraction_cache import init_redis_pool
     from app.core.redis_support import init_pubsub_redis_pool
@@ -238,7 +258,7 @@ class TailoringWorkerConfig(TailoringWorkerSettings):
 
 async def save_startup(ctx):
     logger.info("save_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("save_worker_max_jobs"))
     await _start_worker_log_sink("save")
     from app.core.redis_support import init_pubsub_redis_pool
 
@@ -270,7 +290,7 @@ class SaveWorkerConfig(SaveWorkerSettings):
 
 async def autopost_startup(ctx):
     logger.info("autopost_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("autopost_worker_max_jobs"))
     await _start_worker_log_sink("autopost")
     from app.core.redis_support import init_pubsub_redis_pool
 
@@ -304,7 +324,7 @@ class AutoPostWorkerConfig(AutoPostWorkerSettings):
 
 async def resume_build_startup(ctx):
     logger.info("resume_build_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("resume_worker_max_jobs"))
     await _start_worker_log_sink("resume")
     from app.core.redis_support import init_pubsub_redis_pool
 
@@ -338,7 +358,7 @@ class ResumeBuildWorkerConfig(ResumeBuildWorkerSettings):
 
 async def scraper_startup(ctx):
     logger.info("scraper_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("scraper_worker_max_jobs"))
     await _start_worker_log_sink("scraper")
     from app.core.redis_support import init_pubsub_redis_pool
 
@@ -373,7 +393,7 @@ class ScraperWorkerConfig(ScraperWorkerSettings):
 
 async def encoding_startup(ctx):
     logger.info("encoding_worker_startup_begin")
-    await init_database()
+    await init_database(**_worker_pool("encoding_worker_max_jobs"))
     await _start_worker_log_sink("encoding")
     from app.core.redis_support import init_pubsub_redis_pool
 
@@ -430,7 +450,7 @@ def _install_main_event_loop() -> asyncio.AbstractEventLoop:
     arq ``Worker.__init__`` calls ``asyncio.get_event_loop()``. On Python 3.12+
     that warns/raises if no loop is set. ``asyncio.run()`` also closes its loop
     when finished, so any pre-start async work must leave a live loop installed
-    via ``set_event_loop`` — without calling the deprecated getter first.
+    via ``set_event_loop``, without calling the deprecated getter first.
     """
     global _MAIN_EVENT_LOOP
     try:

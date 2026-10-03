@@ -272,7 +272,9 @@ async def _mark_extraction_ready_without_llm(ext_id: str, job_id: str | None = N
 
 
 _ENCODING_WAIT_SECONDS = 30.0
-_ENCODING_POLL_SECONDS = 1.0
+# Batched encodes finish in tens of ms, so start polling fast and back off.
+_ENCODING_POLL_START_SECONDS = 0.05
+_ENCODING_POLL_MAX_SECONDS = 1.0
 
 
 async def _encodings_present(job_id: str, user_id: str) -> bool:
@@ -320,8 +322,10 @@ async def _wait_for_worker_encodings(job_id: str, user_id: str) -> bool:
     if not enqueued:
         return False
     deadline = time.monotonic() + _ENCODING_WAIT_SECONDS
+    delay = _ENCODING_POLL_START_SECONDS
     while time.monotonic() < deadline:
-        await asyncio.sleep(_ENCODING_POLL_SECONDS)
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, _ENCODING_POLL_MAX_SECONDS)
         try:
             if await _encodings_present(job_id, user_id):
                 return True
@@ -408,13 +412,19 @@ async def _try_vector_authoritative(
     if extraction.is_job_posting is None:
         await _mark_extraction_ready_without_llm(ext_id, job_id)
 
-    from app.services.vector_match_service import compute_vector_match
+    from app.services.vector_match_service import ProfileTooThinError, compute_vector_match
 
-    vector_result = await compute_vector_match(job_id, user_id)
+    try:
+        vector_result = await compute_vector_match(job_id, user_id)
+    except ProfileTooThinError:
+        return None
     if vector_result is None:
         if not await _ensure_encodings_for_vector(job_id, user_id):
             return None
-        vector_result = await compute_vector_match(job_id, user_id)
+        try:
+            vector_result = await compute_vector_match(job_id, user_id)
+        except ProfileTooThinError:
+            return None
         if vector_result is None:
             logger.warning(
                 "vector_match_unavailable_after_encode",
@@ -432,9 +442,12 @@ async def _record_shadow_comparison(job_id: str, user_id: str, llm_result: dict)
     ):
         return
     try:
-        from app.services.vector_match_service import compute_vector_match
+        from app.services.vector_match_service import ProfileTooThinError, compute_vector_match
 
-        vector_result = await compute_vector_match(job_id, user_id)
+        try:
+            vector_result = await compute_vector_match(job_id, user_id)
+        except ProfileTooThinError:
+            return
         if vector_result is None:
             await _enqueue_missing_encodings(job_id, user_id)
             return

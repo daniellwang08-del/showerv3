@@ -5,6 +5,7 @@ available spiders, and triggering sync (spider runs) via arq.
 """
 
 import json
+from app.utils.ttl_cache import AsyncTTLCache
 from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
@@ -877,18 +878,28 @@ async def get_scraped_job(job_id: str, user=Depends(_get_current_user)):
         return ScrapedJobResponse(**dict(row))
 
 
+# Board tiles poll every few seconds; a short TTL turns N polls into one query.
+_STATS_CACHE = AsyncTTLCache(ttl=8.0)
+
+
 @scraper_router.get("/stats", response_model=ScraperStatsResponse)
 async def get_scraper_stats(
     user=Depends(_get_current_user),
     timezone: str | None = Query(None, description="IANA timezone for today's counts (browser local time)"),
 ):
     """Aggregate statistics aligned with the user's jobs dashboard."""
-    from app.services.dashboard_stats import fetch_dashboard_stats
-    from app.utils.date_bounds import day_bounds_for_timezone
-
     user_id = user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    return await _STATS_CACHE.get_or_compute(
+        ("user", user_id, timezone or ""),
+        lambda: _compute_scraper_stats(user_id, timezone),
+    )
+
+
+async def _compute_scraper_stats(user_id: str, timezone: str | None) -> ScraperStatsResponse:
+    from app.services.dashboard_stats import fetch_dashboard_stats
+    from app.utils.date_bounds import day_bounds_for_timezone
 
     day_start, day_end = day_bounds_for_timezone(timezone)
 
@@ -954,7 +965,13 @@ async def get_admin_scraper_stats(
     """System-wide fetch → extract → post funnel for the admin Jobs board."""
     if not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
+    return await _STATS_CACHE.get_or_compute(
+        ("admin", timezone or ""),
+        lambda: _compute_admin_scraper_stats(timezone),
+    )
 
+
+async def _compute_admin_scraper_stats(timezone: str | None) -> AdminScraperStatsResponse:
     from app.services.dashboard_stats import fetch_admin_dashboard_stats
     from app.services.weekly_progress import fetch_admin_board_trend_series
     from app.utils.date_bounds import day_bounds_for_timezone

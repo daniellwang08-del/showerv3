@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # Postgres max_connections (production tuned to 300).
     database_pool_size: int = 12
     database_max_overflow: int = 8
+    # A runaway query or a leaked open transaction should fail, not pin a
+    # connection and its locks. 0 disables either guard.
+    database_statement_timeout_ms: int = Field(default=60_000, ge=0)
+    database_idle_in_transaction_timeout_ms: int = Field(default=120_000, ge=0)
 
     @field_validator("database_url")
     @classmethod
@@ -158,7 +162,12 @@ class Settings(BaseSettings):
     tailoring_worker_max_jobs: int = 10
     save_worker_max_jobs: int = 16
     resume_worker_max_jobs: int = 8
-    scraper_worker_max_jobs: int = 2
+    scraper_worker_max_jobs: int = 4
+    # Spiders in one sync plan run as parallel Scrapy subprocesses (different
+    # hosts), bounded by this. A per-spider Redis lock prevents overlap.
+    scraper_parallel_spiders: int = Field(default=3, ge=1, le=8)
+    # Hard kill for one spider subprocess. Must stay below the scraper job_timeout.
+    scraper_spider_timeout_seconds: int = Field(default=5400, ge=300, le=14000)
     # Sheets/Pumble auto-post (low priority; must not hold save slots).
     autopost_worker_max_jobs: int = 6
     # Max parallel OpenAI calls when attachment text is split into chunks.
@@ -220,6 +229,8 @@ class Settings(BaseSettings):
     # Align with extraction concurrency (token bucket + burst semaphore).
     rate_limit_requests_per_second: float = 12.0
     rate_limit_burst: int = 20
+    # Total in-flight outbound HTTP requests per process (rate limits are per host).
+    http_max_concurrency: int = Field(default=24, ge=1, le=256)
 
     extraction_cache_ttl_seconds: int = 3600
     default_dedup_recycle_days: int = Field(default=60, ge=1, le=3650)
@@ -252,13 +263,20 @@ class Settings(BaseSettings):
     embedding_device: Literal["auto", "cpu", "cuda"] = "auto"
     # When unset, the effective batch size is 64 on CUDA and 16 on CPU.
     embedding_batch_size: int = Field(default=16, ge=1, le=256)
+    # Half-precision weights on CUDA: about 2x throughput on large batches with
+    # cosine drift around 1e-3, well inside match-score rounding.
+    embedding_fp16: bool = True
+    # Concurrent encode requests are merged into one model call. The batcher
+    # waits this long for more requests once the first one arrives.
+    embedding_batch_window_ms: float = Field(default=4.0, ge=0.0, le=50.0)
+    embedding_max_batch_texts: int = Field(default=256, ge=1, le=1024)
     # Encode inline in extraction/analysis processes (True) or always defer to
     # the encoding worker (False) so only that process loads torch.
     # None = auto (False for APP_ENV=local|dev|development, True otherwise).
     embedding_inline: bool | None = Field(default=None)
-    # Concurrent arq jobs for the encoding worker (model inference is CPU bound;
-    # keep low so it never starves the other workers).
-    encoding_worker_max_jobs: int = 2
+    # Concurrent arq jobs for the encoding worker. Model calls are merged by
+    # the micro-batcher, so more slots means bigger GPU batches, not contention.
+    encoding_worker_max_jobs: int = 16
 
     proxy_enabled: bool = False
     proxy_url: str | None = None

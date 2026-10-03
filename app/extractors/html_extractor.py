@@ -1,3 +1,5 @@
+import asyncio
+
 from app.extractors.base import BaseExtractor, ExtractionResult
 from app.models.schemas import ExtractionMethod
 from app.services.job_content_cleaner import plain_text_from_document_html
@@ -6,6 +8,9 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 MIN_CONTENT_LENGTH = 50
+# lxml releases the GIL while parsing, so big pages go to a thread
+# instead of stalling every other job on the worker's event loop.
+OFFLOAD_PARSE_CHARS = 60_000
 
 
 class HTMLExtractor(BaseExtractor):
@@ -27,7 +32,10 @@ class HTMLExtractor(BaseExtractor):
             )
 
         try:
-            content = plain_text_from_document_html(html)
+            if len(html) >= OFFLOAD_PARSE_CHARS:
+                content = await asyncio.to_thread(plain_text_from_document_html, html)
+            else:
+                content = plain_text_from_document_html(html)
 
             if not content or len(content) < MIN_CONTENT_LENGTH:
                 return ExtractionResult(

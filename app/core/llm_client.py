@@ -37,9 +37,11 @@ After the cooldown, one probe request tests whether OpenAI has recovered.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import hashlib
 import json as json_lib
+import random
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -528,7 +530,11 @@ async def _call_anthropic(
         "messages": anthropic_messages,
     }
     if system_text:
-        kwargs["system"] = system_text
+        # System prompts are static per task; mark them cacheable (ignored by
+        # the API below the model's minimum cacheable length).
+        kwargs["system"] = [
+            {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
+        ]
     if temperature is not None:
         kwargs["temperature"] = temperature
 
@@ -696,6 +702,66 @@ def response_message_meta(
         if details is not None:
             usage["reasoning_tokens"] = getattr(details, "reasoning_tokens", None)
     return content, finish_reason, usage
+
+
+_TRANSIENT_MAX_RETRIES = 2
+_TRANSIENT_MAX_DELAY_SECONDS = 8.0
+
+
+def _transient_retry_delay(exc: Exception, attempt: int) -> float | None:
+    """Seconds to wait before retrying the same provider, or None to give up.
+
+    Rate limits and 5xx / overloaded responses usually clear within seconds.
+    Quota exhaustion and timeouts do not, so they go straight to fallback.
+    """
+    name = type(exc).__name__
+    text = str(exc).lower()
+    if "insufficient_quota" in text or "billing" in text:
+        return None
+    if name == "RateLimitError":
+        delay = 1.5 * (2 ** attempt)
+        headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+        try:
+            if headers.get("retry-after-ms"):
+                delay = float(headers["retry-after-ms"]) / 1000.0
+            elif headers.get("retry-after"):
+                delay = float(headers["retry-after"])
+        except (TypeError, ValueError):
+            pass
+    elif name in ("InternalServerError", "OverloadedError", "ServiceUnavailableError"):
+        delay = 1.0 * (2 ** attempt)
+    else:
+        status = getattr(exc, "status_code", None)
+        if status not in (500, 502, 503, 504, 529):
+            return None
+        delay = 1.0 * (2 ** attempt)
+    if delay > _TRANSIENT_MAX_DELAY_SECONDS:
+        return None
+    return delay * (0.8 + 0.4 * random.random())
+
+
+async def _create_with_transient_retry(adapter: Any, kwargs: dict[str, Any]) -> Any:
+    attempt = 0
+    while True:
+        try:
+            return await adapter.create(**kwargs)
+        except adapter.recoverable_errors as e:
+            delay = (
+                _transient_retry_delay(e, attempt)
+                if attempt < _TRANSIENT_MAX_RETRIES
+                else None
+            )
+            if delay is None:
+                raise
+            logger.info(
+                "llm_transient_retry",
+                provider=adapter.name,
+                error_type=type(e).__name__,
+                attempt=attempt + 1,
+                delay_seconds=round(delay, 2),
+            )
+            await asyncio.sleep(delay)
+            attempt += 1
 
 
 async def chat_completion_with_empty_retry(
@@ -1003,7 +1069,7 @@ class LLMFallbackClient:
 
         if not skip_primary:
             try:
-                result = await primary.create(**kwargs)
+                result = await _create_with_transient_retry(primary, kwargs)
                 self._cb.record_success()
                 return result
             except primary.recoverable_errors as e:

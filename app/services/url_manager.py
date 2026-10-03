@@ -1,4 +1,4 @@
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import tldextract
 import hashlib
 import re
@@ -37,7 +37,43 @@ JOB_BOARD_ROOT_DOMAINS = {
 }
 
 
+# Query keys that only track the click, never select the posting.
+_TRACKING_PARAMS = frozenset({
+    "gh_src", "lever-source", "lever-origin", "lever-via", "trk", "trkinfo",
+    "fbclid", "gclid", "msclkid", "dclid", "mc_cid", "mc_eid", "ref", "referrer",
+    "src", "source", "sourcetype", "_hsenc", "_hsmi", "hs_ref", "igshid",
+    "yclid", "rx_campaign", "rx_source", "rx_medium", "jobpipeline", "codes",
+})
+
+
 class URLManager:
+    @staticmethod
+    def normalize_url(url: str) -> str:
+        """Stable dedup key for a posting URL.
+
+        Lowercases scheme and host, drops the fragment, tracking query keys
+        (``utm_*`` and friends) and a trailing slash, and sorts what is left.
+        Path case is kept: some ATS ids are case sensitive.
+        """
+        raw = (url or "").strip()
+        try:
+            p = urlparse(raw)
+        except Exception:
+            return raw
+        if not p.scheme or not p.netloc:
+            return raw
+        query = sorted(
+            (k, v)
+            for k, v in parse_qsl(p.query, keep_blank_values=True)
+            if not k.lower().startswith("utm_") and k.lower() not in _TRACKING_PARAMS
+        )
+        path = p.path or "/"
+        if len(path) > 1:
+            path = path.rstrip("/") or "/"
+        return urlunparse((
+            p.scheme.lower(), p.netloc.lower(), path, "", urlencode(query, doseq=True), "",
+        ))
+
     @staticmethod
     def validate_url(url: str) -> tuple[bool, str | None]:
         try:

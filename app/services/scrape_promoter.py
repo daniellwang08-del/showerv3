@@ -21,6 +21,7 @@ Design highlights
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -37,6 +38,33 @@ from app.storage.repository import JobExtractionRepository, UserJobStatusReposit
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 
 logger = get_logger(__name__)
+
+
+# Each row holds one DB session briefly; keep below the worker's pool size.
+_PROMOTE_CONCURRENCY = 4
+
+
+_PERIOD_LABELS = {"yearly": "year", "annual": "year", "monthly": "month", "weekly": "week", "daily": "day", "hourly": "hour"}
+
+
+def _salary_text(row: dict) -> str | None:
+    lo, hi = row.get("salary_min_cents"), row.get("salary_max_cents")
+    if not lo and not hi:
+        return (row.get("salary_raw") or "").strip() or None
+    cur = (row.get("salary_currency") or "").upper()
+    sym = {"USD": "$", "EUR": "\u20ac", "GBP": "\u00a3"}.get(cur, f"{cur} " if cur else "")
+
+    def fmt(c):
+        v = int(c) / 100
+        return f"{sym}{v / 1000:.0f}k" if v >= 10000 else f"{sym}{v:,.0f}"
+
+    bounds = [c for c in (lo, hi) if c]
+    if len(bounds) == 2 and fmt(bounds[0]) == fmt(bounds[1]):
+        bounds = bounds[:1]
+    span = " - ".join(fmt(c) for c in bounds)
+    period = (row.get("salary_period") or "").strip().lower()
+    period = _PERIOD_LABELS.get(period, period)
+    return f"{span} / {period}" if period else span
 
 
 def _utcnow() -> datetime:
@@ -144,13 +172,14 @@ async def _find_existing_job_by_url(
     Matches ``source_url`` or ``normalized_url`` so aggregator → ATS promote
     still collides with a job saved under either form of the same URL.
     """
+    norm = URLManager.normalize_url(source_url)
     result = await session.execute(
         select(Job)
         .where(
             Job.status != "blocked",
             or_(
                 Job.source_url == source_url,
-                Job.normalized_url == source_url,
+                Job.normalized_url.in_({source_url, norm}),
             ),
         )
         .order_by(Job.created_at.asc())
@@ -275,10 +304,7 @@ async def promote_scrape_run(scrape_run_id: str, user_id: str | None = None) -> 
         logger.info("scrape_promoter_no_unpromoted_rows", **bind)
         return stats
 
-    for row in rows:
-        outcome = await _promote_single_scraped_row(
-            row, scrape_run_id=scrape_run_id, enqueue=True, user_id=user_id
-        )
+    def _tally(outcome: dict) -> None:
         bucket = outcome.get("bucket") or "failed"
         if bucket in stats:
             stats[bucket] = stats[bucket] + 1
@@ -287,6 +313,31 @@ async def promote_scrape_run(scrape_run_id: str, user_id: str | None = None) -> 
             stats["linked_existing"] = stats["linked_existing"] + 1
         if outcome.get("enqueued"):
             stats["enqueued"] += 1
+
+    # Rows sharing a URL must be serialised or both would miss the existing
+    # job and create duplicates. The first row per URL runs in parallel; the
+    # rest run afterwards and resolve as exact duplicates.
+    first: list[dict] = []
+    later: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        key = URLManager.normalize_url(_pick_target_url(row) or "")
+        (later if key and key in seen else first).append(row)
+        if key:
+            seen.add(key)
+
+    sem = asyncio.Semaphore(_PROMOTE_CONCURRENCY)
+
+    async def _one(row) -> dict:
+        async with sem:
+            return await _promote_single_scraped_row(
+                row, scrape_run_id=scrape_run_id, enqueue=True, user_id=user_id
+            )
+
+    for outcome in await asyncio.gather(*(_one(r) for r in first)):
+        _tally(outcome)
+    for row in later:
+        _tally(await _one(row))
 
     logger.info("scrape_promoter_completed", **stats)
     return stats
@@ -435,14 +486,19 @@ async def _promote_single_scraped_row(
                 "scraped_company_name": company,
                 "promoted_from_scraper": True,
             }
+            salary_text = _salary_text(row)
+            if salary_text:
+                raw_metadata["salary_raw"] = salary_text
 
+            norm_url = URLManager.normalize_url(target_url)
             new_job = Job(
                 source_url=target_url,
-                normalized_url=target_url,
+                normalized_url=norm_url,
                 domain=domain,
                 title=title or None,
                 company=company,
                 location=location,
+                work_mode="remote" if row.get("is_remote") else None,
                 description=description_snippet,
                 posted_date=posted_at,
                 experience_level=experience_level,
@@ -465,7 +521,7 @@ async def _promote_single_scraped_row(
             extraction_repo = JobExtractionRepository(session)
             extraction = await extraction_repo.create(
                 source_url=target_url,
-                normalized_url=target_url,
+                normalized_url=norm_url,
                 domain=domain,
             )
             new_job.extraction_id = extraction.id

@@ -70,12 +70,12 @@ including `user_preferences`. Extract work_mode in Task 3 only. If preferences m
 ### Job Alignment Dimensions
 Evaluate alignment on these six dimensions (0-100 each). Each dimension has a **weight**:
 
-1. **Skills Match** (`skills_match`, weight: **30%**) - overlap between required/preferred technical skills,
+1. **Skills Match** (`skills_match`, weight: **<<W:skills_match>>%**) - overlap between required/preferred technical skills,
    tools, frameworks, and platforms in the posting vs Candidate Profile **and** Attached Source Documents.
    Prefer concrete technologies over soft skills. Missing must-have core stack items should reduce this
    score sharply; nice-to-haves should reduce it mildly.
 
-2. **Experience Match** (`experience_match`, weight: **20%**) - years, seniority, ownership scope, and
+2. **Experience Match** (`experience_match`, weight: **<<W:experience_match>>%**) - years, seniority, ownership scope, and
    trajectory vs the role. Use profile + attached documents for proof of scope (scale, systems, leadership
    of technical work).
    - Default preference: **individual-contributor Senior / Staff / Principal software engineering** tracks
@@ -86,7 +86,7 @@ Evaluate alignment on these six dimensions (0-100 each). Each dimension has a **
    - Pure non-engineering roles (sales, pure product marketing, HR, etc.) that do not match the candidate's
      engineering background should score low here.
 
-3. **Job Title Similarity** (`job_title_similarity`, weight: **15%**) - posting title vs candidate's recent
+3. **Job Title Similarity** (`job_title_similarity`, weight: **<<W:job_title_similarity>>%**) - posting title vs candidate's recent
    titles and stated target roles in preferences/custom guidance.
    - Prefer titles in the family: Software Engineer, Backend/Frontend/Full-Stack Engineer, Senior / Staff /
      Principal Engineer, Platform/Infrastructure Engineer, etc.
@@ -94,7 +94,7 @@ Evaluate alignment on these six dimensions (0-100 each). Each dimension has a **
      titles or custom guidance clearly target management.
    - Adjacent IC titles (SRE, ML Engineer, Data Engineer) score based on overlap with the candidate's actual path.
 
-4. **Industry / Domain Match** (`industry_domain_match`, weight: **18%**) - alignment between:
+4. **Industry / Domain Match** (`industry_domain_match`, weight: **<<W:industry_domain_match>>%**) - alignment between:
    - the target company's industry / product domain / environment (startup, healthcare, fintech, govtech, etc.), and
    - the candidate's **profile companies**, industries, and domains evidenced in attached documents.
    **Strictness is JD-conditioned:**
@@ -105,10 +105,10 @@ Evaluate alignment on these six dimensions (0-100 each). Each dimension has a **
      based on transferable product/engineering domain signals; do not invent a harsh industry penalty.
    Never use work mode here.
 
-5. **Education** (`education`, weight: **5%**) - degree/field/certs vs posting requirements. If education
+5. **Education** (`education`, weight: **<<W:education>>%**) - degree/field/certs vs posting requirements. If education
    is not required or only preferred, do not over-penalize strong experience.
 
-6. **User Preferences** (`user_preferences`, weight: **12%**) - fit vs Candidate Job Preferences **and**
+6. **User Preferences** (`user_preferences`, weight: **<<W:user_preferences>>%**) - fit vs Candidate Job Preferences **and**
    Candidate Custom Guidance (role type, industries to pursue/avoid, company size, salary, location city/region,
    tech interests, constraints).
    - **Exclude work mode / remote-onsite preferences from this score entirely.**
@@ -117,7 +117,7 @@ Evaluate alignment on these six dimensions (0-100 each). Each dimension has a **
    - If the candidate lists target industries/domains and this job matches, score high.
 
 ### Computing overall_score
-`overall_score = round(skills_match * 0.30 + experience_match * 0.20 + job_title_similarity * 0.15 + industry_domain_match * 0.18 + education * 0.05 + user_preferences * 0.12)`
+`overall_score = round(<<W:formula>>)`
 
 Verify your math before returning. Each dimension must be an integer 0-100.
 
@@ -249,3 +249,14 @@ Score using profile + attached documents + preferences + custom guidance.
 Do **not** let remote/hybrid/onsite affect any score.
 When the JD requires strong industry/domain familiarity, score `industry_domain_match` strictly against the candidate's companies and document evidence.
 Prefer Senior/Staff IC software-engineering fit unless the candidate's experience clearly supports a management track for this role."""
+
+
+def _render_weights(prompt: str) -> str:
+    """Fill weight placeholders from MATCH_DIMENSION_WEIGHTS (the code's source of truth)."""
+    for key, weight in MATCH_DIMENSION_WEIGHTS.items():
+        prompt = prompt.replace(f"<<W:{key}>>", f"{weight * 100:g}")
+    formula = " + ".join(f"{k} * {w:.2f}" for k, w in MATCH_DIMENSION_WEIGHTS.items())
+    return prompt.replace("<<W:formula>>", formula)
+
+
+JOB_MATCH_PHASE_A_SYSTEM_PROMPT = _render_weights(JOB_MATCH_PHASE_A_SYSTEM_PROMPT)

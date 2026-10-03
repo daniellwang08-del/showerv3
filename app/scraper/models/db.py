@@ -59,7 +59,7 @@ class ScrapedJob(Base):
     __tablename__ = "scraped_jobs"
 
     id = Column(String(36), primary_key=True, default=_generate_uuid)
-    source = Column(String(64), nullable=False, index=True)
+    source = Column(String(64), nullable=False)
     source_job_id = Column(String(256), nullable=False)
     url = Column(String(2048), nullable=False)
     origin_url = Column(String(2048))

@@ -71,7 +71,7 @@ from app.models.database import (
     ValidJobUserApplication,
     ResumeBuildResult,
 )
-from sqlalchemy import delete as sa_delete, select, func, update as sa_update, nullslast, text, and_, or_
+from sqlalchemy import delete as sa_delete, select, func, update as sa_update, nullslast, text, and_, or_, true
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -1897,7 +1897,7 @@ async def submit_job(
         pipeline, is_admin=is_admin, user_id=user_id
     )
     analysis_user_id = extract_user_id  # None for admin / extract-only
-    normalized_url = request.url
+    normalized_url = URLManager.normalize_url(request.url)
     domain = URLManager.extract_domain(request.url)
 
     async with get_session() as session:
@@ -3112,61 +3112,72 @@ async def get_dashboard_counts(
             )
         )
 
-        async def _count(view: str) -> int:
-            view_clauses, needs_match_join = _dashboard_view_clauses(
+        # One scan with a FILTER per tab instead of one COUNT round trip per tab.
+        # Every outer join is unique per (job, user), so rows never multiply.
+        views = ("all", "today", "mine", "available", "applied_today")
+        needs_match = False
+        needs_app = False
+        needs_resume = False
+        needs_ext = is_admin
+        aggregates = []
+        for view in views:
+            view_clauses, view_needs_match = _dashboard_view_clauses(
                 view,
                 min_score=min_score,
                 day_start=day_start,
                 day_end=day_end,
                 is_admin=is_admin,
             )
-            filters = list(shared_filter)
-            needs_extraction_join = False
+            needs_match = needs_match or view_needs_match
+            needs_app = needs_app or view in VIEWS_NEEDING_APPLICATION_JOIN
+            needs_resume = needs_resume or view in VIEWS_NEEDING_RESUME_JOIN
+            needs_ext = needs_ext or view in VIEWS_NEEDING_EXTRACTION_CLAUSE
+            per_view = list(view_clauses)
             if is_admin and view != "extraction_failed":
-                filters.append(Job.status != "extraction_failed")
-                filters.append(
+                per_view.append(Job.status != "extraction_failed")
+                per_view.append(
                     (JobExtraction.status.is_(None))
                     | (JobExtraction.status != ExtractionStatus.FAILED)
                 )
-                needs_extraction_join = True
-            stmt = (
-                select(func.count())
-                .select_from(Job)
-                .outerjoin(
-                    UserJobStatus,
-                    (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
-                )
+            cond = and_(*per_view) if per_view else true()
+            aggregates.append(func.count().filter(cond).label(view))
+
+        stmt = (
+            select(*aggregates)
+            .select_from(Job)
+            .outerjoin(
+                UserJobStatus,
+                (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
             )
-            if needs_match_join:
-                stmt = stmt.outerjoin(
-                    JobMatchResult,
-                    (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
-                )
-            if view in VIEWS_NEEDING_APPLICATION_JOIN:
-                stmt = stmt.outerjoin(
-                    ValidJobUserApplication,
-                    (ValidJobUserApplication.job_id == Job.id)
-                    & (ValidJobUserApplication.user_id == user_id),
-                )
-            if view in VIEWS_NEEDING_RESUME_JOIN:
-                stmt = stmt.outerjoin(
-                    ResumeBuildResult,
-                    (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
-                )
-            if needs_extraction_join or view in VIEWS_NEEDING_EXTRACTION_CLAUSE:
-                stmt = stmt.outerjoin(
-                    JobExtraction, Job.extraction_id == JobExtraction.id
-                )
-            stmt = stmt.where(*filters, *view_clauses)
-            return (await session.execute(stmt)).scalar() or 0
+        )
+        if needs_match:
+            stmt = stmt.outerjoin(
+                JobMatchResult,
+                (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+            )
+        if needs_app:
+            stmt = stmt.outerjoin(
+                ValidJobUserApplication,
+                (ValidJobUserApplication.job_id == Job.id)
+                & (ValidJobUserApplication.user_id == user_id),
+            )
+        if needs_resume:
+            stmt = stmt.outerjoin(
+                ResumeBuildResult,
+                (ResumeBuildResult.job_id == Job.id) & (ResumeBuildResult.user_id == user_id),
+            )
+        if needs_ext:
+            stmt = stmt.outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
+        row = (await session.execute(stmt.where(*shared_filter))).one()
+        counts = dict(row._mapping)
 
         return DashboardCountsResponse(
-            all=await _count("all"),
-            today=await _count("today"),
-            mine=await _count("mine"),
-            available=await _count("available"),
+            all=int(counts["all"] or 0),
+            today=int(counts["today"] or 0),
+            mine=int(counts["mine"] or 0),
+            available=int(counts["available"] or 0),
             suggested=0,
-            applied_today=await _count("applied_today"),
+            applied_today=int(counts["applied_today"] or 0),
         )
 
 

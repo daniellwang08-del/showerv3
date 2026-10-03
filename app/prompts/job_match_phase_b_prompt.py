@@ -210,13 +210,20 @@ def build_phase_b_system_prompt(
 
 JOB_MATCH_PHASE_B_SYSTEM_PROMPT = build_phase_b_system_prompt("", "")
 
-JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
-{job_text}
+# Per-candidate material comes first: it is identical across that candidate's
+# jobs, so providers can serve it from the prompt-prefix cache.
+JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
+{profile_text}
 
 ---
 
-## Candidate Profile
-{profile_text}
+## Project Evidence (authoritative source material - use for facts, metrics, and depth; do not invent)
+{project_evidence_context}
+
+---
+
+## Job Description
+{job_text}
 
 ---
 
@@ -237,11 +244,6 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Job Description
 
 ## Match Summary (from prior analysis)
 {match_summary}
-
----
-
-## Project Evidence (authoritative source material - use for facts, metrics, and depth; do not invent)
-{project_evidence_context}
 
 ---
 

@@ -286,7 +286,7 @@ class JobExtraction(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_url = Column(Text, nullable=False)
     normalized_url = Column(String(2048), nullable=False, index=True)
-    domain = Column(String(255), nullable=False, index=True)
+    domain = Column(String(255), nullable=False)
     status = Column(SQLEnum(ExtractionStatus), default=ExtractionStatus.PENDING, nullable=False)
     extraction_method = Column(SQLEnum(ExtractionMethod), nullable=True)
     title = Column(String(500), nullable=True)
@@ -386,7 +386,6 @@ class UserJobStatus(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "job_id", name="uq_user_job_status"),
-        Index("ix_ujs_user_id", "user_id"),
         Index("ix_ujs_job_id", "job_id"),
         Index("ix_ujs_user_status", "user_id", "status"),
     )
@@ -576,7 +575,7 @@ class SystemLogEvent(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
-    level = Column(String(20), nullable=False, index=True)
+    level = Column(String(20), nullable=False)
     event = Column(String(200), nullable=False)
     logger_name = Column(String(200), nullable=True)
     # http | worker | process | system

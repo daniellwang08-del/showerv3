@@ -233,9 +233,7 @@ SKILLS: dict[str, tuple[str, tuple[str, ...]]] = {
     "looker": ("data", ()),
     "metabase": ("data", ()),
     "excel": ("data", ("microsoft excel", "spreadsheets")),
-    "data analysis": ("data", ("data analytics", "business intelligence", "bi")),
     "a/b testing": ("data", ("ab testing", "experimentation")),
-    "statistics": ("data", ("statistical analysis", "statistical modeling")),
     # ── ML / AI ─────────────────────────────────────────────────────────
     "machine learning": ("ml", ("ml",)),
     "deep learning": ("ml", ("neural networks", "neural network")),
@@ -289,8 +287,6 @@ SKILLS: dict[str, tuple[str, tuple[str, ...]]] = {
     "api design": ("practice", ("api development", "openapi", "swagger")),
     "performance optimization": ("practice", ("performance tuning", "profiling", "optimization")),
     "caching": ("practice", ("memcached", "cache")),
-    "technical leadership": ("practice", ("tech lead", "mentoring", "mentorship", "engineering leadership")),
-    "architecture": ("practice", ("software architecture", "solution architecture", "system architecture")),
     "documentation": ("practice", ("technical writing", "technical documentation")),
     "debugging": ("practice", ("troubleshooting", "root cause analysis")),
     "concurrency": ("practice", ("multithreading", "multi-threading", "parallel programming", "async", "asyncio")),
@@ -313,12 +309,12 @@ SKILLS: dict[str, tuple[str, tuple[str, ...]]] = {
     "data quality": ("data", ("data quality", "dq", "data cleansing", "data cleansing")),
     "master data management": ("data", ("mdm", "master data", "master data management")),
     "data governance": ("data", ("data governance", "data stewardship")),
-    "data analysis": ("data", ("data analysis", "data analytics", "analytical skills")),
+    "data analysis": ("data", ("data analytics", "business intelligence", "bi", "data analysis", "analytical skills")),
     "consulting": ("domain", ("management consulting", "technology consulting", "client facing")),
     "stakeholder management": ("soft", ("stakeholder management", "client management")),
-    "technical leadership": ("soft", ("tech lead", "technical lead", "engineering leadership")),
-    "architecture": ("architecture", ("solution architecture", "system architecture", "software architecture")),
-    "statistics": ("data", ("statistical analysis", "statistical modelling", "statistical modeling")),
+    "technical leadership": ("soft", ("tech lead", "mentoring", "mentorship", "engineering leadership", "technical lead")),
+    "architecture": ("architecture", ("software architecture", "solution architecture", "system architecture")),
+    "statistics": ("data", ("statistical analysis", "statistical modeling", "statistical modelling")),
 }
 
 # Canonical names too ambiguous to match as bare English words; these are

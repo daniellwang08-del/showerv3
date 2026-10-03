@@ -6,6 +6,9 @@ Tracks each spider run in the scrape_runs table for operational visibility.
 import logging
 import uuid
 
+from sqlalchemy import func, literal_column
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from scrapy.exceptions import DropItem
 
 from app.scraper.items import JobItem
@@ -57,25 +60,38 @@ class PostgresPipeline:
         if engine is None or getattr(engine, "_postgres_close_reason_patched", False):
             return
 
-        def _stash(spider, reason: str) -> None:
-            if spider is not None and reason:
-                setattr(spider, "_close_reason", reason)
+        # Scrapy 2.19 dropped the spider argument (close_spider_async(*, reason)),
+        # older releases pass (spider, reason). Accept both and forward untouched:
+        # a signature mismatch here raises inside _spider_idle and the crawl
+        # never closes.
+        def _stash(args: tuple, kwargs: dict) -> None:
+            reason = kwargs.get("reason")
+            spider = kwargs.get("spider")
+            for a in args:
+                if isinstance(a, str):
+                    reason = reason or a
+                elif spider is None:
+                    spider = a
+            if spider is None:
+                spider = getattr(crawler, "spider", None)
+            if spider is not None:
+                setattr(spider, "_close_reason", reason or "cancelled")
 
         if hasattr(engine, "close_spider_async"):
             orig_async = engine.close_spider_async
 
-            async def _close_spider_async(spider, reason="cancelled", *args, **kwargs):
-                _stash(spider, reason)
-                return await orig_async(spider, reason, *args, **kwargs)
+            async def _close_spider_async(*args, **kwargs):
+                _stash(args, kwargs)
+                return await orig_async(*args, **kwargs)
 
             engine.close_spider_async = _close_spider_async  # type: ignore[method-assign]
 
         if hasattr(engine, "close_spider"):
             orig = engine.close_spider
 
-            def _close_spider(spider, reason="cancelled", *args, **kwargs):
-                _stash(spider, reason)
-                return orig(spider, reason, *args, **kwargs)
+            def _close_spider(*args, **kwargs):
+                _stash(args, kwargs)
+                return orig(*args, **kwargs)
 
             engine.close_spider = _close_spider  # type: ignore[method-assign]
 
@@ -263,25 +279,30 @@ class PostgresPipeline:
         self._sanitize_salary_cents(data, item)
 
         try:
-            existing = self.session.query(ScrapedJob).filter_by(
-                source=item.source, source_job_id=item.source_job_id
-            ).first()
-
-            if existing:
-                for key, value in data.items():
-                    if key not in ("id", "scraped_at") and value is not None:
-                        setattr(existing, key, value)
-                existing.updated_at = now
-                existing.scrape_run_id = self.scrape_run.id
-                self.session.commit()
-                self.items_updated += 1
-            else:
-                data["id"] = str(uuid.uuid4())
-                data["updated_at"] = now
-                posting = ScrapedJob(**data)
-                self.session.add(posting)
-                self.session.commit()
+            # One round trip: insert, or on (source, source_job_id) conflict
+            # overwrite only the fields this scrape actually has.
+            table = ScrapedJob.__table__
+            row = {k: v for k, v in data.items() if k in table.c}
+            row["id"] = str(uuid.uuid4())
+            row["updated_at"] = now
+            stmt = pg_insert(table).values(**row)
+            keep = {"id", "scraped_at", "source", "source_job_id"}
+            update_set = {
+                c: func.coalesce(stmt.excluded[c], table.c[c])
+                for c in row
+                if c not in keep
+            }
+            update_set["updated_at"] = now
+            update_set["scrape_run_id"] = self.scrape_run.id
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_scraped_source_job", set_=update_set
+            ).returning(literal_column("(xmax = 0)"))
+            inserted = bool(self.session.execute(stmt).scalar())
+            self.session.commit()
+            if inserted:
                 self.items_new += 1
+            else:
+                self.items_updated += 1
 
             self._flush_run_counters()
             return item

@@ -7,7 +7,9 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.core.exceptions import NetworkError
 from contextlib import asynccontextmanager
+from email.utils import parsedate_to_datetime
 from typing import AsyncGenerator
+from urllib.parse import urlparse
 
 logger = get_logger(__name__)
 
@@ -56,18 +58,82 @@ class _TokenBucket:
         await asyncio.sleep(wait)
 
 
-_rate_limiter: _TokenBucket | None = None
+# Public JSON APIs built for programmatic reads tolerate a faster cadence
+# than career-site HTML pages.
+_API_HOSTS = frozenset({
+    "api.lever.co", "boards-api.greenhouse.io", "api.greenhouse.io",
+    "api.ashbyhq.com", "jobs.ashbyhq.com", "api.smartrecruiters.com",
+    "apply.workable.com", "api.workable.com",
+})
+_MAX_COOLDOWN_SECONDS = 120.0
 
 
-def _get_rate_limiter() -> _TokenBucket:
-    global _rate_limiter
-    if _rate_limiter is None:
-        settings = get_settings()
-        _rate_limiter = _TokenBucket(
-            rate=settings.rate_limit_requests_per_second,
-            burst=max(1, settings.rate_limit_burst),
-        )
-    return _rate_limiter
+class _HostLimiter:
+    """Per-host politeness: a token bucket per host plus a 429 cooldown.
+
+    A slow or rate-limited site only throttles itself. The global semaphore
+    caps total in-flight requests separately.
+    """
+
+    def __init__(self) -> None:
+        self._buckets: dict[str, _TokenBucket] = {}
+        self._cooldown_until: dict[str, float] = {}
+
+    @staticmethod
+    def host(url: str) -> str:
+        try:
+            return (urlparse(url).netloc or "").lower()
+        except Exception:
+            return ""
+
+    def _bucket(self, host: str) -> _TokenBucket:
+        b = self._buckets.get(host)
+        if b is None:
+            settings = get_settings()
+            rate = settings.rate_limit_requests_per_second
+            burst = max(1, settings.rate_limit_burst)
+            if host in _API_HOSTS:
+                rate, burst = max(rate, 10.0), max(burst, 10)
+            b = self._buckets[host] = _TokenBucket(rate=rate, burst=burst)
+        return b
+
+    async def acquire(self, url: str) -> None:
+        host = self.host(url)
+        until = self._cooldown_until.get(host, 0.0)
+        wait = until - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        await self._bucket(host).acquire()
+
+    def cooldown(self, url: str, seconds: float) -> None:
+        host = self.host(url)
+        until = time.monotonic() + min(max(seconds, 1.0), _MAX_COOLDOWN_SECONDS)
+        self._cooldown_until[host] = max(self._cooldown_until.get(host, 0.0), until)
+
+
+_host_limiter = _HostLimiter()
+
+
+def _retry_after_seconds(headers, default: float = 30.0) -> float:
+    raw = (headers or {}).get("Retry-After")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    try:
+        return max(0.0, parsedate_to_datetime(raw).timestamp() - time.time())
+    except Exception:
+        return default
+
+
+@asynccontextmanager
+async def _slot(url: str) -> AsyncGenerator[None, None]:
+    """Wait for the host's turn first, then take a global in-flight slot."""
+    await _host_limiter.acquire(url)
+    async with _semaphore:
+        yield
 
 
 USER_AGENTS = [
@@ -112,13 +178,22 @@ ACCEPT_HEADERS = {
 
 _client: httpx.AsyncClient | None = None
 _semaphore: asyncio.Semaphore | None = None
+_curl_session = None
+
+
+def _get_curl_session():
+    """One shared curl_cffi session so TLS connections are reused."""
+    global _curl_session
+    if _curl_session is None and _CURL_CFFI_AVAILABLE and _CurlAsyncSession is not None:
+        _curl_session = _CurlAsyncSession(impersonate="chrome", max_clients=32)
+    return _curl_session
 
 
 async def init_http_client() -> None:
     global _client, _semaphore
     settings = get_settings()
 
-    _semaphore = asyncio.Semaphore(settings.rate_limit_burst)
+    _semaphore = asyncio.Semaphore(settings.http_max_concurrency)
 
     _client = httpx.AsyncClient(
         timeout=httpx.Timeout(settings.http_timeout_seconds),
@@ -126,19 +201,30 @@ async def init_http_client() -> None:
         max_redirects=10,
         http2=True,
         limits=httpx.Limits(
-            max_keepalive_connections=40,
-            max_connections=150,
+            max_keepalive_connections=64,
+            max_connections=200,
             keepalive_expiry=30,
         ),
     )
-    logger.info("http_client_initialized", timeout=settings.http_timeout_seconds, rate_limit_burst=settings.rate_limit_burst)
+    logger.info(
+        "http_client_initialized",
+        timeout=settings.http_timeout_seconds,
+        max_concurrency=settings.http_max_concurrency,
+        per_host_rps=settings.rate_limit_requests_per_second,
+    )
 
 
 async def close_http_client() -> None:
-    global _client
+    global _client, _curl_session
     if _client:
         await _client.aclose()
         _client = None
+    if _curl_session is not None:
+        try:
+            await _curl_session.close()
+        except Exception:
+            pass
+        _curl_session = None
     logger.info("http_client_closed")
 
 
@@ -177,8 +263,7 @@ class HTTPService:
         if not _client or not _semaphore:
             raise NetworkError("HTTP client not initialized")
 
-        async with _semaphore:
-            await _get_rate_limiter().acquire()
+        async with _slot(url):
 
             try:
                 headers = get_random_headers()
@@ -192,9 +277,9 @@ class HTTPService:
                 )
 
                 if response.status_code == 429:
-                    retry_after = int(response.headers.get("Retry-After", 60))
+                    retry_after = _retry_after_seconds(response.headers)
                     logger.warning("http_fetch_rate_limited", url=url, retry_after=retry_after)
-                    await asyncio.sleep(retry_after)
+                    _host_limiter.cooldown(url, retry_after)
                     raise httpx.NetworkError("Rate limited")
 
                 if response.status_code in (401, 403) and _CURL_CFFI_AVAILABLE:
@@ -255,49 +340,48 @@ class HTTPService:
             return None
         try:
             timeout = self._settings.http_timeout_seconds
-            async with _CurlAsyncSession(
-                impersonate="chrome",
-                timeout=timeout,
-            ) as session:
-                headers = {
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1",
-                }
-                resp = await session.get(url, headers=headers, allow_redirects=True)
-                logger.info(
-                    "http_fetch_impersonate",
+            session = _get_curl_session()
+            headers = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            }
+            resp = await session.get(
+                url, headers=headers, allow_redirects=True, timeout=timeout
+            )
+            logger.info(
+                "http_fetch_impersonate",
+                url=url,
+                status_code=resp.status_code,
+                content_length=len(resp.content or b""),
+            )
+            if is_waf_challenge_response(
+                resp.status_code,
+                dict(resp.headers),
+                resp.text or "",
+            ):
+                logger.warning(
+                    "http_fetch_impersonate_waf_challenge",
                     url=url,
                     status_code=resp.status_code,
-                    content_length=len(resp.content or b""),
                 )
-                if is_waf_challenge_response(
-                    resp.status_code,
-                    dict(resp.headers),
-                    resp.text or "",
-                ):
-                    logger.warning(
-                        "http_fetch_impersonate_waf_challenge",
-                        url=url,
-                        status_code=resp.status_code,
-                    )
-                    return None
-                if resp.status_code >= 400:
-                    # Log the specific block reason so operators can see which
-                    # sites consistently reject curl_cffi impersonation and can
-                    # decide whether to add them to the aggregator-domain list.
-                    logger.warning(
-                        "http_fetch_impersonate_blocked",
-                        url=url,
-                        status_code=resp.status_code,
-                        body_preview=(resp.text or "")[:200],
-                    )
-                    return None
-                return resp.text, resp.status_code, dict(resp.headers)
+                return None
+            if resp.status_code >= 400:
+                # Log the specific block reason so operators can see which
+                # sites consistently reject curl_cffi impersonation and can
+                # decide whether to add them to the aggregator-domain list.
+                logger.warning(
+                    "http_fetch_impersonate_blocked",
+                    url=url,
+                    status_code=resp.status_code,
+                    body_preview=(resp.text or "")[:200],
+                )
+                return None
+            return resp.text, resp.status_code, dict(resp.headers)
         except Exception as e:
             logger.warning("http_fetch_impersonate_failed", url=url, error=str(e))
             return None
@@ -405,8 +489,7 @@ class HTTPService:
         if not _client or not _semaphore:
             raise NetworkError("HTTP client not initialized")
 
-        async with _semaphore:
-            await _get_rate_limiter().acquire()
+        async with _slot(url):
             req_headers = headers or get_json_headers()
             response = await _client.post(url, json=body, headers=req_headers)
             logger.info(
@@ -422,8 +505,7 @@ class HTTPService:
         if not _client or not _semaphore:
             raise NetworkError("HTTP client not initialized")
 
-        async with _semaphore:
-            await _get_rate_limiter().acquire()
+        async with _slot(url):
 
             try:
                 headers = get_json_headers()
@@ -437,9 +519,9 @@ class HTTPService:
                 )
 
                 if response.status_code == 429:
-                    retry_after = int(response.headers.get("Retry-After", 60))
+                    retry_after = _retry_after_seconds(response.headers)
                     logger.warning("http_fetch_rate_limited", url=url, retry_after=retry_after)
-                    await asyncio.sleep(retry_after)
+                    _host_limiter.cooldown(url, retry_after)
                     raise httpx.NetworkError("Rate limited")
 
                 response.raise_for_status()
@@ -462,8 +544,7 @@ class HTTPService:
         if not _client or not _semaphore:
             raise NetworkError("HTTP client not initialized")
 
-        async with _semaphore:
-            await _get_rate_limiter().acquire()
+        async with _slot(url):
 
             headers = get_random_headers()
             response = await _client.get(url, headers=headers)

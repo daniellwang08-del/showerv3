@@ -358,6 +358,9 @@ async def run_spider(
                     elapsed,
                 )
 
+    from app.core.config import get_settings
+
+    spider_timeout = get_settings().scraper_spider_timeout_seconds
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -380,17 +383,27 @@ async def run_spider(
                     elapsed = int(
                         (datetime.now(timezone.utc).replace(tzinfo=None) - started_at).total_seconds()
                     )
-                    if elapsed >= 1800:
+                    if elapsed >= spider_timeout:
                         logger.error(
-                            "Spider '%s' timed out after 1800s - killing subprocess",
+                            "Spider '%s' timed out after %ss - killing subprocess",
                             spider_name,
+                            spider_timeout,
                         )
                         proc.kill()
                         await proc.wait()
                         await asyncio.to_thread(
                             _mark_scrape_run_interrupted, spider_name, started_at
                         )
-                        return {"spider": spider_name, "success": False, "error": "timeout"}
+                        run = await asyncio.to_thread(_latest_scrape_run, spider_name, started_at)
+                        return {
+                            "spider": spider_name,
+                            "success": False,
+                            "error": "timeout",
+                            "scrape_run_id": (run or {}).get("id"),
+                            "items_scraped": int((run or {}).get("items_scraped") or 0),
+                            "items_new": int((run or {}).get("items_new") or 0),
+                            "items_updated": int((run or {}).get("items_updated") or 0),
+                        }
                     if await is_stop_requested():
                         logger.info(
                             "Spider '%s' stop requested, killing subprocess",
@@ -508,55 +521,73 @@ async def run_spiders_from_plan(
     on_spider_start=None,
     spider_progress_callback=None,
 ) -> list[dict]:
-    """Run an explicit list of (spider_name, scrapy_kwargs) pairs."""
+    """Run an explicit list of (spider_name, scrapy_kwargs) pairs.
+
+    Spiders target different hosts and run as separate subprocesses, so they
+    run concurrently (``SCRAPER_PARALLEL_SPIDERS``). Results keep plan order.
+    A Redis lock per spider stops a scheduled and a manual run of the same
+    spider from crawling at the same time.
+    """
+    from app.core.config import get_settings
+    from app.core.redis_support import init_broker_redis_pool
     from app.services.scraper_stop_service import is_stop_requested
 
-    results = []
+    settings = get_settings()
     total = len(plan)
+    results: list[dict | None] = [None] * total
+    sem = asyncio.Semaphore(max(1, settings.scraper_parallel_spiders))
+    done = 0
+    done_lock = asyncio.Lock()
+    lock_ttl = settings.scraper_spider_timeout_seconds + 120
 
-    for i, (name, kwargs) in enumerate(plan):
-        if await is_stop_requested():
-            logger.info(
-                "Stopping remaining spiders after fetch-stop request (next=%s, left=%d)",
-                name,
-                total - i,
-            )
-            for j in range(i, total):
-                skipped_name = plan[j][0]
-                skipped = {
-                    "spider": skipped_name,
-                    "success": False,
-                    "error": "stopped",
-                    "message": "Job fetching was stopped.",
-                }
-                results.append(skipped)
-                if on_progress:
-                    await on_progress(skipped_name, j + 1, total, skipped)
-            break
+    def _stopped(name: str) -> dict:
+        return {"spider": name, "success": False, "error": "stopped", "message": "Job fetching was stopped."}
 
-        if on_spider_start:
-            await on_spider_start(name, i + 1, total)
-        result = await run_spider(
-            name,
-            progress_callback=spider_progress_callback,
-            **kwargs,
-        )
-        results.append(result)
+    async def _finish(i: int, name: str, result: dict) -> None:
+        nonlocal done
+        results[i] = result
+        async with done_lock:
+            done += 1
+            n = done
         if on_progress:
-            await on_progress(name, i + 1, total, result)
+            await on_progress(name, n, total, result)
 
-        if result.get("error") == "stopped":
-            for j in range(i + 1, total):
-                skipped_name = plan[j][0]
-                skipped = {
-                    "spider": skipped_name,
+    async def _one(i: int, name: str, kwargs: dict[str, str]) -> None:
+        async with sem:
+            if await is_stop_requested():
+                await _finish(i, name, _stopped(name))
+                return
+            redis = None
+            lock_key = f"scrape_lock:{name}"
+            try:
+                redis = await init_broker_redis_pool()
+                got = await redis.set(lock_key, "1", nx=True, ex=lock_ttl)
+            except Exception as e:  # Redis down: run unlocked rather than skip
+                logger.warning("Spider lock unavailable for '%s': %s", name, e)
+                got = True
+                redis = None
+            if not got:
+                await _finish(i, name, {
+                    "spider": name,
                     "success": False,
-                    "error": "stopped",
-                    "message": "Job fetching was stopped.",
-                }
-                results.append(skipped)
-                if on_progress:
-                    await on_progress(skipped_name, j + 1, total, skipped)
-            break
+                    "error": "already_running",
+                    "message": f"{name} is already being fetched by another sync.",
+                })
+                return
+            try:
+                if on_spider_start:
+                    await on_spider_start(name, i + 1, total)
+                result = await run_spider(name, progress_callback=spider_progress_callback, **kwargs)
+            except Exception as e:
+                logger.exception("Spider '%s' crashed", name)
+                result = {"spider": name, "success": False, "error": "error", "message": str(e)[:300]}
+            finally:
+                if redis is not None:
+                    try:
+                        await redis.delete(lock_key)
+                    except Exception:
+                        pass
+            await _finish(i, name, result)
 
-    return results
+    await asyncio.gather(*(_one(i, name, kwargs) for i, (name, kwargs) in enumerate(plan)))
+    return [r if r is not None else _stopped(plan[i][0]) for i, r in enumerate(results)]

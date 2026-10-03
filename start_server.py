@@ -112,10 +112,17 @@ if __name__ == "__main__":
 
     install_uvicorn_reload_noise_filter()
 
+    # uvicorn ignores workers under reload; Windows keeps one process so the
+    # Proactor loop policy above stays in effect.
+    workers = 1 if use_reload or sys.platform == "win32" else max(1, int(os.environ.get("API_WORKERS", "1")))
+    if workers > 1:
+        print(f"[workers] {workers} API processes")
+
     uvicorn.run(
         "app.main:app",
         host=host,
         port=port,
+        workers=workers,
         reload=use_reload,
         reload_dirs=reload_dirs if use_reload else None,
         reload_includes=reload_includes if use_reload else None,
@@ -124,5 +131,7 @@ if __name__ == "__main__":
         # See module docstring: prevents uvicorn from overwriting our
         # Proactor policy with SelectorEventLoopPolicy on Windows+reload,
         # which would otherwise break Playwright's subprocess spawn.
-        loop="none",
+        # Linux gets uvloop + httptools (Playwright verified on uvloop).
+        loop="none" if sys.platform == "win32" else "uvloop",
+        http="auto" if sys.platform == "win32" else "httptools",
     )

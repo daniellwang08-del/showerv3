@@ -39,7 +39,15 @@ _COLUMN_KEYS = frozenset(
 
 _SKIP_EVENTS = frozenset(
     {
-        # Extremely chatty / low-value for the dashboard.
+        # Transport chatter and cache hits: high volume, no diagnostic value
+        # (http_request_completed already carries method, path and duration).
+        "ws_redis_event_received",
+        "ws_event_published",
+        "http_request_started",
+        "job_metadata_hydrated",
+        "extraction_cache_stored",
+        "job_text_from_cache",
+        "extraction_service_started",
     }
 )
 
