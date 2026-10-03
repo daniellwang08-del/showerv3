@@ -160,7 +160,7 @@
     return false;
   }
 
-  // Skip the phone country flag dropdown button — leave default US; fill the
+  // Skip the phone country flag dropdown button, leave default US; fill the
   // adjacent phone text input only.
   function shouldSkipControl(el) {
     if (!el || !isJobDivaPage()) return false;
@@ -170,7 +170,7 @@
         if (tag === "BUTTON") return true;
         if (el.getAttribute && el.getAttribute("data-bs-toggle") === "dropdown") return true;
       }
-      // Apply / Cancel / Submit chrome inside the modal footer — not fields.
+      // Apply / Cancel / Submit chrome inside the modal footer, not fields.
       if (el.matches && el.matches("button.jd-btn, button.jd-btn-mobile, button.jd-btn-outline")) {
         const t = btnText(el);
         if (/apply now|quick apply|sign into|create an account|cancel|submit application/i.test(t)) {
@@ -384,7 +384,7 @@
         ) {
           return true;
         }
-        // Form closed without the method modal — treat as submitted.
+        // Form closed without the method modal, treat as submitted.
         if (!hasApplyNow() || /submitted|thank you/i.test(body)) return true;
       }
       const root = applicationRoot();

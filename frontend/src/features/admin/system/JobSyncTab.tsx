@@ -68,16 +68,16 @@ function toForm(row: JobSyncSchedule, platforms: SyncPlatform[]): ScheduleForm {
 }
 
 function formatMarkers(markers: SyncCheckpoint['marker_job_ids']): string {
-  if (Array.isArray(markers)) return markers.slice(0, 3).join(', ') || '—';
+  if (Array.isArray(markers)) return markers.slice(0, 3).join(', ') || '-';
   if (markers && typeof markers === 'object') {
     return (
       Object.entries(markers)
         .slice(0, 2)
         .map(([title, ids]) => `${title}: ${Array.isArray(ids) ? ids.slice(0, 3).join(', ') : String(ids)}`)
-        .join(' · ') || '—'
+        .join(' · ') || '-'
     );
   }
-  return '—';
+  return '-';
 }
 
 function useSyncData() {
@@ -392,7 +392,7 @@ function JobSyncBody({
 
           <p className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">Next:</span>{' '}
-            {values.enabled ? formatWhen(schedule.next_run_at) : '— (disabled)'}
+            {values.enabled ? formatWhen(schedule.next_run_at) : 'Not scheduled (auto-run off)'}
             <span className="mx-1.5">·</span>
             <span className="font-medium text-foreground">Last:</span> {formatWhen(schedule.last_run_at)}
             {schedule.last_run_status ? (

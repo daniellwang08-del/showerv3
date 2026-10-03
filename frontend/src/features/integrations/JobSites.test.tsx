@@ -114,7 +114,7 @@ beforeEach(() => {
   ext.startJobSiteConnect.mockResolvedValue({ ok: true, tabId: 1 });
 });
 
-describe('IntegrationsPage — job sites', () => {
+describe('IntegrationsPage, job sites', () => {
   it('shows skeletons while loading', () => {
     api.fetchJobSites.mockReturnValue(new Promise(() => {}));
     renderPage();
@@ -272,7 +272,7 @@ describe('IntegrationsPage — job sites', () => {
     act(() => handlers.onStatus?.({ slug: 'jobright', state: 'signed_out', url: 'https://jobright.example/login' }));
     expect(await within(sheet).findByText(/Sign in on the Jobright tab/)).toBeInTheDocument();
 
-    await user.click(within(sheet).getByRole('button', { name: /capture now/ }));
+    await user.click(within(sheet).getByRole('button', { name: /capture now/i }));
     expect(await within(sheet).findByText('No session yet')).toBeInTheDocument();
 
     const session: JobSiteCapturedSession = {

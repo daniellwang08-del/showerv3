@@ -61,7 +61,7 @@ export function AssistantPage() {
             urlActionLabel={(n) => `Submit ${n} job${n === 1 ? '' : 's'}`}
           />
           <p className="mt-2 text-center text-xs text-muted-foreground">
-            The assistant can change filters and mark jobs — actions that modify data ask for confirmation.
+            The assistant can change filters and mark jobs, actions that modify data ask for confirmation.
           </p>
         </div>
       </div>

@@ -276,7 +276,7 @@
 
   // Ashby: typed filter text sits in input.value WHILE the listbox is open
   // (screenshot: placeholder/empty commit, "LinkedIn Jobs" only highlighted).
-  // That is NOT a committed selection — Enter often only highlights. Require
+  // That is NOT a committed selection, Enter often only highlights. Require
   // the menu to be collapsed and the value to still match.
   function ashbyComboCommitted(input, want) {
     if (!input || !want) return false;
@@ -315,7 +315,7 @@
   function closeMenu(input, root) {
     const tgt = input || root;
     // Escape inside a Bootstrap modal (JobDiva #quickApplyModal, etc.) calls
-    // Modal.hide() — probe-verified stack: closeMenu → bootstrap hide. Never
+    // Modal.hide(), probe-verified stack: closeMenu → bootstrap hide. Never
     // send Escape / body clicks from within a .modal.
     try {
       if (tgt && tgt.closest && tgt.closest(".modal")) return;
@@ -444,7 +444,7 @@
       return comboHasSelection(root);
     }
 
-    // Ashby value-combobox — live probe evidence (jobs.ashbyhq.com):
+    // Ashby value-combobox, live probe evidence (jobs.ashbyhq.com):
     // - Options live in aria-controls listbox (DIV._floatingContainer_d7ago_103).
     // - Location: aria-selected stays "false"; Enter does NOT commit; option
     //   mousedown+click commits (ApiSetFormValue, aria-expanded=false).
@@ -481,7 +481,7 @@
             setNativeValue(input, value);
             input.dispatchEvent(new Event("input", { bubbles: true }));
           }
-          // Location geocode is async — wait longer than static option lists.
+          // Location geocode is async, wait longer than static option lists.
           await waitUntil(() => (scopedOptionNodes(input, root).length ? true : null), 2500, 60);
           const nodes = scopedOptionNodes(input, root);
           let opt = pickOption(nodes, value);
@@ -526,7 +526,7 @@
             expanded: comboIsExpanded(input),
           });
           if (ok) {
-            // Soft blur only — do NOT re-set the value (reopens autocomplete).
+            // Soft blur only, do NOT re-set the value (reopens autocomplete).
             try {
               input.blur && input.blur();
             } catch {}
@@ -555,7 +555,7 @@
         if (await waitUntil(() => (comboHasSelection(root) ? true : null), 700, 60)) return true;
         // Fallback: type+Enter silently no-ops when the model's answer is not a
         // byte-exact substring react-select's OWN filter accepts (e.g. a long
-        // Greenhouse sentence whose live option uses an em-dash "—" the model
+        // Greenhouse sentence whose live option uses an em-dash "-" the model
         // returned as a hyphen). The filter then hides every option, so reading
         // scopedOptionNodes now yields the EMPTY filtered list. Clear the typed
         // text first so the FULL list re-renders, then match with our own
@@ -711,7 +711,7 @@
     try {
       root.querySelectorAll('[class*="select__control"], [class*="-control"]').forEach((ctrl) => {
         try {
-          // "form-control" / "jd-form" contain "-control" as a substring — those
+          // "form-control" / "jd-form" contain "-control" as a substring, those
           // are Bootstrap/JobDiva native inputs, not react-select.
           const cls = String(
             (ctrl.className && ctrl.className.baseVal !== undefined

@@ -136,7 +136,7 @@ REGION_GROUPS: dict[str, frozenset[str]] = {
 # handling in the classifier. Keys are matched case-insensitively for names
 # and exactly (upper) for abbreviations in the comma-region position.
 SUBDIVISION_TO_CODE: dict[str, str] = {
-    # Canada — provinces and territories
+    # Canada, provinces and territories
     "ontario": "CA", "quebec": "CA", "québec": "CA", "british columbia": "CA",
     "alberta": "CA", "manitoba": "CA", "saskatchewan": "CA",
     "nova scotia": "CA", "new brunswick": "CA", "newfoundland": "CA",
@@ -144,7 +144,7 @@ SUBDIVISION_TO_CODE: dict[str, str] = {
     "yukon": "CA", "nunavut": "CA", "northwest territories": "CA",
     "ON": "CA", "QC": "CA", "BC": "CA", "AB": "CA", "MB": "CA", "SK": "CA",
     "NS": "CA", "NB": "CA", "YT": "CA", "NU": "CA",
-    # Australia — states and territories (ambiguous abbrevs SA/WA/NT omitted)
+    # Australia, states and territories (ambiguous abbrevs SA/WA/NT omitted)
     "new south wales": "AU", "queensland": "AU", "tasmania": "AU",
     "western australia": "AU", "south australia": "AU",
     "australian capital territory": "AU", "victoria": "AU",

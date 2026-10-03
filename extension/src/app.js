@@ -26,7 +26,7 @@ let state = {
   sync: null, // { changed: string[] }
   sessions: [],
   queue: [], // all jobs (dashboard view=all)
-  readyQueue: [], // ready to apply (resume DOCX completed) — derived from the catalog
+  readyQueue: [], // ready to apply (resume DOCX completed), derived from the catalog
   // Authoritative "Ready to apply" list: server view=ready, fetched WITHOUT the
   // min_match_score gate so it always matches the ungated ready_jobs tile count.
   // The catalog (readyQueue) is score-gated and stale-prone, so the ready TAB
@@ -65,11 +65,11 @@ let state = {
   // fresh stats (which already exclude them) arrive. See deriveHomeFromCatalog.
   pendingAppliedIds: [],
   appliedQueue: [], // jobs applied to today (most recent first)
-  // Which Jobs list the user opened chat from — Complete & Next advances in this list.
+  // Which Jobs list the user opened chat from, Complete & Next advances in this list.
   applyListContext: null, // { key, view?, remote_only?, min_match_score?, jobIds: string[] }
   homeTab: "hub", // hub | progress | today | all | ready | queued | remote | mine | tailor | stats | settings | add
-  todaySubTab: "all", // "all" | "platform" | "mine" — narrows the New today list
-  tailorSubTab: "making", // "making" | "ready" — in-progress vs generated resumes
+  todaySubTab: "all", // "all" | "platform" | "mine" - narrows the New today list
+  tailorSubTab: "making", // "making" | "ready" - in-progress vs generated resumes
   tailorHits: [], // unified resume search hits (library + job builds)
   tailorHitsLoading: false,
   tailorRuns: [], // [{ id, kind, jobId?, title, company, stage, label, status, error?, resumeId? }]
@@ -125,7 +125,7 @@ let state = {
 
 // Login form draft (kept outside render state so typing does not re-render on each key).
 let loginDraft = { email: "", password: "", remember: false, showPassword: false };
-// Tailor page JD paste (same reason — avoid remounting the textarea every keystroke).
+// Tailor page JD paste (same reason, avoid remounting the textarea every keystroke).
 let tailorJdDraft = "";
 
 function emptyAutofill() {
@@ -190,7 +190,7 @@ function restoreScrollPositions(positions) {
 /**
  * @param {object} patch
  * @param {{ resetScroll?: boolean }} [opts]
- *   resetScroll — jump to top (view / section / page changes). Soft data refreshes
+ *   resetScroll, jump to top (view / section / page changes). Soft data refreshes
  *   preserve scroll so the 6s home poll and toast-adjacent updates don't yank the list.
  */
 function setState(patch, opts = {}) {
@@ -348,7 +348,7 @@ function onContentMessage(msg, sender) {
       wdStepWaiter({ reports: msg.reports || [], aborted: !!msg.aborted });
       return;
     }
-    // Late DONE after Stop already finished the loop — do not clobber the outcome.
+    // Late DONE after Stop already finished the loop, do not clobber the outcome.
     if (state.autofill.done && state.autofill.loopFinished) return;
     if (msg.aborted) {
       setAutofill({
@@ -377,7 +377,7 @@ function onContentMessage(msg, sender) {
     if (state.autofill.done && state.autofill.loopFinished) return;
     setAutofill({ running: false, done: true, error: msg.error || "Autofill failed", reports: msg.reports || state.autofill.reports });
   } else if (msg.type === "WD_RESOLVE") {
-    // Ignore LLM resolve replies after Stop — page waiters were already cleared.
+    // Ignore LLM resolve replies after Stop, page waiters were already cleared.
     if (state.autofill.loopStop || !state.autofill.running) {
       const tabId = state.autofill.tabId;
       if (tabId != null && msg.requestId) {
@@ -411,7 +411,7 @@ async function handleWorkdayResolve(msg) {
   // Backend AutofillControlIn.label / AutofillFieldIn.label max_length=600
   // (app/api/assistant_routes.py). Stuffing portal option keys into the label
   // (race/ethnicity, long Acknowledgment) caused string_too_long and empty
-  // WD_RESOLVE replies — fields never filled, auto-advance then Save'd blank.
+  // WD_RESOLVE replies, fields never filled, auto-advance then Save'd blank.
   const CONTROL_LABEL_MAX = 600;
   const clip = (s, n) => {
     const t = String(s || "")
@@ -572,8 +572,8 @@ async function handleWorkdayResolve(msg) {
           /type to add skills|add skills|^skills$/i.test(c.label || "") ||
           /^skills$/i.test(String((src && src.key) || ""));
 
-        // Skills: prefer option_values[] (multi typeahead — no harvested list).
-        // Cap at 10 — job needs a focused set, not the full profile dump (Fiserv AA).
+        // Skills: prefer option_values[] (multi typeahead, no harvested list).
+        // Cap at 10, job needs a focused set, not the full profile dump (Fiserv AA).
         if (isSkillsCtrl) {
           const fromArr = Array.isArray(c.option_values)
             ? c.option_values.map((x) => String(x || "").trim()).filter(Boolean)
@@ -605,7 +605,7 @@ async function handleWorkdayResolve(msg) {
         }
 
         const want = norm(v);
-        // Bare "+1"/"1" is not an exact option — do not soft-snap to Anguilla.
+        // Bare "+1"/"1" is not an exact option, do not soft-snap to Anguilla.
         if (phoneCc && (want === "1" || want === "+1")) {
           console.debug("[workday] WD_RESOLVE phone CC not exact option", c.cid, v);
           continue;
@@ -837,7 +837,7 @@ function mdToPlain(text) {
   return s.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-// Imperative toast — avoid a full re-render (and scroll jump) just to show a tip.
+// Imperative toast, avoid a full re-render (and scroll jump) just to show a tip.
 let toastTimer = null;
 let toastText = null;
 function toast(msg) {
@@ -1063,7 +1063,7 @@ async function ensureAskHotkeyOnActiveTab({ requestPermission = false, jobUrl = 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabUrl = (tab && tab.url) || "";
     // Prefer a real http(s) application URL. After reloading the extension the
-    // active tab is often chrome://extensions — using that with
+    // active tab is often chrome://extensions, using that with
     // chrome.permissions.contains/request throws
     // "Only permissions specified in the manifest may be requested."
     const httpUrl = [tabUrl, jobUrl].find((u) => /^https?:\/\//i.test(u || "")) || "";
@@ -1151,7 +1151,7 @@ function openHomeSection(id) {
     patch.allSearchMode = true;
     patch.allSearchQuery = "";
   }
-  // Add jobs is embedded on the hub — never open as a sub-page.
+  // Add jobs is embedded on the hub, never open as a sub-page.
   if (id === "add") {
     patch.homeTab = "hub";
     void loadUserSettings();
@@ -1169,7 +1169,7 @@ function backToHub() {
 }
 
 // Soft-refresh home lists while the panel stays open (dashboard polls ~6s while
-// pipelines run). Keep it quiet — no skeleton flash on background refresh.
+// pipelines run). Keep it quiet, no skeleton flash on background refresh.
 let homePollTimer = null;
 function stopHomePolling() {
   if (homePollTimer != null) {
@@ -1198,7 +1198,7 @@ function localTimezone() {
   }
 }
 
-/** Optional min-score query param — omit when 0 so we match the dashboard. */
+/** Optional min-score query param, omit when 0 so we match the dashboard. */
 function minScoreParam() {
   const n = Number(state.minScore);
   return Number.isFinite(n) && n > 0 ? n : undefined;
@@ -1251,7 +1251,7 @@ function isJobApplied(j) {
   return !!(j && j.applied_at);
 }
 
-/** Resume DOCX completed and not yet marked applied — matches "Ready to apply". */
+/** Resume DOCX completed and not yet marked applied, matches "Ready to apply". */
 function isReadyJob(j) {
   if (!j || isJobApplied(j)) return false;
   return String(j.resume_build_status || j.resume_docx_status || "").toLowerCase() === "completed";
@@ -1681,7 +1681,7 @@ async function bootstrapJobsCatalog({ score, wantScore, timezone, extras }) {
 }
 
 async function loadQueue({ silent = false } = {}) {
-  // Show skeletons while cold-loading — skip the flash on background polls /
+  // Show skeletons while cold-loading, skip the flash on background polls /
   // when we already painted from cache.
   if (!silent) setState({ queueLoading: true });
   try {
@@ -1824,7 +1824,7 @@ async function consumePendingWebappJob() {
 }
 
 /**
- * List-context for Complete & Next — mirrors the hub section the user opened.
+ * List-context for Complete & Next, mirrors the hub section the user opened.
  * jobIds preserve the filtered UI order so "next" matches what they see.
  */
 function applyContextForTab(tabId, jobIds) {
@@ -1898,7 +1898,7 @@ async function resolveNextJob(afterJobId) {
         }
       }
     } else {
-      // Current job not in the cached list — take the first remaining entry.
+      // Current job not in the cached list, take the first remaining entry.
       nextId = original.find(isEligible) || null;
     }
     if (nextId) {
@@ -1910,7 +1910,7 @@ async function resolveNextJob(afterJobId) {
         nextJobIds,
       };
     }
-    // Exhausted this list — do not jump into a different view.
+    // Exhausted this list, do not jump into a different view.
     return { job_id: null, remaining: 0, source: "list", nextJobIds: [] };
   }
 
@@ -1961,7 +1961,7 @@ async function openJob(jobId, { redirect = false, keepReportNotice = false, resu
   setState(patch);
   try {
     await api.createSession(jobId);
-    // Fresh chat per application open — prior turns for this job must not linger.
+    // Fresh chat per application open, prior turns for this job must not linger.
     await api.clearSessionMessages(jobId).catch(() => {});
     const detail = await api.getSessionDetail(jobId);
     const snap = detail.job_snapshot || {};
@@ -1994,13 +1994,13 @@ async function openJob(jobId, { redirect = false, keepReportNotice = false, resu
     const applyUrl = snap.url || detail.job_url;
     void ensureAskHotkeyOnActiveTab({ requestPermission: true, jobUrl: applyUrl });
     if (redirect) {
-      // Navigation is async — reinject after the application page settles.
+      // Navigation is async, reinject after the application page settles.
       setTimeout(() => {
         void ensureAskHotkeyOnActiveTab({ requestPermission: false, jobUrl: applyUrl });
       }, 1800);
     }
     void consumePendingAskSelection();
-    // Never re-consume a submit event after Complete & Next redirects — a stale
+    // Never re-consume a submit event after Complete & Next redirects, a stale
     // pendingAppSubmitted (rewritten by background after we cleared it) would
     // auto-complete the *next* job and skip its URL.
     if (!redirect) {
@@ -2298,7 +2298,7 @@ async function postJobsToPumble(jobIds) {
 let autoCompleteFromSubmit = false;
 let lastAutoCompleteJobId = null;
 let lastAutoCompleteAt = 0;
-// Global advance mutex — outlives a single completeJob so Workday detect +
+// Global advance mutex, outlives a single completeJob so Workday detect +
 // submit-watch + pendingAppSubmitted cannot Complete & Next job B immediately
 // after advancing A→B (which marks B applied and jumps to C).
 let completeInFlight = false;
@@ -2422,7 +2422,7 @@ async function handleApplicationSubmitted(msg) {
   lastAutoCompleteAt = now;
   autoCompleteFromSubmit = true;
   try {
-    toast("Application submitted — completing & loading next…");
+    toast("Application submitted, completing & loading next…");
     await completeJob({ next: true });
   } finally {
     autoCompleteFromSubmit = false;
@@ -2571,7 +2571,7 @@ async function startAutofill() {
     // container and fill it automatically - no manual field tagging.
     if (engine.autoDiscover) {
       setState({ autofill: { ...emptyAutofill(), active: true, discovering: true, tabId: tab.id, engine } });
-      // JobDiva: open Quick Apply before discovery — the form only mounts after
+      // JobDiva: open Quick Apply before discovery, the form only mounts after
       // Apply Now → Quick Apply (~2s), which is longer than AF_AUTOSELECT's retry.
       if (engine.platform === "jobdiva") {
         setAutofill({ runStatus: "Opening Quick Apply…" });
@@ -2689,7 +2689,7 @@ const WD_MAX_STEPS = 9;
 // full fill + ONE targeted recovery. Workday only surfaces most required-field
 // errors AFTER "Save and Continue", so a single recovery pass is required to fix
 // them. The recovery re-fills ONLY the fields Workday flagged (options.onlyInvalid),
-// never the whole step — already-committed fields are left untouched, so this is
+// never the whole step, already-committed fields are left untouched, so this is
 // not the "re-type everything" churn the one-pass design guarded against.
 const WD_MAX_STEP_FILLS = 2;
 // Per step: how many Save attempts. One targeted onlyInvalid recovery may run
@@ -2846,7 +2846,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
     if (!state.autoSubmit) return finishLoop("review");
     if (loopStopped()) return finishLoop("stopped");
     setAutofill({ loopStatus: "Submitting application…" });
-    aaLog("phase: AUTO-SUBMIT — clicking Submit on Review", {});
+    aaLog("phase: AUTO-SUBMIT, clicking Submit on Review", {});
     const res = await tabSend(tabId, { type: "WD_SUBMIT" }, 0);
     aaLog("WD_SUBMIT result", res || {});
     if (loopStopped() || (res && res.aborted)) return finishLoop("stopped");
@@ -2863,8 +2863,8 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
       });
       return;
     }
-    // Submit didn't confirm — leave the user on Review to finish manually.
-    aaLog("auto-submit did not confirm — leaving at Review", { res, detect: d });
+    // Submit didn't confirm, leave the user on Review to finish manually.
+    aaLog("auto-submit did not confirm, leaving at Review", { res, detect: d });
     return finishLoop("review");
   };
   try {
@@ -2896,7 +2896,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
       const runFill = async (extraOptions) => {
         if (loopStopped()) return { aborted: true };
         if (fillsUsed >= WD_MAX_STEP_FILLS) {
-          aaLog("runFill SKIPPED — fill budget exhausted", {
+          aaLog("runFill SKIPPED, fill budget exhausted", {
             label,
             step,
             fillsUsed,
@@ -2938,7 +2938,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
 
       // Clear validation and advance. If validation is dirty (pre-save OR after
       // Save reveals required errors), re-fill ONLY the flagged fields
-      // (options.onlyInvalid) once — bounded by WD_MAX_STEP_FILLS — then Save
+      // (options.onlyInvalid) once, bounded by WD_MAX_STEP_FILLS, then Save
       // again. Committed fields are never re-touched, so this recovers a genuinely
       // failed field without re-harvesting the whole step.
       let advanced = false;
@@ -2981,7 +2981,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
         if (v && !v.clean) {
           lastNames = (v.invalidFields || []).map((f) => f.label || f.key).filter(Boolean);
           console.debug(`[workday] auto-advance: ${label} pre-save errors`, v.invalidFields);
-          aaLog("WARN: dirty validation before Save — retrying failed fields", { label, lastNames });
+          aaLog("WARN: dirty validation before Save, retrying failed fields", { label, lastNames });
           const rec = await recoverInvalid(v.invalidFields, "pre-save");
           if (rec.status === "aborted") return finishLoop("stopped");
           if (rec.status === "error") return finishLoop("error", rec.error);
@@ -3067,13 +3067,13 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
           if (rec.status === "aborted") return finishLoop("stopped");
           if (rec.status === "error") return finishLoop("error", rec.error);
           if (rec.status === "ok") {
-            // Recovery filled the flagged fields — let the next attempt re-flush,
+            // Recovery filled the flagged fields, let the next attempt re-flush,
             // re-validate, and Save again.
-            aaLog("post-save recovery done — retrying Save", { lastNames, fillsUsed });
+            aaLog("post-save recovery done, retrying Save", { lastNames, fillsUsed });
             continue;
           }
-          // No budget left (or nothing to retry) — surface the fields to the user.
-          aaLog("WARN: post-save dirty — recovery budget exhausted; surface to user", {
+          // No budget left (or nothing to retry), surface the fields to the user.
+          aaLog("WARN: post-save dirty, recovery budget exhausted; surface to user", {
             lastNames,
             fillsUsed,
           });
@@ -3137,7 +3137,7 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
 function finishLoop(reason, error) {
   const messages = {
     review: "Reached the Review step - review and submit when you're ready.",
-    submitted: "Application submitted — loading next job…",
+    submitted: "Application submitted, loading next job…",
     done: "Finished the available steps.",
     none: "No Workday application step was detected on this page.",
     stopped: "Auto-advance stopped.",
@@ -3810,7 +3810,7 @@ async function prepareWorkable(tabId) {
       experience = profile.workExperience.map((w) => ({
         company: (w && w.company) || "",
         title: (w && w.title) || "",
-        // Profile WorkExperienceBlock has no industry field — always "" unless
+        // Profile WorkExperienceBlock has no industry field, always "" unless
         // a future API adds it. Logged in content script when skipped.
         industry: (w && w.industry) || "",
         description: (w && w.description) || "",
@@ -4412,7 +4412,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     await prepareCachedAnswers(tabId, eng.platform);
     // Commit browser-autofilled values into controlled React forms. Greenhouse
     // writes through dedicated drivers; commitPrefilled there only scans
-    // comboboxes it must skip — so skip the call on Greenhouse only.
+    // comboboxes it must skip, so skip the call on Greenhouse only.
     if (eng.platform !== "greenhouse") {
       await commitPrefilled(tabId);
     }
@@ -4538,7 +4538,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     } catch {}
 
     // Normalize file roles from labels when the model leaves them as "other"/empty,
-    // then decide file needs_user from whether we can actually download the file —
+    // then decide file needs_user from whether we can actually download the file,
     // never from the LLM's guess (it has no visibility into generated PDFs).
     normalizeFileRolesInResults(results, apiSpecs);
 
@@ -4610,7 +4610,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       if (split.pending) breezyResumePending = split.pending;
     }
     // Ashby: resume is uploaded early (parallel with LLM). Strip it from the
-    // write payload and do NOT schedule ashbyReapply — a second write was
+    // write payload and do NOT schedule ashbyReapply, a second write was
     // re-opening comboboxes and leaving "What brought you" uncommitted.
     if (isAshby) {
       const split = splitLeverResumeWrite(results, files);
@@ -4621,7 +4621,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
         ctx.ashbyReapply = null;
         console.log("[autofill] Ashby: single write pass (resume already uploaded; no reapply)");
       } else if (split.pending) {
-        // Fallback: early upload failed — defer resume + reapply (legacy path).
+        // Fallback: early upload failed, defer resume + reapply (legacy path).
         ashbyResumePending = split.pending;
         ctx.ashbyReapply = stripAshbyToggleControls(writeResults);
         console.log("[autofill] Ashby: early resume missed; falling back to upload-last + reapply");
@@ -4663,14 +4663,14 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
     await new Promise((r) => setTimeout(r, passDelayMs));
     let stillOpen = await countUnfilledControls(tabId, handles, attemptedKeys);
     // After the first write pass, progressive fields can mount slightly after
-    // the settle delay — re-peek once before declaring the page done.
+    // the settle delay, re-peek once before declaring the page done.
     if (!stillOpen && pass === 0) {
       await delay(250);
       stillOpen = await countUnfilledControls(tabId, handles, attemptedKeys);
     }
     if (!stillOpen) {
       try {
-        console.log("[autofill] no unfilled controls after pass", pass + 1, "— skipping further extracts");
+        console.log("[autofill] no unfilled controls after pass", pass + 1, "- skipping further extracts");
       } catch {}
       break;
     }
@@ -4688,7 +4688,7 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
   // Final commit of text values into React/Apollo state. Ashby resume is
   // uploaded early (above); the legacy upload-last + reapply path runs only
   // when early upload failed.
-  // Greenhouse: skip — drivers already commit via React-safe writes; the double
+  // Greenhouse: skip, drivers already commit via React-safe writes; the double
   // commit only re-scans comboboxes and adds ~600ms of idle delay.
   if (eng && eng.mode === "select" && eng.platform === "ashby") {
     setAutofill({ runStatus: "Finalizing the form…" });
@@ -5124,7 +5124,7 @@ async function runAutofill() {
       console.log("[autofill] JobDiva submit result:", sub);
       if (sub.submitted) {
         setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: [] });
-        toast("Application submitted — completing & loading next…");
+        toast("Application submitted, completing & loading next…");
         await completeJob({ next: true });
         return;
       }
@@ -5484,14 +5484,14 @@ function buildWeeklyChartSvg(series, opts = {}) {
   const { max: maxVal, ticks } = niceChartScale(Math.max(dataMax, applyTarget), 4);
   const n = Math.max(1, series.length);
   const groupW = innerW / n;
-  // Thin clustered bars — never fill the whole day slot.
+  // Thin clustered bars, never fill the whole day slot.
   const barW = Math.min(dense ? 4.5 : 6.5, Math.max(2.5, groupW * (dense ? 0.14 : 0.18)));
   const barGap = dense ? 1.2 : 2;
   const clusterW = keys.length * barW + (keys.length - 1) * barGap;
   const labelStep = dense ? Math.max(1, Math.ceil(n / 7)) : 1;
   const baseline = pad.t + innerH;
   const yScale = (v) => baseline - (v / maxVal) * innerH;
-  // Minimum visible height only when non-zero — still seated on the baseline.
+  // Minimum visible height only when non-zero, still seated on the baseline.
   const minBarH = dense ? 1.25 : 1.75;
 
   let grid = `<line x1="${pad.l}" y1="${baseline}" x2="${W - pad.r}" y2="${baseline}" class="weekly-baseline"/>`;
@@ -6143,8 +6143,8 @@ function renderListFilterBar(totalBefore, totalAfter, { resumeMode = false } = {
           class: "list-filter-order-btn" + (f.order === "asc" ? " is-asc" : ""),
           title:
             f.order === "asc"
-              ? "Ascending — click for descending"
-              : "Descending — click for ascending",
+              ? "Ascending, click for descending"
+              : "Descending, click for ascending",
           onclick: () => commitListFilters({ order: f.order === "asc" ? "desc" : "asc" }),
         },
         f.order === "asc" ? "↑ Asc" : "↓ Desc"
@@ -6326,7 +6326,7 @@ function jobResumeReady(j) {
 }
 
 /**
- * True mid-pipeline (queued/processing) — leftover pending files after
+ * True mid-pipeline (queued/processing), leftover pending files after
  * failed/skipped content do NOT count as in-flight.
  */
 function jobResumeInProgress(j) {
@@ -6349,7 +6349,7 @@ function jobResumeFailed(j) {
 
 /**
  * Tailor → In progress: every job that does NOT yet have a tailored resume
- * (never started, queued, generating, or failed — excluding applied).
+ * (never started, queued, generating, or failed, excluding applied).
  */
 function tailorInProgressJobs() {
   return tailorJobPool().filter((j) => !j.applied_at && !jobHasTailoredResume(j));
@@ -6360,7 +6360,7 @@ function tailorGeneratedJobs() {
   return tailorJobPool().filter((j) => jobHasTailoredResume(j));
 }
 
-/** Jobs that still need a tailor kickoff (idle — not running, not failed). */
+/** Jobs that still need a tailor kickoff (idle, not running, not failed). */
 function tailorCandidateJobs() {
   return tailorInProgressJobs().filter(
     (j) => !jobResumeInProgress(j) && !jobResumeFailed(j)
@@ -6383,18 +6383,18 @@ function resumeProgressLabel(j) {
   const cg = _cg(j);
   const docx = _docx(j);
   const pdf = _pdf(j);
-  if (cg === "failed") return "Content failed — tap to retry";
-  if (cg === "skipped") return "Tailoring skipped — tap to retry";
+  if (cg === "failed") return "Content failed, tap to retry";
+  if (cg === "skipped") return "Tailoring skipped, tap to retry";
   if (cg === "processing") return "Generating tailored content…";
   if (cg === "pending") return "Queued for tailoring…";
   if (cg === "completed") {
     if (docx === "processing" || pdf === "processing") return "Building DOCX / PDF…";
     if (docx === "pending" || pdf === "pending") return "Queued for file build…";
-    if (docx === "failed" || pdf === "failed") return "File build failed — tap to retry";
+    if (docx === "failed" || pdf === "failed") return "File build failed, tap to retry";
     return "Tailored resume ready";
   }
   if (docx === "processing" || pdf === "processing") return "Building DOCX / PDF…";
-  if (docx === "failed" || pdf === "failed") return "File build failed — tap to retry";
+  if (docx === "failed" || pdf === "failed") return "File build failed, tap to retry";
   if (!cg) return "Tap to tailor";
   return "Needs tailored resume";
 }
@@ -6754,7 +6754,7 @@ async function startJobTailor(job) {
   try {
     await api.triggerResumeBuild(job.id);
     patchTailorRun(runId, {
-      label: "Queued — generating tailored content…",
+      label: "Queued, generating tailored content…",
       stage: "queued",
     });
     toast("Tailored resume started for this job.");
@@ -6812,7 +6812,7 @@ function renderTailorJdComposer() {
     class: "tailor-jd-input",
     rows: "6",
     placeholder:
-      "Paste a job description here…\n\nSame OneClick AI flow as the Resume Builder — we analyze, tailor, and save to your library.",
+      "Paste a job description here…\n\nSame OneClick AI flow as the Resume Builder, we analyze, tailor, and save to your library.",
     value: tailorJdDraft || "",
   });
   area.addEventListener("input", (e) => {
@@ -6942,7 +6942,7 @@ function renderTailorMakingPanel() {
     el(
       "p",
       { class: "muted small tailor-section-hint" },
-      "These jobs are not ready yet — tailoring has not finished (or has not started)."
+      "These jobs are not ready yet, tailoring has not finished (or has not started)."
     )
   );
   section.appendChild(renderListFilterBar(cards.length, filtered.length));
@@ -7274,7 +7274,7 @@ function renderSettings() {
   ]);
   void store.getBackendUrl().then((url) => {
     const node = document.getElementById("settings-backend");
-    if (node) node.textContent = url || "—";
+    if (node) node.textContent = url || "-";
   });
 
   return el("div", { class: "settings-panel" }, [
@@ -7282,7 +7282,7 @@ function renderSettings() {
       el("div", { class: "settings-block-title" }, "Account"),
       el("div", { class: "settings-row" }, [
         el("span", { class: "muted small" }, "Signed in as"),
-        el("span", { class: "settings-value" }, state.user ? state.user.email : "—"),
+        el("span", { class: "settings-value" }, state.user ? state.user.email : "-"),
       ]),
       backendHint,
       el("div", { class: "settings-actions" }, [
@@ -7419,7 +7419,7 @@ function renderSettings() {
       }),
       settingsToggleRow({
         title: "Auto-submit (Workday)",
-        hint: "When on, the assistant clicks Submit on the Review step. Off by default — also toggleable from the header.",
+        hint: "When on, the assistant clicks Submit on the Review step. Off by default, also toggleable from the header.",
         on: !!state.autoSubmit,
         onToggle: async () => {
           const next = !state.autoSubmit;
@@ -7520,7 +7520,7 @@ function renderSettings() {
       el(
         "p",
         { class: "muted small settings-hint" },
-        "AI provider, models, and API keys are managed in NAO System Settings on the dashboard — not here."
+        "AI provider, models, and API keys are managed in NAO System Settings on the dashboard, not here."
       ),
       el("div", { class: "settings-field" }, [
         el("label", { class: "settings-field-label" }, "Default chat tone"),
@@ -7865,7 +7865,7 @@ function renderAddJobs({ embedded = false } = {}) {
           el("div", { class: "add-jobs-progress-bar", style: `width:${pct}%` }),
         ]),
         el("div", { class: "add-jobs-progress-text muted small" },
-          `${done}/${total} submitted — ${aj.posted || 0} posted, ${aj.dup || 0} duplicate, ${aj.failed || 0} failed`
+          `${done}/${total} submitted, ${aj.posted || 0} posted, ${aj.dup || 0} duplicate, ${aj.failed || 0} failed`
         ),
       ])
     );
@@ -8975,7 +8975,7 @@ function renderAutofillPanel() {
             ? ok
               ? el("div", { class: "af-side-line" }, [
                   el("span", { class: "af-pill info" }, previewEngine.label),
-                  el("span", { class: "af-side-text" }, "Ready — click Fill to run"),
+                  el("span", { class: "af-side-text" }, "Ready, click Fill to run"),
                 ])
               : el("div", { class: "af-side-line warn" }, [
                   icon(ICON_ALERT, "af-inline-ico"),
@@ -9239,7 +9239,7 @@ function renderWorkdayPanel(af) {
     sideKids.push(el("div", { class: "af-side-text muted" }, "Starting…"));
   }
 
-  // Auto-advance debug trail — full step-by-step trace from My Information onward.
+  // Auto-advance debug trail, full step-by-step trace from My Information onward.
   if (af.aaLogs && af.aaLogs.length) {
     const lines = af.aaLogs
       .slice(-200)
@@ -9256,7 +9256,7 @@ function renderWorkdayPanel(af) {
       .join("\n");
     sideKids.push(
       el("details", { class: "af-aa-log", open: true }, [
-        el("summary", {}, `Debug log (${af.aaLogs.length}) — copy & paste for investigation`),
+        el("summary", {}, `Debug log (${af.aaLogs.length}), copy & paste for investigation`),
         el(
           "button",
           {
@@ -9314,7 +9314,7 @@ function renderWorkdayPanel(af) {
         el(
           "p",
           { class: "muted small af-wd-hint" },
-          "Review, click Workday Continue, then re-run — Submit is yours."
+          "Review, click Workday Continue, then re-run, Submit is yours."
         )
       );
     }

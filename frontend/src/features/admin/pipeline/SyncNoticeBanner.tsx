@@ -38,9 +38,9 @@ export function syncHeadline(notice: SyncResultNotice, sources: string): string 
   }
   if (notice.kind === 'error') {
     if (scraped <= 0) return `Job sync failed for ${sources}`;
-    return `Job sync finished with errors — scraped ${n} ${word} from ${sources}${breakdown ? ` (${breakdown})` : ''}`;
+    return `Job sync finished with errors, scraped ${n} ${word} from ${sources}${breakdown ? ` (${breakdown})` : ''}`;
   }
-  if (scraped === 0) return `Sync finished — no listings scraped from ${sources}`;
+  if (scraped === 0) return `Sync finished, no listings scraped from ${sources}`;
   const suffix = notice.kind === 'warning' ? ' with some platform issues' : '';
   return `Scraped ${n} ${word} from ${sources}${breakdown ? ` · ${breakdown}` : ''}${suffix}`;
 }
@@ -70,10 +70,10 @@ export function SyncNoticeBanner({
   const details: string[] = [];
   if (notice.itemsNew > 0) details.push(`${notice.itemsNew.toLocaleString()} new in scrape DB`);
   if (notice.itemsUpdated > 0) details.push(`${notice.itemsUpdated.toLocaleString()} already known (kept existing JD)`);
-  if (dropped > 0) details.push(`${dropped.toLocaleString()} dropped — exact source URL already saved`);
+  if (dropped > 0) details.push(`${dropped.toLocaleString()} dropped, exact source URL already saved`);
   if (notice.extractionEnqueued > 0) details.push(`${notice.extractionEnqueued.toLocaleString()} queued for JD extraction`);
   else if (notice.itemsScraped > 0 && notice.itemsNew === 0 && notice.itemsUpdated > 0 && dropped === 0) {
-    details.push('No new extraction queue — updates reuse existing JD');
+    details.push('No new extraction queue, updates reuse existing JD');
   }
   if (notice.promotionNew > 0) details.push(`${notice.promotionNew.toLocaleString()} new jobs saved`);
   if (notice.syncMode === 'incremental' && !windowLabel) details.push('Incremental sync');
@@ -89,7 +89,7 @@ export function SyncNoticeBanner({
         <p className="text-sm font-medium">{syncHeadline(notice, formatSources(notice.platforms, spiders))}</p>
         {notice.kind !== 'error' && notice.extractionEnqueued > 0 && (
           <p className="text-xs text-muted-foreground">
-            Auto-extraction is running. Jobs move to JD ready when done — Extraction backlog is the live unfinished
+            Auto-extraction is running. Jobs move to JD ready when done, Extraction backlog is the live unfinished
             pool, not this sync&apos;s scrape total.
           </p>
         )}

@@ -383,7 +383,7 @@ async def _promote_single_scraped_row(
 
             existing = await _find_existing_job_by_url(session, source_url=target_url)
             if existing:
-                # Exact URL already in the jobs pool — do not create another Job
+                # Exact URL already in the jobs pool, do not create another Job
                 # and do not re-queue extraction. Stamp the scraped row so the
                 # promoter skips it on the next run.
                 stamp_id = existing.extraction_id or existing.id

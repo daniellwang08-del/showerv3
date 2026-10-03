@@ -123,7 +123,7 @@ export function SourceDocumentsSection({ companies, disabled }: { companies: str
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Detailed per-company project write-ups (PDF, DOCX or Markdown, up to 10 MB). They’re parsed once and used when
-        tailoring résumés for each job — stronger bullets with real metrics and project depth.
+        tailoring résumés for each job, stronger bullets with real metrics and project depth.
       </p>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">

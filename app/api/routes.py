@@ -180,7 +180,7 @@ async def _purge_job_cascade(session, job_id: str) -> bool:
 async def _hide_job_for_user(session, job_id: str, user_id: str) -> bool:
     """Applicant-scoped 'delete': hide the shared job from this user's list only.
 
-    `jobs` is a shared multi-tenant table — a non-admin must never cascade-delete
+    `jobs` is a shared multi-tenant table, a non-admin must never cascade-delete
     the row (that would destroy every other user's match/application/resume data).
     Instead we upsert a per-user manual_hidden status, exactly like report-invalid.
     Returns False when the job does not exist.
@@ -1432,7 +1432,7 @@ async def prepare_job_for_user(
 
     Applicants cannot force re-extract when a shared JD already exists
     (``allow_force_rescrape`` is admin-only). When extraction is already
-    pending/processing, we wait for that shared extract and then analyze —
+    pending/processing, we wait for that shared extract and then analyze,
     never reset mid-flight.
     """
     from app.services.job_pipeline_mode import extraction_has_shared_jd
@@ -1653,7 +1653,7 @@ async def process_extraction_sync(
         result = await service.process_job(extraction_id, url)
         if result.get("status") == "extracted":
             # Scrape-only stays EXTRACTED (shared JD ready). Do not promote to
-            # COMPLETED — that status means Phase A structured the posting.
+            # COMPLETED, that status means Phase A structured the posting.
             if user_id and chain_analysis:
                 found_job_id: str | None = None
                 async with get_session() as session:
@@ -2252,7 +2252,7 @@ def _dashboard_view_clauses(
                 clauses.append(added_at >= day_start)
                 clauses.append(added_at < day_end)
     elif view == "mine":
-        # Applicant "Jobs from me": URL/attachment they (or any applicant) submitted —
+        # Applicant "Jobs from me": URL/attachment they (or any applicant) submitted,
         # never admin inventory FA adds.
         clauses.append(UserJobStatus.status == "active")
         clauses.append(Job.raw_metadata["submitted_data"].isnot(None))
@@ -2292,7 +2292,7 @@ def _dashboard_view_clauses(
     elif view == "available":
         from app.models.schemas import ExtractionStatus
 
-        # Upcoming jobs: shared JD scraped, not yet resume-ready, not applied —
+        # Upcoming jobs: shared JD scraped, not yet resume-ready, not applied,
         # the pool where applicants run match / tailor / resume pipelines.
         clauses.append(
             JobExtraction.status.in_(
@@ -2308,7 +2308,7 @@ def _dashboard_view_clauses(
         )
         clauses.append(ValidJobUserApplication.id.is_(None))
     elif view == "ready":
-        # Tailored resume ready AND not yet applied — "Ready to apply".
+        # Tailored resume ready AND not yet applied"Ready to apply".
         clauses.append(ResumeBuildResult.resume_docx_status == "completed")
         clauses.append(ValidJobUserApplication.id.is_(None))
     elif view == "sheet_posted":
@@ -2727,7 +2727,7 @@ async def get_dashboard_jobs(
         base_filter.extend(view_clauses)
 
         # Admin main table: extraction failures live on the dedicated
-        # Extraction failed board — never mix them into All / other ops views.
+        # Extraction failed board, never mix them into All / other ops views.
         needs_extraction_join = view in VIEWS_NEEDING_EXTRACTION_CLAUSE
         if is_admin and view != "extraction_failed":
             base_filter.append(Job.status != "extraction_failed")
@@ -4067,7 +4067,7 @@ async def prepare_valid_job(
     """Start personal analysis using saved JD when ready; otherwise extract then analyze.
 
     Admins: extract-only shared inventory (never personal analyze/tailor).
-    Applicants: Jobs table Run/Rerun — analyze from saved JD when possible.
+    Applicants: Jobs table Run/Rerun, analyze from saved JD when possible.
     """
     user_id = current_user.get("user_id")
     if not user_id:
@@ -5262,7 +5262,7 @@ async def preview_resume_template_design_doc(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     hit = get_preview_pdf_by_token(token, user_id)
     if not hit:
-        raise HTTPException(status_code=404, detail="Preview expired — refresh the builder.")
+        raise HTTPException(status_code=404, detail="Preview expired, refresh the builder.")
     pdf_bytes, stored_name = hit
     safe_name = stored_name if stored_name.endswith(".pdf") else f"{stored_name}.pdf"
     disposition = f"inline; filename=\"{safe_name}\"; filename*=UTF-8''{quote(safe_name)}"

@@ -259,8 +259,8 @@ export function BenchmarkTab({ settings, catalog }: { settings: SystemSettingsRe
                           {row.model}
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{row.avg != null ? Math.round(row.avg) : '—'}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{row.best != null ? Math.round(row.best) : '—'}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{row.avg != null ? Math.round(row.avg) : '-'}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{row.best != null ? Math.round(row.best) : '-'}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{row.errors}</td>
                     </tr>
                   ))}

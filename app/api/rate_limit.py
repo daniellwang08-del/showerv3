@@ -2,7 +2,7 @@
 
 Protects unauthenticated endpoints (login/signup) from brute-force. If Redis is
 unavailable, requests are ALLOWED (fail-open) so a cache outage never locks real
-users out — brute-force protection is best-effort defense-in-depth, not a hard
+users out, brute-force protection is best-effort defense-in-depth, not a hard
 availability gate.
 """
 
@@ -58,7 +58,7 @@ async def enforce_auth_rate_limit(
 ) -> None:
     """Raise HTTP 429 when an IP (or IP+identity) exceeds the attempt budget.
 
-    Defaults: 30 attempts / 5 min per IP, 8 attempts / 5 min per email — generous
+    Defaults: 30 attempts / 5 min per IP, 8 attempts / 5 min per email, generous
     for humans, punishing for credential-stuffing.
     """
     ip = _client_ip(request)

@@ -1,4 +1,4 @@
-"""Remotive public remote-jobs API — no key."""
+"""Remotive public remote-jobs API, no key."""
 
 from __future__ import annotations
 

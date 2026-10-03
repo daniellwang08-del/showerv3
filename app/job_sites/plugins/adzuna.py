@@ -1,4 +1,4 @@
-"""Adzuna Job Search API — user developer app id + key."""
+"""Adzuna Job Search API, user developer app id + key."""
 
 from __future__ import annotations
 

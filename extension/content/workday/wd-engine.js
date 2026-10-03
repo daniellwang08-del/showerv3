@@ -71,7 +71,7 @@
     if (!el) return false;
     const text = D.norm(el.innerText || el.textContent || el.getAttribute("aria-label") || "");
     if (!text) return false;
-    // Auto-advance must never click final Submit — that is the user's action
+    // Auto-advance must never click final Submit, that is the user's action
     // (or submit-watch → Complete & Next). Mis-detecting Review as My Info used
     // to click this same footer control and then get stuck.
     if (/^submit$/.test(text)) return true;
@@ -98,7 +98,7 @@
     try {
       const now = Date.now();
       const last = WD._aaLastDetectLog || { step: null, at: 0 };
-      // WD_NEXT polls detectStep many times — only log on change or every ~1.2s.
+      // WD_NEXT polls detectStep many times, only log on change or every ~1.2s.
       if (step === last.step && now - last.at < 1200 && !(extra && extra.force)) return;
       WD._aaLastDetectLog = { step, at: now };
       const firstHeading = D.pageHeadingText ? D.pageHeadingText() : "";
@@ -117,7 +117,7 @@
   }
 
   function detectStep() {
-    // Post-submit confirmation must win — leftover progress labels still say
+    // Post-submit confirmation must win, leftover progress labels still say
     // "My Information" and used to send auto-advance into a dead end.
     if (detectSubmittedPage()) {
       logDetectStep("submitted");
@@ -320,7 +320,7 @@
     }
     // fillStep intentionally skips the Work Experience / Education panel fields
     // (see inExperiencePanel), so fillExperienceExtras is the ONLY thing that fills
-    // them — including on onlyInvalid recovery passes (a still-empty School must be
+    // them, including on onlyInvalid recovery passes (a still-empty School must be
     // retried through the correct search-prompt path, never the generic one).
     // fillExperienceExtras is idempotent and recovery-light (it skips the resume
     // upload / panel-add / degree-LLM work when onlyInvalid is set).
@@ -383,7 +383,7 @@
 
   // Click the FINAL "Submit" control on the Review step and wait for the
   // thank-you / submitted confirmation. This is the deliberate action that
-  // clickNext explicitly refuses to take — the side panel only calls it (via
+  // clickNext explicitly refuses to take, the side panel only calls it (via
   // WD_SUBMIT) when the user has turned auto-submit ON. Workday only.
   async function submitApplication() {
     if (aborted()) return { ok: false, aborted: true };

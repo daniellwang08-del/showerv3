@@ -3,7 +3,7 @@
 // Injected into all frames while an application session is open.
 //
 // Safety: we do NOT fire on Continue/Next, and we do NOT assume success from a
-// Submit click alone — we wait for a thank-you/confirmation signal or a clear
+// Submit click alone, we wait for a thank-you/confirmation signal or a clear
 // post-submit navigation away from the form (validation failures stay put).
 
 (function () {
@@ -59,7 +59,7 @@
 
   function looksLikeFinalSubmitText(text) {
     if (!text || isNavigationOnly(text)) return false;
-    // Avoid listing-page CTAs like "Apply" / "Apply now" — those open the form.
+    // Avoid listing-page CTAs like "Apply" / "Apply now" - those open the form.
     if (/^(apply|apply now|easy apply)$/.test(text)) return false;
     if (/^submit$/.test(text)) return true;
     if (/\bsubmit(\s+my)?\s+application\b/.test(text)) return true;
@@ -193,7 +193,7 @@
       const nextBtn = document.querySelector(
         'button[data-automation-id="bottom-navigation-next-button"], button[data-automation-id="pageFooterNextButton"]'
       );
-      // Workday Review/Submit still has the footer button — that is still "on form".
+      // Workday Review/Submit still has the footer button, that is still "on form".
       // After submit the footer usually disappears; don't treat progress-only chrome
       // as an active application form.
       const hasWorkdayFields = !!document.querySelector('[data-automation-id^="formField-"]');
@@ -263,7 +263,7 @@
         return;
       }
       if (tries >= 24) {
-        // ~12s with no success signal — likely validation error; do nothing.
+        // ~12s with no success signal, likely validation error; do nothing.
         clearInterval(pendingTimer);
         pendingTimer = null;
         armedClick = false;

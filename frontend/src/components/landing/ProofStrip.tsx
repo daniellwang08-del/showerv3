@@ -56,7 +56,7 @@ export function ProofStrip() {
           </span>
         </div>
         <p className="max-w-2xl text-pretty text-sm font-semibold leading-relaxed text-white/65 sm:text-base">
-          Sourcing, scoring, documents and autofill are one system — so a raw
+          Sourcing, scoring, documents and autofill are one system, so a raw
           listing becomes a finished application without you switching tools.
         </p>
       </div>

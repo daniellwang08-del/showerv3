@@ -1,6 +1,6 @@
 """Subscription billing: plans, Stripe Checkout, Customer Portal, and webhooks.
 
-Payment details never touch this server — checkout runs in Stripe's embedded
+Payment details never touch this server, checkout runs in Stripe's embedded
 form (an iframe mounted in the billing page) and the Customer Portal is hosted
 by Stripe. Entitlement is driven entirely by signed webhook events, which are
 the only writer of "active/canceled" truth.

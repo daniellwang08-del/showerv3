@@ -100,7 +100,7 @@ export function AdminStatsStrip({ stats, loading, error, onRetry, activeView, ac
             label="Extraction backlog"
             value={needs}
             hint={pending > 0 ? `${fmt(pending)} extracting now` : 'Unfinished JD pool'}
-            title="Live unfinished JD pool — jobs still missing, pending, processing, or stuck mid-extract."
+            title="Live unfinished JD pool, jobs still missing, pending, processing, or stuck mid-extract."
             active={viewActive('needs_extraction')}
             onClick={() => onSelectView('needs_extraction')}
             trend={<Sparkline values={trends?.fetched} labels={trends?.labels} max={trendMax} label="Fetched per day" className="text-status-preparing" />}
@@ -284,8 +284,8 @@ function Sparkline({
     .join(' ');
   const summary = values.map((v, i) => `${labels?.[i] ?? i + 1}: ${v}`).join(', ');
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`${label} — ${summary}`} className={cn('hidden shrink-0 sm:block', className)}>
-      <title>{`${label} — ${summary}`}</title>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`${label}, ${summary}`} className={cn('hidden shrink-0 sm:block', className)}>
+      <title>{`${label}, ${summary}`}</title>
       <polyline points={points} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );

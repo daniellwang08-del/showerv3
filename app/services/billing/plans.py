@@ -1,6 +1,6 @@
 """Subscription plan catalog.
 
-The *charge* is always whatever the Stripe Price says — these entries only
+The *charge* is always whatever the Stripe Price says, these entries only
 drive display and map a plan slug to the settings field holding its Price id.
 Keeping the amounts here lets the pricing page render before Stripe is even
 configured, and lets the webhook translate a Price id back into a plan slug.
@@ -88,7 +88,7 @@ PLANS: tuple[Plan, ...] = (
     Plan(
         slug="quarterly",
         name="Quarterly",
-        tagline="Billed $300 every 3 months — save to $100/mo.",
+        tagline="Billed $300 every 3 months, save to $100/mo.",
         price_setting="stripe_price_quarterly",
         amount_cents=30000,
         currency="usd",
@@ -98,7 +98,7 @@ PLANS: tuple[Plan, ...] = (
     Plan(
         slug="yearly",
         name="Yearly",
-        tagline="Billed $500 a year — best value at ~$42/mo.",
+        tagline="Billed $500 a year, best value at ~$42/mo.",
         price_setting="stripe_price_yearly",
         amount_cents=50000,
         currency="usd",

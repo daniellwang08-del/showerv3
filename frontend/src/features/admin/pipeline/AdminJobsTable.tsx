@@ -325,7 +325,7 @@ function Row({
         <div className="truncate text-xs text-muted-foreground sm:hidden">{job.company || job.domain}</div>
       </td>
       <td className={cn(TD, 'hidden truncate text-muted-foreground sm:table-cell')} title={job.company || undefined}>
-        {job.company || '—'}
+        {job.company || '-'}
       </td>
       <td className={cn(TD, 'hidden xl:table-cell')}>
         {job.source_url ? (
@@ -339,12 +339,12 @@ function Row({
             {job.source_url}
           </a>
         ) : (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground">-</span>
         )}
       </td>
       <td className={cn(TD, 'hidden lg:table-cell')}>
         <Badge variant="outline" className="max-w-full" title={job.source || job.domain}>
-          <span className="truncate">{job.source || job.domain || '—'}</span>
+          <span className="truncate">{job.source || job.domain || '-'}</span>
         </Badge>
       </td>
       <td className={cn(TD, 'hidden md:table-cell')}>
@@ -359,7 +359,7 @@ function Row({
         <button
           type="button"
           onClick={() => onOpen(job)}
-          title={`${meta.hint} — click to view`}
+          title={`${meta.hint}, click to view`}
           className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-xs outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <span className="relative flex size-2 shrink-0">

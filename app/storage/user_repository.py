@@ -47,7 +47,7 @@ class UserRepository:
         self.session = session
 
     async def get_by_email(self, email: str) -> User | None:
-        """Get user by email (full row — deferred profile/secret columns included)."""
+        """Get user by email (full row, deferred profile/secret columns included)."""
         stmt = (
             select(User)
             .options(undefer("*"))
@@ -57,7 +57,7 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def get_by_id(self, user_id: str) -> User | None:
-        """Get user by ID (full row — deferred profile/secret columns included)."""
+        """Get user by ID (full row, deferred profile/secret columns included)."""
         stmt = select(User).options(undefer("*")).where(User.id == user_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -219,7 +219,7 @@ class UserRepository:
         return user, False
 
     async def update_eeo_preferences(self, user_id: str, eeo: dict) -> User | None:
-        """Update only EEO / demographic answers — leave the rest of the profile alone."""
+        """Update only EEO / demographic answers, leave the rest of the profile alone."""
         user = await self.get_by_id(user_id)
         if not user:
             return None

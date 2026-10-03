@@ -1,4 +1,4 @@
-"""Arbeitnow public job-board API — no key."""
+"""Arbeitnow public job-board API, no key."""
 
 from __future__ import annotations
 

@@ -50,7 +50,7 @@ describe('readiness', () => {
 describe('formatting helpers', () => {
   it('formats relative time compactly', () => {
     const now = Date.parse('2026-10-03T12:00:00Z');
-    expect(relativeTime(null, now)).toBe('—');
+    expect(relativeTime(null, now)).toBe('-');
     expect(relativeTime('2026-10-03T11:59:40Z', now)).toBe('now');
     expect(relativeTime('2026-10-03T11:15:00Z', now)).toBe('45m');
     expect(relativeTime('2026-10-03T07:00:00Z', now)).toBe('5h');

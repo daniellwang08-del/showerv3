@@ -36,7 +36,7 @@ class User(Base):
     phone_number = Column(String(30), nullable=True)
     linkedin_url = Column(String(500), nullable=True)
     github_url = Column(String(500), nullable=True)
-    # Heavy profile payloads — deferred so auth/admin list queries stay light.
+    # Heavy profile payloads, deferred so auth/admin list queries stay light.
     # Accessing any of these columns loads that column on demand.
     profile_summary = deferred(Column(Text, nullable=True))
     technical_skills = deferred(Column(JSON, default=list))
@@ -149,7 +149,7 @@ class UserSubscription(Base):
 
     A single row per ``user_id`` mirrors the current subscription so the app can
     answer "is this user entitled?" without a Stripe round-trip. Stripe remains
-    authoritative — every field here is (re)written from webhook events and from
+    authoritative, every field here is (re)written from webhook events and from
     the subscription object returned at checkout, never guessed locally.
     """
 
@@ -239,7 +239,7 @@ class ResumeDocument(Base):
     status = Column(String(20), nullable=False, default="draft", server_default="draft")
     # "manual" | "tailored" - how the resume was created.
     source = Column(String(20), nullable=False, default="manual", server_default="manual")
-    # Full design JSON — deferred; search/metadata lists should not load it.
+    # Full design JSON, deferred; search/metadata lists should not load it.
     design = deferred(Column(JSON, nullable=True))
     # For tailored resumes: the role this was tailored to (used for naming/labels).
     job_title = Column(String(300), nullable=True)
@@ -263,7 +263,7 @@ class ProfileSourceDocument(Base):
     filename = Column(String(500), nullable=False)
     source_kind = Column(String(20), nullable=False)  # pdf | docx | markdown
     company_name = Column(String(200), nullable=True)
-    # Large blobs — deferred for metadata list endpoints.
+    # Large blobs, deferred for metadata list endpoints.
     extracted_text = deferred(Column(Text, nullable=True))
     structured_data = deferred(Column(JSON, nullable=True))
     char_count = Column(Integer, default=0, nullable=False, server_default="0")
@@ -302,7 +302,7 @@ class JobExtraction(Base):
     industry = Column(String(200), nullable=True)
     raw_metadata = Column(JSON, default=dict)
     is_job_posting = Column(Boolean, nullable=True)
-    # Large scrape text — only needed for Phase A/B job_text fallback.
+    # Large scrape text, only needed for Phase A/B job_text fallback.
     raw_plain_text = deferred(Column(Text, nullable=True))
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -328,7 +328,7 @@ class Job(Base):
     company = Column(String(500), nullable=False)
     location = Column(String(500), nullable=True)
     work_mode = Column(String(20), nullable=True)
-    # Large JD body — deferred so dashboard/list queries stay light.
+    # Large JD body, deferred so dashboard/list queries stay light.
     description = deferred(Column(Text, nullable=True))
     posted_date = Column(DateTime, nullable=True)
     experience_level = Column(String(100), nullable=True)
@@ -437,7 +437,7 @@ class JobEncoding(Base):
     """Once-per-job vector encoding + extracted signals for non-LLM matching.
 
     Vectors are float32 arrays stored as raw bytes (dimension defined by
-    ``model_version``); cosine math runs in Python/numpy — no pgvector
+    ``model_version``); cosine math runs in Python/numpy, no pgvector
     extension required on the database server.
     """
     __tablename__ = "job_encodings"
@@ -567,7 +567,7 @@ class MatchEngineComparison(Base):
 class SystemLogEvent(Base):
     """Persisted structured log for the admin logs dashboard.
 
-    Fed by the structlog sink — HTTP req/res lifecycle, worker tasks, and
+    Fed by the structlog sink, HTTP req/res lifecycle, worker tasks, and
     process events share one table keyed by request_id for timelines.
     """
     __tablename__ = "system_log_events"

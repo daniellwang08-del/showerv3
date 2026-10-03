@@ -454,7 +454,7 @@ function AddDestination({
             {selected?.is_private ? (
               <FieldDescription className="flex items-center gap-1 text-xs">
                 <Lock className="size-3" />
-                Private channel — add the API addon bot to this channel in Pumble.
+                Private channel, add the API addon bot to this channel in Pumble.
               </FieldDescription>
             ) : null}
           </Field>

@@ -198,7 +198,7 @@ export interface JobSiteConnectAck {
  * Must match CONNECT_BUILD in extension/src/jobSiteConnect.js.
  *
  * An MV3 service worker keeps running the module graph it was registered with,
- * so editing the extension's files does not restart it — while content scripts
+ * so editing the extension's files does not restart it, while content scripts
  * ARE re-read on every page load. A stale worker therefore answers with a
  * contract the dashboard no longer knows, which looks like an impossible bug.
  * Comparing build stamps turns that into a plain "reload the extension".

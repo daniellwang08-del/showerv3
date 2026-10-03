@@ -1,4 +1,4 @@
-"""Admin system logs API — query persisted structured logs."""
+"""Admin system logs API, query persisted structured logs."""
 
 from __future__ import annotations
 

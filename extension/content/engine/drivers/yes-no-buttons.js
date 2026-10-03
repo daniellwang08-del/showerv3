@@ -131,7 +131,7 @@
     async write(root, answer) {
       const btns = buttonsOf(root);
       if (!btns.length) return false;
-      // Already answered this session — re-click would toggle Ashby OFF.
+      // Already answered this session, re-click would toggle Ashby OFF.
       try {
         if (yesNoLooksSelected(root) || root.getAttribute("data-af-yesno-answered") === "1") {
           root.setAttribute("data-af-yesno-answered", "1");

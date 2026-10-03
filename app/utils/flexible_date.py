@@ -191,7 +191,7 @@ def coerce_flexible_date(raw: str | None) -> str | None:
 
     Used for résumé-import fields (especially certificate ``issued_at``) where the
     model may return résumé wording like ``Aug 2023`` or ``Issued Nov 2021``.
-    Returns None when empty, Present-like, or unparseable — never leaves an
+    Returns None when empty, Present-like, or unparseable, never leaves an
     invalid string that would fail profile validation.
     """
     v = (raw or "").strip()

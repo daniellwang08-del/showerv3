@@ -36,7 +36,7 @@ def get_blocked_reason(domain: str) -> str | None:
 
     Callers in the extraction hot path are sync; we refresh the cache lazily via
     a best-effort sync snapshot. If the cache is cold, fall back to the seed list
-    and schedule is not available here — admin CRUD and app startup warm the cache.
+    and schedule is not available here, admin CRUD and app startup warm the cache.
     """
     lowered = (domain or "").lower().strip()
     if not lowered:

@@ -3,7 +3,7 @@
 // Ashby parses an uploaded resume and autofills name/email/location/socials
 // (Ashby product feature). The convenience "Autofill from resume" zone is never
 // used (file.js). Resume is uploaded EARLY (parallel with the LLM round-trip)
-// so parse settles before the single text/select write pass — avoiding a second
+// so parse settles before the single text/select write pass, avoiding a second
 // ashbyReapply write that re-opened comboboxes and toggled Yes/No.
 (() => {
   const AF = window.__AF;

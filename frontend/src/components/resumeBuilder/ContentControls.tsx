@@ -116,7 +116,7 @@ function workFingerprint(w: Work): string {
   });
 }
 
-/** Local draft editor for one role — Save commits to the resume design (avoids per-keystroke autosave). */
+/** Local draft editor for one role, Save commits to the resume design (avoids per-keystroke autosave). */
 function WorkExperienceEditor({
   value,
   index,
@@ -225,7 +225,7 @@ function WorkExperienceEditor({
       >
         <span className={`min-w-0 flex-1 text-[11px] font-medium ${dirty ? 'text-amber-800' : 'text-slate-500'}`}>
           {dirty
-            ? 'Unsaved changes in this role — preview updates after Save'
+            ? 'Unsaved changes in this role, preview updates after Save'
             : 'Role saved to this resume'}
         </span>
         {dirty ? (
@@ -447,7 +447,7 @@ export function ContentControls({
       <div className="flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-[11px] leading-snug text-blue-700">
         <ListChecks size={14} className="mt-0.5 shrink-0" />
         <span>
-          Edits here apply to <strong>this resume design</strong>. Work experience roles use a local draft — click{' '}
+          Edits here apply to <strong>this resume design</strong>. Work experience roles use a local draft, click{' '}
           <strong>Save role</strong> to update the preview and persist. Select text and use <strong>B / I / U</strong>{' '}
           to format. Your master profile stays untouched.
         </span>

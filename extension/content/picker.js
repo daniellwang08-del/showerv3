@@ -9,7 +9,7 @@
   window.__JOB_AUTOFILL__ = true;
   try {
     // Greenhouse career-page shells also inject (allFrames). Skip the build log
-    // there — the real form lives in the embed iframe.
+    // there, the real form lives in the embed iframe.
     const embedParent =
       typeof window !== "undefined" &&
       window.top === window &&
@@ -313,7 +313,7 @@
     "form:has(.btn-apply)",
     "form:has(.custom-file-input)",
     'form:has(input[name="terms_and_condition"])',
-    // JobDiva (*.jobdiva.com): Quick Apply modal — form root is .job-app-main
+    // JobDiva (*.jobdiva.com): Quick Apply modal, form root is .job-app-main
     // inside .modal-content (not a native <form>), so the generic "form"
     // fallback never matches it.
     ".modal-content:has(.job-app-main)",
@@ -334,7 +334,7 @@
     "form.wpcf7-form",
     // Generic career-page fallback sentinel: findAutoContainer replaces this with
     // findBestGenericContainer() (richest visible form / apply section). Never
-    // use document.querySelector("form") — header search forms would win.
+    // use document.querySelector("form"), header search forms would win.
     "form",
   ];
 
@@ -403,7 +403,7 @@
       root.querySelectorAll("input, textarea, select").forEach((el) => {
         const t = (el.type || "text").toLowerCase();
         if (t === "hidden" || t === "submit" || t === "button" || t === "image" || t === "reset") return;
-        // File inputs are often display:none behind a dropzone — still count them.
+        // File inputs are often display:none behind a dropzone, still count them.
         if (t !== "file" && !isVisible(el)) return;
         n++;
       });
@@ -483,7 +483,7 @@
     return findBestGenericContainer();
   }
 
-  // Known ATS hosts — generic consent prep must never click Accept here (those
+  // Known ATS hosts, generic consent prep must never click Accept here (those
   // engines own their own prep). Guard is belt-and-suspenders; AF_GENERIC_PREP is
   // only sent when platform === "generic".
   function isKnownAtsHost() {
@@ -499,7 +499,7 @@
 
   // Click visible privacy / terms Accept buttons (e.g. Grid Dynamics "I ACCEPT")
   // and tick obvious consent checkboxes before extract. cleanForLLM strips
-  // <button>, so the LLM cannot choose these — must be deterministic.
+  // <button>, so the LLM cannot choose these, must be deterministic.
   function prepareGenericConsent() {
     if (isKnownAtsHost()) return { clicked: 0, ticked: 0, fileWidgets: 0 };
     let clicked = 0;
@@ -729,7 +729,7 @@
   // and commitReactValue no-ops on the empty DOM - the intermittent Ashby bug.
   // Ashby location / how-heard are <input role="combobox"> with NO type=
   // attribute, so they match input:not([type]). Re-committing them via
-  // commitReactValue focuses + re-types the filter and REOPENS the listbox —
+  // commitReactValue focuses + re-types the filter and REOPENS the listbox,
   // live evidence: ashby-combo logged "committed", then final probe showed
   // expanded:"true" on both comboboxes after AF_COMMIT_PREFILLED.
   function isAutocompleteCombobox(el) {
@@ -786,7 +786,7 @@
     for (const el of nodes) {
       try {
         if (!isVisible(el)) continue;
-        // Never re-commit autocomplete comboboxes — ApiSetFormValue already ran
+        // Never re-commit autocomplete comboboxes, ApiSetFormValue already ran
         // on option click; re-typing reopens the dropdown (Ashby failure mode).
         if (isAutocompleteCombobox(el)) {
           skippedCombobox += 1;
@@ -1696,7 +1696,7 @@
       console.log("[autofill] WB edu start_date write", { want: e.start, ok });
       if (ok) n++;
     } else {
-      console.warn("[autofill] WB edu start_date SKIPPED — empty payload start");
+      console.warn("[autofill] WB edu start_date SKIPPED, empty payload start");
     }
     if (e.end) {
       const ok = await wbSetField(editor.querySelector('[name="end_date"]'), e.end);
@@ -1729,11 +1729,11 @@
     // Optional fields first; required Title last (see education note above).
     if (e.company && (await wbSetField(editor.querySelector('[name="company"]'), e.company))) n++;
     if (e.industry && (await wbSetField(editor.querySelector('[name="industry"]'), e.industry))) n++;
-    else if (!e.industry) console.warn("[autofill] WB industry SKIPPED — empty payload (API has no industry)");
+    else if (!e.industry) console.warn("[autofill] WB industry SKIPPED, empty payload (API has no industry)");
     if (e.description && (await wbSetField(editor.querySelector('textarea[name="summary"]'), e.description))) n++;
     // Re-assert the optional fields on the now-stable editor before save so a
     // value React cleared on the first write is recovered (idempotent otherwise).
-    // Do NOT write dates yet — description re-assert / title write clear them
+    // Do NOT write dates yet, description re-assert / title write clear them
     // (same React-drop class as field_of_study; dates were previously written
     // before description re-assert and never restored).
     if (e.company) await wbSetField(editor.querySelector('[name="company"]'), e.company);
@@ -1746,7 +1746,7 @@
       console.log("[autofill] WB exp start_date write", { want: e.start, ok });
       if (ok) n++;
     } else {
-      console.warn("[autofill] WB exp start_date SKIPPED — empty payload start (check startMMYYYY)");
+      console.warn("[autofill] WB exp start_date SKIPPED, empty payload start (check startMMYYYY)");
     }
     if (e.current) {
       await wbSetCurrent(editor, true);
@@ -1758,7 +1758,7 @@
         console.log("[autofill] WB exp end_date write", { want: e.end, ok });
         if (ok) n++;
       } else {
-        console.warn("[autofill] WB exp end_date SKIPPED — empty payload end");
+        console.warn("[autofill] WB exp end_date SKIPPED, empty payload end");
       }
     }
     // Final date re-assert immediately before Update (commitEditorFields only
@@ -2135,7 +2135,7 @@
     } finally {
       try {
         // JobDiva: closeReactSelectMenus Escape matches .form-control and hides
-        // #quickApplyModal (Bootstrap Modal.hide) — skip menu cleanup there.
+        // #quickApplyModal (Bootstrap Modal.hide), skip menu cleanup there.
         const jobdiva =
           (AF.jobdiva && AF.jobdiva.isJobDivaPage && AF.jobdiva.isJobDivaPage()) ||
           /jobdiva\.com$/i.test(location.hostname) ||
@@ -2200,8 +2200,8 @@
     } finally {
       try {
         // Ashby: do NOT run closeReactSelectMenus body-clicks after a successful
-        // combobox commit — they can refocus/reopen autocomplete. Collapse with Escape.
-        // JobDiva: same skip — Escape on .form-control hides Bootstrap #quickApplyModal.
+        // combobox commit, they can refocus/reopen autocomplete. Collapse with Escape.
+        // JobDiva: same skip, Escape on .form-control hides Bootstrap #quickApplyModal.
         const ashby =
           /ashbyhq\.com$/i.test(location.hostname) || !!document.querySelector(".ashby-application-form-container");
         const jobdiva =

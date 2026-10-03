@@ -66,7 +66,7 @@ def upgrade() -> None:
             ),
         )
 
-    # One-shot: unknown locations are treated as US — restore prior hides.
+    # One-shot: unknown locations are treated as US, restore prior hides.
     tables = set(inspector.get_table_names())
     if "user_job_status" in tables:
         op.execute(

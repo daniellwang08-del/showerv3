@@ -1,4 +1,4 @@
-"""Jooble Jobs API — user API key, POST search."""
+"""Jooble Jobs API, user API key, POST search."""
 
 from __future__ import annotations
 

@@ -320,7 +320,7 @@ def _serialize_search_job_build(build, job, active_id: str | None) -> dict[str, 
     name_parts = [p for p in (title, company) if p]
     return {
         "kind": "job_build",
-        "id": build.id,  # build id — open via from-job-build endpoint
+        "id": build.id,  # build id, open via from-job-build endpoint
         "build_id": build.id,
         "job_id": job.id,
         "name": " - ".join(name_parts) if name_parts else "Job resume",

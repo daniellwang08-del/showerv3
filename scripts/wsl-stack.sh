@@ -77,7 +77,7 @@ usage() {
 }
 
 load_env() {
-  [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE — run: cp env.wsl.example .env.wsl (then fill secrets)"
+  [[ -f "$ENV_FILE" ]] || die "missing $ENV_FILE, run: cp env.wsl.example .env.wsl (then fill secrets)"
   set -a
   # Strip CRLF in case the file was edited on the Windows side.
   # shellcheck disable=SC1090
@@ -85,14 +85,14 @@ load_env() {
   set +a
 }
 
-need() { command -v "$1" >/dev/null 2>&1 || die "'$1' not found — $2"; }
+need() { command -v "$1" >/dev/null 2>&1 || die "'$1' not found, $2"; }
 
 preflight() {
   need docker "enable Docker Desktop WSL integration for this distro"
   need supervisord "run scripts/wsl-bootstrap.sh (apt install supervisor)"
   need npm "install Node 22 (scripts/wsl-bootstrap.sh)"
-  [[ -x "$VENV_DIR/bin/python" ]] || die "no $VENV_DIR/bin/python — run scripts/wsl-bootstrap.sh"
-  docker info >/dev/null 2>&1 || die "docker daemon unreachable — start Docker Desktop"
+  [[ -x "$VENV_DIR/bin/python" ]] || die "no $VENV_DIR/bin/python, run scripts/wsl-bootstrap.sh"
+  docker info >/dev/null 2>&1 || die "docker daemon unreachable, start Docker Desktop"
 }
 
 ctl() { supervisorctl -c "$CONF" -s "unix://$SOCK" "$@"; }
@@ -102,7 +102,7 @@ supervisord_running() {
 }
 
 require_running() {
-  supervisord_running || die "supervisord is not running — scripts/wsl-stack.sh up"
+  supervisord_running || die "supervisord is not running, scripts/wsl-stack.sh up"
 }
 
 wait_for_socket() {
@@ -127,7 +127,7 @@ cmd_up() {
   (cd "$NAO_ROOT" && "$VENV_DIR/bin/python" -m alembic upgrade head)
 
   if supervisord_running; then
-    log "supervisord already running — applying config and starting autostart programs"
+    log "supervisord already running, applying config and starting autostart programs"
     ctl update
     ctl start api extraction encoding analysis save tailoring resume scraper autopost vite || true
   else

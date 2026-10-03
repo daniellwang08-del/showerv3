@@ -164,7 +164,7 @@ export interface ScraperStats {
   scored_jobs?: number;
   /** Average match score across scored jobs. Optional for older backends. */
   avg_match_score?: number;
-  /** Jobs with shared JD scraped but pipeline not finished (upcoming — not resume-ready, not applied). */
+  /** Jobs with shared JD scraped but pipeline not finished (upcoming, not resume-ready, not applied). */
   available_jobs?: number;
   /** Visible jobs marked applied. Optional for older backends. */
   applied_jobs?: number;
@@ -271,7 +271,7 @@ export interface SyncProgress {
 export interface SyncPromotionStats {
   total?: number;
   new?: number;
-  /** Exact source-URL already in pool — not saved again / not re-extracted. */
+  /** Exact source-URL already in pool, not saved again / not re-extracted. */
   exact_duplicate_dropped?: number;
   /** Legacy alias of exact_duplicate_dropped. */
   linked_existing?: number;
@@ -307,7 +307,7 @@ export interface SyncResultNotice {
   /** Brand-new Job rows created by promotion (subset of enqueued). */
   promotionNew: number;
   /**
-   * Scraped rows whose source URL already existed in the jobs pool —
+   * Scraped rows whose source URL already existed in the jobs pool,
    * dropped (not saved again, not re-extracted).
    */
   exactDuplicatesDropped: number;

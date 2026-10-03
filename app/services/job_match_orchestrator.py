@@ -168,7 +168,7 @@ async def run_match_auto_posts(
     job_id: str,
     overall_score: Any,
 ) -> None:
-    """Pumble/Sheets auto-post (runs on autopost worker — not save slots)."""
+    """Pumble/Sheets auto-post (runs on autopost worker, not save slots)."""
     try:
         from app.services.pumble_service import auto_post_if_eligible
 

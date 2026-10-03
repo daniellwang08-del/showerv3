@@ -1,4 +1,4 @@
-"""USAJOBS official search API — free Authorization-Key."""
+"""USAJOBS official search API, free Authorization-Key."""
 
 from __future__ import annotations
 

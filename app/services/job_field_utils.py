@@ -136,7 +136,7 @@ def resolve_display_work_mode(
 
     Priority order:
       1. An explicit remote/hybrid/onsite classification from analysis/extraction.
-      2. Title markers (e.g. ``AI Engineer | REMOTE``) — delimited only.
+      2. Title markers (e.g. ``AI Engineer | REMOTE``), delimited only.
       3. The location text (e.g. "Remote, United States", "Austin, TX (Hybrid)").
       4. The remote-policy text (e.g. "Remote within the US").
       5. The scraper's ``is_remote`` flag.
@@ -146,7 +146,7 @@ def resolve_display_work_mode(
     if explicit:
         return explicit
     if title:
-        # Delimited markers only — avoid "Remote Support Engineer" false positives.
+        # Delimited markers only, avoid "Remote Support Engineer" false positives.
         from app.services.work_mode_classifier import classify_work_mode_rules
 
         titled = classify_work_mode_rules(title=title)

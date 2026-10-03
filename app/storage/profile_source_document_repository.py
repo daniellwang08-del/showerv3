@@ -10,7 +10,7 @@ class ProfileSourceDocumentRepository:
         self.session = session
 
     async def list_for_user(self, user_id: str) -> list[ProfileSourceDocument]:
-        """Metadata list — extracted_text/structured_data stay deferred."""
+        """Metadata list, extracted_text/structured_data stay deferred."""
         stmt = (
             select(ProfileSourceDocument)
             .where(ProfileSourceDocument.user_id == user_id)
@@ -20,7 +20,7 @@ class ProfileSourceDocumentRepository:
         return list(result.scalars().all())
 
     async def list_completed_for_user(self, user_id: str) -> list[ProfileSourceDocument]:
-        """Evidence/Phase B path — needs text + structured blobs."""
+        """Evidence/Phase B path, needs text + structured blobs."""
         stmt = (
             select(ProfileSourceDocument)
             .options(

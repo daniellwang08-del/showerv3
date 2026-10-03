@@ -180,7 +180,7 @@ export function SyncPanel({ className }: { className?: string }) {
             ? '“Since” must be on or before “Until”.'
             : win.windowActive
               ? `${formatPostedWindowShort(win.postedSince)} → ${win.postedUntil ? formatPostedWindowShort(win.postedUntil) : 'today'}`
-              : `Incremental — new since checkpoint${usingSubset ? ` · ${syncAllTargets.length} site(s)` : ''}. Shared with Job Sync settings.`}
+              : `Incremental: new since checkpoint${usingSubset ? ` · ${syncAllTargets.length} site(s)` : ''}. Shared with Job Sync settings.`}
         </p>
       </div>
 
@@ -227,7 +227,7 @@ export function SyncPanel({ className }: { className?: string }) {
                         variant="ghost"
                         size="icon-sm"
                         aria-label={`Sync ${spider.label}`}
-                        title={inSchedule ? `Sync ${spider.label}` : 'Not in Job Sync settings — still pullable individually'}
+                        title={inSchedule ? `Sync ${spider.label}` : 'Not in Job Sync settings, still pullable individually'}
                         disabled={syncing || win.windowInvalid}
                         onClick={() => void startSync(buildOptions(spider.name))}
                       >

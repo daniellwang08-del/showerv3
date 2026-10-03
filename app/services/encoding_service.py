@@ -4,7 +4,7 @@ Embeddings are computed with a sentence-transformers model that is loaded
 lazily and only in the process that actually encodes (the ``encoding`` arq
 worker and the backfill task, plus extraction/analysis when inline encoding is
 enabled). The device comes from ``EMBEDDING_DEVICE`` (auto | cpu | cuda).
-Scoring itself never needs the model — it reads stored float32 vectors and
+Scoring itself never needs the model, it reads stored float32 vectors and
 does pure numpy math.
 
 Storage format: L2-normalized float32 arrays as raw bytes, so cosine

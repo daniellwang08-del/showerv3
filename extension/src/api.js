@@ -102,7 +102,7 @@ export async function apiFetch(path, { method = "GET", body, headers, auth = tru
   const data = parseJsonBody(await res.text());
   if (res.status === 401) {
     // Sign-in itself returns 401 for bad credentials / unknown account.
-    // That is not an expired session — the user is trying to create one.
+    // That is not an expired session, the user is trying to create one.
     if (auth) {
       await clearToken();
       throw new ApiError("Your session expired. Please sign in again.", 401);

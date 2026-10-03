@@ -767,7 +767,7 @@ export interface paths {
          * @description Start personal analysis using saved JD when ready; otherwise extract then analyze.
          *
          *     Admins: extract-only shared inventory (never personal analyze/tailor).
-         *     Applicants: Jobs table Run/Rerun — analyze from saved JD when possible.
+         *     Applicants: Jobs table Run/Rerun, analyze from saved JD when possible.
          */
         post: operations["prepare_valid_job_api_v1_jobs_valid__job_id__prepare_post"];
         delete?: never;
@@ -3461,7 +3461,7 @@ export interface paths {
          *       - encode_if_missing (default true)
          *       - include_logs (default true)
          *       - log_hours (default 24)
-         *       - persist (default false) — also run full analysis and save the match
+         *       - persist (default false), also run full analysis and save the match
          */
         post: operations["match_engine_diagnose_api_v1_admin_match_engine_diagnose_post"];
         delete?: never;

@@ -711,7 +711,7 @@ async def chat_completion_with_empty_retry(
     GPT-5 / o-series models often spend the entire ``max_completion_tokens`` budget
     on reasoning (especially when ``OPENAI_REASONING_EFFORT=high``) and return
     ``message.content == ""`` with ``finish_reason=length``. Job match already
-    retried this; resume parse and other JSON callers did not — causing multi-minute
+    retried this; resume parse and other JSON callers did not, causing multi-minute
     503s in production. Empty content is not a raised API error, so provider
     fallback also does not fire unless we retry here.
     """

@@ -278,7 +278,7 @@ async def upsert_settings(
         if key == "match_engine" and parsed not in ("llm", "shadow", "vector"):
             raise ValueError("match_engine must be llm, shadow, or vector")
 
-        # Skip write if equal to env default (optional cleanup) — still store override
+        # Skip write if equal to env default (optional cleanup), still store override
         # so admin intent is explicit.
         _ = settings  # keep for future env-equality checks
 

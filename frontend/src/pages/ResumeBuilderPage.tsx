@@ -82,7 +82,7 @@ export function ResumeBuilderPage() {
 
   const previewGenRef = useRef(0);
 
-  /** Debounced real PDF — primary preview source of truth. */
+  /** Debounced real PDF, primary preview source of truth. */
   useEffect(() => {
     if (!store.design) return;
     const design = store.design;
@@ -268,7 +268,7 @@ export function ResumeBuilderPage() {
           )}
           {previewError && previewUrl && (
             <div className="absolute bottom-2 left-1/2 z-10 w-[min(100%-1rem,24rem)] -translate-x-1/2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-center text-xs text-amber-800 shadow-sm">
-              {previewError} — showing last good PDF.{' '}
+              {previewError}, showing last good PDF.{' '}
               <button type="button" className="font-semibold underline" onClick={() => void handleRefreshPreview()}>
                 Retry
               </button>
@@ -281,7 +281,7 @@ export function ResumeBuilderPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {/* Offscreen HTML measure pass — feeds header/layout metrics into the PDF compiler. */}
+      {/* Offscreen HTML measure pass, feeds header/layout metrics into the PDF compiler. */}
       <ResumePageStack
         design={design}
         profile={previewProfile}

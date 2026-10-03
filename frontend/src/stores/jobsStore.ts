@@ -696,7 +696,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       },
     });
     try {
-      // Runs after the paste modal closes — progress shows in the URL bar.
+      // Runs after the paste modal closes, progress shows in the URL bar.
       await submitExtractedUrls(get, set, urls);
     } catch (error: any) {
       const msg = extractErrorMessage(error, 'Paste submit failed');

@@ -8,7 +8,7 @@ export interface SheetsConfig {
   spreadsheet_url?: string;
   tab_groups?: string[][];
   auto_post_threshold?: number;
-  /** Soft toggle for auto-post after analysis — connection is kept when false. */
+  /** Soft toggle for auto-post after analysis, connection is kept when false. */
   is_enabled?: boolean;
   auto_post_filters?: import('./autoPostFilters').AutoPostFilters;
   group_count?: number;

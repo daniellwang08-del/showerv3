@@ -512,7 +512,7 @@ function buildSyncResultNotice(event: {
   } else if (kind === 'error') {
     message = event.message || event.error || summary.message || summary.error || 'Sync failed.';
   } else if (scraped === 0) {
-    message = `Sync completed — no listings scraped from ${sources}.`;
+    message = `Sync completed, no listings scraped from ${sources}.`;
   } else {
     const parts = [`${newCount} new in scrape DB`, `${updatedCount} updated`];
     if (dropped > 0) {
@@ -792,7 +792,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
       const running = status.status === 'running';
       const prev = get();
       // GET /sync/status only reports running|idle. After enqueue the worker may not
-      // have a scrape_runs row yet — keep optimistic "queued" syncing so Stop stays enabled.
+      // have a scrape_runs row yet, keep optimistic "queued" syncing so Stop stays enabled.
       const queuedOptimistic =
         !running &&
         prev.syncing &&
@@ -1152,7 +1152,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
           enqueuedIds.push(j.job_id);
           if (j.mode === 'analyze') analyzeIds.push(j.job_id);
           else if (j.status === 'ready') {
-            /* shared JD already prepared — no UI pending state */
+            /* shared JD already prepared, no UI pending state */
           } else extractIds.push(j.job_id);
         }
         for (const s of res.skipped ?? []) {

@@ -4,7 +4,7 @@ The resume builder embeds these inline before each contact line in the generated
 .docx header so the output matches the live preview. Icons are described as SVG
 path data on a 24x24 grid and rasterised with Pillow:
 
-* Brand (default) uses ``fill`` for every kind — solid email / phone / LinkedIn /
+* Brand (default) uses ``fill`` for every kind, solid email / phone / LinkedIn /
   GitHub. LinkedIn/GitHub use even-odd (XOR) so interior cut-outs render; email
   uses nonzero (union) for body+flap.
 * Outline uses ``stroke`` line glyphs for every kind.

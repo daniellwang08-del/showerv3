@@ -310,7 +310,7 @@ def _admin_system_visible_clause():
 def _admin_needs_extraction_expr():
     """Jobs without a shared JD scrape (excludes hard failures).
 
-    ``EXTRACTED`` means scrape finished — those are ready, not "needs extraction".
+    ``EXTRACTED`` means scrape finished, those are ready, not "needs extraction".
     """
     return or_(
         Job.extraction_id.is_(None),

@@ -137,7 +137,7 @@ async def _process_listing_job(
         if existing is not None:
             current = await ujs_repo.get(user_id, existing.id)
             if current is not None:
-                # Already visible/excluded for this user — never resurrect.
+                # Already visible/excluded for this user, never resurrect.
                 return "skipped"
             await ujs_repo.upsert(user_id=user_id, job_id=existing.id, status="active")
 

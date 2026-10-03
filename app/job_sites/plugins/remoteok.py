@@ -1,4 +1,4 @@
-"""RemoteOK public JSON feed — no key."""
+"""RemoteOK public JSON feed, no key."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ register(
     JobSitePlugin(
         slug="remoteok",
         name="Remote OK",
-        blurb="Public remote tech jobs. Enable the tile — no account required.",
+        blurb="Public remote tech jobs. Enable the tile, no account required.",
         homepage="https://remoteok.com/",
         auth_type=AuthType.NONE,
         logo_file="remoteok.svg",

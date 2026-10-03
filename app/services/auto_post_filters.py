@@ -2,10 +2,10 @@
 
 Filter shape (persisted JSON on each integration config):
 
-* ``work_modes`` — allow-list of ``remote`` / ``hybrid`` / ``onsite``
+* ``work_modes`` - allow-list of ``remote`` / ``hybrid`` / ``onsite``
   (empty = any work mode). Resolution uses the same signal stack as
   ``resolve_display_work_mode`` (Job.work_mode, location, remote_policy, is_remote).
-* ``exclude_companies`` — block-list; match any entry (case-insensitive
+* ``exclude_companies`` - block-list; match any entry (case-insensitive
   substring) → skip auto-post (e.g. previous employers).
 
 ``auto_post_threshold`` remains the minimum match score (separate column).

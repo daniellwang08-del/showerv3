@@ -10,7 +10,7 @@ export function CountryPicker({
   value,
   options,
   onChange,
-  emptyLabel = 'Worldwide — no country filter',
+  emptyLabel = 'Worldwide, no country filter',
 }: {
   value: string[];
   options: CountryOption[];

@@ -1,4 +1,4 @@
-"""Jobright.ai — personalized recommendations via account email/password."""
+"""Jobright.ai, personalized recommendations via account email/password."""
 
 from __future__ import annotations
 
@@ -189,7 +189,7 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
         payload = await _once(cookies)
 
     if not payload.get("success"):
-        # Stale cookies with stored password — one re-login retry
+        # Stale cookies with stored password, one re-login retry
         email = str(credentials.get("email") or "").strip()
         password = str(credentials.get("password") or "")
         if email and password:

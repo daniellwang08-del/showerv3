@@ -5,7 +5,7 @@ preferred ISO country codes (``users.country_preferences``). A job stays
 visible when its location explicitly matches a preferred country, names a
 region containing one (EU, APAC, …), says it is worldwide, or is
 unknown/ambiguous. Only locations that explicitly resolve OUTSIDE the
-preferred set are dropped — the historical "only explicit non-US is dropped"
+preferred set are dropped, the historical "only explicit non-US is dropped"
 policy, applied per user.
 
 The legacy US-only API (``classify_job_location`` / ``keeps_us_job_pool``)

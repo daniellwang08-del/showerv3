@@ -71,7 +71,7 @@ def format_provider_error(exc: BaseException | str, *, model: str = "") -> str:
     if "429" in raw or "rate limit" in low or "exceeded your current quota" in low:
         return (
             f"{model_label}: provider quota / rate limit exceeded (HTTP 429). "
-            "Wait and retry, lower concurrency, or check Gemini/OpenAI billing — "
+            "Wait and retry, lower concurrency, or check Gemini/OpenAI billing"
             "this is not an application bug."
         )
 
@@ -283,7 +283,7 @@ async def benchmark_one(
             latency_ms=None,
             error=(
                 f"{model}: retired on Gemini (filtered before call). "
-                "Use gemini-2.5-flash / gemini-2.5-pro or newer — not a code bug."
+                "Use gemini-2.5-flash / gemini-2.5-pro or newer, not a code bug."
             ),
             ran_at=ran_at,
         )

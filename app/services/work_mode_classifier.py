@@ -4,7 +4,7 @@ Priority (accuracy first, then speed):
   1. Explicit ATS enums / scraper flags (instant, highest precision)
   2. High-precision keyword rules on title / location / workplace labels / body
   3. MiniLM prototype cosine against remote / hybrid / onsite exemplars
-     (same model as job encoding — microseconds after warm load)
+     (same model as job encoding, microseconds after warm load)
 
 Greenhouse has no workplaceType field (unlike Lever/Ashby), so steps 2–3 are
 the only reliable path for those boards. Prototype matching runs inside the
@@ -58,7 +58,7 @@ _BODY_SIGNAL_RE = re.compile(
 _TITLE_MODE_RE = re.compile(
     r"(?i)(?:"
     # "Engineer | REMOTE", "Engineer - Hybrid", trailing marker
-    r"[|/\-–—]\s*(?P<a>remote|hybrid|on-?\s*site|onsite|in-?\s*office|wfh|work[\s-]*from[\s-]*home)\s*$"
+    r"[|/\-–\u2014]\s*(?P<a>remote|hybrid|on-?\s*site|onsite|in-?\s*office|wfh|work[\s-]*from[\s-]*home)\s*$"
     # "(Remote)", "(Hybrid)"
     r"|\((?P<b>remote|hybrid|on-?\s*site|onsite|in-?\s*office|wfh)\)"
     # Entire title is just the mode keyword
@@ -98,7 +98,7 @@ def build_work_mode_signal_text(
     workplace: str | None = None,
     plain_text: str | None = None,
 ) -> str:
-    """Compact text for embedding — prefer mode-bearing snippets over full JD."""
+    """Compact text for embedding, prefer mode-bearing snippets over full JD."""
     parts: list[str] = []
     for value in (title, location, workplace):
         cleaned = (value or "").strip()

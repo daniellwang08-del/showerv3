@@ -5,7 +5,7 @@ dimension_scores with the same six keys, summary/strengths/gaps,
 recommendation, requires_security_clearance) so post-analysis dedup,
 persistence, auto-post thresholds, and the frontend work unchanged.
 
-Pure numpy math over rows written by ``encoding_service`` — never loads the
+Pure numpy math over rows written by ``encoding_service`` - never loads the
 embedding model, so it is safe to call from the analysis worker (~1-5 ms per
 pair).
 """
@@ -215,7 +215,7 @@ async def load_encodings(
 
     ``title_vec`` / ``content_vec`` / ``experience_vec`` / ``prefs_vec`` are
     ``deferred()`` columns. Sync attribute access under AsyncSession raises
-    MissingGreenlet (sqlalchemy xd2s) — never "touch" them; undefer in the
+    MissingGreenlet (sqlalchemy xd2s), never "touch" them; undefer in the
     SELECT instead.
     """
     async with get_session() as session:

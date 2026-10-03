@@ -44,7 +44,7 @@
           if (!WD || !WD.steps) {
             reply({
               ok: false,
-              error: "WD.steps missing — click Start/Again in NAO first (injects Workday engine)",
+              error: "WD.steps missing, click Start/Again in NAO first (injects Workday engine)",
             });
             return;
           }
@@ -266,7 +266,7 @@
         const before = WD.engine.detectStep();
         const beforeHeading = stepHeading(before);
         const ok = await WD.engine.clickNext();
-        // Poll for real next step. Mid-nav often returns step:null briefly —
+        // Poll for real next step. Mid-nav often returns step:null briefly,
         // do NOT treat that as advanced=false and stop (DraftKings logs: myInfo→null
         // then experience ~600ms later; panel then burned 1600ms on slow-nav).
         for (let i = 0; i < 22; i++) {
@@ -279,7 +279,7 @@
           }
           const now = WD.engine.detectStep();
           const nowHeading = stepHeading(now) || stepHeading(before);
-          // Still unmounting / generic flash — keep polling.
+          // Still unmounting / generic flash, keep polling.
           if (!now || now === "generic") continue;
           if (now !== before) break;
           // Application Questions 1 of 2 → 2 of 2 must count even if an older
@@ -384,7 +384,7 @@
     }
 
     const runSeq = msg.runSeq != null ? Number(msg.runSeq) : 0;
-    // Late WD_RUN from a Stop'd attempt — do not start filling again.
+    // Late WD_RUN from a Stop'd attempt, do not start filling again.
     if (runSeq && runSeq < (WD.minRunSeq || 0)) {
       send({ type: "WD_DONE", reports: [], aborted: true, runSeq });
       return;
@@ -427,7 +427,7 @@
           } catch {}
           send({ type: "WD_PROGRESS", report: r });
         });
-        // Superseded by a newer WD_RUN — do not resolve the panel waiter.
+        // Superseded by a newer WD_RUN, do not resolve the panel waiter.
         if (runId !== activeRunId) return;
         send({
           type: "WD_DONE",

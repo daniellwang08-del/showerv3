@@ -16,7 +16,7 @@ const toneClass = {
 
 export function MatchScore({ score, className }: { score: number | null | undefined; className?: string }) {
   if (score == null) {
-    return <span className={cn('text-xs text-muted-foreground', className)}>—</span>;
+    return <span className={cn('text-xs text-muted-foreground', className)}>-</span>;
   }
   const rounded = Math.round(score);
   return (

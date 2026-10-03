@@ -1,16 +1,16 @@
 """Month-scoped daily analytics for the admin Data Analysis page.
 
 Vocabulary (platform-wide unless noted):
-  * fetched        — Job.created_at into the system (non-blocked)
-  * employer_posted — Job.posted_date (employer post date; optional)
-  * team_applied   — ValidJobUserApplication across all users
-  * remote         — fetched jobs matching the shared remote expression
-  * jd_ready       — JobExtraction reached EXTRACTED or COMPLETED that day
+  * fetched, Job.created_at into the system (non-blocked)
+  * employer_posted, Job.posted_date (employer post date; optional)
+  * team_applied, ValidJobUserApplication across all users
+  * remote, fetched jobs matching the shared remote expression
+  * jd_ready, JobExtraction reached EXTRACTED or COMPLETED that day
                       (coalesce(completed_at, updated_at))
-  * extraction_failed — JobExtraction status FAILED that day (updated_at;
+  * extraction_failed, JobExtraction status FAILED that day (updated_at;
                       failures do not set completed_at)
-  * sheet/pumble   — Job.sheet_posted_at / Job.pumble_posted_at (system-wide)
-  * board_added    — per-user coalesce(UJS.created_at, Job.created_at) for
+  * sheet/pumble, Job.sheet_posted_at / Job.pumble_posted_at (system-wide)
+  * board_added, per-user coalesce(UJS.created_at, Job.created_at) for
                       that user's visible set (user-activity only)
 """
 
@@ -130,7 +130,7 @@ async def fetch_team_applied_vs_fetched_series(
 # Legacy name kept so any external import still resolves; behaviour is platform-wide.
 async def fetch_applied_vs_posted_series(
     session: AsyncSession,
-    user_id: str | None = None,  # noqa: ARG001 — ignored; admin platform scope
+    user_id: str | None = None,  # noqa: ARG001, ignored; admin platform scope
     *,
     year: int,
     month: int,
@@ -229,10 +229,10 @@ async def fetch_pipeline_series(
 ) -> dict:
     """Daily intake + extraction outcomes (platform-wide).
 
-    * fetched_count — jobs created that day
-    * jd_ready_count — extractions that reached EXTRACTED or COMPLETED that day
-    * extraction_failed_count — extractions marked FAILED that day (updated_at)
-    * backlog_now — point-in-time unfinished JD pool (not a daily event)
+    * fetched_count, jobs created that day
+    * jd_ready_count, extractions that reached EXTRACTED or COMPLETED that day
+    * extraction_failed_count, extractions marked FAILED that day (updated_at)
+    * backlog_now, point-in-time unfinished JD pool (not a daily event)
     """
     start_utc, end_utc = month_bounds_for_timezone(year, month, tz_name)
     day_list = days_in_month(year, month)
@@ -465,7 +465,7 @@ async def fetch_scrape_health_series(
 ) -> dict:
     """Daily scrape_runs aggregates: items_new and errors.
 
-    Buckets by coalesce(finished_at, started_at) in the viewer timezone — the
+    Buckets by coalesce(finished_at, started_at) in the viewer timezone, the
     same wall-clock conversion used for Job timestamps. Uses raw SQL against
     scrape_runs (owned by the sync scraper ORM) to avoid mixing ORM bases.
     """

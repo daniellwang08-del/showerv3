@@ -35,7 +35,7 @@ const PROOFS = [
 /**
  * Public auth chrome: same landing header + cinematic surface, then a split
  * composition (brand story · interactive form). The form panel is the only
- * “card” — it exists so fields stay a clear interaction target.
+ * “card”, it exists so fields stay a clear interaction target.
  */
 export function AuthShell({
   children,
@@ -91,7 +91,7 @@ export function AuthShell({
 
             <p className="mt-5 max-w-md text-pretty text-[15px] leading-relaxed text-white/65 sm:text-base">
               {isLogin
-                ? 'Sign in to pick up matches, tailored documents, and autofill — the same NAO you left, ready on this device.'
+                ? 'Sign in to pick up matches, tailored documents, and autofill, the same NAO you left, ready on this device.'
                 : 'Create an account to sync five job networks, score roles against your profile, and open applications with the form already filled.'}
             </p>
 

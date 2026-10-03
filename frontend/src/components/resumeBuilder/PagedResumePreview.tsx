@@ -136,7 +136,7 @@ export function ResumePageStack({
           if (top > bandBottom - 1 && top < firstTop) firstTop = top;
         }
         const gapPx = firstTop === Infinity ? null : Math.max(0, firstTop - bandBottom);
-        // Clamp absurd geometry. Do NOT null band_pt — a null pin lets dxpdf size the
+        // Clamp absurd geometry. Do NOT null band_pt, a null pin lets dxpdf size the
         // first-page header from nested contact tables, which can grow past the page
         // and shove the Technical two-column body onto page 2 (blank page-1 body).
         const twoCol = design.layout.columns === 2;

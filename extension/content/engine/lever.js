@@ -275,7 +275,7 @@
     }
 
     input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-    // Only succeed when Lever actually committed selectedLocation — faking the
+    // Only succeed when Lever actually committed selectedLocation, faking the
     // hidden field fails server-side validation on submit.
     return locationIsCommitted(input);
   }
@@ -358,7 +358,7 @@
       };
     },
     isFilled(root) {
-      // Visible text alone is not enough — Lever only accepts a dropdown pick
+      // Visible text alone is not enough, Lever only accepts a dropdown pick
       // that populates hidden selectedLocation.
       return locationIsCommitted(root);
     },

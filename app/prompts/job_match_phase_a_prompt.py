@@ -82,7 +82,7 @@ Evaluate alignment on these six dimensions (0-100 each). Each dimension has a **
      score higher than people-manager / EM / Director / VP tracks when the candidate's recent titles and
      evidence are IC engineering.
    - If the candidate's recent experience clearly shows engineering management and the job is a manager
-     role that fits that EP, do **not** penalize — score the management fit fairly.
+     role that fits that EP, do **not** penalize, score the management fit fairly.
    - Pure non-engineering roles (sales, pure product marketing, HR, etc.) that do not match the candidate's
      engineering background should score low here.
 

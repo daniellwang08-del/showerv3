@@ -74,7 +74,7 @@ def _reload_watch_config() -> tuple[list[str], list[str], list[str], float]:
     # A second reload while the worker is still in lifespan startup leaves the
     # reloader parent holding :8000 with a live-looking child that never serves
     # HTTP (TCP accept works, requests hang forever). Debounce hard enough to
-    # coalesce those duplicates — see app/core/reload_quiet.py.
+    # coalesce those duplicates, see app/core/reload_quiet.py.
     delay = 4.0
     return [app_dir], includes, excludes, delay
 

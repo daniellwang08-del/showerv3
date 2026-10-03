@@ -343,7 +343,7 @@ function ConnectedSheets({
         <div className="min-w-0 flex-1">
           <FieldLabel htmlFor="sheets-enabled">Auto-post after job analysis</FieldLabel>
           <FieldDescription className="mt-1 text-xs">
-            When off, your spreadsheet stays connected — only automatic posting pauses. Manual “Post to Google Sheet”
+            When off, your spreadsheet stays connected, only automatic posting pauses. Manual “Post to Google Sheet”
             still works.
           </FieldDescription>
         </div>

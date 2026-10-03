@@ -20,7 +20,7 @@ from app.utils.date_bounds import days_in_month, month_bounds_for_timezone
 
 # board_added = jobs that appeared on that user's board (visibility-scoped).
 # applied = that user's ValidJobUserApplication rows.
-# sheet_posted / pumble_posted are intentionally NOT per-user — those are
+# sheet_posted / pumble_posted are intentionally NOT per-user, those are
 # system-wide Job timestamps and live on the Distribution chart instead.
 USER_ACTIVITY_METRICS = ("board_added", "applied", "jobs_added")
 # jobs_added is a deprecated alias of board_added (same query, honest label).
@@ -48,7 +48,7 @@ def _normalize_activity_metrics(metrics: list[str]) -> list[str]:
 async def list_known_platforms(session: AsyncSession, user_id: str | None = None) -> list[str]:
     """Distinct platform sources from non-blocked jobs.
 
-    ``user_id`` is accepted for back-compat but ignored — admin Analysis always
+    ``user_id`` is accepted for back-compat but ignored, admin Analysis always
     lists system-wide sources so the platform chart matches platform-wide counts.
     """
     del user_id  # platform list is admin-wide
@@ -83,9 +83,9 @@ async def fetch_user_activity_series(
     """Daily activity lines for selected users × selected metrics.
 
     Metrics:
-      * board_added — coalesce(UJS.created_at, Job.created_at) for jobs visible
+      * board_added, coalesce(UJS.created_at, Job.created_at) for jobs visible
                       to that user (personal board intake, not system fetch)
-      * applied     — that user's applications
+      * applied, that user's applications
     """
     start_utc, end_utc = month_bounds_for_timezone(year, month, tz_name)
     day_list = days_in_month(year, month)
@@ -197,15 +197,15 @@ async def fetch_platform_vs_applied_series(
     month: int,
     tz_name: str | None,
     platforms: list[str] | None = None,
-    viewer_user_id: str | None = None,  # noqa: ARG001 — ignored; always platform-wide
+    viewer_user_id: str | None = None,  # noqa: ARG001, ignored; always platform-wide
 ) -> dict:
     """Daily jobs fetched per scrape platform vs all-users applied count.
 
     Both axes are platform-wide:
-      * platform lines — non-blocked Job.created_at by source
-      * applied        — ValidJobUserApplication across all users
+      * platform lines, non-blocked Job.created_at by source
+      * applied, ValidJobUserApplication across all users
 
-    No UserJobStatus join — that previously mixed admin-visible subsets with
+    No UserJobStatus join, that previously mixed admin-visible subsets with
     all-user applied counts and could double-count when unscoped.
     """
     del viewer_user_id

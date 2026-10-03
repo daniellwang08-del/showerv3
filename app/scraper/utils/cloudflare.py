@@ -86,7 +86,7 @@ class CloudflareSession:
 
     Complete reliability against remoterocketship Cloudflare requires:
       1. Residential proxies via ``SCRAPER_PROXY_*`` / list file / ``PROXY_URL``
-      2. Fingerprint rotation (chrome123/124/…) — CF blocks specific JA3s per IP
+      2. Fingerprint rotation (chrome123/124/…), CF blocks specific JA3s per IP
       3. Never using the floating ``chrome`` alias
     """
 
@@ -246,7 +246,7 @@ class CloudflareSession:
 
                 if reason == "cloudflare_blocked":
                     self._cf_hits_on_fingerprint += 1
-                    # With a proxy pool, rotate egress immediately — CF burns per IP.
+                    # With a proxy pool, rotate egress immediately, CF burns per IP.
                     if self.proxies_list and len(self.proxies_list) > 1:
                         self._rotate_proxy()
                         self._create_session(self._impersonate)
@@ -264,7 +264,7 @@ class CloudflareSession:
                         # short enough that systemd TimeoutStopSec can still exit.
                         delay = 12.0 + random.uniform(0, 6.0)
                     logger.warning(
-                        "Cloudflare challenge — retry %d/%d in %.0fs "
+                        "Cloudflare challenge, retry %d/%d in %.0fs "
                         "(impersonate=%s, proxy=%s)",
                         attempt + 1,
                         attempts,

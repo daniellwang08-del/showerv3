@@ -6,7 +6,7 @@ path; we return an empty list with a clear message for that provider.
 
 Gateways often keep listing **retired** Gemini IDs after Google shuts them
 down for ``generateContent``. Those still appear in /v1/models but return
-404 at call time — we filter them from ``usable_for_chat`` so admins do not
+404 at call time, we filter them from ``usable_for_chat`` so admins do not
 bind or benchmark dead models.
 """
 

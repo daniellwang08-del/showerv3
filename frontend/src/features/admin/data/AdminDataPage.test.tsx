@@ -145,7 +145,7 @@ const baseCriteria = {
   sample_limit: 20,
 };
 
-describe('AdminDataPage — analytics', () => {
+describe('AdminDataPage, analytics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     seedAnalytics();
@@ -257,7 +257,7 @@ describe('AdminDataPage — analytics', () => {
   });
 });
 
-describe('AdminDataPage — cleanup', () => {
+describe('AdminDataPage, cleanup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     seedAnalytics();

@@ -95,10 +95,10 @@ Work experience (critical - most errors happen here):
 - certificates: include name; issued_at when an issue date is shown; url when a credential/verification link is present.
   - issued_at MUST use the same formats as period_*: YYYY-MM (month+year) or YYYY (year only). Never emit résumé wording like "Aug 2023", "Issued Nov 2021", or "August 2023".
   - Example: "Issued Aug 2023 Expired Aug 2025" → issued_at "2023-08". Prefer the issue date, not the expiry.
-  - Issuer names and credential IDs are not separate fields — put the certificate title in name; do not dump issuer/ID/date lines into extra when they belong with a certificate.
+  - Issuer names and credential IDs are not separate fields, put the certificate title in name; do not dump issuer/ID/date lines into extra when they belong with a certificate.
 - phone_country_code: dialing code only (e.g. "+1", "+44"). phone_number: the **complete** national number without the country code.
   - For US/Canada (+1): phone_number MUST be the full 10-digit number (area code + local), e.g. "(610) 234-7936" or "6102347936". Never emit a truncated fragment such as "313-3369" or "610-234".
-  - If the résumé phone is incomplete, unreadable, or you cannot recover all digits, set BOTH phone_country_code and phone_number to null — do not invent or keep partial numbers.
+  - If the résumé phone is incomplete, unreadable, or you cannot recover all digits, set BOTH phone_country_code and phone_number to null, do not invent or keep partial numbers.
   - Do not put the country code inside phone_number (no leading "+1" in phone_number).
 - job_type: only if explicitly stated or unambiguous (remote/hybrid/onsite); else null.
 - Do not invent employers, degrees, or links. If something is unreadable, use null rather than guessing.

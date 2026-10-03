@@ -1,4 +1,4 @@
-"""ZipRecruiter Publisher Search API — user-supplied publisher key."""
+"""ZipRecruiter Publisher Search API, user-supplied publisher key."""
 
 from __future__ import annotations
 

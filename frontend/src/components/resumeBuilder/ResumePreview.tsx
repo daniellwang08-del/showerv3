@@ -919,7 +919,7 @@ export function ExperienceBlock({
         minWidth: 0,
         maxWidth: '100%',
       };
-      // Uniform margin-top (not bottom) so consecutive body lines share the same gap —
+      // Uniform margin-top (not bottom) so consecutive body lines share the same gap,
       // matches the PDF fill engine's space_before rhythm and avoids uneven measure noise.
       const bodyLineGap = { margin: '2px 0 0', ...textStyle };
       if (!marker) {
@@ -1488,7 +1488,7 @@ export function ResumePreview({ design, profile, paged = false }: ResumePreviewP
         textAlign: l.header_align,
         marginBottom: bandBg ? 0 : hpSides.bottom * PT_TO_PX,
         background: bandBg,
-        // Stretch to fill — matches the .docx band picture (exact width × band height).
+        // Stretch to fill, matches the .docx band picture (exact width × band height).
         // `cover` + center was cropping a differently-aspect baked image than the PDF
         // stretch, so the live preview and Accurate PDF showed different header scenes.
         backgroundImage: headerImage ? `url(${headerImage.data_url})` : undefined,

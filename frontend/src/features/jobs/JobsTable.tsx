@@ -421,7 +421,7 @@ function Cell({
     }
     case 'mode': {
       const mode = workMode(job);
-      if (!mode) return <span className="text-muted-foreground">—</span>;
+      if (!mode) return <span className="text-muted-foreground">-</span>;
       return (
         <span
           className={cn(
@@ -476,7 +476,7 @@ function Cell({
       return (
         <div className="flex items-center gap-0.5">
           <TrackButton
-            label={applied ? 'Applied — click to unmark' : 'Mark as applied'}
+            label={applied ? 'Applied, click to unmark' : 'Mark as applied'}
             active={applied}
             activeClass="text-status-applied"
             onClick={() => onAction(applied ? 'unmark-applied' : 'mark-applied', [job])}
@@ -573,7 +573,7 @@ function DocsCell({
   }
   const resume = job.resume_pdf_status === 'completed';
   const cover = job.cover_letter_pdf_status === 'completed';
-  if (!resume && !cover) return <span className="text-xs text-muted-foreground">—</span>;
+  if (!resume && !cover) return <span className="text-xs text-muted-foreground">-</span>;
   return (
     <div className="flex items-center gap-0.5">
       {resume && (

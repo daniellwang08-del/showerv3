@@ -67,7 +67,7 @@ function normalizeOrder(order: SectionId[] | undefined): SectionId[] {
 /** Fill in defaults on a raw stored design so older / partial designs render cleanly.
  *  Shared by initial load and every library switch/create/delete. */
 function hydrateDesign(raw: ResumeDesign): ResumeDesign {
-  // Two-column page body (Technical theme) is retired — always coerce to single column.
+  // Two-column page body (Technical theme) is retired, always coerce to single column.
   const themeId = raw.theme_id === 'technical' ? 'classic' : raw.theme_id;
   return {
     ...raw,
@@ -78,7 +78,7 @@ function hydrateDesign(raw: ResumeDesign): ResumeDesign {
       header_background: raw.layout.header_background ?? 'none',
       header_padding_pt: raw.layout.header_padding_pt ?? 16,
       // Product default is brand. One-time migrate: older saves often stuck on
-      // `outline` before icon-offset fields existed — flip those to brand. After
+      // `outline` before icon-offset fields existed, flip those to brand. After
       // offsets are present, an explicit Outline choice is preserved.
       contact_icons: (() => {
         const rawIcons = raw.layout.contact_icons;
@@ -484,7 +484,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     const current = get().design;
     if (!current) return;
     // Keep user content, section visibility/order, and header image. Drop browser
-    // header/layout metrics whenever the theme changes columns or header chrome —
+    // header/layout metrics whenever the theme changes columns or header chrome,
     // Always drop browser metrics on theme apply so measure-only preview re-reports.
     const keepImage = current.layout.header_image ?? null;
     const next: ResumeDesign = {

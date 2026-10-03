@@ -198,7 +198,7 @@ def _normalize_row(event_dict: dict) -> dict[str, Any] | None:
 
 
 def persist_log_processor(_, __, event_dict: dict) -> dict:
-    """structlog processor — never raises; never blocks."""
+    """structlog processor, never raises; never blocks."""
     try:
         row = _normalize_row(event_dict)
         if row is not None:

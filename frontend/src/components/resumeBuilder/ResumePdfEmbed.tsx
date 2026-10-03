@@ -1,5 +1,5 @@
 /**
- * Native PDF viewer for the builder — shows the actual generated PDF bytes
+ * Native PDF viewer for the builder, shows the actual generated PDF bytes
  * (not rasterized page images). Uses the browser's built-in PDF plugin.
  */
 export function ResumePdfEmbed({

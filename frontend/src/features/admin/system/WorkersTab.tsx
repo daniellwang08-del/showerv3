@@ -218,7 +218,7 @@ function OpsSection({ active }: { active: boolean }) {
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">{(r.items_scraped ?? 0).toLocaleString()}</td>
                       <td className="px-3 py-2 text-muted-foreground tabular-nums">
-                        {r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
+                        {r.started_at ? new Date(r.started_at).toLocaleString() : '-'}
                       </td>
                     </tr>
                   ))}

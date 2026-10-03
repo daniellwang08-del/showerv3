@@ -29,7 +29,7 @@ def _get_fernet() -> Fernet:
             is_production = settings.app_env.strip().lower() in ("production", "prod")
             if is_production:
                 # Never silently encrypt production secrets with a public,
-                # source-code-embedded key — that is equivalent to plaintext.
+                # source-code-embedded key, that is equivalent to plaintext.
                 raise RuntimeError(
                     "SETTINGS_ENCRYPTION_KEY or AUTH_SECRET_KEY must be set in production; "
                     "refusing to encrypt user secrets with the insecure development fallback."

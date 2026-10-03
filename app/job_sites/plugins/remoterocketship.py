@@ -1,4 +1,4 @@
-"""RemoteRocketship — listing API with a pasted browser session cookie header."""
+"""RemoteRocketship, listing API with a pasted browser session cookie header."""
 
 from __future__ import annotations
 

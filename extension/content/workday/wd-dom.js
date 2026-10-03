@@ -308,7 +308,7 @@
     );
   }
   // Progress-rail / stepper labels often use role="heading" and still say
-  // "My Information" on later pages — that must not win step detection.
+  // "My Information" on later pages, that must not win step detection.
   function inProgressChrome(el) {
     return !!(
       el &&
@@ -375,7 +375,7 @@
   }
 
   // Use console.info (not console.debug): Chrome DevTools hides Verbose/Debug by
-  // default. WD.aa() is the auto-advance step tracer — always stringified + mirrored
+  // default. WD.aa() is the auto-advance step tracer, always stringified + mirrored
   // to the NAO Debug log so investigation does not depend on page DevTools.
   let aaSeq = 0;
   let lastDetectLog = { step: null, at: 0 };

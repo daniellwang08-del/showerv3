@@ -40,7 +40,7 @@ export interface PumbleConfig {
   integrations?: PumbleIntegration[];
   auto_post_threshold?: number;
   auto_post_filters?: import('./autoPostFilters').AutoPostFilters;
-  /** @deprecated Use integrations[] — kept for backward compatibility */
+  /** @deprecated Use integrations[], kept for backward compatibility */
   channel_id?: string;
   channel_name?: string;
   workspace_id?: string | null;

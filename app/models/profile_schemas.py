@@ -343,7 +343,7 @@ class ProfileCreateRequest(BaseModel):
         if cc_digits == "1" and len(num_digits) != 10:
             raise ValueError(
                 "US/Canada phone numbers must be 10 digits (area code + number), "
-                "e.g. (610) 234-7936 — incomplete values like 313-3369 are not allowed"
+                "e.g. (610) 234-7936, incomplete values like 313-3369 are not allowed"
             )
         return self
 

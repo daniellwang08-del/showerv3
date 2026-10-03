@@ -1,5 +1,5 @@
 /**
- * Job-site account connect — real tab redirect + navigation tracking.
+ * Job-site account connect, real tab redirect + navigation tracking.
  *
  * FLOW
  *   1. Dashboard "Connect" -> START_JOB_SITE_CONNECT.
@@ -18,7 +18,7 @@
  *
  * SERVICE-WORKER LIFETIME: signing in takes longer than the MV3 idle timeout,
  * so connect state lives in chrome.storage.session and all listeners are
- * registered at worker start — a restart mid-login resumes the same watch.
+ * registered at worker start, a restart mid-login resumes the same watch.
  */
 
 const LOG_PREFIX = "[nao:jobsite]";
@@ -28,8 +28,8 @@ const WATCH_SCRIPT_ID = "nao-job-site-watch";
  * Bumped whenever this module's message contract changes. Every ack carries it
  * so the dashboard can tell "connect failed" apart from "the service worker is
  * still running a previously-loaded build". An MV3 worker keeps executing the
- * module graph it was registered with — editing this file on disk does NOT
- * restart it — while content scripts are re-read on every page load. That mix
+ * module graph it was registered with, editing this file on disk does NOT
+ * restart it, while content scripts are re-read on every page load. That mix
  * produces confusing, impossible-looking errors without this stamp.
  */
 export const CONNECT_BUILD = "2026.10.02-nao-rebrand";
@@ -208,7 +208,7 @@ function isTrackedUrl(url) {
   });
 }
 
-/** 'signed_in' | 'signed_out' | 'unknown' — purely from where the tab landed. */
+/** 'signed_in' | 'signed_out' | 'unknown' - purely from where the tab landed. */
 function classifyUrl(url) {
   if (!active || !url) return "unknown";
   if (!isTrackedUrl(url)) return "unknown";
@@ -413,7 +413,7 @@ async function evaluateSettled(url) {
   }
 
   // Landing page did not redirect anywhere conclusive (marketing home,
-  // interstitial). If session cookies exist, open the protected page once —
+  // interstitial). If session cookies exist, open the protected page once,
   // it either renders (signed in) or bounces to login (signed out).
   const cookies = await collectCookies();
   if (hasSessionCookies(cookies) && !active.retriedVerifyUrl && active.verifyUrl) {

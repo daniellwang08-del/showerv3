@@ -1,4 +1,4 @@
-"""Jobicy remote jobs API v2 — no key."""
+"""Jobicy remote jobs API v2, no key."""
 
 from __future__ import annotations
 

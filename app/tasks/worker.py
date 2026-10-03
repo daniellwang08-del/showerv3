@@ -24,7 +24,7 @@ AUTOPOST_QUEUE = "job_autopost"
 ENCODING_QUEUE = "job_encoding"
 
 # Per-user save lock: defer instead of sleeping so waiters do not occupy max_jobs.
-# Never abandon a completed analysis — keep deferring until the lock is free.
+# Never abandon a completed analysis, keep deferring until the lock is free.
 SAVE_LOCK_POLL_SECONDS = 1.5
 # Soft log threshold only (not a hard give-up). Kept for metrics/tests.
 SAVE_LOCK_MAX_WAIT_SECONDS = 90
@@ -201,7 +201,7 @@ async def extract_job(
                 )
 
             # Platform / admin extract-only leaves status at EXTRACTED (shared raw JD
-            # ready). COMPLETED is reserved for Phase A structuring — never promote
+            # ready). COMPLETED is reserved for Phase A structuring, never promote
             # scrape-only rows here or the Jobs dots treat structuring as done.
             if user_id:
                 await publish_ws_event({
@@ -247,7 +247,7 @@ async def extract_job(
                                 pending_match_progress = None
                                 logger.warning("job_match_enqueue_failed", valid_job_id=job.id, error=str(enq_err))
             else:
-                # Shared inventory extract finished — fan-out auto-prepare for opted-in users.
+                # Shared inventory extract finished, fan-out auto-prepare for opted-in users.
                 try:
                     async with get_session() as session:
                         job_repo = JobRepository(session)
@@ -451,7 +451,7 @@ async def save_analyzed_job(
     enqueue, WS events, and auto-post run after the lock is released.
 
     Critical: a completed Phase A result must never be discarded because the
-    per-user lock is busy — keep deferring until the save succeeds.
+    per-user lock is busy, keep deferring until the save succeeds.
     """
     from app.core.redis_support import pipeline_job_id
     from app.services.post_analysis_dedup import run_post_analysis_dedup
@@ -480,7 +480,7 @@ async def save_analyzed_job(
             if next_attempt == SAVE_LOCK_MAX_ATTEMPTS or (
                 next_attempt > SAVE_LOCK_MAX_ATTEMPTS and next_attempt % SAVE_LOCK_MAX_ATTEMPTS == 0
             ):
-                # Soft warning only — still keep waiting; never drop match_data.
+                # Soft warning only, still keep waiting; never drop match_data.
                 logger.warning(
                     "save_lock_still_busy",
                     job_id=job_id,
@@ -1189,7 +1189,7 @@ async def run_scraper_task(
         # Deploy / systemd restart cancels the arq task (SIGTERM). The Scrapy
         # subprocess may already have flushed jobs + finalized scrape_runs.
         # Never tell the UI "Cancelled or timed out" when the DB shows a
-        # completed scrape — that was the false-red RemoteRocketship banner.
+        # completed scrape, that was the false-red RemoteRocketship banner.
         from app.scraper.runner import _latest_scrape_run
 
         platform_names = [name for name, _ in plan]
@@ -1225,7 +1225,7 @@ async def run_scraper_task(
                     "error": "service_restarted",
                     "message": (
                         "Service restarted mid-sync. "
-                        f"{scraped} jobs already saved — run Sync again to finish."
+                        f"{scraped} jobs already saved, run Sync again to finish."
                     ),
                 })
 
@@ -1599,7 +1599,7 @@ class TailoringWorkerSettings:
     queue_name = TAILORING_QUEUE
     job_timeout = 480
     max_jobs = get_settings().tailoring_worker_max_jobs
-    # Transient LLM/network failures — retryable (unlike save/resume file I/O).
+    # Transient LLM/network failures, retryable (unlike save/resume file I/O).
     max_tries = get_settings().tailoring_worker_max_tries
     keep_result = _keep_result()
     on_startup = _tailoring_worker_startup

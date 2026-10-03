@@ -380,7 +380,7 @@ class ZipRecruiterSpider(BaseJobSpider):
         if page < self.max_pages and page < max_page_by_total and len(jobs) >= JOBS_PER_PAGE:
             yield self._api_request(title, page=page + 1)
         elif page < self.max_pages and len(jobs) >= JOBS_PER_PAGE:
-            # total missing — keep going until short page
+            # total missing, keep going until short page
             yield self._api_request(title, page=page + 1)
 
     def _request_resolve_apply(self, job: dict, search_title: str):
@@ -667,7 +667,7 @@ class ZipRecruiterSpider(BaseJobSpider):
         )
 
     def parse_listing(self, response):
-        """BaseJobSpider abstract hook — API mode uses ``parse_api_page``."""
+        """BaseJobSpider abstract hook, API mode uses ``parse_api_page``."""
         return
 
     def parse_job(self, response):

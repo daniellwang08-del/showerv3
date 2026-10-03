@@ -3,7 +3,7 @@
 Logout adds the token's ``jti`` here until its natural expiry; the auth
 dependency and the WebSocket handshake reject revoked ids. Any Redis error
 fails OPEN (the token is treated as valid) so a cache outage never logs every
-user out — revocation is defense-in-depth, not a hard availability gate.
+user out, revocation is defense-in-depth, not a hard availability gate.
 """
 
 from __future__ import annotations

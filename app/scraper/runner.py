@@ -61,7 +61,7 @@ def check_spider_auth(spider_name: str) -> dict:
 
     RemoteRocketship listing (``/api/fetch_job_openings/``) works without a
     valid session once Cloudflare TLS impersonation succeeds, so a missing or
-    expired RRS session does not block the sync — cookies remain optional.
+    expired RRS session does not block the sync, cookies remain optional.
     """
     from app.scraper.auth import session_status, PLATFORMS
 
@@ -82,7 +82,7 @@ def check_spider_auth(spider_name: str) -> dict:
     token_expired = status.get("token_expired")
     token_expires_at = status.get("token_expires_at")
 
-    # RRS: public listing API — do not hard-block sync on missing/expired cookies.
+    # RRS: public listing API, do not hard-block sync on missing/expired cookies.
     soft_auth = platform_key == "rrs"
     ok = True if soft_auth else configured
 
@@ -263,7 +263,7 @@ def _latest_scrape_run(spider_name: str, started_after: datetime) -> dict | None
 
 
 def _latest_scrape_run_id(spider_name: str, started_after: datetime) -> str | None:
-    """Compatibility wrapper — prefer ``_latest_scrape_run`` for status-aware checks."""
+    """Compatibility wrapper, prefer ``_latest_scrape_run`` for status-aware checks."""
     row = _latest_scrape_run(spider_name, started_after)
     return row["id"] if row else None
 
@@ -306,7 +306,7 @@ async def run_spider(
     from app.services.scraper_stop_service import is_stop_requested
 
     if await is_stop_requested():
-        logger.info("Spider '%s' skipped — fetch stop requested", spider_name)
+        logger.info("Spider '%s' skipped, fetch stop requested", spider_name)
         return {
             "spider": spider_name,
             "success": False,
@@ -393,7 +393,7 @@ async def run_spider(
                         return {"spider": spider_name, "success": False, "error": "timeout"}
                     if await is_stop_requested():
                         logger.info(
-                            "Spider '%s' stop requested — killing subprocess",
+                            "Spider '%s' stop requested, killing subprocess",
                             spider_name,
                         )
                         proc.kill()

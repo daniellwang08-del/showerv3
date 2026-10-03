@@ -67,7 +67,7 @@
     return clean((li.getAttribute && li.getAttribute("title")) || li.textContent);
   }
 
-  // Real choices only: drop the "— Make a Selection —" placeholder (it carries a
+  // Real choices only: drop the "- Make a Selection" placeholder (it carries a
   // .dropdown-placeholder child) and the "No Results" filler, which is rendered
   // as .result-unselectable but is defensively filtered by text too.
   function resultNodes(a) {

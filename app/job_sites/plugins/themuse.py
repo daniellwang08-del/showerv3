@@ -1,4 +1,4 @@
-"""The Muse public jobs API — key optional."""
+"""The Muse public jobs API, key optional."""
 
 from __future__ import annotations
 

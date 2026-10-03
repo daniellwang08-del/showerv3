@@ -23,7 +23,7 @@ export async function saveUserProfile(form: ProfileFormData): Promise<UserProfil
   return data;
 }
 
-/** Preferences-only EEO save — does not revalidate the résumé body. */
+/** Preferences-only EEO save, does not revalidate the résumé body. */
 export async function saveEeoPreferences(eeo: EEOPreferences): Promise<UserProfile> {
   const emptyToNull = (s: string | undefined) => (s?.trim() ? s.trim() : null);
   const body = {
@@ -40,7 +40,7 @@ export async function saveEeoPreferences(eeo: EEOPreferences): Promise<UserProfi
   return data;
 }
 
-/** Preferences-only address save — does not revalidate the résumé body. */
+/** Preferences-only address save, does not revalidate the résumé body. */
 export async function saveAddressPreferences(address: AddressInfo): Promise<UserProfile> {
   const emptyToNull = (s: string | undefined) => (s?.trim() ? s.trim() : null);
   const body = {

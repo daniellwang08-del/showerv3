@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="")
     # OpenAI-compatible base URL (Azure, LiteLLM, private gateway, …).
     # Empty = official OpenAI. Accepts with or without trailing `/v1`.
-    # One key may expose many models via GET {base}/models — bind per job in admin.
+    # One key may expose many models via GET {base}/models, bind per job in admin.
     openai_api_base: str = Field(default="")
     # Default chat model when a job binding does not select one. GPT-5 reasoning
     # models (e.g. gpt-5.1) use max_completion_tokens and ignore custom
@@ -225,7 +225,7 @@ class Settings(BaseSettings):
     default_dedup_recycle_days: int = Field(default=60, ge=1, le=3650)
     default_min_match_score: int = Field(default=0, ge=0, le=100)
 
-    # Post-analysis dedup rule toggles — platform defaults for per-user prefs
+    # Post-analysis dedup rule toggles, platform defaults for per-user prefs
     # (applied company / score comparison). Always-on rules (below_min_score,
     # non_us, same_url, strict_similarity) are not toggleable here.
     # Unknown/missing locations are always kept (treated as US).

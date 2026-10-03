@@ -1,8 +1,8 @@
 """ML job metadata extraction via MiniLM candidate ranking.
 
 Design (CPU, same model as vector match encodings):
-  1. Prefer structured ATS API fields when present (JSON — not text search).
-  2. Otherwise generate *generic* text spans (windows / sentences) — no vendor
+  1. Prefer structured ATS API fields when present (JSON, not text search).
+  2. Otherwise generate *generic* text spans (windows / sentences), no vendor
      chrome string matching for the final decision.
   3. Embed candidates + field prototypes with MiniLM; pick the span whose
      cosine to TITLE / COMPANY prototypes wins (and loses to NOISE).
@@ -187,7 +187,7 @@ def _slug_to_display(slug: str) -> str:
 
 
 def generate_span_candidates(plain_text: str | None) -> list[str]:
-    """Generic span proposals — vendor-agnostic windows over the posting head."""
+    """Generic span proposals, vendor-agnostic windows over the posting head."""
     if not plain_text:
         return []
     head = _norm(plain_text[:_MAX_SCAN_CHARS])

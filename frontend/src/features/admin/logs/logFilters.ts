@@ -119,7 +119,7 @@ export function errDetail(e: unknown, fallback: string): string {
 }
 
 export function formatTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const d = new Date(iso.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }

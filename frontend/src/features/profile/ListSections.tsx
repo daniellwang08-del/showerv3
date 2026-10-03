@@ -180,7 +180,7 @@ export function AdditionalEdit({ form, update, err }: EditorProps) {
       maxLength={500}
       addLabel="Add line"
       placeholder="e.g. Languages: English (native), Spanish · Awards: Hackathon winner 2023"
-      description="Languages, awards, publications, volunteering — one item per line."
+      description="Languages, awards, publications, volunteering, one item per line."
       errorFor={(i) => err(`extra_${i}`)}
     />
   );

@@ -266,7 +266,7 @@ async def run_post_analysis_dedup(
                 overall_score=overall_score,
                 duplicated_because_id=None,
                 exclusion_type=SECURITY_CLEARANCE_EXCLUSION,
-                reason="Requires security clearance — removed after analysis.",
+                reason="Requires security clearance, removed after analysis.",
             )
 
         if match_data.get("is_job_posting") is False:
@@ -283,7 +283,7 @@ async def run_post_analysis_dedup(
                 overall_score=overall_score,
                 duplicated_because_id=None,
                 exclusion_type=NOT_A_JOB_POSTING_EXCLUSION,
-                reason="Not a job posting — removed after analysis.",
+                reason="Not a job posting, removed after analysis.",
             )
 
         # Score 0 ("0 Weak") must leave the Jobs list after Phase A. Also honor
@@ -294,7 +294,7 @@ async def run_post_analysis_dedup(
             and overall_score < min_match_score
         ):
             reason = (
-                "Match score is 0 (Weak) — removed after analysis."
+                "Match score is 0 (Weak), removed after analysis."
                 if overall_score <= 0
                 else (
                     f"Match score {overall_score}% is below your minimum threshold "

@@ -62,10 +62,10 @@ Programs: `api` `extraction` `encoding` `analysis` `analysis2` `save`
 
 ### Troubleshooting
 
-- **`docker daemon unreachable`** — start Docker Desktop; confirm Ubuntu-24.04
+- **`docker daemon unreachable`** - start Docker Desktop; confirm Ubuntu-24.04
   is enabled under *Resources → WSL integration*. After `wsl --shutdown`,
   restart Docker Desktop.
-- **A program is `FATAL` / `BACKOFF`** — `bash scripts/wsl-stack.sh logs <name>`;
+- **A program is `FATAL` / `BACKOFF`** - `bash scripts/wsl-stack.sh logs <name>`;
   most often a bad value in `.env.wsl`.
-- **Laptop memory pressure** — lower `EXTRACTION_WORKER_MAX_JOBS` and
+- **Laptop memory pressure** - lower `EXTRACTION_WORKER_MAX_JOBS` and
   `BROWSER_POOL_SIZE` together in `.env.wsl` (Chromium is the largest consumer).

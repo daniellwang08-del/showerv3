@@ -128,7 +128,7 @@ async def heal_stale_pipeline_state(
                 UPDATE user_job_status AS ujs
                 SET status = 'duplicated',
                     exclusion_type = 'below_min_score',
-                    reason = 'Match score is 0 (Weak) — removed after analysis.',
+                    reason = 'Match score is 0 (Weak), removed after analysis.',
                     match_score_at_decision = coalesce(ujs.match_score_at_decision, 0),
                     updated_at = timezone('UTC', now())
                 WHERE ujs.status = 'active'
@@ -145,7 +145,7 @@ async def heal_stale_pipeline_state(
         )
         excluded_zero_scores = len(zero_score_result.fetchall())
 
-        # Unknown locations are treated as US — clear legacy location_unknown hides.
+        # Unknown locations are treated as US, clear legacy location_unknown hides.
         location_unknown_result = await session.execute(
             text(
                 """

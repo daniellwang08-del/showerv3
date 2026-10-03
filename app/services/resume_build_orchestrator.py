@@ -8,7 +8,7 @@ Every résumé and cover letter is rendered from the user's Resume Builder desig
 There is no uploaded-.docx-template path anymore.
 
 DOCX fills run in parallel (resume + cover letter), then PDF conversions
-``asyncio.gather`` — both are CPU/IO bound and independent once inputs are loaded.
+``asyncio.gather`` - both are CPU/IO bound and independent once inputs are loaded.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _sync_build_resume_docx(
     out_path: Path,
     scratch_template: Path,
 ) -> Path:
-    # Compile into a per-job scratch file — never the shared working_template.docx.
+    # Compile into a per-job scratch file, never the shared working_template.docx.
     # Concurrent builds for the same user previously raced on that shared path and
     # could fill one job's content into another's half-written template.
     scratch_template.parent.mkdir(parents=True, exist_ok=True)

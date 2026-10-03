@@ -27,7 +27,7 @@ export function estimateBandAspect(design: ResumeDesign): number {
   if (measured && measured > 0) {
     return Math.max(2.2, Math.min(9, pageW / measured));
   }
-  // Fallback estimate — identical factors to `_header_band_height_pt`.
+  // Fallback estimate, identical factors to `_header_band_height_pt`.
   const base = design.typography.base_font_pt;
   const hp = headerPadSides(design.layout);
   let content = base * design.typography.name_scale * 1.1;
@@ -106,7 +106,7 @@ export function HeaderImageControls({
   };
 
   // When the live-measured (or estimated) band aspect drifts, re-bake so the stored
-  // pixels match the height the .docx will stretch into — otherwise preview+PDF both
+  // pixels match the height the .docx will stretch into, otherwise preview+PDF both
   // distort, or worse, preview `cover` crops differently than PDF stretch.
   const storedAspect = image?.aspect ?? 0;
   useEffect(() => {

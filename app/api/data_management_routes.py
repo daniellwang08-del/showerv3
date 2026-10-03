@@ -377,7 +377,7 @@ async def preview_data_management(
             result = await preview_jobs(session, user_id, _filters_dict(body))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    # Do not return full job_ids list to the client for preview — only sample + count.
+    # Do not return full job_ids list to the client for preview, only sample + count.
     return {
         "matched_count": result["matched_count"],
         "capped": result["capped"],

@@ -1,12 +1,12 @@
 /**
- * NAO shared UI tokens — one brand language for app, auth, and landing CTAs.
+ * NAO shared UI tokens, one brand language for app, auth, and landing CTAs.
  *
  * Landing stays cinematic-dark (fixed hex / white-alpha) so the app's slate
  * dark-mode remap cannot invert marketing copy. Auth and app import these
  * classes so buttons, cards, and inputs feel like one product.
  */
 
-/** Sky → blue → indigo — matches landing CTA and auth primary. */
+/** Sky → blue → indigo, matches landing CTA and auth primary. */
 export const brandGradient = 'from-sky-500 via-blue-600 to-indigo-600';
 export const brandGradientHover = 'hover:from-sky-400 hover:via-blue-500 hover:to-indigo-500';
 
@@ -59,7 +59,7 @@ export const btnSaveActive =
 /** Landing / auth shared CTA gradient fill (padding chosen by caller). */
 export const brandCtaFill = `bg-gradient-to-r ${brandGradient} ${brandGradientHover}`;
 
-/** Short accent set for section icon chips — avoid inventing new per-card gradients. */
+/** Short accent set for section icon chips, avoid inventing new per-card gradients. */
 export const sectionAccents = {
   sky: 'bg-gradient-to-br from-sky-500 to-cyan-600',
   indigo: 'bg-gradient-to-br from-indigo-500 to-violet-600',

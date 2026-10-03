@@ -186,7 +186,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
 }
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
-/* Home hub — platform dashboard + tools */
+/* Home hub, platform dashboard + tools */
 .home-board {
   display: flex;
   flex-direction: column;
@@ -480,7 +480,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
   height: 14px;
 }
 
-/* Tools — icon-first actions with count badges */
+/* Tools, icon-first actions with count badges */
 .home-tool {
   display: flex;
   flex-direction: column;
@@ -1265,7 +1265,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
   box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
 }
 
-/* Hide native number spinners — they clash with the dark UI. */
+/* Hide native number spinners, they clash with the dark UI. */
 input[type="number"].settings-input,
 input[type="number"].score-input,
 input[type="number"].num-stepper-input {
@@ -2114,7 +2114,7 @@ input[type="number"].num-stepper-input::-webkit-inner-spin-button {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
-/* Job view — flush footer to the panel bottom (no bottom gap). */
+/* Job view, flush footer to the panel bottom (no bottom gap). */
 .screen.job {
   gap: 10px;
   padding: 12px 10px 0;
@@ -2480,7 +2480,7 @@ input[type="number"].num-stepper-input::-webkit-inner-spin-button {
 }
 .composer-input:focus { outline: none; border: none; box-shadow: none; }
 
-/* One-line group directly under the input — no y-gap, no divider */
+/* One-line group directly under the input, no y-gap, no divider */
 .composer-toolbar {
   display: flex;
   align-items: center;
@@ -2532,7 +2532,7 @@ input[type="number"].num-stepper-input::-webkit-inner-spin-button {
 .icon-btn.stop:hover { background: rgba(229, 84, 75, 0.12); }
 .composer-ask-btn svg { width: 13px; height: 13px; }
 
-/* Footer — compact, pinned to the bottom edge of the side panel */
+/* Footer, compact, pinned to the bottom edge of the side panel */
 .footer {
   display: flex;
   align-items: stretch;
@@ -2658,7 +2658,7 @@ input[type="number"].num-stepper-input::-webkit-inner-spin-button {
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(0.97); } }
 
-/* Autofill — square action + status/alerts beside it */
+/* Autofill, square action + status/alerts beside it */
 .autofill {
   display: flex;
   flex-direction: column;

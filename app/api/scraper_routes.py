@@ -604,7 +604,7 @@ async def list_scraped_jobs(
             ") "
         )
 
-        # Explicit columns — never SELECT sj.* (description TEXT is unused in list UI).
+        # Explicit columns, never SELECT sj.* (description TEXT is unused in list UI).
         sj_cols = (
             "sj.id, sj.source, sj.source_job_id, sj.url, sj.origin_url, sj.title, "
             "sj.company_name, sj.location, sj.is_remote, sj.salary_raw, "

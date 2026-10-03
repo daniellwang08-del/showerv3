@@ -215,7 +215,7 @@ function EmbeddedCheckoutPanel({
       <div className={`relative my-6 w-full max-w-xl ${card} p-4 sm:p-5`}>
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className={`text-sm font-bold ${headingText}`}>
-            Subscribe — {planName} plan
+            Subscribe to {planName}
           </h2>
           <button
             type="button"
@@ -320,7 +320,7 @@ export function BillingPage() {
         <PageHeader
           icon={CreditCard}
           title="Subscription"
-          description="Choose a plan to unlock NAO. Payments are handled securely by Stripe — cancel or change anytime."
+          description="Choose a plan to unlock NAO. Payments are handled securely by Stripe, cancel or change anytime."
         />
 
         {checkoutStatus === 'success' ? (

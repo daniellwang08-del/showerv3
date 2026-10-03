@@ -382,7 +382,7 @@ class WelcomeToTheJungleSpider(BaseJobSpider):
     def _enrich_errback(self, failure):
         hit = failure.request.meta.get("algolia_hit") or {}
         self.logger.warning(
-            "WTTJ REST enrich failed for %s/%s: %s — yielding Algolia-only item",
+            "WTTJ REST enrich failed for %s/%s: %s, yielding Algolia-only item",
             failure.request.meta.get("org_slug"),
             failure.request.meta.get("job_slug"),
             failure.value,
@@ -415,7 +415,7 @@ class WelcomeToTheJungleSpider(BaseJobSpider):
             yield item
 
     def parse_job(self, response):
-        """Unused — listing + REST enrich produce items."""
+        """Unused, listing + REST enrich produce items."""
         return
 
     @staticmethod

@@ -211,7 +211,7 @@ class ExtractionService:
                     logger.warning("wttj_algolia_extract_failed", job_id=job_id, error=wttj_result.error)
 
             # 1e. Greenhouse Job Board API for native boards.greenhouse.io URLs
-            # (token + job id already in the URL — no HTML / browser needed).
+            # (token + job id already in the URL, no HTML / browser needed).
             if parse_greenhouse_job_id_from_url(url) and greenhouse_board_tokens_from_url(url):
                 logger.info("greenhouse_api_attempt", job_id=job_id, url=url)
                 gh_early = await self.greenhouse_board_extractor.extract(url)
@@ -221,7 +221,7 @@ class ExtractionService:
                     last_error = gh_early.error
                     logger.warning("greenhouse_api_extract_failed", job_id=job_id, error=gh_early.error)
 
-            # Strong vendor hit — skip HTTP + browser (avoids repeating slow failures).
+            # Strong vendor hit, skip HTTP + browser (avoids repeating slow failures).
             early_best, early_method, early_structured = pick_best_text(candidates)
             if len(early_best) >= 500:
                 logger.info(

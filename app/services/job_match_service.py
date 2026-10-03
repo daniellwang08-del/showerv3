@@ -630,7 +630,7 @@ def tailored_resume_quality_issues(
 ) -> list[str]:
     """Return soft quality problems that warrant one Phase B regeneration retry.
 
-    Does not reject the payload forever — callers may still accept after retry.
+    Does not reject the payload forever, callers may still accept after retry.
     """
     if not resume or not isinstance(resume, dict):
         return ["missing_tailored_resume"]

@@ -38,7 +38,7 @@
 (function () {
   "use strict";
 
-  // Same isolated world for this extension — survives repeated executeScript.
+  // Same isolated world for this extension, survives repeated executeScript.
   if (globalThis.__NAO_WEBAPP_BRIDGE_INSTALLED__) return;
   globalThis.__NAO_WEBAPP_BRIDGE_INSTALLED__ = true;
 

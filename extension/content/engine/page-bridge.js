@@ -104,7 +104,7 @@
       el.dispatchEvent(new Event("input", { bubbles: true }));
     }
     el.dispatchEvent(new Event("change", { bubbles: true }));
-    // Autocomplete filter typing must NOT blur — blur collapses Ashby's listbox
+    // Autocomplete filter typing must NOT blur, blur collapses Ashby's listbox
     // before we can click an option (probe: commit requires option click / Enter
     // while expanded).
     callReactHandlers(el, blur ? ["input", "change", "blur"] : ["input", "change"]);

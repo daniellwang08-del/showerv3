@@ -159,7 +159,7 @@ class PostgresPipeline:
 
             # Scrapy's normal completion reason is "finished". Custom
             # CloseSpider reasons (auth_expired, fetch_failed, …) must not
-            # be recorded as success — that caused false-green sync runs.
+            # be recorded as success, that caused false-green sync runs.
             #
             # Pipeline close_spider often runs BEFORE stats finish_reason is
             # set, so honor spider._close_reason (stashed by engine patch).
@@ -170,7 +170,7 @@ class PostgresPipeline:
             )
 
             if finish_reason in _INTERRUPT_REASONS:
-                # SIGTERM / deploy restart mid-crawl — jobs already flushed
+                # SIGTERM / deploy restart mid-crawl, jobs already flushed
                 # stay saved; status must not read as a clean success.
                 self.scrape_run.status = "interrupted"
                 spider.logger.warning(
@@ -292,7 +292,7 @@ class PostgresPipeline:
             self._safe_rollback()
             spider = self._spider()
             spider.logger.exception(
-                "Failed to persist scraped job %s:%s — skipping item and continuing",
+                "Failed to persist scraped job %s:%s, skipping item and continuing",
                 item.source,
                 item.source_job_id,
             )
@@ -307,7 +307,7 @@ class PostgresPipeline:
                 continue
             if not isinstance(value, int) or value < 0 or value > _PG_INT_MAX:
                 logger.warning(
-                    "Clearing %s=%r for %s:%s (salary_raw=%r) — exceeds Integer range",
+                    "Clearing %s=%r for %s:%s (salary_raw=%r), exceeds Integer range",
                     key,
                     value,
                     item.source,

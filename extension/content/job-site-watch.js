@@ -35,7 +35,7 @@
         },
       );
     } catch (_e) {
-      // Extension reloaded/disabled — stop polling so we don't spam the page.
+      // Extension reloaded/disabled, stop polling so we don't spam the page.
       if (pollTimer) clearInterval(pollTimer);
     }
   }

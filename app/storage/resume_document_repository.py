@@ -29,7 +29,7 @@ class ResumeDocumentRepository:
         return list(result.scalars().all())
 
     async def list_metadata_for_user(self, user_id: str) -> list[ResumeDocument]:
-        """Metadata only — design stays deferred (search / key collection)."""
+        """Metadata only, design stays deferred (search / key collection)."""
         stmt = (
             select(ResumeDocument)
             .where(ResumeDocument.user_id == user_id)

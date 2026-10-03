@@ -1,4 +1,4 @@
-# NAO Frontend Redesign — Upgrade Plan
+# NAO Frontend Redesign, Upgrade Plan
 
 Status: proposal · Owner: Raoyinc · Baseline commit: `ee472d8` · Date: 2026-10-03
 
@@ -165,21 +165,21 @@ Signup → Onboarding (4 steps, skippable, resumable)
 - Each section is a card with view mode and edit mode; edit uses a form with inline validation; autosave draft locally, explicit Save.
 - Completeness meter in the header with "next best field" suggestions.
 
-**Settings (`/app/settings`)** — tabs: *Job preferences* · *Matching* (min score, dedup, auto-prepare) · *AI & keys* (provider, model, BYO keys) · *Prompts (advanced)* · *Notifications*. Each tab has one Save bar that appears when dirty.
+**Settings (`/app/settings`)** - tabs: *Job preferences* · *Matching* (min score, dedup, auto-prepare) · *AI & keys* (provider, model, BYO keys) · *Prompts (advanced)* · *Notifications*. Each tab has one Save bar that appears when dirty.
 
-**Integrations (`/app/integrations`)** — grid of connection cards with status (Connected / Needs attention / Off), each opening a sheet (side drawer) with setup and filters.
+**Integrations (`/app/integrations`)** - grid of connection cards with status (Connected / Needs attention / Off), each opening a sheet (side drawer) with setup and filters.
 
-**Assistant** — one global panel (right side, `⌘J`), context-aware (current page / selected job / document), with suggestions driven by state ("Your profile is missing skills; want me to extract them from your resume?"). Actions that mutate data show a confirm card (already supported by backend flow).
+**Assistant** - one global panel (right side, `⌘J`), context-aware (current page / selected job / document), with suggestions driven by state ("Your profile is missing skills; want me to extract them from your resume?"). Actions that mutate data show a confirm card (already supported by backend flow).
 
-**Admin Overview (`/admin`)** — tiles: Jobs ingested today, Extraction success %, Queue depth per worker, Match latency p50/p95, LLM spend today, Errors last hour; each tile links to its page. Live via WS.
+**Admin Overview (`/admin`)** - tiles: Jobs ingested today, Extraction success %, Queue depth per worker, Match latency p50/p95, LLM spend today, Errors last hour; each tile links to its page. Live via WS.
 
-**Admin Pipeline (`/admin/pipeline`)** — dense table (compact density default) with column chooser, server-side sort/filter, state filter chips (Queued, Extracting, Failed, Encoded, Analyzed), bulk *Re-extract* / *Delete*, extraction detail drawer with raw text and log.
+**Admin Pipeline (`/admin/pipeline`)** - dense table (compact density default) with column chooser, server-side sort/filter, state filter chips (Queued, Extracting, Failed, Encoded, Analyzed), bulk *Re-extract* / *Delete*, extraction detail drawer with raw text and log.
 
-**Admin AI (`/admin/ai`)** — tabs: Defaults · Provider keys (masked, test, rotate, delete with confirm) · Bindings · Match engine · Benchmark. **Explicit Save** with diff preview for production knobs; no auto-save.
+**Admin AI (`/admin/ai`)** - tabs: Defaults · Provider keys (masked, test, rotate, delete with confirm) · Bindings · Match engine · Benchmark. **Explicit Save** with diff preview for production knobs; no auto-save.
 
-**Admin Users** — server-paginated, sortable table; row opens user drawer (profile summary, usage, role, enable/disable, reset, impersonate-as-view). Every destructive action uses typed confirmation for bulk.
+**Admin Users** - server-paginated, sortable table; row opens user drawer (profile summary, usage, role, enable/disable, reset, impersonate-as-view). Every destructive action uses typed confirmation for bulk.
 
-**Admin Logs** — saved filter presets as chips at top, live tail toggle, virtualized table, detail drawer. Filters apply immediately (debounced), no "Apply" button.
+**Admin Logs** - saved filter presets as chips at top, live tail toggle, virtualized table, detail drawer. Filters apply immediately (debounced), no "Apply" button.
 
 ### 2.5 Interaction patterns (one implementation each)
 
@@ -206,7 +206,7 @@ Signup → Onboarding (4 steps, skippable, resumable)
 
 | Library | Styling engine | Fit with current Tailwind 4 code | Bundle / runtime | Tables & forms | Verdict |
 |---|---|---|---|---|---|
-| **shadcn/ui on Base UI** (CLI v4, Base UI 1.6, default since July 2026) | Tailwind v4, zero runtime, you own the source | Native — same utilities, OKLCH CSS variables, `@theme` | Smallest; only what you add | Pairs with TanStack Table/Virtual, react-hook-form + zod (official patterns) | **Choose** |
+| **shadcn/ui on Base UI** (CLI v4, Base UI 1.6, default since July 2026) | Tailwind v4, zero runtime, you own the source | Native, same utilities, OKLCH CSS variables, `@theme` | Smallest; only what you add | Pairs with TanStack Table/Virtual, react-hook-form + zod (official patterns) | **Choose** |
 | Mantine v8 | CSS Modules, zero runtime | Second styling system beside Tailwind | Moderate | Strong built-ins (dates, forms, notifications) | Runner-up |
 | MUI v7 (+ MUI X) | Emotion runtime CSS-in-JS; Pigment CSS paused (June 2026) | Conflicts with Tailwind; override-heavy | Heavier, runtime style injection | Best data grid (Pro/Premium are paid) | Reject |
 | Ant Design v6 | CSS variables, optional zero-runtime mode | Strong visual identity, hard to make look like NAO | Largest of the set | Excellent admin tables/forms | Reject for app; acceptable only if admin were a separate app |
@@ -254,7 +254,7 @@ Signup → Onboarding (4 steps, skippable, resumable)
 - **Density**: `comfortable` (applicant default) and `compact` (admin default) via a `data-density` attribute that changes row height and padding tokens.
 - **Elevation**: 3 levels (card, popover, dialog); no coloured shadows.
 - **Motion budget**: 150–200 ms ease-out for UI; no infinite animations except an active-progress indicator; respect `prefers-reduced-motion`.
-- **Z-index scale**: base, sticky, dropdown, sheet, dialog, toast, tooltip — defined once.
+- **Z-index scale**: base, sticky, dropdown, sheet, dialog, toast, tooltip, defined once.
 
 ### 4.2 Component inventory (old → new)
 
@@ -271,12 +271,12 @@ Signup → Onboarding (4 steps, skippable, resumable)
 | `Badge`, `StatusPill`, `ScoreRing`, `MatchBreakdown` | `Badge`, ad-hoc chips, match badges, colour-only pipeline squares |
 | `EmptyState`, `Skeleton`, `ErrorState` | per-page empty/loader variants, full-screen `BrandedLoader` after first paint |
 | `Toaster` (sonner) | `NotificationToasts` |
-| `CommandPalette` | — |
+| `CommandPalette` | - |
 | `PageHeader`, `PageSection`, `SectionNav` | `PageHeader`, `PageScrollArea` |
 | `Chart*` (lazy) | `DualLineChart`, `MultiLineChart`, `TrendSparkline` |
 
 ### 4.3 Design deliverables before code
-1. Token sheet and component states (light/dark, comfortable/compact) — build as a `/__design` route in dev (cheaper than Storybook; can add Storybook later).
+1. Token sheet and component states (light/dark, comfortable/compact), build as a `/__design` route in dev (cheaper than Storybook; can add Storybook later).
 2. Wireframes for Home, Jobs + detail panel, Onboarding, Documents, Admin Overview, Admin Pipeline.
 3. Copy deck: applicant vocabulary (*Preparing*, *Ready to apply*) vs admin vocabulary (*Extracting*, *Encoded*, *Analyzed*).
 
@@ -376,7 +376,7 @@ client can patch without a refetch.
 ## 7. Using this machine's full capacity
 
 ### 7.1 Developer loop (22 threads, 16 GB RAM, WSL2)
-- **Repo on ext4 (`~/NAO`)** — already done; keep Cursor attached via *Connect to WSL* so file watching is native (on `/mnt/d` it is several times slower).
+- **Repo on ext4 (`~/NAO`)** - already done; keep Cursor attached via *Connect to WSL* so file watching is native (on `/mnt/d` it is several times slower).
 - **Vite 8 (Rolldown bundler)**: production builds take 43 s today on Vite 7; Rolldown typically cuts that by 3–10×. Verify the plugin set (React, compiler) at upgrade time.
 - **Type checking**: `tsc --noEmit` in watch in a separate supervisor program, or try the native TypeScript compiler preview (`tsgo`) for ~10× faster checks; keep `tsc` as the CI gate.
 - **Vitest** with `pool: 'threads'` and `maxThreads: 12`; **Playwright** with 6 workers headless Chromium (already installed in WSL).
@@ -394,7 +394,7 @@ client can patch without a refetch.
 | Brotli/gzip for JSON (`GZipMiddleware` or nginx) | 70–85% smaller list responses |
 | `/openapi.json` stable operation ids | Clean generated client names |
 
-### 7.3 GPU (RTX 4050, 6 GB) — currently using ~100 MB for MiniLM
+### 7.3 GPU (RTX 4050, 6 GB), currently using ~100 MB for MiniLM
 | Opportunity | Value | Cost |
 |---|---|---|
 | **Upgrade embeddings** to `all-mpnet-base-v2` or `bge-base-en-v1.5` (768-dim) | Better match quality; GPU makes it cheap (~420 MB VRAM, batch 64) | Re-encode backfill (minutes on GPU); migration for vector dim |
@@ -417,7 +417,7 @@ of that class.
 Estimates assume one developer working with an AI pair, ~6 productive hours/day.
 Each phase ends deployable; old and new UIs coexist behind redirects until Phase 7.
 
-### Phase 0 — Foundation (4–5 days)
+### Phase 0, Foundation (4–5 days)
 - Add tooling: ESLint flat config, Prettier, `rollup-plugin-visualizer`, Vitest + MSW, Playwright + axe, Lighthouse CI script.
 - `npx shadcn init` (Base UI, Tailwind 4, `src/components/ui`), `cn()`, `theme.css` with NAO tokens (light/dark, density).
 - Add TanStack Query, Table, Virtual, react-hook-form, zod, sonner, cmdk, openapi-typescript + openapi-fetch; React Compiler.
@@ -426,20 +426,20 @@ Each phase ends deployable; old and new UIs coexist behind redirects until Phase
 - `/__design` route with all primitives in both themes and densities.
 - **Exit**: build green, design route reviewed, baseline captured.
 
-### Phase 1 — Shells, routing, role split (4 days)
+### Phase 1, Shells, routing, role split (4 days)
 - `createBrowserRouter`, `PublicShell`, `ApplicantShell`, `AdminShell` (separate lazy chunks), guards, legacy redirects, `logs.*` host → `/admin/logs`.
 - New sidebars (collapsible, icon rail at `lg`), top bar with `⌘K` palette, user menu, theme switch.
 - Mount existing pages inside new shells unchanged (strangler step).
 - Remove `min-w-[1400px]` floor; pages scroll horizontally only where unavoidable until rebuilt.
 - **Exit**: applicants' initial bundle contains no admin code (verified in visualizer); all old URLs redirect.
 
-### Phase 2 — Data and realtime layer (4–5 days)
+### Phase 2, Data and realtime layer (4–5 days)
 - QueryClient, key factory, query hooks for jobs/stats/profile/settings; adapters so old components can read from Query.
 - `api/realtime.ts` with patching + coalesced invalidation; remove polls one by one.
 - Backend: enrich pipeline WS events; lean list DTO; cursor pagination for `/jobs/dashboard`.
 - **Exit**: a 50-event burst causes ≤ 2 list refetches; no `setInterval` polling left in Jobs.
 
-### Phase 3 — Applicant Jobs + Job detail (8–10 days)
+### Phase 3, Applicant Jobs + Job detail (8–10 days)
 - `DataTable` (virtualized, sortable, column visibility, keyboard nav, bulk bar) and mobile card list.
 - Jobs page with saved views, filter chips (URL-synced), Add-jobs sheet (paste URLs, connect site).
 - Job detail side panel with Match / Description / Documents / Activity tabs; deep links; `j/k`.
@@ -447,7 +447,7 @@ Each phase ends deployable; old and new UIs coexist behind redirects until Phase
 - Delete `ScraperDashboard` applicant branches, `ScraperJobsTable` applicant code, `JobAnalysisModal` for applicants.
 - **Exit**: usability check of the core loop (find → open → prepare → apply) in ≤ 4 clicks; INP ≤ 100 ms; axe clean.
 
-### Phase 4 — Onboarding, Home, Profile, Settings, Integrations, Insights (8–9 days)
+### Phase 4, Onboarding, Home, Profile, Settings, Integrations, Insights (8–9 days)
 - Onboarding wizard (resume import → essentials → preferences → first jobs), resumable, skippable.
 - Home dashboard with state-driven CTA and checklist.
 - Profile with section nav, view/edit cards, react-hook-form + zod, completeness meter.
@@ -456,19 +456,19 @@ Each phase ends deployable; old and new UIs coexist behind redirects until Phase
 - Insights page (merge Job Analysis + focus stats; lazy charts).
 - **Exit**: new user reaches first scored job without leaving the guided path; all forms keyboard-complete.
 
-### Phase 5 — Documents (Resume Builder) + Assistant (6–7 days)
+### Phase 5, Documents (Resume Builder) + Assistant (6–7 days)
 - Three-pane layout, library, Content/Design tabs with accordions, preview Web Worker, commit-debounced compile.
 - Carlito WOFF2 loaded only here.
 - Unified Assistant panel (`⌘J`) with page/job/document context; One-Click tailoring becomes an Assistant action in document context.
 - **Exit**: no main-thread task > 50 ms while dragging design controls.
 
-### Phase 6 — Admin console (8–9 days)
+### Phase 6, Admin console (8–9 days)
 - Overview tiles (live), Pipeline table + extraction drawer, Sources, AI (explicit save with diff, confirmations), Workers, Users (server-paginated, drawer), Data (tabs), Logs (virtualized, live tail).
 - Typed confirmation for destructive bulk ops; audit-friendly toasts.
 - Delete `SystemSettingsPage` monolith, admin branches in the old Jobs tree, `ScraperStatsBar`.
 - **Exit**: every destructive admin action is confirmed; admin pages load ≤ 200 KB gzip.
 
-### Phase 7 — Landing, auth, hardening, cleanup (4–5 days)
+### Phase 7, Landing, auth, hardening, cleanup (4–5 days)
 - Landing rebuilt on the token system (keep the cinematic look via a `marketing` theme), self-hosted optimized media, lazy demos.
 - Auth screens on shadcn forms; multi-error display.
 - Remove legacy redirects after one release, `style.css` remainder, `ui/tokens.ts`, old stores, axios, Headless UI, Heroicons.

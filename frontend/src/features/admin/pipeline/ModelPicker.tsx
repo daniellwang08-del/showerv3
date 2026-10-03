@@ -28,7 +28,7 @@ export function ModelPicker() {
   const models = useLlmModels(open || settings.isSuccess);
   const userModel = settings.data?.llm_model ?? null;
   const defaultModel = settings.data?.default_llm_model ?? '';
-  const active = userModel || defaultModel || '—';
+  const active = userModel || defaultModel || '-';
 
   const save = useMutation({
     mutationFn: (model: string | null) => setActiveLlmModel(model),

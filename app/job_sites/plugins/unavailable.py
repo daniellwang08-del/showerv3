@@ -53,7 +53,7 @@ _unavailable(
     sort_order=210,
     reason=(
         "Indeed Job Sync / Job Update APIs are for approved ATS and employer partners "
-        "posting jobs to Indeed — they cannot pull your Indeed job feed. Connect JSearch "
+        "posting jobs to Indeed, they cannot pull your Indeed job feed. Connect JSearch "
         "for aggregated Indeed-sourced listings, or Adzuna for a first-party search API."
     ),
 )
@@ -101,7 +101,7 @@ _unavailable(
 _unavailable(
     slug="handshake",
     name="Handshake",
-    blurb="Handshake is university SSO only — no third-party job fetch.",
+    blurb="Handshake is university SSO only, no third-party job fetch.",
     homepage="https://joinhandshake.com/",
     logo_file="handshake.svg",
     sort_order=250,

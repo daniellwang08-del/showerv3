@@ -87,13 +87,13 @@ export function sourceLabel(job: DashboardJob): string {
   if (job.added_from === 'admin_manual') return 'Added by team';
   const key = (job.source || job.added_from || '').toLowerCase();
   if (key && key !== 'job_sites') return SOURCE_NAMES[key] ?? job.source ?? key;
-  return job.domain.replace(/^(www|jobs|careers|boards|job-boards)\./, '') || '—';
+  return job.domain.replace(/^(www|jobs|careers|boards|job-boards)\./, '') || '-';
 }
 
 export function relativeTime(dateStr: string | null | undefined, now = Date.now()): string {
-  if (!dateStr) return '—';
+  if (!dateStr) return '-';
   const t = new Date(dateStr).getTime();
-  if (Number.isNaN(t)) return '—';
+  if (Number.isNaN(t)) return '-';
   const mins = Math.floor((now - t) / 60000);
   if (mins < 1) return 'now';
   if (mins < 60) return `${mins}m`;

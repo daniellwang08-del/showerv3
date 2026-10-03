@@ -25,7 +25,7 @@ from app.storage.database import get_session
 
 logger = get_logger(__name__)
 
-# Soft caps — protect LLM spend / queue depth under multi-user auto-prepare.
+# Soft caps, protect LLM spend / queue depth under multi-user auto-prepare.
 AUTO_PREPARE_FANOUT_MAX_USERS = 200
 AUTO_PREPARE_BACKFILL_CHUNK = 50
 # Redis counter TTL for per-user auto-prepare daily enqueue budget (UTC day).

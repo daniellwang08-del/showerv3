@@ -131,7 +131,7 @@ export function CleanupPanel() {
     <div className="space-y-6">
       <SectionCard
         title="Job cleanup"
-        description="Admin cascade purge by age and/or regex against company, domain, or job site URLs. Preview first — deletes cannot be undone."
+        description="Admin cascade purge by age and/or regex against company, domain, or job site URLs. Preview first. Deletes cannot be undone."
       >
         <div className="grid gap-4 lg:grid-cols-2">
           <div className={cn('rounded-xl border p-4 transition-colors', useAge && 'bg-muted/40')}>
@@ -386,11 +386,11 @@ function PreviewCard({ result }: { result: JobCleanupResult }) {
               {result.sample.map((row) => (
                 <tr key={row.job_id} className="border-t">
                   <td className="max-w-[260px] truncate px-5 py-2" title={row.title ?? undefined}>
-                    {row.title || '—'}
+                    {row.title || '-'}
                   </td>
-                  <td className="max-w-[180px] truncate px-3 py-2 text-muted-foreground">{row.company || '—'}</td>
+                  <td className="max-w-[180px] truncate px-3 py-2 text-muted-foreground">{row.company || '-'}</td>
                   <td className="max-w-[180px] truncate px-3 py-2 font-mono text-xs text-muted-foreground">
-                    {row.domain || '—'}
+                    {row.domain || '-'}
                   </td>
                   <td className="px-5 py-2 whitespace-nowrap text-muted-foreground tabular-nums">
                     {formatCreated(row.created_at)}

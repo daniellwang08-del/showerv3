@@ -93,7 +93,7 @@ function StepsGroup({ items }: { items: ToolItem[] }) {
             {items.map((i) => (
               <li key={i.id} className="text-xs text-muted-foreground">
                 <span className="font-medium text-foreground/80">{i.title}</span>
-                {i.summary && i.status !== 'running' ? <span> — {i.summary}</span> : null}
+                {i.summary && i.status !== 'running' ? <span>, {i.summary}</span> : null}
               </li>
             ))}
           </ol>

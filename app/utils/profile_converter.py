@@ -194,7 +194,7 @@ def user_profile_to_openai_text(profile: Any) -> str:
             if issued:
                 line += f" ({issued})"
             if url:
-                line += f" — {url}"
+                line += f" - {url}"
             parts.append(line)
         parts.append("")
 

@@ -163,7 +163,7 @@ export function UsersTable({
                     {label && <div className="truncate text-xs text-muted-foreground md:hidden">{label}</div>}
                   </td>
                   <td className="hidden max-w-0 truncate px-3 py-2.5 text-muted-foreground md:table-cell" title={label}>
-                    {label || '—'}
+                    {label || '-'}
                   </td>
                   <td className="px-3 py-2.5">
                     <RoleBadge user={u} />

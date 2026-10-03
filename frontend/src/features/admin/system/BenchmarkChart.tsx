@@ -48,7 +48,7 @@ export default function BenchmarkChart({
                 fontSize: 12,
                 color: 'var(--popover-foreground)',
               }}
-              formatter={(v) => (typeof v === 'number' ? `${Math.round(v)} ms` : String(v ?? '—'))}
+              formatter={(v) => (typeof v === 'number' ? `${Math.round(v)} ms` : String(v ?? '-'))}
               labelFormatter={(v) => `Run ${v}`}
             />
             {series.map((s) => (

@@ -213,9 +213,9 @@ function ConnectedSite({
             {relativeTime(connection.last_synced_at) ?? 'Not synced yet'}
           </dd>
           <dt className="text-muted-foreground">Listings</dt>
-          <dd className="tabular-nums">{connection.last_listing_count ?? '—'}</dd>
+          <dd className="tabular-nums">{connection.last_listing_count ?? '-'}</dd>
           <dt className="text-muted-foreground">New jobs</dt>
-          <dd className="tabular-nums">{connection.last_new_jobs ?? '—'}</dd>
+          <dd className="tabular-nums">{connection.last_new_jobs ?? '-'}</dd>
           {hints.map(([k, v]) => (
             <div key={k} className="contents">
               <dt className="text-muted-foreground capitalize">{k.replace(/_/g, ' ')}</dt>
@@ -312,7 +312,7 @@ function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnect
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          This board publishes a public job feed. Connecting enables automatic sync into your pipeline — no
+          This board publishes a public job feed. Connecting enables automatic sync into your pipeline, no
           account required.
         </p>
         {flow.error ? <InlineError>{flow.error}</InlineError> : null}
@@ -365,7 +365,7 @@ function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnect
         <div className="flex flex-wrap gap-2">
           <Button disabled={flow.busy || flow.extReady === null} onClick={() => void flow.captureNow()}>
             {flow.busy ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
-            I&apos;m signed in — capture now
+            I&apos;m signed in. Capture now
           </Button>
           <Button variant="outline" disabled={flow.extReady === null} onClick={() => void flow.focusTab()}>
             <ExternalLink />

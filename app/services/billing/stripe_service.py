@@ -4,7 +4,7 @@ Stripe's Python SDK is synchronous; every network call here is dispatched to a
 worker thread so it never blocks the event loop. Import of the SDK is lazy so a
 deployment that leaves billing unconfigured pays nothing at startup.
 
-This module is intentionally free of database and HTTP-framework concerns — it
+This module is intentionally free of database and HTTP-framework concerns, it
 only talks to Stripe. Persisting the results is the subscription service's job.
 """
 
@@ -83,7 +83,7 @@ async def create_checkout_session(
 
     ``ui_mode='embedded_page'`` makes Stripe return a ``client_secret`` the
     browser uses to mount the checkout form *inside* our billing page (an iframe
-    to checkout.stripe.com — no card data touches our server). ``return_url`` is
+    to checkout.stripe.com, no card data touches our server). ``return_url`` is
     where Stripe navigates the top window once payment completes; there is no
     ``cancel_url`` in embedded mode (the user simply closes the form).
 

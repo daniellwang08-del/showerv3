@@ -12,7 +12,7 @@ from app.services.job_source_boards import BoardJob
 class AuthType(StrEnum):
     """How a user connects this site."""
 
-    NONE = "none"  # public feed — enabling the tile is enough
+    NONE = "none"  # public feed, enabling the tile is enough
     API_KEY = "api_key"  # user pastes a developer / publisher key
     ACCOUNT = "account"  # browser session (iframe + extension) and/or credentials
     UNAVAILABLE = "unavailable"  # researched; no legitimate user-login fetch path

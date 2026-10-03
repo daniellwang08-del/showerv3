@@ -2,7 +2,7 @@
 
 Uses ATS API fields and labeled ``Title:`` / ``Company:`` lines. Messy HTML
 embeds without those signals are filled later by MiniLM span ranking in
-``metadata_vector_extractor`` during ``encode_job`` — not by vendor page regex.
+``metadata_vector_extractor`` during ``encode_job`` - not by vendor page regex.
 """
 
 from __future__ import annotations
@@ -248,7 +248,7 @@ def parse_labeled_metadata(plain_text: str | None) -> dict[str, str]:
         stripped = lines[i].strip()
         if not stripped:
             i += 1
-            # Blank after we already have labels usually ends the header —
+            # Blank after we already have labels usually ends the header,
             # but SuccessFactors often has blank lines between fields, so only
             # stop once we have both title-ish content and are past company/location.
             if saw_label and ("company" in out or "location" in out) and i > 0:
@@ -454,7 +454,7 @@ def build_metadata(
     """Merge *structured* ATS fields for a fast hydrate (no torch).
 
     Final title/company fill for messy HTML embeds is done by MiniLM span
-    ranking in ``metadata_vector_extractor`` during ``encode_job`` — not by
+    ranking in ``metadata_vector_extractor`` during ``encode_job`` - not by
     vendor-specific page-text regexes.
     """
     labeled = parse_labeled_metadata(plain_text)
@@ -576,7 +576,7 @@ async def hydrate_job_metadata(
 
     When ``mark_completed`` is True (vector-engine path), also advances the
     extraction to COMPLETED / is_job_posting=True like the old LLM structuring
-    pass did — without rewriting an already-rich LLM structured description
+    pass did, without rewriting an already-rich LLM structured description
     unless description was empty.
     """
     async with get_session() as session:

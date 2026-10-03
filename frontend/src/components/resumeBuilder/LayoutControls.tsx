@@ -101,7 +101,7 @@ export function LayoutControls({
       {l.contact_icons !== 'none' && (
         <div className="space-y-2 rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-2">
           <p className="text-[11px] font-medium text-slate-500">
-            Icon position (pt) — nudge until the PDF matches the preview
+            Icon position (pt), nudge until the PDF matches the preview
           </p>
           <Slider
             label="Horizontal"

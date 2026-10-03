@@ -151,7 +151,7 @@
   }
 
   // Canvas Select (Application Questions) often keeps a blank input.value after a
-  // successful option click — the visible choice lives in a sibling / aria state.
+  // successful option click, the visible choice lives in a sibling / aria state.
   // Reading only .value made openAndPick report failure on every Yes/No commit.
   function selectDisplayValue(trigger) {
     if (!trigger) return "";
@@ -177,7 +177,7 @@
 
   function triggerShowsPlaceholder(trigger) {
     const t = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
-    // Workday Voluntary EEO defaults to "No Response" (Review screenshot) — that is
+    // Workday Voluntary EEO defaults to "No Response" (Review screenshot), that is
     // NOT a real filled answer; treat as empty so harvest→LLM still runs.
     return !t || /^select(\s+one)?\.?\.?\.?$/.test(t) || /^no response\.?$/.test(t);
   }
@@ -201,7 +201,7 @@
   // An EMPTY prompt STILL has <div data-automation-id="promptSelectionLabel"></div>
   // BEFORE selectedItem in document order. querySelector with a comma list returns
   // the first match in DOCUMENT order, so selecting promptSelectionLabel first
-  // always returned "" even when selectedItem was present — that is the proven
+  // always returned "" even when selectedItem was present, that is the proven
   // root cause of "Field of Study already filled but engine refills it" and of
   // fieldHasCommittedValue treating filled prompts as empty on recovery.
   function promptSelectionNodes(multi) {
@@ -314,7 +314,7 @@
   }
 
   async function closeAllListboxes(exceptMulti, opts) {
-    // soft: Escape only — never focusSinkOutside body-clicks (those jump the page;
+    // soft: Escape only, never focusSinkOutside body-clicks (those jump the page;
     // proven GDIT harvest stack: focusSinkOutside ← closeListbox ← closeAllListboxes
     // ← harvestPortalOptions, with uxInsights clickListener firing on each close).
     const soft = !!(opts && opts.soft);
@@ -372,7 +372,7 @@
   }
 
   // Phone country code: full option label (LLM + apply). +1 is shared by many
-  // NANP territories — prompts must prefer United States of America (+1).
+  // NANP territories, prompts must prefer United States of America (+1).
   const PHONE_CC_LABEL = { "1": "United States of America (+1)" };
   const USA_PHONE_CC = "United States of America (+1)";
 
@@ -405,13 +405,13 @@
     );
   }
 
-  // LLM prompts — primary way we get correct phone CC / phone number values.
+  // LLM prompts, primary way we get correct phone CC / phone number values.
   function phoneCountryCodeLlmHint(want) {
     const pref = String(want || USA_PHONE_CC).replace(/\s+/g, " ").trim() || USA_PHONE_CC;
     return (
       `Country Phone Code. Reply with ONE exact option text from the harvested list. ` +
       `Preferred: "${pref}". If the candidate uses +1 / US, you MUST pick ` +
-      `"United States of America (+1)" (or the closest United States (+1) wording) — ` +
+      `"United States of America (+1)" (or the closest United States (+1) wording)` +
       `NEVER Anguilla, Jamaica, Barbados, Canada, or any other +1 territory when ` +
       `United States of America (+1) is in the list.`
     );
@@ -428,7 +428,7 @@
   }
 
   // Put preferred dial-code first so it survives options[] caps (~120). This only
-  // affects what the LLM *sees* in the truncated options array — not the answer.
+  // affects what the LLM *sees* in the truncated options array, not the answer.
   function prioritizeUsaPhoneCcTexts(texts) {
     const list = (texts || []).filter((t) => t && !isPlaceholderOption(t));
     const usa = exactUsaPhoneCcOption(list);
@@ -446,7 +446,7 @@
   }
 
   // Exact snap of LLM/profile answer onto harvested phone-CC options.
-  // NO override to USA — if the model returned an exact list row, use it.
+  // NO override to USA, if the model returned an exact list row, use it.
   // Soft "+1" / substring matches are rejected (they falsely hit Anguilla).
   function snapExactPhoneCcAnswer(answer, options, portalOptions) {
     const texts = options && options.length
@@ -627,9 +627,9 @@
       countryRegion: expandState(a.state),
       postalCode: a.postalCode,
       phoneType: c.phoneDeviceType,
-      // Prefer full USA label — never a bare "+1" that snaps to Anguilla.
+      // Prefer full USA label, never a bare "+1" that snaps to Anguilla.
       countryPhoneCode: PHONE_CC_LABEL[cc] || (cc === "1" ? USA_PHONE_CC : undefined),
-      // National digits only (no country code) — Workday validates format separately.
+      // National digits only (no country code), Workday validates format separately.
       phoneNumber: nationalPhoneDigits(c.phone),
       // Workday My Information often uses formField-emailAddress (DraftKings proof:
       // v12 skipped LLM for free-text without want → Email APPLY no-value).
@@ -653,7 +653,7 @@
     const fullName = [nm.first, nm.last].filter(Boolean).join(" ").trim();
     const low = label.toLowerCase();
     // CrowdStrike / similar: long "Acknowledgment" Canvas Select about generative AI
-    // in interviews. MUST resolve before the disability EEO rule — the same label
+    // in interviews. MUST resolve before the disability EEO rule, the same label
     // contains "disability or other condition" and bare /disability/ would return
     // the CC-305 EEO string, which is NOT an option (live probe).
     if (isAcknowledgmentSelectLabel(low)) return "Yes";
@@ -670,13 +670,13 @@
     }
     if (/accept these terms|yes i accept/i.test(low)) return "Yes";
     if (/cover\s*letter/i.test(low) && p.coverLetter) return p.coverLetter;
-    // Email — buildValueMap keys emailAddress; label-only "Email" still needs this.
+    // Email, buildValueMap keys emailAddress; label-only "Email" still needs this.
     const contactEmail = (p.contact && p.contact.email) || p.email;
     if (/^e-?mail(\s*address)?$/i.test(low.trim()) && contactEmail) return contactEmail;
     if (/\bemail\b/i.test(low) && !/employee|employer|manager|referr/i.test(low) && contactEmail) {
       return contactEmail;
     }
-    // CC-305 / OFCCP disability self-ID ONLY — never bare /disability/ (hits
+    // CC-305 / OFCCP disability self-ID ONLY, never bare /disability/ (hits
     // Acknowledgment + reasonable-accommodation Application Questions).
     if (isDisabilitySelfIdLabel(low)) {
       return e.disability
@@ -704,7 +704,7 @@
       [/award or administration of any contracts.*defense|department of defense/i, "No"],
       [/projects.*contracts.*procurements.*involved/i, "No"],
       [/agree to receive text messages|receive text messages from/i, "Yes"],
-      // "relocating" must match — `\brelocate\b` does NOT (word boundary fails on -ing).
+      // "relocating" must match`\brelocate\b` does NOT (word boundary fails on -ing).
       [/relocat/i, "No"],
       // Workday: "Do you now or in the future require any immigration filing or visa sponsorship…"
       // Old patterns required adjacent "require sponsorship" and missed this wording.
@@ -719,7 +719,7 @@
       [/export control|citizen, national or resident of any of the following countries|iran,\s*cuba,\s*north korea|donetsk|luhansk/i, "No"],
       [/related to a current .+ employee|related to.*workday employee|related to a current workday/i, "No"],
       [/related to an employee of a customer|government official.*business interactions|direct business interactions with/i, "No"],
-      // Long acknowledgement Canvas Select — must choose Yes (Workday rejects No).
+      // Long acknowledgement Canvas Select, must choose Yes (Workday rejects No).
       [
         /please enter ["']?yes["']? if you acknowledge|acknowledge that i have read|answered them truthfully and accurately|acknowledgment|i acknowledge that i|generative ai platforms|unauthorized assistance during the interview|agree to comply with these terms/i,
         "Yes",
@@ -731,10 +731,10 @@
       [/gender/i, e.gender],
       [/sexual orientation|lgbtq/i, e.sexualOrientation || "I don't wish to answer"],
       [/what is your race|race\/ethnicity|ethnicity|\brace\b/i, e.ethnicity],
-      // Sentinel resolved against the tenant's live options in writeField —
+      // Sentinel resolved against the tenant's live options in writeField,
       // UPS/OFCCP wording varies ("I AM NOT A VETERAN", decline-to-disclose, …).
       [/veteran/i, e.veteran === true ? "__EEO_VETERAN_TRUE__" : "__EEO_VETERAN_FALSE__"],
-      // EEO disability ONLY — never match interview Acknowledgment (contains "disability").
+      // EEO disability ONLY, never match interview Acknowledgment (contains "disability").
       // Never match Voluntary "Self-Identification of Ethnicity/Gender/Veteran" (no disability).
       [
         /(?:do you have a disability|i have a disability|no,? i do not have a disability|cc-305|disability status)|(?:self.identif.*disability|disability.*self.identif)/i,
@@ -778,7 +778,7 @@
   //   "Self-Identification of Ethnicity / Gender / Veteran…"
   // Bare /self.identif/ matched those and (via isDisabilityContainer) diverted them
   // OUT of harvest→LLM→apply into fillDisabilitySelfId, which only clicks CC-305
-  // disability checkboxes — so Ethnicity/Gender/Veteran never reached the LLM and
+  // disability checkboxes, so Ethnicity/Gender/Veteran never reached the LLM and
   // Review kept "No Response".
   function isDisabilitySelfIdLabel(labelOrLow) {
     const low = String(labelOrLow || "").toLowerCase();
@@ -939,7 +939,7 @@
   }
 
   async function writeTextEl(el, value) {
-    // Do not center the page on every text field — that recreated harvest scroll thrash on APPLY.
+    // Do not center the page on every text field, that recreated harvest scroll thrash on APPLY.
     try {
       el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
     } catch {}
@@ -969,7 +969,7 @@
     return ((el && el.textContent) || "").replace(/\s+/g, " ").trim();
   }
 
-  // True empty-state rows — including "No Items." with trailing punct.
+  // True empty-state rows, including "No Items." with trailing punct.
   function isEmptyPromptRow(text) {
     const t = D.norm(text);
     return !t || /^(no items|no results)\.?$/.test(t);
@@ -1104,7 +1104,7 @@
   }
 
   // After clicking an L1 category, wait for drill-down UI (header/back) or a
-  // leaf-only list — prompt must stay open.
+  // leaf-only list, prompt must stay open.
   async function waitForSourceDrillDown(ms, ownerMulti) {
     const end = Date.now() + (ms || 4000);
     while (Date.now() < end) {
@@ -1226,7 +1226,7 @@
         await closePrompt(multi, input);
       }
     }
-    // focusSinkOutside closes keep-open lists via outside click — skip when protecting one.
+    // focusSinkOutside closes keep-open lists via outside click, skip when protecting one.
     if (!(exceptMulti && isMultiListOpen(exceptMulti))) {
       focusSinkOutside(document);
       await D.delay(80);
@@ -1257,7 +1257,7 @@
     return contains.length ? contains[0].el : null;
   }
 
-  // Canvas multi/prompt rows often ignore a plain row click — same defect as School.
+  // Canvas multi/prompt rows often ignore a plain row click, same defect as School.
   // Proven fix: pointer-click the row, then promptOption text, then any checkbox/radio.
   async function clickMultiOptionRow(el) {
     if (!el) return false;
@@ -1297,7 +1297,7 @@
   }
 
   // Type queries for virtualized Country Phone Code (full label often filters poorly).
-  // Never lead with bare "+1" — that surfaces Anguilla before United States.
+  // Never lead with bare "+1" - that surfaces Anguilla before United States.
   function multiTypeQueries(value) {
     const v = String(value || "").replace(/\s+/g, " ").trim();
     const out = [];
@@ -1331,7 +1331,7 @@
   function promptResultOptions(root) {
     return visibleOptions(root).filter((o) => {
       if (o.closest('[data-automation-id="selectedItem"], [data-automation-id="pill"]')) return false;
-      // Use isEmptyPromptRow — plain "no items" miss rejects "No Items." (period),
+      // Use isEmptyPromptRow, plain "no items" miss rejects "No Items." (period),
       // which Zillow skills typeahead shows while search is in flight.
       return !isEmptyPromptRow(o.textContent);
     });
@@ -1354,7 +1354,7 @@
   // search-result row silently did nothing and the School prompt stayed empty.
   // Fire the full pointer+mouse sequence a real user generates.
   //
-  // NEVER scroll the page to center the trigger (block:"center") — that caused
+  // NEVER scroll the page to center the trigger (block:"center"), that caused
   // the GDIT My Info harvest thrash (open source → scroll, open suffix → scroll,
   // open state → scroll, …). Portals float; triggers do not need to be centered.
   // Options inside an open list may use scroll:"nearest" only.
@@ -1370,7 +1370,7 @@
         el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
       } catch {}
     }
-    // mode falsy / "none": no scroll — open dropdowns in place.
+    // mode falsy / "none": no scroll, open dropdowns in place.
     const init = {
       bubbles: true,
       cancelable: true,
@@ -1389,13 +1389,13 @@
     }
   }
 
-  // Some Workday builds do NOT honor a fully-synthetic option click — React only
+  // Some Workday builds do NOT honor a fully-synthetic option click, React only
   // commits on a trusted click. This is the SAME class of failure already proven
   // in this repo for checkboxes (the fix there was a native input.click()). So
   // fire the synthetic pointer/mouse sequence (drives hover/focus state) AND a
   // native .click() as a backstop. The isConnected guard makes the native click a
   // no-op when the first click already committed and Workday detached the option
-  // from its portal — so this never double-toggles a working tenant.
+  // from its portal, so this never double-toggles a working tenant.
   function pointerClickWithNativeBackstop(el, opts) {
     firePointerClick(el, opts);
     try {
@@ -1404,7 +1404,7 @@
   }
 
   // ARIA listbox contract: the committed option carries aria-selected="true"
-  // (Workday sets this on the <li role="option">, NOT on hover — the highlighted
+  // (Workday sets this on the <li role="option">, NOT on hover, the highlighted
   // option is tracked via the input's aria-activedescendant instead). This is the
   // authoritative commit signal and does NOT depend on the trigger button's text
   // finalizing, which some tenants only do AFTER the popup closes.
@@ -1550,7 +1550,7 @@
     }
     const raw = String(answer).replace(/\s+/g, " ").trim();
     if (!raw || isPlaceholderOption(raw)) return null;
-    // Encoded forms: "No (value=…)" / "value=…" / "id=…" — try once on original.
+    // Encoded forms: "No (value=…)" / "value=…" / "id=…" - try once on original.
     const mVal = raw.match(/(?:data-)?value\s*[=:]\s*([^\s)|,]+)/i);
     if (mVal) {
       const hit = portalOptions.find((o) => D.norm(o.value) === D.norm(mVal[1]));
@@ -1592,7 +1592,7 @@
 
   // Wait until a single-select portal has stable [role=option] rows.
   // waitForOptionsSettled uses multi-select row readers and can miss listbox portals.
-  // Small AQ lists (Yes/No, Man/Woman, …) settle in tens of ms — keep settle/poll short.
+  // Small AQ lists (Yes/No, Man/Woman, …) settle in tens of ms, keep settle/poll short.
   async function waitForPortalOptionRows(popup, opts) {
     const timeout = (opts && opts.timeout) || 1600;
     const settleMs = opts && opts.settleMs != null ? opts.settleMs : 60;
@@ -1647,7 +1647,7 @@
 
   // Universal Workday single-select path (ALL Canvas listbox dropdowns):
   // ONE open → read/snap → pointer-click → close.
-  // Never invent Yes/No / acknowledgment expansions here — callers must pass
+  // Never invent Yes/No / acknowledgment expansions here, callers must pass
   // an LLM (or profile) answer that snaps onto harvested options.
   //
   // CRITICAL: do NOT harvestPortalOptions (open→close) then openAndPickPortal
@@ -1657,7 +1657,7 @@
   async function applyListboxPortal(trigger, answer, prePortalOptions) {
     if (!trigger || answer == null || answer === "") return false;
 
-    // Already a snapped {id,value,text} from phase-2 harvest — open once and click.
+    // Already a snapped {id,value,text} from phase-2 harvest, open once and click.
     if (typeof answer === "object" && !Array.isArray(answer) && (answer.id || answer.value || answer.text)) {
       return await openAndPickPortal(trigger, answer);
     }
@@ -1677,7 +1677,7 @@
       } catch {}
       return false;
     }
-    // openListboxForOptions already settled — only re-read if snap still missing.
+    // openListboxForOptions already settled, only re-read if snap still missing.
     let liveRows = readPortalOptionRows(popup);
     if (!choice) choice = resolvePortalChoice(answer, liveRows);
     if (!choice && pre.length) choice = resolvePortalChoice(answer, pre);
@@ -1779,7 +1779,7 @@
     const cur = D.norm(selectDisplayValue(trigger) || triggerCurrentValue(trigger));
     if (cur && valueMatchesWant(cur, want) && !markedInvalid) return true;
 
-    // Force a clean open — stale aria-expanded + empty portal was the GDIT miss.
+    // Force a clean open, stale aria-expanded + empty portal was the GDIT miss.
     if (listboxIsOpen(trigger) || openedListbox(trigger)) {
       await closeListbox(trigger, { soft: true });
       await D.delay(40);
@@ -1791,7 +1791,7 @@
       } catch {}
       return false;
     }
-    // openListboxForOptions already settled — find immediately; brief poll on remount.
+    // openListboxForOptions already settled, find immediately; brief poll on remount.
     let match = findPortalOptionEl(popup, choice);
     for (let i = 0; !match && i < 6; i++) {
       await D.delay(40);
@@ -1824,7 +1824,7 @@
     for (let i = 0; i < 8 && !committed(); i++) await D.delay(40);
     if (!committed()) await typeAheadCommit(trigger, chosen, committed);
     await closeListbox(trigger);
-    // Some builds finalize the trigger text only after the popup closes — settle
+    // Some builds finalize the trigger text only after the popup closes, settle
     // then re-check before declaring failure.
     for (let i = 0; i < 4 && !committed(); i++) await D.delay(60);
     if (committed()) return true;
@@ -1917,7 +1917,7 @@
   }
 
   // Workday Canvas Select (CrowdStrike Application Questions 2 of 2, proven DOM):
-  // Closed: <button aria-haspopup=listbox>Select One</button> — NO options in DOM.
+  // Closed: <button aria-haspopup=listbox>Select One</button>, NO options in DOM.
   // Open:   button gets aria-expanded=true aria-controls="<id>", and options render
   // in a body-level Popper portal OUTSIDE #root / formField:
   //   <div data-behavior-click-outside-close data-popper-placement>
@@ -1968,7 +1968,7 @@
   // Open a Canvas / Workday listbox and wait until the portal options exist.
   // Returns the popup root (portal or listbox) or null.
   // opts.fast: shorter open/settle for typical small AQ lists (Yes/No, gender, …).
-  // Callers must NOT re-settle after this returns — options are already stable.
+  // Callers must NOT re-settle after this returns, options are already stable.
   async function openListboxForOptions(btn, opts) {
     if (!btn) return null;
     opts = opts || {};
@@ -1980,7 +1980,7 @@
       poll: opts.poll != null ? opts.poll : 40,
       minCount: opts.minCount != null ? opts.minCount : 1,
     };
-    // Already open with real options — do not pointer-click again (toggles closed).
+    // Already open with real options, do not pointer-click again (toggles closed).
     // GDIT proof: after harvest Escape, aria-expanded can stay true while the
     // portal is EMPTY. Returning that empty root made openAndPickPortal miss.
     if (listboxIsOpen(btn)) {
@@ -2035,7 +2035,7 @@
   // Close a single-select listbox opened by `btn` and keep it closed. Leaving a
   // popup open corrupts later interactions (a subsequent open-toggle would CLOSE
   // it, and option harvesting would read nothing).
-  // soft: Escape + preventScroll focus only — no body clicks (harvest path).
+  // soft: Escape + preventScroll focus only, no body clicks (harvest path).
   async function closeListbox(btn, opts) {
     if (!btn) return;
     const soft = !!(opts && opts.soft);
@@ -2117,7 +2117,7 @@
   // hierarchical-prompt search only when Enter fires while the search input holds
   // focus, so focus is asserted before the keys are sent.
   //
-  // ALWAYS preventScroll — focus() without it scrolled each harvest field into
+  // ALWAYS preventScroll, focus() without it scrolled each harvest field into
   // view on Escape close (source top → state mid → phone bottom = up/down thrash).
   function pressKey(el, key, code, keyCode) {
     try {
@@ -2139,7 +2139,7 @@
   // non-null relatedTarget) fires - a bare input.blur() (relatedTarget=null) is
   // ignored by the widget.
   //
-  // Body pointer/click events are OPTIONAL. Harvest must NOT fire them — GDIT
+  // Body pointer/click events are OPTIONAL. Harvest must NOT fire them, GDIT
   // console proved: focusSinkOutside body click → uxInsights clickListener →
   // visible page jump on every listbox close during HARVEST.
   function focusSinkOutside(doc, opts) {
@@ -2215,7 +2215,7 @@
       return true;
     }
 
-    // Keep-open path: list already scrolled near USA — click without reopen/reset.
+    // Keep-open path: list already scrolled near USA, click without reopen/reset.
     let input = alreadyOpen ? multi.querySelector("input") : null;
     if (!input) {
       input = await openMultiPrompt(multi);
@@ -2292,14 +2292,14 @@
       return ok;
     };
 
-    // Keep-open harvest left the viewport near the bottom — try click first
+    // Keep-open harvest left the viewport near the bottom, try click first
     // before any type/scroll that would remount from the top.
     if (alreadyOpen && (await tryClickWant(null, "keep-open-mounted"))) {
       await closePrompt(multi, input);
       return true;
     }
 
-    // Allstate Country Phone Code: type-filter is proven broken in AA logs —
+    // Allstate Country Phone Code: type-filter is proven broken in AA logs,
     // typing "United States…" leaves Afghanistan…Anguilla mounted, then Enter
     // clears the list (mounted:[]). Skip that waste; scroll-until-found works.
     // Other multiselects still try a short type path first.
@@ -2328,7 +2328,7 @@
     }
 
     // Scroll until the target row mounts, then click immediately (do NOT
-    // reset scrollTop to 0 first — that unmounts USA on a 249-row list).
+    // reset scrollTop to 0 first, that unmounts USA on a 249-row list).
     // Keep-open path: do not clear the search input (would jump the list).
     if (!alreadyOpen) {
       try {
@@ -2343,7 +2343,7 @@
     }
     const scroller = multiListScroller(multi);
     if (scroller) {
-      // Keep-open at bottom: USA may be just above the fold — scroll up a little first.
+      // Keep-open at bottom: USA may be just above the fold, scroll up a little first.
       if (alreadyOpen && (scroller.scrollTop || 0) > 0) {
         for (let i = 0; i < 12; i++) {
           throwIfAborted();
@@ -2393,7 +2393,7 @@
 
   // ── "How Did You Hear About Us?" (source) ─────────────────────────────────
   //
-  // ALL Workday tenants — design path only:
+  // ALL Workday tenants, design path only:
   //   open → harvest visible options → LLM returns exact option text → select it.
   // Hierarchical (2-step):
   //   L1 harvest → LLM picks category (e.g. Job Boards for LinkedIn) → KEEP OPEN
@@ -2474,7 +2474,7 @@
         ? `For LinkedIn, prefer "Social Media" when that folder exists (LinkedIn is often NOT under Job Boards). `
         : "") +
       `Otherwise pick the folder that would contain professional job boards / career platforms ` +
-      `(Indeed, Glassdoor, ZipRecruiter, Monster, Dice, LinkedIn, etc.) — often ` +
+      `(Indeed, Glassdoor, ZipRecruiter, Monster, Dice, LinkedIn, etc.), often ` +
       `"Job Boards", "Job Platforms", or "Social Media". Return exact category text from the list.`
     );
   }
@@ -2581,7 +2581,7 @@
     const portalHtml = buildPortalOptionsHtml(cid, label, portals, "");
     // Hint already carries preferred + peer guidance; do not force LinkedIn-only wording.
     const fullLabel = hint
-      ? `${label} — ${hint} Reply with ONE exact option text from the list.`
+      ? `${label}, ${hint} Reply with ONE exact option text from the list.`
       : label;
     try {
       WD.log(`source LLM ask: want='${want}' options=${texts.length}`, texts.slice(0, 15));
@@ -2622,7 +2622,7 @@
     }
   }
 
-  // Click a SOURCE list row. Prefer promptOption text — checkbox click can fail
+  // Click a SOURCE list row. Prefer promptOption text, checkbox click can fail
   // to commit single-select source leaves (log: Website / Direct Source no commit).
   async function clickSourceListOption(el) {
     if (!el) return false;
@@ -2642,7 +2642,7 @@
     return true;
   }
 
-  // Drill into an L1/L2 folder (chevron category) — never checkbox.
+  // Drill into an L1/L2 folder (chevron category), never checkbox.
   async function clickSourceFolder(el) {
     if (!el) return false;
     const row =
@@ -2667,7 +2667,7 @@
 
   async function harvestSourceLiveRows(multi) {
     await waitForOptionsSettled({ timeout: 3500, settleMs: 280, ownerMulti: multi });
-    // Short lists (Allstate L1=4 folders, Social Media L2=7) fit the viewport —
+    // Short lists (Allstate L1=4 folders, Social Media L2=7) fit the viewport,
     // skip scrollCollect. Long virtualized L2 still needs a full scroll pass.
     if (!multiListNeedsScroll(multi)) {
       return readMultiOptionRows(activeMultiListRoot(multi));
@@ -2731,7 +2731,7 @@
   }
 
   // Re-open, select L1 category, keep prompt open for L2 harvest.
-  // L1 is usually a short non-virtualized folder list (Allstate: 4 categories) —
+  // L1 is usually a short non-virtualized folder list (Allstate: 4 categories),
   // do NOT full scrollCollect again (that re-did HARVEST work every run).
   async function applySourceL1KeepOpen(multi, category) {
     const input = multi && multi.querySelector("input");
@@ -2740,7 +2740,7 @@
     await waitForOptionsSettled({ timeout: 3000, settleMs: 220, ownerMulti: multi, minCount: 1 });
     let folderEl = findMultiOptionByText(category, multi);
     if (!folderEl) {
-      // Rare: long L1 list — only then scroll-hunt.
+      // Rare: long L1 list, only then scroll-hunt.
       await harvestSourceLiveRows(multi);
       folderEl = findMultiOptionByText(category, multi);
     }
@@ -2970,7 +2970,7 @@
   // Proven on-tenant (School "University of Wollongong", live screenshots):
   //   1. Type the school name and KEEP it in the input.
   //   2. WAIT until "Search Results (N)" appears (list may briefly show "No Items").
-  //   3. Press Enter WHILE the typed text is still present — that commits a unique
+  //   3. Press Enter WHILE the typed text is still present, that commits a unique
   //      match, or highlights the best of N>1 matches.
   //   4. If still not committed (N>1), press Enter AGAIN with the text still there.
   //   5. Last resort: click the EXACT option (pickOption prefers exact text so
@@ -2978,7 +2978,7 @@
   //
   // Anti-pattern that FAILED on this tenant: Enter before matches appear, or
   // clearing the input after matches appear then pressing Enter on an empty
-  // "Search" placeholder — leaves Search Results open with no selection (and
+  // "Search" placeholder, leaves Search Results open with no selection (and
   // that open prompt then poisons Degree openAndPick for the same panel).
   async function fillSearchPrompt(multi, value) {
     const want = D.norm(value);
@@ -2989,7 +2989,7 @@
     const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
 
     for (let attempt = 0; attempt < 2; attempt++) {
-      // 1. Open ONCE. Never click the opener/input again after this — a click on
+      // 1. Open ONCE. Never click the opener/input again after this, a click on
       //    an already-open prompt re-runs it and drops the highlighted row (that
       //    is what produced the "input cleared, Search Results still open" state).
       D.clickEl(opener);
@@ -3011,7 +3011,7 @@
       await waitForFilteredOption(value, 5000);
       await D.delay(220);
 
-      // 4. Enter, then Enter again — focus PINNED to the input the whole time.
+      // 4. Enter, then Enter again, focus PINNED to the input the whole time.
       //    pressKey re-focuses the input itself, and nothing between the two
       //    presses clicks, blurs, clears or retypes. Enter #1 commits a unique
       //    match / highlights the best of N; Enter #2 confirms the highlight.
@@ -3025,7 +3025,7 @@
         return true;
       }
 
-      // 5. Fallback: pointer-click the exact result row (full pointer sequence —
+      // 5. Fallback: pointer-click the exact result row (full pointer sequence,
       //    plain click events are ignored by Canvas prompt rows).
       const match = pickResultOption(value);
       if (match) {
@@ -3049,15 +3049,15 @@
     return isChosen();
   }
 
-  // ── Skills ("Type to Add Skills") — multi typeahead, empty until you type ──
+  // ── Skills ("Type to Add Skills"), multi typeahead, empty until you type ──
   //
   // Proven failure (Zillow 2026-08-06 eeo-llm-v4 logs): fillMultiselect typed
-  // "Python" then looked for mounted rows (mounted:[]) — skills search does NOT
+  // "Python" then looked for mounted rows (mounted:[]), skills search does NOT
   // populate until Enter is pressed IN the search input. Closed-list harvest also
   // returns options:0 (nothing to list before typing).
   //
   // Fiserv 2026-08-06 AA: search mounted related rows but EVERY token ok:false
-  // chips:0. Root cause: focus input + firePointerClick only — Canvas multi needs
+  // chips:0. Root cause: focus input + firePointerClick only, Canvas multi needs
   // clickMultiOptionRow. LLM prompt asked for ALL skills; cap was 40.
   // Workflow: type → related results → clickMultiOptionRow(best) → verify chip.
   const SKILLS_MAX = 10;
@@ -3101,7 +3101,7 @@
     return promptSelectionNodes(multi).length;
   }
 
-  // Relatedness — NEVER bare w.includes(t) (Fiserv: "fastapi".includes("fasta"),
+  // Relatedness, NEVER bare w.includes(t) (Fiserv: "fastapi".includes("fasta"),
   // "go"→Go-Carts). Exact / prefix / token-boundary only.
   function skillTextRelated(rowText, token) {
     const t = D.norm(rowText);
@@ -3176,12 +3176,12 @@
   //
   // US LBM 2026-08-07 skills-diag-v21 proof: the skills typeahead commits the
   // pill from the search itself (chips=1 BEFORE any click), and its result rows
-  // are TOGGLES — so clickMultiOptionRow's extra clicks (row + promptOption +
+  // are TOGGLES, so clickMultiOptionRow's extra clicks (row + promptOption +
   // checkbox) re-clicked the already-selected row and fired PILL-REMOVED twice,
   // ending at chips=0. Fix: if the skill is already committed, DO NOT click; if
   // not, click ONE target and stop the instant a chip appears (never a 2nd click
   // on a selected row). "Committed" = chip count grew past chipsBefore or the
-  // exact token/row text is chosen — never promptChosen(multi,"") (that is true
+  // exact token/row text is chosen, never promptChosen(multi,"") (that is true
   // whenever ANY earlier skill is present and would false-positive later tokens).
   async function commitSkillRow(multi, match, token, chipsBefore) {
     const added = () =>
@@ -3201,7 +3201,7 @@
     for (const t of targets) {
       firePointerClick(t, { scroll: "nearest" });
       // Verify with a real wait so a slow async commit is seen BEFORE we would
-      // click another target — a 2nd click on a now-selected row toggles it off.
+      // click another target, a 2nd click on a now-selected row toggles it off.
       const end = Date.now() + 700;
       while (Date.now() < end) {
         if (added()) return true;
@@ -3281,7 +3281,7 @@
     }
 
     WD._skillsStage = "click-row:" + token.slice(0, 24) + " chips=" + multiChipCount(multi);
-    // Idempotent select — never re-click a selected (toggle) row.
+    // Idempotent select, never re-click a selected (toggle) row.
     let ok = await commitSkillRow(multi, match, token, chipsBefore);
     WD._skillsStage = "post-click-verify:" + token.slice(0, 24) + " chips=" + multiChipCount(multi);
 
@@ -3315,7 +3315,7 @@
     // DIAG (v21): the reported bug is "chip is added then automatically
     // deselected". Watch the multiselect subtree for pill REMOVALS and log the
     // current WD._skillsStage marker (set in fillOneSkillToken) so the console
-    // proves EXACTLY which sub-step deletes a committed chip — no guessing.
+    // proves EXACTLY which sub-step deletes a committed chip, no guessing.
     const chipTexts = () =>
       promptSelectionNodes(multi).map((n) => (n.textContent || "").replace(/\s+/g, " ").trim().slice(0, 32));
     const isPill = (n) =>
@@ -3409,7 +3409,7 @@
     if (!input) return;
     // Prefer native HTMLElement.click on the input so React's delegated
     // onChange sees the event (label pointer-only can flip .checked without
-    // updating Workday's model — Fiserv military group proof).
+    // updating Workday's model, Fiserv military group proof).
     try {
       input.focus({ preventScroll: true });
     } catch {}
@@ -3436,7 +3436,7 @@
 
   function notifyCheckboxReact(input, opts) {
     if (!input) return;
-    // Do NOT dispatch a bubbling click here after setNativeChecked — the
+    // Do NOT dispatch a bubbling click here after setNativeChecked, the
     // checkbox's default click action toggles .checked and undoes the setter.
     if (opts && opts.withClick) {
       try {
@@ -3458,7 +3458,7 @@
   //   v18: applyCheckboxGroup checked:true ok:true, then Save still required
   // Root cause: label pointer-click flips native .checked WITHOUT React's
   // onChange (React maps checkbox onChange → click). Returning on .checked
-  // alone is a phantom success — same class as text "visible but model empty".
+  // alone is a phantom success, same class as text "visible but model empty".
   //
   // Fix: rising-edge native input.click() so React hears click with checked=true.
   async function commitCheckable(input, wantChecked) {
@@ -3497,7 +3497,7 @@
         firePointerClick(lbl || input, { scroll: "nearest" });
         method = "label-then-rising";
         await D.delay(50);
-        // Label may have phantom-checked without React — force rising edge.
+        // Label may have phantom-checked without React, force rising edge.
         if (input.checked) {
           setNativeChecked(input, false);
           await D.delay(20);
@@ -3783,7 +3783,7 @@
   async function writeField(container, value, label) {
     if (value == null || value === "") return null;
     let raw = String(value);
-    // Phone Number: national digits only — never write "+1…" into this field.
+    // Phone Number: national digits only, never write "+1…" into this field.
     try {
       const aid = (container.getAttribute && container.getAttribute("data-automation-id")) || "";
       if (/formField-phoneNumber\b/i.test(aid) || isPhoneNumberField("", label)) {
@@ -3824,7 +3824,7 @@
     const listbox = listboxTrigger(container);
     if (listbox) {
       // ALL Workday Canvas listbox dropdowns: portal harvest → snap → pointer pick.
-      // Do not expand Yes/No / acknowledgment / EEO strings here — that raced the
+      // Do not expand Yes/No / acknowledgment / EEO strings here, that raced the
       // LLM portal path and false-matched (e.g. disability sentence → "No").
       const ok = await applyListboxPortal(listbox, value);
       try {
@@ -3944,17 +3944,17 @@
   function isDisabilityContainer(container, label) {
     const low = (label || "").toLowerCase();
     // CrowdStrike Application Questions "Acknowledgment" embeds
-    // "If I have a disability or other condition…" — that is a listbox about
+    // "If I have a disability or other condition…" - that is a listbox about
     // generative-AI interview rules, NOT the CC-305 disability self-ID.
     // Matching /disability/ here made fillStep `continue` before resolveByLabel
     // AND before LLM (proven: field stayed Select One; raw pointer-click worked).
     if (isAcknowledgmentSelectLabel(low) || isReasonableAccommodationLabel(low)) return false;
     // Demographics "Self-Identification of Ethnicity/Gender/Veteran" must go through
-    // harvest → LLM → apply — never the hardcoded disability checkbox path.
+    // harvest → LLM → apply, never the hardcoded disability checkbox path.
     if (/self.identif/i.test(low) && !/disability/i.test(low)) return false;
     if (/please check one of the boxes|cc-305/i.test(low)) return true;
     if (/self.identif/i.test(low) && /disability/i.test(low)) return true;
-    // Require disability self-ID phrasing — bare "disability" alone is too broad.
+    // Require disability self-ID phrasing, bare "disability" alone is too broad.
     if (isDisabilitySelfIdLabel(low)) return true;
     const inputs = [...container.querySelectorAll('input[type="radio"], input[type="checkbox"]')];
     if (inputs.length < 2 || inputs.length > 5) return false;
@@ -3984,7 +3984,7 @@
   // resolveByLabel, so it routes them through the fillMultiselect/LLM path. That
   // (a) DOUBLE-fills Field of Study (fillStep + fillExperienceExtras both open it)
   // and (b) drives School through fillMultiselect, which never commits the prompt
-  // and leaves it empty+required — the two exact symptoms reported.
+  // and leaves it empty+required, the two exact symptoms reported.
   function inExperiencePanel(container) {
     const g = container.closest('[role="group"][aria-labelledby$="-panel"]');
     if (!g) return false;
@@ -4035,7 +4035,7 @@
   }
 
   // Profile fact to hint the LLM (country, phone type, how-did-you-hear, …).
-  // Screening Yes/No is NOT invented here — the model picks from live options.
+  // Screening Yes/No is NOT invented here, the model picks from live options.
   function profileWantForField(key, label, profile, valueByKey) {
     if (key && Object.prototype.hasOwnProperty.call(valueByKey, key) && valueByKey[key] != null && valueByKey[key] !== "") {
       return String(valueByKey[key]);
@@ -4074,7 +4074,7 @@
 
   // A REQUIRED, binary Yes/No control asking the candidate to OPT IN to being
   // contacted (marketing/telemarketing calls, texts, SMS, email). The candidate
-  // is never required to consent — only required to answer — so when the model
+  // is never required to consent, only required to answer, so when the model
   // abstains this is the one class of dropped option we can safely default to
   // "No" (decline). Scoped tightly to explicit consent-to-contact wording so we
   // never invent answers to qualification / eligibility questions.
@@ -4117,7 +4117,7 @@
         }
       }
       // Phone CC: always ask LLM when options were harvested (exact option text).
-      // Phone Number: use profile digits when present — no LLM round-trip needed
+      // Phone Number: use profile digits when present, no LLM round-trip needed
       // (DraftKings proof: LLM batch was ~5.4s for mostly profile text fields).
       if (phoneNum) {
         const digits = nationalPhoneDigits(item.want);
@@ -4155,11 +4155,11 @@
           needLlm.push(item);
           continue;
         }
-        // Empty optional free-text — do not spend an LLM slot.
+        // Empty optional free-text, do not spend an LLM slot.
         continue;
       }
       if (item.want && item.portalOptions && item.portalOptions.length) {
-        // Exact match only for pre-LLM want snap — soft resolvePortalChoice can
+        // Exact match only for pre-LLM want snap, soft resolvePortalChoice can
         // mis-pick (e.g. bare "+1" → Anguilla). Hierarchical source L1 never snaps want.
         if (item.sourceHierarchical) {
           if (exactOption(item.want, item.options)) {
@@ -4214,7 +4214,7 @@
           const phoneCc = isCountryPhoneCodeField(item.key, item.label) || /country phone code/i.test(item.label || "");
           const phoneNum = isPhoneNumberField(item.key, item.label) || (/phone number/i.test(item.label || "") && !(item.options && item.options.length));
           if (phoneCc) {
-            // Exact LLM option text only — never force USA over the model.
+            // Exact LLM option text only, never force USA over the model.
             const text = snapExactPhoneCcAnswer(raw, item.options, item.portalOptions);
             if (text) {
               const hit =
@@ -4225,7 +4225,7 @@
             continue;
           }
           if (phoneNum) {
-            // Format cleanup only (strip +1 / punctuation) — not a different answer.
+            // Format cleanup only (strip +1 / punctuation), not a different answer.
             values[item.cid] = nationalPhoneDigits(raw) || nationalPhoneDigits(item.want);
             continue;
           }
@@ -4292,7 +4292,7 @@
       }
       // How Did You Hear (flat or any source with a harvested list): if the
       // model left this cid empty, pick LinkedIn / peer board from the SAME
-      // list that was sent to the LLM — one-pass fill, no second WD_RUN.
+      // list that was sent to the LLM, one-pass fill, no second WD_RUN.
       if (
         !values[item.cid] &&
         item.isSource &&
@@ -4442,7 +4442,7 @@
     // 2) Stabilize count. Proven Zillow Voluntary Disclosures failure
     // (2026-08-06 listbox-source-v2 logs): fillStep START saw containerCount:1
     // (only acceptTermsAndAgreements / Acknowledged), then ~3s later pre-save
-    // detectStep reported fieldCount:4 — Ethnicity / Gender / Veteran had mounted
+    // detectStep reported fieldCount:4, Ethnicity / Gender / Veteran had mounted
     // AFTER the collect snapshot, so Review kept "No Response". Exiting on the
     // first formField was too early.
     let last = -1;
@@ -4754,7 +4754,7 @@
         t.portalOptions = [];
         t.portalHtml = "";
         t.llmLabel =
-          `${t.label} — Type-to-add skills multi-select. There is NO pre-harvested option list. ` +
+          `${t.label}, Type-to-add skills multi-select. There is NO pre-harvested option list. ` +
           `Return ONLY the 7–10 skills MOST relevant to THIS job from the candidate profile ` +
           `(languages/frameworks named in the job first). Do NOT dump the full skill inventory. ` +
           `Put each skill in option_values (one per entry) and a comma-separated copy in value.`;
@@ -4781,8 +4781,8 @@
         t.portalOptions = l1.portals;
         t.kind = "select";
         t.llmLabel = t.hierarchical
-          ? `${t.label} (category) — ${sourceL1CategoryHint(t.want)}`
-          : `${t.label} — ${sourceFlatHint(t.want)}`;
+          ? `${t.label} (category), ${sourceL1CategoryHint(t.want)}`
+          : `${t.label}, ${sourceFlatHint(t.want)}`;
         decisions.harvest += 1;
         harvestSummary.push({
           key: t.key,
@@ -4823,7 +4823,7 @@
             kind: t.kind,
             keepOpen: true,
           });
-          // Do NOT closeAllListboxes — phone list must stay open for APPLY.
+          // Do NOT closeAllListboxes, phone list must stay open for APPLY.
           return;
         }
 
@@ -4846,7 +4846,7 @@
           }
           if (!(harvested.options && harvested.options.length)) {
             try {
-              WD.warn("flat listbox harvest: 0 options — retrying", t.label || t.key);
+              WD.warn("flat listbox harvest: 0 options, retrying", t.label || t.key);
             } catch {}
             await D.delay(80);
             try {
@@ -4863,7 +4863,7 @@
           t.listboxId = harvested.listboxId || null;
           t.hierarchical = false;
           if (t.isSource) {
-            t.llmLabel = `${t.label} — ${sourceFlatHint(t.want)} Return the exact option text from the list.`;
+            t.llmLabel = `${t.label}, ${sourceFlatHint(t.want)} Return the exact option text from the list.`;
           } else {
             t.llmLabel = t.label;
           }
@@ -4894,7 +4894,7 @@
           return;
         }
 
-        // Checkbox / radio / multi — classifyControl harvests those widgets.
+        // Checkbox / radio / multi, classifyControl harvests those widgets.
         let info = null;
         try {
           info = await classifyControl(t.container);
@@ -4930,7 +4930,7 @@
         });
         return;
       }
-      // Text / textarea / tel / email — NEVER open a dropdown. classifyControl can
+      // Text / textarea / tel / email, NEVER open a dropdown. classifyControl can
       // hit listboxTrigger on mis-scoped containers; keep this path DOM-only.
       const ta = t.container.querySelector("textarea");
       const text = t.container.querySelector(
@@ -5113,7 +5113,7 @@
       if (t.phoneCcApplied == null) await applyPhoneCcTarget(t);
     }
 
-    // ── Phase 3b: source L2 (hierarchical only) — keep-open harvest → small LLM ──
+    // ── Phase 3b: source L2 (hierarchical only), keep-open harvest → small LLM ──
     const baselineKeys = visibleFormFieldKeys();
     for (const t of targets) {
       throwIfAborted();
@@ -5145,7 +5145,7 @@
       const leafItems = [
         {
           cid: leafCid,
-          label: `${t.label} (specific source) — ${sourceL2LeafHint(t.want)}`,
+          label: `${t.label} (specific source), ${sourceL2LeafHint(t.want)}`,
           kind: "select",
           required: true,
           options: l2.texts,
@@ -5202,7 +5202,7 @@
         let ok = !!t.sourceApplied;
         const trigger = listboxTrigger(t.container);
         // Zillow (and some tenants): How Did You Hear is a single listbox, NOT
-        // multiSelectContainer. Inventory logged kind:"listbox" — the old
+        // multiSelectContainer. Inventory logged kind:"listbox" - the old
         // `if (!ok && t.multi)` gate skipped APPLY entirely (ok:false with no pick log).
         if (!ok && t.multi) {
           // Flat multi source: LLM pick first, then local peer boards from the harvested
@@ -5415,7 +5415,7 @@
     // committed() latch cannot catch this because a sibling's later portal open
     // resets an already-committed field AFTER its own APPLY returned. Now that the
     // whole pass is done (all portals closed, every trigger settled), re-read each
-    // listbox trigger and re-pick any that did not durably stick — so all
+    // listbox trigger and re-pick any that did not durably stick, so all
     // listboxes are filled in THIS first pass instead of depending on the rescan.
     for (const rc of listboxApplied) {
       throwIfAborted();
@@ -5468,7 +5468,7 @@
     await fillDisabilitySelfId(profile, rep);
   }
 
-  // (recheckUncommittedOptionFields removed — one-pass harvest→LLM→apply only)
+  // (recheckUncommittedOptionFields removed, one-pass harvest→LLM→apply only)
 
   // ── My Experience: repeating Work Experience + Education panels ──────────────
   // Panels do not exist until "Add" is clicked, so the generic formField pass
@@ -5617,7 +5617,7 @@
     if (value == null || value === "") return;
     const c = panelField(root, key);
     if (!c) return;
-    // Already committed — do not rewrite (recovery must not re-type work/edu text).
+    // Already committed, do not rewrite (recovery must not re-type work/edu text).
     if (fieldHasCommittedValue(c)) {
       record(rep, label, true);
       return;
@@ -5716,14 +5716,14 @@
     // Live DOM evidence (Siemens Healthineers applyFlowMyExpPage): the School
     // wrapper is data-automation-id="formField-school" (NOT "formField-schoolName").
     // Looking up schoolName returned null, so the engine never typed a university
-    // name at all — while Degree / Field of Study / GPA (correct keys) filled fine.
+    // name at all, while Degree / Field of Study / GPA (correct keys) filled fine.
     // Some older tenants use schoolName; try both.
     if (entry.school) {
       const schoolFF = panelField(root, "school") || panelField(root, "schoolName");
       if (schoolFF) {
         const schoolMulti = schoolFF.querySelector('[data-automation-id="multiSelectContainer"]');
         if (schoolMulti && promptChosen(schoolMulti, "")) {
-          record(rep, `Edu ${n} School`, true); // already committed — do not re-open
+          record(rep, `Edu ${n} School`, true); // already committed, do not re-open
         } else {
           record(
             rep,
@@ -5825,7 +5825,7 @@
   // Proven CrowdStrike flow: pointer-open → read portal option id/value/text +
   // portal HTML → close. Returns { options:[{id,value,text}], portalHtml, listboxId }.
   //
-  // Soft close only (Escape, no body-click). Do NOT force window.scrollTo — if the
+  // Soft close only (Escape, no body-click). Do NOT force window.scrollTo, if the
   // page jumps, that means this open/close harvest path is the wrong behavior to
   // remove, not something to mask.
   async function harvestPortalOptions(btn) {
@@ -5841,7 +5841,7 @@
       } catch {}
       return { options: [], portalHtml: "", listboxId: null };
     }
-    // openListboxForOptions already settled options — read once (no second settle).
+    // openListboxForOptions already settled options, read once (no second settle).
     let options = readPortalOptionRows(popup);
     if (!options.length) {
       options = await waitForPortalOptionRows(popup, { timeout: 600, settleMs: 40, poll: 40, minCount: 1 });
@@ -5933,13 +5933,13 @@
 
   // Deterministic LAST RESORT when the LLM round-trip returns nothing
   // (API error, timeout, truncated JSON, or needs_user). Never used before the
-  // LLM when a harvested option list exists — the model must pick live option text.
+  // LLM when a harvested option list exists, the model must pick live option text.
   function localScreeningPick(label, profile, options) {
     if (!options || !options.length) return null;
     const pick = (w) => snapToHarvestedOption(w, options);
     const e = (profile && profile.eeo) || {};
     const low = (label || "").toLowerCase();
-    // Profile facts only — map onto harvested options, do not invent free text.
+    // Profile facts only, map onto harvested options, do not invent free text.
     if (/hispanic or latino/.test(low) && e.hispanicLatino != null) return pick(e.hispanicLatino ? "Yes" : "No");
     if (/\bgender\b|\bsex\b/.test(low) && e.gender) return pick(e.gender);
     if (/sexual orientation|lgbtq/.test(low)) return pick(e.sexualOrientation || "I don't wish to answer");
@@ -5972,7 +5972,7 @@
 
   // Round-trip to the side panel (→ backend LLM). Sends portal option DOM
   // (data-af-options-for + id/data-value) so the model returns an exact option
-  // id, data-value, or text — matching the proven console harvest flow.
+  // id, data-value, or text, matching the proven console harvest flow.
   function requestOptionMatches(items) {
     return new Promise((resolve) => {
       let done = false;
@@ -6098,19 +6098,19 @@
     }
     const btn = listboxTrigger(container);
     if (btn) {
-      // harvestPortalOptions already closeAllListboxes — do not nest another full
+      // harvestPortalOptions already closeAllListboxes, do not nest another full
       // close pass before every open (that amplified Escape/focus churn on GDIT).
       let harvested = await harvestPortalOptions(btn);
       if (!(harvested.options && harvested.options.length)) {
         try {
-          WD.warn("classifyControl: 0 portal options — retrying", fieldLabel(container));
+          WD.warn("classifyControl: 0 portal options, retrying", fieldLabel(container));
         } catch {}
         await D.delay(80);
         harvested = await harvestPortalOptions(btn);
       }
       const label = fieldLabel(container);
       let options = (harvested.options || []).map((o) => o.text);
-      // Do not third-open on "implausible" — that caused extra scroll/open cycles.
+      // Do not third-open on "implausible" - that caused extra scroll/open cycles.
       // Prefer empty options over thrashing the page; LLM / APPLY can recover.
       if (!optionsPlausibleForLabel(label, options) && options.length) {
         try {
@@ -6196,7 +6196,7 @@
         rep.unmatched.push({ key: t.key, label: t.label });
         continue;
       }
-      // Multi + known want (Country Phone Code): skip harvest/LLM entirely —
+      // Multi + known want (Country Phone Code): skip harvest/LLM entirely,
       // fillMultiselect type-to-select is authoritative. Contaminated harvest
       // previously returned LinkedIn from the source field.
       const multiEarly =
@@ -6293,7 +6293,7 @@
           }
         }
       }
-      // Local profile want snap BEFORE LLM — State/California, phone CC, etc.
+      // Local profile want snap BEFORE LLM, State/California, phone CC, etc.
       if (item.want && item.portalOptions && item.portalOptions.length) {
         const fromWant = resolvePortalChoice(item.want, item.portalOptions);
         if (fromWant) {
@@ -6309,7 +6309,7 @@
         }
       }
       // Multi with known want but empty/contaminated harvest (e.g. LinkedIn leaked
-      // into Country Phone Code) — apply want via fillMultiselect type path.
+      // into Country Phone Code), apply want via fillMultiselect type path.
       if (item.want) {
         const meta = byCid.get(item.cid);
         if (meta && meta.container && meta.container.querySelector('[data-automation-id="multiSelectContainer"]')) {
@@ -6365,7 +6365,7 @@
         }
       }
       if (item.options && item.options.length) {
-        // Emergency only after LLM + want snap failed. Never invent free text —
+        // Emergency only after LLM + want snap failed. Never invent free text,
         // localScreeningPick must snap onto harvested options.
         const local = localScreeningPick(item.label, profile, item.options);
         if (local) {
@@ -6535,7 +6535,7 @@
       const removed = await clearUploadedFiles(getScope);
       const inputPresent = !!D.q(AID("file-upload-input-ref"));
       let assigned = await D.attachFile(AID("file-upload-input-ref"), resumeFile);
-      // UI row is the real commit signal — Workday often clears input.files after
+      // UI row is the real commit signal, Workday often clears input.files after
       // accepting the File (see attachFile). Wait for the row; retry once if absent.
       let uiOk = await waitForUploadItem(assigned ? 6000 : 2500);
       if (!uiOk) {
@@ -6566,7 +6566,7 @@
 
     // 1. Create exactly the needed panels (idempotent across re-runs). Workday
     //    allows multiple empty blocks (proven), so add them all up front. On a
-    //    recovery pass the panels already exist — skip the ~1.5s settle/add work.
+    //    recovery pass the panels already exist, skip the ~1.5s settle/add work.
     if (!recovery) {
       if (work.length) await ensurePanels("Work-Experience-section", "Work-Experience", work.length);
       if (edu.length) await ensurePanels("Education-section", "Education", edu.length);
@@ -6583,7 +6583,7 @@
     //    of Study is NOT harvested here - it is a free search prompt filled inline
     //    in step 3 by typing the exact value and pressing Enter.)
     // Recovery: only re-attempt EMPTY education fields (School + Degree). Do NOT
-    // re-walk work panels — that produced the duplicate "My Experience" report.
+    // re-walk work panels, that produced the duplicate "My Experience" report.
     if (recovery) {
       for (let i = 0; i < eduPanels.length; i++) {
         await fillEducationNonDegree(eduPanels[i], edu[i], i + 1, rep);
@@ -6618,7 +6618,7 @@
     for (let i = 0; i < eduPanels.length; i++) {
       const e = edu[i] || {};
       const n = i + 1;
-      // Degree: Canvas listbox — portal harvest (id/value/text) then LLM.
+      // Degree: Canvas listbox, portal harvest (id/value/text) then LLM.
       if (e.degree) {
         const degFF = panelField(eduPanels[i], "degree");
         if (degFF && fieldHasCommittedValue(degFF)) continue;

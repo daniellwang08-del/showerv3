@@ -1,4 +1,4 @@
-"""Reed.co.uk publisher API — API key as HTTP Basic username."""
+"""Reed.co.uk publisher API, API key as HTTP Basic username."""
 
 from __future__ import annotations
 

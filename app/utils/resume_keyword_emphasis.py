@@ -59,7 +59,7 @@ def is_tech_like_keyword(term: str) -> bool:
     key = t.lower()
     if key in _SOFT_STOP:
         return False
-    # Multi-word requirement fragments (e.g. "payment ledger") — keep if not all soft.
+    # Multi-word requirement fragments (e.g. "payment ledger"), keep if not all soft.
     if " " in t:
         tokens = [p.strip(".,;:") for p in t.split() if p.strip(".,;:")]
         if not tokens or len(t) > 48 or len(tokens) > 6:

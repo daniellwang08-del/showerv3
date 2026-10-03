@@ -90,8 +90,8 @@ function SheetBody({
         <Section title="Details">
           <dl className="divide-y">
             <DetailRow label="Email">{user.email}</DetailRow>
-            <DetailRow label="Name">{user.name || '—'}</DetailRow>
-            <DetailRow label="Display name">{user.display_name || '—'}</DetailRow>
+            <DetailRow label="Name">{user.name || '-'}</DetailRow>
+            <DetailRow label="Display name">{user.display_name || '-'}</DetailRow>
             <DetailRow label="Created">
               <span className="tabular-nums">{formatDate(user.created_at, true)}</span>
             </DetailRow>

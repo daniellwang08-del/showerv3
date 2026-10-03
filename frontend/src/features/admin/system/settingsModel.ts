@@ -186,7 +186,7 @@ export function errDetail(err: unknown, fallback: string): string {
 }
 
 export function formatWhen(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return '-';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });

@@ -18,7 +18,7 @@ export const HERO_VIDEO =
 
 export const HERO_POSTER = photo('photo-1498050108023-c4e6cde34c31', 1920);
 
-/** Subtle looping gif overlay — digital rain, Wikimedia Commons. */
+/** Subtle looping gif overlay, digital rain, Wikimedia Commons. */
 export const HERO_GIF =
   'https://upload.wikimedia.org/wikipedia/commons/2/21/Matrix_digital_rain_animation_small_letters_only.gif';
 

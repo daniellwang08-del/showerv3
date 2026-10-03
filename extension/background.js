@@ -33,7 +33,7 @@ async function injectBridge(tabId, { force = false } = {}) {
         try {
           const host = new URL(tab.url).hostname;
           // Already-open tabs at install still need force inject (see callers).
-          // For later complete events on manifest hosts, skip — static CS ran.
+          // For later complete events on manifest hosts, skip, static CS ran.
           if (isManifestContentScriptHost(host)) return;
         } catch {
           /* ignore bad url */

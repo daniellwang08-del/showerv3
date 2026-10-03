@@ -32,7 +32,7 @@ export function AdminDataPage() {
   return (
     <PageLayout
       title="Data"
-      description="Review jobs added to NAO, user activity, and scrape platforms — then purge stale or unwanted jobs by age or pattern."
+      description="Review jobs added to NAO, user activity, and scrape platforms, then purge stale or unwanted jobs by age or pattern."
       width="wide"
     >
       <Tabs value={tab} onValueChange={setTab} className="gap-6">

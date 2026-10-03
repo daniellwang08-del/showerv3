@@ -623,7 +623,7 @@ html.dark {
   from { opacity: 0; transform: scale(0.92); }
   to   { opacity: 1; transform: scale(1); }
 }
-/* Color/opacity only — never scale/translate (those fight transition-all and
+/* Color/opacity only, never scale/translate (those fight transition-all and
    shift the stats tile box while the bump class is on). */
 @keyframes stats-num-bump {
   0%   { color: inherit; filter: brightness(1); }
@@ -769,7 +769,7 @@ html.dark {
   animation: stats-hero-pulse 0.7s ease-out;
 }
 .stats-num-bump {
-  /* Keep display from the element (block/inline-flex). Do not override it —
+  /* Keep display from the element (block/inline-flex). Do not override it,
      toggling block ↔ inline-block was resizing the tile on every count change. */
   animation: stats-num-bump 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1268,7 +1268,7 @@ html:not(.dark) select optgroup {
    scale, so the dark-mode palette remap cannot invert them.
    ============================================================ */
 /* Only <html> may scroll. overflow-x: hidden on body/#root computes to
-   overflow-y: auto (CSS overflow spec) and creates nested scrollers — those
+   overflow-y: auto (CSS overflow spec) and creates nested scrollers, those
    fight the document, steal position:fixed, and make the page jump on Y. */
 html.public-viewport {
   min-width: 0;

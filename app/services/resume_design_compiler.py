@@ -65,7 +65,7 @@ def _container_usable_emu(container: Any, design: ResumeDesign) -> int:
     """Right-tab stop position for the container being written into.
 
     In a two-column layout education lives in a ~34% sidebar cell. Using the full-page
-    width as the tab stop places the date past the cell edge into the main column — the
+    width as the tab stop places the date past the cell edge into the main column, the
     same visual bleed as the preview flex overflow. Prefer the cell width when present.
     """
     full = _page_usable_emu(design)
@@ -414,7 +414,7 @@ def _set_table_full_bleed(
     tbl_ind.set(qn("w:type"), "dxa")
     tbl_ind.set(qn("w:w"), str(-_emu_to_twips(left_margin_emu)))
     tbl_pr.append(tbl_ind)
-    # Never emit OOXML "autofit" — dxpdf only accepts "auto" | "fixed".
+    # Never emit OOXML "autofit" - dxpdf only accepts "auto" | "fixed".
     layout = OxmlElement("w:tblLayout")
     layout.set(qn("w:type"), "fixed")
     tbl_pr.append(layout)
@@ -534,7 +534,7 @@ def _layout_gap(design: ResumeDesign, field: str, fallback: float) -> float:
             value = float(raw)
     if value is None:
         value = float(fallback)
-    # Keep body rhythm tight and even — especially experience bullets.
+    # Keep body rhythm tight and even, especially experience bullets.
     if field == "exp_bullet_pt":
         return max(1.0, min(value, 3.5))
     if field == "heading_before_pt" and design.layout.columns == 2:
@@ -776,7 +776,7 @@ def _emit_contact_icon_text_pair(
     Transparent PNG padding also fails (dxpdf flattens alpha to opaque black).
 
     User nudges (``offset_x_pt`` / ``offset_y_pt``, + = right / down) MUST use
-    paragraph ``space_before`` (Y) and text ``left_indent = -offset_x`` (X) — not
+    paragraph ``space_before`` (Y) and text ``left_indent = -offset_x`` (X), not
     ``tcMar``. Proven under dxpdf: cell top margins apply to the whole row (Y± leave
     relative midY unchanged); icon ``left_indent`` clips in the narrow icon column;
     growing that column by the indent cancels +X.
@@ -914,7 +914,7 @@ def _estimate_contact_col_twips(
     text_pt = _measure_text_width_pt(label, size_pt, font_family)
     # Contact icons are square PNGs sized to ``icon_h`` (base_font * 0.66), not contact_size.
     icon_pt = float(icon_h_pt) if has_icon else 0.0
-    # dxpdf wrap is strict at the cell edge — keep a few pt of slack.
+    # dxpdf wrap is strict at the cell edge, keep a few pt of slack.
     return max(240, int(round((text_pt + icon_pt + 5.0) * 20)))
 
 
@@ -923,7 +923,7 @@ def _set_centered_fixed_table(
 ) -> None:
     """Center a nested table with explicit fixed column widths (dxpdf-safe).
 
-    Must rewrite ``w:gridCol`` / ``w:tcW`` — leaving python-docx's equal parent-width
+    Must rewrite ``w:gridCol`` / ``w:tcW`` - leaving python-docx's equal parent-width
     splits makes contacts sit at 0/180/360/540 and clips GitHub.
 
     dxpdf ignores ``tblJc=center`` on nested tables inside a header cell, so we
@@ -965,7 +965,7 @@ def _set_centered_fixed_table(
     tbl_w.set(qn("w:type"), "dxa")
     tbl_w.set(qn("w:w"), str(total))
     tbl_pr.append(tbl_w)
-    # Left-align the table, then push it with tblInd — dxpdf honors this path.
+    # Left-align the table, then push it with tblInd, dxpdf honors this path.
     tbl_jc = OxmlElement("w:tblJc")
     tbl_jc.set(qn("w:val"), "left")
     tbl_pr.append(tbl_jc)
@@ -1042,7 +1042,7 @@ def _render_header(
 
     name_color = _hex_to_rgb("#ffffff" if on_dark else design.colors.heading)
     title_color = _hex_to_rgb("#f1f5f9" if on_dark else design.colors.accent)
-    # Pure white on dark/image bands — `#e2e8f0` washes out over bright photo regions.
+    # Pure white on dark/image bands`#e2e8f0` washes out over bright photo regions.
     contact_hex = "#ffffff" if on_dark else design.colors.muted
     contact_color = _hex_to_rgb(contact_hex)
 
@@ -1256,12 +1256,12 @@ def _coerce_docx_image(raw: bytes) -> bytes:
 
 # Hard ceilings for browser-reported header geometry. Values above these (seen after
 # theme/column switches or bad measure passes) pin a near-page-tall first-page header
-# and push the body — especially the Technical two-column table — onto page 2, so page
+# and push the body, especially the Technical two-column table, onto page 2, so page
 # 1 shows only the name band over blank white.
 #
 # Evidence (dxpdf): removing the exact ``trHeight`` pin and letting nested contact
 # tables define natural header height produced pages=2 with page-0 text = header only
-# and no body — matching the Technical blank-page-1 bug in production.
+# and no body, matching the Technical blank-page-1 bug in production.
 _MAX_PINNED_BAND_PT = 220.0
 _MAX_PINNED_BAND_PT_TWO_COL = 110.0
 _MAX_HEADER_GAP_CONTRIB_PT = 48.0
@@ -1285,7 +1285,7 @@ def _effective_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> 
 
     Uses the browser-measured ``header_metrics.band_pt`` when present, but never
     shorter than the typography estimate. Stale inline metrics (e.g. 87.9 pt) must
-    not clip stacked contacts — proven: undersized band paints white ``on_dark``
+    not clip stacked contacts, proven: undersized band paints white ``on_dark``
     text onto the page and hides labels.
 
     Also rejects absurdly *large* measurements so a bad measure cannot evacuate the
@@ -1485,7 +1485,7 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
     band_h_pt = _effective_band_height_pt(design, profile)
 
     # Honour asymmetric vertical padding: top-align with hp_top (preview match).
-    # Do NOT shade the cell when a behindDoc image supplies the band — cell fill would
+    # Do NOT shade the cell when a behindDoc image supplies the band, cell fill would
     # paint over the picture (image mode) or only fill the 1pt geometry pin (soft/solid).
     _set_cell_margins(
         cell,
@@ -1516,7 +1516,7 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
         height_emu=int(round(band_h_pt * 12700)),
     )
     if not ok:
-        # Embedding failed — fall back to a cell fill and accept a taller geometry pin
+        # Embedding failed, fall back to a cell fill and accept a taller geometry pin
         # so page-1 text stays on the coloured band (page 2+ may gain a larger top inset).
         _set_cell_background(cell, fill)
         _set_row_exact_height(table.rows[0], int(round(float(band_h_pt) * 20)))
@@ -2103,7 +2103,7 @@ def compile_design(
     # page breaks) as the live preview, on any OS - the design is deep-copied first so
     # the caller's object is untouched.
     design = design.model_copy(deep=True)
-    # Two-column page body (Technical theme) is retired — keep single-column only.
+    # Two-column page body (Technical theme) is retired, keep single-column only.
     design.layout.columns = 1
     if design.theme_id == "technical":
         design.theme_id = "classic"
@@ -2211,7 +2211,7 @@ def compile_design(
             render_section(left_cell, sec)
         _remove_leading_empty(left_cell)
         _remove_leading_empty(right_cell)
-        # First block in each column should not inherit a large heading_before — that
+        # First block in each column should not inherit a large heading_before, that
         # reads as a blank band under the name header on page 1.
         for col_cell in (left_cell, right_cell):
             paras = col_cell.paragraphs

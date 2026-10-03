@@ -3,7 +3,7 @@
 A "job source" is a company job board URL a user registers (Greenhouse,
 Lever, Ashby, or Workable). All four vendors expose public, keyless JSON
 APIs that return every open posting for a board, so syncing a source is one
-HTTP request — no scraping or browser rendering.
+HTTP request, no scraping or browser rendering.
 
 The existing extractors in ``app/extractors`` fetch ONE job given its URL;
 this module fetches the LIST of posting URLs for a board. Discovered URLs

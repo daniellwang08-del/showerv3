@@ -58,7 +58,7 @@ class BaseJobSpider(scrapy.Spider):
         """Return whether *posted_at* falls inside the configured sync window.
 
         When a date window is active (``posted_since`` / ``posted_until``) and
-        the item has no parseable date, reject it — otherwise date-backfill
+        the item has no parseable date, reject it, otherwise date-backfill
         would silently accept every undated listing.
         """
         if posted_at is None:

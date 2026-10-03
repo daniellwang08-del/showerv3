@@ -16,7 +16,7 @@ export function AutofillSection() {
             </h2>
             <p className="mt-4 text-pretty text-base leading-relaxed text-white/60 sm:text-lg">
               Open the panel on any application page. It knows which hiring system you are on,
-              which job you are applying to, and which documents belong to it — then it types
+              which job you are applying to, and which documents belong to it, then it types
               everything so you can review and submit.
             </p>
 

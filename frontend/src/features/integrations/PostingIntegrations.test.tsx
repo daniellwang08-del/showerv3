@@ -83,7 +83,7 @@ async function openCard(name: string) {
   return { user, sheet: await screen.findByRole('dialog') };
 }
 
-describe('IntegrationsPage — Google Sheets', () => {
+describe('IntegrationsPage, Google Sheets', () => {
   it('shows Unavailable when the server has no Google credentials', async () => {
     sheets.fetchSheetsStatus.mockResolvedValue({ server_configured: false, service_account_email: null });
     const { sheet } = await openCard('Google Sheets');
@@ -209,7 +209,7 @@ describe('IntegrationsPage — Google Sheets', () => {
   });
 });
 
-describe('IntegrationsPage — Pumble', () => {
+describe('IntegrationsPage, Pumble', () => {
   it('shows Unavailable when the integration is disabled on the server', async () => {
     pumble.fetchPumbleStatus.mockResolvedValue({ integration_available: false });
     renderPage();

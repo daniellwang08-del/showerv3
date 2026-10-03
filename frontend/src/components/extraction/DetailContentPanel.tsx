@@ -1020,7 +1020,7 @@ export function DetailContentPanel({
                 </div>
               )}
 
-              {/* Applicant / structured view — show once scrape finished (extracted) or structured (completed) */}
+              {/* Applicant / structured view, show once scrape finished (extracted) or structured (completed) */}
               {!isAdmin && analysis.job_data && jdReady && postingBody(analysis.job_data, null)}
 
               {!isAdmin && !analysis.job_data && jdReady && (

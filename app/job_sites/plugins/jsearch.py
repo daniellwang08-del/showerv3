@@ -1,4 +1,4 @@
-"""JSearch (RapidAPI) — aggregated LinkedIn / Indeed / Glassdoor / ZipRecruiter listings."""
+"""JSearch (RapidAPI), aggregated LinkedIn / Indeed / Glassdoor / ZipRecruiter listings."""
 
 from __future__ import annotations
 

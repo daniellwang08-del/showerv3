@@ -2,9 +2,9 @@
 
 Logical roles (optional split when the Redis server allows multiple DBs):
 
-  * broker  — arq queues / job payloads  (``REDIS_URL``, typically ``/0``)
-  * cache   — extraction content cache   (``REDIS_CACHE_URL``, typically ``/1``)
-  * pubsub  — WebSocket event fan-out    (``REDIS_PUBSUB_URL``, typically ``/2``)
+  * broker, arq queues / job payloads  (``REDIS_URL``, typically ``/0``)
+  * cache, extraction content cache   (``REDIS_CACHE_URL``, typically ``/1``)
+  * pubsub, WebSocket event fan-out    (``REDIS_PUBSUB_URL``, typically ``/2``)
 
 Managed Redis (Render Key Value, some Redis Cloud plans) often only exposes DB 0.
 Leave cache/pubsub URLs unset so they fall back to ``REDIS_URL``.

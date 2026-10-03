@@ -1,10 +1,10 @@
 """Weekly progress series for the assistant / dashboard home chart.
 
 Per local calendar day (user timezone):
-  * posted      — jobs added to the platform (same semantics as dashboard ``today``)
-  * recommended — posted that day AND match score >= the user's effective min
+  * posted, jobs added to the platform (same semantics as dashboard ``today``)
+  * recommended, posted that day AND match score >= the user's effective min
                   (Preferences page threshold → dashboard ``suggested`` rule)
-  * applied     — jobs the user marked applied that day
+  * applied, jobs the user marked applied that day
 """
 
 from __future__ import annotations
@@ -181,10 +181,10 @@ async def fetch_board_trend_series(
 ) -> dict:
     """Daily activity series for the four main board side tiles (last *days*).
 
-    * ready     — resumes that became ready (docx completed) that day
-    * best      — strong match analyses (score >= 75) completed that day
-    * remote    — remote-friendly jobs added that day
-    * available — jobs added that day with shared JD that are still not resume-ready
+    * ready, resumes that became ready (docx completed) that day
+    * best, strong match analyses (score >= 75) completed that day
+    * remote, remote-friendly jobs added that day
+    * available, jobs added that day with shared JD that are still not resume-ready
                   and not marked applied ("available to start")
     """
     start_utc, end_utc, day_list = recent_week_bounds_for_timezone(tz_name, days=days)
@@ -289,10 +289,10 @@ async def fetch_admin_board_trend_series(
 ) -> dict:
     """Daily ops series for the admin board side tiles (last *days*).
 
-    * fetched       — jobs created that day
-    * extracted     — extractions that reached EXTRACTED or COMPLETED that day
-    * sheet_posted  — jobs that gained sheet_posted_at that day
-    * pumble_posted — jobs that gained pumble_posted_at that day
+    * fetched, jobs created that day
+    * extracted, extractions that reached EXTRACTED or COMPLETED that day
+    * sheet_posted, jobs that gained sheet_posted_at that day
+    * pumble_posted, jobs that gained pumble_posted_at that day
     """
     from app.models.database import JobExtraction
     from app.models.schemas import ExtractionStatus

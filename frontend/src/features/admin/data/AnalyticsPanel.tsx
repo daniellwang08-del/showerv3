@@ -95,7 +95,7 @@ export function AnalyticsPanel() {
     <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <p className="max-w-xl text-sm text-muted-foreground">
         Platform-wide metrics for <span className="font-medium text-foreground">{timezone}</span>. Fetched means jobs
-        created on NAO — not the employer post date.
+        created on NAO, not the employer post date.
       </p>
       <div className="flex w-full items-end gap-2 sm:w-auto">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:w-56 sm:flex-none">
@@ -402,7 +402,7 @@ function UserActivitySection({
   return (
     <SectionCard
       title="User activity"
-      description="Per-user board adds (jobs that appeared on that user's board) and applications. Sheet/Pumble posts are system-wide — see Distribution above."
+      description="Per-user board adds (jobs that appeared on that user's board) and applications. Sheet/Pumble posts are system-wide, see Distribution above."
       actions={monthBadge}
     >
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start">

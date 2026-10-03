@@ -1339,7 +1339,7 @@ def resolve_resume_artifact_path(stored: str | Path | None) -> Path | None:
 
     Builds historically stored *relative* paths like
     ``resume_output/Acme/<job_id>/Name_resume.pdf``. Those only work when the
-    API/worker CWD matches the build CWD — which broke extension autofill
+    API/worker CWD matches the build CWD, which broke extension autofill
     downloads whenever a process started elsewhere. Prefer the project root and
     configured output root over CWD.
     """

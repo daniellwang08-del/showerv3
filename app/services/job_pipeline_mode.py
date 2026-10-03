@@ -4,9 +4,9 @@ Admin / platform ingest prepares a shared job description (extraction only).
 Applicant ingest and "prepare" run personal analysis → tailor → resume build.
 
 ``manual_submit_pipeline`` (per-user) controls depth for URL/paste submits:
-  - ``extract`` — shared JD only (no personal analysis chain)
-  - ``match`` — extraction + Phase A only (``skip_phase_b``)
-  - ``full`` — extraction + Phase A + Phase B when platform allows (default)
+  - ``extract`` - shared JD only (no personal analysis chain)
+  - ``match`` - extraction + Phase A only (``skip_phase_b``)
+  - ``full`` - extraction + Phase A + Phase B when platform allows (default)
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def manual_submit_enqueue_flags(
     uid = str(user_id)
     mode = normalize_manual_submit_pipeline(pipeline)
     if mode == "extract":
-        # Shared scrape only — user is already linked via UserJobStatus.
+        # Shared scrape only, user is already linked via UserJobStatus.
         return None, False, False
     if mode == "match":
         return uid, True, True

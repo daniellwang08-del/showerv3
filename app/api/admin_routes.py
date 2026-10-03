@@ -216,7 +216,7 @@ async def _arq_queue_pending(redis, queue_name: str) -> int:
     if type_name == "zset":
         return int(await redis.zcard(queue_name) or 0)
     if type_name == "list":
-        # Legacy / unexpected — keep readable rather than WRONGTYPE.
+        # Legacy / unexpected, keep readable rather than WRONGTYPE.
         return int(await redis.llen(queue_name) or 0)
     return 0
 
@@ -914,7 +914,7 @@ async def match_engine_diagnose(
       - encode_if_missing (default true)
       - include_logs (default true)
       - log_hours (default 24)
-      - persist (default false) — also run full analysis and save the match
+      - persist (default false), also run full analysis and save the match
     """
     from app.services.match_diagnose_service import diagnose_job_match
 

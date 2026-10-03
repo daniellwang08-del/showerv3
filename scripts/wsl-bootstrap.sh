@@ -54,7 +54,7 @@ log "uv python install $PY_VERSION"
 uv python install "$PY_VERSION"
 
 if [[ -d .venv && ! -x "$VENV_PY" ]]; then
-  die ".venv exists but has no bin/python (Windows venv?) — remove it and re-run"
+  die ".venv exists but has no bin/python (Windows venv?), remove it and re-run"
 fi
 if [[ ! -x "$VENV_PY" ]]; then
   log "creating .venv (Python $PY_VERSION)"
@@ -73,7 +73,7 @@ log "installing requirements.txt"
 uv pip install --python "$VENV_PY" -r requirements.txt
 
 if ! "$VENV_PY" -c "import sys, torch; sys.exit(0 if torch.version.cuda else 1)" >/dev/null 2>&1; then
-  warn "torch is no longer a CUDA build after requirements — reinstalling from $TORCH_INDEX"
+  warn "torch is no longer a CUDA build after requirements, reinstalling from $TORCH_INDEX"
   uv pip install --python "$VENV_PY" --reinstall-package torch torch --index-url "$TORCH_INDEX"
 fi
 
@@ -104,17 +104,17 @@ fi
 # --- env file ----------------------------------------------------------------
 if [[ ! -f .env.wsl ]]; then
   cp env.wsl.example .env.wsl
-  warn "created .env.wsl from env.wsl.example — set AUTH_SECRET_KEY and OPENAI_API_KEY"
+  warn "created .env.wsl from env.wsl.example, set AUTH_SECRET_KEY and OPENAI_API_KEY"
 fi
 
 # --- verify ------------------------------------------------------------------
 log "verifying"
-nvidia-smi -L || warn "nvidia-smi failed — check the Windows NVIDIA driver / WSL2 GPU support"
+nvidia-smi -L || warn "nvidia-smi failed, check the Windows NVIDIA driver / WSL2 GPU support"
 "$VENV_PY" - <<'PY' || warn "torch CUDA check failed (encoding falls back to CPU)"
 import torch
 print("torch", torch.__version__, "cuda", torch.version.cuda, "available", torch.cuda.is_available())
 if torch.cuda.is_available():
     print("device", torch.cuda.get_device_name(0))
 PY
-docker info >/dev/null 2>&1 || warn "docker unreachable — enable Docker Desktop WSL integration for this distro"
+docker info >/dev/null 2>&1 || warn "docker unreachable, enable Docker Desktop WSL integration for this distro"
 log "done. Next: scripts/wsl-stack.sh up"

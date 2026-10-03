@@ -148,9 +148,9 @@ function EncodingsSection() {
             <Stat label="Jobs encoded" value={s.jobs_encoded.toLocaleString()} />
             <Stat label="Users encoded" value={s.users_encoded.toLocaleString()} />
             <Stat label={`Comparisons (${s.window_days}d)`} value={s.comparisons.toLocaleString()} />
-            <Stat label="Mean delta" value={s.mean_delta ?? '—'} />
-            <Stat label="Mean abs. error" value={s.mean_absolute_error ?? '—'} />
-            <Stat label="Max abs. error" value={s.max_absolute_error ?? '—'} />
+            <Stat label="Mean delta" value={s.mean_delta ?? '-'} />
+            <Stat label="Mean abs. error" value={s.mean_absolute_error ?? '-'} />
+            <Stat label="Max abs. error" value={s.max_absolute_error ?? '-'} />
           </dl>
           {s.comparisons > 0 && histogram.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -275,9 +275,9 @@ function DiagnoseResult({ result }: { result: MatchDiagnoseResult }) {
     <div className="mt-5 space-y-4 border-t pt-4" aria-label="Diagnose result">
       <dl className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         <Stat label="OK" value={result.ok ? 'yes' : 'no'} tone={result.ok ? 'ok' : 'bad'} />
-        <Stat label="Score" value={vr?.overall_score ?? '—'} />
-        <Stat label="Total time" value={`${result.timing?.total_ms ?? '—'} ms`} />
-        <Stat label="Engine setting" value={result.match_engine_setting || '—'} />
+        <Stat label="Score" value={vr?.overall_score ?? '-'} />
+        <Stat label="Total time" value={`${result.timing?.total_ms ?? '-'} ms`} />
+        <Stat label="Engine setting" value={result.match_engine_setting || '-'} />
       </dl>
 
       {result.errors?.length || result.warnings?.length ? (
@@ -313,7 +313,7 @@ function DiagnoseResult({ result }: { result: MatchDiagnoseResult }) {
                     <td className="px-2 py-1.5 font-mono">{s.step}</td>
                     <td className="px-2 py-1.5 tabular-nums">{s.duration_ms}</td>
                     <td className="max-w-md truncate px-2 py-1.5 font-mono text-muted-foreground">
-                      {s.detail ? JSON.stringify(s.detail) : '—'}
+                      {s.detail ? JSON.stringify(s.detail) : '-'}
                     </td>
                   </tr>
                 ))}
@@ -327,7 +327,7 @@ function DiagnoseResult({ result }: { result: MatchDiagnoseResult }) {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Reasoning</p>
-            <p className="text-sm">{vr.summary || '—'}</p>
+            <p className="text-sm">{vr.summary || '-'}</p>
             {vr.strengths?.length ? (
               <ul className="list-disc space-y-0.5 pl-4 text-sm text-match-strong">
                 {vr.strengths.map((s) => (
@@ -344,20 +344,20 @@ function DiagnoseResult({ result }: { result: MatchDiagnoseResult }) {
             ) : null}
             <div className="flex flex-wrap gap-1.5">
               <Badge variant="outline" className="tabular-nums">
-                exp↔content: {cosines.experience_to_content ?? '—'}
+                exp↔content: {cosines.experience_to_content ?? '-'}
               </Badge>
               <Badge variant="outline" className="tabular-nums">
-                title: {cosines.best_title ?? '—'}
+                title: {cosines.best_title ?? '-'}
               </Badge>
               <Badge variant="outline" className="tabular-nums">
-                prefs: {cosines.prefs_to_content ?? '—'}
+                prefs: {cosines.prefs_to_content ?? '-'}
               </Badge>
             </div>
             {skills.matched?.length || skills.missing_required?.length ? (
               <p className="text-sm text-muted-foreground">
-                Matched: {(skills.matched || []).join(', ') || '—'}
+                Matched: {(skills.matched || []).join(', ') || '-'}
                 <br />
-                Missing required: {(skills.missing_required || []).join(', ') || '—'}
+                Missing required: {(skills.missing_required || []).join(', ') || '-'}
               </p>
             ) : null}
           </div>
@@ -377,9 +377,9 @@ function DiagnoseResult({ result }: { result: MatchDiagnoseResult }) {
                   {Object.entries(contributions).map(([key, c]) => (
                     <tr key={key}>
                       <td className="px-2 py-1.5 font-mono">{key}</td>
-                      <td className="px-2 py-1.5 tabular-nums">{c.score ?? '—'}</td>
-                      <td className="px-2 py-1.5 tabular-nums">{c.weight ?? '—'}</td>
-                      <td className="px-2 py-1.5 tabular-nums">{c.weighted ?? '—'}</td>
+                      <td className="px-2 py-1.5 tabular-nums">{c.score ?? '-'}</td>
+                      <td className="px-2 py-1.5 tabular-nums">{c.weight ?? '-'}</td>
+                      <td className="px-2 py-1.5 tabular-nums">{c.weighted ?? '-'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -405,9 +405,9 @@ function DiagnoseResult({ result }: { result: MatchDiagnoseResult }) {
               <tbody className="divide-y">
                 {result.recent_logs.map((log, i) => (
                   <tr key={`${log.event}-${i}`}>
-                    <td className="px-2 py-1 whitespace-nowrap text-muted-foreground">{log.created_at || '—'}</td>
+                    <td className="px-2 py-1 whitespace-nowrap text-muted-foreground">{log.created_at || '-'}</td>
                     <td className="px-2 py-1 font-mono">{log.event}</td>
-                    <td className="px-2 py-1 tabular-nums">{log.duration_ms ?? '—'}</td>
+                    <td className="px-2 py-1 tabular-nums">{log.duration_ms ?? '-'}</td>
                     <td className="px-2 py-1">{log.service}</td>
                   </tr>
                 ))}

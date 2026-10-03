@@ -1,8 +1,8 @@
 """Resolve residential proxy URLs for scrapers (esp. RemoteRocketship).
 
 Sources (first non-empty wins for the list; file + inline are merged):
-  1. ``SCRAPER_PROXY_LIST_PATH`` — text file, one proxy per line
-  2. ``SCRAPER_PROXY_URL`` / ``SCRAPER_PROXY_URLS`` — inline URL(s)
+  1. ``SCRAPER_PROXY_LIST_PATH`` - text file, one proxy per line
+  2. ``SCRAPER_PROXY_URL`` / ``SCRAPER_PROXY_URLS`` - inline URL(s)
   3. ``SCRAPER_PROXY_HOST`` + ``PORT`` + optional ``USER``/``PASSWORD``
   4. ``PROXY_URL`` when ``PROXY_ENABLED=true`` (shared HTTP-client proxy)
 

@@ -180,7 +180,7 @@ def clone_chrome_profile_for_cdp(
 
     if chrome_processes_running():
         raise RuntimeError(
-            "Chrome is still running — cookie files are locked. "
+            "Chrome is still running, cookie files are locked. "
             "Run: taskkill /IM chrome.exe /F"
         )
 
@@ -470,7 +470,7 @@ def open_url_in_existing_chrome(url: str) -> None:
 
     Evidence: launching chrome.exe with only a URL (no --user-data-dir) makes
     Chrome print "Opening in existing browser session" and reuse the active
-    profile/window — the failure mode we saw when Playwright tried to own the
+    profile/window, the failure mode we saw when Playwright tried to own the
     default profile.
     """
     exe = chrome_executable()
@@ -654,11 +654,11 @@ def _ensure_cdp_chrome(
         print(f"CDP endpoint ready: {cdp_url}")
         return
 
-    print(f"No Chrome listening on {cdp_url} — starting CDP-safe Chrome...")
+    print(f"No Chrome listening on {cdp_url}, starting CDP-safe Chrome...")
     if chrome_processes_running():
         print(
             "\nChrome is already running WITHOUT remote debugging.\n"
-            "Windows (cmd) — quit it, then re-run:\n"
+            "Windows (cmd), quit it, then re-run:\n"
             "  taskkill /IM chrome.exe /F\n"
             f"  python -m app.scraper.auth capture {platform_key}\n"
         )

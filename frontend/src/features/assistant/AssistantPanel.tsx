@@ -66,7 +66,7 @@ export function AssistantPanel() {
           <div className="flex h-full flex-col justify-end gap-3 pb-2">
             <p className="text-lg font-semibold tracking-tight">How can I help with your search?</p>
             <p className="text-sm text-muted-foreground">
-              Filter and sort jobs, check stats, submit links, or mark applications — I can act on the page for you.
+              Filter and sort jobs, check stats, submit links, or mark applications, I can act on the page for you.
             </p>
             <div className="flex flex-col items-start gap-1.5 pt-2">
               {ASSISTANT_SUGGESTIONS.map((s) => (

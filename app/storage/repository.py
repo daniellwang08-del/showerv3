@@ -265,7 +265,7 @@ class JobExtractionRepository:
     ) -> None:
         """Force-write pasted JD and mark shared extraction EXTRACTED (raw JD ready).
 
-        COMPLETED is reserved for Phase A structuring — a manual paste is scrape-equivalent.
+        COMPLETED is reserved for Phase A structuring, a manual paste is scrape-equivalent.
         """
         now = _utcnow()
         values: dict = {

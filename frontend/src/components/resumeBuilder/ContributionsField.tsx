@@ -44,7 +44,7 @@ function bulletPrefixLength(line: string): number {
 }
 
 /**
- * Key contributions editor — every line is a bullet (like Teal / Kickresume list inputs).
+ * Key contributions editor, every line is a bullet (like Teal / Kickresume list inputs).
  * Enter always starts a new `- ` bullet; plain non-bullet lines are not used.
  */
 export function ContributionsField({
@@ -134,7 +134,7 @@ export function ContributionsField({
         return;
       }
 
-      // Prevent deleting the `- ` prefix itself — move caret or remove previous line instead
+      // Prevent deleting the `- ` prefix itself, move caret or remove previous line instead
       if (lineIsBullet(line)) {
         const prefixLen = bulletPrefixLength(line);
         if (caret === start + prefixLen && prefixLen > 0) {

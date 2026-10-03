@@ -210,7 +210,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
             )
             if not self._cf_session.proxies_list:
                 self.logger.error(
-                    "No residential proxies loaded — RemoteRocketship will likely "
+                    "No residential proxies loaded, RemoteRocketship will likely "
                     "hit Cloudflare 403 on the VPS IP. Set SCRAPER_PROXY_URL or "
                     "SCRAPER_PROXY_LIST_PATH in .env and restart the scraper worker."
                 )
@@ -267,7 +267,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
         return f"{self.base_url}{API_PATH}?q={quote(q_json)}"
 
     # ------------------------------------------------------------------
-    # start (Scrapy 2.13+) — fetch only via curl_cffi (chrome124)
+    # start (Scrapy 2.13+), fetch only via curl_cffi (chrome124)
     # ------------------------------------------------------------------
 
     async def start(self):
@@ -282,7 +282,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
         # succeeds (chrome124). Cookies remain preferred when present.
         if not session.is_authenticated:
             self.logger.warning(
-                "No saved RRS session — continuing with unauthenticated listing. "
+                "No saved RRS session, continuing with unauthenticated listing. "
                 "Optional: python -m app.scraper.auth capture rrs"
             )
 
@@ -310,7 +310,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
                     reason,
                 )
                 if page == 1:
-                    # Do not raise CloseSpider from async start() — Scrapy treats
+                    # Do not raise CloseSpider from async start(), Scrapy treats
                     # that as an unexpected error and reports finish_reason=finished.
                     self._close_reason = reason
                 break
@@ -350,7 +350,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
                 if isinstance(job, dict)
             ]
             # DateAdded sort is newest-first. Once an entire page is older than
-            # posted_since, further pages cannot be in-range — stop after this page.
+            # posted_since, further pages cannot be in-range, stop after this page.
             page_too_old = self._page_too_old(page_posted_dates)
             if page_too_old:
                 self.logger.info(

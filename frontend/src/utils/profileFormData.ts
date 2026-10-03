@@ -186,7 +186,7 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
       // CRITICAL: only promote derived fields that still fit ProfileCreateRequest
       // limits (project_intro ≤ 2000, contributions ≤ 40). Otherwise a Preferences
       // save that round-trips the whole profile through PUT /profile 422s on
-      // work_experience even though EEO itself is valid — which is exactly how
+      // work_experience even though EEO itself is valid, which is exactly how
       // "Failed to save EEO preferences" appeared for profiles with long JD blobs.
       const derived = deriveWorkContent(w);
       const nextTitle = derived.projectTitle || w.project_title;

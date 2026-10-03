@@ -437,7 +437,7 @@ export async function setAutoAdvance(value) {
 }
 
 // Workday only: when enabled, the auto-advance loop clicks the final "Submit"
-// on the Review step instead of stopping there. OFF by default — submitting an
+// on the Review step instead of stopping there. OFF by default, submitting an
 // application is a deliberate action, so the user must opt in.
 export async function getAutoSubmit() {
   const { autoSubmit } = await LOCAL.get("autoSubmit");
