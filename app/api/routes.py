@@ -1950,7 +1950,11 @@ async def submit_job(
         # Simple URL match: look for an existing active job with the same URL
         existing_result = await session.execute(
             select(Job)
-            .where(Job.normalized_url == normalized_url, Job.status == "active")
+            .where(
+                Job.normalized_url.in_(URLManager.equivalent_normalized_urls(request.url)),
+                Job.status == "active",
+            )
+            .order_by(Job.created_at)
             .limit(1)
         )
         existing_job = existing_result.scalar_one_or_none()
@@ -3057,6 +3061,8 @@ class DashboardCountsResponse(BaseModel):
     available: int = 0  # Upcoming jobs (JD ready, pipeline incomplete)
     suggested: int = 0  # Deprecated alias; kept for older clients
     applied_today: int = 0
+    ready: int = 0  # Tailored resume ready, not applied
+    remote: int = 0  # Remote jobs in the visible pool
 
 
 @router.get(
@@ -3114,7 +3120,7 @@ async def get_dashboard_counts(
 
         # One scan with a FILTER per tab instead of one COUNT round trip per tab.
         # Every outer join is unique per (job, user), so rows never multiply.
-        views = ("all", "today", "mine", "available", "applied_today")
+        views = ("all", "today", "mine", "available", "applied_today", "ready")
         needs_match = False
         needs_app = False
         needs_resume = False
@@ -3141,6 +3147,9 @@ async def get_dashboard_counts(
                 )
             cond = and_(*per_view) if per_view else true()
             aggregates.append(func.count().filter(cond).label(view))
+        if not remote_only:
+            remote_cond = and_(*_dashboard_search_clauses(remote_only=True))
+            aggregates.append(func.count().filter(remote_cond).label("remote"))
 
         stmt = (
             select(*aggregates)
@@ -3178,6 +3187,8 @@ async def get_dashboard_counts(
             available=int(counts["available"] or 0),
             suggested=0,
             applied_today=int(counts["applied_today"] or 0),
+            ready=int(counts["ready"] or 0),
+            remote=int(counts["all"] if remote_only else counts["remote"] or 0),
         )
 
 

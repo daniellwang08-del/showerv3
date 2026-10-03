@@ -46,6 +46,17 @@ _TRACKING_PARAMS = frozenset({
 })
 
 
+_HOST_ALIAS_GROUPS = (
+    ("boards.greenhouse.io", "job-boards.greenhouse.io"),
+    ("boards.eu.greenhouse.io", "job-boards.eu.greenhouse.io"),
+)
+_HOST_ALIASES = {
+    host: tuple(h for h in group if h != host)
+    for group in _HOST_ALIAS_GROUPS
+    for host in group
+}
+
+
 class URLManager:
     @staticmethod
     def normalize_url(url: str) -> str:
@@ -73,6 +84,20 @@ class URLManager:
         return urlunparse((
             p.scheme.lower(), p.netloc.lower(), path, "", urlencode(query, doseq=True), "",
         ))
+
+    @staticmethod
+    def equivalent_normalized_urls(url: str) -> list[str]:
+        """``normalize_url(url)`` plus the same posting on its alias hosts.
+
+        Greenhouse serves one posting from both ``boards.`` and ``job-boards.``
+        hosts and redirects between them, so either form must find the stored job.
+        """
+        normalized = URLManager.normalize_url(url)
+        p = urlparse(normalized)
+        aliases = _HOST_ALIASES.get(p.netloc)
+        if not aliases:
+            return [normalized]
+        return [normalized] + [urlunparse(p._replace(netloc=host)) for host in aliases]
 
     @staticmethod
     def validate_url(url: str) -> tuple[bool, str | None]:

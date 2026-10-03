@@ -492,6 +492,26 @@ class CreateSessionRequest(BaseModel):
     job_id: str = Field(..., min_length=1, max_length=36)
 
 
+class OpenSessionRequest(BaseModel):
+    # Start the conversation empty so earlier visits do not leak into a new apply.
+    fresh: bool = True
+
+
+class SessionDocsOut(BaseModel):
+    resume_pdf: bool = False
+    resume_docx: bool = False
+    cover_pdf: bool = False
+    cover_docx: bool = False
+    content_status: str | None = None
+    build_error: str | None = None
+
+
+class SessionOpenOut(ApplicationSessionOut):
+    applied_at: str | None = None
+    pumble_posted: bool = False
+    docs: SessionDocsOut = Field(default_factory=SessionDocsOut)
+
+
 class UpdateSessionRequest(BaseModel):
     status: str = Field(..., pattern="^(in_progress|completed)$")
 
@@ -1385,6 +1405,9 @@ async def assistant_autofill(
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         profile_text = user.profile_openai_cache or ""
+        identity_text = _contact_identity_text(user)
+        if identity_text:
+            profile_text = (identity_text + "\n\n" + profile_text).strip()
         # The resume-style profile cache omits the candidate's home address, so
         # append it for address/city/state/postal form fields to fill from.
         addr_text = _contact_address_text(getattr(user, "address", None))
@@ -1499,6 +1522,38 @@ def _address_for_autofill(addr: Any) -> dict:
         "postalCode": _s("postal_code"),
         "country": _s("country", "United States of America"),
     }
+
+
+def _contact_identity_text(user: Any) -> str:
+    """Name and contact block for the LLM autofill prompt. The resume cache
+    only carries a display name, so first / last name fields were sometimes
+    flagged needs_user instead of being split from it."""
+
+    def _s(attr: str) -> str:
+        v = getattr(user, attr, None)
+        return v.strip() if isinstance(v, str) and v.strip() else ""
+
+    first, middle, last = _s("name_first"), _s("name_middle"), _s("name_last")
+    if not (first and last):
+        parts = _s("name").split()
+        if len(parts) >= 2:
+            first = first or parts[0]
+            last = last or parts[-1]
+    full = " ".join(p for p in [first, middle, last] if p) or _s("name")
+    phone = " ".join(p for p in [_s("phone_country_code"), _s("phone_number")] if p)
+    rows = [
+        ("First name", first),
+        ("Middle name", middle),
+        ("Last name", last),
+        ("Full name", full),
+        ("Email", _s("profile_email") or _s("email")),
+        ("Phone", phone),
+        ("LinkedIn", _s("linkedin_url")),
+    ]
+    lines = [f"- {label}: {val}" for label, val in rows if val]
+    if not lines:
+        return ""
+    return "## Contact Details\n" + "\n".join(lines)
 
 
 def _contact_address_text(addr: Any) -> str:
@@ -2022,16 +2077,43 @@ async def assistant_autofill_profile(
 @assistant_router.get("/assistant/sessions", response_model=list[ApplicationSessionOut])
 async def list_sessions(
     status_filter: str | None = Query(None, alias="status"),
+    limit: int = Query(200, ge=1, le=500),
     current_user: dict = Depends(get_current_user),
 ) -> list[ApplicationSessionOut]:
     user_id = _require_user_id(current_user)
     async with get_session() as session:
-        stmt = select(ApplicationSession).where(ApplicationSession.user_id == user_id)
-        if status_filter in ("in_progress", "completed"):
-            stmt = stmt.where(ApplicationSession.status == status_filter)
-        stmt = stmt.order_by(ApplicationSession.updated_at.desc())
+        if status_filter == "in_progress":
+            stmt = in_progress_sessions_query(user_id)
+        else:
+            stmt = select(ApplicationSession).where(ApplicationSession.user_id == user_id)
+            if status_filter == "completed":
+                stmt = stmt.where(ApplicationSession.status == status_filter)
+        stmt = stmt.order_by(ApplicationSession.updated_at.desc()).limit(limit)
         rows = (await session.execute(stmt)).scalars().all()
         return [_session_to_out(s) for s in rows]
+
+
+def in_progress_sessions_query(user_id: str):
+    """Open sessions the user can still act on.
+
+    A session stays ``in_progress`` when the job is marked applied elsewhere
+    (web app, batch) or removed from the user's list, so both are excluded here.
+    """
+    applied = select(ValidJobUserApplication.id).where(
+        ValidJobUserApplication.user_id == user_id,
+        ValidJobUserApplication.job_id == ApplicationSession.job_id,
+    )
+    hidden = select(UserJobStatus.id).where(
+        UserJobStatus.user_id == user_id,
+        UserJobStatus.job_id == ApplicationSession.job_id,
+        UserJobStatus.status.in_(("duplicated", "manual_hidden")),
+    )
+    return select(ApplicationSession).where(
+        ApplicationSession.user_id == user_id,
+        ApplicationSession.status == "in_progress",
+        ~applied.exists(),
+        ~hidden.exists(),
+    )
 
 
 @assistant_router.post("/assistant/sessions", response_model=ApplicationSessionOut)
@@ -2126,6 +2208,86 @@ async def get_session_detail(
                 for m in msgs
             ],
         )
+
+
+def _docs_from_build(row: ResumeBuildResult | None) -> SessionDocsOut:
+    if row is None:
+        return SessionDocsOut()
+
+    def done(value: str | None) -> bool:
+        return str(value or "").lower() == "completed"
+
+    return SessionDocsOut(
+        resume_pdf=done(row.resume_pdf_status),
+        resume_docx=done(row.resume_docx_status),
+        cover_pdf=done(row.cover_letter_pdf_status),
+        cover_docx=done(row.cover_letter_docx_status),
+        content_status=getattr(row, "content_generation_status", None),
+        build_error=row.error_message or getattr(row, "content_generation_error", None),
+    )
+
+
+@assistant_router.post("/assistant/sessions/{job_id}/open", response_model=SessionOpenOut)
+async def open_session(
+    job_id: str,
+    req: OpenSessionRequest | None = None,
+    current_user: dict = Depends(get_current_user),
+) -> SessionOpenOut:
+    """Everything the extension needs to show one application, in one round trip:
+    starts or refreshes the session, optionally clears the chat, and returns the
+    applied state plus tailored document readiness."""
+    user_id = _require_user_id(current_user)
+    fresh = True if req is None else req.fresh
+    base = await create_session(CreateSessionRequest(job_id=job_id), current_user)
+    async with get_session() as session:
+        if fresh:
+            await session.execute(
+                sa_delete(AssistantMessage).where(
+                    AssistantMessage.user_id == user_id, AssistantMessage.job_id == job_id
+                )
+            )
+        applied_at = (
+            await session.execute(
+                select(ValidJobUserApplication.applied_at).where(
+                    ValidJobUserApplication.user_id == user_id,
+                    ValidJobUserApplication.job_id == job_id,
+                )
+            )
+        ).scalar_one_or_none()
+        build = (
+            await session.execute(
+                select(ResumeBuildResult).where(
+                    ResumeBuildResult.user_id == user_id,
+                    ResumeBuildResult.job_id == job_id,
+                )
+            )
+        ).scalar_one_or_none()
+        pumble_posted_at = (
+            await session.execute(select(Job.pumble_posted_at).where(Job.id == job_id))
+        ).scalar_one_or_none()
+        await session.commit()
+    return SessionOpenOut(
+        **base.model_dump(),
+        applied_at=_iso(applied_at) if applied_at else None,
+        pumble_posted=pumble_posted_at is not None,
+        docs=_docs_from_build(build),
+    )
+
+
+@assistant_router.get("/assistant/sessions/{job_id}/docs", response_model=SessionDocsOut)
+async def session_docs(job_id: str, current_user: dict = Depends(get_current_user)) -> SessionDocsOut:
+    """Tailored resume / cover letter readiness for one job (200 even before a build exists)."""
+    user_id = _require_user_id(current_user)
+    async with get_session() as session:
+        build = (
+            await session.execute(
+                select(ResumeBuildResult).where(
+                    ResumeBuildResult.user_id == user_id,
+                    ResumeBuildResult.job_id == job_id,
+                )
+            )
+        ).scalar_one_or_none()
+    return _docs_from_build(build)
 
 
 @assistant_router.patch("/assistant/sessions/{job_id}", response_model=ApplicationSessionOut)

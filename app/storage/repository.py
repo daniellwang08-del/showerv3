@@ -17,6 +17,7 @@ from app.services.job_field_utils import (
     clean_optional_job_field,
     infer_title_from_description,
 )
+from app.services.url_manager import URLManager
 from app.core.logging import get_logger
 from app.utils.text_sanitizer import sanitize_for_postgres_text
 from datetime import datetime, timezone
@@ -375,7 +376,11 @@ class JobRepository:
         result = await self._session.execute(
             select(Job)
             .options(undefer(Job.description))
-            .where(Job.normalized_url == normalized_url, Job.status == "active")
+            .where(
+                Job.normalized_url.in_(URLManager.equivalent_normalized_urls(normalized_url)),
+                Job.status == "active",
+            )
+            .order_by(Job.created_at)
             .limit(1)
         )
         return result.scalar_one_or_none()

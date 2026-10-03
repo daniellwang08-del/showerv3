@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse, ORJSONResponse
 from app.api.routes import router
 from app.api.scraper_routes import scraper_router
 from app.api.assistant_routes import assistant_router
+from app.api.extension_routes import extension_router
 from app.api.agent_routes import agent_router
 from app.api.data_management_routes import router as data_management_router
 from app.api.admin_routes import router as admin_router
@@ -402,6 +403,7 @@ def create_app() -> FastAPI:
     app.include_router(router, prefix="/api/v1")
     app.include_router(scraper_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")
+    app.include_router(extension_router, prefix="/api/v1")
     app.include_router(agent_router, prefix="/api/v1")
     app.include_router(data_management_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
