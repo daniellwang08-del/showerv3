@@ -28,17 +28,17 @@ const HomePage = named(() => import('./features/home/HomePage'), 'HomePage');
 const OnboardingPage = named(() => import('./features/onboarding/OnboardingPage'), 'OnboardingPage');
 const AssistantPage = named(() => import('./features/assistant/AssistantPage'), 'AssistantPage');
 const JobsPage = named(() => import('./features/jobs/JobsPage'), 'JobsPage');
-const ScraperDashboard = named(() => import('./pages/ScraperDashboard'), 'ScraperDashboard');
+const AdminPipelinePage = named(() => import('./features/admin/pipeline/AdminPipelinePage'), 'AdminPipelinePage');
 const ProfilePage = named(() => import('./features/profile/ProfilePage'), 'ProfilePage');
 const PreferencesPage = named(() => import('./features/settings/PreferencesPage'), 'PreferencesPage');
 const IntegrationsPage = named(() => import('./features/integrations/IntegrationsPage'), 'IntegrationsPage');
 const InsightsPage = named(() => import('./features/insights/InsightsPage'), 'InsightsPage');
 const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
 const ResumeBuilderPage = named(() => import('./pages/ResumeBuilderPage'), 'ResumeBuilderPage');
-const DataAnalysisManagementPage = named(() => import('./pages/DataManagementPage'), 'DataAnalysisManagementPage');
-const UserManagementPage = named(() => import('./pages/UserManagementPage'), 'UserManagementPage');
-const SystemSettingsPage = named(() => import('./pages/SystemSettingsPage'), 'SystemSettingsPage');
-const SystemLogsPage = named(() => import('./pages/SystemLogsPage'), 'SystemLogsPage');
+const AdminDataPage = named(() => import('./features/admin/data/AdminDataPage'), 'AdminDataPage');
+const AdminUsersPage = named(() => import('./features/admin/users/AdminUsersPage'), 'AdminUsersPage');
+const AdminSystemPage = named(() => import('./features/admin/system/AdminSystemPage'), 'AdminSystemPage');
+const AdminLogsPage = named(() => import('./features/admin/logs/AdminLogsPage'), 'AdminLogsPage');
 
 function isLogsHost(): boolean {
   if (typeof window === 'undefined') return false;
@@ -375,11 +375,11 @@ function App() {
             )
           }
         >
-          <Route index element={<Page legacy title="Jobs pipeline"><ScraperDashboard /></Page>} />
-          <Route path="data" element={<Page legacy title="Data"><DataAnalysisManagementPage /></Page>} />
-          <Route path="users" element={<Page legacy title="Users"><UserManagementPage /></Page>} />
-          <Route path="settings" element={<Page legacy title="System settings"><SystemSettingsPage /></Page>} />
-          <Route path="logs" element={<Page legacy title="Logs"><SystemLogsPage /></Page>} />
+          <Route index element={<Page><AdminPipelinePage /></Page>} />
+          <Route path="data" element={<Page><AdminDataPage /></Page>} />
+          <Route path="users" element={<Page><AdminUsersPage /></Page>} />
+          <Route path="settings" element={<Page><AdminSystemPage /></Page>} />
+          <Route path="logs" element={<Page><AdminLogsPage /></Page>} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Route>
 
