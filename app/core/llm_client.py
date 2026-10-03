@@ -910,6 +910,24 @@ _Adapter = _OpenAIAdapter | _GeminiAdapter | _AnthropicAdapter
 # ── Public wrapper that looks like AsyncOpenAI ────────────────────────────
 
 
+STYLE_RULE = (
+    "Writing style: never use the em dash character (U+2014). "
+    "Use a comma, colon, period or parentheses instead."
+)
+
+
+def _with_style_rule(messages: Any) -> Any:
+    """Return ``messages`` with the house writing-style rule in the system prompt."""
+    if not isinstance(messages, list):
+        return messages
+    out = list(messages)
+    if out and isinstance(out[0], dict) and out[0].get("role") == "system" and isinstance(out[0].get("content"), str):
+        if STYLE_RULE not in out[0]["content"]:
+            out[0] = {**out[0], "content": f"{out[0]['content']}\n\n{STYLE_RULE}"}
+        return out
+    return [{"role": "system", "content": STYLE_RULE}, *out]
+
+
 class _CompletionsNamespace:
     def __init__(self, parent: "LLMFallbackClient"):
         self._parent = parent
@@ -965,6 +983,8 @@ class LLMFallbackClient:
                 "No LLM provider configured. Set an API key for OpenAI, Anthropic, or Gemini."
             )
 
+        if "messages" in kwargs:
+            kwargs["messages"] = _with_style_rule(kwargs["messages"])
         primary = self._adapters[0]
         fallbacks = self._adapters[1:]
         primary_error: Exception | None = None
@@ -1065,6 +1085,7 @@ class LLMFallbackClient:
                 "No LLM provider configured. Set an API key for OpenAI, Anthropic, or Gemini."
             )
 
+        messages = _with_style_rule(messages)
         primary = self._adapters[0]
         fallbacks = self._adapters[1:]
         skip_primary = bool(fallbacks) and not self._cb.should_attempt_primary()

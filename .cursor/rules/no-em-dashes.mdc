@@ -1,0 +1,29 @@
+---
+description: Never use the em dash character anywhere in NAO
+alwaysApply: true
+---
+
+# No em dashes
+
+Never write the em dash character (U+2014) in UI copy, code comments, docs,
+commit messages, LLM prompts, or chat replies.
+
+Use a comma, colon, period, or parentheses instead. For an empty table cell or
+missing value, use `-`.
+
+```tsx
+// BAD
+description="Preview first — deletes cannot be undone."
+{row.company || '\u2014'}
+
+// GOOD
+description="Preview first. Deletes cannot be undone."
+{row.company || '-'}
+```
+
+Exceptions: code that must recognise em dashes in incoming text (résumé
+parsing, title normalisation) writes them as the `\u2014` escape, never as the
+literal character.
+
+Enforced by `frontend/src/test/noEmDash.test.ts`, and every LLM call gets the
+same rule through `STYLE_RULE` in `app/core/llm_client.py`.
