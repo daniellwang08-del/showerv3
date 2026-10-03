@@ -495,7 +495,7 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
     <>
       <SectionCard
         title="Auto-prepare"
-        description="When a job description is already available, prepare new jobs for you in the background. Off by default."
+        description="When a job description is already available, prepare new jobs for you in the background. Scoring is on for new accounts."
       >
         <div className="space-y-4">
           <SettingRow

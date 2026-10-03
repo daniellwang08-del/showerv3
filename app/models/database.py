@@ -73,7 +73,7 @@ class User(Base):
     dedup_score_comparison_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Auto-prepare: when platform JD is ready, enqueue personal match (and optionally full tailor).
-    auto_prepare_match = Column(Boolean, default=False, nullable=False, server_default="false")
+    auto_prepare_match = Column(Boolean, default=True, nullable=False, server_default="true")
     auto_prepare_full = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Manual URL/paste submit depth: extract | match | full (default full).

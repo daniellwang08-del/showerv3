@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { PanelLeft, Search, SquarePen, Sparkles } from 'lucide-react';
+import { PanelLeft, Search, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -40,7 +40,6 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const assistantDocked = useShellStore((s) => s.assistantDocked);
   const recentJobs = useShellStore((s) => s.recentJobs);
   const timeline = useAgentStore((s) => s.timeline);
-  const clearChat = useAgentStore((s) => s.clear);
   const openJob = useOpenJob();
   const isApplicant = variant === 'applicant';
 
@@ -93,22 +92,6 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
       </div>
 
       <div className={cn('space-y-0.5 px-2 pb-2', collapsed && 'px-2.5')}>
-        {isApplicant ? (
-          <RailTooltip label="New chat" collapsed={collapsed}>
-            <button
-              type="button"
-              className={cn(rowClass, 'font-medium', collapsed && 'justify-center px-0')}
-              onClick={() => {
-                clearChat();
-                navigate('/app');
-                onNavigate?.();
-              }}
-            >
-              <SquarePen />
-              {!collapsed && <span className="flex-1 text-left">New chat</span>}
-            </button>
-          </RailTooltip>
-        ) : null}
         <RailTooltip label="Search ⌘K" collapsed={collapsed}>
           <button
             type="button"
