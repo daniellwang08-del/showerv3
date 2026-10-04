@@ -210,8 +210,88 @@ def build_phase_b_system_prompt(
 
 JOB_MATCH_PHASE_B_SYSTEM_PROMPT = build_phase_b_system_prompt("", "")
 
+_PHASE_B_RESUME_HEADER = """You are an elite resume writer and technical career strategist.
+Using the job description, structured job context, match summary, candidate profile, and **Project Evidence**
+(when provided), produce the **Tailored Resume Content** (Task 1 below) as one JSON response.
+The cover letter is written in a separate step: do not write one here.
+
+Do NOT re-score the job match. Do NOT re-extract structured job fields.
+
+---
+"""
+
+_COVER_LETTER_HEADER = """You are a senior engineer writing your own cover letter for a specific job.
+Using the job description, structured job context, match summary, candidate profile, and **Project Evidence**
+(when provided), write the **Cover Letter** (Task 2 below) as one JSON response.
+
+---
+"""
+
+PHASE_B_RESUME_OUTPUT_CONTRACT = JOB_MATCH_PHASE_B_OUTPUT_CONTRACT.split('  "cover_letter"')[0].rstrip().rstrip(",") + "\n}"
+
+COVER_LETTER_OUTPUT_CONTRACT = """
+---
+
+## Response Format
+Return ONLY valid JSON:
+
+{
+  "cover_letter": {
+    "body": "<string - paragraphs separated by \\n\\n>"
+  }
+}"""
+
+
+def build_phase_b_resume_system_prompt(resume_instructions: str) -> str:
+    """Resume-only Phase B system prompt (editable instructions + locked JSON contract)."""
+    resume = resume_instructions.strip() or RESUME_TAILORING_INSTRUCTIONS.strip()
+    return f"{_PHASE_B_RESUME_HEADER}{resume}{PHASE_B_RESUME_OUTPUT_CONTRACT}"
+
+
+def build_cover_letter_system_prompt(cover_letter_instructions: str) -> str:
+    """Cover-letter-only system prompt (editable instructions + locked JSON contract)."""
+    cover = cover_letter_instructions.strip() or COVER_LETTER_INSTRUCTIONS.strip()
+    return f"{_COVER_LETTER_HEADER}{cover}{COVER_LETTER_OUTPUT_CONTRACT}"
+
+
+PHASE_B_RESUME_SYSTEM_PROMPT = build_phase_b_resume_system_prompt("")
+COVER_LETTER_SYSTEM_PROMPT = build_cover_letter_system_prompt("")
+
 # Per-candidate material comes first: it is identical across that candidate's
 # jobs, so providers can serve it from the prompt-prefix cache.
+COVER_LETTER_USER_TEMPLATE = """## Candidate Profile
+{profile_text}
+
+---
+
+## Project Evidence (authoritative source material - use for facts and examples; do not invent)
+{project_evidence_context}
+
+---
+
+## Job Description
+{job_text}
+
+---
+
+## Structured Job (from prior analysis)
+{structured_context}
+
+---
+
+## Company / domain cues
+{company_domain_cues}
+
+---
+
+## Match Summary (from prior analysis)
+{match_summary}
+
+---
+
+Write the cover letter body for THIS role. Name the hiring company and role when present above.
+Return the cover letter JSON as specified."""
+
 JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
 {profile_text}
 
@@ -254,7 +334,6 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
 4. Profile work order is most recent first: **index 0–1 → ≥8 bullets each**; **index 2 → ≥7**; **older → ≥4**.
 5. Technical skills: JD-driven categories; **technologies/tools only** - no soft-skill or process jargon.
 6. Wrap important JD tech/domain keywords in ``**double asterisks**`` (summary, descriptions, bullets, skill lists).
-7. Cover letter must name this hiring company and role when present above.
-8. Return tailored resume JSON and cover letter body as specified.
+7. Return the tailored resume JSON as specified.
 
 Include exactly one work_experience entry for EVERY company in the profile - do not skip any."""

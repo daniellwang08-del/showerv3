@@ -15,6 +15,8 @@ from app.prompts.job_match_phase_b_prompt import (
     RESUME_TAILORING_INSTRUCTIONS,
     RESUME_TAILORING_PROMPT_MAX_LENGTH,
     RESUME_TAILORING_PROMPT_MIN_LENGTH,
+    build_cover_letter_system_prompt,
+    build_phase_b_resume_system_prompt,
     build_phase_b_system_prompt,
 )
 from app.core.exceptions import AIParsingError
@@ -403,6 +405,14 @@ class UserRepository:
         resume_instructions = self._resume_tailoring_instructions_for_user(user)
         cover_letter_instructions = self._cover_letter_instructions_for_user(user)
         return build_phase_b_system_prompt(resume_instructions, cover_letter_instructions)
+
+    async def get_effective_phase_b_system_prompts(self, user_id: str) -> tuple[str, str]:
+        """Return (resume system prompt, cover letter system prompt) for separate calls."""
+        user = await self.get_by_id(user_id)
+        return (
+            build_phase_b_resume_system_prompt(self._resume_tailoring_instructions_for_user(user)),
+            build_cover_letter_system_prompt(self._cover_letter_instructions_for_user(user)),
+        )
 
     async def get_effective_resume_tailoring_instructions(self, user_id: str) -> str:
         user = await self.get_by_id(user_id)

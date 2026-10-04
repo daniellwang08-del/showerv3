@@ -5,6 +5,7 @@ Phase A: validation + structured extraction + match scoring.
 Phase B: tailored resume JSON + cover letter (deferred).
 """
 
+import asyncio
 import json
 import re
 
@@ -23,8 +24,10 @@ from app.prompts.job_match_phase_a_prompt import (
     MATCH_DIMENSION_WEIGHTS,
 )
 from app.prompts.job_match_phase_b_prompt import (
-    JOB_MATCH_PHASE_B_SYSTEM_PROMPT,
+    COVER_LETTER_SYSTEM_PROMPT,
+    COVER_LETTER_USER_TEMPLATE,
     JOB_MATCH_PHASE_B_USER_TEMPLATE,
+    PHASE_B_RESUME_SYSTEM_PROMPT,
 )
 from app.models.schemas import JobDescriptionSchema
 from app.services.job_field_utils import (
@@ -666,7 +669,6 @@ def tailored_resume_quality_issues(
         issues.append("work_experience_missing")
         return issues
 
-    recent_blob_parts = [summary.lower()]
     for idx, entry in enumerate(experience):
         if not isinstance(entry, dict):
             issues.append(f"work_experience[{idx}]_invalid")
@@ -687,13 +689,6 @@ def tailored_resume_quality_issues(
             emphasized = sum(1 for b in clean if "**" in b)
             if emphasized == 0:
                 issues.append(f"work_experience[{idx}]_no_keyword_emphasis")
-        if idx < 3:
-            recent_blob_parts.append(str(entry.get("project_description") or "").lower())
-            recent_blob_parts.extend(b.lower() for b in clean)
-            for sk in skills:
-                if isinstance(sk, dict):
-                    recent_blob_parts.append(str(sk.get("skills") or "").lower())
-                    recent_blob_parts.append(str(sk.get("category") or "").lower())
 
     cues = [c for c in (role_domain_cues or []) if isinstance(c, str) and c.strip()]
     if cues and summary:
@@ -705,15 +700,47 @@ def tailored_resume_quality_issues(
     # Callers pass only anchors the candidate's own profile supports, so most of
     # them belong in the summary, recent roles and skills. Too few to judge: skip.
     if len(anchors) >= _MIN_SUPPORTED_ANCHORS:
-        blob = " ".join(recent_blob_parts)
-        hits = sum(1 for term in anchors if term.lower() in blob)
-        if hits / len(anchors) < _SUPPORTED_ANCHOR_COVERAGE:
+        if recent_anchor_coverage(resume, anchors) < _SUPPORTED_ANCHOR_COVERAGE:
             issues.append("insufficient_job_keyword_alignment")
     return issues
 
 
 _MIN_SUPPORTED_ANCHORS = 3
 _SUPPORTED_ANCHOR_COVERAGE = 0.7
+
+# Issues a second LLM call does not fix: anchors are a noisy keyword list (a rerun
+# lands on the same coverage) and emphasis is applied deterministically.
+_ADVISORY_QUALITY_ISSUES = frozenset(
+    {"insufficient_job_keyword_alignment", "profile_summary_missing_role_domain_cues"}
+)
+
+
+_COVER_LETTER_MAX_TOKENS = 4096
+
+
+def _is_advisory_quality_issue(issue: str) -> bool:
+    return issue in _ADVISORY_QUALITY_ISSUES or issue.endswith(
+        ("_weak_keyword_emphasis", "_no_keyword_emphasis")
+    )
+
+
+def recent_anchor_coverage(resume: dict | None, anchors: list[str]) -> float:
+    """Share of *anchors* found in the summary, skills and three most recent roles."""
+    terms = [a for a in anchors if isinstance(a, str) and a.strip()]
+    if not terms or not resume or not isinstance(resume, dict):
+        return 0.0
+    parts = [str(resume.get("profile_summary") or "")]
+    for sk in resume.get("technical_skills") or []:
+        if isinstance(sk, dict):
+            parts.append(str(sk.get("category") or ""))
+            parts.append(str(sk.get("skills") or ""))
+    for entry in (resume.get("work_experience") or [])[:3]:
+        if not isinstance(entry, dict):
+            continue
+        parts.append(str(entry.get("project_description") or ""))
+        parts.extend(b for b in entry.get("bullets") or [] if isinstance(b, str))
+    blob = " ".join(parts).lower().replace("**", "")
+    return sum(1 for t in terms if t.lower() in blob) / len(terms)
 
 
 def supported_job_anchors(anchors: list[str], *evidence: str) -> list[str]:
@@ -826,6 +853,7 @@ async def _call_openai_json(
     user_id: str | None = None,
     job_type: str | None = None,
     temperature: float = 0.2,
+    reasoning_effort: str | None = None,
 ) -> dict:
     client = await get_llm_client_for_user(user_id, job_type=job_type)
     settings = get_settings()
@@ -852,7 +880,9 @@ async def _call_openai_json(
         )
 
     try:
-        result_text, response = await _complete(token_budget=max_tokens)
+        result_text, response = await _complete(
+            token_budget=max_tokens, reasoning_effort=reasoning_effort
+        )
         try:
             return _loads_llm_json(result_text)
         except (json.JSONDecodeError, AIParsingError) as first_err:
@@ -1073,22 +1103,56 @@ async def generate_tailored_content_phase_b(
     if user_id:
         async with get_session() as session:
             user_repo = UserRepository(session)
-            system_prompt = await user_repo.get_effective_resume_tailoring_system_prompt(user_id)
+            resume_system, cover_system = await user_repo.get_effective_phase_b_system_prompts(
+                user_id
+            )
     else:
-        system_prompt = JOB_MATCH_PHASE_B_SYSTEM_PROMPT
+        resume_system, cover_system = PHASE_B_RESUME_SYSTEM_PROMPT, COVER_LETTER_SYSTEM_PROMPT
 
-    parsed = await _call_openai_json(
-        system_prompt=system_prompt,
-        user_content=user_content,
-        max_tokens=phase_b_max,
-        observe_name="phase_b",
-        user_id=user_id,
-        job_type="resume_tailoring",
-        temperature=phase_b_temperature,
+    cover_user = COVER_LETTER_USER_TEMPLATE.format(
+        job_text=job_truncated,
+        profile_text=profile_truncated,
+        structured_context=structured_block,
+        company_domain_cues=domain_cues,
+        match_summary=match_summary or "No match summary available.",
+        project_evidence_context=evidence_truncated,
     )
+    reasoning_effort = settings.phase_b_reasoning_effort or None
 
-    first_resume = _parse_tailored_resume(parsed.get("tailored_resume"))
-    cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
+    async def _resume_call(content: str, observe_name: str) -> dict | None:
+        parsed = await _call_openai_json(
+            system_prompt=resume_system,
+            user_content=content,
+            max_tokens=phase_b_max,
+            observe_name=observe_name,
+            user_id=user_id,
+            job_type="resume_tailoring",
+            temperature=phase_b_temperature,
+            reasoning_effort=reasoning_effort,
+        )
+        resume = _parse_tailored_resume(parsed.get("tailored_resume"))
+        return apply_keyword_emphasis_to_resume(resume, job_anchors) if resume else None
+
+    async def _cover_call(observe_name: str) -> dict | None:
+        try:
+            parsed = await _call_openai_json(
+                system_prompt=cover_system,
+                user_content=cover_user,
+                max_tokens=_COVER_LETTER_MAX_TOKENS,
+                observe_name=observe_name,
+                user_id=user_id,
+                job_type="resume_tailoring",
+                temperature=phase_b_temperature,
+                reasoning_effort=reasoning_effort,
+            )
+        except AIParsingError as e:
+            logger.warning("cover_letter_call_failed", observe=observe_name, error=str(e))
+            return None
+        return _parse_cover_letter(parsed.get("cover_letter"))
+
+    first_resume, cover_letter = await asyncio.gather(
+        _resume_call(user_content, "phase_b"), _cover_call("phase_b_cover_letter")
+    )
     tailored_resume = first_resume
 
     quality_issues = tailored_resume_quality_issues(
@@ -1096,30 +1160,36 @@ async def generate_tailored_content_phase_b(
         job_anchor_terms=truthful_anchors,
         role_domain_cues=role_cues,
     )
-    if quality_issues or not cover_letter:
+    blocking = [i for i in quality_issues if not _is_advisory_quality_issue(i)]
+    coverage = round(recent_anchor_coverage(tailored_resume, truthful_anchors), 3)
+    if quality_issues and not blocking:
+        logger.info(
+            "phase_b_quality_advisory",
+            issues=quality_issues,
+            supported_anchors=len(truthful_anchors),
+            jd_anchors=len(job_anchors),
+            coverage=coverage,
+        )
+
+    if blocking or not cover_letter:
         logger.warning(
             "phase_b_quality_soft_retry",
             issues=quality_issues,
             cover_letter_missing=not bool(cover_letter),
             supported_anchors=len(truthful_anchors),
             jd_anchors=len(job_anchors),
-            coverage=round(
-                tailored_resume_coverage_score(
-                    tailored_resume, job_anchor_terms=truthful_anchors
-                ),
-                3,
-            ),
+            coverage=coverage,
         )
         retry_user = (
             user_content
-            + "\n\nQUALITY RETRY: Previous output failed soft checks for near-perfect JD fit. "
-            "REWRITE (do not lightly edit): profile_summary must be substantive and name THIS "
+            + "\n\nQUALITY RETRY: Previous output failed these checks: "
+            + ", ".join(blocking)
+            + ". REWRITE (do not lightly edit): profile_summary must be substantive and name THIS "
             "job's role/domain; technical_skills must use JD-driven categories with technologies "
-            "only (no soft-skill jargon); index 0–1 roles need ≥8 bullets each with dense "
-            "**keyword** emphasis on THIS job's tech/domain terms; index 2 ≥7 bullets; older "
-            "roles ≥4; cover_letter.body must be a complete letter naming this company/role when "
-            "available. Map Must-cover requirements into the two most recent roles when the "
-            "background supports them. Never invent employers, dates, or technologies."
+            "only (no soft-skill jargon); index 0-1 roles need at least 8 bullets each with dense "
+            "**keyword** emphasis on THIS job's tech/domain terms; index 2 at least 7 bullets; "
+            "older roles at least 4. Map Must-cover requirements into the two most recent roles "
+            "when the background supports them. Never invent employers, dates, or technologies."
         )
         if truthful_anchors:
             retry_user += (
@@ -1128,46 +1198,36 @@ async def generate_tailored_content_phase_b(
                 + ", ".join(truthful_anchors[:16])
                 + "."
             )
-        parsed_retry = await _call_openai_json(
-            system_prompt=system_prompt,
-            user_content=retry_user,
-            max_tokens=phase_b_max,
-            observe_name="phase_b_quality_retry",
-            user_id=user_id,
-            job_type="resume_tailoring",
-            temperature=phase_b_temperature,
+
+        async def _no_result() -> None:
+            return None
+
+        retry_resume, retry_cover = await asyncio.gather(
+            _resume_call(retry_user, "phase_b_quality_retry") if blocking else _no_result(),
+            _cover_call("phase_b_cover_letter_retry") if not cover_letter else _no_result(),
         )
-        retry_resume = _parse_tailored_resume(parsed_retry.get("tailored_resume"))
-        retry_cover = _parse_cover_letter(parsed_retry.get("cover_letter"))
         if retry_cover:
             cover_letter = retry_cover
-        chosen = _pick_better_tailored_resume(
-            first_resume,
-            retry_resume,
-            job_anchor_terms=truthful_anchors,
-            role_domain_cues=role_cues,
-        )
-        if chosen is not None:
-            tailored_resume = chosen
-        remaining = tailored_resume_quality_issues(
-            tailored_resume,
-            job_anchor_terms=truthful_anchors,
-            role_domain_cues=role_cues,
-        )
-        if remaining:
-            logger.warning(
-                "phase_b_quality_issues_after_retry",
-                issues=remaining,
-                coverage=round(
-                    tailored_resume_coverage_score(
-                        tailored_resume, job_anchor_terms=truthful_anchors
-                    ),
-                    3,
-                ),
+        if blocking:
+            chosen = _pick_better_tailored_resume(
+                first_resume,
+                retry_resume,
+                job_anchor_terms=truthful_anchors,
+                role_domain_cues=role_cues,
             )
-
-    if tailored_resume:
-        tailored_resume = apply_keyword_emphasis_to_resume(tailored_resume, job_anchors)
+            if chosen is not None:
+                tailored_resume = chosen
+            remaining = tailored_resume_quality_issues(
+                tailored_resume,
+                job_anchor_terms=truthful_anchors,
+                role_domain_cues=role_cues,
+            )
+            if any(not _is_advisory_quality_issue(i) for i in remaining):
+                logger.warning(
+                    "phase_b_quality_issues_after_retry",
+                    issues=remaining,
+                    coverage=round(recent_anchor_coverage(tailored_resume, truthful_anchors), 3),
+                )
 
     if not tailored_resume:
         logger.warning("tailored_resume_section_missing_or_invalid")

@@ -747,6 +747,7 @@ async def generate_tailored_content(
     job_id: str,
     user_id: str,
     extraction_id: str | None = None,
+    manual: bool = False,
 ) -> dict | None:
     from app.services.job_match_orchestrator import run_tailored_content_generation
     from app.storage.repository import ResumeBuildRepository
@@ -763,7 +764,7 @@ async def generate_tailored_content(
 
     try:
         result = await run_tailored_content_generation(
-            job_id, user_id, extraction_id=extraction_id
+            job_id, user_id, extraction_id=extraction_id, manual=manual
         )
         if result:
             logger.info("worker_generate_tailored_content_completed", valid_job_id=job_id)

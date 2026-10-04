@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import bind_logging_context, get_logger
-from app.models.database import Job
+from app.models.database import Job, UserJobStatus, ValidJobUserApplication
 from app.models.schemas import ExtractionStatus, JobDescriptionSchema
 from app.services.system_settings_service import (
     get_effective_value,
@@ -133,6 +133,8 @@ async def enqueue_tailored_content_generation(
     job_id: str,
     user_id: str,
     extraction_id: str | None = None,
+    *,
+    manual: bool = False,
 ) -> bool:
     try:
         from app.tasks.worker import get_tailoring_pool, TAILORING_QUEUE
@@ -144,6 +146,7 @@ async def enqueue_tailored_content_generation(
             job_id,
             user_id,
             extraction_id,
+            manual=manual,
             _job_id=pipeline_job_id("tailor", job_id, user_id),
         )
         logger.info(
@@ -814,16 +817,53 @@ async def run_job_match_analysis(
         raise
 
 
+async def _tailoring_skip_reason(job_id: str, user_id: str, *, manual: bool) -> str | None:
+    """Why automatic tailoring is wasted on this job, or None to proceed.
+
+    Hidden jobs never need documents. Applied jobs only do when the user asks.
+    """
+    async with get_session() as session:
+        hidden = await session.scalar(
+            select(UserJobStatus.id).where(
+                UserJobStatus.user_id == user_id,
+                UserJobStatus.job_id == job_id,
+                UserJobStatus.status.in_(("duplicated", "manual_hidden")),
+            ).limit(1)
+        )
+        if hidden:
+            return "hidden"
+        if manual:
+            return None
+        applied = await session.scalar(
+            select(ValidJobUserApplication.id).where(
+                ValidJobUserApplication.user_id == user_id,
+                ValidJobUserApplication.job_id == job_id,
+            ).limit(1)
+        )
+        return "applied" if applied else None
+
+
 async def run_tailored_content_generation(
     job_id: str,
     user_id: str,
     *,
     extraction_id: str | None = None,
+    manual: bool = False,
 ) -> dict | None:
     """Phase B: tailored resume JSON + cover letter, then enqueue DOCX/PDF build."""
     bind_logging_context(job_id=job_id, user_id=user_id)
 
     try:
+        skip_reason = await _tailoring_skip_reason(job_id, user_id, manual=manual)
+        if skip_reason:
+            logger.info("tailored_content_skipped", reason=skip_reason, manual=manual)
+            async with get_session() as session:
+                repo = ResumeBuildRepository(session)
+                existing = await repo.get(job_id, user_id)
+                if not (existing and existing.tailored_resume_data):
+                    await repo.mark_content_skipped(job_id, user_id)
+            return None
+
         loaded = await _load_job_and_profile(job_id, user_id, extraction_id)
         if not loaded:
             return None

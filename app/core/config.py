@@ -174,6 +174,10 @@ class Settings(BaseSettings):
     openai_attachment_max_concurrent: int = 8
     phase_a_max_tokens: int = 16384
     phase_b_max_tokens: int = 16384
+    # Reasoning effort for resume tailoring + cover letter calls only. Empty = use
+    # openai_reasoning_effort. "none" is accepted by gpt-5.1+ only, and on gpt-5.1 it
+    # lists JD technologies the profile does not contain, so keep it unset by default.
+    phase_b_reasoning_effort: Literal["", "none", "minimal", "low", "medium", "high"] = ""
     auto_generate_tailored_content: bool = True
     # Global kill-switch for auto-prepare fan-out / backfill (manual Run unaffected).
     auto_prepare_enabled: bool = True

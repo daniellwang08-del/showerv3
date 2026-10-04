@@ -10,13 +10,18 @@ from app.prompts.job_match_phase_a_prompt import (
     JOB_MATCH_PHASE_A_USER_TEMPLATE,
 )
 from app.prompts.job_match_phase_b_prompt import (
+    COVER_LETTER_SYSTEM_PROMPT,
+    COVER_LETTER_USER_TEMPLATE,
     JOB_MATCH_PHASE_B_INSTRUCTIONS,
     JOB_MATCH_PHASE_B_OUTPUT_CONTRACT,
     JOB_MATCH_PHASE_B_SYSTEM_PROMPT,
     JOB_MATCH_PHASE_B_USER_TEMPLATE,
+    PHASE_B_RESUME_SYSTEM_PROMPT,
     RESUME_TAILORING_INSTRUCTIONS,
     RESUME_TAILORING_PROMPT_MAX_LENGTH,
     RESUME_TAILORING_PROMPT_MIN_LENGTH,
+    build_cover_letter_system_prompt,
+    build_phase_b_resume_system_prompt,
     build_phase_b_system_prompt,
 )
 
@@ -24,14 +29,19 @@ __all__ = [
     "COVER_LETTER_INSTRUCTIONS",
     "COVER_LETTER_PROMPT_MAX_LENGTH",
     "COVER_LETTER_PROMPT_MIN_LENGTH",
+    "COVER_LETTER_SYSTEM_PROMPT",
+    "COVER_LETTER_USER_TEMPLATE",
     "JOB_MATCH_PHASE_A_SYSTEM_PROMPT",
     "JOB_MATCH_PHASE_A_USER_TEMPLATE",
     "JOB_MATCH_PHASE_B_INSTRUCTIONS",
     "JOB_MATCH_PHASE_B_OUTPUT_CONTRACT",
     "JOB_MATCH_PHASE_B_SYSTEM_PROMPT",
     "JOB_MATCH_PHASE_B_USER_TEMPLATE",
+    "PHASE_B_RESUME_SYSTEM_PROMPT",
     "RESUME_TAILORING_INSTRUCTIONS",
     "RESUME_TAILORING_PROMPT_MAX_LENGTH",
     "RESUME_TAILORING_PROMPT_MIN_LENGTH",
+    "build_cover_letter_system_prompt",
+    "build_phase_b_resume_system_prompt",
     "build_phase_b_system_prompt",
 ]

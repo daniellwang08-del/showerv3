@@ -764,6 +764,29 @@ async def _create_with_transient_retry(adapter: Any, kwargs: dict[str, Any]) -> 
             attempt += 1
 
 
+def _log_llm_call_completed(
+    observe: str | None,
+    job_type: str | None,
+    response: object,
+    usage: dict[str, int | None],
+    started: float,
+    create_kwargs: dict[str, Any],
+) -> None:
+    logger.info(
+        "llm_call_completed",
+        observe=observe,
+        job_type=job_type,
+        model=getattr(response, "model", None),
+        provider=getattr(response, "provider", None),
+        reasoning_effort_override=create_kwargs.get("reasoning_effort"),
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        # Keys containing "token" are redacted by the log scrubber.
+        usage_prompt=usage.get("prompt_tokens"),
+        usage_completion=usage.get("completion_tokens"),
+        usage_reasoning=usage.get("reasoning_tokens"),
+    )
+
+
 async def chat_completion_with_empty_retry(
     client: Any,
     *,
@@ -781,9 +804,11 @@ async def chat_completion_with_empty_retry(
     503s in production. Empty content is not a raised API error, so provider
     fallback also does not fire unless we retry here.
     """
+    started = time.perf_counter()
     response = await client.chat.completions.create(**create_kwargs)
     text, finish_reason, usage = response_message_meta(response)
     if text:
+        _log_llm_call_completed(observe, job_type, response, usage, started, create_kwargs)
         return text, response
 
     logger.warning(
@@ -801,6 +826,7 @@ async def chat_completion_with_empty_retry(
     response = await client.chat.completions.create(**retry_kwargs)
     text, finish_reason, usage = response_message_meta(response)
     if text:
+        _log_llm_call_completed(observe, job_type, response, usage, started, retry_kwargs)
         return text, response
 
     logger.error(

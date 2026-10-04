@@ -6319,7 +6319,7 @@ async def trigger_resume_build(
         return {"success": True, "message": "Resume build enqueued"}
 
     from app.services.job_match_orchestrator import enqueue_tailored_content_generation
-    enqueued = await enqueue_tailored_content_generation(job_id, user_id)
+    enqueued = await enqueue_tailored_content_generation(job_id, user_id, manual=True)
     if not enqueued:
         raise HTTPException(
             status_code=503,
