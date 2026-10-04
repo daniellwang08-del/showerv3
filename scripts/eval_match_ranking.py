@@ -152,6 +152,7 @@ async def _evaluate_inner(
                         undefer(UserEncoding.experience_vec),
                         undefer(UserEncoding.prefs_vec),
                         undefer(UserEncoding.domain_vec),
+                        undefer(UserEncoding.chunk_vecs),
                     )
                 )
             )
@@ -166,6 +167,7 @@ async def _evaluate_inner(
                         undefer(JobEncoding.title_vec),
                         undefer(JobEncoding.content_vec),
                         undefer(JobEncoding.industry_vec),
+                        undefer(JobEncoding.chunk_vecs),
                     )
                 )
             )

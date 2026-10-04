@@ -30,11 +30,30 @@ from sqlalchemy.orm import undefer
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.database import Job, JobEncoding, JobExtraction, User, UserEncoding
+from app.services.industry_taxonomy import industry_profile
+from app.services.posting_validity import non_posting_reason
+from app.services.role_taxonomy import (
+    level_from_years,
+    role_family,
+    role_level,
+    role_specialty,
+    user_specialties,
+)
 from app.services.security_clearance_detector import requires_security_clearance
-from app.services.skill_lexicon import extract_skills, extract_skills_with_importance
+from app.services.skill_lexicon import (
+    PREFERRED_HEADING_RE,
+    REQUIRED_HEADING_RE,
+    extract_skills,
+    extract_skills_with_importance,
+    skill_category,
+)
 from app.storage.database import get_session
 
 logger = get_logger(__name__)
+
+# Bump when encode_job / encode_user start writing different inputs for the
+# scorer; the backfill re-encodes every row whose encoder_version differs.
+ENCODER_VERSION = "v4-roles-industry"
 
 _model = None
 _model_device: str | None = None
@@ -267,6 +286,99 @@ def b64_to_vec(data: str | None) -> np.ndarray | None:
         return None
 
 
+def matrix_to_bytes(mat: np.ndarray | None) -> bytes | None:
+    """Row-stacked chunk vectors as float16; halves storage, cosines move < 0.001."""
+    if mat is None or mat.size == 0:
+        return None
+    return np.asarray(mat, dtype=np.float16).tobytes()
+
+
+def bytes_to_matrix(raw: bytes | None, dim: int) -> np.ndarray | None:
+    if not raw or dim <= 0:
+        return None
+    flat = np.frombuffer(raw, dtype=np.float16)
+    if flat.size % dim:
+        return None
+    return flat.reshape(-1, dim).astype(np.float32)
+
+
+# ── Chunking for requirement-level similarity ───────────────────────────────
+
+_MAX_JOB_CHUNKS = 40
+_MAX_PROFILE_CHUNKS = 90
+_MIN_CHUNK_CHARS = 25
+_MAX_CHUNK_CHARS = 400
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+(?=[A-Z])")
+_BULLET_STRIP = " \t-*\u2022\u25cf\u25aa"
+# Legal, benefits and application boilerplate says nothing about the work and
+# would only dilute the posting's average similarity.
+_BOILERPLATE_RE = re.compile(
+    r"equal opportunity|\beeo\b|without regard to|disabilit|veteran|accommodation|benefits|401\(?k|\bpto\b|"
+    r"paid time off|health insurance|dental|vision insurance|parental leave|salary range|compensation|base pay|"
+    r"pay range|cookie|privacy policy|e-verify|background check|apply now|apply for this|recruiting scam|phishing",
+    re.IGNORECASE,
+)
+
+
+def _split_chunks(text: str) -> list[str]:
+    out: list[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip(_BULLET_STRIP)
+        if not line:
+            continue
+        parts = _SENTENCE_SPLIT_RE.split(line) if len(line) > 300 else [line]
+        for part in parts:
+            part = part.strip()
+            if len(part) >= _MIN_CHUNK_CHARS:
+                out.append(part[:_MAX_CHUNK_CHARS])
+    return out
+
+
+def job_chunks(body: str | None) -> list[str]:
+    """Substantive lines of a posting: headings and boilerplate dropped."""
+    out: list[str] = []
+    for chunk in _split_chunks(body or ""):
+        if len(chunk) < 80 and (REQUIRED_HEADING_RE.search(chunk) or PREFERRED_HEADING_RE.search(chunk)):
+            continue
+        if _BOILERPLATE_RE.search(chunk):
+            continue
+        out.append(chunk)
+        if len(out) >= _MAX_JOB_CHUNKS:
+            break
+    return out
+
+
+def profile_chunks(
+    *,
+    profile_title: str | None,
+    profile_summary: str | None,
+    work_experience: list | None,
+    technical_skills,
+) -> list[str]:
+    """One chunk per achievement line, so no part of a long profile is cut off."""
+    chunks: list[str] = []
+    if (profile_title or "").strip():
+        chunks.append(str(profile_title).strip())
+    chunks.extend(_split_chunks(str(profile_summary or "")))
+    for entry in work_experience or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("project_intro", "description"):
+            chunks.extend(_split_chunks(str(entry.get(key) or "")))
+        for item in entry.get("contributions") or []:
+            chunks.extend(_split_chunks(str(item)))
+    if technical_skills:
+        text = technical_skills if isinstance(technical_skills, str) else " ".join(map(str, technical_skills))
+        chunks.extend(text[i : i + 300] for i in range(0, min(len(text), 1200), 300))
+    seen: set[str] = set()
+    unique: list[str] = []
+    for chunk in chunks:
+        if chunk not in seen:
+            seen.add(chunk)
+            unique.append(chunk)
+    return unique[:_MAX_PROFILE_CHUNKS]
+
+
 # ── Deterministic JD signal extraction ──────────────────────────────────────
 
 _YEARS_RE = re.compile(
@@ -289,19 +401,36 @@ _DEGREE_WAIVER_RE = re.compile(
 )
 
 
+_YEARS_RANGE_RE = re.compile(
+    r"(\d{1,2})\s*(?:-|to|\u2013|\u2014)\s*\d{1,2}\s*\+?\s*(?:years?|yrs?)", re.IGNORECASE
+)
+
+
 def extract_years_required(text: str | None) -> int | None:
-    """Highest plausible 'N+ years ... experience' requirement in the JD."""
+    """Core 'N years of experience' bar of the JD.
+
+    A range counts at its lower end ("8-12 years" asks for 8). Postings often
+    list several "N+ years in X" lines for individual tools; the bar for the
+    role is the typical one among them, so the median is used, not the largest.
+    """
     if not text:
         return None
-    best: int | None = None
-    for match in _YEARS_RE.finditer(text):
+    values: list[int] = []
+    for match in _YEARS_RANGE_RE.finditer(text):
+        low = int(match.group(1))
+        if 1 <= low <= 20:
+            values.append(low)
+    for match in _YEARS_RE.finditer(_YEARS_RANGE_RE.sub(" ", text)):
         try:
             years = int(match.group(1))
         except (TypeError, ValueError):
             continue
-        if 1 <= years <= 20 and (best is None or years > best):
-            best = years
-    return best
+        if 1 <= years <= 20:
+            values.append(years)
+    if not values:
+        return None
+    values.sort()
+    return values[len(values) // 2]
 
 
 def extract_degree_required(text: str | None) -> bool | None:
@@ -357,6 +486,21 @@ def _years_from_experience(entries: list) -> float | None:
 
 # ── Job encoding ────────────────────────────────────────────────────────────
 
+# Some ATS extractors store only a metadata header ("Posted Date / Employment
+# Type / City ...") as the description while the posting itself sits in the
+# raw page text. Below this size the description is treated as such a stub.
+_STUB_DESCRIPTION_CHARS = 600
+
+
+def job_body_text(description: str | None, raw_text: str | None) -> str:
+    """The text that actually describes the job: description, unless it is a stub."""
+    description = description or ""
+    raw_text = raw_text or ""
+    if len(description.strip()) < _STUB_DESCRIPTION_CHARS and len(raw_text) > len(description):
+        return raw_text
+    return description or raw_text
+
+
 def _compose_job_texts(
     job: Job, extraction: JobExtraction | None, raw_text: str | None
 ) -> tuple[str, str, str, str]:
@@ -370,7 +514,9 @@ def _compose_job_texts(
     parts: list[str] = []
     requirements = list(getattr(extraction, "requirements", None) or []) if extraction else []
     responsibilities = list(getattr(extraction, "responsibilities", None) or []) if extraction else []
-    description = (getattr(extraction, "description", None) if extraction else None) or ""
+    description = job_body_text(
+        (getattr(extraction, "description", None) if extraction else None), raw_text
+    )
 
     if title:
         parts.append(title)
@@ -413,6 +559,17 @@ def _compose_job_texts(
     return title, content_text, industry_text, full_text
 
 
+def job_signals(title: str | None, body: str | None) -> dict:
+    """Title-derived role signals and page validity, stored on JobEncoding.signals."""
+    return {
+        "family": role_family(title),
+        "specialty": role_specialty(title),
+        "level": role_level(title),
+        "posting_issue": non_posting_reason(body),
+        "industries": industry_profile(body),
+    }
+
+
 def _analyze_job_text(
     job_id: str,
     title_text: str,
@@ -434,7 +591,9 @@ def _analyze_job_text(
     degree_required = extract_degree_required(full_text)
     clearance, _phrase = requires_security_clearance(full_text)
 
-    vecs = encode_texts([title_text or content_text[:200], content_text, industry_text])
+    chunks = job_chunks(content_text)
+    vecs = encode_texts([title_text or content_text[:200], content_text, industry_text] + chunks)
+    chunk_mat = vecs[3:] if chunks else None
 
     # Vector work-mode + MiniLM title/company fill (encoding process only).
     work_mode_to_set: str | None = None
@@ -492,6 +651,7 @@ def _analyze_job_text(
         degree_required,
         clearance,
         (vecs[0], vecs[1], vecs[2]),
+        chunk_mat,
         work_mode_to_set,
         title_to_set,
         company_to_set,
@@ -531,6 +691,9 @@ async def encode_job(job_id: str) -> bool:
         job_extraction_id = job.extraction_id
         meta = job.raw_metadata if isinstance(job.raw_metadata, dict) else {}
         is_remote_flag = bool(meta.get("is_remote"))
+        posting_body = job_body_text(
+            getattr(extraction, "description", None) if extraction else None, raw_text
+        )
 
     if not content_text.strip():
         logger.warning("encode_job_no_text", job_id=job_id)
@@ -544,6 +707,7 @@ async def encode_job(job_id: str) -> bool:
         degree_required,
         clearance,
         (title_vec, content_vec, industry_vec),
+        chunk_mat,
         work_mode_to_set,
         title_to_set,
         company_to_set,
@@ -561,6 +725,7 @@ async def encode_job(job_id: str) -> bool:
         job_source_url,
         is_remote_flag,
     )
+    signals = job_signals(title_to_set or title_text or job_title, posting_body)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_session() as session:
@@ -576,10 +741,13 @@ async def encode_job(job_id: str) -> bool:
         row.title_vec = vec_to_bytes(title_vec)
         row.content_vec = vec_to_bytes(content_vec)
         row.industry_vec = vec_to_bytes(industry_vec)
+        row.chunk_vecs = matrix_to_bytes(chunk_mat)
         row.skills = skills
         row.years_required = years_required
         row.degree_required = degree_required
         row.requires_security_clearance = bool(clearance)
+        row.signals = signals
+        row.encoder_version = ENCODER_VERSION
         row.encoded_at = now
 
     # One row per transaction: extraction and save workers lock jobs and
@@ -608,6 +776,9 @@ async def encode_job(job_id: str) -> bool:
         skills=len(skills),
         years_required=years_required,
         clearance=clearance,
+        chunks=0 if chunk_mat is None else len(chunk_mat),
+        family=signals["family"],
+        posting_issue=signals["posting_issue"],
         industry_chars=len(industry_text),
         work_mode=work_mode_to_set or job_work_mode,
         title=title_to_set or job_title,
@@ -642,53 +813,15 @@ def _entry_text(entry: dict) -> str:
     )
 
 
-def build_prefs_proxy_text(
-    *,
-    explicit_prefs: str | None,
-    guidance: str | None,
-    work_experience: list | None,
-    country_preferences: list | None,
-) -> str:
-    """Always-non-empty preferences blob so prefs_vec is never left null."""
-    parts: list[str] = []
-    if (explicit_prefs or "").strip():
-        parts.append(explicit_prefs.strip())
-    if (guidance or "").strip():
-        parts.append(guidance.strip())
+def build_prefs_text(*, explicit_prefs: str | None, guidance: str | None) -> str:
+    """What the candidate actually said they want; empty when they said nothing.
 
-    countries = [str(c).strip().upper() for c in (country_preferences or []) if str(c).strip()]
-    if countries:
-        parts.append("Preferred work countries: " + ", ".join(countries[:8]))
-
-    titles: list[str] = []
-    companies: list[str] = []
-    for entry in work_experience or []:
-        if not isinstance(entry, dict):
-            continue
-        title = str(entry.get("job_title") or "").strip()
-        company = str(entry.get("company_name") or entry.get("company") or "").strip()
-        industry = str(entry.get("industry") or "").strip()
-        if title and title not in titles:
-            titles.append(title)
-        if company and company not in companies:
-            companies.append(company)
-        if industry:
-            parts.append(f"Industry experience: {industry}")
-        if len(titles) >= 5:
-            break
-    if titles:
-        parts.append("Target roles similar to: " + "; ".join(titles[:5]))
-    if companies:
-        parts.append("Companies / domains of interest: " + "; ".join(companies[:6]))
-
-    if not (explicit_prefs or "").strip():
-        parts.append(
-            "Prefer remote or hybrid roles when the posting allows it; "
-            "value strong product and engineering craft, clear ownership, "
-            "and modern software delivery practices."
-        )
-    text = "\n".join(p for p in parts if p).strip()
-    return text or "Open to strong engineering roles with clear impact."
+    Nothing is synthesised for an empty profile: padding the text with the
+    candidate's own past titles only re-measured title similarity, and a stock
+    remote-work sentence made work mode leak into the score.
+    """
+    parts = [p.strip() for p in (explicit_prefs, guidance) if (p or "").strip()]
+    return "\n".join(parts)
 
 
 def build_domain_proxy_text(work_experience: list | None, education: list | None) -> str:
@@ -734,18 +867,16 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
         profile_text = await UserRepository(session).get_profile_openai_text(user_id)
         work_experience = list(user.work_experience or [])
         education = list(user.education or [])
-        prefs_text = (user.job_match_preferences or "").strip()
         guidance = ""
         if (user.resume_tailoring_prompt_mode or "default") == "custom":
             guidance = (user.resume_tailoring_prompt_custom or "").strip()
-        country_prefs = list(getattr(user, "country_preferences", None) or [])
-        prefs_combined = build_prefs_proxy_text(
-            explicit_prefs=prefs_text,
-            guidance=guidance,
-            work_experience=work_experience,
-            country_preferences=country_prefs,
+        prefs_combined = build_prefs_text(
+            explicit_prefs=user.job_match_preferences, guidance=guidance
         )
         domain_text = build_domain_proxy_text(work_experience, education)
+        profile_title = user.profile_title
+        profile_summary = user.profile_summary
+        technical_skills = user.technical_skills
 
         # Vector columns are deferred; the unchanged-profile check below reads them,
         # and a lazy load is impossible under the async session.
@@ -757,14 +888,13 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
             )
         ).scalar_one_or_none()
         new_hash = _profile_hash(
-            profile_text, prefs_combined, domain_text, model_version(), "v2-domain-prefs"
+            profile_text, prefs_combined, domain_text, model_version(), ENCODER_VERSION
         )
         if (
             not force
             and existing is not None
             and existing.profile_hash == new_hash
-            and existing.prefs_vec is not None
-            and getattr(existing, "domain_vec", None) is not None
+            and existing.encoder_version == ENCODER_VERSION
         ):
             logger.info("encode_user_unchanged", user_id=user_id)
             return True
@@ -773,6 +903,58 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
         logger.info("encode_user_no_profile", user_id=user_id)
         return False
 
+    fields = await build_user_encoding(
+        profile_text=profile_text,
+        work_experience=work_experience,
+        education=education,
+        prefs_text=prefs_combined,
+        domain_text=domain_text,
+        profile_title=profile_title,
+        profile_summary=profile_summary,
+        technical_skills=technical_skills,
+    )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with get_session() as session:
+        row = (
+            await session.execute(
+                select(UserEncoding).where(UserEncoding.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = UserEncoding(user_id=user_id)
+            session.add(row)
+        for key, value in fields.items():
+            setattr(row, key, value)
+        row.profile_hash = new_hash
+        row.encoded_at = now
+
+    logger.info(
+        "user_encoded",
+        user_id=user_id,
+        skills=len(fields["skills"]),
+        titles=len(fields["title_vecs"]),
+        chunks=fields["signals"]["chunks"],
+        families=fields["signals"]["families"],
+        years_experience=fields["years_experience"],
+        prefs_chars=len(prefs_combined),
+        domain_chars=len(domain_text),
+    )
+    return True
+
+
+async def build_user_encoding(
+    *,
+    profile_text: str,
+    work_experience: list,
+    education: list,
+    prefs_text: str,
+    domain_text: str,
+    profile_title: str | None,
+    profile_summary: str | None,
+    technical_skills,
+) -> dict:
+    """UserEncoding column values for a profile. Encodes but never touches the DB."""
     titles: list[str] = []
     for entry in work_experience:
         if isinstance(entry, dict):
@@ -802,43 +984,62 @@ async def encode_user(user_id: str, *, force: bool = False) -> bool:
     years_experience = _years_from_experience(work_experience)
     has_degree = bool(education) or None
 
-    to_encode = [profile_text] + titles + [prefs_combined, domain_text]
+    chunks = profile_chunks(
+        profile_title=profile_title,
+        profile_summary=profile_summary,
+        work_experience=work_experience,
+        technical_skills=technical_skills,
+    ) or _split_chunks(profile_text)[:_MAX_PROFILE_CHUNKS]
+
+    to_encode = [profile_text] + titles + [domain_text] + ([prefs_text] if prefs_text else []) + chunks
     vecs = await encode_texts_async(to_encode)
     experience_vec = vecs[0]
     title_vecs = [
         {"title": titles[i], "vec": vec_to_b64(vecs[1 + i])} for i in range(len(titles))
     ]
-    prefs_vec = vecs[1 + len(titles)]
-    domain_vec = vecs[2 + len(titles)]
+    domain_vec = vecs[1 + len(titles)]
+    offset = 2 + len(titles)
+    prefs_vec = None
+    if prefs_text:
+        prefs_vec = vecs[offset]
+        offset += 1
+    chunk_mat = vecs[offset:] if chunks else None
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    async with get_session() as session:
-        row = (
-            await session.execute(
-                select(UserEncoding).where(UserEncoding.user_id == user_id)
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            row = UserEncoding(user_id=user_id)
-            session.add(row)
-        row.model_version = model_version()
-        row.experience_vec = vec_to_bytes(experience_vec)
-        row.prefs_vec = vec_to_bytes(prefs_vec)
-        row.domain_vec = vec_to_bytes(domain_vec)
-        row.title_vecs = title_vecs
-        row.skills = skills
-        row.years_experience = years_experience
-        row.has_degree = has_degree
-        row.profile_hash = new_hash
-        row.encoded_at = now
-
-    logger.info(
-        "user_encoded",
-        user_id=user_id,
-        skills=len(skills),
-        titles=len(title_vecs),
-        years_experience=years_experience,
-        prefs_chars=len(prefs_combined),
-        domain_chars=len(domain_text),
+    family_titles = ([str(profile_title)] if (profile_title or "").strip() else []) + titles[:3]
+    recent_text = " ".join(
+        str(entry.get(key) or "")
+        for entry in work_experience[:2]
+        if isinstance(entry, dict)
+        for key in ("job_title", "project_intro", "description")
     )
-    return True
+    # Only titles that state a seniority count; the rest fall back to years.
+    title_levels = [
+        lvl
+        for lvl in (role_level(t, default=None) for t in family_titles[:2])
+        if lvl is not None
+    ]
+    signals = {
+        "families": [role_family(t) for t in family_titles],
+        "specialties": user_specialties(family_titles, skills, skill_category, recent_text),
+        "level": max(title_levels) if title_levels else None,
+        "level_from_years": level_from_years(years_experience),
+        "industries": industry_profile(
+            " ".join([profile_summary or ""] + [_entry_text(e) for e in work_experience if isinstance(e, dict)])
+        ),
+        "preferred_industries": industry_profile(prefs_text, min_hits=1),
+        "chunks": 0 if chunk_mat is None else len(chunk_mat),
+    }
+
+    return {
+        "model_version": model_version(),
+        "experience_vec": vec_to_bytes(experience_vec),
+        "prefs_vec": vec_to_bytes(prefs_vec),
+        "domain_vec": vec_to_bytes(domain_vec),
+        "chunk_vecs": matrix_to_bytes(chunk_mat),
+        "title_vecs": title_vecs,
+        "skills": skills,
+        "years_experience": years_experience,
+        "has_degree": has_degree,
+        "signals": signals,
+        "encoder_version": ENCODER_VERSION,
+    }

@@ -453,11 +453,16 @@ class JobEncoding(Base):
     content_vec = deferred(Column(LargeBinary, nullable=True))
     # Embedding of company / industry / domain phrase (independent of JD body).
     industry_vec = deferred(Column(LargeBinary, nullable=True))
+    # One float16 row per substantive JD line (requirement-level similarity).
+    chunk_vecs = deferred(Column(LargeBinary, nullable=True))
     # {"skill": "required" | "preferred" | "mentioned", ...}
     skills = Column(JSON, default=dict, nullable=False)
     years_required = Column(Integer, nullable=True)
     degree_required = Column(Boolean, nullable=True)
     requires_security_clearance = Column(Boolean, default=False, nullable=False)
+    # {"family", "specialty", "level", "posting_issue"} from role_taxonomy / posting_validity.
+    signals = Column(JSON, nullable=True)
+    encoder_version = Column(String(40), nullable=True)
     encoded_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
@@ -475,12 +480,17 @@ class UserEncoding(Base):
     prefs_vec = deferred(Column(LargeBinary, nullable=True))
     # Embedding of industries / companies from work history (domain fit).
     domain_vec = deferred(Column(LargeBinary, nullable=True))
+    # One float16 row per profile achievement line.
+    chunk_vecs = deferred(Column(LargeBinary, nullable=True))
     # [{"title": str, "vec": base64-float32}, ...] recent titles, newest first.
     title_vecs = Column(JSON, default=list, nullable=False)
     # {"skill": recency_weight 0..1, ...}
     skills = Column(JSON, default=dict, nullable=False)
     years_experience = Column(Float, nullable=True)
     has_degree = Column(Boolean, nullable=True)
+    # {"families", "specialties", "level", "level_from_years", "chunks"}.
+    signals = Column(JSON, nullable=True)
+    encoder_version = Column(String(40), nullable=True)
     # Hash of the encoded inputs; unchanged profiles are never re-encoded.
     profile_hash = Column(String(64), nullable=True)
     encoded_at = Column(DateTime, server_default=func.now(), nullable=False)

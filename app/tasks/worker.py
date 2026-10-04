@@ -1829,7 +1829,7 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
     from sqlalchemy import select
 
     from app.models.database import Job as JobModel, JobEncoding, User, UserEncoding
-    from app.services.encoding_service import encode_job, encode_user, model_version
+    from app.services.encoding_service import ENCODER_VERSION, encode_job, encode_user, model_version
 
     jobs_done = 0
     jobs_failed = 0
@@ -1844,8 +1844,7 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
                 .where(
                     (UserEncoding.user_id.is_(None))
                     | (UserEncoding.model_version != current_model)
-                    | (UserEncoding.domain_vec.is_(None))
-                    | (UserEncoding.prefs_vec.is_(None))
+                    | (UserEncoding.encoder_version.is_distinct_from(ENCODER_VERSION))
                 )
                 .where(User.is_active.is_(True))
             )
@@ -1866,7 +1865,7 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
                     .where(
                         (JobEncoding.job_id.is_(None))
                         | (JobEncoding.model_version != current_model)
-                        | (JobEncoding.industry_vec.is_(None))
+                        | (JobEncoding.encoder_version.is_distinct_from(ENCODER_VERSION))
                         | (JobModel.work_mode.is_(None))
                         | (JobModel.work_mode == "")
                     )

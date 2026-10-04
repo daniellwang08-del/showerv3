@@ -252,6 +252,7 @@ async def _load(min_positives: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]
                         undefer(UserEncoding.experience_vec),
                         undefer(UserEncoding.prefs_vec),
                         undefer(UserEncoding.domain_vec),
+                        undefer(UserEncoding.chunk_vecs),
                     )
                 )
             )
@@ -266,6 +267,7 @@ async def _load(min_positives: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]
                         undefer(JobEncoding.title_vec),
                         undefer(JobEncoding.content_vec),
                         undefer(JobEncoding.industry_vec),
+                        undefer(JobEncoding.chunk_vecs),
                     )
                 )
             )

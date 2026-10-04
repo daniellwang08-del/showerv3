@@ -435,6 +435,10 @@ async def _try_vector_authoritative(
                 user_id=user_id,
             )
             return None
+    if vector_result.get("is_job_posting") is False:
+        async with get_session() as session:
+            await JobExtractionRepository(session).update_is_job_posting(ext_id, False)
+        return vector_result, False
     return vector_result, True
 
 

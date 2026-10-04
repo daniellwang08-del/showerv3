@@ -176,7 +176,8 @@ def _compare_scorers(
         labels.append(int(bool(applied)))
         owners.append(user_id)
 
-        variants["current"].append(float(_score_skills(job_skills, user_skills)[0]))
+        coverage = _score_skills(job_skills, user_skills)[0]
+        variants["current"].append(50.0 if coverage is None else 100.0 * coverage)
 
         total = sum(idf(s) for s in job_skills) or 1.0
         got = sum(idf(s) for s in job_skills if s in user_skills)
