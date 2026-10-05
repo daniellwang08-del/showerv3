@@ -455,6 +455,12 @@ class JobEncoding(Base):
     industry_vec = deferred(Column(LargeBinary, nullable=True))
     # One float16 row per substantive JD line (requirement-level similarity).
     chunk_vecs = deferred(Column(LargeBinary, nullable=True))
+    # Float16 rows for the posting lines in ``req_lines``, same order.
+    req_vecs = deferred(Column(LargeBinary, nullable=True))
+    # [{"t": line, "m": P(hard requirement), "n": P(nice to have)}, ...]
+    req_lines = deferred(Column(JSON, nullable=True))
+    # Compact posting digest read by the cross-encoder.
+    ce_text = deferred(Column(Text, nullable=True))
     # {"skill": "required" | "preferred" | "mentioned", ...}
     skills = Column(JSON, default=dict, nullable=False)
     years_required = Column(Integer, nullable=True)
@@ -490,6 +496,10 @@ class UserEncoding(Base):
     has_degree = Column(Boolean, nullable=True)
     # {"families", "specialties", "level", "level_from_years", "chunks"}.
     signals = Column(JSON, nullable=True)
+    # Text of each ``chunk_vecs`` row, for requirement evidence in explanations.
+    chunk_texts = deferred(Column(JSON, nullable=True))
+    # Compact profile digest read by the cross-encoder.
+    ce_text = deferred(Column(Text, nullable=True))
     encoder_version = Column(String(40), nullable=True)
     # Hash of the encoded inputs; unchanged profiles are never re-encoded.
     profile_hash = Column(String(64), nullable=True)

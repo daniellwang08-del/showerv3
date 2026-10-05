@@ -172,6 +172,11 @@ async def analysis_startup(ctx):
     await init_redis_pool()
     await init_pubsub_redis_pool()
     await heal_stale_pipeline_state()
+    # Loading torch and the cross-encoder takes ~10 s; doing it before the
+    # worker takes jobs keeps that off the first matches' latency.
+    from app.services import cross_encoder
+
+    await asyncio.to_thread(cross_encoder.warm_up)
     logger.info("analysis_worker_startup_complete")
 
 
@@ -217,6 +222,10 @@ async def tailoring_shutdown(ctx):
 # arq's get_kwargs reads __dict__ (own attrs only), so every setting used
 # by the Worker must appear directly on the concrete config class.
 
+from app.core.config import get_settings as _get_settings
+
+_MATCH_POLL_DELAY = _get_settings().match_worker_poll_delay_seconds
+
 class ExtractionWorkerConfig(ExtractionWorkerSettings):
     on_startup = extraction_startup
     on_shutdown = extraction_shutdown
@@ -227,6 +236,7 @@ class ExtractionWorkerConfig(ExtractionWorkerSettings):
     max_tries = ExtractionWorkerSettings.max_tries
     keep_result = ExtractionWorkerSettings.keep_result
     redis_settings = ExtractionWorkerSettings.redis_settings()
+    poll_delay = _MATCH_POLL_DELAY
 
 
 class AnalysisWorkerConfig(AnalysisWorkerSettings):
@@ -242,6 +252,7 @@ class AnalysisWorkerConfig(AnalysisWorkerSettings):
     max_tries = AnalysisWorkerSettings.max_tries
     keep_result = AnalysisWorkerSettings.keep_result
     redis_settings = AnalysisWorkerSettings.redis_settings()
+    poll_delay = _MATCH_POLL_DELAY
 
 
 class TailoringWorkerConfig(TailoringWorkerSettings):
@@ -286,6 +297,7 @@ class SaveWorkerConfig(SaveWorkerSettings):
     max_tries = SaveWorkerSettings.max_tries
     keep_result = SaveWorkerSettings.keep_result
     redis_settings = SaveWorkerSettings.redis_settings()
+    poll_delay = _MATCH_POLL_DELAY
 
 
 async def autopost_startup(ctx):
@@ -425,6 +437,7 @@ class EncodingWorkerConfig(EncodingWorkerSettings):
     max_tries = EncodingWorkerSettings.max_tries
     keep_result = EncodingWorkerSettings.keep_result
     redis_settings = EncodingWorkerSettings.redis_settings()
+    poll_delay = _MATCH_POLL_DELAY
 
 
 WORKER_CONFIGS = {

@@ -163,6 +163,9 @@ class Settings(BaseSettings):
     save_worker_max_jobs: int = 16
     resume_worker_max_jobs: int = 8
     scraper_worker_max_jobs: int = 4
+    # Queue poll interval for the match path (extraction, encoding, analysis,
+    # save). arq's 0.5 s default adds ~0.25 s idle per hop.
+    match_worker_poll_delay_seconds: float = Field(default=0.05, ge=0.01, le=0.5)
     # Spiders in one sync plan run as parallel Scrapy subprocesses (different
     # hosts), bounded by this. A per-spider Redis lock prevents overlap.
     scraper_parallel_spiders: int = Field(default=3, ge=1, le=8)
@@ -256,6 +259,17 @@ class Settings(BaseSettings):
     # vector = vector scorer is authoritative; Phase A never calls the LLM
     #          (raw extraction text + encodings). Phase B tailoring unchanged.
     match_engine: Literal["llm", "shadow", "vector"] = "vector"
+    # Vector scorer generation. v5 = learned dimension models over requirement
+    # coverage (falls back to v4 when its model files are missing); v4 = the
+    # hand-fitted linear models.
+    match_vector_scorer: Literal["v5", "v4"] = "v5"
+    # Cross-encoder stage of scorer v5, run in the analysis worker.
+    # auto = on when CUDA is available and the weights exist; off = trees only.
+    match_cross_encoder: Literal["auto", "on", "off"] = "auto"
+    # Directory written by the cross-encoder export (weights, tokenizer, meta).
+    match_cross_encoder_dir: str = Field(default="./model_cache/nao-match-ce-v5")
+    match_cross_encoder_batch_window_ms: float = Field(default=3.0, ge=0.0, le=50.0)
+    match_cross_encoder_max_batch: int = Field(default=16, ge=1, le=128)
     # Sentence-transformers model for section embeddings.
     # MiniLM-L6 (~90 MB, 384-dim) fits small VPS hosts; upgrade to
     # all-mpnet-base-v2 (~420 MB, 768-dim) via env on larger machines.

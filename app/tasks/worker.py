@@ -155,7 +155,6 @@ async def extract_job(
             "url": url,
         })
 
-    pending_match_progress: tuple[str, str] | None = None
     try:
         from app.services.extraction_service import ExtractionService
 
@@ -171,35 +170,32 @@ async def extract_job(
                 method=method,
                 content_length=content_length,
             )
-            # Vector match engine: encode the job BEFORE chaining analysis so the
-            # analysis worker almost always hits a warm encoding (ms path).
+            valid_job_id: str | None = None
             try:
                 async with get_session() as session:
                     _job_row = await JobRepository(session).get_by_extraction_id(job_id)
-                if _job_row:
-                    from app.services.encoding_service import (
-                        embedding_inline_enabled,
-                        encode_job,
-                    )
-
-                    if not embedding_inline_enabled():
-                        await enqueue_encode_job(_job_row.id)
-                    else:
-                        try:
-                            await encode_job(_job_row.id)
-                        except Exception as inline_enc_err:
-                            logger.warning(
-                                "encode_inline_after_extract_failed",
-                                job_id=_job_row.id,
-                                error=str(inline_enc_err),
-                            )
-                            await enqueue_encode_job(_job_row.id)
-            except Exception as enc_err:
+                    valid_job_id = _job_row.id if _job_row else None
+            except Exception as lookup_err:
                 logger.warning(
-                    "encode_enqueue_after_extract_failed",
+                    "extract_job_valid_job_lookup_failed",
                     extraction_id=job_id,
-                    error=str(enc_err),
+                    error=str(lookup_err),
                 )
+            then: dict | None = None
+            if valid_job_id and user_id and chain_analysis:
+                then = {
+                    "analyze": {
+                        "user_id": user_id,
+                        "extraction_id": job_id,
+                        "skip_phase_b": bool(skip_phase_b),
+                    }
+                }
+            elif valid_job_id and not user_id:
+                then = {"fanout": {"extraction_id": job_id}}
+            # The job must be encoded before the vector engine can score it, so
+            # analysis / fan-out rides on the encode task and starts on a warm
+            # encoding. When the encode cannot carry it, it runs here as before.
+            chained = await _encode_after_extract(valid_job_id, then) if valid_job_id else False
 
             # Platform / admin extract-only leaves status at EXTRACTED (shared raw JD
             # ready). COMPLETED is reserved for Phase A structuring, never promote
@@ -213,65 +209,8 @@ async def extract_job(
                     "method": method,
                 })
 
-                if chain_analysis:
-                    async with get_session() as session:
-                        job_repo = JobRepository(session)
-                        job = await job_repo.get_by_extraction_id(job_id)
-                        if job:
-                            try:
-                                progress_repo = JobMatchInProgressRepository(session)
-                                await progress_repo.add(job.id, user_id)
-                                await session.commit()
-                                pending_match_progress = (job.id, user_id)
-                                pool = await get_analysis_pool()
-                                from app.core.redis_support import pipeline_job_id
-
-                                await pool.enqueue_job(
-                                    "analyze_job_match",
-                                    job.id,
-                                    user_id,
-                                    job_id,
-                                    bool(skip_phase_b),
-                                    _job_id=pipeline_job_id("analyze", job.id, user_id),
-                                )
-                                logger.info(
-                                    "job_match_enqueued",
-                                    valid_job_id=job.id,
-                                    user_id=user_id,
-                                    queue=ANALYSIS_QUEUE,
-                                    skip_phase_b=bool(skip_phase_b),
-                                )
-                                pending_match_progress = None
-                            except Exception as enq_err:
-                                await progress_repo.remove(job.id, user_id)
-                                await session.commit()
-                                pending_match_progress = None
-                                logger.warning("job_match_enqueue_failed", valid_job_id=job.id, error=str(enq_err))
-            else:
-                # Shared inventory extract finished, fan-out auto-prepare for opted-in users.
-                try:
-                    async with get_session() as session:
-                        job_repo = JobRepository(session)
-                        job = await job_repo.get_by_extraction_id(job_id)
-                        valid_job_id = job.id if job else None
-                    if valid_job_id:
-                        from app.services.auto_prepare_service import fanout_auto_prepare_for_job
-
-                        fanout = await fanout_auto_prepare_for_job(
-                            valid_job_id,
-                            extraction_id=job_id,
-                        )
-                        logger.info(
-                            "auto_prepare_fanout_after_extract",
-                            extraction_id=job_id,
-                            **{k: fanout.get(k) for k in ("job_id", "enqueued", "skipped", "users")},
-                        )
-                except Exception as fanout_err:
-                    logger.warning(
-                        "auto_prepare_fanout_failed",
-                        extraction_id=job_id,
-                        error=str(fanout_err),
-                    )
+            if then and not chained:
+                await _run_after_encode(valid_job_id, then)
 
         elif result.get("status") == "failed":
             error_msg = result.get("error", "Unknown error")
@@ -294,8 +233,6 @@ async def extract_job(
         return result
     except asyncio.CancelledError:
         await _mark_extraction_failed_cancelled(job_id)
-        if pending_match_progress:
-            await clear_job_match_progress(pending_match_progress[0], pending_match_progress[1])
         if user_id:
             await _hide_extraction_failure_for_user(job_id, user_id, "Cancelled or timed out")
             await publish_ws_event({
@@ -1610,6 +1547,11 @@ async def _analysis_worker_startup(ctx: dict) -> None:
     await init_redis_pool()
     await init_pubsub_redis_pool()
     await heal_stale_pipeline_state()
+    # Loading torch and the cross-encoder takes ~10 s; doing it before the
+    # worker takes jobs keeps that off the first matches' latency.
+    from app.services import cross_encoder
+
+    await asyncio.to_thread(cross_encoder.warm_up)
 
 
 class AnalysisWorkerSettings:
@@ -1769,6 +1711,96 @@ async def enqueue_encode_job(job_id: str) -> bool:
         return False
 
 
+async def _encode_after_extract(valid_job_id: str, then: dict | None) -> bool:
+    """Encode a freshly extracted job. True when the encode task will run ``then``.
+
+    Inline encoding finishes before returning, so the caller runs ``then`` itself.
+    A stable encode id already queued (or finished within keep_result) dedupes
+    and drops the arguments, so ``then`` is only attached to a new task.
+    """
+    from app.services.encoding_service import embedding_inline_enabled, encode_job
+
+    if embedding_inline_enabled():
+        try:
+            await encode_job(valid_job_id)
+        except Exception as inline_enc_err:
+            logger.warning(
+                "encode_inline_after_extract_failed",
+                job_id=valid_job_id,
+                error=str(inline_enc_err),
+            )
+            await enqueue_encode_job(valid_job_id)
+        return False
+    try:
+        from app.core.redis_support import pipeline_job_id
+
+        pool = await get_encoding_pool()
+        queued = await pool.enqueue_job(
+            "encode_job_task",
+            valid_job_id,
+            then,
+            _job_id=pipeline_job_id("encjob", valid_job_id, "job"),
+        )
+        return queued is not None and then is not None
+    except Exception as e:
+        logger.warning("encode_enqueue_after_extract_failed", job_id=valid_job_id, error=str(e))
+        return False
+
+
+async def _run_after_encode(valid_job_id: str, then: dict) -> None:
+    """Start what waits on a job's encoding: one user's analysis, or the auto-prepare fan-out."""
+    analyze = then.get("analyze")
+    if analyze:
+        user_id = analyze["user_id"]
+        async with get_session() as session:
+            progress_repo = JobMatchInProgressRepository(session)
+            try:
+                await progress_repo.add(valid_job_id, user_id)
+                await session.commit()
+                pool = await get_analysis_pool()
+                from app.core.redis_support import pipeline_job_id
+
+                await pool.enqueue_job(
+                    "analyze_job_match",
+                    valid_job_id,
+                    user_id,
+                    analyze.get("extraction_id"),
+                    bool(analyze.get("skip_phase_b")),
+                    _job_id=pipeline_job_id("analyze", valid_job_id, user_id),
+                )
+                logger.info(
+                    "job_match_enqueued",
+                    valid_job_id=valid_job_id,
+                    user_id=user_id,
+                    queue=ANALYSIS_QUEUE,
+                    skip_phase_b=bool(analyze.get("skip_phase_b")),
+                )
+            except Exception as enq_err:
+                await progress_repo.remove(valid_job_id, user_id)
+                await session.commit()
+                logger.warning("job_match_enqueue_failed", valid_job_id=valid_job_id, error=str(enq_err))
+    fanout_args = then.get("fanout")
+    if fanout_args:
+        try:
+            from app.services.auto_prepare_service import fanout_auto_prepare_for_job
+
+            fanout = await fanout_auto_prepare_for_job(
+                valid_job_id,
+                extraction_id=fanout_args.get("extraction_id"),
+            )
+            logger.info(
+                "auto_prepare_fanout_after_extract",
+                extraction_id=fanout_args.get("extraction_id"),
+                **{k: fanout.get(k) for k in ("job_id", "enqueued", "skipped", "users")},
+            )
+        except Exception as fanout_err:
+            logger.warning(
+                "auto_prepare_fanout_failed",
+                extraction_id=fanout_args.get("extraction_id"),
+                error=str(fanout_err),
+            )
+
+
 async def enqueue_encode_user(user_id: str) -> bool:
     """Best-effort enqueue of profile encoding (stable id dedupes)."""
     try:
@@ -1786,18 +1818,23 @@ async def enqueue_encode_user(user_id: str) -> bool:
         return False
 
 
-async def encode_job_task(ctx: dict, job_id: str) -> dict:
-    """Encoding worker: embed one job + extract deterministic signals."""
+async def encode_job_task(ctx: dict, job_id: str, then: dict | None = None) -> dict:
+    """Encoding worker: embed one job + extract deterministic signals, then start ``then``."""
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="encode_job", valid_job_id=job_id)
     try:
         from app.services.encoding_service import encode_job
 
-        ok = await encode_job(job_id)
-        return {"job_id": job_id, "encoded": bool(ok)}
-    except Exception as e:
-        logger.exception("encode_job_task_failed", valid_job_id=job_id, error=str(e))
-        return {"job_id": job_id, "encoded": False, "error": str(e)}
+        try:
+            ok = await encode_job(job_id)
+        except Exception as e:
+            logger.exception("encode_job_task_failed", valid_job_id=job_id, error=str(e))
+            ok = False
+        # Runs even when encoding failed: analysis then reports the miss instead of
+        # leaving the job without a result.
+        if then:
+            await _run_after_encode(job_id, then)
+        return {"job_id": job_id, "encoded": bool(ok), "chained": sorted(then or {})}
     finally:
         clear_logging_context()
 

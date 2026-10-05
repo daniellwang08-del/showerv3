@@ -556,6 +556,9 @@ async def load_encodings(
                     undefer(JobEncoding.content_vec),
                     undefer(JobEncoding.industry_vec),
                     undefer(JobEncoding.chunk_vecs),
+                    undefer(JobEncoding.req_vecs),
+                    undefer(JobEncoding.req_lines),
+                    undefer(JobEncoding.ce_text),
                 )
                 .where(JobEncoding.job_id == job_id)
             )
@@ -568,22 +571,18 @@ async def load_encodings(
                     undefer(UserEncoding.prefs_vec),
                     undefer(UserEncoding.domain_vec),
                     undefer(UserEncoding.chunk_vecs),
+                    undefer(UserEncoding.chunk_texts),
+                    undefer(UserEncoding.ce_text),
                 )
                 .where(UserEncoding.user_id == user_id)
             )
         ).scalar_one_or_none()
-        # Materialize deferred bytes while the session is still open so
-        # score_pair can run after the context exits.
+        # Detach with every loaded column so scoring can run after the session
+        # closes; the deferred columns above are already populated.
         if job_enc is not None:
-            job_enc.title_vec = job_enc.title_vec
-            job_enc.content_vec = job_enc.content_vec
-            job_enc.industry_vec = job_enc.industry_vec
-            job_enc.chunk_vecs = job_enc.chunk_vecs
+            session.expunge(job_enc)
         if user_enc is not None:
-            user_enc.experience_vec = user_enc.experience_vec
-            user_enc.prefs_vec = user_enc.prefs_vec
-            user_enc.domain_vec = user_enc.domain_vec
-            user_enc.chunk_vecs = user_enc.chunk_vecs
+            session.expunge(user_enc)
         return job_enc, user_enc
 
 
@@ -602,6 +601,7 @@ def encoding_fingerprint(job_enc: JobEncoding, user_enc: UserEncoding) -> str:
         job_enc.content_vec,
         _loaded(job_enc, "industry_vec"),
         _loaded(job_enc, "chunk_vecs"),
+        _loaded(job_enc, "req_vecs"),
         user_enc.experience_vec,
         _loaded(user_enc, "prefs_vec"),
         _loaded(user_enc, "domain_vec"),
@@ -618,6 +618,9 @@ def encoding_fingerprint(job_enc: JobEncoding, user_enc: UserEncoding) -> str:
                 "job_degree": job_enc.degree_required,
                 "job_clearance": bool(job_enc.requires_security_clearance),
                 "job_signals": _loaded(job_enc, "signals"),
+                "job_requirements": _loaded(job_enc, "req_lines"),
+                "job_ce_text": _loaded(job_enc, "ce_text"),
+                "user_ce_text": _loaded(user_enc, "ce_text"),
                 "user_skills": dict(sorted(dict(user_enc.skills or {}).items())),
                 "user_years": user_enc.years_experience,
                 "user_degree": user_enc.has_degree,
@@ -680,7 +683,14 @@ def _gated_result(
 
 
 def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = False) -> dict:
-    """Score one user x job pair from loaded encodings (sync, pure math)."""
+    """Score one user x job pair from loaded encodings with scorer v4 (sync, pure math)."""
+    return _score_v4(job_enc, user_enc, explain=explain)[0]
+
+
+def _score_v4(
+    job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool
+) -> tuple[dict, dict | None, dict | None]:
+    """(result, features, raw); features and raw are None for gated pairs."""
     posting_issue = (_loaded(job_enc, "signals") or {}).get("posting_issue")
     if posting_issue:
         return _gated_result(
@@ -690,7 +700,7 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
             gate="not_a_job_posting",
             explain=explain,
             requires_clearance=False,
-        )
+        ), None, None
     if job_enc.requires_security_clearance:
         return _gated_result(
             job_enc,
@@ -699,7 +709,7 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
             gate="security_clearance",
             explain=explain,
             requires_clearance=True,
-        )
+        ), None, None
 
     features, raw = _features(job_enc, user_enc)
     dims = _dimension_scores(features, raw["has_preferences"])
@@ -757,7 +767,166 @@ def score_pair(job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = 
             },
             "overall_from_weights": overall,
         }
+    return result, features, raw
+
+
+def _quote(text: str, limit: int = 140) -> str:
+    text = " ".join(str(text).split())
+    return f"\"{text[: limit - 3]}...\"" if len(text) > limit else f"\"{text}\""
+
+
+def _v5_narrative(
+    overall: int,
+    features: dict,
+    raw: dict,
+    job_enc: JobEncoding,
+    user_enc: UserEncoding,
+    evidence: dict,
+) -> tuple[str, list[str], list[str]]:
+    _summary, strengths, gaps = _build_narrative(
+        overall, {}, features, raw, job_enc, user_enc.years_experience
+    )
+    met, unmet, total = evidence["met"], evidence["unmet"], evidence["must_total"]
+    if met:
+        best = met[0]
+        line = f"Covers the requirement {_quote(best['requirement'])}"
+        if best.get("evidence"):
+            line += f" (your profile: {_quote(best['evidence'], 120)})"
+        strengths.insert(0, line + ".")
+    if unmet:
+        gaps.insert(
+            0,
+            "Requirements with no close match in your profile: "
+            + "; ".join(_quote(u["requirement"], 110) for u in unmet[:3])
+            + ".",
+        )
+    label = _recommendation(overall).replace("_", " ")
+    summary = (
+        f"Deterministic match score {overall}/100 ({label}), from learned models over how well "
+        "your experience covers each of the posting's requirements, role function and "
+        "seniority fit, skills evidenced, and line-by-line similarity."
+    )
+    if total:
+        summary += f" {evidence['must_met']} of {total} hard requirements are evidenced."
+    return summary, strengths, gaps
+
+
+async def score_pair_v5(
+    job_enc: JobEncoding, user_enc: UserEncoding, *, explain: bool = False
+) -> dict:
+    """Scorer v5 (trees, then the cross-encoder blend when available); v4 when v5 cannot run."""
+    from app.core.config import get_settings
+    from app.services import cross_encoder, vector_match_v5
+
+    v4, features, raw = _score_v4(job_enc, user_enc, explain=True)
+    v4_explain = v4.pop("explain")
+    if explain:
+        v4["explain"] = v4_explain
+    if get_settings().match_vector_scorer != "v5" or not vector_match_v5.scorer_available():
+        return v4
+    if features is None:
+        # v5 keeps the v4 hard gates, so a gated pair is a final v5 result.
+        v4.update(scorer_version=vector_match_v5.SCORER_VERSION, scorer_stage="gate")
+        return v4
+    v4["explain"] = v4_explain
+    try:
+        trees = vector_match_v5.tree_scores(job_enc, user_enc, v4)
+    except Exception as e:
+        logger.warning("vector_match_v5_trees_failed", job_id=job_enc.job_id, error=str(e))
+        trees = None
+    if not explain:
+        v4.pop("explain", None)
+    if trees is None:
+        return v4
+
+    ce = None
+    if trees["posting_prob"] >= 0.5 and trees["overall"] >= vector_match_v5.cascade_threshold():
+        ce = await cross_encoder.score_pair(
+            _loaded(user_enc, "ce_text"), _loaded(job_enc, "ce_text")
+        )
+    dims_f, posting_prob = vector_match_v5.blend(trees, ce)
+    stage = "trees+cross_encoder" if ce else "trees"
+    provenance = {
+        "scorer_version": vector_match_v5.SCORER_VERSION,
+        "model_version": job_enc.model_version,
+        "inputs_fingerprint": v4["inputs_fingerprint"],
+        "scorer_stage": stage,
+    }
+    if posting_prob < 0.5:
+        gated = _gated_result(
+            job_enc,
+            user_enc,
+            summary="Not a job posting: the page does not read like an open role.",
+            gate="not_a_job_posting",
+            explain=explain,
+            requires_clearance=False,
+        )
+        gated.update(provenance)
+        # Judged per pair, so it must not be stored on the shared extraction.
+        gated["not_posting_source"] = "learned"
+        return gated
+
+    dims = {key: int(round(dims_f[key])) for key in MATCH_DIMENSION_WEIGHTS}
+    overall = _compute_overall(dims)
+    summary, strengths, gaps = _v5_narrative(
+        overall, features, raw, job_enc, user_enc, trees["evidence"]
+    )
+    result = {
+        "overall_score": overall,
+        "dimension_scores": dims,
+        "summary": summary,
+        "strengths": strengths,
+        "gaps": gaps,
+        "recommendation": _recommendation(overall),
+        "requires_security_clearance": False,
+        **provenance,
+    }
+    if explain:
+        result["explain"] = {
+            **v4_explain,
+            "scorer_version": vector_match_v5.SCORER_VERSION,
+            "scorer_stage": stage,
+            "v4": {"overall": v4["overall_score"], "dimension_scores": v4["dimension_scores"]},
+            "trees": {
+                "overall": round(trees["overall"], 2),
+                "dimension_scores": {k: round(v, 2) for k, v in trees["dims"].items()},
+                "posting_prob": round(trees["posting_prob"], 4),
+            },
+            "cross_encoder": (
+                {
+                    "dimension_scores": {k: round(v, 2) for k, v in ce["dims"].items()},
+                    "posting_prob": round(ce["posting_prob"], 4),
+                    "ms": ce["ms"],
+                }
+                if ce
+                else None
+            ),
+            "blend_tree_weight": vector_match_v5.blend_weight() if ce else 1.0,
+            "requirements": {
+                **{k: (None if v != v else round(v, 4)) for k, v in trees["req_features"].items()},
+                **trees["evidence"],
+            },
+            "dimension_contributions": {
+                key: {
+                    "score": int(dims[key]),
+                    "weight": float(weight),
+                    "weighted": round(float(dims[key]) * float(weight), 2),
+                }
+                for key, weight in MATCH_DIMENSION_WEIGHTS.items()
+            },
+            "overall_from_weights": overall,
+        }
     return result
+
+
+def current_scorer_version() -> str:
+    """Version stamped on new results: v5 when configured and its models are shipped."""
+    from app.core.config import get_settings
+    from app.services import vector_match_v5
+
+    if get_settings().match_vector_scorer == "v5" and vector_match_v5.scorer_available():
+        return vector_match_v5.SCORER_VERSION
+    return SCORER_VERSION
 
 
 def user_encoding_is_scorable(user_enc: UserEncoding) -> bool:
@@ -803,4 +972,4 @@ async def compute_vector_match(
             user_model=user_enc.model_version,
         )
         return None
-    return score_pair(job_enc, user_enc, explain=explain)
+    return await score_pair_v5(job_enc, user_enc, explain=explain)

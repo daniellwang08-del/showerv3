@@ -10,6 +10,10 @@ alone on purpose: their summary, strengths and gaps are model-written prose,
 and replacing them with vector output would not be a consistency fix but a
 silent downgrade of those rows to a different engine's analysis.
 
+Pairs are scored concurrently so the cross-encoder stage of scorer v5 can
+batch them on the GPU. Rows whose encodings were written by an older encoder
+are skipped: re-encode first (admin backfill), then re-score.
+
 Defaults to a dry run that reports the score movement it would cause. Pass
 --apply to write.
 
@@ -22,49 +26,30 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import time
 
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import undefer
 
 from app.models.database import JobEncoding, JobMatchResult, UserEncoding
-from app.services.vector_match_service import SCORER_VERSION, score_pair
+from app.services.encoding_service import ENCODER_VERSION
+from app.services.vector_match_service import current_scorer_version, score_pair_v5
 from app.storage.database import close_database, get_session, init_database
 
 
-async def _rescore(apply_changes: bool, batch_size: int) -> None:
+async def _rescore(apply_changes: bool, batch_size: int, concurrency: int) -> None:
     await init_database()
+    target = current_scorer_version()
     try:
         async with get_session() as session:
             user_encs = {
                 u.user_id: u
-                for u in (
-                    await session.execute(
-                        select(UserEncoding).options(
-                            undefer(UserEncoding.experience_vec),
-                            undefer(UserEncoding.prefs_vec),
-                            undefer(UserEncoding.domain_vec),
-                            undefer(UserEncoding.chunk_vecs),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
+                for u in (await session.execute(select(UserEncoding).options(undefer("*")))).scalars().all()
             }
             job_encs = {
                 j.job_id: j
-                for j in (
-                    await session.execute(
-                        select(JobEncoding).options(
-                            undefer(JobEncoding.title_vec),
-                            undefer(JobEncoding.content_vec),
-                            undefer(JobEncoding.industry_vec),
-                            undefer(JobEncoding.chunk_vecs),
-                        )
-                    )
-                )
-                .scalars()
-                .all()
+                for j in (await session.execute(select(JobEncoding).options(undefer("*")))).scalars().all()
             }
             rows = (
                 (
@@ -79,17 +64,16 @@ async def _rescore(apply_changes: bool, batch_size: int) -> None:
             )
 
             print()
-            print(f"Re-scoring vector-engine rows with {SCORER_VERSION}")
+            print(f"Re-scoring vector-engine rows with {target}")
             print(f"  candidate rows              {len(rows)}")
 
-            deltas: list[int] = []
             already_current = 0
             missing_encoding = 0
             mismatched_model = 0
-            changed = 0
-
+            stale_encoder = 0
+            todo = []
             for row in rows:
-                if row.scorer_version == SCORER_VERSION:
+                if row.scorer_version == target:
                     already_current += 1
                     continue
                 job_enc = job_encs.get(row.job_id)
@@ -102,11 +86,27 @@ async def _rescore(apply_changes: bool, batch_size: int) -> None:
                     # re-encoding is the fix, not re-scoring.
                     mismatched_model += 1
                     continue
+                if job_enc.encoder_version != ENCODER_VERSION or user_enc.encoder_version != ENCODER_VERSION:
+                    stale_encoder += 1
+                    continue
+                todo.append((row, job_enc, user_enc))
 
-                result = score_pair(job_enc, user_enc)
+            sem = asyncio.Semaphore(concurrency)
+
+            async def one(job_enc, user_enc):
+                async with sem:
+                    return await score_pair_v5(job_enc, user_enc)
+
+            started = time.monotonic()
+            results = await asyncio.gather(*(one(j, u) for _, j, u in todo))
+            elapsed = time.monotonic() - started
+
+            deltas: list[int] = []
+            stages: dict[str, int] = {}
+            for changed, ((row, _j, _u), result) in enumerate(zip(todo, results), start=1):
                 deltas.append(int(result["overall_score"]) - int(row.overall_score or 0))
-                changed += 1
-
+                stage = result.get("scorer_stage", "gate")
+                stages[stage] = stages.get(stage, 0) + 1
                 if apply_changes:
                     row.overall_score = result["overall_score"]
                     row.dimension_scores = result["dimension_scores"]
@@ -120,10 +120,14 @@ async def _rescore(apply_changes: bool, batch_size: int) -> None:
                     if changed % batch_size == 0:
                         await session.flush()
 
-            print(f"  already on {SCORER_VERSION[:20]:<20} {already_current}")
+            print(f"  already on {target[:20]:<20} {already_current}")
             print(f"  skipped, no encoding        {missing_encoding}")
             print(f"  skipped, model mismatch     {mismatched_model}")
-            print(f"  {'rewritten' if apply_changes else 'would rewrite':<27} {changed}")
+            print(f"  skipped, encoder not {ENCODER_VERSION[:6]:<6} {stale_encoder}")
+            print(f"  {'rewritten' if apply_changes else 'would rewrite':<27} {len(todo)}")
+            if todo:
+                print(f"  scored in                   {elapsed:.1f}s ({len(todo) / max(elapsed, 1e-6):.0f} pairs/s)")
+                print(f"  stages                      {stages}")
 
             if deltas:
                 arr = np.asarray(deltas)
@@ -153,8 +157,9 @@ def main() -> None:
         "--apply", action="store_true", help="write the new scores (default: dry run)"
     )
     parser.add_argument("--batch-size", type=int, default=200)
+    parser.add_argument("--concurrency", type=int, default=32)
     args = parser.parse_args()
-    asyncio.run(_rescore(args.apply, args.batch_size))
+    asyncio.run(_rescore(args.apply, args.batch_size, args.concurrency))
 
 
 if __name__ == "__main__":

@@ -32,6 +32,14 @@ from app.core.logging import get_logger
 from app.models.database import Job, JobEncoding, JobExtraction, User, UserEncoding
 from app.services.industry_taxonomy import industry_profile
 from app.services.posting_validity import non_posting_reason
+from app.services.requirement_lines import (
+    BOILERPLATE_RE,
+    classify_lines,
+    job_ce_text,
+    posting_lines,
+    profile_ce_text,
+    stored_requirements,
+)
 from app.services.role_taxonomy import (
     level_from_years,
     role_family,
@@ -53,7 +61,7 @@ logger = get_logger(__name__)
 
 # Bump when encode_job / encode_user start writing different inputs for the
 # scorer; the backfill re-encodes every row whose encoder_version differs.
-ENCODER_VERSION = "v4-roles-industry"
+ENCODER_VERSION = "v5-requirements"
 
 _model = None
 _model_device: str | None = None
@@ -163,8 +171,15 @@ def model_version() -> str:
     return get_settings().embedding_model_name
 
 
+# Padded tokens per CUDA forward pass. A job sends ~5 long texts (256 tokens)
+# and ~60 short ones; a fixed batch size pads the short ones to 256.
+_CUDA_PAD_TOKEN_BUDGET = 8192
+
+
 def _encode_now(texts: list[str]) -> np.ndarray:
     model = get_embedding_model()
+    if _model_device == "cuda" and len(texts) > 1:
+        return _encode_length_bucketed(model, texts)
     vecs = model.encode(
         texts,
         batch_size=effective_embedding_batch_size(),
@@ -172,6 +187,24 @@ def _encode_now(texts: list[str]) -> np.ndarray:
         show_progress_bar=False,
     )
     return np.asarray(vecs, dtype=np.float32)
+
+
+def _encode_length_bucketed(model, texts: list[str]) -> np.ndarray:
+    max_tokens = int(model.max_seq_length or 256)
+    est = [min(len(t) // 4 + 2, max_tokens) for t in texts]
+    order = sorted(range(len(texts)), key=est.__getitem__, reverse=True)
+    out = np.empty((len(texts), model.get_sentence_embedding_dimension()), dtype=np.float32)
+    i = 0
+    while i < len(order):
+        idx = order[i : i + max(1, _CUDA_PAD_TOKEN_BUDGET // est[order[i]])]
+        out[idx] = model.encode(
+            [texts[k] for k in idx],
+            batch_size=len(idx),
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        i += len(idx)
+    return out
 
 
 class _EncodeBatcher:
@@ -310,14 +343,6 @@ _MIN_CHUNK_CHARS = 25
 _MAX_CHUNK_CHARS = 400
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+(?=[A-Z])")
 _BULLET_STRIP = " \t-*\u2022\u25cf\u25aa"
-# Legal, benefits and application boilerplate says nothing about the work and
-# would only dilute the posting's average similarity.
-_BOILERPLATE_RE = re.compile(
-    r"equal opportunity|\beeo\b|without regard to|disabilit|veteran|accommodation|benefits|401\(?k|\bpto\b|"
-    r"paid time off|health insurance|dental|vision insurance|parental leave|salary range|compensation|base pay|"
-    r"pay range|cookie|privacy policy|e-verify|background check|apply now|apply for this|recruiting scam|phishing",
-    re.IGNORECASE,
-)
 
 
 def _split_chunks(text: str) -> list[str]:
@@ -340,7 +365,7 @@ def job_chunks(body: str | None) -> list[str]:
     for chunk in _split_chunks(body or ""):
         if len(chunk) < 80 and (REQUIRED_HEADING_RE.search(chunk) or PREFERRED_HEADING_RE.search(chunk)):
             continue
-        if _BOILERPLATE_RE.search(chunk):
+        if BOILERPLATE_RE.search(chunk):
             continue
         out.append(chunk)
         if len(out) >= _MAX_JOB_CHUNKS:
@@ -582,6 +607,7 @@ def _analyze_job_text(
     job_work_mode: str | None,
     job_source_url: str | None,
     is_remote_flag: bool,
+    posting_body: str = "",
 ):
     """CPU and model work for ``encode_job``; runs in a worker thread."""
     from app.services.job_field_utils import clean_optional_job_field
@@ -592,8 +618,21 @@ def _analyze_job_text(
     clearance, _phrase = requires_security_clearance(full_text)
 
     chunks = job_chunks(content_text)
-    vecs = encode_texts([title_text or content_text[:200], content_text, industry_text] + chunks)
-    chunk_mat = vecs[3:] if chunks else None
+    lines = posting_lines(posting_body or content_text)
+    base = [title_text or content_text[:200], content_text, industry_text] + chunks
+    # Requirement lines mostly repeat chunk text; encode each distinct string once.
+    index = {text: i for i, text in enumerate(base)}
+    extra: list[str] = []
+    for text, _section in lines:
+        if text not in index:
+            index[text] = len(base) + len(extra)
+            extra.append(text)
+    vecs = encode_texts(base + extra)
+    chunk_mat = vecs[3 : len(base)] if chunks else None
+    line_vecs = vecs[[index[t] for t, _ in lines]] if lines else np.zeros((0, vecs.shape[1]), np.float32)
+    p_must, p_nice = classify_lines(lines, line_vecs)
+    req_payload, req_mat = stored_requirements(lines, line_vecs, p_must, p_nice)
+    ce_text = job_ce_text(job_title or title_text, lines, p_must, p_nice)
 
     # Vector work-mode + MiniLM title/company fill (encoding process only).
     work_mode_to_set: str | None = None
@@ -655,6 +694,7 @@ def _analyze_job_text(
         work_mode_to_set,
         title_to_set,
         company_to_set,
+        (req_payload, req_mat, ce_text),
     )
 
 
@@ -711,6 +751,7 @@ async def encode_job(job_id: str) -> bool:
         work_mode_to_set,
         title_to_set,
         company_to_set,
+        (req_payload, req_mat, ce_text),
     ) = await asyncio.to_thread(
         _analyze_job_text,
         job_id,
@@ -724,6 +765,7 @@ async def encode_job(job_id: str) -> bool:
         job_work_mode,
         job_source_url,
         is_remote_flag,
+        posting_body,
     )
     signals = job_signals(title_to_set or title_text or job_title, posting_body)
 
@@ -742,6 +784,9 @@ async def encode_job(job_id: str) -> bool:
         row.content_vec = vec_to_bytes(content_vec)
         row.industry_vec = vec_to_bytes(industry_vec)
         row.chunk_vecs = matrix_to_bytes(chunk_mat)
+        row.req_vecs = matrix_to_bytes(req_mat)
+        row.req_lines = req_payload
+        row.ce_text = ce_text
         row.skills = skills
         row.years_required = years_required
         row.degree_required = degree_required
@@ -777,6 +822,7 @@ async def encode_job(job_id: str) -> bool:
         years_required=years_required,
         clearance=clearance,
         chunks=0 if chunk_mat is None else len(chunk_mat),
+        requirements=len(req_payload),
         family=signals["family"],
         posting_issue=signals["posting_issue"],
         industry_chars=len(industry_text),
@@ -1041,5 +1087,15 @@ async def build_user_encoding(
         "years_experience": years_experience,
         "has_degree": has_degree,
         "signals": signals,
+        "chunk_texts": list(chunks) if chunk_mat is not None else [],
+        "ce_text": profile_ce_text(
+            prefs_text=prefs_text,
+            profile_title=profile_title,
+            profile_summary=profile_summary,
+            years_experience=years_experience,
+            work_experience=work_experience,
+            education=education,
+            technical_skills=technical_skills,
+        ),
         "encoder_version": ENCODER_VERSION,
     }

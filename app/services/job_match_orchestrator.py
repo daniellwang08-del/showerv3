@@ -275,9 +275,8 @@ async def _mark_extraction_ready_without_llm(ext_id: str, job_id: str | None = N
 
 
 _ENCODING_WAIT_SECONDS = 30.0
-# Batched encodes finish in tens of ms, so start polling fast and back off.
-_ENCODING_POLL_START_SECONDS = 0.05
-_ENCODING_POLL_MAX_SECONDS = 1.0
+# How often arq checks for the encode task's result; batched encodes take tens of ms.
+_ENCODING_RESULT_POLL_SECONDS = 0.05
 
 
 async def _encodings_present(job_id: str, user_id: str) -> bool:
@@ -308,45 +307,56 @@ async def _encodings_present(job_id: str, user_id: str) -> bool:
 
 
 async def _wait_for_worker_encodings(job_id: str, user_id: str) -> bool:
-    """Enqueue job+user encoding and briefly wait for the encoding worker."""
-    try:
-        from app.tasks.worker import enqueue_encode_job, enqueue_encode_user
+    """Have the encoding worker encode the job and profile, wait for it once, check once.
 
-        enqueued = await enqueue_encode_job(job_id)
-        enqueued = await enqueue_encode_user(user_id) and enqueued
-    except Exception as e:
+    Each encode has a stable arq id, so this waits on the task that is already
+    queued or running instead of re-polling the tables.
+    """
+    from arq.jobs import Job as ArqJob
+
+    from app.core.redis_support import pipeline_job_id
+    from app.tasks.worker import get_encoding_pool
+
+    started = time.monotonic()
+    try:
+        pool = await get_encoding_pool()
+        waits = []
+        for task, arg, arq_id in (
+            ("encode_job_task", job_id, pipeline_job_id("encjob", job_id, "job")),
+            ("encode_user_task", user_id, pipeline_job_id("encuser", user_id, "user")),
+        ):
+            await pool.enqueue_job(task, arg, _job_id=arq_id)
+            waits.append(
+                ArqJob(arq_id, pool).result(
+                    timeout=_ENCODING_WAIT_SECONDS, poll_delay=_ENCODING_RESULT_POLL_SECONDS
+                )
+            )
+        await asyncio.gather(*waits)
+    except asyncio.TimeoutError:
         logger.warning(
-            "encoding_enqueue_from_match_failed",
+            "vector_encoding_wait_timeout",
+            job_id=job_id,
+            user_id=user_id,
+            waited_seconds=_ENCODING_WAIT_SECONDS,
+        )
+        return False
+    except Exception as e:
+        # A failed or expired encode task still leaves the final table check.
+        logger.warning(
+            "vector_encoding_wait_failed",
             job_id=job_id,
             user_id=user_id,
             error=str(e),
         )
-        return False
-    if not enqueued:
-        return False
-    deadline = time.monotonic() + _ENCODING_WAIT_SECONDS
-    delay = _ENCODING_POLL_START_SECONDS
-    while time.monotonic() < deadline:
-        await asyncio.sleep(delay)
-        delay = min(delay * 2, _ENCODING_POLL_MAX_SECONDS)
-        try:
-            if await _encodings_present(job_id, user_id):
-                return True
-        except Exception as e:
-            logger.warning(
-                "vector_encoding_wait_check_failed",
-                job_id=job_id,
-                user_id=user_id,
-                error=str(e),
-            )
-            return False
-    logger.warning(
-        "vector_encoding_wait_timeout",
+    present = await _encodings_present(job_id, user_id)
+    logger.info(
+        "vector_encoding_waited",
         job_id=job_id,
         user_id=user_id,
-        waited_seconds=_ENCODING_WAIT_SECONDS,
+        present=present,
+        waited_ms=int((time.monotonic() - started) * 1000),
     )
-    return False
+    return present
 
 
 async def _ensure_encodings_for_vector(job_id: str, user_id: str) -> bool:
@@ -436,8 +446,9 @@ async def _try_vector_authoritative(
             )
             return None
     if vector_result.get("is_job_posting") is False:
-        async with get_session() as session:
-            await JobExtractionRepository(session).update_is_job_posting(ext_id, False)
+        if vector_result.get("not_posting_source") != "learned":
+            async with get_session() as session:
+                await JobExtractionRepository(session).update_is_job_posting(ext_id, False)
         return vector_result, False
     return vector_result, True
 
@@ -670,6 +681,8 @@ async def run_job_match_analysis(
                 "job_match_vector_engine_complete",
                 job_id=job_id,
                 user_id=user_id,
+                scorer_version=result.get("scorer_version"),
+                scorer_stage=result.get("scorer_stage"),
                 score=result.get("overall_score"),
                 is_job_posting=is_job_posting,
                 dimension_scores=result.get("dimension_scores"),
