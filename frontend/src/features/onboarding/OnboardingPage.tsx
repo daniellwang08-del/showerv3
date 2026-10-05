@@ -114,7 +114,7 @@ export function OnboardingPage({
   const currentForm = form ?? baseForm();
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background">
       <PageTitle title="Get started" />
       <header className="flex h-14 shrink-0 items-center justify-between px-4 sm:px-6">
         <NaoWordmark className="h-[18px] text-foreground" />
@@ -123,7 +123,7 @@ export function OnboardingPage({
         </Button>
       </header>
 
-      <main className="flex flex-1 justify-center px-4 pt-6 pb-16 sm:pt-12">
+      <main className="page-scroll-y-auto flex min-h-0 flex-1 justify-center overflow-y-auto px-4 pt-6 pb-16 sm:pt-12">
         <div className="w-full max-w-xl">
           <Stepper step={step} onJump={(i) => i < step && setStep(i)} />
           <div className="mt-8">
@@ -447,6 +447,44 @@ function EssentialsStep({
           {errors.phone_number ? <FieldError>{errors.phone_number}</FieldError> : null}
         </Field>
         {field('linkedin_url', 'LinkedIn profile URL', { placeholder: 'https://linkedin.com/in/you' })}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="onb-address-city">City</FieldLabel>
+            <Input
+              id="onb-address-city"
+              autoComplete="address-level2"
+              value={form.address.city ?? ''}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, address: { ...f.address, city: e.target.value } }))
+              }
+              placeholder="San Francisco"
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="onb-address-state">State / Province</FieldLabel>
+            <Input
+              id="onb-address-state"
+              autoComplete="address-level1"
+              value={form.address.state ?? ''}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, address: { ...f.address, state: e.target.value } }))
+              }
+              placeholder="CA"
+            />
+          </Field>
+        </div>
+        <Field>
+          <FieldLabel htmlFor="onb-address-country">Country</FieldLabel>
+          <Input
+            id="onb-address-country"
+            autoComplete="country-name"
+            value={form.address.country ?? ''}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, address: { ...f.address, country: e.target.value } }))
+            }
+            placeholder="United States"
+          />
+        </Field>
         <Field data-invalid={!!errors.profile_summary || undefined}>
           <FieldLabel htmlFor="onb-profile_summary">Professional summary</FieldLabel>
           <Textarea

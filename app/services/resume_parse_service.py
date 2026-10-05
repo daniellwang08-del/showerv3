@@ -48,6 +48,13 @@ Copy profile fields from the résumé into structured JSON for a job-search appl
   "linkedin_url": string | null,
   "github_url": string | null,
   "profile_summary": string | null,
+  "location": string | null,
+  "address": {
+    "city": string | null,
+    "state": string | null,
+    "postal_code": string | null,
+    "country": string | null
+  },
   "technical_skills": [ { "category": string | null, "skills": string | null } ],
   "work_experience": [ {
     "company_name": string | null,
@@ -96,6 +103,8 @@ Work experience (critical - most errors happen here):
   - issued_at MUST use the same formats as period_*: YYYY-MM (month+year) or YYYY (year only). Never emit résumé wording like "Aug 2023", "Issued Nov 2021", or "August 2023".
   - Example: "Issued Aug 2023 Expired Aug 2025" → issued_at "2023-08". Prefer the issue date, not the expiry.
   - Issuer names and credential IDs are not separate fields, put the certificate title in name; do not dump issuer/ID/date lines into extra when they belong with a certificate.
+- location: the candidate's home / header location as printed near the name or contact row (e.g. "San Francisco, CA", "London, United Kingdom"). This is NOT a job or school location.
+- address: structured form of that same header location. city / state / postal_code / country only. Do NOT put a street address unless the résumé itself prints one in the header. Do not copy work_experience or education locations here.
 - phone_country_code: dialing code only (e.g. "+1", "+44"). phone_number: the **complete** national number without the country code.
   - For US/Canada (+1): phone_number MUST be the full 10-digit number (area code + local), e.g. "(610) 234-7936" or "6102347936". Never emit a truncated fragment such as "313-3369" or "610-234".
   - If the résumé phone is incomplete, unreadable, or you cannot recover all digits, set BOTH phone_country_code and phone_number to null, do not invent or keep partial numbers.
@@ -646,6 +655,27 @@ def _normalize_phone_fields(country: str | None, number: str | None) -> tuple[st
     return None, None
 
 
+def _guess_header_location_from_text(text: str) -> str | None:
+    """Best-effort home location from the résumé header when the LLM omitted it."""
+    from app.services.resume_location import format_resume_header_location, parse_resume_header_location
+
+    if not text or not text.strip():
+        return None
+    for raw_line in text[:2500].splitlines()[:20]:
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line or "," not in line or len(line) < 5 or len(line) > 80:
+            continue
+        lowered = line.lower()
+        if "@" in lowered or "http" in lowered or "linkedin" in lowered or "github" in lowered:
+            continue
+        if re.search(r"\d{3}[-.\s]?\d{3}[-.\s]?\d{4}", line):
+            continue
+        parsed = parse_resume_header_location(line)
+        if parsed.get("city") and (parsed.get("state") or parsed.get("country")):
+            return format_resume_header_location(parsed) or None
+    return None
+
+
 def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> list[str]:
     """Backfill header contact fields when the vision LLM omits icon-row details."""
     notes: list[str] = []
@@ -680,6 +710,15 @@ def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> l
         em = _EMAIL_IN_TEXT_RE.search(header)
         if em:
             draft.email = em.group(0).lower()
+
+    if not draft.location and not (draft.address and (draft.address.city or draft.address.country)):
+        guessed = _guess_header_location_from_text(header)
+        if guessed:
+            draft.location = guessed
+            from app.services.resume_location import apply_header_location_to_draft
+
+            apply_header_location_to_draft(draft)
+            notes.append("Home location was recovered from document text (AI parser omitted it).")
 
     return notes
 
@@ -784,6 +823,8 @@ _RESUME_DRAFT_KEYS = {
     "linkedin_url",
     "github_url",
     "profile_summary",
+    "location",
+    "address",
     "technical_skills",
     "work_experience",
     "education",
@@ -819,6 +860,7 @@ _EDU_KEYS = {
 
 _CERT_KEYS = {"name", "issued_at", "url"}
 _SKILL_KEYS = {"category", "skills"}
+_ADDRESS_KEYS = {"line1", "line2", "city", "state", "postal_code", "country", "local_preferences"}
 
 
 def _listify(value: Any) -> list[Any]:
@@ -884,6 +926,14 @@ def coerce_resume_payload(data: Any) -> dict[str, Any]:
         out["certificates"] = [
             _keep_known(item, _CERT_KEYS) for item in _listify(out["certificates"]) if isinstance(item, dict)
         ]
+    if "address" in out:
+        addr = out["address"]
+        if isinstance(addr, str):
+            out["address"] = addr.strip() or None
+        elif isinstance(addr, dict):
+            out["address"] = _keep_known(addr, _ADDRESS_KEYS)
+        else:
+            out.pop("address", None)
     return out
 
 
@@ -917,6 +967,7 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     draft.linkedin_url = _normalize_linkedin_url(_clean(draft.linkedin_url))
     draft.github_url = _normalize_github_url(_clean(draft.github_url))
     draft.profile_summary = _clean(draft.profile_summary)
+    draft.location = _clean(draft.location)
 
     if not draft.phone_country_code and draft.phone_number:
         draft.phone_country_code = "+1"
@@ -990,6 +1041,9 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
 
     draft.extra = [x.strip() for x in draft.extra if x and str(x).strip()]
 
+    from app.services.resume_location import apply_header_location_to_draft
+
+    apply_header_location_to_draft(draft)
     return draft
 
 
@@ -1085,9 +1139,10 @@ def infer_country_preferences(draft) -> list[str]:
     """Detect the candidate's likely job countries from a parsed resume draft.
 
     Signals, strongest first:
-      1. Work-experience locations (document order ≈ most recent first).
-      2. Education locations.
-      3. Phone dialing code (weak fallback, only when no location matched).
+      1. Header / home location (the contact-row city printed on the résumé).
+      2. Work-experience locations (document order ≈ most recent first).
+      3. Education locations.
+      4. Phone dialing code (weak fallback, only when no location matched).
 
     Returns ISO alpha-2 codes, first-seen order, capped at 3. Used to seed
     ``users.country_preferences`` unless the user configured them manually.
@@ -1101,6 +1156,20 @@ def infer_country_preferences(draft) -> list[str]:
         for code in codes:
             if code not in ordered:
                 ordered.append(code)
+
+    header_bits = [
+        getattr(draft, "location", None),
+    ]
+    addr = getattr(draft, "address", None)
+    if addr is not None:
+        header_bits.extend(
+            [
+                getattr(addr, "city", None),
+                getattr(addr, "state", None),
+                getattr(addr, "country", None),
+            ]
+        )
+    _add(detect_countries_in_text(" ".join(str(x) for x in header_bits if x)))
 
     for work in (getattr(draft, "work_experience", None) or [])[:5]:
         _add(detect_countries_in_text(getattr(work, "location", None)))

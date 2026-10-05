@@ -1,4 +1,5 @@
 import {
+  type AddressInfo,
   type CertificateBlock,
   type EducationBlock,
   type ProfileFormData,
@@ -10,6 +11,7 @@ import {
 import type { UserProfile } from '../types/profile';
 import { coerceFlexibleDate } from './flexibleDate';
 import { profileToForm } from './profileFormData';
+import { parseResumeHeaderLocation } from './resumeLocation';
 
 export type ResumeDraft = {
   name_first?: string | null;
@@ -22,6 +24,15 @@ export type ResumeDraft = {
   linkedin_url?: string | null;
   github_url?: string | null;
   profile_summary?: string | null;
+  location?: string | null;
+  address?: {
+    line1?: string | null;
+    line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postal_code?: string | null;
+    country?: string | null;
+  } | null;
   technical_skills?: Array<{ category?: string | null; skills?: string | null }>;
   work_experience?: Array<{
     company_name?: string | null;
@@ -178,6 +189,8 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
   if (linkedin !== undefined) partial.linkedin_url = linkedin;
   if (pick(draft.github_url) !== undefined) partial.github_url = pick(draft.github_url)!;
   if (pick(draft.profile_summary) !== undefined) partial.profile_summary = pick(draft.profile_summary)!;
+  const address = addressFromDraft(draft);
+  if (address) partial.address = address;
   if (skills.length) partial.technical_skills = skills;
   if (work.length) partial.work_experience = work;
   if (education.length) partial.education = education;
@@ -185,6 +198,29 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
   if (extra.length) partial.extra = extra;
 
   return partial;
+}
+
+function hasHomeLocation(addr: AddressInfo | undefined): boolean {
+  if (!addr) return false;
+  return !!(addr.city?.trim() || addr.state?.trim() || addr.line1?.trim());
+}
+
+function addressFromDraft(draft: ResumeDraft): AddressInfo | undefined {
+  const src = draft.address ?? {};
+  const parsed = pick(draft.location) ? parseResumeHeaderLocation(draft.location) : {};
+  const city = pick(src.city) ?? parsed.city;
+  const state = pick(src.state) ?? parsed.state;
+  const postal = pick(src.postal_code) ?? parsed.postal_code;
+  const country = pick(src.country) ?? parsed.country;
+  if (!city && !state && !country && !pick(src.line1)) return undefined;
+  const out: AddressInfo = {};
+  if (pick(src.line1)) out.line1 = pick(src.line1);
+  if (pick(src.line2)) out.line2 = pick(src.line2);
+  if (city) out.city = city;
+  if (state) out.state = state;
+  if (postal) out.postal_code = postal;
+  if (country) out.country = country;
+  return out;
 }
 
 function previewSnippet(s: string, max = 80): string {
@@ -368,6 +404,14 @@ export function mergeResumeImport(
 
   if (!out.phone_country_code?.trim()) out.phone_country_code = '+1';
   if (!out.extra?.length) out.extra = [''];
+
+  if (partial.address && (mode === 'replace' || !hasHomeLocation(base.address))) {
+    out.address = {
+      ...base.address,
+      ...partial.address,
+      local_preferences: base.address.local_preferences ?? [],
+    };
+  }
 
   return out;
 }

@@ -270,6 +270,8 @@ class ResumeExtractedDraft(BaseModel):
     linkedin_url: str | None = None
     github_url: str | None = None
     profile_summary: str | None = None
+    location: str | None = None
+    address: AddressInfo | None = None
     technical_skills: list[ResumeSkillBlock] = Field(default_factory=list)
     work_experience: list[ResumeWorkBlock] = Field(default_factory=list)
     education: list[ResumeEducationBlock] = Field(default_factory=list)
@@ -280,6 +282,23 @@ class ResumeExtractedDraft(BaseModel):
     @classmethod
     def normalize_extra(cls, v):
         return _coerce_str_list(v)
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def empty_location(cls, v):
+        return _empty_to_none(v)
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def coerce_address(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            from app.services.resume_location import parse_resume_header_location
+
+            parsed = parse_resume_header_location(v)
+            return parsed or None
+        return v
 
 
 class ResumeParseResponse(BaseModel):

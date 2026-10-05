@@ -29,6 +29,7 @@ import type {
 import { renderRich } from '../../utils/richText';
 import { deriveWorkContent } from '../../utils/workExperience';
 import { formatFlexibleDate, formatFlexiblePeriod } from '../../utils/flexibleDate';
+import { formatResumeHeaderLocation } from '../../utils/resumeLocation';
 
 export const PT_TO_PX = 1.3333;
 
@@ -150,7 +151,7 @@ function fullName(p: UserProfile | null): string {
   return p.name || 'Your Name';
 }
 
-type ContactKind = 'email' | 'phone' | 'linkedin' | 'github';
+type ContactKind = 'email' | 'phone' | 'location' | 'linkedin' | 'github';
 
 type ContactItem = { kind: ContactKind; text: string; href?: string };
 
@@ -176,6 +177,10 @@ function contactItems(p: UserProfile | null): ContactItem[] {
   if (phone) {
     const tel = phone.replace(/[^\d+]/g, '');
     items.push({ kind: 'phone', text: phone, href: tel ? `tel:${tel}` : undefined });
+  }
+  const location = formatResumeHeaderLocation(p.address);
+  if (location) {
+    items.push({ kind: 'location', text: location });
   }
   if ((p.linkedin_url || '').trim()) {
     const raw = p.linkedin_url!.trim();
@@ -277,6 +282,17 @@ function ContactIcon({
       ) : (
         <svg {...common} fill={color}>
           <path d={GITHUB_PATH} />
+        </svg>
+      );
+    case 'location':
+      return variant === 'outline' ? (
+        <svg {...common} {...strokeProps}>
+          <path d="M12 21s7-7.75 7-13a7 7 0 1 0-14 0c0 5.25 7 13 7 13z" />
+          <circle cx="12" cy="9.5" r="2.5" />
+        </svg>
+      ) : (
+        <svg {...common} fill={color} fillRule="evenodd">
+          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" />
         </svg>
       );
     default:

@@ -2585,7 +2585,30 @@ def _dashboard_min_score_clauses(min_match_score: int | None) -> tuple[list, boo
     return [], False
 
 
-def _dashboard_visible_base_filter(user_id: str, min_match_score: int | None = None) -> tuple[list, bool]:
+def _applicant_preferred_pool_clause(
+    user_id: str,
+    countries: list[str] | None,
+    *,
+    is_admin: bool,
+):
+    """Hide teammate / scraped jobs that sit outside this viewer's country prefs.
+
+    Jobs the viewer added themselves stay visible. Admins are unfiltered.
+    """
+    if is_admin:
+        return None
+    from app.services.job_location_classifier import preferred_pool_visibility_clause
+
+    return preferred_pool_visibility_clause(user_id, countries or [])
+
+
+def _dashboard_visible_base_filter(
+    user_id: str,
+    min_match_score: int | None = None,
+    *,
+    country_preferences: list[str] | None = None,
+    is_admin: bool = False,
+) -> tuple[list, bool]:
     """Shared visibility filter for dashboard list / revision / sync (view=all)."""
     base_filter = [
         Job.status != "blocked",
@@ -2593,6 +2616,11 @@ def _dashboard_visible_base_filter(user_id: str, min_match_score: int | None = N
     ]
     score_clauses, needs_match_join = _dashboard_min_score_clauses(min_match_score)
     base_filter.extend(score_clauses)
+    country_clause = _applicant_preferred_pool_clause(
+        user_id, country_preferences, is_admin=is_admin
+    )
+    if country_clause is not None:
+        base_filter.append(country_clause)
     return base_filter, needs_match_join
 
 
@@ -2760,9 +2788,18 @@ async def _dashboard_revision_for_user(
     user_id: str,
     *,
     min_match_score: int | None = None,
+    is_admin: bool = False,
 ) -> tuple[str, int, datetime]:
     """Return (revision, total, server_time) for the user's visible job catalog."""
-    base_filter, needs_match_join = _dashboard_visible_base_filter(user_id, min_match_score)
+    countries: list[str] = []
+    if not is_admin:
+        countries = await UserRepository(session).get_country_preferences(user_id)
+    base_filter, needs_match_join = _dashboard_visible_base_filter(
+        user_id,
+        min_match_score,
+        country_preferences=countries,
+        is_admin=is_admin,
+    )
     # Fingerprint from visible row count + newest related activity timestamps.
     activity = func.greatest(
         Job.updated_at,
@@ -2872,12 +2909,19 @@ async def get_dashboard_jobs(
             min_score = await UserRepository(session).get_effective_min_match_score(user_id)
 
         # Admins see the full non-blocked pool (matches admin stats). Applicants
-        # still hide jobs they marked duplicated / manual_hidden via UJS.
+        # still hide jobs they marked duplicated / manual_hidden via UJS, and
+        # hide teammate / scraped jobs outside their country preferences.
         base_filter = [Job.status != "blocked"]
         if not is_admin:
             base_filter.append(
                 (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")
             )
+            countries = await UserRepository(session).get_country_preferences(user_id)
+            country_clause = _applicant_preferred_pool_clause(
+                user_id, countries, is_admin=False
+            )
+            if country_clause is not None:
+                base_filter.append(country_clause)
         base_filter.extend(
             _dashboard_search_clauses(
                 q=q, title=title, company=company, source=source, remote_only=remote_only,
@@ -2984,7 +3028,10 @@ async def get_dashboard_revision(
 
     async with get_session() as session:
         revision, total, server_time = await _dashboard_revision_for_user(
-            session, user_id, min_match_score=min_match_score
+            session,
+            user_id,
+            min_match_score=min_match_score,
+            is_admin=bool(current_user.get("is_admin")),
         )
         return DashboardRevisionResponse(
             revision=revision,
@@ -3039,15 +3086,25 @@ async def get_dashboard_sync(
     day_start, day_end = day_bounds_for_timezone(timezone_name)
 
     async with get_session() as session:
+        is_admin = bool(current_user.get("is_admin"))
         revision, total, server_time = await _dashboard_revision_for_user(
-            session, user_id, min_match_score=min_match_score
+            session,
+            user_id,
+            min_match_score=min_match_score,
+            is_admin=is_admin,
         )
 
         min_score_pref = await UserRepository(session).get_effective_min_match_score(user_id)
+        countries = [] if is_admin else await UserRepository(session).get_country_preferences(user_id)
         shared_filter = [
             Job.status != "blocked",
             (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
         ]
+        country_clause = _applicant_preferred_pool_clause(
+            user_id, countries, is_admin=is_admin
+        )
+        if country_clause is not None:
+            shared_filter.append(country_clause)
 
         async def _count(view: str) -> int:
             view_clauses, needs_match_join = _dashboard_view_clauses(
@@ -3100,7 +3157,12 @@ async def get_dashboard_sync(
                 counts=counts,
             )
 
-        base_filter, _needs = _dashboard_visible_base_filter(user_id, min_match_score)
+        base_filter, _needs = _dashboard_visible_base_filter(
+            user_id,
+            min_match_score,
+            country_preferences=countries,
+            is_admin=is_admin,
+        )
         changed_clause = or_(
             Job.updated_at >= since_dt,
             UserJobStatus.updated_at >= since_dt,
@@ -3277,6 +3339,12 @@ async def get_dashboard_counts(
             shared_filter.append(
                 (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")
             )
+            countries = await UserRepository(session).get_country_preferences(user_id)
+            country_clause = _applicant_preferred_pool_clause(
+                user_id, countries, is_admin=False
+            )
+            if country_clause is not None:
+                shared_filter.append(country_clause)
         shared_filter.extend(
             _dashboard_search_clauses(
                 q=q, title=title, company=company, source=source, remote_only=remote_only,

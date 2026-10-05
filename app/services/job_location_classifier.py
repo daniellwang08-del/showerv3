@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Iterable
+from functools import lru_cache
+from typing import Any, Iterable
 
 from app.services.country_catalog import (
     PHRASE_TO_CODE,
@@ -414,6 +415,156 @@ def classify_job_location(
     if mapped == LocationVerdict.US:
         return mapped, f"US location: {combined[:120]}"
     return mapped, f"location needs review: {combined[:120]}"
+
+
+def job_was_added_by_user(raw_metadata: Any, user_id: str) -> bool:
+    """True when this viewer submitted the job (not an admin FA add)."""
+    meta = raw_metadata if isinstance(raw_metadata, dict) else {}
+    if not meta.get("submitted_data"):
+        return False
+    if str(meta.get("submitted_by_admin") or "").lower() == "true":
+        return False
+    return str(meta.get("submitted_by_user_id") or "") == str(user_id or "")
+
+
+def job_added_by_user_clause(user_id: str):
+    """SQLAlchemy clause matching ``job_was_added_by_user``."""
+    from sqlalchemy import and_, or_
+
+    from app.models.database import Job
+
+    return and_(
+        Job.raw_metadata["submitted_data"].isnot(None),
+        Job.raw_metadata["submitted_by_user_id"].as_string() == (user_id or ""),
+        or_(
+            Job.raw_metadata["submitted_by_admin"].as_string().is_(None),
+            Job.raw_metadata["submitted_by_admin"].as_string() != "true",
+        ),
+    )
+
+
+def _sql_word_pattern(phrase: str) -> str:
+    """Alphanumeric-boundary pattern for Postgres ``~*`` (POSIX classes)."""
+    return rf"(^|[^[:alnum:]]){re.escape(phrase)}([^[:alnum:]]|$)"
+
+
+@lru_cache(maxsize=64)
+def _allowed_location_regex(allowed: frozenset[str]) -> str | None:
+    """POSIX regex that matches an explicit preferred-country signal."""
+    if not allowed:
+        return None
+    phrases: list[str] = [p for p, code in PHRASE_TO_CODE.items() if code in allowed]
+    phrases.extend(code.lower() for code in allowed if code not in _US_STATE_ABBREVS or code == "US")
+    for token, group in REGION_GROUPS.items():
+        if group & allowed:
+            phrases.append(token)
+    extras: list[str] = []
+    if "US" in allowed:
+        extras.append(_sql_word_pattern("us"))
+        extras.append(rf",\s*(?:{'|'.join(sorted(_US_STATE_ABBREVS))})([^[:alnum:]]|$)")
+        phrases.extend(name for name in _US_STATE_NAMES)
+    if not phrases and not extras:
+        return None
+    parts = [_sql_word_pattern(p) for p in phrases]
+    parts.extend(extras)
+    return "(?:" + ")|(?:".join(parts) + ")"
+
+
+@lru_cache(maxsize=64)
+def _outside_location_regex(allowed: frozenset[str]) -> str | None:
+    """POSIX regex that matches locations explicitly outside ``allowed``."""
+    if not allowed:
+        return None
+
+    forbidden: list[str] = []
+    for phrase, code in PHRASE_TO_CODE.items():
+        if code in allowed:
+            continue
+        if phrase == "georgia" and "US" in allowed:
+            continue
+        forbidden.append(phrase)
+
+    for token, group in REGION_GROUPS.items():
+        if group.isdisjoint(allowed):
+            forbidden.append(token)
+
+    from app.services.country_catalog import COUNTRY_NAMES, SUBDIVISION_TO_CODE
+
+    for name, code in SUBDIVISION_TO_CODE.items():
+        if code not in allowed:
+            forbidden.append(name.lower() if name != name.upper() else name)
+
+    # Bare ISO codes ("London, GB") that are not also US state abbreviations.
+    for code in COUNTRY_NAMES:
+        if code in allowed or code in _US_STATE_ABBREVS:
+            continue
+        forbidden.append(code.lower())
+
+    extras: list[str] = []
+    if "US" not in allowed:
+        abbrevs = "|".join(sorted(_US_STATE_ABBREVS))
+        extras.append(rf",\s*(?:{abbrevs})([^[:alnum:]]|$)")
+        for name in _US_STATE_NAMES:
+            if name == "georgia" and "GE" in allowed:
+                continue
+            forbidden.append(name)
+        extras.append(_sql_word_pattern("us"))
+
+    if not forbidden and not extras:
+        return None
+
+    parts = [_sql_word_pattern(p) for p in forbidden]
+    parts.extend(extras)
+    return "(?:" + ")|(?:".join(parts) + ")"
+
+
+def location_explicitly_outside_preferences_clause(allowed_countries: Iterable[str]):
+    """SQL: ``Job.location`` names a country/region outside the preference set."""
+    allowed = frozenset(str(c).strip().upper() for c in allowed_countries if str(c).strip())
+    pattern = _outside_location_regex(allowed)
+    if not pattern:
+        return None
+
+    from sqlalchemy import func
+
+    from app.models.database import Job
+
+    return func.coalesce(Job.location, "").op("~*")(pattern)
+
+
+def location_matches_preferred_clause(allowed_countries: Iterable[str]):
+    """SQL: ``Job.location`` names a preferred country or overlapping region."""
+    allowed = frozenset(str(c).strip().upper() for c in allowed_countries if str(c).strip())
+    pattern = _allowed_location_regex(allowed)
+    if not pattern:
+        return None
+
+    from sqlalchemy import func
+
+    from app.models.database import Job
+
+    return func.coalesce(Job.location, "").op("~*")(pattern)
+
+
+def preferred_pool_visibility_clause(user_id: str, allowed_countries: Iterable[str]):
+    """Keep jobs this viewer added; hide others that explicitly resolve outside prefs.
+
+    Empty preferences disable location filtering. A location that names both a
+    preferred country and a non-preferred one stays visible (``US or Canada``
+    for a US user). Only explicit outside-only locations are dropped.
+    """
+    from sqlalchemy import or_
+
+    allowed = [str(c).strip().upper() for c in allowed_countries if str(c).strip()]
+    if not allowed:
+        return None
+    outside = location_explicitly_outside_preferences_clause(allowed)
+    if outside is None:
+        return None
+    matching = location_matches_preferred_clause(allowed)
+    if matching is None:
+        return or_(job_added_by_user_clause(user_id), ~outside)
+    return or_(job_added_by_user_clause(user_id), matching, ~outside)
 
 
 def keeps_us_job_pool(

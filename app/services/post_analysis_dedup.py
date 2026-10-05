@@ -327,7 +327,9 @@ async def run_post_analysis_dedup(
             extraction = extraction_row.scalar_one_or_none()
 
         preferred_countries = await user_repo.get_country_preferences(user_id)
-        if preferred_countries:
+        from app.services.job_location_classifier import job_was_added_by_user
+
+        if preferred_countries and not job_was_added_by_user(current_job.raw_metadata, user_id):
             location_verdict, location_detail = classify_job_location_for_countries(
                 current_job.location,
                 remote_policy=extraction.remote_policy if extraction else None,

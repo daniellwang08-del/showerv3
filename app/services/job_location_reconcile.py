@@ -133,8 +133,12 @@ async def reconcile_job_locations_for_user(user_id: str, *, batch_size: int = 50
                 rows = (await session.execute(stmt)).all()
 
                 ujs_repo = UserJobStatusRepository(session)
+                from app.services.job_location_classifier import job_was_added_by_user
+
                 for job, extraction, overall_score in rows:
                     scanned += 1
+                    if job_was_added_by_user(job.raw_metadata, user_id):
+                        continue
                     keep, _verdict, detail = keeps_preferred_job_pool(
                         job.location,
                         remote_policy=extraction.remote_policy if extraction else None,

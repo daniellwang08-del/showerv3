@@ -1099,6 +1099,7 @@ def _render_header(
 
     raw_email = (profile.get("email") or "").strip() or None
     raw_phone = (profile.get("phone") or "").strip() or None
+    raw_location = (profile.get("location") or "").strip() or None
     raw_linkedin = (profile.get("linkedin") or "").strip() or None
     raw_github = (profile.get("github") or "").strip() or None
     contact_items: list[tuple[str, str, str | None]] = []
@@ -1106,6 +1107,8 @@ def _render_header(
         contact_items.append(("email", raw_email, _contact_href("email", raw_email, raw_email)))
     if raw_phone:
         contact_items.append(("phone", raw_phone, _contact_href("phone", raw_phone, raw_phone)))
+    if raw_location:
+        contact_items.append(("location", raw_location, None))
     if raw_linkedin:
         contact_items.append(
             ("linkedin", _clean_url(raw_linkedin), _contact_href("linkedin", raw_linkedin, raw_linkedin))
@@ -1929,11 +1932,14 @@ _CERT_GLYPH: dict[str, str] = {
 # ── Profile extraction ─────────────────────────────────────────────────────
 
 def _profile_dict(user: User) -> dict[str, Any]:
+    from app.services.resume_location import format_resume_header_location
+
     return {
         "full_name": _full_name(user),
         "title": (getattr(user, "profile_title", None) or "").strip(),
         "email": (getattr(user, "profile_email", None) or getattr(user, "email", None) or "").strip(),
         "phone": _format_phone(user),
+        "location": format_resume_header_location(getattr(user, "address", None)),
         "linkedin": (getattr(user, "linkedin_url", None) or "").strip(),
         "github": (getattr(user, "github_url", None) or "").strip(),
     }
