@@ -38,6 +38,17 @@ const LAYOUT_FIELDS: (keyof LayoutMetrics)[] = [
 /** Leaf roles that must not end a page (they introduce the block after them). */
 const KEEP_WITH_NEXT = new Set(['heading', 'exp-head', 'exp-lead', 'exp-label']);
 
+/** Mark which `[data-block]` leaves belong on this page clone.
+ *  Uses a data attribute (not `el.style.visibility`) so a later React style
+ *  rewrite, e.g. changing heading color, cannot drop on-page titles. */
+export function stampPageBlockVisibility(host: HTMLElement, visible: boolean[]): void {
+  const els = host.querySelectorAll<HTMLElement>('[data-block]');
+  els.forEach((el, idx) => {
+    el.dataset.onPage = visible[idx] ? '1' : '0';
+    el.style.removeProperty('visibility');
+  });
+}
+
 /** Page geometry in CSS px at 96 dpi. The PDF renderer prints frames of exactly this
  *  size onto pages of exactly this size, so each on-screen page is one PDF page. */
 export const PAPER_SIZES: Record<PaperSize, { label: string; widthPx: number; heightPx: number; css: string }> = {
@@ -321,20 +332,18 @@ export function ResumePageStack({
     return () => ro.disconnect();
   }, [design, profile, letter, marginTop, marginBottom, hasBand, nativeW, nativeH, onMeasureHeader, onMeasureLayout, measureOnly]);
 
-  // Hide every block that belongs to another page. Inherited `visibility` keeps
-  // non-block wrappers hidden too, and hidden content is never painted into the PDF.
+  // Hide every block that belongs to another page so a PDF page never carries
+  // extractable text from another page. Re-stamp after `design` changes: React
+  // rewrites heading/color style objects and used to wipe inline visibility,
+  // which made section titles inherit hidden from the page host.
   useLayoutEffect(() => {
     if (measureOnly) return;
     pages.forEach((page, i) => {
       const host = pageRefs.current[i];
       if (!host) return;
-      host.style.visibility = 'hidden';
-      const els = host.querySelectorAll<HTMLElement>('[data-block]');
-      els.forEach((el, idx) => {
-        el.style.visibility = page.visible[idx] ? 'visible' : 'hidden';
-      });
+      stampPageBlockVisibility(host, page.visible);
     });
-  }, [pages, measureOnly]);
+  }, [pages, measureOnly, design]);
 
   const pageCount = pages.length;
   useEffect(() => {
@@ -365,6 +374,7 @@ export function ResumePageStack({
           ref={(el) => {
             pageRefs.current[i] = el;
           }}
+          className="resume-page-body"
           style={{ position: 'absolute', top: -page.offset, left: 0, width: nativeW }}
         >
           <ResumePreview design={design} profile={profile} letter={letter} paged />

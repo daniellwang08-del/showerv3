@@ -51,3 +51,13 @@
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
+
+/* Page clones stamp [data-on-page] on each [data-block]. Do not use inline
+   visibility for this: React re-applies heading color styles and would drop
+   el.style.visibility, hiding Technical Skills / Work Experience titles. */
+.resume-page-body [data-block][data-on-page="0"] {
+  visibility: hidden;
+}
+.resume-page-body [data-block][data-on-page="1"] {
+  visibility: visible;
+}
