@@ -43,7 +43,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { integrationKeys, invalidateJobSites } from './queries';
 import { InlineError, Section, SheetFrame } from './SheetFrame';
-import { errorDetail, jobSiteStatus, parseServerDate, relativeTime } from './status';
+import {
+  errorDetail,
+  jobSiteStatus,
+  needsReconnect,
+  parseServerDate,
+  relativeTime,
+  resumeLabel,
+} from './status';
 import { useJobSiteConnect, type ConnectLogLine, type StepState } from './useJobSiteConnect';
 
 function upsertConnection(qc: ReturnType<typeof useQueryClient>, row: JobSiteConnection) {
@@ -171,10 +178,36 @@ function ConnectedSite({
   const enabled = toggle.isPending ? Boolean(toggle.variables) : connection.enabled;
   const synced = parseServerDate(connection.last_synced_at);
   const hints = Object.entries(connection.credential_hints ?? {});
+  const state = connection.status ?? 'connected';
+  const reauth = needsReconnect(connection);
+  const resume = resumeLabel(connection.next_sync_at);
+  const waiting = (state === 'rate_limited' || state === 'quota_exhausted') && Boolean(resume);
+  const cap = plugin.lifetime_request_cap ?? null;
+  const nextSync = enabled && state !== 'needs_reauth' ? resume : null;
 
   return (
     <div className="space-y-6">
-      {connection.last_error ? (
+      {reauth ? (
+        <Alert variant="destructive">
+          <AlertCircle />
+          <AlertTitle>Sign in to {plugin.name} again</AlertTitle>
+          <AlertDescription>
+            <p>{connection.last_error ?? 'The saved session or key stopped working.'} Syncing is paused until you reconnect.</p>
+            <Button size="sm" className="mt-2" onClick={onReconnect}>
+              <KeyRound />
+              {plugin.auth_type === 'api_key' ? 'Update credentials' : 'Reconnect'}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : waiting ? (
+        <Alert>
+          <AlertCircle />
+          <AlertTitle>{state === 'quota_exhausted' ? 'Request limit reached' : 'Rate limited'}</AlertTitle>
+          <AlertDescription>
+            {connection.last_error ?? `${plugin.name} asked us to slow down.`} Syncing resumes {resume}.
+          </AlertDescription>
+        </Alert>
+      ) : connection.last_error ? (
         <InlineError title="The last sync failed">{connection.last_error}</InlineError>
       ) : null}
 
@@ -199,7 +232,7 @@ function ConnectedSite({
           <Button
             variant="outline"
             size="sm"
-            disabled={sync.isPending || !enabled}
+            disabled={sync.isPending || !enabled || reauth || waiting}
             onClick={() => sync.mutate()}
           >
             {sync.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
@@ -216,6 +249,20 @@ function ConnectedSite({
           <dd className="tabular-nums">{connection.last_listing_count ?? '-'}</dd>
           <dt className="text-muted-foreground">New jobs</dt>
           <dd className="tabular-nums">{connection.last_new_jobs ?? '-'}</dd>
+          {nextSync ? (
+            <>
+              <dt className="text-muted-foreground">Next sync</dt>
+              <dd className="tabular-nums">{nextSync}</dd>
+            </>
+          ) : null}
+          {cap ? (
+            <>
+              <dt className="text-muted-foreground">Key usage</dt>
+              <dd className="tabular-nums">
+                {connection.request_count ?? 0} of {cap} lifetime requests
+              </dd>
+            </>
+          ) : null}
           {hints.map(([k, v]) => (
             <div key={k} className="contents">
               <dt className="text-muted-foreground capitalize">{k.replace(/_/g, ' ')}</dt>
@@ -360,7 +407,7 @@ function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnect
       {flow.error ? <InlineError>{flow.error}</InlineError> : null}
 
       {extMissing ? (
-        <InstallGuide onInstalled={flow.retry} />
+        <InstallGuide onInstalled={flow.retry} hasCredentialFallback={hasFields} />
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button disabled={flow.busy || flow.extReady === null} onClick={() => void flow.captureNow()}>
@@ -439,7 +486,13 @@ const EXTENSION_STEPS = [
   'Pin “NAO” and sign in with your account',
 ];
 
-function InstallGuide({ onInstalled }: { onInstalled: () => void }) {
+function InstallGuide({
+  onInstalled,
+  hasCredentialFallback,
+}: {
+  onInstalled: () => void;
+  hasCredentialFallback: boolean;
+}) {
   const [checking, setChecking] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
@@ -472,7 +525,9 @@ function InstallGuide({ onInstalled }: { onInstalled: () => void }) {
         {checking ? <Loader2 className="animate-spin" /> : null}
         I&apos;ve installed it
       </Button>
-      <p className="text-xs text-muted-foreground">Or enter your credentials below instead.</p>
+      {hasCredentialFallback ? (
+        <p className="text-xs text-muted-foreground">Or enter your credentials below instead.</p>
+      ) : null}
     </Section>
   );
 }
@@ -523,27 +578,6 @@ function CredentialFields({
   const strict = plugin.auth_type === 'api_key';
   return (
     <FieldGroup className="gap-4">
-      {plugin.auth_type === 'account' && plugin.login_url ? (
-        <p className="text-sm text-muted-foreground">
-          {plugin.slug === 'remoterocketship' ? (
-            <>
-              Paste a Cookie header from DevTools after signing in on{' '}
-              <a href={plugin.login_url} target="_blank" rel="noreferrer" className="text-brand hover:underline">
-                RemoteRocketship
-              </a>
-              .
-            </>
-          ) : (
-            <>
-              Enter the same email and password you use on{' '}
-              <a href={plugin.homepage} target="_blank" rel="noreferrer" className="text-brand hover:underline">
-                {plugin.name}
-              </a>
-              . We verify against the live API.
-            </>
-          )}
-        </p>
-      ) : null}
       {plugin.credential_fields.map((field) => {
         const id = `cred-${plugin.slug}-${field.key}`;
         const invalid = strict && missing.includes(field.key);

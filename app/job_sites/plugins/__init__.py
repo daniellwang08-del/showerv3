@@ -14,5 +14,4 @@ from . import (  # noqa: F401
     themuse,
     unavailable,
     usajobs,
-    ziprecruiter,
 )

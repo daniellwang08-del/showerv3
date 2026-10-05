@@ -30,6 +30,9 @@ export interface WsEvent {
   items_updated?: number;
   promotion?: Record<string, unknown>;
   elapsed_seconds?: number;
+  plugin_slug?: string;
+  plugin_name?: string;
+  status?: string;
 }
 
 type WsEventHandler = (event: WsEvent) => void;

@@ -59,6 +59,20 @@ _unavailable(
 )
 
 _unavailable(
+    slug="ziprecruiter",
+    name="ZipRecruiter",
+    blurb="ZipRecruiter shut down its job-search API in April 2025.",
+    homepage="https://www.ziprecruiter.com/",
+    logo_file="ziprecruiter.svg",
+    sort_order=215,
+    reason=(
+        "ZipRecruiter retired its publisher Search API (ZipSearch) on March 31, 2025, "
+        "and its remaining APIs are for ATS partners posting jobs. Connect JSearch for "
+        "aggregated ZipRecruiter-sourced listings."
+    ),
+)
+
+_unavailable(
     slug="glassdoor",
     name="Glassdoor",
     blurb="Glassdoor has no public job-search API for individuals.",

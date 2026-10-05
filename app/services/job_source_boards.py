@@ -58,6 +58,9 @@ class BoardJob:
     title: str = ""
     location: str = ""
     company: str = ""
+    # The board's own listing page when ``url`` is the employer's posting;
+    # boards that require attribution link back here.
+    source_url: str = ""
 
 
 @dataclass

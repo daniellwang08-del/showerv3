@@ -559,6 +559,14 @@ class UserJobSiteConnection(Base):
     last_error = Column(Text, nullable=True)
     last_listing_count = Column(Integer, nullable=True)
     last_new_jobs = Column(Integer, nullable=True)
+    # connected | needs_reauth | rate_limited | quota_exhausted | error
+    status = Column(String(20), nullable=False, default="connected", server_default="connected")
+    consecutive_failures = Column(Integer, nullable=False, default=0, server_default="0")
+    # None means "due now" while connected, "stopped" in any other status.
+    next_sync_at = Column(DateTime, nullable=True)
+    last_success_at = Column(DateTime, nullable=True)
+    # Lifetime fetches with the stored key, for boards with a lifetime cap.
+    request_count = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

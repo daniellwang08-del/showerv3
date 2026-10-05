@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { jobSiteStatus, pumbleStatus, relativeTime, sheetsStatus } from './status';
+import { jobSiteStatus, pumbleStatus, relativeTime, resumeLabel, sheetsStatus } from './status';
 import { extensionStatusText, extensionSteps } from './useJobSiteConnect';
 import { makeConnection, makePlugin } from './testUtils';
 
@@ -17,6 +17,27 @@ describe('integration status helpers', () => {
       kind: 'connected',
       detail: 'Not synced yet · 1 listing',
     });
+  });
+
+  it('maps lifecycle statuses to attention with a next step', () => {
+    const plugin = makePlugin();
+    const reauth = jobSiteStatus(plugin, makeConnection({ status: 'needs_reauth', last_error: 'Key rejected' }));
+    expect(reauth).toEqual({ kind: 'attention', detail: 'Sign in again to resume syncing · Key rejected' });
+    const soon = new Date(Date.now() + 3 * 3600_000).toISOString();
+    expect(jobSiteStatus(plugin, makeConnection({ status: 'quota_exhausted', next_sync_at: soon }))).toEqual({
+      kind: 'attention',
+      detail: 'Request limit reached · resumes in 3h',
+    });
+    expect(
+      jobSiteStatus(plugin, makeConnection({ status: 'quota_exhausted', next_sync_at: null, last_error: 'Key used up' })),
+    ).toEqual({ kind: 'attention', detail: 'Request limit reached · Key used up' });
+  });
+
+  it('formats resume times', () => {
+    const now = Date.parse('2026-10-03T12:00:00Z');
+    expect(resumeLabel('2026-10-03T12:30:00', now)).toBe('in 30m');
+    expect(resumeLabel('2026-10-03T12:00:30', now)).toBe('shortly');
+    expect(resumeLabel(null, now)).toBeNull();
   });
 
   it('treats naive server timestamps as UTC', () => {

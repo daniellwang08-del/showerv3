@@ -68,5 +68,8 @@ register(
             ),
         ),
         fetch=_fetch,
+        # Free keys carry a lifetime cap of 500 requests; daily syncs stretch it past a year.
+        min_sync_hours=24.0,
+        lifetime_request_cap=500,
     )
 )

@@ -149,6 +149,17 @@ function handleWsEvent(event: WsEvent) {
     return;
   }
 
+  if (event.type === 'job_site_status') {
+    void queryClient.invalidateQueries({ queryKey: ['integrations', 'job-sites'] });
+    const name = event.plugin_name || event.plugin_slug || 'A job site';
+    const action =
+      event.status === 'needs_reauth'
+        ? `${name} needs you to sign in again. Open Integrations and click Reconnect.`
+        : `${name} stopped syncing: ${event.message || 'its request limit is used up'}.`;
+    useUIStore.getState().notify('warning', action, 12000);
+    return;
+  }
+
   if (event.type === 'scrape_promoted' || event.type === 'job_submitted') {
     refresh.afterSubmit();
     refresh.lists();

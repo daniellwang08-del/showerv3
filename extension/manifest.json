@@ -20,10 +20,7 @@
     "http://127.0.0.1/*",
     "https://localhost/*",
     "https://*.jobright.ai/*",
-    "https://jobright.ai/*",
-    "https://*.remoterocketship.com/*",
-    "https://www.remoterocketship.com/*",
-    "https://remoterocketship.com/*"
+    "https://jobright.ai/*"
   ],
   "background": {
     "service_worker": "background.js",

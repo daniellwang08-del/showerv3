@@ -179,6 +179,7 @@ async def _process_listing_job(
             raw_metadata={
                 "scraped_source": scraped_source,
                 **extra_meta,
+                **({"source_listing_url": board_job.source_url} if board_job.source_url else {}),
             },
         )
         session.add(job)

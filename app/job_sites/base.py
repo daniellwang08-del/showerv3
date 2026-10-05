@@ -14,7 +14,7 @@ class AuthType(StrEnum):
 
     NONE = "none"  # public feed, enabling the tile is enough
     API_KEY = "api_key"  # user pastes a developer / publisher key
-    ACCOUNT = "account"  # browser session (iframe + extension) and/or credentials
+    ACCOUNT = "account"  # browser session captured by the extension (no passwords)
     UNAVAILABLE = "unavailable"  # researched; no legitimate user-login fetch path
 
 
@@ -43,7 +43,7 @@ FetchFn = Callable[[dict[str, Any], FetchContext], Awaitable[list[BoardJob]]]
 
 @dataclass(frozen=True)
 class SessionCapture:
-    """Browser-session connect: open the board in a tab, watch where it lands.
+    """Browser-session connect: the extension opens the board in a real tab and watches where it lands.
 
     The extension opens ``start_url`` and tracks navigation until it settles.
     The board's own redirect is the login test: an authenticated Jobright user
@@ -88,6 +88,10 @@ class JobSitePlugin:
     unavailable_reason: str = ""
     session_capture: SessionCapture | None = None
     fetch: FetchFn | None = None
+    # Minimum hours between syncs; set from the board's published polling rules.
+    min_sync_hours: float = 6.0
+    # Requests a key may ever make (Jooble free keys: 500). 0 means no cap.
+    lifetime_request_cap: int = 0
 
     @property
     def connectable(self) -> bool:
@@ -112,6 +116,8 @@ class JobSitePlugin:
             "unavailable_reason": self.unavailable_reason or None,
             "logo_src": f"/integrations/job-sites/{self.logo_file}",
             "sort_order": self.sort_order,
+            "min_sync_hours": self.min_sync_hours,
+            "lifetime_request_cap": self.lifetime_request_cap or None,
             "credential_fields": [
                 {
                     "key": f.key,

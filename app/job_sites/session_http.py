@@ -6,8 +6,16 @@ import asyncio
 from typing import Any
 
 from app.core.logging import get_logger
+from app.job_sites.errors import RateLimited, SessionExpired
 
 logger = get_logger(__name__)
+
+
+def _retry_after(raw: str | None) -> float | None:
+    try:
+        return max(0.0, float(raw)) if raw else None
+    except ValueError:
+        return None
 
 BROWSER_HEADERS = {
     "Accept": "application/json, text/plain, */*",
@@ -80,8 +88,13 @@ def _sync_get_json(
             )
         response = session.get(url, params=params)
         if response.status_code in (401, 403):
-            raise PermissionError(
+            raise SessionExpired(
                 f"Session rejected ({response.status_code}). Sign in again and recapture cookies."
+            )
+        if response.status_code == 429:
+            raise RateLimited(
+                "The site is rate limiting requests (429).",
+                retry_after_seconds=_retry_after(response.headers.get("retry-after")),
             )
         response.raise_for_status()
         return response.json()

@@ -63,9 +63,37 @@ export function jobSiteStatus(plugin: JobSitePlugin, connection: JobSiteConnecti
     return { kind: 'unavailable', detail: plugin.unavailable_reason || 'Not available right now' };
   }
   if (!connection) return { kind: 'not_connected' };
+  const state = connection.status ?? 'connected';
+  if (state === 'needs_reauth') {
+    return { kind: 'attention', detail: `Sign in again to resume syncing · ${connection.last_error ?? 'Session expired'}` };
+  }
+  if (state === 'quota_exhausted' || state === 'rate_limited') {
+    const resume = resumeLabel(connection.next_sync_at);
+    const reason = state === 'quota_exhausted' ? 'Request limit reached' : 'Rate limited by the site';
+    return {
+      kind: 'attention',
+      detail: resume ? `${reason} · resumes ${resume}` : `${reason} · ${connection.last_error ?? 'new key needed'}`,
+    };
+  }
   if (connection.last_error) return { kind: 'attention', detail: connection.last_error };
   if (!connection.enabled) return { kind: 'off', detail: `Auto-sync paused · ${syncSummary(connection)}` };
   return { kind: 'connected', detail: syncSummary(connection) };
+}
+
+/** "in 3h", "in 2d", or a date; null when there is no scheduled time. */
+export function resumeLabel(iso: string | null | undefined, now = Date.now()): string | null {
+  const date = parseServerDate(iso);
+  if (!date) return null;
+  const mins = Math.ceil((date.getTime() - now) / 60000);
+  if (mins <= 1) return 'shortly';
+  if (mins < 60) return `in ${mins}m`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `in ${hrs}h`;
+  return `on ${date.toLocaleDateString()}`;
+}
+
+export function needsReconnect(connection: JobSiteConnection | undefined): boolean {
+  return connection?.status === 'needs_reauth';
 }
 
 export interface SheetsData {

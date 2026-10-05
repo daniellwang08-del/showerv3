@@ -223,6 +223,38 @@ describe('IntegrationsPage, job sites', () => {
     expect(within(sheet).getByText('API key was rejected (401).')).toBeInTheDocument();
   });
 
+  it('asks the user to reconnect when the session expired and blocks manual sync', async () => {
+    const user = userEvent.setup();
+    db.connections.push(
+      makeConnection({
+        plugin_slug: 'jobright',
+        status: 'needs_reauth',
+        last_error: 'Your Jobright session expired.',
+        next_sync_at: null,
+      }),
+    );
+    renderPage();
+    expect(await within(await screen.findByRole('article', { name: 'Jobright' })).findByText('Needs attention')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Manage Jobright' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText('Sign in to Jobright again')).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Sync now' })).toBeDisabled();
+    await user.click(within(sheet).getAllByRole('button', { name: 'Reconnect' })[0]);
+    expect(await within(sheet).findByText('Connect with your browser login')).toBeInTheDocument();
+  });
+
+  it('shows lifetime key usage for capped boards', async () => {
+    const user = userEvent.setup();
+    db.plugins.push(
+      makePlugin({ slug: 'jooble', name: 'Jooble', auth_type: 'api_key', sort_order: 8, lifetime_request_cap: 500 }),
+    );
+    db.connections.push(makeConnection({ plugin_slug: 'jooble', request_count: 37 }));
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Manage Jooble' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText('37 of 500 lifetime requests')).toBeInTheDocument();
+  });
+
   it('asks for confirmation before disconnecting', async () => {
     const user = userEvent.setup();
     renderPage();

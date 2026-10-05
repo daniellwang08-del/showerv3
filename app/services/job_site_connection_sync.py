@@ -3,18 +3,29 @@
 Users connect a catalog plugin (API key, session cookies, or enable-only public
 feed). Periodic sync fetches listings through the plugin and feeds URLs into
 the same extract → analyze path as ATS job sources.
+
+Each connection carries a lifecycle status. A rejected session or key stops
+polling until the user reconnects; throttles and quotas wait for the board's
+reset time; transient failures back off exponentially.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.logging import get_logger
-from app.job_sites.base import AuthType, FetchContext
+from app.job_sites.base import AuthType, FetchContext, JobSitePlugin
+from app.job_sites.errors import (
+    ConnectionConfigError,
+    QuotaExhausted,
+    RateLimited,
+    SessionExpired,
+)
 from app.job_sites.registry import get_plugin
 from app.models.database import User, UserJobSiteConnection
 from app.services.country_catalog import normalize_country_preferences
@@ -29,10 +40,139 @@ from app.utils.secret_encryption import decrypt_secret, encrypt_secret
 logger = get_logger(__name__)
 
 SYNC_INTERVAL_HOURS = 6
+MAX_BACKOFF_HOURS = 48
+# Consecutive transient failures before the card shows "needs attention".
+ERROR_AFTER_FAILURES = 3
+DEFAULT_RATE_LIMIT_WAIT = timedelta(minutes=30)
+
+STATUS_CONNECTED = "connected"
+STATUS_NEEDS_REAUTH = "needs_reauth"
+STATUS_RATE_LIMITED = "rate_limited"
+STATUS_QUOTA_EXHAUSTED = "quota_exhausted"
+STATUS_ERROR = "error"
+# Statuses the scheduler keeps polling once next_sync_at is reached.
+RUNNABLE_STATUSES = (STATUS_CONNECTED, STATUS_RATE_LIMITED, STATUS_QUOTA_EXHAUSTED, STATUS_ERROR)
+
+FAILURE_AUTH = "auth"
+FAILURE_RATE_LIMITED = "rate_limited"
+FAILURE_QUOTA = "quota"
+FAILURE_CONFIG = "config"
+FAILURE_TRANSIENT = "transient"
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def sync_interval(plugin: JobSitePlugin | None) -> timedelta:
+    hours = max(SYNC_INTERVAL_HOURS, plugin.min_sync_hours) if plugin else SYNC_INTERVAL_HOURS
+    return timedelta(hours=hours)
+
+
+def classify_failure(exc: Exception) -> str:
+    if isinstance(exc, SessionExpired):
+        return FAILURE_AUTH
+    if isinstance(exc, QuotaExhausted):
+        return FAILURE_QUOTA
+    if isinstance(exc, RateLimited):
+        return FAILURE_RATE_LIMITED
+    if isinstance(exc, ConnectionConfigError):
+        return FAILURE_CONFIG
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in (401, 403):
+            return FAILURE_AUTH
+        if code == 429:
+            return FAILURE_RATE_LIMITED
+        if code in (400, 404, 405, 410):
+            return FAILURE_CONFIG
+        return FAILURE_TRANSIENT
+    if isinstance(exc, PermissionError):
+        return FAILURE_AUTH
+    if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError):
+        return FAILURE_CONFIG
+    return FAILURE_TRANSIENT
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    if isinstance(exc, RateLimited):
+        return exc.retry_after_seconds
+    if isinstance(exc, httpx.HTTPStatusError):
+        raw = exc.response.headers.get("retry-after")
+        try:
+            return max(0.0, float(raw)) if raw else None
+        except ValueError:
+            return None
+    return None
+
+
+def failure_schedule(
+    kind: str,
+    exc: Exception,
+    *,
+    failures: int,
+    interval: timedelta,
+    now: datetime,
+) -> tuple[str, datetime | None]:
+    """(status, next_sync_at) after a failed fetch. ``failures`` includes this one."""
+    if kind == FAILURE_AUTH:
+        return STATUS_NEEDS_REAUTH, None
+    if kind == FAILURE_CONFIG:
+        return STATUS_ERROR, None
+    if kind == FAILURE_QUOTA:
+        resets_at = exc.resets_at if isinstance(exc, QuotaExhausted) else None
+        return STATUS_QUOTA_EXHAUSTED, resets_at
+    if kind == FAILURE_RATE_LIMITED:
+        wait = _retry_after_seconds(exc)
+        delay = timedelta(seconds=wait) if wait else DEFAULT_RATE_LIMIT_WAIT
+        return STATUS_RATE_LIMITED, now + min(delay, timedelta(hours=MAX_BACKOFF_HOURS))
+    backoff = min(interval * (2 ** max(0, failures - 1)), timedelta(hours=MAX_BACKOFF_HOURS))
+    status = STATUS_ERROR if failures >= ERROR_AFTER_FAILURES else STATUS_CONNECTED
+    return status, now + backoff
+
+
+def lifetime_cap_reached(plugin: JobSitePlugin | None, request_count: int) -> bool:
+    cap = plugin.lifetime_request_cap if plugin else 0
+    return bool(cap) and request_count >= cap
+
+
+def _lifetime_cap_error(plugin: JobSitePlugin) -> QuotaExhausted:
+    return QuotaExhausted(
+        f"This {plugin.name} key has used all {plugin.lifetime_request_cap} requests its free plan "
+        "allows. Request a new key from the site, then reconnect."
+    )
+
+
+# Public feeds return the same listing for everyone with the same filters, so
+# one fetch per TTL serves every user and keeps us inside the board's poll limits.
+_public_feed_cache: dict[tuple, tuple[float, list]] = {}
+
+
+async def _fetch_public_cached(plugin: JobSitePlugin, credentials: dict, ctx: FetchContext):
+    key = (plugin.slug, ctx.country_codes, ctx.max_jobs)
+    ttl = max(SYNC_INTERVAL_HOURS, plugin.min_sync_hours) * 3600
+    hit = _public_feed_cache.get(key)
+    if hit and time.monotonic() - hit[0] < ttl:
+        return list(hit[1])
+    listing = await plugin.fetch(credentials, ctx)
+    _public_feed_cache[key] = (time.monotonic(), list(listing))
+    return listing
+
+
+async def _publish_status(user_id: str, plugin: JobSitePlugin | None, slug: str, status: str, message: str) -> None:
+    from app.api.websocket import publish_ws_event
+
+    try:
+        await publish_ws_event({
+            "type": "job_site_status",
+            "user_id": user_id,
+            "plugin_slug": slug,
+            "plugin_name": plugin.name if plugin else slug,
+            "status": status,
+            "message": message,
+        })
+    except Exception as e:
+        logger.warning("job_site_status_publish_failed", plugin_slug=slug, error=str(e))
 
 
 def encrypt_credentials(payload: dict) -> str:
@@ -76,23 +216,10 @@ def credential_hints(plugin_slug: str, credentials: dict) -> dict[str, str]:
     if not plugin:
         return hints
     if plugin.auth_type == AuthType.ACCOUNT:
-        email = str(credentials.get("email") or "").strip()
-        if email:
-            hints["email"] = email
-        if credentials.get("password"):
-            hints["password"] = "••••••••"
         cookies = credentials.get("cookies")
         n = len(cookies) if isinstance(cookies, list) else 0
         if n:
             hints["cookies"] = f"{n} cookies"
-        if credentials.get("cookie_header"):
-            hints["cookie_header"] = "pasted"
-        storage = credentials.get("storage")
-        if isinstance(storage, dict) and storage:
-            keys = sum(len(v) for v in storage.values() if isinstance(v, dict))
-            if keys:
-                hints["storage"] = f"{keys} keys"
-        if n and not credentials.get("password"):
             hints["session"] = "captured from browser"
         return hints
     for field in plugin.credential_fields:
@@ -120,44 +247,86 @@ async def verify_and_fetch(plugin_slug: str, credentials: dict, ctx: FetchContex
             if plugin
             else f"Unknown job site: {plugin_slug}"
         )
-        raise ValueError(reason)
+        raise ConnectionConfigError(reason)
     if plugin.fetch is None:
-        raise ValueError(f"{plugin.name} cannot fetch listings.")
-    if plugin.auth_type in (AuthType.API_KEY, AuthType.ACCOUNT):
-        missing = []
-        for field in plugin.credential_fields:
-            if str(credentials.get(field.key) or "").strip():
-                continue
-            if field.key == "email" and ctx.user_email:
-                continue
-            # Account plugins may supply cookies from a prior connect instead of
-            # the paste/password fields on every sync.
-            if plugin.auth_type == AuthType.ACCOUNT and (
-                isinstance(credentials.get("cookies"), list)
-                and credentials.get("cookies")
-            ):
-                continue
-            missing.append(field.label)
-        if missing and plugin.auth_type == AuthType.API_KEY:
-            raise ValueError(f"Missing: {', '.join(missing)}")
-        if missing and plugin.auth_type == AuthType.ACCOUNT:
-            # Only require fields when there is no usable session material yet.
-            if not (
-                isinstance(credentials.get("cookies"), list) and credentials.get("cookies")
-            ):
-                raise ValueError(f"Missing: {', '.join(missing)}")
+        raise ConnectionConfigError(f"{plugin.name} cannot fetch listings.")
+    if plugin.auth_type == AuthType.API_KEY:
+        missing = [
+            field.label
+            for field in plugin.credential_fields
+            if not str(credentials.get(field.key) or "").strip()
+            and not (field.key == "email" and ctx.user_email)
+        ]
+        if missing:
+            raise ConnectionConfigError(f"Missing: {', '.join(missing)}")
+    if plugin.auth_type == AuthType.NONE:
+        return await _fetch_public_cached(plugin, credentials, ctx)
     return await plugin.fetch(credentials, ctx)
+
+
+async def _load_row(session, connection_id: str) -> UserJobSiteConnection | None:
+    return (
+        await session.execute(
+            select(UserJobSiteConnection).where(UserJobSiteConnection.id == connection_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def _record_failure(
+    connection_id: str,
+    plugin: JobSitePlugin | None,
+    exc: Exception,
+    *,
+    counted_request: bool,
+) -> dict:
+    kind = classify_failure(exc)
+    error_text = describe_fetch_error(exc)[:500]
+    now = _now()
+    notify: tuple[str, str] | None = None
+    async with get_session() as session:
+        row = await _load_row(session, connection_id)
+        if row is None:
+            return {"connection_id": connection_id, "status": "missing"}
+        previous = row.status
+        failures = (row.consecutive_failures or 0) + 1
+        status, next_at = failure_schedule(
+            kind, exc, failures=failures, interval=sync_interval(plugin), now=now
+        )
+        row.last_synced_at = now
+        row.last_error = error_text
+        row.consecutive_failures = failures
+        row.status = status
+        row.next_sync_at = next_at
+        if counted_request:
+            row.request_count = (row.request_count or 0) + 1
+        # Alert once per transition into a state only the user can fix.
+        if status != previous and (
+            status == STATUS_NEEDS_REAUTH or (status == STATUS_QUOTA_EXHAUSTED and next_at is None)
+        ):
+            notify = (row.user_id, row.plugin_slug)
+    if notify:
+        await _publish_status(notify[0], plugin, notify[1], status, error_text)
+    logger.warning(
+        "job_site_connection_fetch_failed",
+        connection_id=connection_id,
+        plugin_slug=plugin.slug if plugin else None,
+        failure=kind,
+        status=status,
+        next_sync_at=next_at.isoformat() if next_at else None,
+        error=error_text,
+    )
+    return {
+        "connection_id": connection_id,
+        "status": "fetch_failed",
+        "failure": kind,
+        "connection_status": status,
+        "error": error_text,
+    }
 
 
 async def sync_user_job_site_connection(connection_id: str) -> dict:
     async with get_session() as session:
-        row = (
-            await session.execute(
-                select(UserJobSiteConnection).where(
-                    UserJobSiteConnection.id == connection_id
-                )
-            )
-        ).scalar_one_or_none()
+        row = await _load_row(session, connection_id)
         if row is None:
             return {"connection_id": connection_id, "status": "missing"}
         user = (
@@ -167,11 +336,14 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
             return {"connection_id": connection_id, "status": "user_inactive"}
         plugin_slug = row.plugin_slug
         user_id = row.user_id
+        request_count = row.request_count or 0
         try:
             credentials = decrypt_credentials(row.credentials_encrypted)
         except Exception as e:
             row.last_synced_at = _now()
             row.last_error = f"Could not decrypt credentials: {e}"[:500]
+            row.status = STATUS_NEEDS_REAUTH
+            row.next_sync_at = None
             return {"connection_id": connection_id, "status": "decrypt_failed"}
         pipeline = normalize_manual_submit_pipeline(
             getattr(user, "manual_submit_pipeline", None)
@@ -183,32 +355,15 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
     )
 
     plugin = get_plugin(plugin_slug)
+    if lifetime_cap_reached(plugin, request_count):
+        return await _record_failure(
+            connection_id, plugin, _lifetime_cap_error(plugin), counted_request=False
+        )
+    counts_request = bool(plugin and plugin.lifetime_request_cap)
     try:
         listing = await verify_and_fetch(plugin_slug, credentials, ctx)
     except Exception as e:
-        error_text = describe_fetch_error(e)[:500]
-        async with get_session() as session:
-            row = (
-                await session.execute(
-                    select(UserJobSiteConnection).where(
-                        UserJobSiteConnection.id == connection_id
-                    )
-                )
-            ).scalar_one_or_none()
-            if row is not None:
-                row.last_synced_at = _now()
-                row.last_error = error_text
-        logger.warning(
-            "job_site_connection_fetch_failed",
-            connection_id=connection_id,
-            plugin_slug=plugin_slug,
-            error=error_text,
-        )
-        return {
-            "connection_id": connection_id,
-            "status": "fetch_failed",
-            "error": error_text,
-        }
+        return await _record_failure(connection_id, plugin, e, counted_request=counts_request)
 
     counts = await ingest_board_jobs(
         listing,
@@ -226,24 +381,20 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
         skip_phase_b=skip_phase_b,
     )
 
+    now = _now()
     async with get_session() as session:
-        row = (
-            await session.execute(
-                select(UserJobSiteConnection).where(
-                    UserJobSiteConnection.id == connection_id
-                )
-            )
-        ).scalar_one_or_none()
+        row = await _load_row(session, connection_id)
         if row is not None:
-            row.last_synced_at = _now()
+            row.last_synced_at = now
+            row.last_success_at = now
             row.last_error = None
+            row.status = STATUS_CONNECTED
+            row.consecutive_failures = 0
+            row.next_sync_at = now + sync_interval(plugin)
             row.last_listing_count = len(listing)
             row.last_new_jobs = counts["created"]
-            # Account plugins may refresh cookies during fetch (Jobright re-login).
-            try:
-                row.credentials_encrypted = encrypt_credentials(credentials)
-            except Exception:
-                pass
+            if counts_request:
+                row.request_count = (row.request_count or 0) + 1
 
     logger.info(
         "job_site_connection_synced",
@@ -261,14 +412,20 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
 
 
 async def sync_due_job_site_connections() -> dict:
-    cutoff = _now() - timedelta(hours=SYNC_INTERVAL_HOURS)
+    now = _now()
     async with get_session() as session:
         rows = await session.execute(
-            select(UserJobSiteConnection.id).where(
+            select(UserJobSiteConnection.id)
+            .where(
                 UserJobSiteConnection.enabled.is_(True),
-                (UserJobSiteConnection.last_synced_at.is_(None))
-                | (UserJobSiteConnection.last_synced_at < cutoff),
+                UserJobSiteConnection.status.in_(RUNNABLE_STATUSES),
+                or_(
+                    UserJobSiteConnection.next_sync_at <= now,
+                    (UserJobSiteConnection.next_sync_at.is_(None))
+                    & (UserJobSiteConnection.status == STATUS_CONNECTED),
+                ),
             )
+            .order_by(UserJobSiteConnection.next_sync_at.asc().nulls_first())
         )
         due_ids = [row[0] for row in rows.all()]
 

@@ -35,7 +35,17 @@ export interface JobSitePlugin {
   sort_order: number;
   credential_fields: JobSiteCredentialField[];
   session_capture: JobSiteSessionCapture | null;
+  min_sync_hours?: number;
+  /** Requests a key may ever make (Jooble free keys); null when uncapped. */
+  lifetime_request_cap?: number | null;
 }
+
+export type JobSiteConnectionStatus =
+  | 'connected'
+  | 'needs_reauth'
+  | 'rate_limited'
+  | 'quota_exhausted'
+  | 'error';
 
 export interface JobSiteConnection {
   id: string;
@@ -47,6 +57,12 @@ export interface JobSiteConnection {
   last_new_jobs: number | null;
   credential_hints: Record<string, string>;
   created_at: string | null;
+  status?: JobSiteConnectionStatus;
+  consecutive_failures?: number;
+  /** Null while connected means "due now"; in any other status it means stopped. */
+  next_sync_at?: string | null;
+  last_success_at?: string | null;
+  request_count?: number;
 }
 
 export interface JobSiteCatalog {

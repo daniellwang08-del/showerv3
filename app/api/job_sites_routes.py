@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -12,11 +14,16 @@ from app.job_sites.base import AuthType, FetchContext
 from app.job_sites.registry import get_plugin, list_plugins
 from app.models.database import User, UserJobSiteConnection
 from app.services.job_site_connection_sync import (
+    STATUS_CONNECTED,
+    STATUS_NEEDS_REAUTH,
+    STATUS_QUOTA_EXHAUSTED,
+    STATUS_RATE_LIMITED,
     credential_hints,
     decrypt_credentials,
     describe_fetch_error,
     encrypt_credentials,
     fetch_context_for_user,
+    lifetime_cap_reached,
     verify_and_fetch,
 )
 from app.storage.database import get_session
@@ -49,6 +56,11 @@ class JobSiteConnectionResponse(BaseModel):
     last_new_jobs: int | None
     credential_hints: dict[str, str]
     created_at: str | None
+    status: str = "connected"
+    consecutive_failures: int = 0
+    next_sync_at: str | None = None
+    last_success_at: str | None = None
+    request_count: int = 0
 
 
 class JobSiteCatalogResponse(BaseModel):
@@ -81,6 +93,11 @@ def _to_response(row: UserJobSiteConnection, hints: dict[str, str] | None = None
         last_new_jobs=row.last_new_jobs,
         credential_hints=hints,
         created_at=row.created_at.isoformat() if row.created_at else None,
+        status=row.status or STATUS_CONNECTED,
+        consecutive_failures=row.consecutive_failures or 0,
+        next_sync_at=row.next_sync_at.isoformat() if row.next_sync_at else None,
+        last_success_at=row.last_success_at.isoformat() if row.last_success_at else None,
+        request_count=row.request_count or 0,
     )
 
 
@@ -124,6 +141,32 @@ def _merge_credentials(plugin, body: JobSiteConnectRequest) -> dict:
     if plugin.auth_type == AuthType.NONE:
         return {}
     return creds
+
+
+async def _prior_request_count(user_id: str, plugin, credentials: dict) -> int:
+    """Lifetime requests already spent by this exact key; a new key starts at 0."""
+    if not plugin.lifetime_request_cap:
+        return 0
+    async with get_session() as session:
+        row = (
+            await session.execute(
+                select(UserJobSiteConnection).where(
+                    UserJobSiteConnection.user_id == user_id,
+                    UserJobSiteConnection.plugin_slug == plugin.slug,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return 0
+        try:
+            stored = decrypt_credentials(row.credentials_encrypted)
+        except Exception:
+            return 0
+    same_key = all(
+        str(stored.get(f.key) or "").strip() == str(credentials.get(f.key) or "").strip()
+        for f in plugin.credential_fields
+    )
+    return (row.request_count or 0) if same_key else 0
 
 
 MAX_STORAGE_CHARS = 100_000
@@ -193,6 +236,15 @@ async def connect_job_site(
 
     ctx = await _user_fetch_context(user_id)
     credentials = _merge_credentials(plugin, body)
+    prior_requests = await _prior_request_count(user_id, plugin, credentials)
+    if lifetime_cap_reached(plugin, prior_requests):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"This {plugin.name} key has used all {plugin.lifetime_request_cap} requests "
+                "its free plan allows. Request a new key from the site."
+            ),
+        )
     try:
         listing = await verify_and_fetch(plugin.slug, credentials, ctx)
     except ValueError as e:
@@ -237,6 +289,10 @@ async def connect_job_site(
         existing.enabled = True
         existing.last_error = None
         existing.last_listing_count = len(listing)
+        existing.status = STATUS_CONNECTED
+        existing.consecutive_failures = 0
+        existing.next_sync_at = None
+        existing.request_count = prior_requests + (1 if plugin.lifetime_request_cap else 0)
         await session.flush()
         response = _to_response(existing, hints)
         connection_id = existing.id
@@ -271,7 +327,11 @@ async def update_job_site(
         if row is None:
             raise HTTPException(status_code=404, detail="Not connected")
         if body.enabled is not None:
+            turning_on = bool(body.enabled) and not row.enabled
             row.enabled = bool(body.enabled)
+            if turning_on and row.status not in (STATUS_NEEDS_REAUTH, STATUS_QUOTA_EXHAUSTED):
+                row.status = STATUS_CONNECTED
+                row.next_sync_at = None
         await session.flush()
         return _to_response(row)
 
@@ -319,6 +379,19 @@ async def sync_job_site_now(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Enable the connection before syncing.",
+            )
+        if row.status == STATUS_NEEDS_REAUTH:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Reconnect this site before syncing.",
+            )
+        if row.status in (STATUS_RATE_LIMITED, STATUS_QUOTA_EXHAUSTED) and (
+            row.next_sync_at is None or row.next_sync_at > datetime.now(timezone.utc).replace(tzinfo=None)
+        ):
+            when = f" until {row.next_sync_at.isoformat()}Z" if row.next_sync_at else ""
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"The site's request limit is reached; syncing is paused{when}.",
             )
         connection_id = row.id
 
