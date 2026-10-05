@@ -1,5 +1,16 @@
+import re
+
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
+
+
+def check_password_policy(v: str) -> str:
+    """Same rules the signup form shows: 8+ chars with upper, lower, and a digit."""
+    if not v or len(v) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if not re.search(r"[A-Z]", v) or not re.search(r"[a-z]", v) or not re.search(r"\d", v):
+        raise ValueError("Password must include an uppercase letter, a lowercase letter, and a number")
+    return v
 
 
 class SignupRequest(BaseModel):
@@ -18,9 +29,7 @@ class SignupRequest(BaseModel):
     @classmethod
     def validate_password(cls, v: str) -> str:
         # Only validate; do not transform
-        if not v or len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
+        return check_password_policy(v)
 
 
 class LoginRequest(BaseModel):
@@ -49,6 +58,19 @@ class AuthResponse(BaseModel):
     access_token: str | None = None
     token_type: str | None = None
     expires_in: int | None = None
+    # "pending" means the account exists but waits for admin approval or an
+    # access key; the session it carries only reaches /auth/approval*.
+    approval_status: str | None = None
+
+
+class SignupApprovalState(BaseModel):
+    email: str
+    approval_status: str
+    requested_at: datetime
+
+
+class RedeemAccessKeyRequest(BaseModel):
+    key: str = Field(..., min_length=1, max_length=64)
 
 
 class UserResponse(BaseModel):
@@ -59,6 +81,8 @@ class UserResponse(BaseModel):
     is_active: bool
     is_admin: bool = False
     created_at: datetime
+    approval_status: str = "approved"
+    approved_at: datetime | None = None
     # Subscription snapshot (mirrored from Stripe) so the SPA can gate UI and
     # show billing status without a second request. Defaults keep every other
     # place that builds a UserResponse working unchanged.

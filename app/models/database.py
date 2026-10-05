@@ -19,6 +19,14 @@ class User(Base):
     # Platform admin. Existing users are bootstrapped true via migration 048;
     # new signups default to false.
     is_admin = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
+    # Signup gate: "pending" until an admin approves the request or the user
+    # redeems an admin-issued access key; only "approved" accounts may use the
+    # app or the extension. Rows that predate migration 076 are "approved".
+    approval_status = Column(String(16), nullable=False, server_default="approved", index=True)
+    approved_at = Column(DateTime, nullable=True)
+    approved_by = Column(String(36), nullable=True)
+    # Tokens issued before this instant are rejected (password reset, rejection).
+    sessions_valid_after = Column(DateTime, nullable=True)
     # Stripe customer id (cus_…). Created lazily the first time a user opens
     # Checkout, then reused so a user never spawns duplicate Stripe customers.
     # Nullable + unique: Postgres allows many NULLs under a unique constraint.
@@ -799,6 +807,24 @@ class AgentChatSession(Base):
     __table_args__ = (
         Index("ix_agent_chat_sessions_user_updated", "user_id", "updated_at"),
     )
+
+
+class SignupAccessKey(Base):
+    """Admin-issued one-time key that approves a pending signup when redeemed.
+
+    Only an HMAC of the key is stored; the plaintext is shown to the admin once.
+    Issuing a new key revokes the user's earlier unused keys.
+    """
+    __tablename__ = "signup_access_keys"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    key_hash = Column(String(64), nullable=False, unique=True)
+    created_by = Column(String(36), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
 
 
 class SystemSetting(Base):

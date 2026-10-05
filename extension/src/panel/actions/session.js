@@ -11,9 +11,9 @@ import { goHome, loadHome } from "./home.js";
 import { consumePendingHandoffs } from "./job.js";
 
 export async function init() {
-  api.onUnauthorized(() => {
+  api.onUnauthorized((reason) => {
     if (state.view === "login") return;
-    void endSession("Your session expired. Sign in again.");
+    void endSession(reason || "Your session expired. Sign in again.");
   });
   await storage.dropLegacyCatalog();
   await storage.syncBackendFromOpenTabs();

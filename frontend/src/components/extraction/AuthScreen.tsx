@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AuthShell } from './AuthShell';
+import { errorBoxClass } from './authStyles';
 import { LoginForm } from './LoginForm';
 import { SignupForm } from './SignupForm';
 
@@ -15,12 +16,15 @@ interface AuthScreenProps {
   onModeChange?: (mode: AuthMode) => void;
   /** Kept for call-site compatibility; home is always the landing header brand. */
   homeTo?: string;
+  /** Why the previous session ended (e.g. the signup was declined). */
+  notice?: string | null;
 }
 
 export function AuthScreen({
   onAuthSuccess,
   initialMode = 'login',
   onModeChange,
+  notice,
 }: AuthScreenProps) {
   const [localMode, setLocalMode] = useState<AuthMode>(initialMode);
   const mode = onModeChange ? initialMode : localMode;
@@ -32,6 +36,11 @@ export function AuthScreen({
 
   return (
     <AuthShell mode={mode} onModeChange={switchTo}>
+      {notice && mode === 'login' && (
+        <p role="alert" className={`${errorBoxClass} mb-4`}>
+          {notice}
+        </p>
+      )}
       <div key={mode} className="auth-form-swap">
         {mode === 'login' ? (
           <LoginForm onLogin={onAuthSuccess} onSwitchToSignup={() => switchTo('signup')} />

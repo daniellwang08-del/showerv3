@@ -2,8 +2,73 @@ import "./chrome-stub.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-const { readSse } = await import("../src/api.js");
+const api = await import("../src/api.js");
+const storage = await import("../src/storage.js");
+const { readSse } = api;
 const { LISTS, listQuery } = await import("../src/panel/lists.js");
+
+/** Replace fetch with a single canned response and record the requests. */
+function stubFetch(status, body, headers = {}) {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return new Response(body == null ? null : JSON.stringify(body), { status, headers });
+  };
+  return calls;
+}
+
+test("a pending-approval 403 signs out and surfaces the server reason", async () => {
+  await storage.setToken("tok");
+  let reason;
+  api.onUnauthorized((r) => (reason = r));
+  stubFetch(403, { detail: "Your account is waiting for admin approval." }, { "X-Auth-Status": "pending" });
+  await assert.rejects(api.getProfile(), (err) => err.status === 403 && err.kind === "auth");
+  assert.equal(reason, "Your account is waiting for admin approval.");
+  assert.equal(await storage.getToken(), null);
+});
+
+test("an ordinary 403 keeps the session", async () => {
+  await storage.setToken("tok");
+  let called = false;
+  api.onUnauthorized(() => (called = true));
+  stubFetch(403, { detail: "Available to applicant accounts only" });
+  await assert.rejects(api.getProfile(), (err) => err.status === 403 && err.kind === "http");
+  assert.equal(called, false);
+  assert.equal(await storage.getToken(), "tok");
+});
+
+test("a declined signup 401 passes its reason; a plain 401 does not", async () => {
+  await storage.setToken("tok");
+  let reason = "unset";
+  api.onUnauthorized((r) => (reason = r));
+  stubFetch(401, { detail: "Your signup request was declined." }, { "X-Auth-Status": "rejected" });
+  await assert.rejects(api.getProfile(), /declined/);
+  assert.equal(reason, "Your signup request was declined.");
+
+  await storage.setToken("tok");
+  stubFetch(401, { detail: "Invalid token" });
+  await assert.rejects(api.getProfile(), /session expired/);
+  assert.equal(reason, null);
+});
+
+test("logout revokes the token on the server, then forgets it", async () => {
+  await storage.setToken("tok-123");
+  const calls = stubFetch(200, { message: "Logged out successfully" });
+  await api.logout();
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/api\/v1\/auth\/logout$/);
+  assert.equal(calls[0].init.headers.Authorization, "Bearer tok-123");
+  assert.equal(await storage.getToken(), null);
+});
+
+test("logout still signs out locally when the server is unreachable", async () => {
+  await storage.setToken("tok");
+  globalThis.fetch = async () => {
+    throw new TypeError("network down");
+  };
+  await api.logout();
+  assert.equal(await storage.getToken(), null);
+});
 
 function streamOf(chunks) {
   const enc = new TextEncoder();

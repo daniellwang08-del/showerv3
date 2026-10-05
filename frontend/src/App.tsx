@@ -21,6 +21,10 @@ const named = <T extends Record<string, unknown>>(loader: () => Promise<T>, name
   lazy(() => loader().then((m) => ({ default: m[name] as React.ComponentType<any> })));
 
 const AuthScreen = named(() => import('./components/extraction/AuthScreen'), 'AuthScreen');
+const PendingApprovalScreen = named(
+  () => import('./components/extraction/PendingApprovalScreen'),
+  'PendingApprovalScreen',
+);
 const JobActionModal = named(() => import('./components/extraction/JobActionModal'), 'JobActionModal');
 const ConfirmDialog = named(() => import('./components/extraction/ConfirmDialog'), 'ConfirmDialog');
 const LandingPage = named(() => import('./pages/LandingPage'), 'LandingPage');
@@ -202,7 +206,8 @@ function handleWsEvent(event: WsEvent) {
 }
 
 function App() {
-  const { isAuthenticated, user, authPage, logout, onAuthSuccess, refreshUser } = useAuth();
+  const { isAuthenticated, pendingApproval, authNotice, user, authPage, logout, onAuthSuccess, refreshUser } =
+    useAuth();
   const navigate = useNavigate();
 
   const modal = useModalStore((s) => s.modal);
@@ -245,6 +250,15 @@ function App() {
     return <BrandedLoader fullscreen label="Starting NAO…" />;
   }
 
+  if (pendingApproval) {
+    return (
+      <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
+        <PageTitle title="Waiting for approval" />
+        <PendingApprovalScreen onResolved={refreshUser} onSignOut={handleLogout} />
+      </Suspense>
+    );
+  }
+
   if (!isAuthenticated) {
     // Visitors land on the public marketing page; /login and /signup own the
     // auth mode so both are shareable. Any other path (an app route reached
@@ -257,6 +271,7 @@ function App() {
           initialMode="login"
           onModeChange={() => navigate('/login')}
           homeTo="/login"
+          notice={authNotice}
         />
       );
       return (
@@ -275,13 +290,26 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route
             path="/login"
-            element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode="login" onModeChange={gotoMode} homeTo="/" />}
+            element={
+              <AuthScreen
+                onAuthSuccess={onAuthSuccess}
+                initialMode="login"
+                onModeChange={gotoMode}
+                homeTo="/"
+                notice={authNotice}
+              />
+            }
           />
           <Route
             path="/signup"
             element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode="signup" onModeChange={gotoMode} homeTo="/" />}
           />
-          <Route path="*" element={<AuthScreen onAuthSuccess={onAuthSuccess} initialMode={authPage} homeTo="/" />} />
+          <Route
+            path="*"
+            element={
+              <AuthScreen onAuthSuccess={onAuthSuccess} initialMode={authPage} homeTo="/" notice={authNotice} />
+            }
+          />
         </Routes>
       </Suspense>
     );

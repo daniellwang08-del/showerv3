@@ -8,12 +8,14 @@ import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ConfirmActionDialog } from './ConfirmActionDialog';
+import { SignupRequestsPanel } from './SignupRequestsPanel';
+import { accountStatus, type AccountStatus } from './UserBadges';
 import { UserDetailSheet } from './UserDetailSheet';
 import { UsersTable, type SortKey, type SortState } from './UsersTable';
 import { bulkTargets, errDetail, useAdminUsers, type BulkKind, type PendingAction } from './userActions';
 
 type RoleFilter = 'all' | 'admin' | 'user';
-type StatusFilter = 'all' | 'active' | 'disabled';
+type StatusFilter = 'all' | AccountStatus;
 
 const ROLE_FILTERS: Array<{ value: RoleFilter; label: string }> = [
   { value: 'all', label: 'All roles' },
@@ -23,8 +25,12 @@ const ROLE_FILTERS: Array<{ value: RoleFilter; label: string }> = [
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'all', label: 'Any status' },
   { value: 'active', label: 'Active' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'rejected', label: 'Rejected' },
   { value: 'disabled', label: 'Disabled' },
 ];
+
+const STATUS_ORDER: Record<AccountStatus, number> = { active: 0, pending: 1, rejected: 2, disabled: 3 };
 
 const BULK_BUTTONS: Array<{ kind: BulkKind; label: string; icon: typeof Shield }> = [
   { kind: 'promote', label: 'Promote', icon: Shield },
@@ -43,7 +49,7 @@ function sortValue(u: AdminUser, key: SortKey): string | number {
     case 'role':
       return u.is_admin ? 0 : 1;
     case 'status':
-      return u.is_active ? 0 : 1;
+      return STATUS_ORDER[accountStatus(u)];
     case 'created_at':
       return u.created_at ? new Date(u.created_at).getTime() || 0 : 0;
   }
@@ -57,8 +63,7 @@ function visibleUsers(
   const rows = users.filter((u) => {
     if (role === 'admin' && !u.is_admin) return false;
     if (role === 'user' && u.is_admin) return false;
-    if (status === 'active' && !u.is_active) return false;
-    if (status === 'disabled' && u.is_active) return false;
+    if (status !== 'all' && accountStatus(u) !== status) return false;
     if (!q) return true;
     return `${u.email} ${u.display_name || ''} ${u.name || ''}`.toLowerCase().includes(q);
   });
@@ -125,7 +130,7 @@ export function AdminUsersPage() {
     <PageLayout
       width="wide"
       title="Users"
-      description="Manage roles, account status, and passwords. Select rows for bulk actions; click a row for details."
+      description="Approve signups and manage roles, account status, and passwords. Select rows for bulk actions; click a row for details."
       actions={
         <Button
           variant="outline"
@@ -138,6 +143,8 @@ export function AdminUsersPage() {
       }
     >
       <div className="space-y-3">
+        <SignupRequestsPanel />
+
         {loadError && (
           <div
             role="alert"

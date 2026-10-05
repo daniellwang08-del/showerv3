@@ -10,6 +10,7 @@ import { useAgentStore } from '@/stores/agentStore';
 import type { NavSection } from './nav';
 import { UserMenu, type ShellUser } from './UserMenu';
 import { useOpenJob } from '@/features/jobs/useOpenJob';
+import { usePendingSignupCount } from '@/features/admin/users/signupRequests';
 
 type AppSidebarProps = {
   nav: NavSection[];
@@ -45,6 +46,8 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const location = useLocation();
   const openJob = useOpenJob();
   const isApplicant = variant === 'applicant';
+  const pendingSignups = usePendingSignupCount(variant === 'admin');
+  const navBadges: Record<string, number> = { '/admin/users': pendingSignups };
 
   const recentChats = isApplicant ? sessions.slice(0, 5) : [];
   const onAssistantPage = location.pathname.startsWith('/app/assistant');
@@ -116,25 +119,40 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
             ) : null}
             {section.label && collapsed ? <div className="mx-3 mb-2 border-t" /> : null}
             <div className="space-y-0.5">
-              {section.items.map(({ to, label, icon: Icon, end }) => (
-                <RailTooltip key={to} label={label} collapsed={collapsed}>
-                  <NavLink
-                    to={to}
-                    end={end}
-                    onClick={() => onNavigate?.()}
-                    className={({ isActive }) =>
-                      cn(
-                        rowClass,
-                        collapsed && 'justify-center px-0',
-                        isActive && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground',
-                      )
-                    }
-                  >
-                    <Icon />
-                    {!collapsed && <span className="truncate">{label}</span>}
-                  </NavLink>
-                </RailTooltip>
-              ))}
+              {section.items.map(({ to, label, icon: Icon, end }) => {
+                const badge = navBadges[to] ?? 0;
+                return (
+                  <RailTooltip key={to} label={badge ? `${label} (${badge} pending)` : label} collapsed={collapsed}>
+                    <NavLink
+                      to={to}
+                      end={end}
+                      onClick={() => onNavigate?.()}
+                      className={({ isActive }) =>
+                        cn(
+                          rowClass,
+                          'relative',
+                          collapsed && 'justify-center px-0',
+                          isActive && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground',
+                        )
+                      }
+                    >
+                      <Icon />
+                      {!collapsed && <span className="flex-1 truncate">{label}</span>}
+                      {badge > 0 &&
+                        (collapsed ? (
+                          <span aria-hidden className="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" />
+                        ) : (
+                          <span
+                            className="rounded-full bg-brand px-1.5 text-xs font-semibold text-white tabular-nums"
+                            aria-label={`${badge} pending signup${badge === 1 ? '' : 's'}`}
+                          >
+                            {badge}
+                          </span>
+                        ))}
+                    </NavLink>
+                  </RailTooltip>
+                );
+              })}
             </div>
           </div>
         ))}

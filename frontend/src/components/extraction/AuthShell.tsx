@@ -38,23 +38,9 @@ const tabClass = (active: boolean) =>
     active ? 'bg-white text-[#04060F] shadow-sm' : 'text-white/60 hover:text-white'
   }`;
 
-/**
- * Public auth chrome: the landing header over the NAO horizon key art, then a
- * split composition (brand story, interactive form). The form panel is the only
- * card, it exists so fields stay a clear interaction target.
- */
-export function AuthShell({
-  children,
-  mode,
-  onModeChange,
-}: {
-  children: ReactNode;
-  mode: AuthMode;
-  onModeChange: (mode: AuthMode) => void;
-}) {
+/** Landing header over the NAO horizon key art; shared by every public auth screen. */
+export function AuthBackdrop({ children }: { children: ReactNode }) {
   usePublicViewport('landing-theme');
-
-  const isLogin = mode === 'login';
 
   return (
     <div className="relative flex min-h-dvh flex-col overflow-x-hidden bg-[#04060F] text-white antialiased">
@@ -72,6 +58,30 @@ export function AuthShell({
           <div className="absolute inset-0 hidden bg-gradient-to-r from-[#04060F]/85 via-[#04060F]/30 to-transparent lg:block" />
         </div>
 
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Public auth chrome: the landing header over the NAO horizon key art, then a
+ * split composition (brand story, interactive form). The form panel is the only
+ * card, it exists so fields stay a clear interaction target.
+ */
+export function AuthShell({
+  children,
+  mode,
+  onModeChange,
+}: {
+  children: ReactNode;
+  mode: AuthMode;
+  onModeChange: (mode: AuthMode) => void;
+}) {
+  const isLogin = mode === 'login';
+
+  return (
+    <AuthBackdrop>
         <div
           className={`${LANDING_CONTAINER} grid flex-1 items-center gap-10 py-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(20rem,26rem)] lg:gap-14 lg:py-16 xl:gap-20`}
         >
@@ -154,7 +164,7 @@ export function AuthShell({
                 <p className="mt-1.5 text-sm text-white/60">
                   {isLogin
                     ? 'Use the email and password for your workspace.'
-                    : 'No credit card. You can start matching in minutes.'}
+                    : 'No credit card. An admin approves new accounts before the workspace opens.'}
                 </p>
               </div>
 
@@ -180,7 +190,6 @@ export function AuthShell({
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </AuthBackdrop>
   );
 }

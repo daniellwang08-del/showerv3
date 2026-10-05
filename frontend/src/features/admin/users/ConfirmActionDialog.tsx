@@ -23,6 +23,7 @@ import {
   runAction,
   type PendingAction,
 } from './userActions';
+import { signupRequestsKey } from './signupRequests';
 
 function ActionDescription({ action }: { action: PendingAction }) {
   if (action.kind === 'delete') {
@@ -38,6 +39,19 @@ function ActionDescription({ action }: { action: PendingAction }) {
       <>
         {action.next ? 'Grant' : 'Remove'} admin access for{' '}
         <strong className="text-foreground">{action.user.email}</strong>.
+      </>
+    );
+  }
+  if (action.kind === 'approval') {
+    return action.next === 'approved' ? (
+      <>
+        Let <strong className="text-foreground">{action.user.email}</strong> use NAO and the extension. If they are on
+        the waiting screen, their workspace opens right away.
+      </>
+    ) : (
+      <>
+        <strong className="text-foreground">{action.user.email}</strong> will be signed out and cannot sign in until
+        approved.
       </>
     );
   }
@@ -101,7 +115,10 @@ export function ConfirmActionDialog({
       onClose();
     },
     onError: (e) => setError(errDetail(e, 'Action failed')),
-    onSettled: () => qc.invalidateQueries({ queryKey: adminUsersKey }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: adminUsersKey });
+      void qc.invalidateQueries({ queryKey: signupRequestsKey });
+    },
   });
 
   const close = () => {

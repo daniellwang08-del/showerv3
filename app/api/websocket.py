@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -21,12 +22,23 @@ from app.core.redis_support import (
     init_pubsub_redis_pool,
     pubsub_redis_url,
 )
-from app.services.auth_service import AuthService
-
 logger = get_logger(__name__)
 
 WS_CHANNEL = "ws:events"
 WS_RESUME_CHANNEL = "ws:resume_events"
+WS_REAUTH_INTERVAL_SECONDS = 60
+
+
+async def _ws_authorized_user_id(token: str | None) -> str | None:
+    from app.services.session_auth import SessionAuthError, resolve_session
+
+    try:
+        return (await resolve_session(token)).user.id
+    except SessionAuthError as e:
+        logger.info("ws_auth_rejected", reason=e.reason)
+    except Exception as e:
+        logger.warning("ws_auth_check_failed", error=str(e))
+    return None
 
 ws_router = APIRouter()
 
@@ -172,46 +184,25 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         cookies = ws.cookies
         token = cookies.get("access_token")
 
-    if not token:
-        await ws.close(code=4001, reason="Missing authentication token")
-        return
-
-    payload = AuthService.verify_token(token)
-    if not payload:
-        await ws.close(code=4001, reason="Invalid token")
-        return
-
-    user_id = payload.get("user_id")
+    # Same rules as HTTP (approved, active, not revoked). Fails closed: if the
+    # account cannot be verified, the client reconnects and tries again.
+    user_id = await _ws_authorized_user_id(token)
     if not user_id:
-        await ws.close(code=4001, reason="Invalid token")
+        await ws.close(code=4001, reason="Not authorized")
         return
-
-    # Mirror the HTTP auth guarantees: reject revoked tokens and deactivated
-    # accounts instead of streaming their events indefinitely.
-    from app.services.token_denylist import is_jti_revoked
-
-    if await is_jti_revoked(payload.get("jti")):
-        await ws.close(code=4001, reason="Token revoked")
-        return
-
-    try:
-        from app.storage.database import get_session
-        from app.storage.user_repository import UserRepository
-
-        async with get_session() as session:
-            user = await UserRepository(session).get_by_id(user_id)
-        if not user or not user.is_active:
-            await ws.close(code=4001, reason="Account disabled")
-            return
-    except Exception as e:
-        # Fail-open on infra errors so a transient DB blip doesn't drop all sockets.
-        logger.warning("ws_active_check_failed", user_id=user_id, error=str(e))
 
     await manager.connect(ws, user_id)
+    last_check = time.monotonic()
     try:
         while True:
             data = await ws.receive_text()
             if data == "ping":
+                # Long-lived sockets must not outlive a disable, rejection, or logout.
+                if time.monotonic() - last_check >= WS_REAUTH_INTERVAL_SECONDS:
+                    last_check = time.monotonic()
+                    if await _ws_authorized_user_id(token) != user_id:
+                        await ws.close(code=4001, reason="Not authorized")
+                        break
                 await ws.send_text(json.dumps({"type": "pong"}))
     except WebSocketDisconnect:
         pass

@@ -6,6 +6,21 @@ export interface AdminUser {
   is_active: boolean;
   is_admin: boolean;
   created_at: string;
+  approval_status?: 'pending' | 'approved' | 'rejected';
+  approved_at?: string | null;
+}
+
+export interface SignupRequest {
+  id: string;
+  email: string;
+  approval_status: 'pending';
+  requested_at: string;
+  active_key: { created_at: string; expires_at: string } | null;
+}
+
+export interface IssuedAccessKey {
+  key: string;
+  expires_at: string;
 }
 
 export interface SystemSettingItem {

@@ -12,10 +12,21 @@ from sqlalchemy import ColumnElement, and_, func, literal_column, or_, select, t
 
 from app.api.routes import _purge_job_cascade, health_check, require_admin
 from app.core.logging import get_logger
-from app.models.auth_schemas import UserResponse
+from app.models.auth_schemas import UserResponse, check_password_policy
 from app.models.database import Job, User
 from app.services import blocked_domains_service, system_settings_service
 from app.services import llm_provider_keys_service
+from app.services.signup_approval_service import (
+    APPROVAL_APPROVED,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    active_keys_by_user,
+    approve_user,
+    issue_access_key,
+    reject_user,
+    revoke_open_keys,
+    utcnow,
+)
 from app.storage.database import get_session
 from app.storage.user_repository import UserRepository, user_applied_by_display_name
 
@@ -33,6 +44,8 @@ def _user_response(user: User) -> UserResponse:
         is_active=bool(user.is_active),
         is_admin=bool(getattr(user, "is_admin", False)),
         created_at=user.created_at,
+        approval_status=user.approval_status,
+        approved_at=user.approved_at,
     )
 
 
@@ -46,6 +59,128 @@ class AdminUserPatch(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=255)
+
+    @field_validator("password")
+    @classmethod
+    def _policy(cls, v: str) -> str:
+        return check_password_policy(v)
+
+
+class SignupAccessKeyInfo(BaseModel):
+    created_at: datetime
+    expires_at: datetime
+
+
+class SignupRequestRow(BaseModel):
+    id: str
+    email: str
+    approval_status: str
+    requested_at: datetime
+    active_key: SignupAccessKeyInfo | None = None
+
+
+class IssueAccessKeyRequest(BaseModel):
+    expires_at: datetime
+
+
+class IssuedAccessKey(BaseModel):
+    key: str
+    expires_at: datetime
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Columns hold naive UTC; tag it so browsers do not read it as local time."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+async def _load_user_for_update(session, user_id: str) -> User:
+    user = (
+        await session.execute(select(User).where(User.id == user_id).with_for_update())
+    ).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.get("/signup-requests", response_model=list[SignupRequestRow])
+async def list_signup_requests(current_user: dict = Depends(require_admin)):
+    """Pending signups, oldest first, with each one's usable access key (if any)."""
+    async with get_session() as session:
+        users = (
+            await session.execute(
+                select(User).where(User.approval_status == APPROVAL_PENDING).order_by(User.created_at.asc())
+            )
+        ).scalars().all()
+        keys = await active_keys_by_user(session, [u.id for u in users])
+        return [
+            SignupRequestRow(
+                id=u.id,
+                email=u.email,
+                approval_status=u.approval_status,
+                requested_at=_as_utc(u.created_at),
+                active_key=(
+                    SignupAccessKeyInfo(
+                        created_at=_as_utc(keys[u.id].created_at), expires_at=_as_utc(keys[u.id].expires_at)
+                    )
+                    if u.id in keys
+                    else None
+                ),
+            )
+            for u in users
+        ]
+
+
+@router.post("/users/{user_id}/approve", response_model=UserResponse)
+async def approve_signup(user_id: str, current_user: dict = Depends(require_admin)):
+    async with get_session() as session:
+        user = await _load_user_for_update(session, user_id)
+        if user.approval_status != APPROVAL_APPROVED:
+            await approve_user(session, user, admin_id=current_user["user_id"])
+            await session.commit()
+        return _user_response(user)
+
+
+@router.post("/users/{user_id}/reject", response_model=UserResponse)
+async def reject_signup(user_id: str, current_user: dict = Depends(require_admin)):
+    if user_id == current_user.get("user_id"):
+        raise HTTPException(status_code=400, detail="Cannot reject your own account")
+    async with get_session() as session:
+        user = await _load_user_for_update(session, user_id)
+        if user.is_admin:
+            raise HTTPException(status_code=400, detail="Demote this admin before rejecting the account")
+        if user.approval_status != APPROVAL_REJECTED:
+            await reject_user(session, user, admin_id=current_user["user_id"])
+            await session.commit()
+        return _user_response(user)
+
+
+@router.post("/users/{user_id}/access-key", response_model=IssuedAccessKey)
+async def issue_signup_access_key(
+    user_id: str,
+    body: IssueAccessKeyRequest,
+    current_user: dict = Depends(require_admin),
+):
+    """Generate a one-time key for a pending signup. The plaintext is returned only here."""
+    async with get_session() as session:
+        user = await _load_user_for_update(session, user_id)
+        try:
+            key, row = await issue_access_key(
+                session, user, expires_at=body.expires_at, admin_id=current_user["user_id"]
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        await session.commit()
+        return IssuedAccessKey(key=key, expires_at=_as_utc(row.expires_at))
+
+
+@router.delete("/users/{user_id}/access-key")
+async def revoke_signup_access_key(user_id: str, current_user: dict = Depends(require_admin)):
+    async with get_session() as session:
+        await _load_user_for_update(session, user_id)
+        revoked = await revoke_open_keys(session, user_id)
+        await session.commit()
+        logger.info("signup_access_key_revoked", user_id=user_id, by=current_user.get("user_id"), count=revoked)
+        return {"success": True, "revoked": revoked}
 
 
 @router.get("/users", response_model=list[UserResponse])
@@ -86,6 +221,9 @@ async def patch_user(
                 detail="Cannot disable the last remaining admin",
             )
 
+        if body.is_admin and user.approval_status != APPROVAL_APPROVED:
+            raise HTTPException(status_code=400, detail="Approve this signup before making it an admin")
+
         if body.is_admin is not None:
             user.is_admin = body.is_admin
         if body.is_active is not None:
@@ -116,6 +254,10 @@ async def reset_user_password(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         await repo.set_password(user_id, body.password)
+        # Sign the user out everywhere (web and extension). An admin resetting
+        # their own password keeps the session they are using right now.
+        if user_id != current_user.get("user_id"):
+            user.sessions_valid_after = utcnow()
         await session.commit()
         logger.info(
             "admin_password_reset",

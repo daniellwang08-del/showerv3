@@ -101,8 +101,15 @@ class UserRepository:
 
         The first active admin slot is granted automatically so a fresh
         install can open System Settings / User Management without a
-        manual SQL bootstrap.
+        manual SQL bootstrap. Everyone else starts "pending" until an admin
+        approves the signup or the user redeems an admin-issued access key.
         """
+        from app.services.signup_approval_service import (
+            APPROVAL_APPROVED,
+            APPROVAL_PENDING,
+            utcnow,
+        )
+
         email = email.lower().strip()
         password_hash = AuthService.hash_password(password)
         is_first_admin = (await self.count_admins()) == 0
@@ -112,6 +119,8 @@ class UserRepository:
             password_hash=password_hash,
             is_active=True,
             is_admin=is_first_admin,
+            approval_status=APPROVAL_APPROVED if is_first_admin else APPROVAL_PENDING,
+            approved_at=utcnow() if is_first_admin else None,
         )
 
         self.session.add(user)
@@ -121,6 +130,7 @@ class UserRepository:
             user_id=user.id,
             email=email,
             is_admin=is_first_admin,
+            approval_status=user.approval_status,
         )
         return user
 

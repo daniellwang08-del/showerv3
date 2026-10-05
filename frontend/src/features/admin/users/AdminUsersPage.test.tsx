@@ -4,8 +4,17 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import type { AdminUser } from '@/types/admin';
-import { deleteAdminUser, fetchAdminUsers, patchAdminUser, resetAdminUserPassword } from '@/api/adminApi';
+import type { AdminUser, SignupRequest } from '@/types/admin';
+import {
+  approveSignup,
+  deleteAdminUser,
+  fetchAdminUsers,
+  fetchSignupRequests,
+  issueSignupAccessKey,
+  patchAdminUser,
+  rejectSignup,
+  resetAdminUserPassword,
+} from '@/api/adminApi';
 import { AdminUsersPage } from './AdminUsersPage';
 
 vi.mock('@/api/adminApi', () => ({
@@ -13,6 +22,11 @@ vi.mock('@/api/adminApi', () => ({
   patchAdminUser: vi.fn(),
   deleteAdminUser: vi.fn(),
   resetAdminUserPassword: vi.fn(),
+  fetchSignupRequests: vi.fn(),
+  approveSignup: vi.fn(),
+  rejectSignup: vi.fn(),
+  issueSignupAccessKey: vi.fn(),
+  revokeSignupAccessKey: vi.fn(),
 }));
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { id: 'u1', email: 'me@nao.dev', is_admin: true } }),
@@ -23,6 +37,18 @@ const fetchMock = vi.mocked(fetchAdminUsers);
 const patchMock = vi.mocked(patchAdminUser);
 const deleteMock = vi.mocked(deleteAdminUser);
 const resetMock = vi.mocked(resetAdminUserPassword);
+const requestsMock = vi.mocked(fetchSignupRequests);
+const approveMock = vi.mocked(approveSignup);
+const rejectMock = vi.mocked(rejectSignup);
+const issueKeyMock = vi.mocked(issueSignupAccessKey);
+
+const PENDING_REQUEST: SignupRequest = {
+  id: 'u4',
+  email: 'dana@new.io',
+  approval_status: 'pending',
+  requested_at: '2026-10-05T07:00:00Z',
+  active_key: null,
+};
 
 function makeUser(over: Partial<AdminUser>): AdminUser {
   return {
@@ -66,6 +92,7 @@ describe('AdminUsersPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchMock.mockResolvedValue([ME, BOB, CAROL]);
+    requestsMock.mockResolvedValue([]);
   });
 
   it('shows skeletons, then renders every user with role, status and created date', async () => {
@@ -222,18 +249,23 @@ describe('AdminUsersPage', () => {
     expect(await within(sheet).findByText('Password must be at least 8 characters')).toBeInTheDocument();
 
     await user.type(within(sheet).getByLabelText('New password'), 'longenough1');
+    await user.click(submit);
+    expect(await within(sheet).findByText('Include an uppercase letter')).toBeInTheDocument();
+
+    await user.clear(within(sheet).getByLabelText('New password'));
+    await user.type(within(sheet).getByLabelText('New password'), 'Longenough1');
     await user.type(within(sheet).getByLabelText('Confirm password'), 'different1');
     await user.click(submit);
     expect(await within(sheet).findByText('Passwords do not match')).toBeInTheDocument();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
 
     await user.clear(within(sheet).getByLabelText('Confirm password'));
-    await user.type(within(sheet).getByLabelText('Confirm password'), 'longenough1');
+    await user.type(within(sheet).getByLabelText('Confirm password'), 'Longenough1');
     await user.click(submit);
     const dialog = await screen.findByRole('alertdialog');
     expect(resetMock).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole('button', { name: 'Reset' }));
-    await waitFor(() => expect(resetMock).toHaveBeenCalledWith('u2', 'longenough1'));
+    await waitFor(() => expect(resetMock).toHaveBeenCalledWith('u2', 'Longenough1'));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
     expect(within(sheet).getByLabelText('New password')).toHaveValue('');
   });
@@ -248,5 +280,71 @@ describe('AdminUsersPage', () => {
     await user.click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(dataRows()).toHaveLength(3));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('hides the signup requests panel when nothing is pending', async () => {
+    renderPage();
+    await waitFor(() => expect(dataRows()).toHaveLength(3));
+    expect(screen.queryByRole('region', { name: 'Signup requests' })).not.toBeInTheDocument();
+  });
+
+  it('approves a pending signup from the requests panel', async () => {
+    const user = userEvent.setup();
+    requestsMock.mockResolvedValueOnce([PENDING_REQUEST]).mockResolvedValue([]);
+    approveMock.mockResolvedValue(makeUser({ id: 'u4', email: 'dana@new.io', approval_status: 'approved' }));
+    renderPage();
+    const panel = await screen.findByRole('region', { name: 'Signup requests' });
+    expect(within(panel).getByText('dana@new.io')).toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Approve dana@new.io' }));
+    await waitFor(() => expect(approveMock).toHaveBeenCalledWith('u4'));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Signup requests' })).not.toBeInTheDocument());
+  });
+
+  it('generates an access key with the chosen expiry and shows it once', async () => {
+    const user = userEvent.setup();
+    requestsMock.mockResolvedValue([PENDING_REQUEST]);
+    issueKeyMock.mockResolvedValue({ key: 'K7M2XP9QRT', expires_at: '2026-10-08T07:00:00Z' });
+    renderPage();
+    const panel = await screen.findByRole('region', { name: 'Signup requests' });
+    await user.click(within(panel).getByRole('button', { name: /Access key/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Generate access key')).toBeInTheDocument();
+    const before = Date.now();
+    await user.click(within(dialog).getByRole('button', { name: /Generate key/ }));
+    await waitFor(() => expect(issueKeyMock).toHaveBeenCalledTimes(1));
+    const [userId, expiresAt] = issueKeyMock.mock.calls[0];
+    expect(userId).toBe('u4');
+    const threeDays = 3 * 24 * 60 * 60 * 1000;
+    expect(expiresAt.getTime() - before).toBeGreaterThanOrEqual(threeDays - 1000);
+    expect(expiresAt.getTime() - before).toBeLessThanOrEqual(threeDays + 5000);
+    expect(await within(dialog).findByTestId('issued-access-key')).toHaveTextContent('K7M2XP9QRT');
+  });
+
+  it('rejects a pending signup only after confirmation', async () => {
+    const user = userEvent.setup();
+    requestsMock.mockResolvedValue([PENDING_REQUEST]);
+    rejectMock.mockResolvedValue(makeUser({ id: 'u4', email: 'dana@new.io', approval_status: 'rejected' }));
+    renderPage();
+    const panel = await screen.findByRole('region', { name: 'Signup requests' });
+    await user.click(within(panel).getByRole('button', { name: 'Reject dana@new.io' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(rejectMock).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: /Reject/ }));
+    await waitFor(() => expect(rejectMock).toHaveBeenCalledWith('u4'));
+  });
+
+  it('labels pending accounts in the table and approves them from the detail sheet', async () => {
+    const user = userEvent.setup();
+    const dana = makeUser({ id: 'u4', email: 'dana@new.io', approval_status: 'pending' });
+    fetchMock.mockResolvedValue([ME, BOB, CAROL, dana]);
+    approveMock.mockResolvedValue({ ...dana, approval_status: 'approved' });
+    renderPage();
+    await waitFor(() => expect(dataRows()).toHaveLength(4));
+    expect(within(rowFor('dana@new.io')).getByText('Pending approval')).toBeInTheDocument();
+    const sheet = await openSheet(user, 'dana@new.io');
+    await user.click(within(sheet).getByRole('button', { name: 'Approve' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(approveMock).toHaveBeenCalledWith('u4'));
   });
 });

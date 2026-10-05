@@ -87,6 +87,35 @@ function SheetBody({
       </SheetHeader>
 
       <div className="scrollbar-thin flex-1 space-y-6 overflow-y-auto p-4">
+        {user.approval_status && user.approval_status !== 'approved' && (
+          <>
+            <Section
+              title="Signup approval"
+              description={
+                user.approval_status === 'pending'
+                  ? 'This account is waiting for approval and cannot use NAO or the extension yet.'
+                  : 'This signup was rejected. The user cannot sign in until it is approved.'
+              }
+            >
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => onAction({ kind: 'approval', user, next: 'approved' })}>
+                  <UserCheck /> Approve
+                </Button>
+                {user.approval_status === 'pending' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onAction({ kind: 'approval', user, next: 'rejected' })}
+                  >
+                    <UserX /> Reject
+                  </Button>
+                )}
+              </div>
+            </Section>
+            <Separator />
+          </>
+        )}
+
         <Section title="Details">
           <dl className="divide-y">
             <DetailRow label="Email">{user.email}</DetailRow>
@@ -152,7 +181,10 @@ function SheetBody({
 
         <Separator />
 
-        <Section title="Reset password" description="Set a temporary password (min 8 characters) and share it securely.">
+        <Section
+          title="Reset password"
+          description="Set a temporary password (8+ characters with upper, lower, and a number) and share it securely."
+        >
           <ResetPasswordForm key={user.id} user={user} />
         </Section>
 

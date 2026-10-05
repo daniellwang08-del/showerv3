@@ -27,7 +27,15 @@ from app.models.schemas import (
     DashboardRevisionResponse,
     DashboardSyncResponse,
 )
-from app.models.auth_schemas import SignupRequest, LoginRequest, AuthResponse, UserResponse, ProfileUpdateRequest
+from app.models.auth_schemas import (
+    AuthResponse,
+    LoginRequest,
+    ProfileUpdateRequest,
+    RedeemAccessKeyRequest,
+    SignupApprovalState,
+    SignupRequest,
+    UserResponse,
+)
 from app.models.profile_schemas import (
     ProfileResponse,
     ProfileCreateRequest,
@@ -256,56 +264,39 @@ def _auth_cookie_params(*, max_age: int | None = None) -> dict:
     return params
 
 
+async def _authenticate(request: Request, *, allow_pending: bool) -> dict:
+    from app.services.session_auth import AUTH_STATUS_HEADER, SessionAuthError, resolve_session
+
+    try:
+        resolved = await resolve_session(_request_access_token(request), allow_pending=allow_pending)
+    except SessionAuthError as e:
+        logger.warning("auth_required_rejected", reason=e.reason)
+        headers = {AUTH_STATUS_HEADER: e.auth_status} if e.auth_status else None
+        raise HTTPException(status_code=e.status_code, detail=e.detail, headers=headers)
+
+    user = resolved.user
+    bind_logging_context(user_id=user.id, user_email=user.email)
+    try:
+        request.state.user_id = user.id
+    except Exception:
+        pass
+    return {
+        **resolved.payload,
+        "user_id": user.id,
+        "is_admin": bool(getattr(user, "is_admin", False)),
+        "is_active": True,
+        "approval_status": user.approval_status,
+    }
+
+
 async def get_current_user(request: Request):
-    token = _request_access_token(request)
-    if not token:
-        logger.warning("auth_required_missing_token")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = AuthService.verify_token(token)
-    if not payload:
-        logger.warning("auth_required_invalid_token")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    """Signed-in, active, approved account. Every protected route depends on this."""
+    return await _authenticate(request, allow_pending=False)
 
-    # Reject tokens explicitly revoked at logout (fail-open if Redis is down).
-    from app.services.token_denylist import is_jti_revoked
 
-    if await is_jti_revoked(payload.get("jti")):
-        logger.warning("auth_required_revoked_token")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
-
-    user_id: str | None = None
-    uid = payload.get("user_id")
-    if uid is not None and str(uid).strip():
-        user_id = str(uid).strip()
-    elif isinstance(payload.get("sub"), str) and payload["sub"].strip():
-        async with get_session() as session:
-            user_repo = UserRepository(session)
-            user = await user_repo.get_by_email(payload["sub"].lower().strip())
-            if user:
-                user_id = user.id
-
-    if not user_id:
-        bind_logging_context(user_email=payload.get("sub"))
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-
-    # Reject deactivated accounts even if the JWT is still valid.
-    async with get_session() as session:
-        user_repo = UserRepository(session)
-        user = await user_repo.get_by_id(user_id)
-        if not user or not user.is_active:
-            logger.warning("auth_required_inactive_user", user_id=user_id)
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
-        bind_logging_context(user_id=user.id, user_email=user.email)
-        try:
-            request.state.user_id = user.id
-        except Exception:
-            pass
-        return {
-            **payload,
-            "user_id": user.id,
-            "is_admin": bool(getattr(user, "is_admin", False)),
-            "is_active": True,
-        }
+async def get_pending_or_approved_user(request: Request):
+    """Like get_current_user but also admits pending signups. Only for /auth/approval*."""
+    return await _authenticate(request, allow_pending=True)
 
 
 async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -358,16 +349,27 @@ async def signup(request: SignupRequest, response: Response, http_request: Reque
                 **_auth_cookie_params(max_age=86400),
             )
             
-            logger.info("user_signup_success", email=user.email, user_id=user.id)
-            
+            logger.info(
+                "user_signup_success",
+                email=user.email,
+                user_id=user.id,
+                approval_status=user.approval_status,
+            )
+
+            pending = user.approval_status == "pending"
             return AuthResponse(
                 success=True,
-                message="Account created successfully",
+                message=(
+                    "Signup request sent. An admin will approve it, or enter the access key you were given."
+                    if pending
+                    else "Account created successfully"
+                ),
                 email=user.email,
                 user_id=user.id,
                 access_token=access_token,
                 token_type="bearer",
                 expires_in=86400,
+                approval_status=user.approval_status,
             )
         except IntegrityError:
             await session.rollback()
@@ -417,7 +419,27 @@ async def login(request: LoginRequest, response: Response, http_request: Request
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
-        
+
+        from app.services.session_auth import AUTH_STATUS_HEADER, PENDING_DETAIL, REJECTED_DETAIL
+
+        approval = user.approval_status or "approved"
+        if approval == "rejected":
+            logger.warning("user_login_failed", email=normalized_email, reason="approval_rejected")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=REJECTED_DETAIL,
+                headers={AUTH_STATUS_HEADER: approval},
+            )
+        # The extension only works for approved accounts; a pending web login
+        # gets a session that can reach nothing but the approval screen.
+        if approval == "pending" and request.long_lived:
+            logger.warning("user_login_failed", email=normalized_email, reason="approval_pending_extension")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"{PENDING_DETAIL} Sign in on the website to check your request.",
+                headers={AUTH_STATUS_HEADER: approval},
+            )
+
         # Long-lived token for non-cookie clients (extension); default 24h otherwise.
         if request.long_lived:
             from app.services.system_settings_service import get_effective_value
@@ -453,6 +475,7 @@ async def login(request: LoginRequest, response: Response, http_request: Request
             access_token=access_token,
             token_type="bearer",
             expires_in=expires_seconds,
+            approval_status=approval,
         )
 
 
@@ -476,7 +499,7 @@ async def issue_extension_token(
     user_id = current_user.get("user_id")
     async with get_session() as session:
         user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-        if user is None or not user.is_active:
+        if user is None or not user.is_active or user.approval_status != "approved":
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
         from app.services.system_settings_service import get_effective_value
 
@@ -551,8 +574,70 @@ async def read_users_me(current_user: dict = Depends(get_current_user)) -> UserR
             is_active=user.is_active,
             is_admin=bool(getattr(user, "is_admin", False)),
             created_at=user.created_at,
+            approval_status=user.approval_status,
+            approved_at=user.approved_at,
             **sub_state,
         )
+
+
+async def _approval_state(user_id: str) -> SignupApprovalState:
+    async with get_session() as session:
+        user = await UserRepository(session).get_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        return SignupApprovalState(
+            email=user.email,
+            approval_status=user.approval_status,
+            requested_at=user.created_at,
+        )
+
+
+@router.get("/auth/approval", response_model=SignupApprovalState)
+async def read_signup_approval(
+    current_user: dict = Depends(get_pending_or_approved_user),
+) -> SignupApprovalState:
+    """Polled by the waiting screen; flips to "approved" once an admin approves."""
+    return await _approval_state(current_user["user_id"])
+
+
+@router.post("/auth/approval/redeem", response_model=SignupApprovalState)
+async def redeem_signup_access_key(
+    body: RedeemAccessKeyRequest,
+    http_request: Request,
+    current_user: dict = Depends(get_pending_or_approved_user),
+) -> SignupApprovalState:
+    """Approve the caller's own pending signup with an admin-issued access key."""
+    from app.api.rate_limit import enforce_auth_rate_limit
+    from app.services.signup_approval_service import redeem_access_key
+
+    user_id = current_user["user_id"]
+    await enforce_auth_rate_limit(
+        http_request,
+        scope="access_key",
+        email=user_id,
+        per_ip=20,
+        per_ip_window=900,
+        per_identity=6,
+        per_identity_window=900,
+    )
+    async with get_session() as session:
+        user = (
+            await session.execute(select(User).where(User.id == user_id).with_for_update())
+        ).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        if user.approval_status == "approved":
+            return SignupApprovalState(
+                email=user.email, approval_status=user.approval_status, requested_at=user.created_at
+            )
+        if not await redeem_access_key(session, user, body.key):
+            logger.warning("signup_access_key_rejected", user_id=user_id)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That access key is invalid or has expired. Ask your admin for a new one.",
+            )
+        await session.commit()
+    return await _approval_state(user_id)
 
 
 @router.patch("/auth/profile", response_model=UserResponse)

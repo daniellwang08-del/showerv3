@@ -27,7 +27,10 @@ export const resetPasswordSchema = z
       .string()
       .trim()
       .min(8, 'Password must be at least 8 characters')
-      .max(255, 'Password must be at most 255 characters'),
+      .max(255, 'Password must be at most 255 characters')
+      .regex(/[A-Z]/, 'Include an uppercase letter')
+      .regex(/[a-z]/, 'Include a lowercase letter')
+      .regex(/\d/, 'Include a number'),
     confirm: z.string().trim(),
   })
   .refine((v) => v.password === v.confirm, { path: ['confirm'], message: 'Passwords do not match' });
@@ -107,7 +110,7 @@ export function ResetPasswordForm({ user }: { user: AdminUser }) {
             <AlertDialogTitle>Reset password?</AlertDialogTitle>
             <AlertDialogDescription>
               Replace the password for <strong className="text-foreground">{user.email}</strong>. Their current
-              password stops working immediately.
+              password stops working immediately and they are signed out of the web app and the extension.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error && (

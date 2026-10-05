@@ -1,5 +1,5 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
-import { deleteAdminUser, fetchAdminUsers, patchAdminUser } from '@/api/adminApi';
+import { approveSignup, deleteAdminUser, fetchAdminUsers, patchAdminUser, rejectSignup } from '@/api/adminApi';
 import type { AdminUser } from '@/types/admin';
 
 export const adminUsersKey = ['admin-users'] as const;
@@ -14,6 +14,7 @@ export type PendingAction =
   | { kind: 'role'; user: AdminUser; next: boolean }
   | { kind: 'active'; user: AdminUser; next: boolean }
   | { kind: 'delete'; user: AdminUser }
+  | { kind: 'approval'; user: AdminUser; next: 'approved' | 'rejected' }
   | { kind: 'bulk'; bulk: BulkKind; users: AdminUser[] };
 
 export interface ActionResult {
@@ -73,6 +74,9 @@ export async function runAction(action: PendingAction): Promise<ActionResult> {
   } else if (action.kind === 'delete') {
     await deleteAdminUser(action.user.id);
     result.deleted.push(action.user.id);
+  } else if (action.kind === 'approval') {
+    const fn = action.next === 'approved' ? approveSignup : rejectSignup;
+    result.updated.push(await fn(action.user.id));
   } else {
     for (const u of action.users) {
       try {
@@ -106,6 +110,8 @@ export function actionTitle(a: PendingAction): string {
       return a.next ? 'Enable account?' : 'Disable account?';
     case 'delete':
       return 'Delete user?';
+    case 'approval':
+      return a.next === 'approved' ? 'Approve signup?' : 'Reject signup?';
     case 'bulk': {
       const n = a.users.length;
       return {
@@ -123,11 +129,13 @@ export function actionConfirmLabel(a: PendingAction): string {
   if (a.kind === 'delete' || (a.kind === 'bulk' && a.bulk === 'delete')) return 'Delete';
   if (a.kind === 'role') return a.next ? 'Promote' : 'Demote';
   if (a.kind === 'active') return a.next ? 'Enable' : 'Disable';
+  if (a.kind === 'approval') return a.next === 'approved' ? 'Approve' : 'Reject';
   return 'Confirm';
 }
 
 export function isDestructive(a: PendingAction): boolean {
   if (a.kind === 'delete') return true;
+  if (a.kind === 'approval') return a.next === 'rejected';
   if (a.kind === 'active' || a.kind === 'role') return !a.next;
   return a.bulk === 'delete' || a.bulk === 'disable' || a.bulk === 'demote';
 }
@@ -140,6 +148,8 @@ export function actionSuccess(a: PendingAction): string {
       return a.next ? `${a.user.email} enabled` : `${a.user.email} disabled`;
     case 'delete':
       return `${a.user.email} deleted`;
+    case 'approval':
+      return `${a.user.email} ${a.next}`;
     case 'bulk': {
       const verb = { promote: 'Promoted', demote: 'Demoted', enable: 'Enabled', disable: 'Disabled', delete: 'Deleted' }[
         a.bulk

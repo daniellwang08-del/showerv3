@@ -2,6 +2,7 @@ import { apiClient } from './client';
 import type {
   AdminUser,
   BlockedDomain,
+  IssuedAccessKey,
   JobCleanupRequest,
   JobCleanupResult,
   LlmBenchmarkResponse,
@@ -10,6 +11,7 @@ import type {
   LlmModelsResponse,
   LlmProviderKey,
   OpsOverview,
+  SignupRequest,
   SystemSettingsResponse,
 } from '../types/admin';
 
@@ -32,6 +34,33 @@ export async function resetAdminUserPassword(userId: string, password: string): 
 
 export async function deleteAdminUser(userId: string): Promise<void> {
   await apiClient.delete(`/admin/users/${userId}`);
+}
+
+export async function fetchSignupRequests(): Promise<SignupRequest[]> {
+  const { data } = await apiClient.get<SignupRequest[]>('/admin/signup-requests');
+  return data;
+}
+
+export async function approveSignup(userId: string): Promise<AdminUser> {
+  const { data } = await apiClient.post<AdminUser>(`/admin/users/${userId}/approve`);
+  return data;
+}
+
+export async function rejectSignup(userId: string): Promise<AdminUser> {
+  const { data } = await apiClient.post<AdminUser>(`/admin/users/${userId}/reject`);
+  return data;
+}
+
+/** The plaintext key is only ever returned by this call. */
+export async function issueSignupAccessKey(userId: string, expiresAt: Date): Promise<IssuedAccessKey> {
+  const { data } = await apiClient.post<IssuedAccessKey>(`/admin/users/${userId}/access-key`, {
+    expires_at: expiresAt.toISOString(),
+  });
+  return data;
+}
+
+export async function revokeSignupAccessKey(userId: string): Promise<void> {
+  await apiClient.delete(`/admin/users/${userId}/access-key`);
 }
 
 export async function fetchSystemSettings(): Promise<SystemSettingsResponse> {

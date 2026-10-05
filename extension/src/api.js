@@ -23,14 +23,18 @@ export class ApiError extends Error {
 
 let unauthorizedHandler = null;
 
-/** Called once when a request comes back 401 with a token attached. */
+/**
+ * Called once when a request with a token attached is refused for the account
+ * itself (expired, revoked, disabled, or not approved). Receives the reason to
+ * show, or null for a plain expiry.
+ */
 export function onUnauthorized(fn) {
   unauthorizedHandler = fn;
 }
 
-async function handleUnauthorized() {
+async function handleUnauthorized(message = null) {
   await clearToken();
-  if (unauthorizedHandler) unauthorizedHandler();
+  if (unauthorizedHandler) unauthorizedHandler(message);
 }
 
 /** Request the optional host permission for the server origin (needs a user gesture). */
@@ -122,12 +126,20 @@ async function checkStatus(res, auth) {
   } catch {
     /* non-JSON error body */
   }
+  // The server sets X-Auth-Status when the account's signup is pending or was declined.
+  const accountState = res.headers.get("x-auth-status");
   if (res.status === 401) {
     if (auth) {
-      await handleUnauthorized();
-      throw new ApiError("Your session expired. Sign in again.", 401, "auth");
+      const reason = accountState ? errorDetail(data, null) : null;
+      await handleUnauthorized(reason);
+      throw new ApiError(reason || "Your session expired. Sign in again.", 401, "auth");
     }
     throw new ApiError(errorDetail(data, "Incorrect email or password."), 401, "auth");
+  }
+  if (res.status === 403 && accountState) {
+    const reason = errorDetail(data, "This account is not approved yet.");
+    if (auth) await handleUnauthorized(reason);
+    throw new ApiError(reason, 403, "auth");
   }
   throw new ApiError(errorDetail(data, `Request failed (${res.status}).`), res.status, "http");
 }
@@ -172,7 +184,18 @@ export async function login(email, password) {
   return user;
 }
 
-export const logout = () => clearToken();
+/** Revoke the token on the server (best effort, so sign-out works offline), then forget it. */
+export async function logout() {
+  if (await getToken()) {
+    try {
+      const res = await send("/auth/logout", { method: "POST", timeoutMs: 5000 });
+      await res.body?.cancel();
+    } catch {
+      /* offline or server down: the local sign-out still happens */
+    }
+  }
+  await clearToken();
+}
 
 /** WebSocket URL for live events (token in the query string, as the dashboard does). */
 export async function liveEventsUrl() {

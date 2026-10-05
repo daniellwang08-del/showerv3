@@ -58,15 +58,18 @@ class AuthService:
     def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
         settings = get_settings()
         to_encode = data.copy()
+        now = datetime.now(timezone.utc)
         if expires_delta:
-            expire = datetime.now(timezone.utc) + expires_delta
+            expire = now + expires_delta
         else:
-            expire = datetime.now(timezone.utc) + timedelta(minutes=1440) # 24 hours default
+            expire = now + timedelta(minutes=1440) # 24 hours default
 
         # Unique token id so individual tokens can be revoked (logout) without
         # rotating the signing secret (which would invalidate everyone at once).
         to_encode.setdefault("jti", uuid.uuid4().hex)
-        to_encode.update({"exp": expire})
+        # `iat` lets a per-user cutoff (users.sessions_valid_after) revoke every
+        # token issued before a password reset or signup rejection.
+        to_encode.update({"exp": expire, "iat": int(now.timestamp())})
         encoded_jwt = jwt.encode(to_encode, settings.auth_secret_key, algorithm="HS256")
         return encoded_jwt
 

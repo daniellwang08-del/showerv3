@@ -379,6 +379,8 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Cross-origin clients (logs subdomain, extension) read the approval state from it.
+        expose_headers=["X-Auth-Status"],
     )
 
     app.add_middleware(ErrorHandlerMiddleware)
