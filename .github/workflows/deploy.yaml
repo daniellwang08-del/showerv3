@@ -147,24 +147,24 @@ jobs:
               echo "no /etc/nginx/conf.d; skipping nginx hardening"
             fi
 
-            echo "Ensuring logs.atomspace.it.com nginx site is installed..."
+            echo "Ensuring logs.nao.it.com nginx site is installed..."
             # Install HTTP vhost only when missing. Never overwrite after certbot
             # has rewritten the live file with TLS listen blocks.
             if [ -d /etc/nginx/sites-available ]; then
-              LOGS_AVAIL=/etc/nginx/sites-available/logs.atomspace
+              LOGS_AVAIL=/etc/nginx/sites-available/logs.nao
               LOGS_SRC=deploy/nginx/logs.atomspace.it.com.conf
               if [ -f "$LOGS_SRC" ] && [ ! -f "$LOGS_AVAIL" ]; then
                 cp "$LOGS_SRC" "$LOGS_AVAIL"
-                ln -sfn "$LOGS_AVAIL" /etc/nginx/sites-enabled/logs.atomspace
+                ln -sfn "$LOGS_AVAIL" /etc/nginx/sites-enabled/logs.nao
                 if nginx -t; then
                   systemctl reload nginx || echo "nginx reload failed after logs site install"
-                  echo "Installed logs.atomspace HTTP site (run certbot for TLS)."
+                  echo "Installed logs.nao.it.com HTTP site (run certbot for TLS)."
                 else
                   echo "nginx -t failed after logs site install; removing"
-                  rm -f /etc/nginx/sites-enabled/logs.atomspace "$LOGS_AVAIL"
+                  rm -f /etc/nginx/sites-enabled/logs.nao "$LOGS_AVAIL"
                 fi
               else
-                echo "logs.atomspace site already present or source missing — left unchanged"
+                echo "logs.nao site already present or source missing, left unchanged"
               fi
             fi
 
@@ -177,6 +177,6 @@ jobs:
             # a deploy whose app is perfectly healthy. The first call checks the
             # API process, the second the full nginx + TLS path.
             curl --fail http://127.0.0.1:8000/api/v1/health
-            curl --fail --resolve atomspace.it.com:443:127.0.0.1 https://atomspace.it.com/api/v1/health
+            curl --fail --resolve nao.it.com:443:127.0.0.1 https://nao.it.com/api/v1/health
 
             echo "Deployment successful."

@@ -125,7 +125,7 @@ export async function changeServer(url) {
     try {
       new URL(next);
     } catch {
-      return "Enter a valid address, for example https://atomspace.it.com";
+      return "Enter a valid address, for example https://nao.it.com";
     }
     if (!(await api.ensureHostPermission(next))) return `Allow access to ${new URL(next).host} to use it.`;
   }

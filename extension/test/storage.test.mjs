@@ -21,14 +21,14 @@ test("unknown preferences are rejected", async () => {
 });
 
 test("server address normalizes to an origin", () => {
-  assert.equal(storage.normalizeBackendUrl("https://atomspace.it.com/api/v1/"), "https://atomspace.it.com");
+  assert.equal(storage.normalizeBackendUrl("https://nao.it.com/api/v1/"), "https://nao.it.com");
   assert.equal(storage.normalizeBackendUrl("localhost:8000"), "http://localhost:8000");
 });
 
 test("a manual server address wins", async () => {
   await storage.setManualBackendUrl("http://127.0.0.1:8000");
   assert.equal(await storage.getBackendUrl(), "http://127.0.0.1:8000");
-  assert.equal(await storage.setBackendUrl("https://atomspace.it.com"), false);
+  assert.equal(await storage.setBackendUrl("https://nao.it.com"), false);
   await storage.setManualBackendUrl(null);
 });
 

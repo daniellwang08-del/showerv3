@@ -37,7 +37,7 @@ function ServerField({ backendUrl }) {
   return html`<form class="login-server-form" onSubmit=${save}>
     <label class="field">
       <span class="field-label">Server address</span>
-      <input class="input" type="url" value=${value} placeholder="https://atomspace.it.com" onInput=${(e) => setValue(e.currentTarget.value)} />
+      <input class="input" type="url" value=${value} placeholder="https://nao.it.com" onInput=${(e) => setValue(e.currentTarget.value)} />
     </label>
     ${error ? html`<p class="field-error">${error}</p>` : null}
     <div class="row-actions">

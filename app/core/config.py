@@ -315,7 +315,7 @@ class Settings(BaseSettings):
     frontend_url: str = Field(default="")
     cors_extra_origins: str = Field(default="")
     # Cookie Domain for access_token so apex + logs subdomain share the session
-    # (e.g. ".atomspace.it.com"). Empty = host-only (local/dev default).
+    # (e.g. ".nao.it.com"). Empty = host-only (local/dev default).
     auth_cookie_domain: str = Field(default="")
 
     # ── Stripe billing / subscriptions ───────────────────────────────────

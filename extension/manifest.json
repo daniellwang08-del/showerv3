@@ -14,8 +14,8 @@
   ],
   "optional_host_permissions": ["*://*/*", "https://*.greenhouse.io/*"],
   "host_permissions": [
-    "https://atomspace.it.com/*",
-    "https://www.atomspace.it.com/*",
+    "https://nao.it.com/*",
+    "https://www.nao.it.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://localhost/*",
@@ -32,8 +32,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://atomspace.it.com/*",
-        "https://www.atomspace.it.com/*",
+        "https://nao.it.com/*",
+        "https://www.nao.it.com/*",
         "http://localhost/*",
         "http://127.0.0.1/*",
         "https://localhost/*"

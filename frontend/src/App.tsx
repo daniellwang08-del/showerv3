@@ -44,7 +44,7 @@ const AdminLogsPage = named(() => import('./features/admin/logs/AdminLogsPage'),
 function isLogsHost(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname.toLowerCase();
-  return host === 'logs.atomspace.it.com' || host.startsWith('logs.');
+  return host === 'logs.nao.it.com' || host.startsWith('logs.');
 }
 
 function AdminsOnlyNotice() {
@@ -54,8 +54,8 @@ function AdminsOnlyNotice() {
         <p className="text-lg font-semibold">Admins only</p>
         <p className="text-sm text-muted-foreground">
           System logs require an admin account. Sign in at{' '}
-          <a className="text-brand underline" href="https://atomspace.it.com/login">
-            atomspace.it.com
+          <a className="text-brand underline" href="https://nao.it.com/login">
+            nao.it.com
           </a>{' '}
           with an admin user, then open this site again.
         </p>
