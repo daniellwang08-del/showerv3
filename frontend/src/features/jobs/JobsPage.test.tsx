@@ -274,6 +274,14 @@ describe('JobsPage', () => {
     expect(applyAgentDashboard).toHaveBeenCalledWith(expect.objectContaining({ reset: true, view: 'all' }));
   });
 
+  it('keeps overflowing rows inside a bounded jobs scroller', () => {
+    seed(Array.from({ length: 40 }, (_, i) => makeJob({ id: `j${i}`, title: `Role ${i}` })));
+    renderPage();
+    const list = screen.getByRole('rowgroup', { name: 'Jobs' });
+    expect(list).toHaveClass('absolute', 'inset-0', 'overflow-auto', 'overscroll-contain');
+    expect(list.closest('.min-h-0')).toBeTruthy();
+  });
+
   it('paginates', async () => {
     const user = userEvent.setup();
     seed([makeJob()], { total: 120, pages: 3, page: 2 } as never);

@@ -98,7 +98,7 @@ function RecordView({
         </SheetDescription>
       </SheetHeader>
 
-      <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto p-4">
+      <div className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">
         <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-1.5 text-xs">
           {fields.map(([k, v]) =>
             v ? (
@@ -175,7 +175,7 @@ function TimelineView({
         <SheetTitle>{kind === 'job' ? 'Job timeline' : 'Request timeline'}</SheetTitle>
         <SheetDescription className="break-all font-mono text-xs text-brand">{id}</SheetDescription>
       </SheetHeader>
-      <div className="scrollbar-thin flex-1 overflow-y-auto p-4">
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
         {q.isPending ? (
           <div className="space-y-3" aria-label="Loading timeline">
             {Array.from({ length: 5 }, (_, i) => (

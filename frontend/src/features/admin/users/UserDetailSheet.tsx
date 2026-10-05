@@ -86,7 +86,7 @@ function SheetBody({
         </div>
       </SheetHeader>
 
-      <div className="scrollbar-thin flex-1 space-y-6 overflow-y-auto p-4">
+      <div className="scrollbar-thin min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain p-4">
         {user.approval_status && user.approval_status !== 'approved' && (
           <>
             <Section

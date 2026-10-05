@@ -34,7 +34,7 @@ export function SheetFrame({
           <SheetDescription className="mt-0.5">{description}</SheetDescription>
         </div>
       </div>
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">{children}</div>
     </div>
   );
 }

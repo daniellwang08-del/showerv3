@@ -36,7 +36,7 @@ export function JobDetailSheet({ isAdmin }: { isAdmin: boolean }) {
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-none data-[side=right]:md:w-[min(1000px,88vw)]"
+        className="gap-0 overflow-hidden p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-none data-[side=right]:md:w-[min(1000px,88vw)]"
       >
         <SheetTitle className="sr-only">Job details</SheetTitle>
         {jobId ? (

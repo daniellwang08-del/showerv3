@@ -174,7 +174,7 @@ export function JobsTable(props: JobsTableProps) {
   const menuTargets = menuJob ? props.targetsFor(menuJob) : [];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
       <div
         role="row"
         className="grid shrink-0 items-center border-b bg-muted/40 text-xs font-medium text-muted-foreground"
@@ -223,6 +223,7 @@ export function JobsTable(props: JobsTableProps) {
         )}
       </div>
 
+      <div className="relative min-h-0 min-w-0 flex-1">
       <ContextMenu onOpenChange={(open) => !open && setMenuJob(null)}>
         <ContextMenuTrigger
           render={
@@ -230,7 +231,7 @@ export function JobsTable(props: JobsTableProps) {
               ref={scrollRef}
               role="rowgroup"
               aria-label="Jobs"
-              className="scrollbar-thin relative min-h-0 flex-1 overflow-auto"
+              className="scrollbar-thin absolute inset-0 overflow-auto overscroll-contain"
               onKeyDown={onKeyDown}
               onContextMenu={(e: MouseEvent<HTMLDivElement>) => {
                 const row = (e.target as HTMLElement).closest<HTMLElement>('[data-row-index]');
@@ -290,6 +291,7 @@ export function JobsTable(props: JobsTableProps) {
           )}
         </ContextMenuContent>
       </ContextMenu>
+      </div>
     </div>
   );
 }

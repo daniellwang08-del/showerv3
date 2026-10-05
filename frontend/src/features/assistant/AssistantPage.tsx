@@ -68,7 +68,7 @@ export function AssistantPage() {
   const loading = !!routeId && (sessionLoad === 'loading' || !showingRoute);
 
   return (
-    <div className="flex h-full">
+    <div className="flex min-h-0 min-w-0 flex-1">
       <PageTitle title={title && routeId ? title : 'Assistant'} />
       <aside className="hidden w-64 shrink-0 border-r lg:flex lg:flex-col">{history}</aside>
       <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>

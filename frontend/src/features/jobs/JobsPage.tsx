@@ -244,7 +244,7 @@ export function JobsPage() {
   );
 
   return (
-    <div ref={containerRef} className="relative flex h-full flex-col gap-4 px-4 pb-4 pt-5 md:px-6">
+    <div ref={containerRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden px-4 pb-4 pt-5 md:px-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Jobs</h1>

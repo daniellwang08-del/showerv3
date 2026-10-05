@@ -14,7 +14,7 @@ export function PageScrollArea({
 }: Props) {
   const scrollClass = alwaysShowScrollbar ? 'page-scroll-y' : 'page-scroll-y-auto';
   return (
-    <div className={`${scrollClass} h-full min-h-0 overflow-x-hidden ${className}`.trim()}>
+    <div className={`${scrollClass} h-full min-h-0 flex-1 overflow-x-hidden overscroll-contain ${className}`.trim()}>
       {children}
     </div>
   );

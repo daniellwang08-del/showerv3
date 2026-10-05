@@ -89,7 +89,8 @@ function Page({ children, legacy, title }: { children: ReactNode; legacy?: boole
       {children}
     </Suspense>
   );
-  return legacy ? <LegacyPage>{content}</LegacyPage> : content;
+  if (legacy) return <LegacyPage>{content}</LegacyPage>;
+  return <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{content}</div>;
 }
 
 function LegacyRedirect({ to }: { to: string }) {

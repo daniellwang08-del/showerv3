@@ -19,7 +19,7 @@ export function PageLayout({
   className?: string;
 }) {
   return (
-    <div className="scrollbar-thin h-full overflow-y-auto">
+    <div className="scrollbar-thin min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
       <PageTitle title={title} />
       <div
         className={cn(

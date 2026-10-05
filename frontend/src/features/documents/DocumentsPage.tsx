@@ -679,7 +679,7 @@ export function DocumentsPage() {
       </div>
 
       <Dialog open={preview != null} onOpenChange={(open) => !open && setPreview(null)}>
-        <DialogContent className="flex h-[min(92dvh,1000px)] w-full flex-col gap-0 p-0 sm:max-w-4xl">
+        <DialogContent className="flex h-[min(92dvh,1000px)] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
           <div className="flex shrink-0 items-center gap-3 border-b py-2.5 pr-12 pl-4">
             <DialogTitle className="min-w-0 flex-1 truncate text-sm font-semibold">
               {preview ? `${preview.fileType.startsWith('cover') ? 'Cover letter' : 'Resume'}: ${preview.row.title}` : ''}
