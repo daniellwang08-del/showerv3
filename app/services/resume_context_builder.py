@@ -7,6 +7,7 @@ from typing import Any
 
 from app.models.database import Job, User
 from app.services.job_field_utils import parse_job_title
+from app.utils.company_name import companies_match, normalize_company_name
 from app.utils.flexible_date import format_flexible_date, format_flexible_period
 
 
@@ -119,7 +120,7 @@ def _profile_work_rows(user: User) -> list[dict[str, Any]]:
 
 
 def _norm_company(value: object) -> str:
-    return str(value or "").strip().lower()
+    return normalize_company_name(value)
 
 
 def _match_tailored_work_row(
@@ -130,13 +131,12 @@ def _match_tailored_work_row(
     used: set[int],
 ) -> dict:
     """Prefer company+title, then company-only, then first unused row (order fallback)."""
-    company_l = _norm_company(company)
     title_l = str(title or "").strip().lower()
-    if company_l:
+    if company:
         for i, row in enumerate(tailored_rows):
             if i in used or not isinstance(row, dict):
                 continue
-            if _norm_company(row.get("company_name")) != company_l:
+            if not companies_match(row.get("company_name"), company):
                 continue
             if title_l and str(row.get("job_title") or "").strip().lower() == title_l:
                 used.add(i)
@@ -144,7 +144,7 @@ def _match_tailored_work_row(
         for i, row in enumerate(tailored_rows):
             if i in used or not isinstance(row, dict):
                 continue
-            if _norm_company(row.get("company_name")) == company_l:
+            if companies_match(row.get("company_name"), company):
                 used.add(i)
                 return row
     for i, row in enumerate(tailored_rows):

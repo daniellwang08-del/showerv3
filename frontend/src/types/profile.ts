@@ -21,6 +21,7 @@ export type EducationBlock = {
   period_end?: string;
   location?: string;
   description?: string;
+  field_of_study?: string;
 };
 export type CertificateBlock = {
   name: string;

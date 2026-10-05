@@ -377,13 +377,18 @@
   const USA_PHONE_CC = "United States of America (+1)";
 
   // Thin digit cleanup after LLM (prompt asks for exactly 10 national digits).
-  function nationalPhoneDigits(phone) {
+  function nationalPhoneDigits(phone, countryCode) {
     let d = String(phone || "").replace(/\D/g, "");
     if (!d) return "";
-    if (d.length === 10) return d;
-    if (d.length === 11 && d.charAt(0) === "1") return d.slice(1);
-    if (d.charAt(0) === "1" && d.length > 11) return d.slice(1, 11);
-    if (d.length > 10) return d.slice(0, 10);
+    const cc = String(countryCode == null ? "" : countryCode).replace(/\D/g, "");
+    const looksUs =
+      cc === "1" ||
+      (!cc && (d.length === 10 || (d.length === 11 && d.charAt(0) === "1")));
+    if (looksUs) {
+      if (d.length === 11 && d.charAt(0) === "1") return d.slice(1);
+      if (d.length > 10) return d.slice(-10);
+      return d;
+    }
     return d;
   }
 
@@ -609,7 +614,7 @@
     const c = p.contact || {};
     const a = p.address || {};
     const w = p.websites || {};
-    const cc = String(c.phoneCountryCode || "").replace(/\D/g, "") || "1";
+    const cc = String(c.phoneCountryCode || "").replace(/\D/g, "");
     const map = {
       source: p.howDidYouHear,
       country: canonCountry(a.country),
@@ -628,9 +633,9 @@
       postalCode: a.postalCode,
       phoneType: c.phoneDeviceType,
       // Prefer full USA label, never a bare "+1" that snaps to Anguilla.
-      countryPhoneCode: PHONE_CC_LABEL[cc] || (cc === "1" ? USA_PHONE_CC : undefined),
+      countryPhoneCode: cc === "1" ? USA_PHONE_CC : (cc ? PHONE_CC_LABEL[cc] || `+${cc}` : undefined),
       // National digits only (no country code), Workday validates format separately.
-      phoneNumber: nationalPhoneDigits(c.phone),
+      phoneNumber: nationalPhoneDigits(c.phone, cc),
       // Workday My Information often uses formField-emailAddress (DraftKings proof:
       // v12 skipped LLM for free-text without want → Email APPLY no-value).
       emailAddress: c.email,

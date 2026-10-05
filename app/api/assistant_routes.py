@@ -55,7 +55,9 @@ from app.models.database import (
 from app.models.schemas import ExtractionStatus
 from app.services.job_pipeline_mode import extraction_has_shared_jd
 from app.storage.database import get_session
+from app.utils.company_name import companies_match
 from app.utils.date_bounds import day_bounds_for_timezone
+from app.utils.flexible_date import coerce_flexible_date, parse_flexible_date
 
 assistant_router = APIRouter()
 logger = get_logger(__name__)
@@ -1506,21 +1508,31 @@ _PRESENT_RE = re.compile(r"present|current|now|ongoing", re.I)
 
 
 def _address_for_autofill(addr: Any) -> dict:
-    """Map the user's saved address to the canonical autofill shape. Country
-    defaults to the US when unset (matches the engine's other US defaults)."""
+    """Map the user's saved address to the canonical autofill shape.
+
+    Do not invent a country. Only assume the US when the saved state looks like
+    a US abbreviation (and a city or ZIP is present).
+    """
     a = addr if isinstance(addr, dict) else {}
 
     def _s(key, default=""):
         v = a.get(key)
         return v.strip() if isinstance(v, str) and v.strip() else default
 
+    country = _s("country")
+    state = _s("state")
+    city = _s("city")
+    postal = _s("postal_code")
+    if not country and re.fullmatch(r"[A-Za-z]{2}", state) and (city or re.fullmatch(r"\d{5}(?:-\d{4})?", postal)):
+        country = "United States of America"
+
     return {
         "line1": _s("line1"),
         "line2": _s("line2"),
-        "city": _s("city"),
-        "state": _s("state"),
-        "postalCode": _s("postal_code"),
-        "country": _s("country", "United States of America"),
+        "city": city,
+        "state": state,
+        "postalCode": postal,
+        "country": country,
     }
 
 
@@ -1648,6 +1660,13 @@ def _to_mmyyyy(period: Any) -> str:
     s = str(period or "").strip()
     if not s or _PRESENT_RE.search(s):
         return ""
+    coerced = coerce_flexible_date(s)
+    if coerced:
+        parsed = parse_flexible_date(coerced)
+        if parsed:
+            year = parsed["year"]
+            month = parsed.get("month") or 1
+            return f"{month:02d}/{year}"
     m = re.search(r"\b(\d{1,2})[/\-.](\d{4})\b", s)  # MM/YYYY or M-YYYY
     if m:
         mm = max(1, min(12, int(m.group(1))))
@@ -1661,10 +1680,10 @@ def _to_mmyyyy(period: Any) -> str:
         mon = _MONTHS.get(m.group(1)[:3].lower())
         if mon:
             return f"{mon:02d}/{m.group(2)}"
-    m = re.search(r"\b(\d{4})\b", s)  # bare year -> Jan of that year
+    m = re.search(r"\b(19\d{2}|20\d{2})\b", s)  # bare year -> Jan of that year
     if m:
         return f"01/{m.group(1)}"
-    return s
+    return ""
 
 
 def _is_current_period(period_end: Any) -> bool:
@@ -1689,6 +1708,24 @@ def _split_skills(technical_skills: list) -> list[str]:
     return out[:50]
 
 
+def _profile_description(block: dict) -> str:
+    """Compose a Role Description from profile narrative fields."""
+    desc = _plain_text(block.get("description"))
+    if desc:
+        return desc
+    parts: list[str] = []
+    intro = _plain_text(block.get("project_intro") or block.get("project_description") or "")
+    if intro:
+        parts.append(intro)
+    for c in block.get("contributions") or []:
+        if isinstance(c, str) and c.strip():
+            parts.append(f"- {c.strip()}")
+    skills = str(block.get("used_skills") or "").strip()
+    if skills:
+        parts.append(f"Technologies: {skills}")
+    return _plain_text("\n".join(parts))
+
+
 def _tailored_description(block: dict) -> str:
     """Compose a Role Description from tailored project_description + bullets."""
     parts: list[str] = []
@@ -1698,7 +1735,9 @@ def _tailored_description(block: dict) -> str:
     for b in block.get("bullets") or []:
         if isinstance(b, str) and b.strip():
             parts.append(f"- {b.strip()}")
-    return "\n".join(parts)
+    if parts:
+        return "\n".join(parts)
+    return _profile_description(block)
 
 
 # Markdown emphasis/links the resume renders but a plain-text form field must not
@@ -1734,22 +1773,45 @@ def _plain_text(text: Any) -> str:
     return s.strip()
 
 
-def _match_profile_block(profile_we: list, company: str, idx: int) -> dict:
-    """Find the profile work block for a tailored entry by company name, then
-    fall back to positional order (the tailored list mirrors profile order)."""
-    cl = (company or "").strip().lower()
-    if cl:
-        for p in profile_we:
-            if isinstance(p, dict) and str(p.get("company_name", "")).strip().lower() == cl:
-                return p
-    if 0 <= idx < len(profile_we) and isinstance(profile_we[idx], dict):
-        return profile_we[idx]
+def _match_tailored_work_row(
+    tailored_rows: list[dict],
+    profile_row: dict,
+    used: set[int],
+) -> dict:
+    """Prefer company+title, then fuzzy company, then first unused row."""
+    company = str(profile_row.get("company_name") or "")
+    title_l = str(profile_row.get("job_title") or "").strip().lower()
+    if company:
+        for i, row in enumerate(tailored_rows):
+            if i in used or not isinstance(row, dict):
+                continue
+            if not companies_match(row.get("company_name"), company):
+                continue
+            if title_l and str(row.get("job_title") or "").strip().lower() == title_l:
+                used.add(i)
+                return row
+        for i, row in enumerate(tailored_rows):
+            if i in used or not isinstance(row, dict):
+                continue
+            if companies_match(row.get("company_name"), company):
+                used.add(i)
+                return row
+    for i, row in enumerate(tailored_rows):
+        if i in used or not isinstance(row, dict):
+            continue
+        used.add(i)
+        return row
     return {}
 
 
 def _build_work_experience(profile_we: list, tailored_we: list | None, resume_source: str) -> list[dict]:
+    """Profile rows are the skeleton. Tailored text supplies narrative only.
+
+    Company, title, dates, and location stay on the saved profile so a rewritten
+    tailored title or a 'Google LLC' vs 'Google' alias cannot swap two roles.
+    """
     profile_we = [p for p in (profile_we or []) if isinstance(p, dict)]
-    use_tailored = resume_source == "tailored" and tailored_we
+    use_tailored = resume_source == "tailored" and bool(tailored_we)
     if not use_tailored:
         return [
             {
@@ -1759,29 +1821,31 @@ def _build_work_experience(profile_we: list, tailored_we: list | None, resume_so
                 "startMMYYYY": _to_mmyyyy(p.get("period_start")),
                 "endMMYYYY": _to_mmyyyy(p.get("period_end")),
                 "current": _is_current_period(p.get("period_end")),
-                "description": _plain_text(p.get("description")),
+                "description": _profile_description(p),
             }
             for p in profile_we
         ]
 
+    safe_tailored = [t for t in (tailored_we or []) if isinstance(t, dict)]
+    used: set[int] = set()
     out: list[dict] = []
-    for i, t in enumerate(tailored_we):
-        if not isinstance(t, dict):
-            continue
-        prof = _match_profile_block(profile_we, t.get("company_name", ""), i)
-        # Dates/location: prefer enriched tailored fields, fall back to profile.
-        start = t.get("period_start") or prof.get("period_start")
-        end = t.get("period_end") if t.get("period_end") is not None else prof.get("period_end")
-        loc = t.get("location") or prof.get("location")
+    for prof in profile_we:
+        tailored = _match_tailored_work_row(safe_tailored, prof, used)
+        start = prof.get("period_start") or tailored.get("period_start")
+        end = prof.get("period_end") if prof.get("period_end") is not None else tailored.get("period_end")
+        loc = prof.get("location") or tailored.get("location")
+        narrative = _plain_text(_tailored_description(tailored)) if tailored else ""
+        if not narrative:
+            narrative = _profile_description(prof)
         out.append(
             {
-                "company": str(t.get("company_name") or ""),
-                "title": str(t.get("job_title") or ""),
+                "company": str(prof.get("company_name") or tailored.get("company_name") or ""),
+                "title": str(prof.get("job_title") or tailored.get("job_title") or ""),
                 "location": str(loc or ""),
                 "startMMYYYY": _to_mmyyyy(start),
                 "endMMYYYY": _to_mmyyyy(end),
                 "current": _is_current_period(end),
-                "description": _plain_text(_tailored_description(t)),
+                "description": narrative,
             }
         )
     return out
@@ -1845,33 +1909,12 @@ async def _llm_company_locations(companies: list[str], home: str, user_id: str) 
 async def _enrich_work_locations(
     work: list[dict], home: str, cache: dict, user_id: str
 ) -> tuple[list[dict], dict]:
-    """Fill empty work-experience locations using a per-company cache, resolving any
-    misses via the LLM. Company office is job-independent, so the resolved values are
-    cached (keyed by lowercased company) for reuse. Returns (work, updated_cache)."""
-    cache = {str(k).lower(): v for k, v in (cache or {}).items() if isinstance(v, str)}
-    missing: list[str] = []
-    for w in work:
-        if str(w.get("location") or "").strip():
-            continue
-        company = str(w.get("company") or "").strip()
-        if not company:
-            continue
-        key = company.lower()
-        if cache.get(key):
-            w["location"] = cache[key]
-        else:
-            missing.append(company)
-    if missing:
-        resolved = await _llm_company_locations(sorted(set(missing)), home, user_id)
-        for w in work:
-            if str(w.get("location") or "").strip():
-                continue
-            company = str(w.get("company") or "").strip()
-            key = company.lower()
-            if resolved.get(key):
-                w["location"] = resolved[key]
-                cache[key] = resolved[key]
-    return work, cache
+    """Leave empty work locations empty.
+
+    Inventing a nearest office or HQ is a common source of wrong application
+    fills. Forms should use the résumé location or stay blank.
+    """
+    return work, cache or {}
 
 
 def _infer_field_of_study(
@@ -1890,8 +1933,10 @@ def _infer_field_of_study(
     degree = str(edu.get("degree") or "")
     description = str(edu.get("description") or "")
     blob = f"{explicit} {degree} {description}".lower()
+    from app.services.resume_parse_service import _infer_field_from_degree
 
-    primary = explicit or str(default_field_of_study or "").strip()
+    from_degree = _infer_field_from_degree(degree) or ""
+    primary = explicit or from_degree or str(default_field_of_study or "").strip()
     if not primary:
         if "computer science" in blob or re.search(r"\bcs\b", blob):
             primary = "Computer Science"
@@ -2023,13 +2068,26 @@ async def assistant_autofill_profile(
         education = user.education or []
         user_first = user.name_first or ""
         user_last = user.name_last or ""
+        if not (user_first and user_last) and getattr(user, "name", None):
+            parts = str(user.name).split()
+            if len(parts) >= 2:
+                user_first = user_first or parts[0]
+                user_last = user_last or parts[-1]
         user_email = user.profile_email or user.email or ""
         user_phone = str(user.phone_number or "")
-        phone_cc = re.sub(r"\D", "", str(user.phone_country_code or "")) or "1"
+        phone_cc = re.sub(r"\D", "", str(user.phone_country_code or ""))
+        if not phone_cc:
+            national = re.sub(r"\D", "", user_phone)
+            if len(national) == 10:
+                phone_cc = "1"
         linkedin = user.linkedin_url or ""
         github = user.github_url or ""
         address = _address_for_autofill(getattr(user, "address", None))
         skills = _split_skills(user.technical_skills or [])
+        if resume_source == "tailored":
+            tailored_skills = _split_skills(build_data.get("technical_skills") or [])
+            if tailored_skills:
+                skills = tailored_skills
         eeo = _eeo_for_autofill(getattr(user, "eeo_preferences", None))
 
     work = _build_work_experience(profile_we, tailored_we, resume_source)

@@ -76,7 +76,8 @@ Copy profile fields from the résumé into structured JSON for a job-search appl
     "period_start": string | null,
     "period_end": string | null,
     "location": string | null,
-    "description": string | null
+    "description": string | null,
+    "field_of_study": string | null
   } ],
   "certificates": [ { "name": string | null, "issued_at": string | null, "url": string | null } ],
   "extra": [ string ]
@@ -95,6 +96,7 @@ Work experience (critical - most errors happen here):
 - If the résumé uses tables or two-column layout, follow reading order so all lines for that job stay in that job’s `description`.
 
 - education.description: copy honors, coursework, or notes verbatim if present.
+- education.field_of_study: the major / field only (e.g. "Computer Science"), not the full degree title. If the résumé prints "B.S. Computer Science", degree is the full phrase and field_of_study is "Computer Science".
 - technical_skills: copy ONLY from the résumé's dedicated Skills / Technical Skills section at the end of the document. Each object MUST include both `category` (e.g. "Languages", "Frameworks", "Cloud & DevOps") and `skills` (comma-separated list for that category). Do NOT put per-job "Technologies Used" lines here - those belong in work_experience.description.
 - extra: optional lines copied verbatim (e.g. languages, awards) not captured elsewhere.
 - period_*: use YYYY-MM when the document shows month+year; use YYYY if only year; use null if unclear-do not guess dates.
@@ -544,6 +546,17 @@ _US_PHONE_RE = re.compile(
 _INTL_PHONE_RE = re.compile(
     r"\+[1-9]\d{0,3}[\s\-.(/]*\d(?:[\d\s\-()./]{5,20}\d)"
 )
+# International call prefix 00 instead of +.
+_INTL_00_PHONE_RE = re.compile(
+    r"(?<!\d)00\s*[1-9]\d{0,3}[\s\-.(/]*\d(?:[\d\s\-()./]{5,20}\d)"
+)
+_BULLET_PREFIX_RE = re.compile(r"^[\-\*\u2022\u2013\u2014]\s+")
+_PRESENT_PERIOD_RE = re.compile(r"^(present|current|now|ongoing)$", re.I)
+_FIELD_AFTER_IN_RE = re.compile(r"\b(?:in|,)\s+([A-Z][A-Za-z0-9 /&+-]{2,80})\s*$")
+_FIELD_AFTER_DEGREE_RE = re.compile(
+    r"(?:B\.?\s*S\.?|M\.?\s*S\.?|B\.?\s*A\.?|M\.?\s*A\.?|BSc|MSc|BEng|MEng|Ph\.?\s*D\.?)\s*,?\s+(.+)$",
+    re.I,
+)
 
 # Capture the profile handle; allow optional trailing slash / query / fragment.
 # Host may be www. or a regional subdomain (e.g. uk.linkedin.com).
@@ -645,6 +658,59 @@ def _non_us_plus(text: str) -> bool:
     return bool(re.search(r"\+(?!1(?:\D|$))\d", text or ""))
 
 
+def _rewrite_intl_phone_text(text: str) -> str:
+    """Normalize written trunk zeros and the 00 international prefix."""
+    s = (text or "").strip()
+    if not s:
+        return s
+    # +44 (0)7700 900123 → +44 7700 900123
+    s = re.sub(r"\(\s*0\s*\)", " ", s)
+    if not s.startswith("+") and re.match(r"^00\s*[1-9]", s):
+        s = "+" + re.sub(r"^00\s*", "", s)
+    return s
+
+
+def _bullets_from_description(desc: str | None) -> list[str]:
+    """Turn a role narrative into contribution lines when the LLM left bullets empty."""
+    out: list[str] = []
+    for line in str(desc or "").splitlines():
+        t = _BULLET_PREFIX_RE.sub("", line).strip()
+        if t:
+            out.append(t)
+    return out
+
+
+def _infer_field_from_degree(degree: str | None, existing: str | None = None) -> str | None:
+    """Pull a major out of 'B.S. Computer Science' / 'MSc in Electrical Engineering'."""
+    if existing and str(existing).strip():
+        return str(existing).strip()
+    d = str(degree or "").strip()
+    if not d:
+        return None
+    generic = {"science", "arts", "engineering", "business", "business administration"}
+    m = _FIELD_AFTER_IN_RE.search(d)
+    if m:
+        field = m.group(1).strip(" .")
+        if field and field.lower() not in generic:
+            return field
+    m = _FIELD_AFTER_DEGREE_RE.search(d)
+    if m:
+        field = re.sub(r"^(in|of)\s+", "", m.group(1).strip(" ."), flags=re.I)
+        if field and field.lower() not in generic:
+            return field
+    return None
+
+
+def _coerce_resume_period(raw: str | None) -> str | None:
+    """Canonical YYYY / YYYY-MM / YYYY-MM-DD, or None for Present-like values."""
+    cleaned = str(raw).strip() if raw and str(raw).strip() else None
+    if not cleaned:
+        return None
+    if _PRESENT_PERIOD_RE.match(cleaned):
+        return None
+    return coerce_flexible_date(cleaned) or cleaned
+
+
 def _normalize_phone_fields(country: str | None, number: str | None) -> tuple[str | None, str | None]:
     """Split/format phone fields; keep the exact country code from the résumé.
 
@@ -653,11 +719,11 @@ def _normalize_phone_fields(country: str | None, number: str | None) -> tuple[st
     never be rewritten as ``+1`` or dropped. Truncated US fragments like
     ``313-3369`` are discarded so the profile is not seeded with invalid data.
     """
-    raw_cc = str(country).strip() if country and str(country).strip() else ""
-    raw_num = str(number).strip() if number and str(number).strip() else ""
+    raw_cc = _rewrite_intl_phone_text(str(country).strip() if country and str(country).strip() else "")
+    raw_num = _rewrite_intl_phone_text(str(number).strip() if number and str(number).strip() else "")
     if raw_cc and not raw_cc.startswith("+") and re.fullmatch(r"\d{1,4}", raw_cc):
         raw_cc = f"+{raw_cc}"
-    combined = " ".join(x for x in (raw_cc, raw_num) if x).strip()
+    combined = _rewrite_intl_phone_text(" ".join(x for x in (raw_cc, raw_num) if x).strip())
     if not combined:
         return None, None
 
@@ -741,6 +807,15 @@ def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> l
                 draft.phone_number = num
                 recovered = True
                 notes.append("Phone number was recovered from document text (AI parser omitted it).")
+        if not recovered:
+            m00 = _INTL_00_PHONE_RE.search(header)
+            if m00:
+                cc, num = _normalize_phone_fields(None, m00.group(0))
+                if num:
+                    draft.phone_country_code = cc
+                    draft.phone_number = num
+                    recovered = True
+                    notes.append("Phone number was recovered from document text (AI parser omitted it).")
         if not recovered:
             m = _US_PHONE_RE.search(header)
             if m:
@@ -1049,12 +1124,16 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
         jtype = _infer_job_type(_clean(w.location), jtype, desc)
         raw_contributions = w.contributions if isinstance(w.contributions, list) else []
         contributions = [str(c).strip() for c in raw_contributions if c is not None and str(c).strip()]
+        if not contributions and desc:
+            contributions = _bullets_from_description(desc)
+        if not desc and contributions:
+            desc = "\n".join(f"- {c}" for c in contributions)
         clean_work.append(
             ResumeWorkBlock(
                 company_name=cn,
                 job_title=jt,
-                period_start=_clean(w.period_start),
-                period_end=_clean(w.period_end),
+                period_start=_coerce_resume_period(w.period_start),
+                period_end=_coerce_resume_period(w.period_end),
                 location=_clean(w.location),
                 job_type=jtype,
                 project_title=_clean(w.project_title),
@@ -1079,10 +1158,11 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
                 university_name=u,
                 degree=d,
                 mark=_clean(e.mark),
-                period_start=_clean(e.period_start),
-                period_end=_clean(e.period_end),
+                period_start=_coerce_resume_period(e.period_start),
+                period_end=_coerce_resume_period(e.period_end),
                 location=_clean(e.location),
                 description=_clean(e.description),
+                field_of_study=_infer_field_from_degree(d, _clean(e.field_of_study)),
             )
         )
     draft.education = clean_edu

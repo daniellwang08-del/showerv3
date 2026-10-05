@@ -55,6 +55,7 @@ export type ResumeDraft = {
     period_end?: string | null;
     location?: string | null;
     description?: string | null;
+    field_of_study?: string | null;
   }>;
   certificates?: Array<{ name?: string | null; issued_at?: string | null; url?: string | null }>;
   extra?: string[];
@@ -160,6 +161,7 @@ export function draftToFormPartial(draft: ResumeDraft, accountEmail: string | un
       period_end: normalizePeriodEnd(e.period_end),
       location: pick(e.location) ?? '',
       description: pick(e.description) ?? '',
+      field_of_study: pick(e.field_of_study) ?? '',
     }))
     .filter((e) => e.university_name || e.degree);
 

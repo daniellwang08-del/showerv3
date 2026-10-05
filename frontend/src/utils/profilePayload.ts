@@ -46,6 +46,7 @@ export function profileFormToPayload(data: ProfileFormData) {
         period_end: emptyToNull(e.period_end),
         location: emptyToNull(e.location),
         description: emptyToNull(e.description),
+        field_of_study: emptyToNull(e.field_of_study),
       })),
     certificates: data.certificates
       .filter((c) => c.name.trim())

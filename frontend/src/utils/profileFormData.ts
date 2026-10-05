@@ -34,6 +34,7 @@ export const emptyEducation = (): EducationBlock => ({
   period_end: '',
   location: '',
   description: '',
+  field_of_study: '',
 });
 export const emptyCert = (): CertificateBlock => ({ name: '', issued_at: '', url: '' });
 export const emptyEEO = (): EEOPreferences => ({
@@ -209,6 +210,7 @@ export function profileToForm(p: UserProfile | null): ProfileFormData {
       period_end: asString(x.period_end),
       location: asString(x.location),
       description: asString(x.description),
+      field_of_study: asString(x.field_of_study),
     })),
     certificates: cert.map((x) => ({
       name: asString(x.name),

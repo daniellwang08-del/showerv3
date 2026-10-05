@@ -175,13 +175,18 @@ async function handleWorkdayResolve(msg) {
       const L = `${(src && src.label) || ""} ${label || ""}`;
       return /phone number/i.test(L) && !/country phone code/i.test(L);
     };
-    const nationalPhoneDigits = (phone) => {
+    const nationalPhoneDigits = (phone, countryCode) => {
       let d = String(phone || "").replace(/\D/g, "");
       if (!d) return "";
-      if (d.length === 10) return d;
-      if (d.length === 11 && d.charAt(0) === "1") return d.slice(1);
-      if (d.charAt(0) === "1" && d.length > 11) return d.slice(1, 11);
-      if (d.length > 10) return d.slice(0, 10);
+      const cc = String(countryCode == null ? "" : countryCode).replace(/\D/g, "");
+      const looksUs =
+        cc === "1" ||
+        (!cc && (d.length === 10 || (d.length === 11 && d.charAt(0) === "1")));
+      if (looksUs) {
+        if (d.length === 11 && d.charAt(0) === "1") return d.slice(1);
+        if (d.length > 10) return d.slice(-10);
+        return d;
+      }
       return d;
     };
 

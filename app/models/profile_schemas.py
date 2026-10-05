@@ -245,6 +245,7 @@ class ResumeEducationBlock(BaseModel):
     period_end: str | None = None
     location: str | None = None
     description: str | None = None
+    field_of_study: str | None = None
 
 
 class ResumeCertBlock(BaseModel):
