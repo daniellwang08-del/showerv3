@@ -1,5 +1,6 @@
 import type { ResumeContent } from '../types/resumeDesign';
 import type {
+  AddressInfo,
   UserProfile,
   WorkExperienceBlock,
   TechnicalSkillBlock,
@@ -7,6 +8,7 @@ import type {
   CertificateBlock,
 } from '../types/profile';
 import { deriveWorkContent } from './workExperience';
+import { formatResumeHeaderLocation, parseResumeHeaderLocation } from './resumeLocation';
 
 export const emptyContentSkill = (): ResumeContent['technical_skills'][number] => ({ category: '', skills: '' });
 
@@ -96,6 +98,7 @@ export function normalizeResumeContent(content: ResumeContent): ResumeContent {
     email: str(content.email),
     phone_country_code: str(content.phone_country_code),
     phone_number: str(content.phone_number),
+    location: str(content.location),
     linkedin_url: str(content.linkedin_url),
     github_url: str(content.github_url),
     profile_summary: str(content.profile_summary),
@@ -137,6 +140,7 @@ export function profileToContent(profile: UserProfile | null): ResumeContent {
     email: str(p?.email),
     phone_country_code: str(p?.phone_country_code),
     phone_number: str(p?.phone_number),
+    location: formatResumeHeaderLocation(p?.address),
     linkedin_url: str(p?.linkedin_url),
     github_url: str(p?.github_url),
     profile_summary: str(p?.profile_summary),
@@ -172,6 +176,15 @@ export function profileToContent(profile: UserProfile | null): ResumeContent {
   });
 }
 
+/** Fill a blank Content location from the profile address so the field is editable. */
+export function seedHeaderLocation(content: ResumeContent, profile: UserProfile | null): ResumeContent {
+  const normalized = normalizeResumeContent(content);
+  if (normalized.location.trim()) return normalized;
+  const fromProfile = formatResumeHeaderLocation(profile?.address);
+  if (!fromProfile) return normalized;
+  return { ...normalized, location: fromProfile };
+}
+
 /** Overlay a content override onto a profile so the live preview reflects manual edits.
  *  Mirrors the backend overlay: scalar header fields fall back to the profile when blank;
  *  list sections are used as authored. */
@@ -191,6 +204,8 @@ export function effectiveProfile(profile: UserProfile | null, content?: ResumeCo
       updated_at: '',
     } as UserProfile);
   const pick = (a: string, b: string | null | undefined) => (a.trim() ? a : b ?? '');
+  const loc = normalized.location.trim();
+  const address = loc ? addressFromLocation(loc, base.address) : base.address;
   return {
     ...base,
     name_first: pick(normalized.name_first, base.name_first),
@@ -203,9 +218,22 @@ export function effectiveProfile(profile: UserProfile | null, content?: ResumeCo
     linkedin_url: pick(normalized.linkedin_url, base.linkedin_url),
     github_url: pick(normalized.github_url, base.github_url),
     profile_summary: pick(normalized.profile_summary, base.profile_summary),
+    address,
     technical_skills: normalized.technical_skills,
     work_experience: normalized.work_experience,
     education: normalized.education,
     certificates: normalized.certificates,
   };
+}
+
+function addressFromLocation(
+  text: string,
+  base?: AddressInfo | Record<string, unknown> | null,
+): AddressInfo {
+  const parsed = parseResumeHeaderLocation(text);
+  const prefs = (base as AddressInfo | undefined)?.local_preferences;
+  if (parsed.city || parsed.state || parsed.country) {
+    return { ...parsed, local_preferences: prefs };
+  }
+  return { city: text, local_preferences: prefs };
 }

@@ -105,10 +105,11 @@ Work experience (critical - most errors happen here):
   - Issuer names and credential IDs are not separate fields, put the certificate title in name; do not dump issuer/ID/date lines into extra when they belong with a certificate.
 - location: the candidate's home / header location as printed near the name or contact row (e.g. "San Francisco, CA", "London, United Kingdom"). This is NOT a job or school location.
 - address: structured form of that same header location. city / state / postal_code / country only. Do NOT put a street address unless the résumé itself prints one in the header. Do not copy work_experience or education locations here.
-- phone_country_code: dialing code only (e.g. "+1", "+44"). phone_number: the **complete** national number without the country code.
+- phone_country_code: dialing code only (e.g. "+1", "+44", "+353"). phone_number: the **complete** national number without the country code.
+  - Keep the exact dialing prefix printed on the résumé. Never rewrite a non-US number as "+1".
   - For US/Canada (+1): phone_number MUST be the full 10-digit number (area code + local), e.g. "(610) 234-7936" or "6102347936". Never emit a truncated fragment such as "313-3369" or "610-234".
   - If the résumé phone is incomplete, unreadable, or you cannot recover all digits, set BOTH phone_country_code and phone_number to null, do not invent or keep partial numbers.
-  - Do not put the country code inside phone_number (no leading "+1" in phone_number).
+  - Do not put the country code inside phone_number (no leading "+1" / "+44" in phone_number).
 - job_type: only if explicitly stated or unambiguous (remote/hybrid/onsite); else null.
 - Do not invent employers, degrees, or links. If something is unreadable, use null rather than guessing.
 """
@@ -538,6 +539,11 @@ _US_PHONE_RE = re.compile(
     r"(?:\+?1[\s\-.(]*)?"
     r"(\d{3})[\s\).\-]*(\d{3})[\s.\-]*(\d{4})\b"
 )
+# Leading +CC then a national number. Used to recover phones the vision LLM
+# omitted and to stop the US 3-3-4 regex from stealing "+44 7700 900123".
+_INTL_PHONE_RE = re.compile(
+    r"\+[1-9]\d{0,3}[\s\-.(/]*\d(?:[\d\s\-()./]{5,20}\d)"
+)
 
 # Capture the profile handle; allow optional trailing slash / query / fragment.
 # Host may be www. or a regional subdomain (e.g. uk.linkedin.com).
@@ -608,50 +614,90 @@ def _format_us_national(digits10: str) -> str:
     return f"({digits10[:3]}) {digits10[3:6]}-{digits10[6:]}"
 
 
+def _only_digits(text: str) -> str:
+    return re.sub(r"\D", "", text or "")
+
+
+def _as_plus_code(text: str) -> str | None:
+    digits = _only_digits(text)
+    if not digits:
+        return None
+    return f"+{digits}"
+
+
+def _dial_prefixes() -> tuple[str, ...]:
+    from app.services.country_catalog import DIAL_CODE_TO_COUNTRY
+
+    return tuple(sorted(DIAL_CODE_TO_COUNTRY, key=len, reverse=True))
+
+
+def _split_dial_digits(digits: str) -> tuple[str | None, str]:
+    """Longest-prefix split of an E.164 digit string into ``(+CC, national)``."""
+    if not digits:
+        return None, ""
+    for code in _dial_prefixes():
+        if digits.startswith(code) and len(digits) - len(code) >= 6:
+            return f"+{code}", digits[len(code):]
+    return None, digits
+
+
+def _non_us_plus(text: str) -> bool:
+    return bool(re.search(r"\+(?!1(?:\D|$))\d", text or ""))
+
+
 def _normalize_phone_fields(country: str | None, number: str | None) -> tuple[str | None, str | None]:
-    """Split/format phone fields; reject incomplete numbers (never keep partials).
+    """Split/format phone fields; keep the exact country code from the résumé.
 
     US/Canada (+1) requires a full 10-digit national number. Other countries
-    require 8–15 national digits. Truncated fragments like ``313-3369`` under
-    ``+1`` are discarded so the profile is not seeded with invalid contact data.
+    require 6–15 national digits. A leading ``+44`` / ``+49`` / ``+353`` must
+    never be rewritten as ``+1`` or dropped. Truncated US fragments like
+    ``313-3369`` are discarded so the profile is not seeded with invalid data.
     """
-    combined = " ".join(x for x in (country, number) if x and str(x).strip()).strip()
+    raw_cc = str(country).strip() if country and str(country).strip() else ""
+    raw_num = str(number).strip() if number and str(number).strip() else ""
+    if raw_cc and not raw_cc.startswith("+") and re.fullmatch(r"\d{1,4}", raw_cc):
+        raw_cc = f"+{raw_cc}"
+    combined = " ".join(x for x in (raw_cc, raw_num) if x).strip()
     if not combined:
         return None, None
 
+    stated = _as_plus_code(raw_cc) if raw_cc else None
+    number_has_non_us_plus = _non_us_plus(raw_num)
+    stated_non_us = bool(stated and not _is_us_country_code(stated))
+
+    # International prefix present: split by known dial codes BEFORE the US
+    # 3-3-4 regex, which otherwise matches inside "+44 7700 900123".
+    if number_has_non_us_plus or _non_us_plus(combined) or stated_non_us:
+        source = raw_num if number_has_non_us_plus else combined
+        if stated and _is_us_country_code(stated) and number_has_non_us_plus:
+            source = raw_num
+        cc, national = _split_dial_digits(_only_digits(source))
+
+        if stated_non_us and stated:
+            stated_digits = _only_digits(stated)
+            full_digits = _only_digits(combined)
+            if full_digits.startswith(stated_digits) and len(full_digits) - len(stated_digits) >= 6:
+                cc = stated
+                national = full_digits[len(stated_digits):]
+            elif raw_num:
+                national_only = _only_digits(raw_num)
+                if 6 <= len(national_only) <= 15:
+                    cc, national = stated, national_only
+
+        if cc == "+1" and len(national) == 10:
+            return "+1", _format_us_national(national)
+        if cc and cc != "+1" and 6 <= len(national) <= 15:
+            return cc, national
+        return None, None
+
+    digits = _only_digits(combined)
     m = _US_PHONE_RE.search(combined)
     if m:
         return "+1", _format_us_national(f"{m.group(1)}{m.group(2)}{m.group(3)}")
-
-    digits = re.sub(r"\D", "", combined)
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
     if len(digits) == 10:
         return "+1", _format_us_national(digits)
-
-    cc = str(country).strip() if country and str(country).strip() else None
-    num = str(number).strip() if number and str(number).strip() else None
-    national_digits = _phone_digit_count(num)
-
-    # Whole number landed in the country field only.
-    if not num and cc and not _is_us_country_code(cc):
-        cc_digits = re.sub(r"\D", "", cc)
-        if len(cc_digits) == 11 and cc_digits.startswith("1"):
-            return "+1", _format_us_national(cc_digits[1:])
-        if len(cc_digits) == 10:
-            return "+1", _format_us_national(cc_digits)
-        return None, None
-
-    # +1 / implied US: keep only a complete 10-digit national number.
-    if _is_us_country_code(cc) or cc is None:
-        if national_digits == 10 and num:
-            return "+1", _format_us_national(re.sub(r"\D", "", num))
-        return None, None
-
-    # Non-US country code: require a complete-looking national part.
-    if num and 8 <= national_digits <= 15:
-        return cc, num
-
     return None, None
 
 
@@ -686,13 +732,23 @@ def _fill_missing_contact_from_text(draft: ResumeExtractedDraft, text: str) -> l
     header = text[:5000]
 
     if not draft.phone_number:
-        m = _US_PHONE_RE.search(header)
-        if m:
-            cc, num = _normalize_phone_fields(None, m.group(0))
+        recovered = False
+        im = _INTL_PHONE_RE.search(header)
+        if im:
+            cc, num = _normalize_phone_fields(None, im.group(0))
             if num:
-                draft.phone_country_code = cc or "+1"
+                draft.phone_country_code = cc
                 draft.phone_number = num
+                recovered = True
                 notes.append("Phone number was recovered from document text (AI parser omitted it).")
+        if not recovered:
+            m = _US_PHONE_RE.search(header)
+            if m:
+                cc, num = _normalize_phone_fields(None, m.group(0))
+                if num:
+                    draft.phone_country_code = cc
+                    draft.phone_number = num
+                    notes.append("Phone number was recovered from document text (AI parser omitted it).")
 
     if not draft.linkedin_url:
         lm = _LINKEDIN_IN_TEXT_RE.search(text)
@@ -969,8 +1025,14 @@ def _normalize_draft(data: dict[str, Any]) -> ResumeExtractedDraft:
     draft.profile_summary = _clean(draft.profile_summary)
     draft.location = _clean(draft.location)
 
+    # Do not invent +1 for leftover international nationals. Normalize already
+    # assigns +1 only when the number is a complete US/Canada 10-digit value.
     if not draft.phone_country_code and draft.phone_number:
-        draft.phone_country_code = "+1"
+        national = re.sub(r"\D", "", draft.phone_number)
+        if len(national) == 10:
+            draft.phone_country_code = "+1"
+        else:
+            draft.phone_number = None
     jt_allowed = {"onsite", "hybrid", "remote"}
     clean_work = []
     for w in draft.work_experience:

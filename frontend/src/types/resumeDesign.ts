@@ -246,6 +246,7 @@ export interface ResumeContent {
   email: string;
   phone_country_code: string;
   phone_number: string;
+  location: string;
   linkedin_url: string;
   github_url: string;
   profile_summary: string;

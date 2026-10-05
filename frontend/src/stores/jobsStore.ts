@@ -50,10 +50,12 @@ async function submitExtractedUrls(
   set: JobsStoreSet,
   urls: string[],
   warnings?: string[],
-): Promise<{ posted: number; duplicate: number; failed: number; total: number }> {
+  source: 'paste' | 'attachment' = 'paste',
+): Promise<{ posted: number; duplicate: number; failed: number; total: number; shareToastShown: boolean }> {
   let posted = 0;
   let duplicate = 0;
   let failed = 0;
+  const jobIds: string[] = [];
 
   set({
     attachmentFlow: {
@@ -75,6 +77,7 @@ async function submitExtractedUrls(
           failed += 1;
           return;
         }
+        if (response.job_id) jobIds.push(response.job_id);
         if (response.is_duplicate) {
           duplicate += 1;
         } else {
@@ -137,14 +140,31 @@ async function submitExtractedUrls(
     });
   }
 
-  try {
-    const { useUIStore } = await import('./uiStore');
-    useUIStore.getState().notify(toastKind, summary, 9000);
-  } catch {
-    // Toast is best-effort; submitNotice still set above.
+  let shareToastShown = false;
+  if (jobIds.length > 0 && !(failed > 0 && posted === 0 && duplicate === 0)) {
+    try {
+      const { useJobAddStore } = await import('./jobAddStore');
+      const { showJobAddShareToast } = await import('@/features/jobs/JobAddShareToast');
+      const batch = await useJobAddStore.getState().recordAfterSubmit(jobIds, source);
+      if (batch) {
+        showJobAddShareToast(batch);
+        shareToastShown = true;
+      }
+    } catch {
+      // History / share toast is best-effort.
+    }
   }
 
-  return { posted, duplicate, failed, total: urls.length };
+  if (!shareToastShown) {
+    try {
+      const { useUIStore } = await import('./uiStore');
+      useUIStore.getState().notify(toastKind, summary, 9000);
+    } catch {
+      // Toast is best-effort; submitNotice still set above.
+    }
+  }
+
+  return { posted, duplicate, failed, total: urls.length, shareToastShown };
 }
 
 let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -217,7 +237,7 @@ type JobsState = {
   submitJob: (submittedUrl: string) => Promise<void>;
   submitAttachmentFiles: (files: File[]) => Promise<void>;
   /** Parse pasted text for http(s) URLs and submit them (same pipeline as attachments). */
-  submitPastedText: (text: string) => Promise<void>;
+  submitPastedText: (text: string) => Promise<{ shareToastShown: boolean } | void>;
 
   markApplied: (items: SubmittedUrlItem[]) => Promise<void>;
   markUnapplied: (items: SubmittedUrlItem[]) => Promise<void>;
@@ -618,6 +638,16 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         }
         await get().refreshLists({ showLoading: false, reset: false });
         await syncDashboardAfterSubmit();
+        if (response.job_id && !response.is_duplicate) {
+          try {
+            const { useJobAddStore } = await import('./jobAddStore');
+            const { showJobAddShareToast } = await import('@/features/jobs/JobAddShareToast');
+            const batch = await useJobAddStore.getState().recordAfterSubmit([response.job_id], 'manual');
+            if (batch) showJobAddShareToast(batch);
+          } catch {
+            // History / share toast is best-effort.
+          }
+        }
       } else {
         set({ submitError: response.message || 'Error submitting job', submitNotice: '' });
       }
@@ -663,7 +693,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         }
         return;
       }
-      await submitExtractedUrls(get, set, urls, warnings);
+      await submitExtractedUrls(get, set, urls, warnings, 'attachment');
     } catch (error: any) {
       const msg = extractErrorMessage(error, 'Attachment processing failed');
       set({ submitError: msg });
@@ -697,7 +727,7 @@ export const useJobsStore = create<JobsState>((set, get) => ({
     });
     try {
       // Runs after the paste modal closes, progress shows in the URL bar.
-      await submitExtractedUrls(get, set, urls);
+      return await submitExtractedUrls(get, set, urls, undefined, 'paste');
     } catch (error: any) {
       const msg = extractErrorMessage(error, 'Paste submit failed');
       set({ submitError: msg });

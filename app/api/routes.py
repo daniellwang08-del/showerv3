@@ -2329,6 +2329,111 @@ async def extract_job_urls_from_attachments(
     return AttachmentExtractUrlsResponse(urls=urls, files_processed=len(parts), warnings=warnings)
 
 
+class JobAddShareUserOut(BaseModel):
+    id: str
+    name: str
+    email: str
+
+
+class JobAddBatchOut(BaseModel):
+    id: str
+    source: str
+    job_count: int
+    share_scope: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    share_users: list[JobAddShareUserOut] = Field(default_factory=list)
+
+
+class JobAddBatchCreateRequest(BaseModel):
+    job_ids: list[str] = Field(default_factory=list, max_length=2000)
+    source: str = "manual"
+    share_scope: str | None = None
+    user_ids: list[str] | None = None
+
+
+class JobAddBatchShareRequest(BaseModel):
+    share_scope: str = Field(..., pattern="^(private|team|all|users)$")
+    user_ids: list[str] | None = None
+
+
+@router.get("/job-add-batches", response_model=list[JobAddBatchOut])
+async def list_job_add_batches(current_user: dict = Depends(get_current_user)) -> list[JobAddBatchOut]:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.job_add_batches import list_batches
+
+    async with get_session() as session:
+        rows = await list_batches(session, user_id)
+    return [JobAddBatchOut(**row) for row in rows]
+
+
+@router.get("/job-add-batches/share-targets", response_model=list[JobAddShareUserOut])
+async def list_job_add_share_targets(
+    current_user: dict = Depends(get_current_user),
+) -> list[JobAddShareUserOut]:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.job_add_batches import list_share_targets
+
+    async with get_session() as session:
+        rows = await list_share_targets(session, user_id)
+    return [JobAddShareUserOut(**row) for row in rows]
+
+
+@router.post("/job-add-batches", response_model=JobAddBatchOut | None)
+async def create_job_add_batch(
+    body: JobAddBatchCreateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> JobAddBatchOut | None:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.job_add_batches import create_batch
+
+    async with get_session() as session:
+        row = await create_batch(
+            session,
+            user_id,
+            body.job_ids,
+            source=body.source,
+            share_scope=body.share_scope,
+            share_user_ids=body.user_ids,
+        )
+        await session.commit()
+    return JobAddBatchOut(**row) if row else None
+
+
+@router.patch("/job-add-batches/{batch_id}", response_model=JobAddBatchOut)
+async def update_job_add_batch_share(
+    batch_id: str,
+    body: JobAddBatchShareRequest,
+    current_user: dict = Depends(get_current_user),
+) -> JobAddBatchOut:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.job_add_batches import update_share
+
+    async with get_session() as session:
+        try:
+            row = await update_share(
+                session,
+                user_id,
+                batch_id,
+                share_scope=body.share_scope,
+                share_user_ids=body.user_ids,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await session.commit()
+    return JobAddBatchOut(**row)
+
+
 DASHBOARD_VIEWS = {
     "all",
     "today",
@@ -2621,6 +2726,9 @@ def _dashboard_visible_base_filter(
     )
     if country_clause is not None:
         base_filter.append(country_clause)
+    from app.services.job_add_batches import job_share_visibility_clause
+
+    base_filter.append(job_share_visibility_clause(user_id))
     return base_filter, needs_match_join
 
 
@@ -2702,6 +2810,8 @@ def _row_to_dashboard_job(
     viewer_id: str | None = None,
     submitter_names: dict[str, str] | None = None,
 ) -> DashboardJobResponse:
+    from app.services.job_location_classifier import detect_countries_in_text
+
     (
         job,
         ext_status,
@@ -2748,6 +2858,7 @@ def _row_to_dashboard_job(
         title=job.title,
         company=job.company,
         location=job.location,
+        location_countries=detect_countries_in_text(job.location),
         posted_date=job.posted_date,
         experience_level=job.experience_level,
         industry=job.industry,
@@ -2888,6 +2999,7 @@ async def get_dashboard_jobs(
         "title": Job.title,
         "company": Job.company,
         "posted_date": Job.posted_date,
+        "location": Job.location,
         "updated_at": Job.updated_at,
         "match_score": JobMatchResult.overall_score,
         "applied_at": ValidJobUserApplication.applied_at,
@@ -4718,6 +4830,9 @@ class UserSettingsResponse(BaseModel):
     auto_prepare_match: bool = False
     auto_prepare_full: bool = False
     manual_submit_pipeline: str = "full"
+    job_share_default: str = "private"
+    resume_filename_mode: str = "pattern"
+    resume_filename_value: str = "{firstname}_{lastname}_{kind}"
     resume_tailoring_prompt_mode: str
     resume_tailoring_prompt_instructions: str
     resume_tailoring_prompt_instructions_custom: str
@@ -4773,6 +4888,9 @@ class UserSettingsUpdateRequest(BaseModel):
     auto_prepare_match: bool | None = None
     auto_prepare_full: bool | None = None
     manual_submit_pipeline: str | None = None
+    job_share_default: str | None = Field(default=None, pattern="^(private|team|all|ask)$")
+    resume_filename_mode: str | None = Field(default=None, pattern="^(pattern|static)$")
+    resume_filename_value: str | None = Field(default=None, max_length=200)
     resume_tailoring_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
     resume_tailoring_prompt_custom: str | None = Field(default=None, max_length=12000)
     cover_letter_prompt_mode: str | None = Field(default=None, pattern="^(default|custom)$")
@@ -5215,6 +5333,9 @@ async def update_user_settings(
                 auto_prepare_match=body.auto_prepare_match,
                 auto_prepare_full=body.auto_prepare_full,
                 manual_submit_pipeline=body.manual_submit_pipeline,
+                job_share_default=body.job_share_default,
+                resume_filename_mode=body.resume_filename_mode,
+                resume_filename_value=body.resume_filename_value,
                 resume_tailoring_prompt_mode=body.resume_tailoring_prompt_mode,
                 resume_tailoring_prompt_custom=body.resume_tailoring_prompt_custom,
                 cover_letter_prompt_mode=body.cover_letter_prompt_mode,

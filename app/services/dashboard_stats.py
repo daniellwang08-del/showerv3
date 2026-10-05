@@ -33,6 +33,9 @@ def _visible_job_clause(user_id: str, country_preferences: list[str] | None = No
     country_clause = preferred_pool_visibility_clause(user_id, country_preferences or [])
     if country_clause is not None:
         clauses.append(country_clause)
+    from app.services.job_add_batches import job_share_visibility_clause
+
+    clauses.append(job_share_visibility_clause(user_id))
     return and_(*clauses)
 
 

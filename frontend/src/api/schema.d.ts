@@ -6613,6 +6613,11 @@ export interface components {
              */
             phone_number: string;
             /**
+             * Location
+             * @default
+             */
+            location: string;
+            /**
              * Linkedin Url
              * @default
              */

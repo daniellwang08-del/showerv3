@@ -36,6 +36,7 @@ import { saveManualJobDescription } from '../../api/scraperApi';
 import { useScraperStore } from '../../stores/scraperStore';
 import { namedDownloadFile } from '../../utils/resumeFileName';
 import { BrandedLoader } from '../layout/BrandedLoader';
+import { JobLocationLabel } from '../app/JobLocationLabel';
 
 type JobData = {
   title: string;
@@ -364,7 +365,7 @@ function postingBody(data: JobData, sourceUrl?: string | null) {
         )}
         {data.location && (
           <MetaTile icon={MapPin} label="Location">
-            {data.location}
+            <JobLocationLabel location={data.location} className="text-sm text-foreground" />
           </MetaTile>
         )}
         {data.salary_range && (

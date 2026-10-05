@@ -165,7 +165,7 @@ Remember: work_mode is metadata only and must not affect match scores.
 - Put salary, location, employment type, and remote policy in their structured fields - do not repeat them as a noisy prefix inside `description`.
 - Keep `description` under **8000 characters** when possible so the full JSON response fits reliably. Prefer trimming marketing fluff over cutting requirements or responsibilities.
 
-**Location format**: Use "City, State" for US jobs (e.g. "San Francisco, CA"), "City, Country" for international jobs (e.g. "London, UK"). If city is unavailable, use state/region or country only. Never include street addresses, zip codes, or building names.
+**Location format**: Always name the country. US: "City, ST, United States" (e.g. "San Francisco, CA, United States"). International: "City, Country" (e.g. "Berlin, Germany", "London, UK"). Several offices: join with " / " (e.g. "Berlin, Germany / Paris, France"). Fully remote with a country limit: "Remote, United States". Never return only "Remote" when a city or country is named. Never replace a more specific ATS location with a vaguer one. Use null only when the posting names no place at all. Never include street addresses, zip codes, or building names.
 
 **Salary format**: Use compact notation with "k" for thousands, e.g. "$140k - $160k", "€50k - €65k". For hourly rates use "$50/hr - $70/hr". If only one figure is given, use that alone (e.g. "$120k"). Keep currency symbol. Use `null` if no salary info is available.
 

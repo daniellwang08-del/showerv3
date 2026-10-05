@@ -30,6 +30,7 @@ export async function addJobs(text) {
     return false;
   }
   const result = { total: urls.length, done: 0, added: 0, duplicate: 0, failed: [], running: true };
+  const jobIds = [];
   setState({ addJobs: { ...result } });
   const queue = urls.slice();
   const worker = async () => {
@@ -37,6 +38,7 @@ export async function addJobs(text) {
       const url = queue.shift();
       try {
         const res = await api.submitJobUrl(url);
+        if (res && res.job_id) jobIds.push(res.job_id);
         if (res && (res.is_duplicate || res.status === "duplicate")) result.duplicate++;
         else if (res && res.success === false) result.failed.push({ url, reason: res.message || "Rejected" });
         else result.added++;
@@ -50,6 +52,13 @@ export async function addJobs(text) {
   await Promise.all(Array.from({ length: Math.min(ADD_CONCURRENCY, urls.length) }, worker));
   result.running = false;
   setState({ addJobs: { ...result, failed: result.failed.slice() } });
+  if (jobIds.length) {
+    try {
+      await api.createJobAddBatch(jobIds, "extension");
+    } catch {
+      // Sharing history is recorded in the app sidebar when this succeeds.
+    }
+  }
   void loadHome({ quiet: true });
   return true;
 }

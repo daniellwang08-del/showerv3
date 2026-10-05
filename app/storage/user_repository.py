@@ -596,6 +596,22 @@ class UserRepository:
                 in ("extract", "match", "full")
                 else "full"
             ),
+            "job_share_default": (
+                str(getattr(user, "job_share_default", None) or "private").strip().lower()
+                if str(getattr(user, "job_share_default", None) or "private").strip().lower()
+                in ("private", "team", "all", "ask")
+                else "private"
+            ),
+            "resume_filename_mode": (
+                "static"
+                if str(getattr(user, "resume_filename_mode", None) or "pattern").strip().lower()
+                == "static"
+                else "pattern"
+            ),
+            "resume_filename_value": (
+                str(getattr(user, "resume_filename_value", None) or "{firstname}_{lastname}_{kind}").strip()
+                or "{firstname}_{lastname}_{kind}"
+            ),
             "resume_tailoring_prompt_mode": prompt_mode,
             "resume_tailoring_prompt_instructions": effective_instructions,
             "resume_tailoring_prompt_instructions_custom": stored_custom_prompt,
@@ -648,6 +664,9 @@ class UserRepository:
         auto_prepare_match: bool | None = None,
         auto_prepare_full: bool | None = None,
         manual_submit_pipeline: str | None = None,
+        job_share_default: str | None = None,
+        resume_filename_mode: str | None = None,
+        resume_filename_value: str | None = None,
         resume_tailoring_prompt_mode: str | None = None,
         resume_tailoring_prompt_custom: str | None = None,
         cover_letter_prompt_mode: str | None = None,
@@ -766,6 +785,29 @@ class UserRepository:
             if mode not in ("extract", "match", "full"):
                 raise ValueError("manual_submit_pipeline must be 'extract', 'match', or 'full'")
             user.manual_submit_pipeline = mode
+
+        if job_share_default is not None:
+            share = str(job_share_default).strip().lower()
+            if share not in ("private", "team", "all", "ask"):
+                raise ValueError("job_share_default must be 'private', 'team', 'all', or 'ask'")
+            user.job_share_default = share
+
+        if resume_filename_mode is not None or resume_filename_value is not None:
+            from app.services.resume_filename import normalize_filename_mode, normalize_filename_value
+
+            mode = normalize_filename_mode(
+                resume_filename_mode
+                if resume_filename_mode is not None
+                else getattr(user, "resume_filename_mode", None)
+            )
+            value = normalize_filename_value(
+                mode,
+                resume_filename_value
+                if resume_filename_value is not None
+                else getattr(user, "resume_filename_value", None),
+            )
+            user.resume_filename_mode = mode
+            user.resume_filename_value = value
 
         if resume_tailoring_prompt_mode is not None:
             if resume_tailoring_prompt_mode not in ("default", "custom"):

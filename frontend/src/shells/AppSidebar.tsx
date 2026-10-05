@@ -10,6 +10,7 @@ import { useAgentStore } from '@/stores/agentStore';
 import type { NavSection } from './nav';
 import { UserMenu, type ShellUser } from './UserMenu';
 import { useOpenJob } from '@/features/jobs/useOpenJob';
+import { JobAddHistory } from '@/features/jobs/JobAddHistory';
 import { usePendingSignupCount } from '@/features/admin/users/signupRequests';
 
 type AppSidebarProps = {
@@ -156,6 +157,8 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
             </div>
           </div>
         ))}
+
+        {!collapsed && isApplicant ? <JobAddHistory /> : null}
 
         {!collapsed && isApplicant && recentJobs.length > 0 ? (
           <div className="mt-5">

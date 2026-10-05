@@ -10,13 +10,16 @@ export async function submitJobUrls(text: string): Promise<boolean> {
     return false;
   }
   const id = toast.loading(`Submitting ${count} job${count === 1 ? '' : 's'}…`);
+  let shareToastShown = false;
   try {
-    await useJobsStore.getState().submitPastedText(text);
+    const result = await useJobsStore.getState().submitPastedText(text);
+    shareToastShown = Boolean(result && 'shareToastShown' in result && result.shareToastShown);
   } catch {
     // The store records the error in submitError.
   }
   const { submitError, submitNotice, submitNoticeKind } = useJobsStore.getState();
   if (submitError) toast.error(submitError, { id });
+  else if (shareToastShown) toast.dismiss(id);
   else if (submitNoticeKind === 'warning') toast.warning(submitNotice || 'Submitted with warnings', { id });
   else toast.success(submitNotice || `Submitted ${count} job${count === 1 ? '' : 's'}`, { id });
   return !submitError;

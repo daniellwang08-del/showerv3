@@ -50,7 +50,8 @@ import { ControlCard } from '@/components/resumeBuilder/controls';
 import { PAPER_SIZES, ResumePageStack, paperOf } from '@/components/resumeBuilder/PagedResumePreview';
 import type { CoverLetterBody } from '@/components/resumeBuilder/ResumePreview';
 import { selectIsDirty, useResumeBuilderStore } from '@/stores/resumeBuilderStore';
-import { effectiveProfile, normalizeResumeContent, profileToContent } from '@/utils/resumeContent';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { effectiveProfile, normalizeResumeContent, profileToContent, seedHeaderLocation } from '@/utils/resumeContent';
 import {
   fetchLibraryCoverLetter,
   renderDesign,
@@ -95,6 +96,8 @@ export function ResumeStudioPage() {
     useResumeBuilderStore.getState().panelTab === 'content' ? 'content' : 'theme',
   );
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('preview');
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const parkPreview = !isDesktop && mobileView === 'edit';
   const [doc, setDoc] = useState<DocKind>('resume');
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
   const [fitScale, setFitScale] = useState(1);
@@ -290,7 +293,10 @@ export function ResumeStudioPage() {
         </ControlCard>
       ) : (
         <ContentControls
-          content={design.content ? normalizeResumeContent(design.content) : profileToContent(profile)}
+          content={seedHeaderLocation(
+            design.content ? normalizeResumeContent(design.content) : profileToContent(profile),
+            profile,
+          )}
           onChange={store.setContent}
         />
       ),
@@ -532,9 +538,29 @@ export function ResumeStudioPage() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)]">
-        <div className={cn('min-h-0', mobileView === 'edit' ? 'flex' : 'hidden', 'flex-col lg:flex')}>{controlPanel}</div>
-        <div className={cn('min-h-0', mobileView === 'preview' ? 'flex' : 'hidden', 'flex-col lg:flex')}>{canvas}</div>
+      <div className="relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)]">
+        <div
+          className={cn(
+            'relative z-10 min-h-0 bg-background',
+            isDesktop || mobileView === 'edit' ? 'flex flex-col' : 'hidden',
+          )}
+        >
+          {controlPanel}
+        </div>
+        <div
+          className={cn(
+            'relative z-0 min-h-0 flex flex-col',
+            // Keep the preview mounted while Edit is showing so the measurer
+            // does not write zeros (that used to look like a save). Do not use
+            // `invisible` / visibility:hidden: page slices set visibility:visible
+            // on on-page blocks and those children paint through the parent.
+            parkPreview && 'pointer-events-none absolute inset-0 overflow-hidden opacity-0',
+          )}
+          aria-hidden={parkPreview || undefined}
+          inert={parkPreview || undefined}
+        >
+          {canvas}
+        </div>
       </div>
     </div>
   );

@@ -17,6 +17,7 @@ from app.services.job_field_utils import (
     clean_optional_job_field,
     infer_title_from_description,
 )
+from app.services.job_location_parse import prefer_job_location
 from app.services.url_manager import URLManager
 from app.core.logging import get_logger
 from app.utils.text_sanitizer import sanitize_for_postgres_text
@@ -318,7 +319,10 @@ class JobExtractionRepository:
             if recovered:
                 extraction.title = _truncate_for_db(recovered, limits["title"]) or extraction.title
         extraction.company = _truncate_for_db(job_data.company, limits["company"]) or extraction.company
-        extraction.location = _truncate_for_db(job_data.location, limits["location"]) or extraction.location
+        extraction.location = prefer_job_location(
+            extraction.location,
+            _truncate_for_db(job_data.location, limits["location"]),
+        )
         extraction.employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])
         extraction.salary_range = _truncate_for_db(job_data.salary_range, limits["salary_range"])
         old_desc = (extraction.description or "").strip()
@@ -409,7 +413,10 @@ class JobRepository:
         new_company = _truncate_for_db(job_data.company, 500)
         if new_company:
             job.company = new_company
-        job.location = _truncate_for_db(job_data.location, 500) or job.location
+        job.location = prefer_job_location(
+            job.location,
+            _truncate_for_db(job_data.location, 500),
+        )
         job.work_mode = _truncate_for_db(job_data.work_mode, 20) or job.work_mode
         old_vj = (job.description or "").strip()
         new_vj = (job_data.description or "").strip()

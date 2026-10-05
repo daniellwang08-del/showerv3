@@ -271,6 +271,9 @@ export const postJobsToPumble = (jobIds) =>
 
 export const submitJobUrl = (url) => apiFetch("/jobs/submit", { method: "POST", body: { url } });
 
+export const createJobAddBatch = (jobIds, source = "extension") =>
+  apiFetch("/job-add-batches", { method: "POST", body: { job_ids: jobIds, source } });
+
 // ── autofill ─────────────────────────────────────────────────────────────────
 
 /** fields: per-control specs -> { results: [{ handle, controls: [{ cid, value, ... }] }] } */

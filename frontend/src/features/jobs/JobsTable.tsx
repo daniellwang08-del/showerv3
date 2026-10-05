@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { MatchScore } from '@/components/app/MatchScore';
+import { JobLocationLabel } from '@/components/app/JobLocationLabel';
 import type { DashboardJob } from '@/types/scraper';
 import {
   buildJobMenu,
@@ -49,11 +50,12 @@ const ALL: JobsTableTier[] = ['compact', 'medium', 'full'];
 const WIDE: JobsTableTier[] = ['medium', 'full'];
 const FULL: JobsTableTier[] = ['full'];
 
-// Role, Source and Status share the leftover width (3:1:1) so the role column
-// stops swallowing every spare pixel on wide screens.
+// Role and Location share leftover width with Source and Status (1.4:1.3:1:1).
+// Role used to be 3fr and swallowed the table; other columns stay the same.
 export const JOB_COLUMNS: Column[] = [
   { id: 'select', header: '', width: '2.5rem', tiers: ALL },
-  { id: 'title', header: 'Role', width: 'minmax(16rem, 3fr)', compactWidth: 'minmax(0, 1fr)', sortField: 'title', tiers: ALL },
+  { id: 'title', header: 'Role', width: 'minmax(12rem, 1.4fr)', compactWidth: 'minmax(0, 1fr)', sortField: 'title', tiers: ALL },
+  { id: 'location', header: 'Location', width: 'minmax(10rem, 1.3fr)', compactWidth: 'minmax(5rem, 1fr)', sortField: 'location', tiers: ALL },
   { id: 'mode', header: 'Mode', width: '5.5rem', tiers: FULL },
   { id: 'source', header: 'Source', width: 'minmax(7.5rem, 1fr)', tiers: FULL },
   { id: 'posted', header: 'Posted', width: '4.5rem', sortField: 'posted_date', tiers: FULL, align: 'end' },
@@ -415,16 +417,24 @@ function Cell({
         />
       );
     case 'title': {
-      const sub = [job.company, job.location].filter(Boolean).join(' · ');
+      const sub = job.company || job.domain;
       return (
         <div className="min-w-0">
           <div className={cn('truncate font-medium', applied ? 'text-muted-foreground' : 'text-foreground')}>
             {job.title || 'Untitled role'}
           </div>
-          <div className="truncate text-xs text-muted-foreground">{sub || job.domain}</div>
+          <div className="truncate text-xs text-muted-foreground">{sub || '-'}</div>
         </div>
       );
     }
+    case 'location':
+      return (
+        <JobLocationLabel
+          location={job.location}
+          countries={job.location_countries}
+          className="w-full text-xs text-muted-foreground"
+        />
+      );
     case 'mode': {
       const mode = workMode(job);
       if (!mode) return <span className="text-muted-foreground">-</span>;

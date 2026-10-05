@@ -21,6 +21,9 @@ from functools import lru_cache
 from typing import Any, Iterable
 
 from app.services.country_catalog import (
+    CITIES_BY_LENGTH,
+    CITY_TO_CODE,
+    COUNTRY_NAMES,
     PHRASE_TO_CODE,
     PHRASES_BY_LENGTH,
     REGION_GROUPS,
@@ -143,19 +146,54 @@ def _looks_like_us_city_state(segment: str) -> bool:
     return region in _US_STATE_NAMES
 
 
+def _detect_cities(text: str) -> set[str]:
+    codes: set[str] = set()
+    for city in CITIES_BY_LENGTH:
+        if _has_word(text, city):
+            codes.add(CITY_TO_CODE[city])
+    return codes
+
+
 def _detect_country_codes(text: str) -> set[str]:
-    """All country codes explicitly named in the segment text."""
+    """All country codes named by country, city, or city-region form."""
     codes: set[str] = set()
     for phrase in PHRASES_BY_LENGTH:
         if _has_word(text, phrase):
             codes.add(PHRASE_TO_CODE[phrase])
     if _contains_us_country(text):
         codes.add("US")
+
+    # A trailing region wins over the city's default country so "Paris, TX"
+    # is US and "London, ON" is Canada, not France / UK.
     if _looks_like_us_city_state(text):
+        # "Berlin, DE" is Germany in job posts, not Berlin, Delaware. Only
+        # keep the US-state reading when the city is not a known foreign city
+        # whose ISO code is this same two-letter token.
+        city_codes = _detect_cities(text)
+        match = _COMMA_SEGMENT_RE.match(text.strip())
+        region = match.group(2).strip().upper() if match else ""
+        foreign = city_codes - {"US"}
+        if foreign and region in foreign:
+            codes |= foreign
+            return codes
         codes.add("US")
         # Legacy quirk kept on purpose: "City, Georgia" reads as the US state,
         # not the country Georgia.
         codes.discard("GE")
+        return codes
+
+    match = _COMMA_SEGMENT_RE.match(text.strip())
+    if match:
+        region = match.group(2).strip()
+        sub_code = SUBDIVISION_TO_CODE.get(region) or SUBDIVISION_TO_CODE.get(region.upper())
+        if sub_code:
+            codes.add(sub_code)
+            return codes
+        if len(region) == 2 and region.upper() in COUNTRY_NAMES:
+            codes.add(region.upper())
+            return codes
+
+    codes |= _detect_cities(text)
     return codes
 
 
@@ -361,19 +399,7 @@ def detect_countries_in_text(text: str | None) -> list[str]:
         return []
     codes: set[str] = set()
     for seg in _split_into_segments(normalized):
-        seg_codes = _detect_country_codes(seg)
-        if seg_codes:
-            codes |= seg_codes
-            continue
-        match = _COMMA_SEGMENT_RE.match(seg)
-        if match:
-            region = match.group(2).strip()
-            if region.upper() in _US_STATE_ABBREVS or region in _US_STATE_NAMES:
-                codes.add("US")
-                continue
-            sub_code = SUBDIVISION_TO_CODE.get(region) or SUBDIVISION_TO_CODE.get(region.upper())
-            if sub_code:
-                codes.add(sub_code)
+        codes |= _detect_country_codes(seg)
     return sorted(codes)
 
 
@@ -454,6 +480,7 @@ def _allowed_location_regex(allowed: frozenset[str]) -> str | None:
     if not allowed:
         return None
     phrases: list[str] = [p for p, code in PHRASE_TO_CODE.items() if code in allowed]
+    phrases.extend(city for city, code in CITY_TO_CODE.items() if code in allowed)
     phrases.extend(code.lower() for code in allowed if code not in _US_STATE_ABBREVS or code == "US")
     for token, group in REGION_GROUPS.items():
         if group & allowed:
@@ -489,6 +516,10 @@ def _outside_location_regex(allowed: frozenset[str]) -> str | None:
             forbidden.append(token)
 
     from app.services.country_catalog import COUNTRY_NAMES, SUBDIVISION_TO_CODE
+
+    for city, code in CITY_TO_CODE.items():
+        if code not in allowed:
+            forbidden.append(city)
 
     for name, code in SUBDIVISION_TO_CODE.items():
         if code not in allowed:

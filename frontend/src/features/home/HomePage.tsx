@@ -25,6 +25,7 @@ import { useJobList, useJobStats } from '@/features/jobs/queries';
 import { useOpenJob } from '@/features/jobs/useOpenJob';
 import { isApplied } from '@/features/jobs/jobStatus';
 import { shouldOnboard } from '@/features/onboarding/onboardingState';
+import { JobLocationLabel } from '@/components/app/JobLocationLabel';
 import { MatchScore } from '@/components/app/MatchScore';
 import { PageTitle } from '@/components/app/PageTitle';
 import { cn } from '@/lib/utils';
@@ -303,10 +304,18 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{job.title || 'Untitled role'}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {job.company}
-                      {job.location ? ` · ${job.location}` : ''}
-                      {job.is_remote ? ' · Remote' : ''}
+                    <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
+                      <span className="truncate">{job.company}</span>
+                      {job.location ? (
+                        <>
+                          <span aria-hidden>·</span>
+                          <JobLocationLabel
+                            location={job.location}
+                            countries={job.location_countries}
+                            className="min-w-0"
+                          />
+                        </>
+                      ) : null}
                     </p>
                   </div>
                   <MatchScore score={job.match_overall_score} />

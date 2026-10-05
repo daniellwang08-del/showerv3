@@ -6,12 +6,14 @@ import { SaveBar } from '@/components/app/SaveBar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field';
+import { Field, FieldContent, FieldDescription, FieldError, FieldLabel, FieldTitle } from '@/components/ui/field';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import { saveCountryPreferences, saveJobMatchPreferences } from '@/api/settingsApi';
-import type { UserSettings } from '@/types/settings';
+import { saveCountryPreferences, saveJobMatchPreferences, saveJobShareDefaultSettings } from '@/api/settingsApi';
+import { JOB_SHARE_DEFAULT_OPTIONS } from '@/features/jobs/jobAddShare';
+import type { JobShareDefault, UserSettings } from '@/types/settings';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { refreshJobStores, useSetSettings } from './queries';
 import { useDraft, useReportDirty } from './useDraft';
@@ -32,6 +34,7 @@ export function JobSearchTab({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const setSettings = useSetSettings();
+  const [savingShare, setSavingShare] = useState(false);
   const saved = { countries: settings.country_preferences, preferences: settings.job_match_preferences ?? '' };
   const { values, set, clear } = useDraft(saved);
   const [saving, setSaving] = useState(false);
@@ -156,6 +159,48 @@ export function JobSearchTab({
             {SOURCE_HINTS[settings.country_preferences_source]} Leave empty to see jobs from anywhere.
           </p>
         </div>
+      </SectionCard>
+
+      <SectionCard
+        title="When you add jobs"
+        description="Jobs you add stay hidden from others until you share them. This sets the starting choice. You can still change it from the sidebar or the 5-second notice after each add."
+      >
+        <RadioGroup
+          aria-label="Default sharing for jobs you add"
+          value={settings.job_share_default}
+          disabled={savingShare}
+          onValueChange={(value) => {
+            const next = value as JobShareDefault;
+            if (next === settings.job_share_default) return;
+            setSavingShare(true);
+            void saveJobShareDefaultSettings({ job_share_default: next })
+              .then((updated) => {
+                setSettings(updated);
+                toast.success('Default sharing saved');
+              })
+              .catch((err) => {
+                toast.error(extractApiErrorMessage(err, 'Failed to save default sharing.'));
+              })
+              .finally(() => setSavingShare(false));
+          }}
+        >
+          {JOB_SHARE_DEFAULT_OPTIONS.map((opt) => (
+            <FieldLabel key={opt.value} htmlFor={`job-share-${opt.value}`}>
+              <Field orientation="horizontal">
+                <RadioGroupItem
+                  value={opt.value}
+                  id={`job-share-${opt.value}`}
+                  aria-labelledby={`job-share-${opt.value}-title`}
+                  aria-describedby={`job-share-${opt.value}-hint`}
+                />
+                <FieldContent>
+                  <FieldTitle id={`job-share-${opt.value}-title`}>{opt.label}</FieldTitle>
+                  <FieldDescription id={`job-share-${opt.value}-hint`}>{opt.hint}</FieldDescription>
+                </FieldContent>
+              </Field>
+            </FieldLabel>
+          ))}
+        </RadioGroup>
       </SectionCard>
 
       <SectionCard

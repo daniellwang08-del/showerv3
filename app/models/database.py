@@ -127,6 +127,17 @@ class User(Base):
         String(20), default="unset", nullable=False, server_default="unset"
     )
 
+    # Starting share for jobs this user adds: private | team | all | ask.
+    # ask keeps the add private and prompts after the add.
+    job_share_default = Column(String(16), default="private", nullable=False, server_default="private")
+    resume_filename_mode = Column(String(20), default="pattern", nullable=False, server_default="pattern")
+    resume_filename_value = Column(
+        String(200),
+        default="{firstname}_{lastname}_{kind}",
+        nullable=False,
+        server_default="{firstname}_{lastname}_{kind}",
+    )
+
     # Visual resume builder design (theme/typography/colors/layout). Every résumé is
     # compiled from this design; the working template + blueprint are derived from it.
     # These columns MIRROR the currently-active resume in the library (see
@@ -396,6 +407,65 @@ class UserJobStatus(Base):
         UniqueConstraint("user_id", "job_id", name="uq_user_job_status"),
         Index("ix_ujs_job_id", "job_id"),
         Index("ix_ujs_user_status", "user_id", "status"),
+    )
+
+
+class JobAddBatch(Base):
+    """One add session: a user pasted or uploaded a set of jobs together."""
+    __tablename__ = "job_add_batches"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source = Column(String(32), nullable=False, server_default="manual")
+    job_count = Column(Integer, nullable=False, server_default="0")
+    # private | team | all | users
+    share_scope = Column(String(16), nullable=False, server_default="private")
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_job_add_batches_user_created", "user_id", "created_at"),
+    )
+
+
+class JobAddBatchJob(Base):
+    """Jobs that belong to one add session."""
+    __tablename__ = "job_add_batch_jobs"
+
+    batch_id = Column(
+        String(36),
+        ForeignKey("job_add_batches.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    job_id = Column(
+        String(36),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    __table_args__ = (
+        Index("ix_job_add_batch_jobs_job_id", "job_id"),
+    )
+
+
+class JobAddBatchShareUser(Base):
+    """Explicit recipients when a batch is shared with specific people."""
+    __tablename__ = "job_add_batch_share_users"
+
+    batch_id = Column(
+        String(36),
+        ForeignKey("job_add_batches.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
     )
 
 

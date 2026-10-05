@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { COUNTRY_CODES } from '@/constants/countryCodes';
+import { countryCodesForValue } from '@/constants/countryCodes';
 import { cn } from '@/lib/utils';
 import { normalizeDateInput } from './profileSections';
 
@@ -174,62 +174,86 @@ export function CountryCodePicker({
   value,
   onChange,
   error,
+  label = 'Country code',
+  required = true,
+  compact = false,
 }: {
   id: string;
   value: string;
   onChange: (v: string) => void;
   error?: string;
+  label?: string;
+  required?: boolean;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const current = COUNTRY_CODES.find((c) => c.code === value);
+  const codes = countryCodesForValue(value);
+  const current = codes.find((c) => c.code === value);
+  const trigger = (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            id={id}
+            variant="outline"
+            className={cn(
+              'w-full justify-between font-normal',
+              compact && 'h-[30px] px-2.5 text-xs',
+            )}
+            aria-invalid={error ? true : undefined}
+          />
+        }
+      >
+        <span className="truncate tabular-nums">
+          {value || '+1'}
+          {current ? <span className="text-muted-foreground"> {current.country}</span> : null}
+        </span>
+        <ChevronsUpDown className="text-muted-foreground" />
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search country or code" aria-label="Search country codes" />
+          <CommandList>
+            <CommandEmpty>No match.</CommandEmpty>
+            <CommandGroup>
+              {codes.map((c) => (
+                <CommandItem
+                  key={`${c.code}-${c.country}`}
+                  value={`${c.code} ${c.country}`}
+                  data-checked={c.code === value}
+                  onSelect={() => {
+                    onChange(c.code);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="w-12 tabular-nums">{c.code}</span>
+                  <span className="text-muted-foreground">{c.country}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+
+  if (compact) {
+    return (
+      <label className="block">
+        {label ? <div className="mb-1 text-xs font-medium text-foreground/80">{label}</div> : null}
+        {trigger}
+        {error ? <p className="mt-1 text-[11px] text-destructive">{error}</p> : null}
+      </label>
+    );
+  }
+
   return (
     <Field data-invalid={error ? true : undefined} className="gap-1.5">
       <FieldLabel htmlFor={id}>
-        Country code
-        <RequiredMark />
+        {label}
+        {required ? <RequiredMark /> : null}
       </FieldLabel>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
-          render={
-            <Button
-              id={id}
-              variant="outline"
-              className="w-full justify-between font-normal"
-              aria-invalid={error ? true : undefined}
-            />
-          }
-        >
-          <span className="truncate tabular-nums">
-            {value || '+1'}
-            {current ? <span className="text-muted-foreground"> {current.country}</span> : null}
-          </span>
-          <ChevronsUpDown className="text-muted-foreground" />
-        </PopoverTrigger>
-        <PopoverContent className="w-64 p-0" align="start">
-          <Command>
-            <CommandInput placeholder="Search country or code…" aria-label="Search country codes" />
-            <CommandList>
-              <CommandEmpty>No match.</CommandEmpty>
-              <CommandGroup>
-                {COUNTRY_CODES.map((c) => (
-                  <CommandItem
-                    key={`${c.code}-${c.country}`}
-                    value={`${c.code} ${c.country}`}
-                    data-checked={c.code === value}
-                    onSelect={() => {
-                      onChange(c.code);
-                      setOpen(false);
-                    }}
-                  >
-                    <span className="w-12 tabular-nums">{c.code}</span>
-                    <span className="text-muted-foreground">{c.country}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+      {trigger}
       {error ? <FieldError>{error}</FieldError> : null}
     </Field>
   );

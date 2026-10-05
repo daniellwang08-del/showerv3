@@ -19,6 +19,7 @@ from app.services.job_field_utils import (
     normalize_work_mode_display,
     resolve_display_work_mode,
 )
+from app.services.job_location_parse import infer_location_from_text, prefer_job_location
 from app.services.job_source_boards import detect_board
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, JobRepository
@@ -480,11 +481,14 @@ def build_metadata(
             or infer_company_from_url(source_url)
         )
 
-    location = (
-        clean_optional_job_field(structured.get("location"))
-        or clean_optional_job_field(labeled.get("location"))
-        or clean_optional_job_field(existing_location)
-    )
+    location = None
+    for candidate in (
+        clean_optional_job_field(structured.get("location")),
+        clean_optional_job_field(labeled.get("location")),
+        clean_optional_job_field(existing_location),
+        infer_location_from_text(plain_text),
+    ):
+        location = prefer_job_location(location, candidate)
     employment_type = clean_optional_job_field(
         structured.get("employment_type") or labeled.get("employment_type")
     )

@@ -81,6 +81,13 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     )
       ? (data.manual_submit_pipeline as 'extract' | 'match' | 'full')
       : 'full',
+    job_share_default: (['private', 'team', 'all', 'ask'] as const).includes(
+      data.job_share_default as 'private' | 'team' | 'all' | 'ask',
+    )
+      ? (data.job_share_default as 'private' | 'team' | 'all' | 'ask')
+      : 'private',
+    resume_filename_mode: data.resume_filename_mode === 'static' ? 'static' : 'pattern',
+    resume_filename_value: String(data.resume_filename_value ?? '{firstname}_{lastname}_{kind}'),
     resume_tailoring_prompt_mode: (data.resume_tailoring_prompt_mode as SettingsMode) ?? 'default',
     resume_tailoring_prompt_instructions: String(data.resume_tailoring_prompt_instructions ?? ''),
     resume_tailoring_prompt_instructions_custom: String(data.resume_tailoring_prompt_instructions_custom ?? ''),
@@ -217,6 +224,18 @@ export async function saveAutoPrepareSettings(
 
 export async function saveManualSubmitPipelineSettings(
   body: Pick<UserSettingsUpdate, 'manual_submit_pipeline'>,
+) {
+  return updateUserSettings(body);
+}
+
+export async function saveJobShareDefaultSettings(
+  body: Pick<UserSettingsUpdate, 'job_share_default'>,
+) {
+  return updateUserSettings(body);
+}
+
+export async function saveResumeFilenameSettings(
+  body: Pick<UserSettingsUpdate, 'resume_filename_mode' | 'resume_filename_value'>,
 ) {
   return updateUserSettings(body);
 }

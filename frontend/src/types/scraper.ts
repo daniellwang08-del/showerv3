@@ -54,6 +54,8 @@ export interface DashboardJob {
   title: string | null;
   company: string;
   location: string | null;
+  /** ISO 3166-1 alpha-2 codes resolved from ``location`` for flags. */
+  location_countries?: string[];
   description: string | null;
   posted_date: string | null;
   experience_level: string | null;

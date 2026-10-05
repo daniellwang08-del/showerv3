@@ -13,16 +13,22 @@ function fixedWidth(width: string): number {
 describe('columnsFor', () => {
   it('fits the compact tier on a 390px phone', () => {
     const cols = columnsFor('compact');
-    expect(cols.map((c) => c.id)).toEqual(['select', 'title', 'match', 'track']);
+    expect(cols.map((c) => c.id)).toEqual(['select', 'title', 'location', 'match', 'track']);
     const minimum = cols.reduce((sum, c) => sum + fixedWidth(c.width), 0);
     expect(minimum).toBeLessThanOrEqual(390 - 32 - 96);
   });
 
-  it('shares spare width between role, source and status on wide tables', () => {
+  it('shares spare width between role, location, source and status on wide tables', () => {
     const cols = columnsFor('full');
-    expect(cols.find((c) => c.id === 'title')?.width).toBe('minmax(16rem, 3fr)');
+    expect(cols.find((c) => c.id === 'title')?.width).toBe('minmax(12rem, 1.4fr)');
+    expect(cols.find((c) => c.id === 'location')?.width).toBe('minmax(10rem, 1.3fr)');
     expect(cols.find((c) => c.id === 'source')?.width).toBe('minmax(7.5rem, 1fr)');
     expect(cols.find((c) => c.id === 'status')?.width).toBe('minmax(9.5rem, 1fr)');
+    expect(cols.find((c) => c.id === 'mode')?.width).toBe('5.5rem');
+    expect(cols.find((c) => c.id === 'posted')?.width).toBe('4.5rem');
+    expect(cols.find((c) => c.id === 'added')?.width).toBe('4.5rem');
+    expect(cols.find((c) => c.id === 'match')?.width).toBe('7.5rem');
+    expect(cols.find((c) => c.id === 'docs')?.width).toBe('5rem');
   });
 
   it('sizes the actions column to its inline buttons', () => {

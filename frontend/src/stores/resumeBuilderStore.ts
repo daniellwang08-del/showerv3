@@ -229,6 +229,25 @@ function applyDesign(set: (partial: Partial<ResumeBuilderState>) => void, get: (
   scheduleAutoSave(get);
 }
 
+/** Header/body metrics are derived from the live preview, not a user edit.
+ *  Fold them into the design without flipping dirty or kicking autosave, so
+ *  switching Edit/Preview (which remounts the measurer) does not "save". */
+function applyLayoutCache(
+  set: (partial: Partial<ResumeBuilderState>) => void,
+  get: () => ResumeBuilderState,
+  patch: Partial<Pick<ResumeDesign['layout'], 'header_metrics' | 'layout_metrics'>>,
+) {
+  const d = get().design;
+  if (!d) return;
+  const next = { ...d, layout: { ...d.layout, ...patch } };
+  const baseline = get().baseline;
+  if (baseline && !selectIsDirty(get())) {
+    set({ design: next, baseline: JSON.stringify(next) });
+    return;
+  }
+  set({ design: next });
+}
+
 export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   catalog: null,
   design: null,
@@ -563,7 +582,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     // Skip no-op updates so re-measuring an unchanged design never marks it dirty
     // (which would trigger an endless measure → save → recompile loop).
     if (same) return;
-    applyDesign(set, get, { ...d, layout: { ...d.layout, header_metrics: { ...m } } });
+    applyLayoutCache(set, get, { header_metrics: { ...m } });
   },
 
   setLayoutMetrics: (m) => {
@@ -586,7 +605,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     // Skip no-op updates so re-measuring an unchanged design never marks it dirty
     // (which would trigger an endless measure → save → recompile loop).
     if (same) return;
-    applyDesign(set, get, { ...d, layout: { ...d.layout, layout_metrics: { ...m } } });
+    applyLayoutCache(set, get, { layout_metrics: { ...m } });
   },
 
   updateSectionOptions: (patch) => {

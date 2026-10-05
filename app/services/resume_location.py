@@ -220,6 +220,31 @@ def merge_address_fields(
     return merged
 
 
+def replace_header_location(existing: Any, location: str) -> dict[str, Any]:
+    """Replace city/state/country from a Content location line.
+
+    Street and local_preferences stay. Leftover region from a previous country
+    (e.g. MA after switching Boston to London) must not survive.
+    """
+    base: dict[str, Any] = {}
+    if isinstance(existing, dict):
+        base = dict(existing)
+    elif existing is not None and hasattr(existing, "model_dump"):
+        base = existing.model_dump()
+
+    parsed = parse_resume_header_location(location)
+    out: dict[str, Any] = {
+        "line1": _clean(base.get("line1")),
+        "line2": _clean(base.get("line2")),
+        "local_preferences": list(base.get("local_preferences") or []),
+    }
+    if parsed:
+        out.update({key: value for key, value in parsed.items() if value})
+    elif _clean(location):
+        out["city"] = _clean(location)
+    return {key: value for key, value in out.items() if value or key == "local_preferences"}
+
+
 def apply_header_location_to_draft(draft: Any) -> None:
     """Populate ``draft.location`` and ``draft.address`` from whichever is present."""
     from app.models.profile_schemas import AddressInfo

@@ -51,6 +51,17 @@ class _ContentOverlayUser:
             return content.get("email") or getattr(user, name, None)
         if name == "email":
             return content.get("email") or getattr(user, "email", None)
+        if name == "address":
+            loc = str(content.get("location") or "").strip()
+            existing = getattr(user, "address", None)
+            if not loc:
+                return existing
+            from app.services.resume_location import replace_header_location
+
+            merged = replace_header_location(existing, loc)
+            if any(str(merged.get(k) or "").strip() for k in ("city", "state", "country", "line1")):
+                return merged
+            return {"city": loc}
 
         if name in _DIRECT:
             value = content.get(name)

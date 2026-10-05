@@ -368,6 +368,7 @@ class ResumeContent(BaseModel):
     email: str = ""
     phone_country_code: str = ""
     phone_number: str = ""
+    location: str = ""
     linkedin_url: str = ""
     github_url: str = ""
     profile_summary: str = ""

@@ -24,6 +24,7 @@ vi.mock('@/api/settingsApi', () => ({
   saveDedupSettings: vi.fn(),
   saveAutoPrepareSettings: vi.fn(),
   saveManualSubmitPipelineSettings: vi.fn(),
+  saveJobShareDefaultSettings: vi.fn(),
   saveResumeTailoringPromptSettings: vi.fn(),
   saveCoverLetterPromptSettings: vi.fn(),
   saveOpenAiSettings: vi.fn(),
@@ -85,6 +86,9 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     auto_prepare_match: false,
     auto_prepare_full: false,
     manual_submit_pipeline: 'full',
+    job_share_default: 'private',
+    resume_filename_mode: 'pattern',
+    resume_filename_value: '{firstname}_{lastname}_{kind}',
     resume_tailoring_prompt_mode: 'custom',
     resume_tailoring_prompt_instructions: LONG_PROMPT,
     resume_tailoring_prompt_instructions_custom: LONG_PROMPT,
@@ -237,6 +241,16 @@ describe('PreferencesPage', () => {
       timeout: 2500,
     });
     expect(loadJobs).toHaveBeenCalled();
+  });
+
+  it('saves the default job-sharing choice immediately', async () => {
+    api.saveJobShareDefaultSettings.mockResolvedValue(makeSettings({ job_share_default: 'ask' }));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('radio', { name: 'Ask me each time' }));
+    await waitFor(() =>
+      expect(api.saveJobShareDefaultSettings).toHaveBeenCalledWith({ job_share_default: 'ask' }),
+    );
   });
 
   it('keeps a tab draft when switching tabs', async () => {

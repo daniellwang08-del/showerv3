@@ -28,6 +28,7 @@ import {
 } from '../../utils/resumeContent';
 import { selectIsDirty, useResumeBuilderStore } from '../../stores/resumeBuilderStore';
 import { contributionsToEditorText, editorTextToContributions } from '../../utils/workExperience';
+import { CountryCodePicker } from '../../features/profile/fields';
 
 type Work = ResumeContent['work_experience'][number];
 type Skill = ResumeContent['technical_skills'][number];
@@ -156,9 +157,11 @@ function WorkExperienceEditor({
 
   return (
     <Collapsible
+      defaultOpen={index === 0}
       title={draft.company_name || value.company_name || `Experience ${index + 1}`}
       subtitle={[
         draft.job_title || value.job_title,
+        draft.location || value.location,
         (draft.period_start || value.period_start) &&
           formatFlexiblePeriod(draft.period_start || value.period_start, draft.period_end || value.period_end),
       ]
@@ -279,10 +282,23 @@ export function ContentControls({
       <PlainField label="Professional title" value={content.title} onChange={(v) => patch({ title: v })} />
       <div className="grid grid-cols-2 gap-2">
         <PlainField label="Email" value={content.email} onChange={(v) => patch({ email: v })} />
-        <div className="grid grid-cols-[64px_1fr] gap-1.5">
-          <PlainField label="Code" value={content.phone_country_code} onChange={(v) => patch({ phone_country_code: v })} placeholder="+1" />
-          <PlainField label="Phone" value={content.phone_number} onChange={(v) => patch({ phone_number: v })} />
-        </div>
+        <PlainField
+          label="Location"
+          value={content.location}
+          onChange={(v) => patch({ location: v })}
+          placeholder="City, Country"
+        />
+      </div>
+      <div className="grid grid-cols-[minmax(8rem,12rem)_1fr] gap-1.5">
+        <CountryCodePicker
+          id="studio-phone-country-code"
+          value={content.phone_country_code}
+          onChange={(v) => patch({ phone_country_code: v })}
+          label="Code"
+          required={false}
+          compact
+        />
+        <PlainField label="Phone" value={content.phone_number} onChange={(v) => patch({ phone_number: v })} />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <PlainField label="LinkedIn" value={content.linkedin_url} onChange={(v) => patch({ linkedin_url: v })} />
@@ -355,7 +371,8 @@ export function ContentControls({
           <Collapsible
             key={i}
             title={e.university_name || `Education ${i + 1}`}
-            subtitle={[e.degree, (e.period_start || e.period_end) && formatFlexiblePeriod(e.period_start, e.period_end)].filter(Boolean).join('  ·  ')}
+            subtitle={[e.degree, e.location, (e.period_start || e.period_end) && formatFlexiblePeriod(e.period_start, e.period_end)].filter(Boolean).join('  ·  ')}
+            defaultOpen={i === 0}
             tools={
               <RowTools
                 index={i}

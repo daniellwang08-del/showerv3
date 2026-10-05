@@ -149,6 +149,111 @@ SUBDIVISION_TO_CODE: dict[str, str] = {
     "western australia": "AU", "south australia": "AU",
     "australian capital territory": "AU", "victoria": "AU",
     "NSW": "AU", "QLD": "AU", "VIC": "AU", "TAS": "AU", "ACT": "AU",
+    # United Kingdom nations / metro counties (unambiguous)
+    "greater london": "GB", "greater manchester": "GB", "west midlands": "GB",
+    "west yorkshire": "GB", "south yorkshire": "GB", "merseyside": "GB",
+    "tyne and wear": "GB", "strathclyde": "GB",
+    # Ireland
+    "county dublin": "IE", "co dublin": "IE", "co. dublin": "IE",
+    # Germany (spelled-out states only; short codes collide with other uses)
+    "bavaria": "DE", "bayern": "DE", "baden-württemberg": "DE",
+    "baden-wuerttemberg": "DE", "north rhine-westphalia": "DE",
+    "nordrhein-westfalen": "DE", "hesse": "DE", "hessen": "DE",
+    "lower saxony": "DE", "niedersachsen": "DE",
+    # Switzerland / Austria / Netherlands
+    "canton of zurich": "CH", "canton of geneva": "CH",
+    "vienna": "AT", "wien": "AT", "north holland": "NL", "south holland": "NL",
+    # India (common job-posting regions)
+    "karnataka": "IN", "maharashtra": "IN", "telangana": "IN",
+    "tamil nadu": "IN", "haryana": "IN", "uttar pradesh": "IN",
+}
+
+# Unambiguous city / metro → ISO code. Ambiguous names (Cambridge, Portland,
+# Birmingham, Paris TX vs Paris FR) are omitted here; "City, ST" / "City,
+# Country" still resolve through the classifier's region heuristics.
+CITY_TO_CODE: dict[str, str] = {
+    # United States
+    "new york city": "US", "new york": "US", "nyc": "US", "manhattan": "US",
+    "brooklyn": "US", "san francisco": "US", "sf bay area": "US",
+    "bay area": "US", "silicon valley": "US", "palo alto": "US",
+    "mountain view": "US", "sunnyvale": "US", "cupertino": "US",
+    "menlo park": "US", "redwood city": "US", "san jose": "US",
+    "oakland": "US", "berkeley": "US", "seattle": "US", "bellevue": "US",
+    "redmond": "US", "kirkland": "US", "austin": "US", "boston": "US",
+    "cambridge ma": "US", "greater boston": "US", "chicago": "US",
+    "los angeles": "US", "l.a.": "US", "santa monica": "US",
+    "pasadena": "US", "irvine": "US", "san diego": "US", "denver": "US",
+    "boulder": "US", "atlanta": "US", "miami": "US", "dallas": "US",
+    "houston": "US", "fort worth": "US", "phoenix": "US",
+    "washington dc": "US", "washington d.c.": "US", "washington, d.c.": "US",
+    "washington, dc": "US", "dc metro": "US", "arlington va": "US",
+    "philadelphia": "US", "pittsburgh": "US", "detroit": "US",
+    "minneapolis": "US", "twin cities": "US", "st. paul": "US",
+    "st paul": "US", "raleigh": "US", "durham nc": "US",
+    "research triangle": "US", "charlotte": "US", "nashville": "US",
+    "salt lake city": "US", "las vegas": "US", "tampa": "US",
+    "orlando": "US", "cleveland": "US", "indianapolis": "US",
+    "kansas city": "US", "st. louis": "US", "st louis": "US",
+    "baltimore": "US", "milwaukee": "US", "cincinnati": "US",
+    "columbus oh": "US", "portland or": "US", "sacramento": "US",
+    "san antonio": "US", "jacksonville": "US", "richmond va": "US",
+    "norfolk": "US", "virginia beach": "US", "honolulu": "US",
+    "anchorage": "US", "boise": "US", "albuquerque": "US",
+    "oklahoma city": "US", "tulsa": "US", "omaha": "US",
+    "des moines": "US", "madison wi": "US", "ann arbor": "US",
+    "princeton": "US", "reston": "US", "mclean": "US", "tysons": "US",
+    "herndon": "US", "bethesda": "US", "somerville": "US",
+    # Canada
+    "toronto": "CA", "vancouver": "CA", "montreal": "CA", "montréal": "CA",
+    "ottawa": "CA", "calgary": "CA", "edmonton": "CA", "winnipeg": "CA",
+    "mississauga": "CA", "waterloo": "CA", "kitchener": "CA",
+    "halifax": "CA", "quebec city": "CA", "québec city": "CA",
+    "burnaby": "CA", "richmond bc": "CA", "victoria bc": "CA",
+    # United Kingdom / Ireland
+    "london": "GB", "greater london": "GB", "edinburgh": "GB",
+    "glasgow": "GB", "bristol": "GB", "leeds": "GB", "cardiff": "GB",
+    "belfast": "GB", "brighton": "GB", "nottingham": "GB",
+    "newcastle upon tyne": "GB", "sheffield": "GB", "liverpool": "GB",
+    "leicester": "GB", "coventry": "GB", "reading uk": "GB",
+    "cambridge uk": "GB", "oxford uk": "GB", "dublin": "IE", "cork": "IE",
+    "galway": "IE", "limerick": "IE",
+    # Europe
+    "berlin": "DE", "munich": "DE", "münchen": "DE", "hamburg": "DE",
+    "frankfurt": "DE", "cologne": "DE", "köln": "DE", "düsseldorf": "DE",
+    "dusseldorf": "DE", "stuttgart": "DE", "amsterdam": "NL",
+    "rotterdam": "NL", "the hague": "NL", "utrecht": "NL", "eindhoven": "NL",
+    "paris": "FR", "lyon": "FR", "marseille": "FR", "toulouse": "FR",
+    "nantes": "FR", "lille": "FR", "madrid": "ES", "barcelona": "ES",
+    "valencia es": "ES", "lisbon": "PT", "lisboa": "PT", "porto": "PT",
+    "milan": "IT", "milano": "IT", "rome it": "IT", "turin": "IT",
+    "torino": "IT", "stockholm": "SE", "gothenburg": "SE", "oslo": "NO",
+    "copenhagen": "DK", "helsinki": "FI", "vienna": "AT", "wien": "AT",
+    "zurich": "CH", "zürich": "CH", "geneva": "CH", "basel": "CH",
+    "lausanne": "CH", "brussels": "BE", "bruxelles": "BE", "antwerp": "BE",
+    "warsaw": "PL", "krakow": "PL", "kraków": "PL", "prague": "CZ",
+    "praha": "CZ", "budapest": "HU", "bucharest": "RO", "sofia": "BG",
+    "athens gr": "GR", "luxembourg city": "LU",
+    # Middle East / Africa
+    "dubai": "AE", "abu dhabi": "AE", "tel aviv": "IL", "jerusalem": "IL",
+    "haifa": "IL", "riyadh": "SA", "jeddah": "SA", "doha": "QA",
+    "cape town": "ZA", "johannesburg": "ZA", "nairobi": "KE", "lagos": "NG",
+    "cairo": "EG", "casablanca": "MA",
+    # Asia-Pacific
+    "singapore": "SG", "tokyo": "JP", "osaka": "JP", "yokohama": "JP",
+    "seoul": "KR", "busan": "KR", "sydney": "AU", "melbourne": "AU",
+    "brisbane": "AU", "perth au": "AU", "adelaide": "AU", "canberra": "AU",
+    "auckland": "NZ", "wellington": "NZ", "hong kong": "HK", "taipei": "TW",
+    "shanghai": "CN", "beijing": "CN", "shenzhen": "CN", "hangzhou": "CN",
+    "bangalore": "IN", "bengaluru": "IN", "mumbai": "IN", "hyderabad": "IN",
+    "delhi": "IN", "new delhi": "IN", "pune": "IN", "chennai": "IN",
+    "noida": "IN", "gurgaon": "IN", "gurugram": "IN", "kolkata": "IN",
+    "kuala lumpur": "MY", "jakarta": "ID", "bangkok": "TH", "manila": "PH",
+    "ho chi minh": "VN", "hanoi": "VN",
+    # Latin America
+    "mexico city": "MX", "ciudad de méxico": "MX", "são paulo": "BR",
+    "sao paulo": "BR", "rio de janeiro": "BR", "buenos aires": "AR",
+    "santiago": "CL", "bogotá": "CO", "bogota": "CO", "lima": "PE",
+    "montevideo": "UY",
 }
 
 # Tokens that mean the posting is open to any country.
@@ -185,6 +290,10 @@ MAX_COUNTRY_PREFERENCES = 30
 # ("south korea" before "korea", "united arab emirates" before nothing).
 PHRASES_BY_LENGTH: tuple[str, ...] = tuple(
     sorted(PHRASE_TO_CODE, key=len, reverse=True)
+)
+
+CITIES_BY_LENGTH: tuple[str, ...] = tuple(
+    sorted(CITY_TO_CODE, key=len, reverse=True)
 )
 
 _NAME_TO_CODE = {name.strip().lower(): code for code, name in COUNTRY_NAMES.items()}

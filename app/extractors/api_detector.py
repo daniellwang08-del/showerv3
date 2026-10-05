@@ -153,11 +153,12 @@ class APIDetectorExtractor(BaseExtractor):
 
     def _location_text(self, node: Any) -> str | None:
         if isinstance(node, list):
+            found = []
             for item in node:
-                found = self._location_text(item)
-                if found:
-                    return found
-            return None
+                loc = self._location_text(item)
+                if loc and loc not in found:
+                    found.append(loc)
+            return " / ".join(found) if found else None
         if isinstance(node, str):
             return node.strip() or None
         if not isinstance(node, dict):

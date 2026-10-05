@@ -266,8 +266,12 @@ export function ResumePageStack({
     };
 
     const compute = () => {
+      const box = root.getBoundingClientRect();
+      // A display:none ancestor (mobile Edit tab) collapses the measurer to 0.
+      // Writing those zeros would mark the design dirty and trigger a save.
+      if (box.width < 8 || root.scrollHeight < 8) return;
       const total = root.scrollHeight;
-      const rootTop = root.getBoundingClientRect().top;
+      const rootTop = box.top;
 
       reportHeaderMetrics(root, rootTop);
       reportLayoutMetrics(root, rootTop);

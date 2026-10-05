@@ -1,5 +1,10 @@
 export type SettingsMode = 'default' | 'custom';
 
+export type JobShareDefault = 'private' | 'team' | 'all' | 'ask';
+export type JobShareScope = 'private' | 'team' | 'all' | 'users';
+export type ResumeFilenameMode = 'pattern' | 'static';
+export const DEFAULT_RESUME_FILENAME_PATTERN = '{firstname}_{lastname}_{kind}';
+
 export type LlmProvider = 'openai' | 'anthropic' | 'gemini';
 
 export const LLM_PROVIDERS: LlmProvider[] = ['openai', 'anthropic', 'gemini'];
@@ -57,6 +62,10 @@ export interface UserSettings {
   auto_prepare_full: boolean;
   /** Depth for URL/paste submits: extract | match | full */
   manual_submit_pipeline: 'extract' | 'match' | 'full';
+  /** Starting share for jobs this user adds: private | team | all | ask */
+  job_share_default: JobShareDefault;
+  resume_filename_mode: ResumeFilenameMode;
+  resume_filename_value: string;
   resume_tailoring_prompt_mode: SettingsMode;
   resume_tailoring_prompt_instructions: string;
   resume_tailoring_prompt_instructions_custom: string;
@@ -115,6 +124,9 @@ export interface UserSettingsUpdate {
   auto_prepare_match?: boolean;
   auto_prepare_full?: boolean;
   manual_submit_pipeline?: 'extract' | 'match' | 'full';
+  job_share_default?: JobShareDefault;
+  resume_filename_mode?: ResumeFilenameMode;
+  resume_filename_value?: string;
   resume_tailoring_prompt_mode?: SettingsMode;
   resume_tailoring_prompt_custom?: string;
   cover_letter_prompt_mode?: SettingsMode;
