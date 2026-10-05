@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { completeProfile } from '@/test/profileFixtures';
+import { completeForm, completeProfile } from '@/test/profileFixtures';
 import type { UserSettings } from '@/types/settings';
 import { OnboardingPage } from './OnboardingPage';
 import { readOnboarding, shouldOnboard, writeOnboarding } from './onboardingState';
@@ -150,6 +150,22 @@ describe('OnboardingPage', () => {
     await user.click(screen.getByRole('button', { name: 'Add 2 jobs' }));
     expect(await screen.findByText('jobs page')).toBeInTheDocument();
     expect(readOnboarding('u1')?.status).toBe('done');
+  });
+
+  it('keeps Save and continue visible when the professional summary is long', async () => {
+    writeOnboarding('u1', { status: 'active', step: 1 });
+    sessionStorage.setItem(
+      'nao.onboarding.form.v1.u1',
+      JSON.stringify(completeForm({ profile_summary: 'Builds backend systems. '.repeat(80) })),
+    );
+    renderPage();
+
+    const save = await screen.findByRole('button', { name: 'Save and continue' });
+    expect(save).toBeVisible();
+    expect(screen.getByLabelText('Professional summary')).toHaveClass('max-h-48', 'field-sizing-fixed');
+    expect(save.closest('[data-slot="onboarding-step-actions"]')).toHaveClass(
+      'pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+1.25rem))]',
+    );
   });
 
   it('resumes at the saved step and can be skipped', async () => {

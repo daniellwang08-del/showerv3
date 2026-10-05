@@ -123,10 +123,12 @@ export function OnboardingPage({
         </Button>
       </header>
 
-      <main className="page-scroll-y-auto flex min-h-0 flex-1 justify-center overflow-y-auto px-4 pt-6 pb-16 sm:pt-12">
-        <div className="w-full max-w-xl">
-          <Stepper step={step} onJump={(i) => i < step && setStep(i)} />
-          <div className="mt-8">
+      <main className="flex min-h-0 flex-1 flex-col px-4 pt-6 sm:pt-12">
+        <div className="mx-auto flex min-h-0 w-full max-w-xl flex-1 flex-col">
+          <div className="shrink-0">
+            <Stepper step={step} onJump={(i) => i < step && setStep(i)} />
+          </div>
+          <div className="mt-8 flex min-h-0 flex-1 flex-col">
             {profileQuery.isPending ? (
               <div className="space-y-3">
                 <Skeleton className="h-8 w-2/3" />
@@ -213,8 +215,19 @@ function StepHeader({ title, description }: { title: string; description: ReactN
   );
 }
 
+function StepBody({ children }: { children: ReactNode }) {
+  return <div className="page-scroll-y-auto min-h-0 flex-1 overflow-y-auto pb-4">{children}</div>;
+}
+
 function StepActions({ children }: { children: ReactNode }) {
-  return <div className="mt-8 flex items-center justify-between gap-3">{children}</div>;
+  return (
+    <div
+      data-slot="onboarding-step-actions"
+      className="shrink-0 border-t bg-background pt-3 pb-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+1.25rem))]"
+    >
+      <div className="flex items-center justify-between gap-3">{children}</div>
+    </div>
+  );
 }
 
 function ResumeStep({
@@ -268,7 +281,8 @@ function ResumeStep({
   };
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <StepBody>
       <StepHeader
         title="Let's start with your résumé"
         description="NAO reads it to build your profile, match you to jobs, and tailor documents. You can review everything next."
@@ -317,6 +331,7 @@ function ResumeStep({
           {error}
         </p>
       ) : null}
+      </StepBody>
       <StepActions>
         <span />
         <Button variant="ghost" onClick={onManual} disabled={busy}>
@@ -324,7 +339,7 @@ function ResumeStep({
           <ArrowRight />
         </Button>
       </StepActions>
-    </>
+    </div>
   );
 }
 
@@ -391,12 +406,14 @@ function EssentialsStep({
 
   return (
     <form
+      className="flex min-h-0 flex-1 flex-col"
       onSubmit={(e) => {
         e.preventDefault();
         void save();
       }}
       noValidate
     >
+      <StepBody>
       <StepHeader
         title="Confirm the essentials"
         description={
@@ -491,6 +508,7 @@ function EssentialsStep({
             id="onb-profile_summary"
             rows={5}
             maxLength={5000}
+            className="field-sizing-fixed max-h-48 overflow-y-auto"
             value={form.profile_summary}
             aria-invalid={!!errors.profile_summary || undefined}
             onChange={(e) => set('profile_summary', e.target.value)}
@@ -499,6 +517,7 @@ function EssentialsStep({
           {errors.profile_summary ? <FieldError>{errors.profile_summary}</FieldError> : null}
         </Field>
       </FieldGroup>
+      </StepBody>
       <StepActions>
         <Button type="button" variant="ghost" onClick={onBack} disabled={saving}>
           <ArrowLeft /> Back
@@ -552,7 +571,8 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
   };
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <StepBody>
       <StepHeader
         title="What are you looking for?"
         description="NAO uses this to filter and score jobs. Change it any time in Preferences."
@@ -623,6 +643,7 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
           </Field>
         </FieldGroup>
       )}
+      </StepBody>
       <StepActions>
         <Button variant="ghost" onClick={onBack} disabled={saving}>
           <ArrowLeft /> Back
@@ -632,7 +653,7 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
           Save and continue
         </Button>
       </StepActions>
-    </>
+    </div>
   );
 }
 
@@ -649,7 +670,8 @@ function JobsStep({ onBack, onFinish }: { onBack: () => void; onFinish: (to: str
   };
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <StepBody>
       <StepHeader
         title="Add your first jobs"
         description="Paste links to postings you're interested in. NAO extracts each one, scores it against your profile, and prepares documents."
@@ -685,6 +707,7 @@ function JobsStep({ onBack, onFinish }: { onBack: () => void; onFinish: (to: str
         </div>
         <ArrowRight className="size-4 text-muted-foreground" />
       </button>
+      </StepBody>
       <StepActions>
         <Button variant="ghost" onClick={onBack} disabled={busy}>
           <ArrowLeft /> Back
@@ -699,6 +722,6 @@ function JobsStep({ onBack, onFinish }: { onBack: () => void; onFinish: (to: str
           </Button>
         </div>
       </StepActions>
-    </>
+    </div>
   );
 }
