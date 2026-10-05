@@ -30,7 +30,6 @@ import { PageTitle } from '@/components/app/PageTitle';
 import { cn } from '@/lib/utils';
 import { useJobsStore } from '@/stores/jobsStore';
 import { useScraperStore } from '@/stores/scraperStore';
-import { useShellStore } from '@/stores/shellStore';
 import type { DashboardView } from '@/api/scraperApi';
 import {
   appliedWithin,
@@ -40,6 +39,9 @@ import {
   type ChecklistId,
   type NextStep,
 } from './homeState';
+
+/** Same threshold as the backend's "good match" (dashboard_stats.GOOD_MATCH_SCORE). */
+const GOOD_MATCH_SCORE = 50;
 
 function greeting() {
   const h = new Date().getHours();
@@ -60,7 +62,6 @@ type Tile = {
 export function HomePage({ firstName, userId }: { firstName?: string; userId?: string }) {
   const navigate = useNavigate();
   const openJob = useOpenJob();
-  const setDocked = useShellStore((s) => s.setAssistantDocked);
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const stats = useJobStats();
@@ -69,15 +70,17 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
   const top = useJobList({ view: 'all', sort: 'match_score', order: 'desc', per_page: 12 });
   const applied = useJobList({ view: 'applied', sort: 'applied_at', order: 'desc', per_page: 100 });
   const { draft, setDraft, submit, busy } = useAssistantDraft({
-    onAsk: () => setDocked(true),
+    onStartChat: (sessionId) => navigate(`/app/assistant/${sessionId}`),
   });
 
   const onboardingPending =
     profile.data !== undefined && isBlankProfile(profile.data) && shouldOnboard(userId, false);
   if (onboardingPending) return <Navigate to="/onboarding" replace />;
 
-  const goToBoard = (view: DashboardView) => {
-    useScraperStore.getState().applyAgentDashboard({ reset: true, view, remote_only: false, min_match_score: 0 });
+  const goToBoard = (view: DashboardView, minMatchScore = 0) => {
+    useScraperStore
+      .getState()
+      .applyAgentDashboard({ reset: true, view, remote_only: false, min_match_score: minMatchScore });
     navigate('/app/jobs');
   };
 
@@ -142,7 +145,7 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
             else if (s.kind === 'profile') navigate('/app/profile');
             else if (s.kind === 'add-jobs') focusComposer();
             else if (s.kind === 'review-ready') goToBoard('ready');
-            else goToBoard('available');
+            else goToBoard('available', GOOD_MATCH_SCORE);
           }}
         />
 

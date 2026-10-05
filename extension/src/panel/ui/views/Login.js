@@ -53,6 +53,7 @@ export function LoginView({ s }) {
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [websiteOpened, setWebsiteOpened] = useState(false);
 
   useEffect(() => {
     storage.getRememberedEmail().then((saved) => {
@@ -73,27 +74,41 @@ export function LoginView({ s }) {
     if (err) setError(err);
   };
 
+  const signInOnWebsite = () => {
+    setWebsiteOpened(true);
+    chrome.tabs.create({ url: `${s.backendUrl.replace(/\/+$/, "")}/extension/connect`, active: true }).catch(() => {});
+  };
+
   return html`<div class="login">
     <div class="login-brand">
       <img src="icons/icon128.png" alt="" width="44" height="44" />
       <h1>Sign in to NAO</h1>
       <p>Apply faster with tailored resumes and autofill.</p>
     </div>
+    <div class="login-form">
+      <${Button} variant="primary" block onClick=${signInOnWebsite}>Sign in with ${hostOf(s.backendUrl)}</${Button}>
+      <p class="muted small">
+        ${websiteOpened
+          ? "Finish signing in on the website tab. This panel updates on its own."
+          : "Uses your browser's saved password on the NAO website."}
+      </p>
+    </div>
+    <p class="login-divider"><span>or use your email</span></p>
     <form class="login-form" onSubmit=${submit} noValidate>
       ${error ? html`<${Banner} tone="danger">${error}</${Banner}>` : null}
       <label class="field">
         <span class="field-label">Email</span>
-        <input class="input" type="email" autocomplete="username" value=${email} onInput=${(e) => setEmail(e.currentTarget.value)} autofocus=${!email} />
+        <input class="input" id="nao-login-email" name="email" type="email" inputmode="email" autocomplete="username" value=${email} onInput=${(e) => setEmail(e.currentTarget.value)} />
       </label>
       <label class="field">
         <span class="field-label">Password</span>
-        <input class="input" type="password" autocomplete="current-password" value=${password} onInput=${(e) => setPassword(e.currentTarget.value)} autofocus=${!!email} />
+        <input class="input" id="nao-login-password" name="password" type="password" autocomplete="current-password" value=${password} onInput=${(e) => setPassword(e.currentTarget.value)} />
       </label>
       <label class="check">
         <input type="checkbox" checked=${remember} onChange=${(e) => setRemember(e.currentTarget.checked)} />
         <span>Remember my email</span>
       </label>
-      <${Button} variant="primary" type="submit" busy=${busy} block>Sign in</${Button}>
+      <${Button} variant="secondary" type="submit" busy=${busy} block>Sign in</${Button}>
     </form>
     <${ServerField} backendUrl=${s.backendUrl} />
   </div>`;

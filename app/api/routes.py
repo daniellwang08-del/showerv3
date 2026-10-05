@@ -64,6 +64,7 @@ from app.services.job_ai_search_service import apply_job_search_spec, interpret_
 from app.services.resume_parse_service import parse_resume_bytes
 from app.models.database import (
     Job,
+    User,
     UserJobStatus,
     JobExtraction,
     JobMatchResult,
@@ -453,6 +454,48 @@ async def login(request: LoginRequest, response: Response, http_request: Request
             token_type="bearer",
             expires_in=expires_seconds,
         )
+
+
+EXTENSION_CONNECT_HEADER = "x-nao-extension-connect"
+
+
+@router.post("/auth/extension-token", response_model=AuthResponse)
+async def issue_extension_token(
+    http_request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> AuthResponse:
+    """Long-lived Bearer token for the browser extension, minted from a signed-in web session.
+
+    Lets the extension sign in through the website, where password managers
+    work (Chrome does not fill passwords on chrome-extension:// pages). The
+    custom header forces a CORS preflight, so other sites cannot trigger it
+    with the user's cookie.
+    """
+    if http_request.headers.get(EXTENSION_CONNECT_HEADER) != "1":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing extension connect header")
+    user_id = current_user.get("user_id")
+    async with get_session() as session:
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        from app.services.system_settings_service import get_effective_value
+
+        expire_days = int(await get_effective_value("extension_token_expire_days", session))
+        email = user.email
+    access_token = AuthService.create_access_token(
+        data={"sub": email, "user_id": user_id},
+        expires_delta=timedelta(days=expire_days),
+    )
+    logger.info("extension_token_issued", user_id=user_id)
+    return AuthResponse(
+        success=True,
+        message="Extension connected",
+        email=email,
+        user_id=user_id,
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=expire_days * 86400,
+    )
 
 
 @router.post("/auth/logout")
@@ -2234,6 +2277,7 @@ def _dashboard_view_clauses(
     day_start: datetime | None = None,
     day_end: datetime | None = None,
     is_admin: bool = False,
+    user_id: str | None = None,
 ) -> tuple[list, bool]:
     """Extra WHERE clauses for a dashboard view tab.
 
@@ -2256,10 +2300,11 @@ def _dashboard_view_clauses(
                 clauses.append(added_at >= day_start)
                 clauses.append(added_at < day_end)
     elif view == "mine":
-        # Applicant "Jobs from me": URL/attachment they (or any applicant) submitted,
-        # never admin inventory FA adds.
+        # Applicant "Added by me": URL/attachment this user submitted, never
+        # another applicant's adds or admin inventory FA adds.
         clauses.append(UserJobStatus.status == "active")
         clauses.append(Job.raw_metadata["submitted_data"].isnot(None))
+        clauses.append(Job.raw_metadata["submitted_by_user_id"].as_string() == (user_id or ""))
         clauses.append(
             or_(
                 Job.raw_metadata["submitted_by_admin"].as_string().is_(None),
@@ -2519,7 +2564,31 @@ def _dashboard_apply_joins(stmt, user_id: str, *, team_applications: bool = Fals
     )
 
 
-def _row_to_dashboard_job(row) -> DashboardJobResponse:
+async def _dashboard_jobs_from_rows(session, rows, viewer_id: str) -> list[DashboardJobResponse]:
+    """Hydrate dashboard rows, naming whoever manually added each job."""
+    submitter_ids = {
+        str(sid)
+        for row in rows
+        if (sid := (row[0].raw_metadata or {}).get("submitted_by_user_id"))
+    }
+    names: dict[str, str] = {}
+    if submitter_ids:
+        users = (
+            await session.execute(select(User).where(User.id.in_(submitter_ids)))
+        ).scalars().all()
+        names = {u.id: user_applied_by_display_name(u) for u in users}
+    return [
+        _row_to_dashboard_job(row, viewer_id=viewer_id, submitter_names=names)
+        for row in rows
+    ]
+
+
+def _row_to_dashboard_job(
+    row,
+    *,
+    viewer_id: str | None = None,
+    submitter_names: dict[str, str] | None = None,
+) -> DashboardJobResponse:
     (
         job,
         ext_status,
@@ -2550,6 +2619,14 @@ def _row_to_dashboard_job(row) -> DashboardJobResponse:
         is_remote=bool(meta.get("is_remote", False)),
     )
     pool_added_at = ujs_created_at or job.created_at
+    applicant_manual = bool(meta.get("submitted_data")) and not _is_admin_manual_submission(meta)
+    submitter_id = meta.get("submitted_by_user_id")
+    from_me = applicant_manual and bool(viewer_id) and submitter_id == viewer_id
+    added_by_name = (
+        (submitter_names or {}).get(str(submitter_id))
+        if applicant_manual and submitter_id and not from_me
+        else None
+    )
     return DashboardJobResponse(
         id=job.id,
         source_url=job.source_url,
@@ -2586,7 +2663,8 @@ def _row_to_dashboard_job(row) -> DashboardJobResponse:
         work_mode=work_mode,
         salary_raw=ext_salary_range or meta.get("salary_raw"),
         job_type=meta.get("job_type"),
-        from_me=bool(meta.get("submitted_data")) and not _is_admin_manual_submission(meta),
+        from_me=from_me,
+        added_by_name=added_by_name,
         added_from=resolve_dashboard_added_from(meta),
         pool_added_at=pool_added_at,
     )
@@ -2727,6 +2805,7 @@ async def get_dashboard_jobs(
             day_start=day_start,
             day_end=day_end,
             is_admin=is_admin,
+            user_id=user_id,
         )
         base_filter.extend(view_clauses)
 
@@ -2793,7 +2872,7 @@ async def get_dashboard_jobs(
         result = await session.execute(stmt)
         rows = result.all()
 
-        items = [_row_to_dashboard_job(row) for row in rows]
+        items = await _dashboard_jobs_from_rows(session, rows, user_id)
 
         return DashboardJobsPage(
             items=items,
@@ -2888,6 +2967,7 @@ async def get_dashboard_sync(
         async def _count(view: str) -> int:
             view_clauses, needs_match_join = _dashboard_view_clauses(
                 view, min_score=min_score_pref, day_start=day_start, day_end=day_end,
+                user_id=user_id,
             )
             stmt_c = (
                 select(func.count())
@@ -2989,7 +3069,7 @@ async def get_dashboard_sync(
             .limit(DASHBOARD_SYNC_UPSERT_CAP)
         )
         upsert_rows = (await session.execute(upsert_stmt)).all()
-        upserts = [_row_to_dashboard_job(row) for row in upsert_rows]
+        upserts = await _dashboard_jobs_from_rows(session, upsert_rows, user_id)
 
         removed_ids: list[str] = []
         left_stmt = (
@@ -3133,6 +3213,7 @@ async def get_dashboard_counts(
                 day_start=day_start,
                 day_end=day_end,
                 is_admin=is_admin,
+                user_id=user_id,
             )
             needs_match = needs_match or view_needs_match
             needs_app = needs_app or view in VIEWS_NEEDING_APPLICATION_JOIN

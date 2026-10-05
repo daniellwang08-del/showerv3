@@ -66,7 +66,9 @@ describe('formatting helpers', () => {
   });
 
   it('labels where a job came from', () => {
-    expect(sourceLabel(makeJob({ added_from: 'manual' }))).toBe('Added by you');
+    expect(sourceLabel(makeJob({ added_from: 'manual', from_me: true }))).toBe('Added by you');
+    expect(sourceLabel(makeJob({ added_from: 'manual', from_me: false, added_by_name: 'Raoyin' }))).toBe('Added by Raoyin');
+    expect(sourceLabel(makeJob({ added_from: 'manual', from_me: false }))).toBe('Added by a teammate');
     expect(sourceLabel(makeJob({ added_from: 'admin_manual', source: null }))).toBe('Added by team');
     expect(sourceLabel(makeJob({ source: 'remoterocketship' }))).toBe('RemoteRocketship');
     expect(sourceLabel(makeJob({ source: null, added_from: null, domain: 'boards.greenhouse.io' }))).toBe('greenhouse.io');

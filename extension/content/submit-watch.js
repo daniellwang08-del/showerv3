@@ -3,8 +3,9 @@
 // Injected into all frames while an application session is open.
 //
 // Safety: we do NOT fire on Continue/Next, and we do NOT assume success from a
-// Submit click alone, we wait for a thank-you/confirmation signal or a clear
-// post-submit navigation away from the form (validation failures stay put).
+// Submit click alone. After a final Submit we wait for a thank-you/confirmation
+// signal, a navigation away from the form, or the Submit control/form
+// disappearing with no validation errors or captcha challenge on screen.
 
 (function () {
   if (window.__NAO_SUBMIT_WATCH__) return;
@@ -220,6 +221,70 @@
     }
   }
 
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    try {
+      const style = getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  // Inline validation that means the submit was rejected and the user must fix fields.
+  function hasVisibleValidationErrors() {
+    try {
+      const invalid = document.querySelectorAll('[aria-invalid="true"]');
+      for (const el of invalid) if (isVisible(el)) return true;
+      const messages = document.querySelectorAll(
+        [
+          ".field-error",
+          ".error-message",
+          ".invalid-feedback",
+          ".has-error .help-block",
+          ".application--error",
+          "[data-automation-id='errorMessage']",
+          "[data-automation-id='inputAlert']",
+          "[role='alert']",
+        ].join(",")
+      );
+      for (const el of messages) {
+        if (isVisible(el) && textOf(el)) return true;
+      }
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
+  // A challenge on screen means the submit is still waiting on the user.
+  function hasVisibleCaptchaChallenge() {
+    try {
+      const frames = document.querySelectorAll(
+        'iframe[src*="recaptcha/api2/bframe"], iframe[src*="recaptcha/enterprise/bframe"], iframe[src*="hcaptcha.com"][title*="challenge" i], iframe[src*="challenges.cloudflare.com"]'
+      );
+      for (const f of frames) {
+        if (!isVisible(f)) continue;
+        const r = f.getBoundingClientRect();
+        if (r.width > 100 && r.height > 100) return true;
+      }
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
+  // No confirmation text, but the final Submit went through: the control (or
+  // its form) disappeared or the page moved on, with no errors or challenge.
+  function probablySubmitted(ctl, startUrl) {
+    if (icimsMidApplication() || hasVisibleValidationErrors() || hasVisibleCaptchaChallenge()) return false;
+    const controlGone = ctl ? !isVisible(ctl) : false;
+    const formGone = ctl && ctl.form ? !ctl.form.isConnected || !isVisible(ctl.form) : false;
+    return controlGone || formGone || location.href !== startUrl;
+  }
+
   function notifySubmitted(reason) {
     const now = Date.now();
     if (now - lastNotifyAt < 5000) return;
@@ -241,11 +306,19 @@
     }
   }
 
-  function armPendingSubmit(reason) {
+  // Poll every 500ms for up to 20s. Probable-submit signals must hold for two
+  // consecutive polls after the first 2s so a spinner swap or a slow
+  // validation pass is not mistaken for success.
+  const POLL_MS = 500;
+  const MAX_TRIES = 40;
+  const PROBABLE_AFTER_TRIES = 4;
+
+  function armPendingSubmit(reason, ctl) {
     armedClick = true;
     const startUrl = location.href;
     if (pendingTimer) clearInterval(pendingTimer);
     let tries = 0;
+    let probableStreak = 0;
     pendingTimer = setInterval(() => {
       tries += 1;
       if (looksLikeConfirmationPage()) {
@@ -257,26 +330,39 @@
         notifySubmitted(reason + "+navigated");
         return;
       }
-      // Form replaced in-place with confirmation content.
-      if (armedClick && !stillOnApplicationForm() && looksLikeConfirmationPage()) {
-        notifySubmitted(reason + "+replaced");
-        return;
+      if (tries >= PROBABLE_AFTER_TRIES && probablySubmitted(ctl, startUrl)) {
+        probableStreak += 1;
+        if (probableStreak >= 2) {
+          notifySubmitted(reason + "+probable");
+          return;
+        }
+      } else {
+        probableStreak = 0;
       }
-      if (tries >= 24) {
-        // ~12s with no success signal, likely validation error; do nothing.
+      if (tries >= MAX_TRIES) {
+        // No success signal: likely a validation error or a stalled submit.
         clearInterval(pendingTimer);
         pendingTimer = null;
         armedClick = false;
       }
-    }, 500);
+    }, POLL_MS);
+  }
+
+  function blockedByNativeValidation(ctl) {
+    try {
+      const form = ctl && ctl.form;
+      return !!form && !form.noValidate && typeof form.checkValidity === "function" && !form.checkValidity();
+    } catch {
+      return false;
+    }
   }
 
   document.addEventListener(
     "click",
     (e) => {
       const ctl = closestSubmitControl(e.target);
-      if (!ctl) return;
-      armPendingSubmit("click");
+      if (!ctl || blockedByNativeValidation(ctl)) return;
+      armPendingSubmit("click", ctl);
     },
     true
   );
@@ -289,7 +375,7 @@
       const submitter = e.submitter || document.activeElement;
       if (submitter && isNavigationOnly(textOf(submitter))) return;
       if (submitter && looksLikeFinalSubmit(submitter)) {
-        armPendingSubmit("form-submit");
+        armPendingSubmit("form-submit", submitter);
       }
     },
     true

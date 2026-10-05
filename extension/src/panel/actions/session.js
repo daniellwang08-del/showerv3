@@ -39,6 +39,13 @@ export async function init() {
   setState({ view: "login" });
 }
 
+/** The worker stored a session from website sign-in; start over with it. */
+export async function reloadSession() {
+  live.stop();
+  await init();
+  if (state.user) toast(`Signed in as ${state.user.email}.`, "ok");
+}
+
 /** @returns {Promise<string|null>} error message, or null on success */
 export async function signIn({ email, password, remember }) {
   const backendUrl = await storage.getBackendUrl();

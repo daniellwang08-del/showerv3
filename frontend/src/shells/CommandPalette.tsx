@@ -85,7 +85,7 @@ export function CommandPalette({
                   onSelect={() =>
                     run(() => {
                       clearChat();
-                      navigate('/app');
+                      navigate('/app/assistant');
                     })
                   }
                 >

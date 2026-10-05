@@ -177,6 +177,7 @@ class ScraperStatsResponse(BaseModel):
     today_available_jobs: int = 0  # available-to-start among jobs added today
     best_jobs: int = 0        # match score >= 75 (Strong)
     good_jobs: int = 0        # match score 50-74 (Good)
+    unapplied_good_jobs: int = 0  # match score >= 50 and not yet applied
     qualified_jobs: int = 0   # match score >= user's preference minimum
     scored_jobs: int = 0      # jobs with any match score
     avg_match_score: int = 0  # average match score across scored jobs
@@ -936,6 +937,7 @@ async def _compute_scraper_stats(user_id: str, timezone: str | None) -> ScraperS
             today_available_jobs=data.get("today_available_jobs", 0),
             best_jobs=data["best_jobs"],
             good_jobs=data["good_jobs"],
+            unapplied_good_jobs=data.get("unapplied_good_jobs", 0),
             qualified_jobs=data["qualified_jobs"],
             scored_jobs=data["scored_jobs"],
             avg_match_score=data["avg_match_score"],

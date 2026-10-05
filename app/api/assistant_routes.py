@@ -2402,6 +2402,7 @@ async def next_job(
             min_score=suggested_min,
             day_start=day_start,
             day_end=day_end,
+            user_id=user_id,
         )
         score_clauses, score_needs_join = _dashboard_min_score_clauses(min_match_score)
         needs_match_join = needs_match_join or score_needs_join or True

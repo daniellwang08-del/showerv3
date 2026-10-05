@@ -83,7 +83,8 @@ const SOURCE_NAMES: Record<string, string> = {
 
 /** Where the row came from: the user, the team, or a named job board. */
 export function sourceLabel(job: DashboardJob): string {
-  if (job.added_from === 'manual' || job.from_me) return 'Added by you';
+  if (job.from_me) return 'Added by you';
+  if (job.added_from === 'manual') return job.added_by_name ? `Added by ${job.added_by_name}` : 'Added by a teammate';
   if (job.added_from === 'admin_manual') return 'Added by team';
   const key = (job.source || job.added_from || '').toLowerCase();
   if (key && key !== 'job_sites') return SOURCE_NAMES[key] ?? job.source ?? key;

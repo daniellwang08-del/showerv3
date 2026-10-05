@@ -4703,6 +4703,8 @@ export interface components {
              * @default false
              */
             from_me: boolean;
+            /** Added By Name */
+            added_by_name?: string | null;
             /**
              * Added From
              * @default job_sites
@@ -7017,6 +7019,11 @@ export interface components {
              * @default 0
              */
             good_jobs: number;
+            /**
+             * Unapplied Good Jobs
+             * @default 0
+             */
+            unapplied_good_jobs: number;
             /**
              * Qualified Jobs
              * @default 0

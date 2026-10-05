@@ -148,6 +148,7 @@ async def fetch_dashboard_stats(
                     and_(
                         UserJobStatus.status == "active",
                         Job.raw_metadata["submitted_data"].isnot(None),
+                        Job.raw_metadata["submitted_by_user_id"].as_string() == user_id,
                         or_(
                             Job.raw_metadata["submitted_by_admin"].as_string().is_(None),
                             Job.raw_metadata["submitted_by_admin"].as_string() != "true",
@@ -198,6 +199,12 @@ async def fetch_dashboard_stats(
                         JobMatchResult.overall_score < BEST_MATCH_SCORE,
                     )
                 ).label("good_jobs"),
+                func.count().filter(
+                    and_(
+                        JobMatchResult.overall_score >= GOOD_MATCH_SCORE,
+                        ValidJobUserApplication.id.is_(None),
+                    )
+                ).label("unapplied_good_jobs"),
                 func.count().filter(
                     JobMatchResult.overall_score >= qualified_min
                 ).label("qualified_jobs"),
@@ -289,6 +296,7 @@ async def fetch_dashboard_stats(
         "today_available_jobs": stats_row.today_available_jobs or 0,
         "best_jobs": stats_row.best_jobs or 0,
         "good_jobs": stats_row.good_jobs or 0,
+        "unapplied_good_jobs": stats_row.unapplied_good_jobs or 0,
         "qualified_jobs": stats_row.qualified_jobs or 0,
         "scored_jobs": stats_row.scored_jobs or 0,
         "avg_match_score": int(round(float(stats_row.avg_match_score or 0))),

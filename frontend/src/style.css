@@ -112,30 +112,32 @@ html.dark {
 }
 
 /* White surfaces -> dark glass. text-white / border-white are left intact
-   (they sit on accent buttons and glass), so only backgrounds change. */
-.dark .bg-white { background-color: #0e121d; }
-.dark .bg-white\/95 { background-color: rgba(14, 18, 29, 0.95); }
-.dark .bg-white\/90 { background-color: rgba(14, 18, 29, 0.9); }
-.dark .bg-white\/85 { background-color: rgba(14, 18, 29, 0.85); }
-.dark .bg-white\/80 { background-color: rgba(14, 18, 29, 0.8); }
-.dark .bg-white\/75 { background-color: rgba(14, 18, 29, 0.75); }
-.dark .bg-white\/70 { background-color: rgba(14, 18, 29, 0.7); }
-.dark .bg-white\/65 { background-color: rgba(14, 18, 29, 0.65); }
-.dark .bg-white\/60 { background-color: rgba(14, 18, 29, 0.6); }
-.dark .bg-white\/55 { background-color: rgba(22, 27, 40, 0.5); }
-.dark .bg-white\/50 { background-color: rgba(14, 18, 29, 0.5); }
-.dark .bg-white\/45 { background-color: rgba(22, 27, 40, 0.42); }
-.dark .bg-white\/40 { background-color: rgba(22, 27, 40, 0.4); }
-.dark .bg-white\/35 { background-color: rgba(22, 27, 40, 0.34); }
-.dark .bg-white\/30 { background-color: rgba(22, 27, 40, 0.3); }
-.dark .bg-white\/25 { background-color: rgba(22, 27, 40, 0.25); }
-.dark .bg-white\/20 { background-color: rgba(22, 27, 40, 0.2); }
-.dark .hover\:bg-white:hover { background-color: #1b2131; }
+   (they sit on accent buttons and glass), so only backgrounds change.
+   Public pages (landing-theme) are always dark and use white chips with navy
+   text on purpose, so they are excluded. */
+html.dark:not(.landing-theme) .bg-white { background-color: #0e121d; }
+html.dark:not(.landing-theme) .bg-white\/95 { background-color: rgba(14, 18, 29, 0.95); }
+html.dark:not(.landing-theme) .bg-white\/90 { background-color: rgba(14, 18, 29, 0.9); }
+html.dark:not(.landing-theme) .bg-white\/85 { background-color: rgba(14, 18, 29, 0.85); }
+html.dark:not(.landing-theme) .bg-white\/80 { background-color: rgba(14, 18, 29, 0.8); }
+html.dark:not(.landing-theme) .bg-white\/75 { background-color: rgba(14, 18, 29, 0.75); }
+html.dark:not(.landing-theme) .bg-white\/70 { background-color: rgba(14, 18, 29, 0.7); }
+html.dark:not(.landing-theme) .bg-white\/65 { background-color: rgba(14, 18, 29, 0.65); }
+html.dark:not(.landing-theme) .bg-white\/60 { background-color: rgba(14, 18, 29, 0.6); }
+html.dark:not(.landing-theme) .bg-white\/55 { background-color: rgba(22, 27, 40, 0.5); }
+html.dark:not(.landing-theme) .bg-white\/50 { background-color: rgba(14, 18, 29, 0.5); }
+html.dark:not(.landing-theme) .bg-white\/45 { background-color: rgba(22, 27, 40, 0.42); }
+html.dark:not(.landing-theme) .bg-white\/40 { background-color: rgba(22, 27, 40, 0.4); }
+html.dark:not(.landing-theme) .bg-white\/35 { background-color: rgba(22, 27, 40, 0.34); }
+html.dark:not(.landing-theme) .bg-white\/30 { background-color: rgba(22, 27, 40, 0.3); }
+html.dark:not(.landing-theme) .bg-white\/25 { background-color: rgba(22, 27, 40, 0.25); }
+html.dark:not(.landing-theme) .bg-white\/20 { background-color: rgba(22, 27, 40, 0.2); }
+html.dark:not(.landing-theme) .hover\:bg-white:hover { background-color: #1b2131; }
 /* Focus-driven white surfaces (e.g. the agent composer that flips to bg-white
    on focus-within) are a distinct utility class, so the .bg-white override
    above does not reach them - map them to the same dark surface. */
-.dark .focus-within\:bg-white:focus-within { background-color: #1b2131; }
-.dark .focus\:bg-white:focus { background-color: #1b2131; }
+html.dark:not(.landing-theme) .focus-within\:bg-white:focus-within { background-color: #1b2131; }
+html.dark:not(.landing-theme) .focus\:bg-white:focus { background-color: #1b2131; }
 
 /* Modal/overlay scrims use bg-slate-900/xx; keep them dark (the palette
    inversion would otherwise flip them to a light wash). */
@@ -174,11 +176,11 @@ html.dark {
 .dark .to-slate-900 { --tw-gradient-to: #0b0f19 var(--tw-gradient-to-position); }
 
 /* White gradient stops -> dark surface so light-to-white gradients stay dark. */
-.dark .from-white { --tw-gradient-from: #0e121d var(--tw-gradient-from-position); }
-.dark .via-white { --tw-gradient-via: #0e121d var(--tw-gradient-via-position); }
-.dark .to-white { --tw-gradient-to: #0e121d var(--tw-gradient-to-position); }
-.dark .from-white\/90 { --tw-gradient-from: rgba(14, 18, 29, 0.9) var(--tw-gradient-from-position); }
-.dark .to-white\/90 { --tw-gradient-to: rgba(14, 18, 29, 0.9) var(--tw-gradient-to-position); }
+html.dark:not(.landing-theme) .from-white { --tw-gradient-from: #0e121d var(--tw-gradient-from-position); }
+html.dark:not(.landing-theme) .via-white { --tw-gradient-via: #0e121d var(--tw-gradient-via-position); }
+html.dark:not(.landing-theme) .to-white { --tw-gradient-to: #0e121d var(--tw-gradient-to-position); }
+html.dark:not(.landing-theme) .from-white\/90 { --tw-gradient-from: rgba(14, 18, 29, 0.9) var(--tw-gradient-from-position); }
+html.dark:not(.landing-theme) .to-white\/90 { --tw-gradient-to: rgba(14, 18, 29, 0.9) var(--tw-gradient-to-position); }
 
 /* Blue chips stay as background-only overrides (blue 50/100 vars double as
    light text on the auth + agent surfaces, so they are NOT remapped above). */

@@ -18,8 +18,18 @@ describe('columnsFor', () => {
     expect(minimum).toBeLessThanOrEqual(390 - 32 - 96);
   });
 
-  it('keeps desktop widths for wider tiers', () => {
-    const title = columnsFor('full').find((c) => c.id === 'title');
-    expect(title?.width).toBe('minmax(16rem, 1fr)');
+  it('shares spare width between role, source and status on wide tables', () => {
+    const cols = columnsFor('full');
+    expect(cols.find((c) => c.id === 'title')?.width).toBe('minmax(16rem, 3fr)');
+    expect(cols.find((c) => c.id === 'source')?.width).toBe('minmax(7.5rem, 1fr)');
+    expect(cols.find((c) => c.id === 'status')?.width).toBe('minmax(9.5rem, 1fr)');
+  });
+
+  it('sizes the actions column to its inline buttons', () => {
+    const ctx = { sheetsConfigured: true, pumbleConfigured: false };
+    const width = (tier: 'full' | 'medium') => columnsFor(tier, ctx).find((c) => c.id === 'track')?.width;
+    expect(width('full')).toBe('14.75rem');
+    expect(width('medium')).toBe('7.25rem');
+    expect(columnsFor('compact', ctx).find((c) => c.id === 'track')?.width).toBe('4rem');
   });
 });

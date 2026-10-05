@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  Check,
   ClipboardCheck,
   ClipboardX,
   Copy,
@@ -51,6 +52,79 @@ function isRunning(job: DashboardJob): boolean {
     job.match_overall_score == null &&
     (job.extraction_status === 'pending' || job.extraction_status === 'processing' || job.match_in_progress)
   );
+}
+
+export interface InlineAction {
+  id: JobActionId;
+  label: string;
+  icon: LucideIcon;
+  disabled?: boolean;
+  destructive?: boolean;
+  /** Toggle actions (applied, posted) render highlighted while on. */
+  active?: boolean;
+}
+
+export type InlineDensity = 'full' | 'medium' | 'compact';
+
+/** Row actions shown as icon buttons on the table; the rest stay in the "…" menu. */
+export function inlineJobActions(job: DashboardJob, ctx: JobMenuContext, density: InlineDensity): InlineAction[] {
+  const applied = isApplied(job);
+  const appliedToggle: InlineAction = {
+    id: applied ? 'unmark-applied' : 'mark-applied',
+    label: applied ? 'Applied, click to unmark' : 'Mark as applied',
+    icon: Check,
+    active: applied,
+  };
+  if (density === 'compact') return [appliedToggle];
+  const openPosting: InlineAction = { id: 'open-url', label: 'Open posting', icon: ExternalLink, disabled: !job.source_url };
+  if (density === 'medium') return [appliedToggle, openPosting];
+
+  const ready = isApplyReady(job);
+  const actions: InlineAction[] = [
+    {
+      id: 'apply',
+      label: ready ? 'Apply with Assistant' : 'Apply with Assistant (needs a match score and documents)',
+      icon: Rocket,
+      disabled: !ready,
+    },
+    appliedToggle,
+  ];
+  if (ctx.sheetsConfigured) {
+    actions.push({
+      id: 'post-sheet',
+      label: job.sheet_posted_at ? 'Posted to Google Sheet' : 'Post to Google Sheet',
+      icon: Sheet,
+      active: Boolean(job.sheet_posted_at),
+      disabled: ctx.postingToSheet,
+    });
+  }
+  if (ctx.pumbleConfigured) {
+    actions.push({
+      id: 'post-pumble',
+      label: job.pumble_posted_at ? 'Posted to Pumble' : 'Post to Pumble',
+      icon: MessageSquare,
+      active: Boolean(job.pumble_posted_at),
+      disabled: ctx.postingToPumble,
+    });
+  }
+  actions.push(
+    openPosting,
+    { id: 'copy-url', label: 'Copy link', icon: Copy, disabled: !job.source_url },
+    {
+      id: 'prepare',
+      label: job.extraction_id ? 'Re-analyze with saved JD' : 'Extract and analyze',
+      icon: RefreshCw,
+      disabled: isRunning(job),
+    },
+    { id: 'delete', label: 'Delete', icon: Trash2, destructive: true },
+  );
+  return actions;
+}
+
+/** Grid width for the actions column: 1.75rem buttons, 0.125rem gaps, cell padding. */
+export function inlineActionsWidth(count: number): string {
+  const rem = count * 1.75 + Math.max(0, count - 1) * 0.125 + 1.75;
+  return `${rem}rem`;
 }
 
 /** Menu shared by the row "…" dropdown, the right-click menu, and the bulk bar. */

@@ -82,7 +82,8 @@ export function nextStep({ profile, stats }: HomeInputs, onboardingPending: bool
   if (!stats) return null;
   if ((stats.total_jobs ?? 0) === 0) return { kind: 'add-jobs' };
   if ((stats.ready_jobs ?? 0) > 0) return { kind: 'review-ready', count: stats.ready_jobs };
-  const good = (stats.best_jobs ?? 0) + (stats.good_jobs ?? 0);
+  // best_jobs/good_jobs include jobs already applied to; only suggest the rest.
+  const good = stats.unapplied_good_jobs ?? 0;
   if (good > 0) return { kind: 'review-matches', count: good };
   return null;
 }

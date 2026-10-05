@@ -202,16 +202,29 @@ describe('JobsPage', () => {
     expect(await screen.findByRole('button', { name: 'Post to Google Sheet' })).toBeInTheDocument();
   });
 
-  it('opens the row menu with job actions', async () => {
+  it('shows row actions inline on wide tables', async () => {
     const user = userEvent.setup();
     seed([readyJob({ id: 'a' })]);
     renderPage();
-    await user.click(screen.getByRole('button', { name: 'Job actions' }));
-    const menu = await screen.findByRole('menu');
-    expect(within(menu).getByRole('menuitem', { name: /Apply with Assistant/ })).toBeInTheDocument();
-    await user.click(within(menu).getByRole('menuitem', { name: /Re-analyze/ }));
+    expect(screen.queryByRole('button', { name: 'Job actions' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply with Assistant' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open posting' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Re-analyze/ }));
     await waitFor(() => expect(actions.rerunJob).toHaveBeenCalledWith('a', { forceRescrape: false }));
-    // Menu items live in a portal; their clicks must not bubble into the row and open details.
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Delete this job?');
+    // Inline buttons must not bubble into the row and open details.
+    expect(screen.getByTestId('location')).not.toHaveTextContent('job=');
+  });
+
+  it('keeps Apply visible but inert until the job is ready', async () => {
+    const user = userEvent.setup();
+    seed([makeJob({ id: 'a', title: 'Alpha' })]);
+    renderPage();
+    const apply = screen.getByRole('button', { name: /Apply with Assistant/ });
+    expect(apply).toHaveAttribute('aria-disabled', 'true');
+    await user.click(apply);
     expect(screen.getByTestId('location')).not.toHaveTextContent('job=');
   });
 

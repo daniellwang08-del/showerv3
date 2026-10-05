@@ -2100,6 +2100,22 @@ button.row:hover,
   gap: 14px;
 }
 
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--subtle-foreground);
+  font-size: 12px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 .login-server {
   display: flex;
   justify-content: center;

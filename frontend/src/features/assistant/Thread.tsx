@@ -173,7 +173,7 @@ function toBlocks(timeline: TimelineItem[]): Block[] {
 
 export function Thread({ className, compact }: { className?: string; compact?: boolean }) {
   const timeline = useAgentStore((s) => s.timeline);
-  const sending = useAgentStore((s) => s.sending);
+  const sending = useAgentStore((s) => s.sending && s.sendingSessionId === s.sessionId);
   const endRef = useRef<HTMLDivElement>(null);
   const last = timeline[timeline.length - 1];
   const waiting = sending && (!last || (last.kind === 'assistant' && !last.text.trim()) || last.kind === 'user');

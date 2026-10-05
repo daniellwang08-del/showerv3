@@ -40,6 +40,10 @@ const AdminDataPage = named(() => import('./features/admin/data/AdminDataPage'),
 const AdminUsersPage = named(() => import('./features/admin/users/AdminUsersPage'), 'AdminUsersPage');
 const AdminSystemPage = named(() => import('./features/admin/system/AdminSystemPage'), 'AdminSystemPage');
 const AdminLogsPage = named(() => import('./features/admin/logs/AdminLogsPage'), 'AdminLogsPage');
+const ExtensionConnectPage = named(
+  () => import('./features/extension/ExtensionConnectPage'),
+  'ExtensionConnectPage',
+);
 
 function isLogsHost(): boolean {
   if (typeof window === 'undefined') return false;
@@ -95,7 +99,7 @@ const SESSION_CACHE_KEYS = ['applicant_scraper_stats_v1', 'admin_scraper_stats_v
 function claimBrowserData(userId: string | null) {
   const shell = useShellStore.getState();
   if (shell.owner === userId) return;
-  useAgentStore.getState().clear();
+  useAgentStore.getState().reset({ dropLegacy: true });
   for (const key of SESSION_CACHE_KEYS) sessionStorage.removeItem(key);
   shell.setOwner(userId);
 }
@@ -223,13 +227,16 @@ function App() {
   useWebSocket(!!isAuthenticated, onWsEvent);
 
   useEffect(() => {
-    if (user?.id) claimBrowserData(user.id);
-  }, [user?.id]);
+    if (!user?.id) return;
+    claimBrowserData(user.id);
+    if (!user.is_admin) void useAgentStore.getState().init(user.id);
+  }, [user?.id, user?.is_admin]);
 
   const handleLogout = useCallback(async () => {
     await logout();
     queryClient.clear();
     claimBrowserData(null);
+    useAgentStore.getState().reset();
     // In-memory stores still hold the previous account's jobs; start the next session clean.
     window.location.replace('/login');
   }, [logout]);
@@ -349,6 +356,15 @@ function App() {
           }
         />
         <Route
+          path="/extension/connect"
+          element={
+            <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
+              <PageTitle title="Connect extension" />
+              <ExtensionConnectPage email={user?.email} />
+            </Suspense>
+          }
+        />
+        <Route
           path="/app"
           element={
             isAdmin ? (
@@ -360,6 +376,7 @@ function App() {
         >
           <Route index element={<Page><HomePage firstName={firstName} userId={user?.id} /></Page>} />
           <Route path="assistant" element={<Page><AssistantPage /></Page>} />
+          <Route path="assistant/:sessionId" element={<Page><AssistantPage /></Page>} />
           <Route path="jobs" element={<Page title="Jobs"><JobsPage /></Page>} />
           <Route path="analysis" element={<Page><InsightsPage /></Page>} />
           <Route path="documents" element={<Page><DocumentsPage /></Page>} />

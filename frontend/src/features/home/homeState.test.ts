@@ -49,11 +49,19 @@ describe('nextStep', () => {
       kind: 'review-ready',
       count: 2,
     });
-    expect(nextStep({ ...base, stats: stats({ total_jobs: 4, best_jobs: 1, good_jobs: 2 }) }, false)).toEqual({
+    expect(
+      nextStep({ ...base, stats: stats({ total_jobs: 4, best_jobs: 1, good_jobs: 2, unapplied_good_jobs: 3 }) }, false),
+    ).toEqual({
       kind: 'review-matches',
       count: 3,
     });
     expect(nextStep({ ...base, stats: stats({ total_jobs: 4 }) }, false)).toBeNull();
+  });
+
+  it('does not suggest good matches that were all applied to', () => {
+    const base = { profile: completeProfile, settings: undefined };
+    const allApplied = stats({ total_jobs: 4, best_jobs: 1, good_jobs: 0, unapplied_good_jobs: 0, applied_jobs: 4 });
+    expect(nextStep({ ...base, stats: allApplied }, false)).toBeNull();
   });
 });
 

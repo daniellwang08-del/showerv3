@@ -85,7 +85,9 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
           <input
             className={glassInputClass}
             id="login-email"
+            name="email"
             type="email"
+            autoComplete="username"
             placeholder="name@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -103,7 +105,9 @@ export function LoginForm({ onLogin, onSwitchToSignup }: LoginFormProps) {
           <input
             className={`${glassInputClass} pr-11`}
             id="login-password"
+            name="password"
             type={showPassword ? 'text' : 'password'}
+            autoComplete="current-password"
             placeholder="••••••••"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

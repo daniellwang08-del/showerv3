@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeJob, readyJob } from '@/test/jobFixtures';
-import { buildJobMenu, type JobMenuEntry, type JobMenuItem } from './jobMenu';
+import { buildJobMenu, inlineJobActions, type JobMenuEntry, type JobMenuItem } from './jobMenu';
 
 const noIntegrations = { sheetsConfigured: false, pumbleConfigured: false };
 const ids = (entries: JobMenuEntry[]) =>
@@ -37,6 +37,22 @@ describe('buildJobMenu', () => {
     }).filter((e): e is JobMenuItem => e !== 'separator');
     expect(entries.find((e) => e.id === 'post-sheet')?.disabled).toBe(true);
     expect(entries.find((e) => e.id === 'post-pumble')?.disabled).toBeFalsy();
+  });
+
+  it('puts every row action inline on wide tables and a short set on narrow ones', () => {
+    const inline = (job = makeJob(), density: 'full' | 'medium' | 'compact' = 'full', ctx = noIntegrations) =>
+      inlineJobActions(job, ctx, density).map((a) => a.id);
+    expect(inline()).toEqual(['apply', 'mark-applied', 'open-url', 'copy-url', 'prepare', 'delete']);
+    expect(inline(makeJob(), 'full', { sheetsConfigured: true, pumbleConfigured: true })).toEqual([
+      'apply', 'mark-applied', 'post-sheet', 'post-pumble', 'open-url', 'copy-url', 'prepare', 'delete',
+    ]);
+    expect(inline(makeJob(), 'medium')).toEqual(['mark-applied', 'open-url']);
+    expect(inline(makeJob(), 'compact')).toEqual(['mark-applied']);
+    expect(inline(makeJob({ applied_at: '2026-10-01T00:00:00Z' }), 'compact')).toEqual(['unmark-applied']);
+    const apply = (job: ReturnType<typeof makeJob>) =>
+      inlineJobActions(job, noIntegrations, 'full').find((a) => a.id === 'apply');
+    expect(apply(makeJob())?.disabled).toBe(true);
+    expect(apply(readyJob())?.disabled).toBe(false);
   });
 
   it('disables re-analysis while a job is still being read', () => {

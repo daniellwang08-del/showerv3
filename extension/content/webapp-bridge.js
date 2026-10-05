@@ -132,8 +132,58 @@
     }
     if (JOB_SITE_TYPES[data.type]) {
       forwardJobSite(data, event.origin || "*");
+      return;
+    }
+    if (data.type === "CONNECT_EXTENSION") {
+      void connectExtensionSession(data.requestId || null, event.origin || "*");
     }
   });
+
+  // Website sign-in for the extension. The token is fetched here, in the
+  // content script, and goes straight to the worker; page scripts never see it.
+  function connectExtensionSession(requestId, targetOrigin) {
+    const done = function (payload) {
+      reply("CONNECT_EXTENSION_RESULT", Object.assign({ requestId: requestId }, payload), targetOrigin);
+    };
+    return fetch(location.origin + "/api/v1/auth/extension-token", {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-NAO-Extension-Connect": "1" },
+    })
+      .then(function (res) {
+        return res.json().then(
+          function (body) {
+            return { res: res, body: body };
+          },
+          function () {
+            return { res: res, body: null };
+          },
+        );
+      })
+      .then(function (out) {
+        const body = out.body || {};
+        if (!out.res.ok || !body.access_token) {
+          done({ ok: false, error: (body && body.detail) || "Could not create an extension session." });
+          return;
+        }
+        chrome.runtime.sendMessage(
+          {
+            type: "WEBAPP_EXTENSION_SESSION",
+            token: body.access_token,
+            user: { user_id: body.user_id, email: body.email },
+            backendUrl: location.origin,
+          },
+          function (response) {
+            void chrome.runtime.lastError;
+            const ok = !!(response && response.ok);
+            done(ok ? { ok: true, email: body.email } : { ok: false, error: (response && response.error) || "The extension did not respond." });
+          },
+        );
+      })
+      .catch(function () {
+        done({ ok: false, error: "Could not reach the server." });
+      });
+  }
 
   // Background → dashboard (navigation logs, status updates, captured session).
   try {

@@ -1,4 +1,4 @@
-import { API_BASE_URL } from './client';
+import { API_BASE_URL, apiClient } from './client';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,4 +136,51 @@ export async function streamAgentChat(
   // Flush any trailing frame without a terminating blank line.
   const tail = parseFrame(buffer);
   if (tail) onEvent(tail);
+}
+
+// ---------------------------------------------------------------------------
+// Saved chats
+// ---------------------------------------------------------------------------
+
+export interface AgentSessionSummary {
+  id: string;
+  title: string;
+  item_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentSessionDetail<Item = Record<string, unknown>> extends AgentSessionSummary {
+  items: Item[];
+}
+
+export async function listAgentSessions(limit = 200): Promise<AgentSessionSummary[]> {
+  const { data } = await apiClient.get<AgentSessionSummary[]>('/agent/sessions', { params: { limit } });
+  return data;
+}
+
+export async function fetchAgentSession<Item>(id: string): Promise<AgentSessionDetail<Item>> {
+  const { data } = await apiClient.get<AgentSessionDetail<Item>>(`/agent/sessions/${encodeURIComponent(id)}`);
+  return data;
+}
+
+export async function saveAgentSession(
+  id: string,
+  items: unknown[],
+  title?: string,
+): Promise<AgentSessionSummary> {
+  const { data } = await apiClient.put<AgentSessionSummary>(`/agent/sessions/${encodeURIComponent(id)}`, {
+    items,
+    ...(title ? { title } : {}),
+  });
+  return data;
+}
+
+export async function renameAgentSession(id: string, title: string): Promise<AgentSessionSummary> {
+  const { data } = await apiClient.patch<AgentSessionSummary>(`/agent/sessions/${encodeURIComponent(id)}`, { title });
+  return data;
+}
+
+export async function deleteAgentSession(id: string): Promise<void> {
+  await apiClient.delete(`/agent/sessions/${encodeURIComponent(id)}`);
 }

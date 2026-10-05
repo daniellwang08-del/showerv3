@@ -74,11 +74,12 @@ export async function openJob(jobId, { navigate = false, context, keepReportNoti
     if (seq !== openSeq) return;
     const job = jobFromSession(session);
     job.engine = resolveEngine({ snapshot: job.snapshot });
-    if (navigate && job.url) await openInWorkTab(job.url);
+    const tabId = navigate && job.url ? await openInWorkTab(job.url) : null;
     if (seq !== openSeq) return;
     setState({ job });
     markSeen(id);
     chrome.storage.session.set({ activeApplyJobId: id }).catch(() => {});
+    void rememberApplyTab(id, tabId);
     void armAskHotkey({ requestPermission: true, jobUrl: job.url });
     if (navigate) setTimeout(() => void armAskHotkey({ requestPermission: false, jobUrl: job.url }), 1800);
     void consumePendingAskSelection();
@@ -117,6 +118,20 @@ export function openFromSessions(jobId, ids) {
     navigate: true,
     context: { listId: "progress", title: "In progress", query: null, ids: ids.map(String), page: 1, pages: 1, seen: [] },
   });
+}
+
+/** Bind the tab showing this job's application, so a submit there is credited to it. */
+async function rememberApplyTab(jobId, tabId) {
+  try {
+    const id = tabId != null ? tabId : (await getWebWorkTab())?.id;
+    if (id == null) return;
+    const { applyTabJobs } = await chrome.storage.session.get("applyTabJobs");
+    await chrome.storage.session.set({
+      applyTabJobs: { ...(applyTabJobs || {}), [String(id)]: { jobId, at: Date.now() } },
+    });
+  } catch {
+    /* session storage unavailable */
+  }
 }
 
 function markSeen(jobId) {
@@ -377,7 +392,11 @@ export async function completeJob({ next }) {
   }
 }
 
-/** The application page reported a submit: same as "Applied, next job". */
+/**
+ * The application page reported a submit. For the job on screen this is the
+ * same as "Applied, next job"; for a job the panel has moved away from, the
+ * application is still recorded, just without navigating.
+ */
 export async function handleApplicationSubmitted(msg) {
   chrome.storage.session.remove("pendingAppSubmitted").catch(() => {});
   if (completeInFlight || autoCompleting) return;
@@ -385,10 +404,14 @@ export async function handleApplicationSubmitted(msg) {
   if (state.autofill && state.autofill.running) return;
   const now = Date.now();
   if (lastAdvanceAt && now - lastAdvanceAt < ADVANCE_COOLDOWN_MS) return;
-  if (state.view !== "job" || !state.job || state.job.applied) return;
-  const jobId = state.job.job_id;
   const msgJobId = msg && msg.jobId != null ? String(msg.jobId) : "";
-  if (msgJobId && msgJobId !== jobId) return;
+  const onScreen = state.view === "job" && state.job ? state.job.job_id : "";
+  if (!onScreen || (msgJobId && msgJobId !== onScreen)) {
+    if (msgJobId) await recordAppliedOffScreen(msgJobId);
+    return;
+  }
+  if (state.job.applied) return;
+  const jobId = onScreen;
   if (lastAutoJobId === jobId && now - lastAutoAt < SUBMIT_REPEAT_MS) return;
   lastAutoJobId = jobId;
   lastAutoAt = now;
@@ -398,6 +421,33 @@ export async function handleApplicationSubmitted(msg) {
     await completeJob({ next: true });
   } finally {
     autoCompleting = false;
+  }
+}
+
+async function recordAppliedOffScreen(jobId) {
+  if (lastAutoJobId === jobId && Date.now() - lastAutoAt < SUBMIT_REPEAT_MS) return;
+  lastAutoJobId = jobId;
+  lastAutoAt = Date.now();
+  try {
+    const marked = await api.markApplied([jobId]);
+    if (!marked || !(Number(marked.marked) > 0)) return;
+    api.updateSession(jobId, "completed").catch(() => {});
+    toast("Application submitted. Marked as applied.", "ok");
+  } catch (err) {
+    toast(messageOf(err, "Could not mark the submitted job as applied."), "danger");
+  }
+}
+
+/** A submit recorded by the background while the panel was closed. */
+export async function consumeAppliedInBackground() {
+  try {
+    const { appliedInBackground: done } = await chrome.storage.session.get("appliedInBackground");
+    if (!done || !done.jobId) return;
+    await chrome.storage.session.remove("appliedInBackground");
+    if (Date.now() - Number(done.at || 0) > 6 * 60 * 60 * 1000) return;
+    toast("Your submitted application was marked as applied.", "ok");
+  } catch {
+    /* session storage unavailable */
   }
 }
 
@@ -562,6 +612,7 @@ export async function consumePendingWebappJob() {
 }
 
 export async function consumePendingHandoffs() {
+  await consumeAppliedInBackground();
   await consumePendingWebappJob();
 }
 

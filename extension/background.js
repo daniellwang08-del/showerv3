@@ -1,9 +1,10 @@
 // Dashboard origins: production (nao.it.com), localhost, and private LAN.
 // Chrome match patterns ignore ports, so LAN inject covers any Vite port (e.g. :5173).
 
-import { getBackendUrl, normalizeBackendUrl, setBackendUrl } from "./src/storage.js";
+import { getBackendUrl, normalizeBackendUrl, setBackendUrl, setCurrentUser, setToken } from "./src/storage.js";
 import { isDashboardUrl } from "./src/backendOrigin.js";
 import { attachMessageHandlers as attachJobSiteConnectHandlers } from "./src/jobSiteConnect.js";
+import * as api from "./src/api.js";
 
 const BRIDGE_FILE = "content/webapp-bridge.js";
 
@@ -159,6 +160,26 @@ const PENDING_JOB_KEY = "pendingWebappJob";
 attachJobSiteConnectHandlers();
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === "WEBAPP_EXTENSION_SESSION") {
+    (async () => {
+      try {
+        const from = sender && (sender.url || (sender.tab && sender.tab.url));
+        if (!sender || sender.id !== chrome.runtime.id || !isDashboardUrl(from) || !msg.token || !msg.user) {
+          sendResponse({ ok: false, error: "Sign-in must come from the NAO website." });
+          return;
+        }
+        await syncBackendUrl(msg.backendUrl || new URL(from).origin);
+        await setToken(String(msg.token));
+        await setCurrentUser({ user_id: String(msg.user.user_id), email: String(msg.user.email || "") });
+        chrome.runtime.sendMessage({ type: "SESSION_CHANGED" }).catch(() => {});
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: String((err && err.message) || err) });
+      }
+    })();
+    return true;
+  }
+
   if (msg && msg.type === "SYNC_BACKEND_URL" && msg.backendUrl) {
     (async () => {
       try {
@@ -388,31 +409,75 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
-  // Application submit detected on the page → side panel Complete & Next.
-  // Bind to activeApplyJobId and globally debounce so multi-frame submit-watch
-  // + Workday detect cannot stash a second event that completes the *next* job.
+  // Application submit detected on the page. Resolve which job it belongs to
+  // (the tab the panel opened it in wins over the panel's current job), then
+  // hand it to the open panel, or record it here when no panel is open.
   if (msg && msg.type === "APP_SUBMITTED") {
-    chrome.storage.session
-      .get(["activeApplyJobId", "lastAppSubmittedAt"])
-      .then((data) => {
-        const now = msg.at || Date.now();
-        const last = Number((data && data.lastAppSubmittedAt) || 0);
-        if (last && now - last < 10_000) return;
-        const jobId = (data && data.activeApplyJobId) || msg.jobId || "";
-        return chrome.storage.session.set({
-          lastAppSubmittedAt: now,
-          pendingAppSubmitted: {
-            reason: msg.reason || "submit",
-            url: msg.url || "",
-            at: now,
-            jobId: jobId ? String(jobId) : "",
-          },
-        });
-      })
-      .catch(() => {});
+    void handleAppSubmitted(msg, sender);
     sendResponse({ ok: true });
     return false;
   }
 
   return false;
+});
+
+const APPLY_TAB_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+async function resolveSubmittedJobId(msg, sender) {
+  const data = await chrome.storage.session.get(["activeApplyJobId", "applyTabJobs"]);
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+  const byTab = tabId != null && data.applyTabJobs ? data.applyTabJobs[String(tabId)] : null;
+  if (byTab && byTab.jobId && Date.now() - Number(byTab.at || 0) < APPLY_TAB_MAX_AGE_MS) {
+    return String(byTab.jobId);
+  }
+  return String((data && data.activeApplyJobId) || msg.jobId || "");
+}
+
+async function isPanelOpen() {
+  if (!chrome.runtime.getContexts) return false;
+  try {
+    const contexts = await chrome.runtime.getContexts({});
+    return contexts.some((c) => String(c.documentUrl || "").includes("/sidepanel.html"));
+  } catch {
+    return false;
+  }
+}
+
+async function handleAppSubmitted(msg, sender) {
+  try {
+    // Multi-frame submit-watch and Workday detection can both fire for one
+    // submit; a second event must not complete the *next* job.
+    const { lastAppSubmittedAt } = await chrome.storage.session.get("lastAppSubmittedAt");
+    const now = msg.at || Date.now();
+    if (lastAppSubmittedAt && now - Number(lastAppSubmittedAt) < 10_000) return;
+    const jobId = await resolveSubmittedJobId(msg, sender);
+    if (!jobId) return;
+    const report = { reason: msg.reason || "submit", url: msg.url || "", at: now, jobId };
+    await chrome.storage.session.set({ lastAppSubmittedAt: now });
+
+    if (await isPanelOpen()) {
+      await chrome.storage.session.set({ pendingAppSubmitted: report });
+      chrome.runtime.sendMessage({ type: "APP_SUBMITTED_RESOLVED", ...report }).catch(() => {});
+      return;
+    }
+    const marked = await api.markApplied([jobId]);
+    if (marked && Number(marked.marked) > 0) {
+      api.updateSession(jobId, "completed").catch(() => {});
+      await chrome.storage.session.set({ appliedInBackground: { jobId, at: now } });
+    }
+  } catch (err) {
+    console.warn("app submit handling failed", err);
+  }
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.session
+    .get("applyTabJobs")
+    .then(({ applyTabJobs }) => {
+      if (!applyTabJobs || !applyTabJobs[String(tabId)]) return;
+      const next = { ...applyTabJobs };
+      delete next[String(tabId)];
+      return chrome.storage.session.set({ applyTabJobs: next });
+    })
+    .catch(() => {});
 });

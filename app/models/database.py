@@ -781,6 +781,26 @@ class AssistantMessage(Base):
     )
 
 
+class AgentChatSession(Base):
+    """One conversation with the in-app assistant. ``items`` is the rendered
+    timeline (user and assistant turns, tool rows, confirmations), so reopening
+    a chat shows exactly what the user saw. Kept until the user deletes it.
+    """
+    __tablename__ = "agent_chat_sessions"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(200), nullable=False, server_default="New chat")
+    items = Column(JSON, nullable=False)
+    item_count = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_agent_chat_sessions_user_updated", "user_id", "updated_at"),
+    )
+
+
 class SystemSetting(Base):
     """DB overrides for allowlisted Settings fields (admin System Settings)."""
 

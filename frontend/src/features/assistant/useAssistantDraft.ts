@@ -12,11 +12,17 @@ export const ASSISTANT_SUGGESTIONS = [
 
 /**
  * One composer, two intents: text that is only job links is submitted to the
- * pipeline; anything else is a question for the assistant.
+ * pipeline; anything else is a question for the assistant. With
+ * `onStartChat`, a question opens a new saved chat and reports its id.
  */
-export function useAssistantDraft(opts?: { onAsk?: () => void; onSubmitUrls?: () => void }) {
+export function useAssistantDraft(opts?: {
+  onAsk?: () => void;
+  onSubmitUrls?: () => void;
+  onStartChat?: (sessionId: string) => void;
+}) {
   const [draft, setDraft] = useState('');
   const send = useAgentStore((s) => s.send);
+  const startChat = useAgentStore((s) => s.startChat);
   const sending = useAgentStore((s) => s.sending);
   const [submittingUrls, setSubmittingUrls] = useState(false);
 
@@ -39,8 +45,13 @@ export function useAssistantDraft(opts?: { onAsk?: () => void; onSubmitUrls?: ()
       }
       return;
     }
+    if (sending) return;
     setDraft('');
     opts?.onAsk?.();
+    if (opts?.onStartChat) {
+      opts.onStartChat(startChat(text));
+      return;
+    }
     await send(text);
   };
 

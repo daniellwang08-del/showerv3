@@ -1,8 +1,14 @@
 import { create } from 'zustand';
 import {
+  deleteAgentSession,
+  fetchAgentSession,
+  listAgentSessions,
+  renameAgentSession,
+  saveAgentSession,
   streamAgentChat,
   type AgentEvent,
   type AgentJobCard,
+  type AgentSessionSummary,
   type AgentTurnInput,
   type ConfirmedAction,
 } from '../api/agentApi';
@@ -39,30 +45,71 @@ export type TimelineItem =
   | { id: string; kind: 'confirm'; tool: string; title: string; args: Record<string, unknown>; summary: string; resolved?: 'confirmed' | 'cancelled' }
   | { id: string; kind: 'error'; text: string };
 
+export type SessionLoad = 'idle' | 'loading' | 'not_found' | 'error';
+
 interface AgentState {
   open: boolean;
+  /** A reply is streaming. Only one turn runs at a time, possibly in a chat that is not open. */
   sending: boolean;
+  sendingSessionId: string | null;
+  /** Chat currently shown. null means a new chat that has no messages yet. */
+  sessionId: string | null;
   timeline: TimelineItem[];
+  sessions: AgentSessionSummary[];
+  sessionsLoaded: boolean;
+  sessionLoad: SessionLoad;
+  saveFailed: boolean;
 
   openChat: () => void;
   closeChat: () => void;
   toggleChat: () => void;
+  /** Load saved chats for this account and restore the last open one. */
+  init: (userId: string) => Promise<void>;
+  /** Forget everything in memory (account switch or sign-out). Saved chats stay on the server. */
+  reset: (opts?: { dropLegacy?: boolean }) => void;
+  loadSessions: () => Promise<void>;
+  /** Start a fresh chat. Earlier chats stay saved. */
   clear: () => void;
+  openSession: (id: string) => Promise<void>;
+  deleteSession: (id: string) => Promise<void>;
+  renameSession: (id: string, title: string) => Promise<void>;
+  /** Start a new chat with `message` and return its id (for navigation). */
+  startChat: (message: string) => string;
   send: (message: string) => Promise<void>;
   confirmAction: (itemId: string) => Promise<void>;
   cancelAction: (itemId: string) => void;
   discardAction: (itemId: string) => Promise<void>;
 }
 
-const STORAGE_KEY = 'job_scraper:agent_timeline:v1';
-const MAX_PERSISTED = 60;
+/** Pre-session builds kept a single timeline here; it is uploaded once as a saved chat. */
+const LEGACY_STORAGE_KEY = 'job_scraper:agent_timeline:v1';
+const ACTIVE_KEY_PREFIX = 'job_scraper:agent_active:v1:';
+const SAVE_DELAY_MS = 600;
+const TITLE_CHARS = 80;
 
 let _counter = 0;
 const uid = () => `agent-${Date.now()}-${++_counter}`;
 
-function loadTimeline(): TimelineItem[] {
+export function newSessionId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  const b = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === 'function') c.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+function titleFrom(text: string): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  return t.length > TITLE_CHARS ? `${t.slice(0, TITLE_CHARS - 3).trimEnd()}...` : t || 'New chat';
+}
+
+function loadLegacyTimeline(): TimelineItem[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as TimelineItem[]) : [];
@@ -71,16 +118,37 @@ function loadTimeline(): TimelineItem[] {
   }
 }
 
-function persist(timeline: TimelineItem[]) {
+function dropLegacyTimeline() {
   try {
-    // Drop transient "running" tool states before persisting.
-    const clean = timeline
-      .filter((i) => !(i.kind === 'tool' && i.status === 'running'))
-      .slice(-MAX_PERSISTED);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
-    // ignore quota / serialization errors
+    // ignore
   }
+}
+
+function readActive(userId: string): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_KEY_PREFIX + userId);
+  } catch {
+    return null;
+  }
+}
+
+function writeActive(userId: string | null, sessionId: string | null) {
+  if (!userId) return;
+  try {
+    if (sessionId) localStorage.setItem(ACTIVE_KEY_PREFIX + userId, sessionId);
+    else localStorage.removeItem(ACTIVE_KEY_PREFIX + userId);
+  } catch {
+    // ignore
+  }
+}
+
+/** What gets saved: no spinners that would never finish, no empty reply placeholders. */
+export function persistableItems(timeline: TimelineItem[]): TimelineItem[] {
+  return timeline.filter(
+    (i) => !(i.kind === 'tool' && i.status === 'running') && !(i.kind === 'assistant' && !i.text.trim()),
+  );
 }
 
 const tz = (): string | undefined => {
@@ -94,7 +162,7 @@ const tz = (): string | undefined => {
 function historyFrom(timeline: TimelineItem[]): AgentTurnInput[] {
   return timeline
     .filter((i): i is Extract<TimelineItem, { kind: 'user' | 'assistant' }> =>
-      i.kind === 'user' || i.kind === 'assistant',
+      (i.kind === 'user' || i.kind === 'assistant') && !!i.text.trim(),
     )
     .map((i) => ({ role: i.kind, content: i.text }));
 }
@@ -153,20 +221,70 @@ function attachDashboardDiscard(prev: TimelineItem[], snapshot: AgentDashboardSn
   return next;
 }
 
+function upsertSummary(list: AgentSessionSummary[], summary: AgentSessionSummary): AgentSessionSummary[] {
+  return [summary, ...list.filter((s) => s.id !== summary.id)];
+}
+
 export const useAgentStore = create<AgentState>((set, get) => {
-  /** Mutate the timeline, persist, and return nothing. */
-  const update = (fn: (prev: TimelineItem[]) => TimelineItem[]) => {
-    set((s) => {
-      const timeline = fn(s.timeline);
-      persist(timeline);
-      return { timeline };
+  let owner: string | null = null;
+  /** Latest timeline per chat touched in this tab, including a chat whose reply is still streaming in the background. */
+  const buffers = new Map<string, TimelineItem[]>();
+  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const saveChains = new Map<string, Promise<void>>();
+  let generation = 0;
+
+  const flushSave = (sid: string) => {
+    const timer = saveTimers.get(sid);
+    if (timer) clearTimeout(timer);
+    saveTimers.delete(sid);
+    const gen = generation;
+    const prev = saveChains.get(sid) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      if (gen !== generation) return;
+      const items = persistableItems(buffers.get(sid) ?? []);
+      if (!items.length) return;
+      try {
+        const summary = await saveAgentSession(sid, items);
+        if (gen !== generation) return;
+        set((s) => ({ sessions: upsertSummary(s.sessions, summary), saveFailed: false }));
+      } catch {
+        if (gen === generation) set({ saveFailed: true });
+      }
     });
+    saveChains.set(sid, next);
+    return next;
   };
 
-  const handleEvent = (event: AgentEvent, assistantId: string) => {
+  const scheduleSave = (sid: string) => {
+    const timer = saveTimers.get(sid);
+    if (timer) clearTimeout(timer);
+    saveTimers.set(
+      sid,
+      setTimeout(() => void flushSave(sid), SAVE_DELAY_MS),
+    );
+  };
+
+  /** Mutate one chat's timeline; it is shown if it is the open chat, and saved either way. */
+  const update = (sid: string, fn: (prev: TimelineItem[]) => TimelineItem[]) => {
+    const next = fn(buffers.get(sid) ?? []);
+    buffers.set(sid, next);
+    if (get().sessionId === sid) set({ timeline: next });
+    scheduleSave(sid);
+  };
+
+  /** The user picked a chat (or a new one) since init started, so don't restore the last open chat over it. */
+  let chosen = false;
+
+  const show = (sid: string | null, timeline: TimelineItem[], sessionLoad: SessionLoad = 'idle') => {
+    chosen = true;
+    set({ sessionId: sid, timeline, sessionLoad });
+    writeActive(owner, sid);
+  };
+
+  const handleEvent = (event: AgentEvent, sid: string, assistantId: string) => {
     switch (event.type) {
       case 'tool_call':
-        update((prev) => [
+        update(sid, (prev) => [
           ...prev,
           {
             id: uid(),
@@ -182,7 +300,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
       case 'tool_result': {
         const data = event.data as { jobs?: AgentJobCard[] } | undefined;
         const jobs = Array.isArray(data?.jobs) ? data!.jobs : undefined;
-        update((prev) => {
+        update(sid, (prev) => {
           // Update the most recent running tool row for this tool.
           const idx = [...prev]
             .map((i, n) => ({ i, n }))
@@ -216,12 +334,12 @@ export const useAgentStore = create<AgentState>((set, get) => {
           const snapshot = scraper.captureAgentDashboardSnapshot();
           agentNavigate('/app/jobs');
           scraper.applyAgentDashboard(event.filters || {});
-          update((prev) => attachDashboardDiscard(prev, snapshot));
+          update(sid, (prev) => attachDashboardDiscard(prev, snapshot));
         }
         break;
 
       case 'confirm':
-        update((prev) => [
+        update(sid, (prev) => [
           ...prev,
           {
             id: uid(),
@@ -235,7 +353,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         break;
 
       case 'message':
-        update((prev) =>
+        update(sid, (prev) =>
           prev.map((i) =>
             i.id === assistantId && i.kind === 'assistant' ? { ...i, text: event.text } : i,
           ),
@@ -243,7 +361,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         break;
 
       case 'error':
-        update((prev) => [
+        update(sid, (prev) => [
           ...prev.filter((i) => i.id !== assistantId),
           { id: uid(), kind: 'error', text: event.message },
         ]);
@@ -256,65 +374,216 @@ export const useAgentStore = create<AgentState>((set, get) => {
   };
 
   const runTurn = async (
+    sid: string,
     message: string,
     history: AgentTurnInput[],
     confirmed: ConfirmedAction | null,
   ) => {
     // Placeholder assistant bubble we fill from the final `message` event.
     const assistantId = uid();
-    update((prev) => [...prev, { id: assistantId, kind: 'assistant', text: '' }]);
-    set({ sending: true });
+    update(sid, (prev) => [...prev, { id: assistantId, kind: 'assistant', text: '' }]);
+    set({ sending: true, sendingSessionId: sid });
 
     try {
       await streamAgentChat(
         { message, history, timezone: tz(), confirmed },
-        (event) => handleEvent(event, assistantId),
+        (event) => handleEvent(event, sid, assistantId),
       );
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'Something went wrong.';
-      update((prev) => [
+      update(sid, (prev) => [
         ...prev.filter((i) => i.id !== assistantId),
         { id: uid(), kind: 'error', text: detail },
       ]);
     } finally {
       // Remove an empty placeholder if the turn ended without a final message.
-      update((prev) =>
+      update(sid, (prev) =>
         prev.filter((i) => !(i.id === assistantId && i.kind === 'assistant' && !i.text.trim())),
       );
-      set({ sending: false });
+      set({ sending: false, sendingSessionId: null });
+      await flushSave(sid);
     }
+  };
+
+  /** Ensure the open chat has an id, creating one for a brand-new chat. */
+  const ensureSession = (firstMessage: string): string => {
+    const current = get().sessionId;
+    if (current) return current;
+    const sid = newSessionId();
+    const now = new Date().toISOString();
+    buffers.set(sid, []);
+    show(sid, []);
+    set((s) => ({
+      sessions: upsertSummary(s.sessions, {
+        id: sid,
+        title: titleFrom(firstMessage),
+        item_count: 0,
+        created_at: now,
+        updated_at: now,
+      }),
+    }));
+    return sid;
+  };
+
+  const migrateLegacy = async () => {
+    const legacy = persistableItems(loadLegacyTimeline());
+    if (!legacy.length) {
+      dropLegacyTimeline();
+      return;
+    }
+    const sid = newSessionId();
+    const gen = generation;
+    try {
+      const summary = await saveAgentSession(sid, legacy);
+      dropLegacyTimeline();
+      if (gen !== generation) return;
+      buffers.set(sid, legacy);
+      set((s) => ({ sessions: upsertSummary(s.sessions, summary) }));
+      if (!chosen) show(sid, legacy);
+    } catch {
+      // Keep the local copy and try again on the next start.
+    }
+  };
+
+  const doSend = async (sid: string, text: string) => {
+    const history = historyFrom(buffers.get(sid) ?? []);
+    update(sid, (prev) => [...prev, { id: uid(), kind: 'user', text }]);
+    await runTurn(sid, text, history, null);
   };
 
   return {
     open: false,
     sending: false,
-    timeline: loadTimeline(),
+    sendingSessionId: null,
+    sessionId: null,
+    timeline: [],
+    sessions: [],
+    sessionsLoaded: false,
+    sessionLoad: 'idle',
+    saveFailed: false,
 
     openChat: () => set({ open: true }),
     closeChat: () => set({ open: false }),
     toggleChat: () => set((s) => ({ open: !s.open })),
 
+    init: async (userId: string) => {
+      if (owner === userId) return;
+      owner = userId;
+      const active = readActive(userId);
+      await get().loadSessions();
+      await migrateLegacy();
+      if (active && !chosen && owner === userId) await get().openSession(active);
+    },
+
+    reset: (opts) => {
+      generation += 1;
+      owner = null;
+      chosen = false;
+      buffers.clear();
+      for (const t of saveTimers.values()) clearTimeout(t);
+      saveTimers.clear();
+      saveChains.clear();
+      if (opts?.dropLegacy) dropLegacyTimeline();
+      set({
+        sessionId: null,
+        timeline: [],
+        sessions: [],
+        sessionsLoaded: false,
+        sessionLoad: 'idle',
+        saveFailed: false,
+      });
+    },
+
+    loadSessions: async () => {
+      const gen = generation;
+      try {
+        const list = await listAgentSessions();
+        if (gen !== generation) return;
+        // Keep chats created in this tab that the server has not seen yet.
+        const local = get().sessions.filter((s) => !list.some((l) => l.id === s.id) && buffers.has(s.id));
+        set({ sessions: [...local, ...list], sessionsLoaded: true });
+      } catch {
+        if (gen === generation) set({ sessionsLoaded: true });
+      }
+    },
+
     clear: () => {
-      persist([]);
-      set({ timeline: [] });
+      show(null, []);
+    },
+
+    openSession: async (id: string) => {
+      if (get().sessionId === id && get().sessionLoad !== 'error') return;
+      const cached = buffers.get(id);
+      if (cached) {
+        show(id, cached);
+        return;
+      }
+      show(id, [], 'loading');
+      const gen = generation;
+      try {
+        const detail = await fetchAgentSession<TimelineItem>(id);
+        if (gen !== generation || get().sessionId !== id) return;
+        const items = Array.isArray(detail.items) ? detail.items : [];
+        buffers.set(id, items);
+        set((s) => ({ timeline: items, sessionLoad: 'idle', sessions: upsertSummary(s.sessions, detail) }));
+        // Keep list order by recency rather than by last opened.
+        set((s) => ({
+          sessions: [...s.sessions].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+        }));
+      } catch (err) {
+        if (gen !== generation || get().sessionId !== id) return;
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        set({ sessionLoad: status === 404 ? 'not_found' : 'error' });
+        if (status === 404) writeActive(owner, null);
+      }
+    },
+
+    deleteSession: async (id: string) => {
+      try {
+        await deleteAgentSession(id);
+      } catch (err) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        // Never saved (no messages reached the server): just forget it.
+        if (status !== 404) throw err;
+      }
+      const timer = saveTimers.get(id);
+      if (timer) clearTimeout(timer);
+      saveTimers.delete(id);
+      buffers.delete(id);
+      set((s) => ({ sessions: s.sessions.filter((x) => x.id !== id) }));
+      if (get().sessionId === id) show(null, []);
+    },
+
+    renameSession: async (id: string, title: string) => {
+      const summary = await renameAgentSession(id, title);
+      set((s) => ({ sessions: s.sessions.map((x) => (x.id === id ? summary : x)) }));
+    },
+
+    startChat: (message: string) => {
+      const text = message.trim();
+      show(null, []);
+      const sid = ensureSession(text);
+      if (text && !get().sending) void doSend(sid, text);
+      return sid;
     },
 
     send: async (message: string) => {
       const text = message.trim();
       if (!text || get().sending) return;
-      const history = historyFrom(get().timeline);
-      update((prev) => [...prev, { id: uid(), kind: 'user', text }]);
-      await runTurn(text, history, null);
+      const sid = ensureSession(text);
+      await doSend(sid, text);
     },
 
     confirmAction: async (itemId: string) => {
+      const sid = get().sessionId;
       const item = get().timeline.find((i) => i.id === itemId);
-      if (!item || item.kind !== 'confirm' || item.resolved || get().sending) return;
-      update((prev) =>
+      if (!sid || !item || item.kind !== 'confirm' || item.resolved || get().sending) return;
+      update(sid, (prev) =>
         prev.map((i) => (i.id === itemId && i.kind === 'confirm' ? { ...i, resolved: 'confirmed' } : i)),
       );
-      const history = historyFrom(get().timeline);
+      const history = historyFrom(buffers.get(sid) ?? []);
       await runTurn(
+        sid,
         `Proceed with the ${item.tool} action.`,
         history,
         { tool: item.tool, args: item.args },
@@ -322,7 +591,9 @@ export const useAgentStore = create<AgentState>((set, get) => {
     },
 
     cancelAction: (itemId: string) => {
-      update((prev) =>
+      const sid = get().sessionId;
+      if (!sid) return;
+      update(sid, (prev) =>
         prev.map((i) =>
           i.id === itemId && i.kind === 'confirm' ? { ...i, resolved: 'cancelled' } : i,
         ),
@@ -330,8 +601,9 @@ export const useAgentStore = create<AgentState>((set, get) => {
     },
 
     discardAction: async (itemId: string) => {
+      const sid = get().sessionId;
       const item = get().timeline.find((i) => i.id === itemId);
-      if (!item || item.kind !== 'tool' || !item.discard || item.discarded || get().sending) return;
+      if (!sid || !item || item.kind !== 'tool' || !item.discard || item.discarded || get().sending) return;
 
       const scraper = useScraperStore.getState();
       const discard = item.discard;
@@ -348,7 +620,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
         } else if (discard.kind === 'submit_job') {
           await scraper.deleteJob(discard.jobId);
         }
-        update((prev) =>
+        update(sid, (prev) =>
           prev.map((i) => (i.id === itemId && i.kind === 'tool' ? { ...i, discarded: true } : i)),
         );
       } catch {

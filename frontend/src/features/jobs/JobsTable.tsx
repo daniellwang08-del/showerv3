@@ -1,16 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  FileText,
-  Loader2,
-  Mail,
-  MessageSquare,
-  MoreHorizontal,
-  Sheet,
-} from 'lucide-react';
+import { ArrowDown, ArrowUp, FileText, Loader2, Mail, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,7 +9,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/compon
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { MatchScore } from '@/components/app/MatchScore';
 import type { DashboardJob } from '@/types/scraper';
-import { buildJobMenu, type JobActionId, type JobMenuContext } from './jobMenu';
+import {
+  buildJobMenu,
+  inlineActionsWidth,
+  inlineJobActions,
+  type JobActionId,
+  type JobMenuContext,
+} from './jobMenu';
 import { JobMenuItems } from './JobMenu';
 import {
   isApplied,
@@ -53,23 +49,33 @@ const ALL: JobsTableTier[] = ['compact', 'medium', 'full'];
 const WIDE: JobsTableTier[] = ['medium', 'full'];
 const FULL: JobsTableTier[] = ['full'];
 
+// Role, Source and Status share the leftover width (3:1:1) so the role column
+// stops swallowing every spare pixel on wide screens.
 export const JOB_COLUMNS: Column[] = [
   { id: 'select', header: '', width: '2.5rem', tiers: ALL },
-  { id: 'title', header: 'Role', width: 'minmax(16rem, 1fr)', compactWidth: 'minmax(0, 1fr)', sortField: 'title', tiers: ALL },
+  { id: 'title', header: 'Role', width: 'minmax(16rem, 3fr)', compactWidth: 'minmax(0, 1fr)', sortField: 'title', tiers: ALL },
   { id: 'mode', header: 'Mode', width: '5.5rem', tiers: FULL },
-  { id: 'source', header: 'Source', width: '7.5rem', tiers: FULL },
+  { id: 'source', header: 'Source', width: 'minmax(7.5rem, 1fr)', tiers: FULL },
   { id: 'posted', header: 'Posted', width: '4.5rem', sortField: 'posted_date', tiers: FULL, align: 'end' },
   { id: 'added', header: 'Added', width: '4.5rem', sortField: 'created_at', tiers: WIDE, align: 'end' },
   { id: 'match', header: 'Match', width: '7.5rem', compactWidth: '4.75rem', sortField: 'match_score', tiers: ALL },
   { id: 'docs', header: 'Docs', width: '5rem', tiers: WIDE },
-  { id: 'status', header: 'Status', width: '9.5rem', tiers: WIDE },
-  { id: 'track', header: '', width: '6.5rem', compactWidth: '4rem', tiers: ALL, align: 'end' },
+  { id: 'status', header: 'Status', width: 'minmax(9.5rem, 1fr)', tiers: WIDE },
+  { id: 'track', header: 'Actions', width: '8rem', compactWidth: '4rem', tiers: ALL, align: 'end' },
 ];
 
-export function columnsFor(tier: JobsTableTier): Column[] {
-  return JOB_COLUMNS.filter((c) => c.tiers.includes(tier)).map((c) =>
-    tier === 'compact' && c.compactWidth ? { ...c, width: c.compactWidth } : c,
-  );
+/** Number of inline action buttons on a row at this tier, including the "…" menu when shown. */
+export function actionButtonCount(tier: JobsTableTier, ctx: JobMenuContext): number {
+  if (tier === 'full') return 6 + (ctx.sheetsConfigured ? 1 : 0) + (ctx.pumbleConfigured ? 1 : 0);
+  return tier === 'medium' ? 3 : 2;
+}
+
+export function columnsFor(tier: JobsTableTier, ctx?: JobMenuContext): Column[] {
+  return JOB_COLUMNS.filter((c) => c.tiers.includes(tier)).map((c) => {
+    if (tier === 'compact' && c.compactWidth) return { ...c, width: c.compactWidth, header: c.id === 'track' ? '' : c.header };
+    if (c.id === 'track' && ctx) return { ...c, width: inlineActionsWidth(actionButtonCount(tier, ctx)) };
+    return c;
+  });
 }
 
 interface JobsTableProps {
@@ -96,7 +102,7 @@ const ROW_HEIGHT = 56;
 
 export function JobsTable(props: JobsTableProps) {
   const { jobs, loading, tier, sort, onSort, selected, onToggleAll, empty } = props;
-  const columns = columnsFor(tier);
+  const columns = columnsFor(tier, props.menuContext);
   const template = columns.map((c) => c.width).join(' ');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -253,7 +259,7 @@ export function JobsTable(props: JobsTableProps) {
                     top={item.start}
                     columns={columns}
                     template={template}
-                    compact={tier === 'compact'}
+                    tier={tier}
                     selected={selected.has(job.id)}
                     active={props.activeJobId === job.id}
                     focusable={item.index === focusIndex}
@@ -319,7 +325,7 @@ interface JobRowProps {
   top: number;
   columns: Column[];
   template: string;
-  compact: boolean;
+  tier: JobsTableTier;
   selected: boolean;
   active: boolean;
   focusable: boolean;
@@ -389,7 +395,7 @@ function Cell({
   selected,
   applied,
   rerunning,
-  compact,
+  tier,
   menuContext,
   targetsFor,
   onToggleSelect,
@@ -475,34 +481,23 @@ function Cell({
     case 'track':
       return (
         <div className="flex items-center gap-0.5">
-          <TrackButton
-            label={applied ? 'Applied, click to unmark' : 'Mark as applied'}
-            active={applied}
-            activeClass="text-status-applied"
-            onClick={() => onAction(applied ? 'unmark-applied' : 'mark-applied', [job])}
-          >
-            <Check />
-          </TrackButton>
-          {menuContext.sheetsConfigured && !compact && (
-            <TrackButton
-              label={job.sheet_posted_at ? 'Posted to Google Sheet' : 'Post to Google Sheet'}
-              active={Boolean(job.sheet_posted_at)}
-              activeClass="text-match-strong"
-              onClick={() => onAction('post-sheet', [job])}
-            >
-              <Sheet />
-            </TrackButton>
-          )}
-          {menuContext.pumbleConfigured && !compact && (
-            <TrackButton
-              label={job.pumble_posted_at ? 'Posted to Pumble' : 'Post to Pumble'}
-              active={Boolean(job.pumble_posted_at)}
-              activeClass="text-brand"
-              onClick={() => onAction('post-pumble', [job])}
-            >
-              <MessageSquare />
-            </TrackButton>
-          )}
+          {inlineJobActions(job, menuContext, tier).map((action) => {
+            const Icon = action.icon;
+            return (
+              <TrackButton
+                key={action.id}
+                label={action.label}
+                active={Boolean(action.active)}
+                activeClass={ACTIVE_CLASS[action.id] ?? 'text-foreground'}
+                disabled={action.disabled}
+                destructive={action.destructive}
+                onClick={() => onAction(action.id, [job])}
+              >
+                <Icon />
+              </TrackButton>
+            );
+          })}
+          {tier !== 'full' && (
           <DropdownMenu>
             <DropdownMenuTrigger
               aria-label="Job actions"
@@ -514,6 +509,7 @@ function Cell({
               <JobMenuItems kind="dropdown" entries={buildJobMenu(targetsFor(job), menuContext)} onAction={onAction} />
             </DropdownMenuContent>
           </DropdownMenu>
+          )}
         </div>
       );
     default:
@@ -521,16 +517,27 @@ function Cell({
   }
 }
 
+const ACTIVE_CLASS: Partial<Record<JobActionId, string>> = {
+  'mark-applied': 'text-status-applied',
+  'unmark-applied': 'text-status-applied',
+  'post-sheet': 'text-match-strong',
+  'post-pumble': 'text-brand',
+};
+
 function TrackButton({
   label,
   active,
   activeClass,
+  disabled,
+  destructive,
   onClick,
   children,
 }: {
   label: string;
   active: boolean;
   activeClass: string;
+  disabled?: boolean;
+  destructive?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -542,10 +549,19 @@ function TrackButton({
             type="button"
             aria-label={label}
             aria-pressed={active}
-            onClick={onClick}
+            aria-disabled={disabled || undefined}
+            onClick={() => {
+              if (!disabled) onClick();
+            }}
             className={cn(
-              'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 [&_svg]:size-3.5',
-              active ? activeClass : 'text-muted-foreground/50 hover:text-foreground',
+              'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 [&_svg]:size-3.5',
+              disabled
+                ? 'cursor-not-allowed text-muted-foreground/25'
+                : active
+                  ? cn(activeClass, 'hover:bg-accent')
+                  : destructive
+                    ? 'text-muted-foreground/50 hover:bg-destructive/10 hover:text-destructive'
+                    : 'text-muted-foreground/50 hover:bg-accent hover:text-foreground',
             )}
           />
         }

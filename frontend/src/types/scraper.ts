@@ -85,6 +85,8 @@ export interface DashboardJob {
   job_type: string | null;
   /** True when this user added the job via URL/attachment. */
   from_me?: boolean;
+  /** Name of the applicant who added the job via URL/attachment, when not this user. */
+  added_by_name?: string | null;
   /** How the job entered the pool: manual (FM) | admin_manual (FA) | scraper slug | legacy job_sites. */
   added_from?: 'manual' | 'admin_manual' | 'job_sites' | string | null;
   /** When the job entered this user's visible pool (for "today" filtering). */
@@ -158,6 +160,8 @@ export interface ScraperStats {
   best_jobs?: number;
   /** Match score 50-74 (Good). Optional for older backends. */
   good_jobs?: number;
+  /** Match score >= 50 and not yet applied. Optional for older backends. */
+  unapplied_good_jobs?: number;
   /** Match score at/above preference minimum. Optional for older backends. */
   qualified_jobs?: number;
   /** Jobs with any match score. Optional for older backends. */

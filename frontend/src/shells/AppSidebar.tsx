@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { PanelLeft, Search, Sparkles } from 'lucide-react';
 import { NaoWordmark } from '@/components/brand/NaoLogo';
 import { Button } from '@/components/ui/button';
@@ -39,18 +39,15 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const setPaletteOpen = useShellStore((s) => s.setPaletteOpen);
   const toggleAssistant = useShellStore((s) => s.toggleAssistant);
   const assistantDocked = useShellStore((s) => s.assistantDocked);
-  const setAssistantDocked = useShellStore((s) => s.setAssistantDocked);
   const recentJobs = useShellStore((s) => s.recentJobs);
-  const timeline = useAgentStore((s) => s.timeline);
+  const sessions = useAgentStore((s) => s.sessions);
+  const activeChatId = useAgentStore((s) => s.sessionId);
+  const location = useLocation();
   const openJob = useOpenJob();
   const isApplicant = variant === 'applicant';
 
-  const recentPrompts = isApplicant
-    ? timeline
-        .filter((i): i is Extract<typeof i, { kind: 'user' }> => i.kind === 'user')
-        .slice(-4)
-        .reverse()
-    : [];
+  const recentChats = isApplicant ? sessions.slice(0, 5) : [];
+  const onAssistantPage = location.pathname.startsWith('/app/assistant');
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
@@ -162,23 +159,37 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
           </div>
         ) : null}
 
-        {!collapsed && recentPrompts.length > 0 ? (
+        {!collapsed && recentChats.length > 0 ? (
           <div className="mt-5">
-            <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">Recent questions</p>
-            {recentPrompts.map((p) => (
+            <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">Recent chats</p>
+            {recentChats.map((c) => (
               <button
-                key={p.id}
+                key={c.id}
                 type="button"
                 onClick={() => {
-                  setAssistantDocked(true);
+                  navigate(`/app/assistant/${c.id}`);
                   onNavigate?.();
                 }}
-                className="flex h-8 w-full items-center rounded-lg px-2.5 text-left text-sm text-sidebar-foreground/90 hover:bg-sidebar-accent"
-                title={p.text}
+                aria-current={onAssistantPage && c.id === activeChatId ? 'page' : undefined}
+                className={cn(
+                  'flex h-8 w-full items-center rounded-lg px-2.5 text-left text-sm text-sidebar-foreground/90 hover:bg-sidebar-accent',
+                  onAssistantPage && c.id === activeChatId && 'bg-sidebar-accent text-sidebar-accent-foreground',
+                )}
+                title={c.title}
               >
-                <span className="truncate">{p.text}</span>
+                <span className="truncate">{c.title}</span>
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => {
+                navigate(activeChatId ? `/app/assistant/${activeChatId}` : '/app/assistant');
+                onNavigate?.();
+              }}
+              className="flex h-8 w-full items-center rounded-lg px-2.5 text-left text-xs text-muted-foreground hover:bg-sidebar-accent"
+            >
+              All chats
+            </button>
           </div>
         ) : null}
       </nav>

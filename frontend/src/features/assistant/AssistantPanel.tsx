@@ -12,6 +12,7 @@ import { ASSISTANT_SUGGESTIONS, useAssistantDraft } from './useAssistantDraft';
 /** Copilot-style contextual assistant docked on the right of any page (⌘J). */
 export function AssistantPanel() {
   const timeline = useAgentStore((s) => s.timeline);
+  const sessionId = useAgentStore((s) => s.sessionId);
   const clear = useAgentStore((s) => s.clear);
   const setDocked = useShellStore((s) => s.setAssistantDocked);
   const { draft, setDraft, submit, busy } = useAssistantDraft();
@@ -38,7 +39,7 @@ export function AssistantPanel() {
           <TooltipTrigger
             render={
               <Link
-                to="/app/assistant"
+                to={sessionId ? `/app/assistant/${sessionId}` : '/app/assistant'}
                 aria-label="Open full page"
                 onClick={() => setDocked(false)}
                 className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}
