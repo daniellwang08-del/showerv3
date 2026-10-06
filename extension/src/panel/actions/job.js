@@ -393,6 +393,23 @@ export async function completeJob({ next }) {
   }
 }
 
+/** Leave the open job for later: not applied, still in In progress, open the next one. */
+export async function skipJob() {
+  const job = state.job;
+  if (!job || state.skipping || completeInFlight) return;
+  setState({ skipping: true });
+  try {
+    chrome.storage.session.remove("pendingAppSubmitted").catch(() => {});
+    lastAdvanceAt = Date.now();
+    toast(`Skipped ${job.title}. Find it later under In progress.`);
+    await advance(job.job_id);
+  } catch (err) {
+    toast(messageOf(err, "Could not load the next job."), "danger");
+  } finally {
+    setState({ skipping: false });
+  }
+}
+
 /**
  * The application page reported a submit. For the job on screen this is the
  * same as "Applied, next job"; for a job the panel has moved away from, the

@@ -69,6 +69,7 @@ function initialState() {
     autofill: emptyAutofill(),
     reportNotice: null,
     postingToPumble: false,
+    skipping: false,
 
     tailor: { tab: "paste", runs: [], library: null, libraryLoading: false },
     stats: { period: "week", progress: null, scraper: null, loading: false },

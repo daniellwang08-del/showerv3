@@ -1224,19 +1224,50 @@ button.row:hover,
   height: 100%;
 }
 
-.job-scroll {
-  flex: 1;
-  min-height: 0;
+.job-top {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55%;
   overflow-y: auto;
-  padding: 12px 14px 16px;
+  padding: 10px 14px 0;
   scrollbar-width: thin;
   scrollbar-color: var(--muted) transparent;
+}
+
+.job-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 14px 10px;
+}
+
+.job-chat .chat {
+  flex: 1;
+  min-height: 0;
+}
+
+.job-chat .chat-thread {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.job-chat .chat-empty {
+  flex: 1;
 }
 
 .job-head {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.job-head-main .icon-btn {
+  margin-top: 2px;
 }
 
 .job-head-main {
@@ -1285,127 +1316,122 @@ button.row:hover,
   gap: 5px;
 }
 
-.job-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.job-head-actions .btn {
-  margin: -4px -6px -4px 0;
-}
-
 .docs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
+  padding: 6px 8px 6px 12px;
 }
 
-.docs-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
+.docs-row {
+  display: flex;
   align-items: center;
-  gap: 8px 12px;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.docs-files {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .docs-label {
+  margin-right: 2px;
+  color: var(--muted-foreground);
+  font-size: 12px;
   font-weight: 550;
+  white-space: nowrap;
 }
 
-.docs-buttons {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
+.docs-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 6px;
+  background: var(--border);
+}
+
+.doc-file {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.doc-file:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.doc-file:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.doc-tag {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 3px;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 7.5px;
+  font-weight: 700;
+  line-height: 11px;
+  letter-spacing: 0.02em;
+}
+
+.doc-pdf .doc-tag {
+  background: #d93a3a;
+}
+
+.doc-word .doc-tag {
+  background: #2b63c6;
 }
 
 .docs-status {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 8px;
   color: var(--muted-foreground);
   font-size: 12px;
 }
 
-.docs-status.is-danger {
-  color: var(--danger);
-}
-
-.docs-empty {
+.docs-note {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--muted-foreground);
-  font-size: 12.5px;
-}
-
-.docs-empty p {
-  flex: 1;
-}
-
-.analyze {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--muted-foreground);
-  font-size: 12.5px;
-}
-
-.analyze p {
-  flex: 1;
-}
-
-.jd {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.jd-meta {
-  display: flex;
-  flex-wrap: wrap;
   gap: 6px;
-}
-
-.jd-block h3 {
-  margin-bottom: 4px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.jd-block ul {
-  margin: 0;
-  padding-left: 16px;
   color: var(--muted-foreground);
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 
-.jd-block li + li {
-  margin-top: 3px;
-}
-
-.jd-text {
-  color: var(--muted-foreground);
-  font-size: 12.5px;
-  white-space: pre-wrap;
+.docs-note.is-danger {
+  color: var(--danger);
 }
 
 .actionbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 14px;
   border-top: 1px solid var(--border);
   background: var(--background);
   flex: none;
 }
 
-.actionbar-more {
-  position: relative;
-}
-
-.actionbar-more .icon-btn {
+.actionbar > .icon-btn {
   width: 34px;
   height: 34px;
   border: 1px solid var(--border);
