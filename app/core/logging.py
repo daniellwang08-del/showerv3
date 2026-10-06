@@ -167,6 +167,10 @@ def set_request_id(request_id: str | None) -> None:
     _request_id_ctx.set(request_id)
 
 
+def get_request_id() -> str | None:
+    return _request_id_ctx.get()
+
+
 def clear_logging_context() -> None:
     structlog.contextvars.clear_contextvars()
     _request_id_ctx.set(None)

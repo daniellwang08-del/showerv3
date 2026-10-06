@@ -1,19 +1,27 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   Check,
   CheckCircle2,
   ChevronRight,
+  Download,
   ExternalLink,
+  FileText,
   Loader2,
+  PenLine,
+  ScrollText,
   Sparkles,
   Undo2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { useAgentStore, type TimelineItem } from '@/stores/agentStore';
-import type { AgentJobCard } from '@/api/agentApi';
+import { useResumeBuilderStore } from '@/stores/resumeBuilderStore';
+import type { AgentDocumentResult, AgentJobCard } from '@/api/agentApi';
+import { fetchLibraryDocument, saveFile, type DocumentFileType } from '@/api/documentsApi';
 import { MatchScore } from '@/components/app/MatchScore';
 
 type ToolItem = Extract<TimelineItem, { kind: 'tool' }>;
@@ -60,6 +68,203 @@ function JobCardRow({ job }: { job: AgentJobCard }) {
   );
 }
 
+function DocumentCard({ doc }: { doc: AgentDocumentResult }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState<DocumentFileType | 'open' | null>(null);
+  const id = doc.resume_id;
+  if (!id) return null;
+
+  const download = async (fileType: DocumentFileType) => {
+    setBusy(fileType);
+    try {
+      saveFile(await fetchLibraryDocument(id, fileType));
+    } catch {
+      toast.error('Could not build the file. Please try again.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const open = async () => {
+    setBusy('open');
+    await useResumeBuilderStore.getState().switchResume(id);
+    setBusy(null);
+    navigate('/app/studio');
+  };
+
+  const subtitle = [doc.job_title, doc.company].filter(Boolean).join(' at ');
+  return (
+    <div className="rounded-2xl border bg-card p-3.5">
+      <div className="flex items-start gap-3">
+        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
+          <FileText className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{doc.name || 'Tailored resume'}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {subtitle || 'Saved to Documents'}
+            {doc.has_cover_letter ? ' · with cover letter' : ''}
+          </p>
+        </div>
+        {typeof doc.match_score === 'number' ? <MatchScore score={doc.match_score} /> : null}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="xs" disabled={busy !== null} onClick={() => void open()}>
+          {busy === 'open' ? <Loader2 className="animate-spin" /> : <PenLine />}
+          Open in Studio
+        </Button>
+        <Button size="xs" variant="outline" disabled={busy !== null} onClick={() => void download('resume_pdf')}>
+          {busy === 'resume_pdf' ? <Loader2 className="animate-spin" /> : <Download />}
+          Resume PDF
+        </Button>
+        {doc.has_cover_letter ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => void download('cover_letter_pdf')}
+          >
+            {busy === 'cover_letter_pdf' ? <Loader2 className="animate-spin" /> : <Download />}
+            Cover letter PDF
+          </Button>
+        ) : null}
+        {doc.has_job_description ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy !== null}
+            onClick={() => navigate(`/app/documents?posting=${encodeURIComponent(id)}`)}
+          >
+            <ScrollText />
+            Job description
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function formatDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+}
+
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [active]);
+  return now;
+}
+
+/** Step-by-step checklist for a long tool run (tailoring), with elapsed and expected time. */
+function TaskProgress({ item }: { item: ToolItem }) {
+  const running = item.status === 'running';
+  const now = useNow(running);
+  const steps = item.steps ?? [];
+  const done = steps.filter((s) => s.status === 'done').length;
+  const started = item.startedAt;
+  const elapsed = started ? ((item.finishedAt ?? now) - started) / 1000 : null;
+  const expected = item.expectedSeconds;
+  const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+
+  if (item.status === 'ok') {
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <CheckCircle2 className="size-3.5 text-status-ready" />
+        {steps.length} steps completed{elapsed != null ? ` in ${formatDuration(elapsed)}` : ''}
+      </p>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border bg-card p-3.5" aria-live="polite">
+      <div className="flex items-center gap-2">
+        {running ? (
+          <Loader2 className="size-4 shrink-0 animate-spin text-brand" />
+        ) : (
+          <AlertCircle className="size-4 shrink-0 text-destructive" />
+        )}
+        <p className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</p>
+        {elapsed != null ? (
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {formatDuration(elapsed)}
+            {running && expected
+              ? elapsed <= expected
+                ? ` of about ${formatDuration(expected)}`
+                : ', taking a little longer'
+              : ''}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className="mt-2.5 h-1 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${done} of ${steps.length} steps done`}
+      >
+        <div
+          className={cn('h-full rounded-full transition-all duration-500', running ? 'bg-brand' : 'bg-destructive')}
+          style={{ width: `${Math.max(pct, running ? 4 : 0)}%` }}
+        />
+      </div>
+      <ol className="mt-3 space-y-1.5">
+        {steps.map((s) => (
+          <li key={s.id} className="flex items-center gap-2 text-xs">
+            {s.status === 'done' ? (
+              <Check className="size-3.5 shrink-0 text-status-ready" />
+            ) : s.status === 'active' ? (
+              <Loader2 className="size-3.5 shrink-0 animate-spin text-brand" />
+            ) : s.status === 'failed' ? (
+              <AlertCircle className="size-3.5 shrink-0 text-destructive" />
+            ) : (
+              <span className="mx-[3px] size-2 shrink-0 rounded-full border border-muted-foreground/40" />
+            )}
+            <span
+              className={cn(
+                s.status === 'pending' && 'text-muted-foreground',
+                s.status === 'active' && 'font-medium text-foreground',
+                s.status === 'done' && 'text-foreground/80',
+                s.status === 'failed' && 'text-destructive',
+              )}
+            >
+              {s.label}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+const LONG_MESSAGE_CHARS = 600;
+
+function UserMessage({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > LONG_MESSAGE_CHARS;
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%] rounded-3xl bg-muted px-4 py-2.5">
+        <div className={cn('whitespace-pre-line', long && !expanded && 'line-clamp-6')}>{text}</div>
+        {long ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function discardLabel(discard: NonNullable<ToolItem['discard']>): string {
   if (discard.kind === 'dashboard') return 'Undo filter change';
   if (discard.kind === 'applied') return discard.wasApplied ? 'Undo applied' : 'Restore applied';
@@ -73,10 +278,21 @@ function StepsGroup({ items }: { items: ToolItem[] }) {
   const running = items.some((i) => i.status === 'running');
   const failed = items.some((i) => i.status === 'error');
   const jobs = items.flatMap((i) => i.jobs ?? []);
+  const docs = items.flatMap((i) => (i.document ? [{ id: i.id, doc: i.document }] : []));
+  const tracked = items.filter((i) => (i.steps?.length ?? 0) > 0);
+  if (running && tracked.length > 0 && tracked.length === items.length) {
+    return (
+      <div className="space-y-2 pl-10">
+        {tracked.map((i) => (
+          <TaskProgress key={`progress-${i.id}`} item={i} />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2 pl-10">
-      <Collapsible defaultOpen={running}>
+      <Collapsible defaultOpen={running && tracked.length === 0}>
         <CollapsibleTrigger className="group/steps inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
           {running ? (
             <Loader2 className="size-3.5 animate-spin text-brand" />
@@ -85,7 +301,9 @@ function StepsGroup({ items }: { items: ToolItem[] }) {
           ) : (
             <Check className="size-3.5 text-status-ready" />
           )}
-          {running ? items[items.length - 1].title : `${items.length} step${items.length === 1 ? '' : 's'}`}
+          {running
+            ? (items[items.length - 1].progress ?? items[items.length - 1].title)
+            : `${items.length} step${items.length === 1 ? '' : 's'}`}
           <ChevronRight className="size-3.5 transition-transform group-data-[panel-open]/steps:rotate-90" />
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -113,6 +331,12 @@ function StepsGroup({ items }: { items: ToolItem[] }) {
             {discardLabel(i.discard!)}
           </Button>
         ))}
+      {tracked.map((i) => (
+        <TaskProgress key={`progress-${i.id}`} item={i} />
+      ))}
+      {docs.map(({ id, doc }) => (
+        <DocumentCard key={id} doc={doc} />
+      ))}
       {jobs.length > 0 ? (
         <div className="grid gap-1.5">
           {jobs.slice(0, 8).map((job) => (
@@ -189,11 +413,7 @@ export function Thread({ className, compact }: { className?: string; compact?: b
         const item = block.item;
         switch (item.kind) {
           case 'user':
-            return (
-              <div key={item.id} className="flex justify-end">
-                <div className="max-w-[85%] rounded-3xl bg-muted px-4 py-2.5 whitespace-pre-line">{item.text}</div>
-              </div>
-            );
+            return <UserMessage key={item.id} text={item.text} />;
           case 'assistant':
             if (!item.text.trim()) return null;
             return (

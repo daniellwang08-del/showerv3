@@ -21,6 +21,7 @@ from app.models.resume_ai_schemas import (
     ResumeAiTailoredContent,
 )
 from app.models.resume_design_schemas import ContentSkill, ContentWork
+from app.models.schemas import JobDescriptionSchema
 from app.prompts.resume_ai_router_prompt import (
     RESUME_AI_ROUTER_SYSTEM_PROMPT,
     build_router_user_content,
@@ -171,6 +172,26 @@ def _map_tailored(tailored: dict) -> ResumeAiTailoredContent:
     )
 
 
+async def _free_phase_a(
+    user_id: str, job_text: str
+) -> tuple[dict, JobDescriptionSchema | None, str] | None:
+    """Vector-engine score and rule-based job fields. None when the engine is unavailable."""
+    from app.services.pasted_job_scoring import score_pasted_job_remote
+
+    scored = await score_pasted_job_remote(user_id, job_text)
+    if not scored:
+        return None
+    structured_job = None
+    raw = scored.get("structured_job")
+    if isinstance(raw, dict):
+        try:
+            structured_job = JobDescriptionSchema.model_validate(raw)
+        except Exception:  # noqa: BLE001 - tailoring still works without structured fields
+            structured_job = None
+    match = scored.get("match") if isinstance(scored.get("match"), dict) else {}
+    return match, structured_job, "vector"
+
+
 async def _run_pipeline(
     user_id: str,
     job_text: str,
@@ -178,17 +199,34 @@ async def _run_pipeline(
     want_tailor: bool,
     extra_instructions: str = "",
     emit: EmitFn | None = None,
+    want_cover_letter: bool = True,
+    free_scoring: bool = False,
 ) -> dict:
-    """Run Phase A (and optionally Phase B) for a pasted job description. No persistence."""
+    """Run Phase A (and optionally Phase B) for a pasted job description. No persistence.
+
+    ``free_scoring`` scores with the vector engine and reads job fields with
+    rules instead of the LLM Phase A call, falling back to the LLM when the
+    engine is unavailable. The user asked to tailor, so a posting the engine
+    doubts is still tailored, just without a score.
+    """
     async with get_session() as session:
         profile_text = await UserRepository(session).get_profile_openai_text(user_id)
     if not (profile_text or "").strip():
         return {"error": "no_profile"}
 
+    await _emit(emit, "reading", "Reading the job description…")
     await _emit(emit, "analyzing", "Scoring your match to the role…")
-    match_result, structured_job, is_job_posting = await analyze_job_match_phase_a(
-        job_text, profile_text, user_id=user_id
-    )
+    free = await _free_phase_a(user_id, job_text) if free_scoring else None
+    if free is not None:
+        match_result, structured_job, scorer = free
+        if match_result.get("is_job_posting") is False:
+            match_result = {}
+        is_job_posting = True
+    else:
+        match_result, structured_job, is_job_posting = await analyze_job_match_phase_a(
+            job_text, profile_text, user_id=user_id
+        )
+        scorer = "llm"
 
     if not is_job_posting:
         return {"is_job_posting": False, "match": match_result}
@@ -196,9 +234,13 @@ async def _run_pipeline(
     out: dict = {
         "is_job_posting": True,
         "match": match_result,
+        "scorer": scorer,
         "job_title": (structured_job.title if structured_job else None),
         "company": (structured_job.company if structured_job else None),
+        "location": (structured_job.location if structured_job else None),
     }
+    if out["job_title"] == "Untitled":
+        out["job_title"] = None
     if not want_tailor:
         return out
 
@@ -233,6 +275,10 @@ async def _run_pipeline(
             f"apply these while keeping all facts truthful: {extra_instructions.strip()}]"
         )
 
+    async def on_stage(stage: str) -> None:
+        if stage == "quality_retry":
+            await _emit(emit, "quality", "Improving weak sections…")
+
     await _emit(emit, "tailoring", "Rewriting your resume for this job…")
     tailored_resume, cover_letter = await generate_tailored_content_phase_b(
         jd_for_phase_b,
@@ -241,6 +287,8 @@ async def _run_pipeline(
         match_summary=match_summary,
         project_evidence_context=project_evidence_context,
         user_id=user_id,
+        include_cover_letter=want_cover_letter,
+        on_stage=on_stage,
     )
     out["tailored"] = tailored_resume
     out["cover_letter"] = (cover_letter or {}).get("body") if cover_letter else None

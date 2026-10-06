@@ -70,10 +70,12 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def list_active_users(self, *, limit: int = 500) -> list[User]:
-        """Return active users ordered by email (for analysis multi-select)."""
+        """Return active, approved users ordered by email (for analysis multi-select)."""
+        from app.services.signup_approval_service import can_use_app_clause
+
         stmt = (
             select(User)
-            .where(User.is_active.is_(True))
+            .where(can_use_app_clause())
             .order_by(User.email.asc())
             .limit(max(1, min(limit, 1000)))
         )

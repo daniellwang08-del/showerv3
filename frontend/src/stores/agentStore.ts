@@ -6,14 +6,17 @@ import {
   renameAgentSession,
   saveAgentSession,
   streamAgentChat,
+  type AgentDocumentResult,
   type AgentEvent,
   type AgentJobCard,
   type AgentSessionSummary,
   type AgentTurnInput,
   type ConfirmedAction,
+  type ProgressStep,
 } from '../api/agentApi';
 import { useScraperStore, type AgentDashboardSnapshot } from './scraperStore';
 import { useJobsStore } from './jobsStore';
+import { useResumeBuilderStore } from './resumeBuilderStore';
 import { agentNavigate } from '../lib/agentNavigation';
 
 // ---------------------------------------------------------------------------
@@ -36,8 +39,16 @@ export type TimelineItem =
       tool: string;
       title: string;
       status: ToolStatus;
+      /** Latest step reported by a long-running tool. */
+      progress?: string;
+      /** Checklist reported by a long-running tool (tailoring). */
+      steps?: ProgressStep[];
+      expectedSeconds?: number;
+      startedAt?: number;
+      finishedAt?: number;
       summary?: string;
       jobs?: AgentJobCard[];
+      document?: AgentDocumentResult;
       args?: Record<string, unknown>;
       discard?: AgentDiscardAction;
       discarded?: boolean;
@@ -46,6 +57,9 @@ export type TimelineItem =
   | { id: string; kind: 'error'; text: string };
 
 export type SessionLoad = 'idle' | 'loading' | 'not_found' | 'error';
+
+/** `tool` runs that tool directly; `selectedTool` asks the planner to act with it. */
+export type SendOptions = { tool?: ConfirmedAction; selectedTool?: string };
 
 interface AgentState {
   open: boolean;
@@ -73,9 +87,12 @@ interface AgentState {
   openSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
-  /** Start a new chat with `message` and return its id (for navigation). */
-  startChat: (message: string) => string;
-  send: (message: string) => Promise<void>;
+  /**
+   * Start a new chat with `message` and return its id (for navigation).
+   * `tool` runs that tool directly for this turn (a prompt block the user picked).
+   */
+  startChat: (message: string, opts?: SendOptions) => string;
+  send: (message: string, opts?: SendOptions) => Promise<void>;
   confirmAction: (itemId: string) => Promise<void>;
   cancelAction: (itemId: string) => void;
   discardAction: (itemId: string) => Promise<void>;
@@ -180,6 +197,9 @@ function applyRefresh(targets: string[]) {
   if (targets.includes('sync')) {
     void scraper.checkSyncStatus();
     scraper.loadLastSyncRuns();
+  }
+  if (targets.includes('documents')) {
+    void useResumeBuilderStore.getState().loadResumes();
   }
 }
 
@@ -293,13 +313,36 @@ export const useAgentStore = create<AgentState>((set, get) => {
             title: event.title || 'Working',
             status: 'running',
             args: event.args,
+            startedAt: Date.now(),
           },
         ]);
         break;
 
+      case 'progress':
+        update(sid, (prev) => {
+          const idx = [...prev]
+            .map((i, n) => ({ i, n }))
+            .reverse()
+            .find(({ i }) => i.kind === 'tool' && i.tool === event.tool && i.status === 'running')?.n;
+          if (idx == null || !event.label) return prev;
+          const next = [...prev];
+          const row = next[idx];
+          if (row.kind === 'tool') {
+            next[idx] = {
+              ...row,
+              progress: event.label,
+              ...(Array.isArray(event.steps) ? { steps: event.steps } : {}),
+              ...(typeof event.expected_seconds === 'number' ? { expectedSeconds: event.expected_seconds } : {}),
+            };
+          }
+          return next;
+        });
+        break;
+
       case 'tool_result': {
-        const data = event.data as { jobs?: AgentJobCard[] } | undefined;
+        const data = event.data as { jobs?: AgentJobCard[]; document?: AgentDocumentResult } | undefined;
         const jobs = Array.isArray(data?.jobs) ? data!.jobs : undefined;
+        const savedDoc = event.ok && data?.document?.resume_id ? data.document : undefined;
         update(sid, (prev) => {
           // Update the most recent running tool row for this tool.
           const idx = [...prev]
@@ -313,9 +356,12 @@ export const useAgentStore = create<AgentState>((set, get) => {
             const discard = discardForTool(event.tool, event.ok, row.args, event.data);
             next[idx] = {
               ...row,
+              progress: undefined,
               status: event.ok ? 'ok' : 'error',
+              finishedAt: Date.now(),
               summary: event.summary,
               jobs,
+              ...(savedDoc ? { document: savedDoc } : {}),
               ...(discard ? { discard } : {}),
             };
           }
@@ -378,6 +424,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     message: string,
     history: AgentTurnInput[],
     confirmed: ConfirmedAction | null,
+    selectedTool?: string,
   ) => {
     // Placeholder assistant bubble we fill from the final `message` event.
     const assistantId = uid();
@@ -386,7 +433,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
 
     try {
       await streamAgentChat(
-        { message, history, timezone: tz(), confirmed },
+        { message, history, timezone: tz(), confirmed, ...(selectedTool ? { tool: selectedTool } : {}) },
         (event) => handleEvent(event, sid, assistantId),
       );
     } catch (err) {
@@ -445,10 +492,10 @@ export const useAgentStore = create<AgentState>((set, get) => {
     }
   };
 
-  const doSend = async (sid: string, text: string) => {
+  const doSend = async (sid: string, text: string, opts?: SendOptions) => {
     const history = historyFrom(buffers.get(sid) ?? []);
     update(sid, (prev) => [...prev, { id: uid(), kind: 'user', text }]);
-    await runTurn(sid, text, history, null);
+    await runTurn(sid, text, history, opts?.tool ?? null, opts?.selectedTool);
   };
 
   return {
@@ -559,19 +606,19 @@ export const useAgentStore = create<AgentState>((set, get) => {
       set((s) => ({ sessions: s.sessions.map((x) => (x.id === id ? summary : x)) }));
     },
 
-    startChat: (message: string) => {
+    startChat: (message: string, opts?: SendOptions) => {
       const text = message.trim();
       show(null, []);
       const sid = ensureSession(text);
-      if (text && !get().sending) void doSend(sid, text);
+      if (text && !get().sending) void doSend(sid, text, opts);
       return sid;
     },
 
-    send: async (message: string) => {
+    send: async (message: string, opts?: SendOptions) => {
       const text = message.trim();
       if (!text || get().sending) return;
       const sid = ensureSession(text);
-      await doSend(sid, text);
+      await doSend(sid, text, opts);
     },
 
     confirmAction: async (itemId: string) => {

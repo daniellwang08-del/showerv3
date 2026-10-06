@@ -80,6 +80,55 @@ export interface MultiSeriesResult {
   spiders?: string[];
 }
 
+export type AiUsageMeasure = 'cost' | 'tokens';
+
+export interface AiUsageFeature {
+  feature: string;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+export interface AiUsageUserRow {
+  /** "system" for calls not tied to a user. */
+  user_id: string;
+  name: string;
+  email: string | null;
+  approval_status: string | null;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  last_used_at: string | null;
+  tailor_runs: number;
+  tailored_jobs: number;
+  reruns: number;
+  max_runs_per_job: number;
+  applied: number;
+  cost_per_application: number | null;
+  features: AiUsageFeature[];
+}
+
+export interface AiUsageOverview {
+  year: number;
+  month: number;
+  timezone: string;
+  totals: {
+    calls: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    reasoning_tokens: number;
+    total_tokens: number;
+    cost_usd: number;
+    users: number;
+    unpriced_calls: number;
+  };
+  users: AiUsageUserRow[];
+  by_feature: AiUsageFeature[];
+  days: Array<Record<string, string | number>>;
+  series: Array<MultiSeriesMeta & { feature?: string }>;
+}
+
 export interface PipelineSeriesResult extends MultiSeriesResult {
   totals: Record<string, number> & { backlog_now?: number };
 }

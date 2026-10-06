@@ -39,7 +39,11 @@ from app.api.routes import (
     get_current_user,
 )
 from app.core.config import get_settings
-from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
+from app.core.llm_client import (
+    chat_completion_with_empty_retry,
+    get_llm_client_for_user,
+    llm_failure_message,
+)
 from app.core.logging import get_logger
 from app.models.database import (
     ApplicationSession,
@@ -741,7 +745,7 @@ async def assistant_chat(req: AssistantChatRequest, current_user: dict = Depends
             yield _sse({"done": True})
         except Exception as exc:  # noqa: BLE001 - surface a clean SSE error
             logger.warning("assistant_chat_failed", user_id=user_id, job_id=req.job_id, error=str(exc)[:300])
-            yield _sse({"error": "The assistant is temporarily unavailable. Please try again."})
+            yield _sse({"error": llm_failure_message(exc)})
 
     return StreamingResponse(
         event_stream(),
@@ -1487,7 +1491,7 @@ async def assistant_autofill(
         logger.warning("assistant_autofill_failed", user_id=user_id, job_id=req.job_id, error=str(exc)[:300])
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Autofill is temporarily unavailable. Please try again.",
+            detail=llm_failure_message(exc, feature="Autofill"),
         )
 
     results = _parse_autofill_results(

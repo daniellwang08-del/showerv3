@@ -19,7 +19,11 @@ from app.services.job_field_utils import (
     normalize_work_mode_display,
     resolve_display_work_mode,
 )
-from app.services.job_location_parse import infer_location_from_text, prefer_job_location
+from app.services.job_location_parse import (
+    infer_location_from_text,
+    prefer_job_location,
+    strip_work_mode_from_location,
+)
 from app.services.job_source_boards import detect_board
 from app.services.job_text_rules import (
     infer_employment_type,
@@ -553,7 +557,7 @@ def build_metadata(
     return {
         "title": title,
         "company": company,
-        "location": location,
+        "location": strip_work_mode_from_location(location),
         "employment_type": employment_type,
         "salary_range": salary_range,
         "work_mode": work_mode,

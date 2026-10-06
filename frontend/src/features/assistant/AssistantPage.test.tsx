@@ -1,11 +1,13 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 const api = vi.hoisted(() => ({
   streamAgentChat: vi.fn(),
+  fetchAgentTools: vi.fn(),
   listAgentSessions: vi.fn(),
   fetchAgentSession: vi.fn(),
   saveAgentSession: vi.fn(),
@@ -26,18 +28,30 @@ function Where() {
 }
 
 function renderAt(path: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <TooltipProvider>
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/app/assistant" element={<AssistantPage />} />
-          <Route path="/app/assistant/:sessionId" element={<AssistantPage />} />
-        </Routes>
-        <Where />
-      </MemoryRouter>
-    </TooltipProvider>,
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route path="/app/assistant" element={<AssistantPage />} />
+            <Route path="/app/assistant/:sessionId" element={<AssistantPage />} />
+            <Route path="/app/studio" element={<p>studio page</p>} />
+          </Routes>
+          <Where />
+        </MemoryRouter>
+      </TooltipProvider>
+    </QueryClientProvider>,
   );
 }
+
+const JOB_DESCRIPTION = [
+  'Software Engineer III at Vaco, working with Meta.',
+  'You will build and ship backend services in Python and Go, own features end to end,',
+  'partner with product and design, review code, and mentor engineers on the team.',
+  'Requirements: 5+ years of professional software engineering experience, strong',
+  'distributed systems fundamentals, and experience with large scale data pipelines.',
+].join(' ');
 
 describe('AssistantPage', () => {
   beforeAll(() => {
@@ -58,6 +72,24 @@ describe('AssistantPage', () => {
       onEvent({ type: 'message', text: 'Three remote roles today.' });
       onEvent({ type: 'done' });
     });
+    api.fetchAgentTools.mockResolvedValue([
+      {
+        name: 'tailor_resume',
+        label: 'Tailor resume',
+        category: 'Resume and cover letter',
+        description: 'Tailor the resume.',
+        example: 'Tailor my resume to this job description:',
+        requires_confirmation: false,
+      },
+      {
+        name: 'search_jobs',
+        label: 'Find jobs',
+        category: 'Jobs',
+        description: 'Look up jobs.',
+        example: 'Find remote backend jobs',
+        requires_confirmation: false,
+      },
+    ]);
     useAgentStore.setState({
       sessionsLoaded: true,
       sessions: [
@@ -109,6 +141,109 @@ describe('AssistantPage', () => {
     expect(screen.getByTestId('path').textContent).toBe('/app/assistant');
     expect(screen.getByText('What should we work on?')).toBeInTheDocument();
     expect(api.deleteAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('picking a tool pins it to the composer and sends the message to that tool', async () => {
+    const user = userEvent.setup();
+    renderAt('/app/assistant');
+    await user.click(screen.getByRole('button', { name: 'Tools' }));
+    expect(await screen.findByText('Jobs')).toBeInTheDocument();
+    expect(screen.getAllByText('Tailor resume')).toHaveLength(1);
+    await user.click(screen.getByRole('menuitem', { name: /Find jobs/ }));
+    expect(screen.getByRole('button', { name: 'Remove Find jobs' })).toBeInTheDocument();
+    const box = screen.getByRole('textbox');
+    expect(box).toHaveAttribute('placeholder', 'For example: Find remote backend jobs');
+    await user.type(box, 'remote python roles{Enter}');
+    await waitFor(() => expect(api.streamAgentChat).toHaveBeenCalled());
+    const payload = api.streamAgentChat.mock.calls[0][0];
+    expect(payload.tool).toBe('search_jobs');
+    expect(payload.confirmed).toBeNull();
+    expect(payload.message).toBe('remote python roles');
+  });
+
+  it('shows a step checklist with elapsed time while tailoring runs', async () => {
+    let finish: () => void = () => undefined;
+    api.streamAgentChat.mockImplementation(
+      (_p: unknown, onEvent: (e: unknown) => void) =>
+        new Promise<void>((resolve) => {
+          onEvent({ type: 'tool_call', tool: 'tailor_resume', title: 'Tailoring your resume', args: {} });
+          onEvent({
+            type: 'progress',
+            tool: 'tailor_resume',
+            label: 'Writing your tailored resume',
+            expected_seconds: 90,
+            steps: [
+              { id: 'read', label: 'Reading the job description', status: 'done' },
+              { id: 'resume', label: 'Writing your tailored resume', status: 'active' },
+              { id: 'save', label: 'Saving to Documents', status: 'pending' },
+            ],
+          });
+          finish = resolve;
+        }),
+    );
+    renderAt('/app/assistant');
+    await userEvent.type(screen.getByRole('textbox'), 'tailor it{Enter}');
+    expect(await screen.findByRole('progressbar', { name: '1 of 3 steps done' })).toBeInTheDocument();
+    expect(screen.getByText('Saving to Documents')).toBeInTheDocument();
+    expect(screen.getByText(/of about 1m 30s/)).toBeInTheDocument();
+    finish();
+  });
+
+  it('a Tailor resume block runs the tool on a pasted job description and shows the saved resume', async () => {
+    api.streamAgentChat.mockImplementation(async (_p: unknown, onEvent: (e: unknown) => void) => {
+      onEvent({ type: 'tool_call', tool: 'tailor_resume', title: 'Tailoring your resume', args: {} });
+      onEvent({ type: 'progress', tool: 'tailor_resume', label: 'Writing tailored content' });
+      onEvent({
+        type: 'tool_result',
+        tool: 'tailor_resume',
+        ok: true,
+        summary: 'Saved',
+        data: {
+          document: {
+            resume_id: 'r1',
+            name: 'Vaco Software Engineer III',
+            job_title: 'Software Engineer III',
+            company: 'Vaco',
+            has_cover_letter: false,
+            match_score: 78,
+          },
+        },
+      });
+      onEvent({ type: 'message', text: 'Your tailored resume is ready.' });
+      onEvent({ type: 'done' });
+    });
+    const user = userEvent.setup();
+    renderAt('/app/assistant');
+    await user.click(screen.getByRole('button', { name: 'Tools' }));
+    await user.click(await screen.findByRole('menuitem', { name: /Tailor resume/ }));
+    expect(screen.getByRole('button', { name: 'Remove Tailor resume' })).toBeInTheDocument();
+
+    const box = screen.getByRole('textbox');
+    await user.click(box);
+    await user.paste('Too short');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    await user.clear(box);
+    await user.paste(JOB_DESCRIPTION);
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(api.streamAgentChat).toHaveBeenCalled());
+    const payload = api.streamAgentChat.mock.calls[0][0];
+    expect(payload.confirmed).toEqual({ tool: 'tailor_resume', args: { include_cover_letter: false } });
+    expect(payload.message).toBe(`Tailor my resume to this job description.\n\n${JOB_DESCRIPTION}`);
+    expect(await screen.findByText('Vaco Software Engineer III')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Resume PDF/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cover letter PDF/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove Tailor resume' })).not.toBeInTheDocument();
+  });
+
+  it('Backspace on an empty draft removes the picked block', async () => {
+    const user = userEvent.setup();
+    renderAt('/app/assistant');
+    await user.click(screen.getByRole('button', { name: 'Tools' }));
+    await user.click(await screen.findByRole('menuitem', { name: /Resume \+ cover letter/ }));
+    await user.click(screen.getByRole('textbox'));
+    await user.keyboard('{Backspace}');
+    expect(screen.queryByRole('button', { name: /Remove Resume/ })).not.toBeInTheDocument();
   });
 
   it('says so when a chat no longer exists', async () => {

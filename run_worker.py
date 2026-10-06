@@ -88,9 +88,6 @@ from app.tasks.worker import (
     run_scraper_task,
     sync_user_job_sources_task,
     sync_user_job_site_connections_task,
-    encode_job_task,
-    encode_user_task,
-    backfill_encodings_task,
 )
 from app.storage.database import init_database, close_database
 from app.services.http_client import init_http_client, close_http_client
@@ -424,7 +421,7 @@ async def encoding_shutdown(ctx):
 class EncodingWorkerConfig(EncodingWorkerSettings):
     on_startup = encoding_startup
     on_shutdown = encoding_shutdown
-    functions = [encode_job_task, encode_user_task, backfill_encodings_task]
+    functions = EncodingWorkerSettings.functions
     queue_name = EncodingWorkerSettings.queue_name
     job_timeout = EncodingWorkerSettings.job_timeout
     max_jobs = EncodingWorkerSettings.max_jobs

@@ -110,6 +110,43 @@ class ResumeDocumentRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def find_by_job_description_hash(self, user_id: str, jd_hash: str) -> ResumeDocument | None:
+        stmt = (
+            select(ResumeDocument)
+            .options(undefer(ResumeDocument.design))
+            .where(
+                ResumeDocument.user_id == user_id,
+                ResumeDocument.job_description_hash == jd_hash,
+            )
+            .order_by(ResumeDocument.updated_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def search_text_for_user(self, user_id: str, query: str, limit: int = 200) -> list[str]:
+        """Ids of resumes whose name, role, company or saved job description contains ``query``."""
+        q = (query or "").strip()
+        if not q:
+            return []
+        pattern = resume_search_ilike_pattern(q)
+        stmt = (
+            select(ResumeDocument.id)
+            .where(
+                ResumeDocument.user_id == user_id,
+                or_(
+                    ResumeDocument.name.ilike(pattern, escape="\\"),
+                    ResumeDocument.job_title.ilike(pattern, escape="\\"),
+                    ResumeDocument.company.ilike(pattern, escape="\\"),
+                    ResumeDocument.job_description.ilike(pattern, escape="\\"),
+                ),
+            )
+            .order_by(ResumeDocument.updated_at.desc())
+            .limit(max(1, min(limit, 500)))
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
     async def create(self, **kwargs) -> ResumeDocument:
         row = ResumeDocument(**kwargs)
         self.session.add(row)

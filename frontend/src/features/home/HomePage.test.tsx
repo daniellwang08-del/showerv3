@@ -28,8 +28,9 @@ vi.mock('@/features/assistant/Composer', () => ({
 }));
 vi.mock('@/features/assistant/useAssistantDraft', () => ({
   ASSISTANT_SUGGESTIONS: [],
-  useAssistantDraft: () => ({ draft: '', setDraft: vi.fn(), submit: vi.fn(), busy: false }),
+  useAssistantDraft: () => ({ draft: '', setDraft: vi.fn(), block: null, setBlock: vi.fn(), submit: vi.fn(), busy: false }),
 }));
+vi.mock('@/api/agentApi', () => ({ fetchAgentTools: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/stores/scraperStore', () => ({
   useScraperStore: { getState: () => ({ applyAgentDashboard: api.applyAgentDashboard }) },
 }));

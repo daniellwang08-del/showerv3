@@ -1,8 +1,19 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { formatDayLabel, formatDayTick, type ChartRow, type ChartSeries } from './dataUtils';
+import {
+  formatDayLabel,
+  formatDayTick,
+  formatUsd,
+  type ChartRow,
+  type ChartSeries,
+  type ChartValueFormat,
+} from './dataUtils';
 
 const compactFormat = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const compactNumber = (v: number) => compactFormat.format(v);
+const usdTick = (v: number) => `$${v >= 100 ? compactFormat.format(v) : Number(v.toFixed(2))}`;
+
+const formatChartValue = (value: number, format: ChartValueFormat) =>
+  format === 'usd' ? formatUsd(value) : value.toLocaleString();
 
 /** Above this many series the tooltip lists only non-zero values. */
 const DENSE_TOOLTIP = 10;
@@ -22,11 +33,13 @@ function ChartTooltip({
   payload,
   label,
   series,
+  format,
 }: {
   active?: boolean;
   payload?: readonly TooltipEntry[];
   label?: unknown;
   series: ChartSeries[];
+  format: ChartValueFormat;
 }) {
   if (!active || !payload?.length) return null;
   const rows = series.map((s) => ({ ...s, value: Number(payload.find((p) => p.dataKey === s.key)?.value ?? 0) }));
@@ -43,7 +56,7 @@ function ChartTooltip({
               <Swatch color={s.color} dash={s.dash} />
               <span className="truncate">{s.label}</span>
             </span>
-            <span className="font-medium tabular-nums">{s.value.toLocaleString()}</span>
+            <span className="font-medium tabular-nums">{formatChartValue(s.value, format)}</span>
           </li>
         ))}
       </ul>
@@ -56,10 +69,12 @@ export default function LineSeriesChart({
   data,
   series,
   height = 260,
+  format = 'number',
 }: {
   data: ChartRow[];
   series: ChartSeries[];
   height?: number;
+  format?: ChartValueFormat;
 }) {
   return (
     <div className="min-w-0">
@@ -86,11 +101,11 @@ export default function LineSeriesChart({
               tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
             />
             <YAxis
-              allowDecimals={false}
+              allowDecimals={format === 'usd'}
               tickLine={false}
               axisLine={false}
-              width={40}
-              tickFormatter={compactNumber}
+              width={format === 'usd' ? 52 : 40}
+              tickFormatter={format === 'usd' ? usdTick : compactNumber}
               tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
             />
             <Tooltip
@@ -98,7 +113,13 @@ export default function LineSeriesChart({
               allowEscapeViewBox={{ x: false, y: false }}
               wrapperStyle={{ outline: 'none', pointerEvents: 'none', zIndex: 20 }}
               content={({ active, payload, label }) => (
-                <ChartTooltip active={active} payload={payload as readonly TooltipEntry[]} label={label} series={series} />
+                <ChartTooltip
+                  active={active}
+                  payload={payload as readonly TooltipEntry[]}
+                  label={label}
+                  series={series}
+                  format={format}
+                />
               )}
             />
             {series.map((s) => (

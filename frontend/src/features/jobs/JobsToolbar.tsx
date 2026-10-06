@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import type { DashboardView } from '@/api/scraperApi';
 import { extractHttpUrlsFromText } from '@/utils/extractHttpUrls';
 import { submitJobUrls } from './submitJobUrls';
+import { viewTone } from './viewTone';
 
 export interface JobsViewTab {
   id: DashboardView;
@@ -65,37 +66,45 @@ export function JobsToolbar(props: Props) {
 
   return (
     <div className="space-y-3">
-      <div role="tablist" aria-label="Job views" className="scrollbar-thin -mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
-        {props.tabs.map((tab) => {
-          const active = tab.id === props.view;
-          return (
-            <button
-              key={tab.id}
-              role="tab"
-              type="button"
-              aria-selected={active}
-              onClick={() => props.onView(tab.id)}
-              className={cn(
-                'inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50',
-                active
-                  ? 'bg-foreground text-background'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              {tab.label}
-              {tab.count != null && (
-                <span
-                  className={cn(
-                    'rounded-full px-1.5 text-xs tabular-nums',
-                    active ? 'bg-background/20' : 'bg-muted text-muted-foreground',
-                  )}
-                >
-                  {tab.count.toLocaleString()}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      <div className="scrollbar-thin -mx-1 overflow-x-auto px-1 pb-1">
+        <div
+          role="tablist"
+          aria-label="Job views"
+          className="inline-flex min-w-max gap-1 rounded-xl border bg-muted/60 p-1"
+        >
+          {props.tabs.map((tab) => {
+            const active = tab.id === props.view;
+            const tone = viewTone(tab.id);
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                onClick={() => props.onView(tab.id)}
+                className={cn(
+                  'inline-flex h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm outline-none transition-all focus-visible:ring-2 focus-visible:ring-ring/50',
+                  active
+                    ? cn('bg-card font-semibold text-foreground shadow-sm ring-1', tone.ring)
+                    : 'font-medium text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                )}
+              >
+                <span aria-hidden className={cn('size-2 rounded-full', tone.dot, !active && 'opacity-70')} />
+                {tab.label}
+                {tab.count != null && (
+                  <span
+                    className={cn(
+                      'min-w-6 rounded-md px-1.5 py-px text-center text-xs font-semibold tabular-nums',
+                      active || tab.count > 0 ? tone.soft : 'bg-background/70 text-muted-foreground',
+                    )}
+                  >
+                    {tab.count.toLocaleString()}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -165,11 +174,19 @@ export function JobsToolbar(props: Props) {
         ))}
 
         <div className="ml-auto flex items-center gap-2">
-          {props.duplicateCount > 0 && (
-            <Button variant="ghost" size="sm" onClick={props.onOpenDuplicates}>
-              <CopyIcon /> {props.duplicateCount} skipped
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={props.onOpenDuplicates}
+            disabled={props.duplicateCount === 0}
+            title={props.duplicateCount > 0 ? 'Jobs skipped as duplicates. Review them.' : 'No skipped jobs'}
+            className={cn(
+              props.duplicateCount > 0 &&
+                'border-yellow-700/40 bg-yellow-600 font-semibold text-yellow-950 shadow-sm hover:bg-yellow-500 hover:text-yellow-950 dark:border-yellow-400/30 dark:bg-yellow-600 dark:text-yellow-950 dark:hover:bg-yellow-500',
+            )}
+          >
+            <CopyIcon /> {props.duplicateCount} skipped
+          </Button>
           <Button size="sm" onClick={() => setAdding(true)}>
             <Plus /> Add jobs
           </Button>

@@ -1,5 +1,7 @@
 import { apiClient } from './client';
 import type {
+  AiUsageMeasure,
+  AiUsageOverview,
   AnalysisUser,
   AppliedVsFetchedSeries,
   DataManagementMonth,
@@ -133,6 +135,40 @@ export async function fetchUserActivitySeries(body: {
       timezone: body.timezone || localTimezone(),
     },
   );
+  return data;
+}
+
+export async function fetchAiUsageOverview(year: number, month: number, timezone?: string): Promise<AiUsageOverview> {
+  const { data } = await apiClient.get<AiUsageOverview>('/data-management/usage/overview', {
+    params: { year, month, timezone: timezone || localTimezone() },
+  });
+  return data;
+}
+
+export async function fetchAiUsageSeries(body: {
+  year: number;
+  month: number;
+  timezone?: string;
+  user_ids: string[];
+  measure: AiUsageMeasure;
+}): Promise<MultiSeriesResult> {
+  const { data } = await apiClient.post<MultiSeriesResult>('/data-management/series/ai-usage', {
+    ...body,
+    timezone: body.timezone || localTimezone(),
+  });
+  return data;
+}
+
+export async function fetchTailoringRunsSeries(body: {
+  year: number;
+  month: number;
+  timezone?: string;
+  user_ids: string[];
+}): Promise<MultiSeriesResult> {
+  const { data } = await apiClient.post<MultiSeriesResult>('/data-management/series/tailoring-runs', {
+    ...body,
+    timezone: body.timezone || localTimezone(),
+  });
   return data;
 }
 

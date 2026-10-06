@@ -15,7 +15,7 @@ import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -33,6 +33,24 @@ KEY_LENGTH = 10
 KEY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 MIN_KEY_LIFETIME = timedelta(minutes=10)
 MAX_KEY_LIFETIME = timedelta(days=365)
+
+
+def can_use_app_clause():
+    """SQL filter for accounts allowed to do work: active and approved.
+
+    Background fan-outs (auto-prepare, job source syncs, encodings) must use
+    this, not ``is_active`` alone, or pending and rejected signups keep
+    receiving jobs and spending AI credit without ever signing in.
+    """
+    return and_(User.is_active.is_(True), User.approval_status == APPROVAL_APPROVED)
+
+
+def can_use_app(user: User | None) -> bool:
+    return bool(
+        user is not None
+        and user.is_active
+        and (user.approval_status or APPROVAL_APPROVED) == APPROVAL_APPROVED
+    )
 
 
 def utcnow() -> datetime:

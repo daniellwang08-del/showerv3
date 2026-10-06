@@ -9,6 +9,7 @@ validation, permissions and side effects.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.core.logging import get_logger
@@ -375,9 +376,234 @@ async def _trigger_sync(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     )
 
 
+# ── Documents ──────────────────────────────────────────────────────────────
+
+_MIN_JD_CHARS = 200
+
+
+def _job_description_from(ctx: ToolContext, args: dict[str, Any]) -> str:
+    """Prefer the user's own pasted text over anything the model re-typed."""
+    for text in (ctx.user_message, *ctx.earlier_user_messages):
+        if len((text or "").strip()) >= _MIN_JD_CHARS:
+            return text.strip()
+    typed = str(args.get("job_description") or "").strip()
+    return typed if len(typed) >= _MIN_JD_CHARS else ""
+
+
+_REQUEST_LINE_RE = re.compile(
+    r"\b(tailor\w*|customi[sz]e|rewrite|generate|create|write|make|build|prepare|draft)\b"
+    r".{0,80}\b(resume|r\u00e9sum\u00e9|cv|cover\s+letter)\b",
+    re.IGNORECASE,
+)
+
+
+def posting_without_request(text: str) -> str:
+    """The pasted posting without a short leading or trailing request ("tailor my resume to this")."""
+    parts = re.split(r"\n\s*\n", (text or "").strip())
+    if len(parts) > 1 and len(parts[0]) <= 240 and _REQUEST_LINE_RE.search(parts[0]):
+        parts = parts[1:]
+    if len(parts) > 1 and len(parts[-1]) <= 240 and _REQUEST_LINE_RE.search(parts[-1]):
+        parts = parts[:-1]
+    return "\n\n".join(parts).strip()
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
+class TailorChecklist:
+    """Step list streamed with every ``progress`` event of ``tailor_resume``.
+
+    Pipeline stages arrive in order; a stage marks every earlier step done.
+    Writing the resume and the cover letter run in parallel, so both are
+    active together.
+    """
+
+    # Typical run on gpt-5.1: scoring and evidence ~15 s, writing ~60 s.
+    EXPECTED_SECONDS = 90
+    _STAGE_STEPS = {
+        "reading": ("read",),
+        "analyzing": ("score",),
+        "evidence": ("evidence",),
+        "tailoring": ("resume", "cover_letter"),
+        "quality": ("quality",),
+        "saving": ("save",),
+    }
+
+    def __init__(self, ctx: ToolContext, include_letter: bool):
+        self._ctx = ctx
+        labels = [
+            ("read", "Reading the job description"),
+            ("score", "Scoring your match to the role"),
+            ("evidence", "Gathering evidence from your projects"),
+            ("resume", "Writing your tailored resume"),
+        ]
+        if include_letter:
+            labels.append(("cover_letter", "Writing your cover letter"))
+        labels += [
+            ("quality", "Checking quality"),
+            ("save", "Saving to Documents"),
+        ]
+        self.steps = [{"id": i, "label": label, "status": "pending"} for i, label in labels]
+
+    def _index(self, step_id: str) -> int:
+        return next((n for n, s in enumerate(self.steps) if s["id"] == step_id), -1)
+
+    async def _push(self) -> None:
+        active = [s["label"] for s in self.steps if s["status"] == "active"]
+        label = active[0] if active else "Tailoring your resume"
+        await self._ctx.report(
+            label,
+            steps=[dict(s) for s in self.steps],
+            expected_seconds=self.EXPECTED_SECONDS,
+        )
+
+    async def stage(self, stage: str) -> None:
+        ids = [i for i in self._STAGE_STEPS.get(stage, ()) if self._index(i) >= 0]
+        if not ids:
+            return
+        first = min(self._index(i) for i in ids)
+        for n, s in enumerate(self.steps):
+            if n < first and s["status"] != "done":
+                s["status"] = "done"
+            elif s["id"] in ids:
+                s["status"] = "active"
+        await self._push()
+
+    async def finish(self) -> None:
+        for s in self.steps:
+            s["status"] = "done"
+        await self._push()
+
+    async def fail(self) -> None:
+        for s in self.steps:
+            if s["status"] == "active":
+                s["status"] = "failed"
+        await self._push()
+
+
+async def _tailor_resume(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    from app.core.llm_client import llm_failure_message
+    from app.services.resume_ai_chat_service import _run_pipeline
+    from app.services.resume_design_service import save_ai_tailored_as_library_resume
+
+    job_text = _job_description_from(ctx, args)
+    if not job_text:
+        return ToolResult(
+            ok=False,
+            summary="Paste the full job description in your message, then ask again.",
+            error="missing job description",
+        )
+    include_letter = _truthy(args.get("include_cover_letter", False))
+    instructions = str(args.get("instructions") or "").strip()[:2000]
+    steps = TailorChecklist(ctx, include_letter)
+
+    async def emit(ev: dict[str, Any]) -> None:
+        await steps.stage(str(ev.get("stage") or ""))
+
+    try:
+        out = await _run_pipeline(
+            ctx.user_id,
+            job_text,
+            want_tailor=True,
+            extra_instructions=instructions,
+            emit=emit,
+            want_cover_letter=include_letter,
+            free_scoring=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - report the provider reason, keep the turn alive
+        logger.warning("agent_tailor_failed", user_id=ctx.user_id, error=str(exc)[:300])
+        message = llm_failure_message(exc, feature="Tailoring")
+        await steps.fail()
+        return ToolResult(ok=False, summary=message, error=message)
+
+    if out.get("error") == "no_profile":
+        await steps.fail()
+        return ToolResult(
+            ok=False,
+            summary="Add your experience on the Profile page first, then try again.",
+            error="no_profile",
+        )
+    if not out.get("is_job_posting"):
+        await steps.fail()
+        return ToolResult(
+            ok=False,
+            summary="That text doesn't read like a job description. Paste the full posting and try again.",
+            error="not_a_job_posting",
+        )
+    tailored = out.get("tailored")
+    if not isinstance(tailored, dict) or not tailored:
+        await steps.fail()
+        return ToolResult(ok=False, summary="The AI returned no tailored content. Please try again.", error="empty")
+
+    letter = (out.get("cover_letter") or "").strip() if include_letter else ""
+    match = out.get("match") or {}
+    score = match.get("overall_score", match.get("score")) if isinstance(match, dict) else None
+    if not isinstance(score, (int, float)):
+        score = None
+    await steps.stage("saving")
+    payload = await save_ai_tailored_as_library_resume(
+        ctx.user_id,
+        content=tailored,
+        job_title=out.get("job_title"),
+        company=out.get("company"),
+        activate=False,
+        cover_letter=letter or None,
+        job_description=posting_without_request(job_text) or job_text,
+        match_score=score,
+        origin="assistant",
+    )
+    await steps.finish()
+    resume = payload.get("resume") or {}
+    role = " at ".join(p for p in (out.get("job_title"), out.get("company")) if p) or "this role"
+    saved = "resume and cover letter" if letter else "resume"
+    summary = f"Saved a tailored {saved} for {role} to Documents, with the job description."
+    if score is not None:
+        summary += f" Match score {round(score)}."
+    if include_letter and not letter:
+        summary += " The cover letter could not be written this time."
+    return ToolResult(
+        ok=True,
+        summary=summary,
+        data={
+            "document": {
+                "resume_id": resume.get("id"),
+                "name": resume.get("name"),
+                "job_title": out.get("job_title"),
+                "company": out.get("company"),
+                "has_cover_letter": bool(letter),
+                "has_job_description": True,
+                "match_score": round(score) if score is not None else None,
+            }
+        },
+        refresh=["documents"],
+    )
+
+
 # ── Registration ───────────────────────────────────────────────────────────
 
 AGENT_TOOLS: list[ToolSpec] = [
+    register_tool(
+        ToolSpec(
+            name="tailor_resume",
+            description=(
+                "Tailor the user's resume (and optionally a cover letter) to a job description they "
+                "pasted, then save it to their Documents. Use for 'tailor my resume to this job', "
+                "'write a cover letter for this role', or a pasted posting with a tailoring request."
+            ),
+            params=[
+                ToolParam("include_cover_letter", "boolean", "also save a cover letter (default false)"),
+                ToolParam("instructions", "string", "extra wishes, e.g. 'emphasise Python integrations'"),
+            ],
+            handler=_tailor_resume,
+            running_title="Tailoring your resume",
+            label="Tailor resume",
+            category="Resume and cover letter",
+            example="Tailor my resume to this job description:",
+        )
+    ),
     register_tool(
         ToolSpec(
             name="update_dashboard",
@@ -405,6 +631,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             ],
             handler=_update_dashboard,
             running_title="Updating dashboard",
+            label="Filter and sort jobs",
+            category="Jobs",
+            example="Show today's remote jobs sorted by match score",
         )
     ),
     register_tool(
@@ -432,6 +661,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             ],
             handler=_search_jobs,
             running_title="Searching jobs",
+            label="Find jobs",
+            category="Jobs",
+            example="Which jobs at fintech companies match me best?",
         )
     ),
     register_tool(
@@ -441,6 +673,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             params=[],
             handler=_get_stats,
             running_title="Reading stats",
+            label="Search stats",
+            category="Insights",
+            example="How is my job search going this week?",
         )
     ),
     register_tool(
@@ -450,6 +685,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             params=[],
             handler=_get_sync_status,
             running_title="Checking sync status",
+            label="Sync status",
+            category="Insights",
+            example="Is a job sync running right now?",
         )
     ),
     register_tool(
@@ -459,6 +697,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             params=[ToolParam("job_id", "string", "the job id", required=True)],
             handler=_get_job_details,
             running_title="Loading job",
+            label="Job details",
+            category="Jobs",
+            example="Tell me more about my top match",
         )
     ),
     register_tool(
@@ -469,6 +710,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             handler=_submit_job,
             requires_confirmation=True,
             running_title="Submitting job",
+            label="Add a job by link",
+            category="Jobs",
+            example="Add this job: https://",
         )
     ),
     register_tool(
@@ -482,6 +726,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             handler=_set_applied,
             requires_confirmation=True,
             running_title="Updating applied status",
+            label="Mark applied",
+            category="Applications",
+            example="Mark my top 3 matches as applied",
         )
     ),
     register_tool(
@@ -492,6 +739,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             handler=_rerun_matches,
             requires_confirmation=True,
             running_title="Re-running analysis",
+            label="Re-score matches",
+            category="Applications",
+            example="Re-score my ready jobs against my updated resume",
         )
     ),
     register_tool(
@@ -502,6 +752,9 @@ AGENT_TOOLS: list[ToolSpec] = [
             handler=_trigger_sync,
             requires_confirmation=True,
             running_title="Starting sync",
+            label="Sync new jobs",
+            category="Admin",
+            example="Sync new jobs from all platforms",
             admin_only=True,
         )
     ),

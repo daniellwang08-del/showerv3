@@ -247,10 +247,20 @@ async def _flush_once() -> int:
         return 0
 
 
+async def _flush_usage() -> None:
+    from app.services.llm_usage import flush_llm_usage
+
+    await flush_llm_usage()
+
+
 async def _flush_loop() -> None:
     while True:
         try:
             await _flush_once()
+        except Exception:
+            pass
+        try:
+            await _flush_usage()
         except Exception:
             pass
         await asyncio.sleep(1.0)
@@ -262,8 +272,7 @@ async def start_log_sink(*, service: str | None = None) -> None:
         configure_log_sink(service=service)
     else:
         configure_log_sink(service=_service_name or os.environ.get("SHOWERV3_SERVICE", "api"))
-    if not _enabled:
-        return
+    # The loop also writes LLM usage rows, so it runs even with log persistence off.
     if _flush_task and not _flush_task.done():
         return
     _flush_task = asyncio.create_task(_flush_loop(), name="system-log-flush")
@@ -280,6 +289,10 @@ async def stop_log_sink() -> None:
     _flush_task = None
     try:
         await _flush_once()
+    except Exception:
+        pass
+    try:
+        await _flush_usage()
     except Exception:
         pass
 

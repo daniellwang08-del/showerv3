@@ -9,6 +9,7 @@ import { useShellStore } from '@/stores/shellStore';
 import { ChatHistory } from './ChatHistory';
 import { Composer } from './Composer';
 import { Thread } from './Thread';
+import { ToolsMenu } from './ToolsMenu';
 import { ASSISTANT_SUGGESTIONS, useAssistantDraft } from './useAssistantDraft';
 import { PageTitle } from '@/components/app/PageTitle';
 
@@ -28,7 +29,7 @@ export function AssistantPage() {
   const clear = useAgentStore((s) => s.clear);
   const setDocked = useShellStore((s) => s.setAssistantDocked);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const { draft, setDraft, submit, busy } = useAssistantDraft(
+  const { draft, setDraft, block, setBlock, submit, busy } = useAssistantDraft(
     routeId ? undefined : { onStartChat: (id) => navigate(`/app/assistant/${id}`, { replace: true }) },
   );
 
@@ -150,6 +151,15 @@ export function AssistantPage() {
               autoFocus
               placeholder="Ask about your jobs, or paste job links…"
               urlActionLabel={(n) => `Submit ${n} job${n === 1 ? '' : 's'}`}
+              block={block}
+              onClearBlock={() => setBlock(null)}
+              tools={
+                <ToolsMenu
+                  disabled={busy}
+                  selectedId={block?.id}
+                  onPickBlock={(b) => setBlock(block?.id === b.id ? null : b)}
+                />
+              }
             />
             <p className="mt-2 text-center text-xs text-muted-foreground">
               Chats are saved until you delete them. Actions that change data ask for confirmation.

@@ -7,6 +7,7 @@ final reply in real time.
 
 Events (JSON per ``data:`` line):
 - {"type":"tool_call","tool","title","args"}        a tool is about to run
+- {"type":"progress","tool","label","steps"?,"expected_seconds"?} a long tool's stage
 - {"type":"tool_result","tool","ok","summary","data"} a tool finished
 - {"type":"refresh","targets":[...]}                 client caches to reload
 - {"type":"confirm","tool","args","summary","title"} a change needs approval
@@ -35,15 +36,18 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import defer
 
 from app.api.routes import require_applicant
+from app.core.llm_client import llm_failure_message
 from app.core.logging import get_logger
 from app.models.database import AgentChatSession
 from app.services.agent import run_agent_turn
+from app.services.agent.base import visible_tools
 from app.storage.database import get_session
 
 agent_router = APIRouter(prefix="/agent", tags=["agent"])
 logger = get_logger(__name__)
 
-MAX_MESSAGE_CHARS = 4000
+# Large enough for a full pasted job description (same cap as /documents/tailor).
+MAX_MESSAGE_CHARS = 40_000
 MAX_HISTORY_TURNS = 24
 
 MAX_SESSION_ITEMS = 1000
@@ -68,6 +72,8 @@ class AgentChatRequest(BaseModel):
     history: list[AgentTurn] = Field(default_factory=list)
     timezone: str | None = None
     confirmed: ConfirmedAction | None = None
+    # Tool the user picked in the composer's tools menu; the planner acts with it.
+    tool: str | None = Field(default=None, max_length=64)
 
 
 def _sse(obj: dict[str, Any]) -> str:
@@ -93,13 +99,14 @@ async def agent_chat(req: AgentChatRequest, current_user: dict = Depends(require
                 timezone=req.timezone,
                 confirmed=confirmed,
                 is_admin=False,
+                selected_tool=req.tool,
             ):
                 if event.get("type") in {"done", "error"}:
                     saw_terminal = True
                 yield _sse(event)
         except Exception as exc:  # noqa: BLE001 - surface a clean SSE error
             logger.warning("agent_chat_failed", user_id=user_id, error=str(exc)[:300])
-            yield _sse({"type": "error", "message": "The assistant is temporarily unavailable. Please try again."})
+            yield _sse({"type": "error", "message": llm_failure_message(exc)})
             saw_terminal = True
         if not saw_terminal:
             yield _sse({"type": "done"})
@@ -109,6 +116,31 @@ async def agent_chat(req: AgentChatRequest, current_user: dict = Depends(require
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+class AgentToolInfo(BaseModel):
+    name: str
+    label: str
+    category: str
+    description: str
+    example: str
+    requires_confirmation: bool
+
+
+@agent_router.get("/tools", response_model=list[AgentToolInfo])
+async def list_agent_tools(current_user: dict = Depends(require_applicant)) -> list[AgentToolInfo]:
+    """What the assistant can do for this user, for the composer's tools menu."""
+    return [
+        AgentToolInfo(
+            name=spec.name,
+            label=spec.label or spec.running_title,
+            category=spec.category,
+            description=spec.description,
+            example=spec.example,
+            requires_confirmation=spec.requires_confirmation,
+        )
+        for spec in visible_tools(is_admin=False)
+    ]
 
 
 # ---------------------------------------------------------------------------

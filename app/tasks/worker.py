@@ -1961,6 +1961,18 @@ async def encode_job_task(ctx: dict, job_id: str, then: dict | None = None) -> d
         clear_logging_context()
 
 
+async def score_pasted_job_task(ctx: dict, user_id: str, text: str) -> dict:
+    """Encoding worker: free match score for a job description pasted into the assistant."""
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="score_pasted_job", user_id=user_id)
+    try:
+        from app.services.pasted_job_scoring import score_pasted_job
+
+        return await score_pasted_job(user_id, text)
+    finally:
+        clear_logging_context()
+
+
 async def encode_user_task(ctx: dict, user_id: str) -> dict:
     """Encoding worker: embed one user profile (skips when unchanged)."""
     set_request_id(new_request_id())
@@ -1989,6 +2001,7 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
 
     from app.models.database import Job as JobModel, JobEncoding, User, UserEncoding
     from app.services.encoding_service import ENCODER_VERSION, encode_job, encode_user, model_version
+    from app.services.signup_approval_service import can_use_app_clause
 
     jobs_done = 0
     jobs_failed = 0
@@ -2005,7 +2018,7 @@ async def backfill_encodings_task(ctx: dict, batch_size: int = 200) -> dict:
                     | (UserEncoding.model_version != current_model)
                     | (UserEncoding.encoder_version.is_distinct_from(ENCODER_VERSION))
                 )
-                .where(User.is_active.is_(True))
+                .where(can_use_app_clause())
             )
             user_ids = [row[0] for row in user_rows.all()]
         for user_id in user_ids:
@@ -2087,7 +2100,13 @@ async def _encoding_worker_startup(ctx: dict) -> None:
 
 class EncodingWorkerSettings:
     """arq settings for job/profile embedding (CPU model inference)."""
-    functions = [encode_job_task, encode_user_task, backfill_encodings_task]
+    functions = [
+        encode_job_task,
+        encode_user_task,
+        # The API awaits this result, so it must outlive the global keep_result=0.
+        func(score_pasted_job_task, keep_result=300),
+        backfill_encodings_task,
+    ]
     redis_settings = _redis_settings
     queue_name = ENCODING_QUEUE
     # Backfill can walk the whole jobs table; give it room.

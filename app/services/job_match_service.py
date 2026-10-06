@@ -8,6 +8,7 @@ Phase B: tailored resume JSON + cover letter (deferred).
 import asyncio
 import json
 import re
+from typing import Awaitable, Callable
 
 from app.core.config import get_settings
 from app.core.llm_client import (
@@ -1066,10 +1067,15 @@ async def generate_tailored_content_phase_b(
     match_summary: str = "",
     project_evidence_context: str = "",
     user_id: str | None = None,
+    include_cover_letter: bool = True,
+    on_stage: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[dict | None, dict | None]:
     """
     Phase B: tailored resume JSON and cover letter body.
     Returns (tailored_resume_or_None, cover_letter_or_None).
+
+    ``include_cover_letter=False`` skips the cover letter call entirely.
+    ``on_stage`` is awaited with "quality_retry" when a rewrite pass starts.
     """
     settings = get_settings()
     job_truncated = _truncate_job_text_preserve_layout(job_text, MAX_JOB_LENGTH)
@@ -1152,10 +1158,15 @@ async def generate_tailored_content_phase_b(
             return None
         return _parse_cover_letter(parsed.get("cover_letter"))
 
+    async def _no_result() -> None:
+        return None
+
     first_resume, cover_letter = await asyncio.gather(
-        _resume_call(user_content, "phase_b"), _cover_call("phase_b_cover_letter")
+        _resume_call(user_content, "phase_b"),
+        _cover_call("phase_b_cover_letter") if include_cover_letter else _no_result(),
     )
     tailored_resume = first_resume
+    cover_missing = include_cover_letter and not cover_letter
 
     quality_issues = tailored_resume_quality_issues(
         tailored_resume,
@@ -1173,11 +1184,16 @@ async def generate_tailored_content_phase_b(
             coverage=coverage,
         )
 
-    if blocking or not cover_letter:
+    if blocking or cover_missing:
+        if on_stage is not None:
+            try:
+                await on_stage("quality_retry")
+            except Exception:  # noqa: BLE001 - progress reporting must never break the run
+                pass
         logger.warning(
             "phase_b_quality_soft_retry",
             issues=quality_issues,
-            cover_letter_missing=not bool(cover_letter),
+            cover_letter_missing=cover_missing,
             supported_anchors=len(truthful_anchors),
             jd_anchors=len(job_anchors),
             coverage=coverage,
@@ -1201,12 +1217,9 @@ async def generate_tailored_content_phase_b(
                 + "."
             )
 
-        async def _no_result() -> None:
-            return None
-
         retry_resume, retry_cover = await asyncio.gather(
             _resume_call(retry_user, "phase_b_quality_retry") if blocking else _no_result(),
-            _cover_call("phase_b_cover_letter_retry") if not cover_letter else _no_result(),
+            _cover_call("phase_b_cover_letter_retry") if cover_missing else _no_result(),
         )
         if retry_cover:
             cover_letter = retry_cover
@@ -1233,6 +1246,6 @@ async def generate_tailored_content_phase_b(
 
     if not tailored_resume:
         logger.warning("tailored_resume_section_missing_or_invalid")
-    if not cover_letter:
+    if cover_missing and not cover_letter:
         logger.warning("cover_letter_section_missing_or_invalid")
     return tailored_resume, cover_letter

@@ -17,7 +17,7 @@ from app.services.job_field_utils import (
     clean_optional_job_field,
     infer_title_from_description,
 )
-from app.services.job_location_parse import prefer_job_location
+from app.services.job_location_parse import prefer_job_location, strip_work_mode_from_location
 from app.services.url_manager import URLManager
 from app.core.logging import get_logger
 from app.utils.text_sanitizer import sanitize_for_postgres_text
@@ -178,7 +178,7 @@ class JobExtractionRepository:
             "status": ExtractionStatus.COMPLETED,
             "title": resolved_title,
             "company": _truncate_for_db(job_data.company, limits["company"]),
-            "location": _truncate_for_db(job_data.location, limits["location"]),
+            "location": _truncate_for_db(strip_work_mode_from_location(job_data.location), limits["location"]),
             "employment_type": _truncate_for_db(job_data.employment_type, limits["employment_type"]),
             "salary_range": _truncate_for_db(job_data.salary_range, limits["salary_range"]),
             "description": job_data.description,
@@ -226,7 +226,7 @@ class JobExtractionRepository:
         company = _truncate_for_db(job_data.company, limits["company"])
         if company and not clean_optional_job_field(existing.company):
             values["company"] = company
-        location = _truncate_for_db(job_data.location, limits["location"])
+        location = _truncate_for_db(strip_work_mode_from_location(job_data.location), limits["location"])
         if location and not clean_optional_job_field(existing.location):
             values["location"] = location
         employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])

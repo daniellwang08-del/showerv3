@@ -39,6 +39,18 @@ export function fmt(n: number | undefined | null): string {
   return Number(n || 0).toLocaleString();
 }
 
+export type ChartValueFormat = 'number' | 'usd';
+
+/** Sub-dollar amounts keep four decimals so per-call AI costs don't all read as $0.00. */
+export function formatUsd(value: number | undefined | null): string {
+  const v = Number(value || 0);
+  const digits = v !== 0 && Math.abs(v) < 1 ? 4 : 2;
+  return v.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: digits });
+}
+
+const compactTokens = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+export const fmtTokens = (n: number | undefined | null) => compactTokens.format(Number(n || 0));
+
 export function extractErrorMessage(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'response' in err) {
     const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;

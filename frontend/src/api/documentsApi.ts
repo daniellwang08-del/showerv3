@@ -15,8 +15,40 @@ export interface LibraryDocument {
   company: string | null;
   is_active: boolean;
   has_cover_letter: boolean;
+  /** The posting it was tailored to is saved (tailored from pasted text). */
+  has_job_description?: boolean;
+  match_score?: number | null;
+  /** Where the tailoring was requested: assistant, documents, … */
+  origin?: string | null;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface SavedJobDescription {
+  job_description: string | null;
+  job_title: string | null;
+  company: string | null;
+  match_score: number | null;
+  origin: string | null;
+  created_at: string | null;
+}
+
+export async function fetchLibraryJobDescription(resumeId: string): Promise<SavedJobDescription> {
+  const { data } = await apiClient.get<SavedJobDescription>(
+    `/documents/resumes/${encodeURIComponent(resumeId)}/job-description`,
+  );
+  return data;
+}
+
+export interface DocumentSearchHits {
+  library_ids: string[];
+  build_ids: string[];
+}
+
+/** Server-side search that also looks inside saved job descriptions. */
+export async function searchDocuments(q: string, signal?: AbortSignal): Promise<DocumentSearchHits> {
+  const { data } = await apiClient.get<DocumentSearchHits>('/documents/search', { params: { q }, signal });
+  return data;
 }
 
 export interface JobBuildDocument {

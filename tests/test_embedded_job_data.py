@@ -143,7 +143,7 @@ def test_extractor_end_to_end_hydrates_all_fields():
     meta = build_metadata(plain_text=result.raw_content, source_url=UKG_URL, structured_data=result.structured_data)
     assert meta["title"] == "Site Reliability Engineer"
     assert meta["company"] == "One Inc"
-    assert meta["location"] == "Remote, United States"
+    assert meta["location"] == "United States"
     assert meta["salary_range"] == "$115,000 - $120,000 USD"
     assert meta["employment_type"] == "Full-time"
     assert meta["work_mode"] == "remote"
@@ -161,7 +161,8 @@ def test_page_text_winner_keeps_embedded_fields():
     )
     # Without the record the URL slug would give "Fullthrottle1" and no location.
     assert meta["company"] == "Fullthrottle.ai"
-    assert meta["location"] == "Remote (United States)"
+    assert meta["location"] == "United States"
+    assert meta["work_mode"] == "remote"
 
 
 def test_fill_structured_gaps_keeps_best_values():

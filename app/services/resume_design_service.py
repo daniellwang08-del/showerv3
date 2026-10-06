@@ -551,17 +551,31 @@ async def _upsert_tailored_library_doc(
     job_title: str | None,
     design: ResumeDesign,
     cover_letter: str | None = None,
+    job_description: str | None = None,
+    match_score: int | None = None,
+    origin: str | None = None,
 ):
+    """Save a tailored resume.
+
+    With ``job_description`` only a rerun of that same posting updates its
+    document; two postings with the same title stay separate. Without it the
+    document for the same company and title is updated (job workflow opens).
+    """
     from app.storage.resume_document_repository import ResumeDocumentRepository
 
     rrepo = ResumeDocumentRepository(session)
     existing = None
-    target_key = _norm_key(company, job_title)
-    if target_key != "::":
-        for doc in await rrepo.list_for_user(user_id):
-            if _norm_key(doc.company, doc.job_title) == target_key:
-                existing = doc
-                break
+    jd = (job_description or "").strip() or None
+    jd_hash = job_description_hash(jd) if jd else None
+    if jd_hash:
+        existing = await rrepo.find_by_job_description_hash(user_id, jd_hash)
+    else:
+        target_key = _norm_key(company, job_title)
+        if target_key != "::":
+            for doc in await rrepo.list_for_user(user_id):
+                if _norm_key(doc.company, doc.job_title) == target_key:
+                    existing = doc
+                    break
 
     if existing:
         existing.name = name[:200]
@@ -572,6 +586,13 @@ async def _upsert_tailored_library_doc(
         existing.status = "draft"
         if cover_letter is not None:
             existing.cover_letter = cover_letter
+        if jd:
+            existing.job_description = jd
+            existing.job_description_hash = jd_hash
+        if match_score is not None:
+            existing.match_score = match_score
+        if origin:
+            existing.origin = origin
         return existing
 
     return await rrepo.create(
@@ -583,7 +604,19 @@ async def _upsert_tailored_library_doc(
         company=company,
         design=design.model_dump(mode="json"),
         cover_letter=cover_letter,
+        job_description=jd,
+        job_description_hash=jd_hash,
+        match_score=match_score,
+        origin=origin,
     )
+
+
+def job_description_hash(text: str) -> str:
+    """Stable across whitespace and case, so a re-paste of the same posting matches."""
+    import hashlib
+
+    normalized = " ".join((text or "").split()).lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 async def save_ai_tailored_as_library_resume(
@@ -594,6 +627,9 @@ async def save_ai_tailored_as_library_resume(
     company: str | None = None,
     activate: bool = True,
     cover_letter: str | None = None,
+    job_description: str | None = None,
+    match_score: int | float | None = None,
+    origin: str | None = None,
 ) -> dict[str, Any]:
     """Persist OneClick / extension AI-tailored sections into the resume library.
 
@@ -628,6 +664,11 @@ async def save_ai_tailored_as_library_resume(
             job_title=title_n,
             design=design,
             cover_letter=(cover_letter or "").strip() or None,
+            job_description=job_description,
+            match_score=(
+                int(round(match_score)) if isinstance(match_score, (int, float)) else None
+            ),
+            origin=origin,
         )
         if activate:
             user.active_resume_id = doc.id

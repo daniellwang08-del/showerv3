@@ -20,6 +20,8 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Composer } from '@/features/assistant/Composer';
+import { PROMPT_BLOCKS } from '@/features/assistant/promptBlocks';
+import { ToolsMenu } from '@/features/assistant/ToolsMenu';
 import { ASSISTANT_SUGGESTIONS, useAssistantDraft } from '@/features/assistant/useAssistantDraft';
 import { useJobList, useJobStats } from '@/features/jobs/queries';
 import { useOpenJob } from '@/features/jobs/useOpenJob';
@@ -70,7 +72,7 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
   const settings = useQuery({ queryKey: ['settings'], queryFn: fetchUserSettings });
   const top = useJobList({ view: 'all', sort: 'match_score', order: 'desc', per_page: 12 });
   const applied = useJobList({ view: 'applied', sort: 'applied_at', order: 'desc', per_page: 100 });
-  const { draft, setDraft, submit, busy } = useAssistantDraft({
+  const { draft, setDraft, block, setBlock, submit, busy } = useAssistantDraft({
     onStartChat: (sessionId) => navigate(`/app/assistant/${sessionId}`),
   });
 
@@ -136,7 +138,7 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
           {firstName ? `, ${firstName}` : ''}
         </h1>
         <p className="mt-2 text-center text-muted-foreground">
-          Ask about your search, or paste job links to analyze and tailor.
+          Ask about your search, paste job links to analyze, or tailor your resume to a job description.
         </p>
         <NextStepButton
           step={step}
@@ -160,8 +162,18 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
             autoFocus
             placeholder="Ask anything, or paste job URLs…"
             urlActionLabel={(n) => `Analyze ${n} job${n === 1 ? '' : 's'}`}
+            block={block}
+            onClearBlock={() => setBlock(null)}
             tools={
               <>
+                <ToolsMenu
+                  disabled={busy}
+                  selectedId={block?.id}
+                  onPickBlock={(b) => {
+                    setBlock(block?.id === b.id ? null : b);
+                    focusComposer();
+                  }}
+                />
                 <input
                   ref={fileRef}
                   type="file"
@@ -190,6 +202,23 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
             }
           />
           <div className="mt-3 flex flex-wrap justify-center gap-2">
+            {PROMPT_BLOCKS.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                aria-pressed={block?.id === b.id}
+                onClick={() => setBlock(block?.id === b.id ? null : b)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors',
+                  block?.id === b.id
+                    ? 'border-brand/40 bg-brand-soft text-brand'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+              >
+                <b.icon className="size-3 text-brand" />
+                {b.label}
+              </button>
+            ))}
             {ASSISTANT_SUGGESTIONS.map((q) => (
               <button
                 key={q}

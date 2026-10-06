@@ -1,17 +1,18 @@
-import { lazy, Suspense, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useIsFetching, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, CalendarRange, RefreshCw } from 'lucide-react';
+import { CalendarRange, RefreshCw } from 'lucide-react';
 import { getClientTimezone } from '@/api/dataManagementApi';
 import { SectionCard } from '@/components/app/PageLayout';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { FieldLabel } from '@/components/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import type { UserActivityMetric } from '@/types/dataManagement';
+import { AiUsageSection } from './AiUsageSection';
+import { BlockedChart, ChartBlock, InlineError, WIDE_CHART_HEIGHT } from './analyticsBlocks';
 import {
   chartColor,
   cycleSeries,
@@ -36,12 +37,8 @@ import {
   useUserActivitySeries,
 } from './queries';
 
-const LineSeriesChart = lazy(() => import('./DataCharts'));
-
-const ACTIVITY_METRICS: Array<{ id: UserActivityMetric; label: string }> = [
-  { id: 'board_added', label: 'Board added' },
-  { id: 'applied', label: 'Applied' },
-];
+/** Board adds are pool visibility, not user actions, so the per-user chart tracks applications only. */
+const ACTIVITY_METRICS: UserActivityMetric[] = ['applied'];
 
 const FETCHED = chartColor(4);
 const APPLIED = chartColor(1);
@@ -60,11 +57,6 @@ const GROWTH_COLORS = { new_users_count: chartColor(3), team_applied_count: APPL
 const SCRAPE_COLORS = { items_new: chartColor(2), errors: chartColor(5) };
 /** chart-1 is reserved for the applied line. */
 const PLATFORM_PALETTE = [4, 2, 3, 5];
-
-const CHART_HEIGHT = 260;
-const WIDE_CHART_HEIGHT = 320;
-
-type QueryState = { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown; isFetching?: boolean };
 
 export function AnalyticsPanel() {
   const timezone = getClientTimezone();
@@ -309,8 +301,9 @@ function AnalyticsBody({
         </div>
       </SectionCard>
 
-      <PlatformSection period={period} monthBadge={monthBadge} monthLabel={monthLabel} />
+      <AiUsageSection period={period} monthBadge={monthBadge} monthLabel={monthLabel} />
       <UserActivitySection period={period} monthBadge={monthBadge} monthLabel={monthLabel} />
+      <PlatformSection period={period} monthBadge={monthBadge} monthLabel={monthLabel} />
     </div>
   );
 }
@@ -376,33 +369,16 @@ function UserActivitySection({
 }) {
   const users = useAnalysisUsers();
   const [picked, setPicked] = useState<Set<string> | null>(null);
-  const [metrics, setMetrics] = useState<Set<UserActivityMetric>>(() => new Set(['board_added', 'applied']));
   const all = users.data ?? [];
   const selected = picked ?? new Set(all.slice(0, Math.min(DEFAULT_ACTIVITY_USERS, MAX_ACTIVITY_USERS)).map((u) => u.id));
   const ids = [...selected].slice(0, MAX_ACTIVITY_USERS);
-  const metricList = ACTIVITY_METRICS.map((m) => m.id).filter((id) => metrics.has(id));
-  const activity = useUserActivitySeries(period, ids, metricList);
-
-  const toggleMetric = (id: UserActivityMetric) =>
-    setMetrics((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const blocked = users.isPending
-    ? null
-    : ids.length === 0
-      ? 'Select at least one user for this month.'
-      : metricList.length === 0
-        ? 'Select at least one metric for this month.'
-        : null;
+  const activity = useUserActivitySeries(period, ids, ACTIVITY_METRICS);
+  const total = Object.values(activity.data?.totals ?? {}).reduce((a, b) => a + b, 0);
 
   return (
     <SectionCard
-      title="User activity"
-      description="Per-user board adds (jobs that appeared on that user's board) and applications. Sheet/Pumble posts are system-wide, see Distribution above."
+      title="Applications per user"
+      description="Jobs each user marked as applied, per day. Approved accounts only."
       actions={monthBadge}
     >
       <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start">
@@ -416,125 +392,25 @@ function UserActivitySection({
           helperText={`Up to ${MAX_ACTIVITY_USERS} users per month chart`}
           disabled={users.isPending}
         />
-        <fieldset className="flex flex-col gap-1.5">
-          <legend className="mb-1.5 text-sm font-medium">Metrics</legend>
-          <div className="flex flex-wrap gap-2">
-            {ACTIVITY_METRICS.map((m) => {
-              const on = metrics.has(m.id);
-              return (
-                <label
-                  key={m.id}
-                  className={cn(
-                    'inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-sm transition-colors hover:bg-muted',
-                    on && 'border-brand/40 bg-brand-soft',
-                  )}
-                >
-                  <Checkbox checked={on} onCheckedChange={() => toggleMetric(m.id)} />
-                  {m.label}
-                </label>
-              );
-            })}
-          </div>
-        </fieldset>
         {users.isError ? (
           <InlineError compact message="Couldn't load users." onRetry={() => void users.refetch()} />
         ) : null}
       </div>
-      {blocked ? (
-        <p className="flex h-40 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-          {blocked}
-        </p>
+      {!users.isPending && ids.length === 0 ? (
+        <BlockedChart message="Select at least one user for this month." />
       ) : (
         <ChartBlock
-          title={`${monthLabel || 'Month'} user activity`}
-          hideTitle
+          title={`${monthLabel || 'Month'} applications per user`}
+          summary={activity.data ? `${fmt(total)} applications by the selected users` : undefined}
           query={{ ...activity, isPending: users.isPending || activity.isPending }}
           data={activity.data?.days}
           series={toChartSeries(activity.data?.series)}
           height={WIDE_CHART_HEIGHT}
-          emptyText="Select users and metrics to display this month."
-          errorFallback="Failed to load user activity for this month."
+          emptyText="Select users to display this month."
+          errorFallback="Failed to load applications for this month."
         />
       )}
     </SectionCard>
-  );
-}
-
-function ChartBlock({
-  title,
-  hideTitle,
-  summary,
-  query,
-  data,
-  series,
-  emptyText,
-  errorFallback = 'Failed to load this chart.',
-  height = CHART_HEIGHT,
-}: {
-  title: string;
-  hideTitle?: boolean;
-  summary?: string;
-  query: QueryState;
-  data: ChartRow[] | undefined;
-  series: ChartSeries[];
-  emptyText: string;
-  errorFallback?: string;
-  height?: number;
-}) {
-  let content: ReactNode;
-  if (query.isPending) content = <Skeleton className="w-full rounded-lg" style={{ height: height + 28 }} />;
-  else if (query.isError)
-    content = (
-      <div className="flex items-center justify-center rounded-lg border border-dashed" style={{ height }}>
-        <InlineError compact message={extractErrorMessage(query.error, errorFallback)} onRetry={() => void query.refetch()} />
-      </div>
-    );
-  else if (!data || series.length === 0)
-    content = (
-      <p
-        className="flex items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
-        style={{ height }}
-      >
-        {emptyText}
-      </p>
-    );
-  else
-    content = (
-      <Suspense fallback={<Skeleton className="w-full rounded-lg" style={{ height: height + 28 }} />}>
-        <LineSeriesChart data={data} series={series} height={height} />
-      </Suspense>
-    );
-
-  return (
-    <figure className="min-w-0" aria-label={title} aria-busy={query.isPending || undefined}>
-      {hideTitle ? null : (
-        <figcaption className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h3 className="text-sm font-medium">{title}</h3>
-          {summary ? <p className="text-xs text-muted-foreground tabular-nums">{summary}</p> : null}
-        </figcaption>
-      )}
-      {content}
-    </figure>
-  );
-}
-
-function InlineError({ message, onRetry, compact }: { message: string; onRetry: () => void; compact?: boolean }) {
-  return (
-    <div
-      role="alert"
-      className={cn(
-        'flex flex-wrap items-center gap-3',
-        compact ? 'text-sm' : 'justify-between rounded-xl border bg-card px-5 py-4',
-      )}
-    >
-      <div className="flex items-center gap-2 text-sm">
-        <AlertCircle className="size-4 shrink-0 text-destructive" aria-hidden />
-        {message}
-      </div>
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
   );
 }
 

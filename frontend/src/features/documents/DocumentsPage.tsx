@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   Briefcase,
@@ -12,6 +12,7 @@ import {
   Mail,
   MoreHorizontal,
   PenLine,
+  ScrollText,
   Search,
   Sparkles,
   Trash2,
@@ -36,6 +37,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { PageLayout, SectionCard } from '@/components/app/PageLayout';
 import { ConfirmDialog } from '@/components/extraction/ConfirmDialog';
 import { ResumePdfEmbed } from '@/components/resumeBuilder/ResumePdfEmbed';
+import { MatchScore } from '@/components/app/MatchScore';
 import { relativeTime } from '@/features/integrations/status';
 import { cn } from '@/lib/utils';
 import { useResumeBuilderStore } from '@/stores/resumeBuilderStore';
@@ -44,12 +46,16 @@ import {
   fetchDocuments,
   fetchJobBuildDocument,
   fetchLibraryDocument,
+  fetchLibraryJobDescription,
   saveFile,
+  searchDocuments,
   tailorFromJobDescription,
   type DocumentFileType,
+  type DocumentSearchHits,
   type DocumentsResponse,
   type JobBuildDocument,
   type LibraryDocument,
+  type SavedJobDescription,
   type TailorResult,
 } from '@/api/documentsApi';
 
@@ -68,6 +74,9 @@ interface DocRow {
   isActive: boolean;
   note: string | null;
   files: Record<DocumentFileType, FileState>;
+  hasPosting: boolean;
+  matchScore: number | null;
+  fromChat: boolean;
 }
 
 const FILTERS: { id: Filter; label: string }[] = [
@@ -89,6 +98,8 @@ const STAGES = [
   { id: 'tailoring', label: 'Writing' },
   { id: 'saving', label: 'Saving' },
 ];
+/** Finer server stages shown under the nearest step above. */
+const STAGE_ALIAS: Record<string, string> = { reading: 'analyzing', quality: 'tailoring' };
 
 function buildFileState(status: string | undefined): FileState {
   if (status === 'completed') return 'ready';
@@ -117,6 +128,9 @@ function toRows(data: DocumentsResponse): DocRow[] {
         cover_letter_pdf: d.has_cover_letter ? 'ready' : 'none',
         cover_letter_docx: d.has_cover_letter ? 'ready' : 'none',
       },
+      hasPosting: !!d.has_job_description,
+      matchScore: typeof d.match_score === 'number' ? d.match_score : null,
+      fromChat: d.origin === 'assistant',
     };
   });
   const builds: DocRow[] = data.builds.map((b: JobBuildDocument) => {
@@ -140,6 +154,9 @@ function toRows(data: DocumentsResponse): DocRow[] {
       isActive: false,
       note: contentFailed ? b.content_error || 'Content generation failed.' : null,
       files,
+      hasPosting: false,
+      matchScore: null,
+      fromChat: false,
     };
   });
   return [...library, ...builds].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
@@ -181,7 +198,12 @@ function TailorComposer({ onDone }: { onDone: (result: TailorResult) => void }) 
     setError(null);
     setStage('analyzing');
     try {
-      const result = await tailorFromJobDescription(text, instructions.trim(), (ev) => setStage(ev.stage), controller.signal);
+      const result = await tailorFromJobDescription(
+        text,
+        instructions.trim(),
+        (ev) => setStage(STAGE_ALIAS[ev.stage] ?? ev.stage),
+        controller.signal,
+      );
       setJd('');
       setInstructions('');
       onDone(result);
@@ -205,7 +227,8 @@ function TailorComposer({ onDone }: { onDone: (result: TailorResult) => void }) 
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">Tailor to a job</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Paste a job description. NAO rewrites your resume and writes a cover letter for it, then saves both here.
+            Paste a job description. NAO rewrites your resume and writes a cover letter for it, then saves both here
+            with the posting, so you can find it again before an interview.
           </p>
         </div>
       </div>
@@ -322,6 +345,7 @@ function DocumentRow({
   onDownload,
   onOpen,
   onDelete,
+  onViewPosting,
 }: {
   row: DocRow;
   busy: boolean;
@@ -329,6 +353,7 @@ function DocumentRow({
   onDownload: (row: DocRow, fileType: DocumentFileType) => void;
   onOpen: (row: DocRow) => void;
   onDelete: (row: DocRow) => void;
+  onViewPosting: (row: DocRow) => void;
 }) {
   const when = relativeTime(row.updatedAt);
   const resumeReady = row.files.resume_pdf === 'ready';
@@ -353,7 +378,11 @@ function DocumentRow({
             )}
           </span>
           <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-            {[row.subtitle, row.origin !== 'all' ? ORIGIN_LABEL[row.origin as Exclude<Filter, 'all'>] : null, when]
+            {[
+              row.subtitle,
+              row.fromChat ? 'Tailored in chat' : row.origin !== 'all' ? ORIGIN_LABEL[row.origin as Exclude<Filter, 'all'>] : null,
+              when,
+            ]
               .filter(Boolean)
               .join(' · ')}
           </span>
@@ -362,6 +391,18 @@ function DocumentRow({
       </button>
 
       <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+        {row.matchScore != null && <MatchScore score={row.matchScore} />}
+        {row.hasPosting && (
+          <button
+            type="button"
+            onClick={() => onViewPosting(row)}
+            title="View the job description this resume was tailored to"
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2 text-xs font-medium text-foreground transition outline-none hover:border-brand/40 hover:text-brand focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <ScrollText className="size-3.5" />
+            Job description
+          </button>
+        )}
         <FileChip label="Resume" state={row.files.resume_pdf} icon={Download} onClick={() => onDownload(row, 'resume_pdf')} />
         <FileChip label="Cover letter" state={row.files.cover_letter_pdf} icon={Mail} onClick={() => onDownload(row, 'cover_letter_pdf')} />
         <DropdownMenu>
@@ -386,6 +427,12 @@ function DocumentRow({
                 <DropdownMenuItem onClick={() => onPreview(row, 'cover_letter_pdf')}>
                   <Mail />
                   Preview cover letter
+                </DropdownMenuItem>
+              )}
+              {row.hasPosting && (
+                <DropdownMenuItem onClick={() => onViewPosting(row)}>
+                  <ScrollText />
+                  View job description
                 </DropdownMenuItem>
               )}
             </DropdownMenuGroup>
@@ -477,14 +524,63 @@ export function DocumentsPage() {
     return c;
   }, [rows]);
 
+  const [hits, setHits] = useState<{ q: string; ids: Set<string> } | null>(null);
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setHits(null);
+      return;
+    }
+    const controller = new AbortController();
+    const t = window.setTimeout(() => {
+      searchDocuments(q, controller.signal)
+        .then((res: DocumentSearchHits) =>
+          setHits({ q, ids: new Set([...res.library_ids.map((id) => `lib-${id}`), ...res.build_ids.map((id) => `build-${id}`)]) }),
+        )
+        .catch(() => undefined);
+    }, 250);
+    return () => {
+      window.clearTimeout(t);
+      controller.abort();
+    };
+  }, [query]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const serverIds = hits && hits.q.toLowerCase() === q ? hits.ids : null;
     return rows.filter(
       (r) =>
         (filter === 'all' || r.origin === filter) &&
-        (!q || `${r.title} ${r.subtitle ?? ''}`.toLowerCase().includes(q)),
+        (!q || `${r.title} ${r.subtitle ?? ''}`.toLowerCase().includes(q) || !!serverIds?.has(r.key)),
     );
-  }, [rows, filter, query]);
+  }, [rows, filter, query, hits]);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [posting, setPosting] = useState<{ title: string; data: SavedJobDescription | null; error: string | null } | null>(
+    null,
+  );
+  const openPosting = useCallback(async (id: string, title: string) => {
+    setPosting({ title, data: null, error: null });
+    try {
+      const data = await fetchLibraryJobDescription(id);
+      setPosting((p) => (p ? { ...p, data } : p));
+    } catch (err) {
+      setPosting((p) => (p ? { ...p, error: errorText(err, 'Could not load the job description.') } : p));
+    }
+  }, []);
+  const postingParam = searchParams.get('posting');
+  useEffect(() => {
+    if (!postingParam || !data) return;
+    const row = rows.find((r) => r.kind === 'library' && r.id === postingParam);
+    void openPosting(postingParam, row?.title ?? 'Job description');
+    setSearchParams(
+      (p) => {
+        p.delete('posting');
+        return p;
+      },
+      { replace: true },
+    );
+  }, [postingParam, data, rows, openPosting, setSearchParams]);
 
   const onDownload = async (row: DocRow, fileType: DocumentFileType) => {
     setBusyKey(row.key);
@@ -612,7 +708,7 @@ export function DocumentsPage() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search role or company"
+                placeholder="Search role, company or job text"
                 aria-label="Search documents"
                 className="pl-8"
               />
@@ -671,6 +767,7 @@ export function DocumentsPage() {
                   onDownload={(r, t) => void onDownload(r, t)}
                   onOpen={(r) => void onOpen(r)}
                   onDelete={setPendingDelete}
+                  onViewPosting={(r) => void openPosting(r.id, r.title)}
                 />
               ))}
             </ul>
@@ -703,6 +800,47 @@ export function DocumentsPage() {
               </p>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={posting != null} onOpenChange={(open) => !open && setPosting(null)}>
+        <DialogContent className="flex max-h-[min(88dvh,900px)] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+          <div className="shrink-0 border-b py-3 pr-12 pl-5">
+            <DialogTitle className="truncate text-sm font-semibold">Job description: {posting?.title}</DialogTitle>
+            {posting?.data ? (
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                {[posting.data.company, posting.data.created_at ? `Tailored ${relativeTime(posting.data.created_at)}` : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+                {posting.data.match_score != null && <MatchScore score={posting.data.match_score} />}
+              </p>
+            ) : null}
+          </div>
+          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            {posting?.error ? (
+              <p className="text-sm text-destructive">{posting.error}</p>
+            ) : posting?.data ? (
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {posting.data.job_description || 'No job description was saved with this resume.'}
+              </p>
+            ) : (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin text-brand" />
+                Loading…
+              </p>
+            )}
+          </div>
+          {posting?.data?.job_description ? (
+            <div className="flex shrink-0 justify-end border-t px-5 py-2.5">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void navigator.clipboard?.writeText(posting.data?.job_description ?? '')}
+              >
+                Copy text
+              </Button>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 

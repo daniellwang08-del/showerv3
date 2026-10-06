@@ -21,6 +21,7 @@ from app.services.job_pipeline_mode import (
     normalize_manual_submit_pipeline,
 )
 from app.services.job_source_boards import BoardJob, fetch_board_listing
+from app.services.signup_approval_service import can_use_app
 from app.services.url_manager import URLManager
 from app.storage.database import get_session
 from app.storage.repository import (
@@ -254,7 +255,7 @@ async def sync_user_job_source(source_id: str) -> dict:
         user = (
             await session.execute(select(User).where(User.id == source.user_id))
         ).scalar_one_or_none()
-        if user is None or not user.is_active:
+        if not can_use_app(user):
             return {"source_id": source_id, "status": "user_inactive"}
         pipeline = normalize_manual_submit_pipeline(
             getattr(user, "manual_submit_pipeline", None)

@@ -34,6 +34,7 @@ from app.services.job_pipeline_mode import (
     normalize_manual_submit_pipeline,
 )
 from app.services.job_source_sync import MAX_NEW_JOBS_PER_SYNC, ingest_board_jobs
+from app.services.signup_approval_service import can_use_app
 from app.storage.database import get_session
 from app.utils.secret_encryption import decrypt_secret, encrypt_secret
 
@@ -332,7 +333,7 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
         user = (
             await session.execute(select(User).where(User.id == row.user_id))
         ).scalar_one_or_none()
-        if user is None or not user.is_active:
+        if not can_use_app(user):
             return {"connection_id": connection_id, "status": "user_inactive"}
         plugin_slug = row.plugin_slug
         user_id = row.user_id

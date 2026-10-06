@@ -234,7 +234,7 @@ class UserActivitySeriesRequest(BaseModel):
     # Cap keeps charts readable and queries bounded (one series per user × metric).
     user_ids: list[str] = Field(..., min_length=1, max_length=25)
     metrics: list[str] = Field(
-        default_factory=lambda: ["board_added", "applied"],
+        default_factory=lambda: ["applied"],
         min_length=1,
         max_length=8,
     )
@@ -303,12 +303,11 @@ async def post_user_activity_series(
             from sqlalchemy import select
             from app.models.database import User
 
+            from app.services.signup_approval_service import can_use_app_clause
+
             rows = (
                 await session.execute(
-                    select(User).where(
-                        User.id.in_(body.user_ids),
-                        User.is_active.is_(True),
-                    )
+                    select(User).where(User.id.in_(body.user_ids), can_use_app_clause())
                 )
             ).scalars().all()
             by_id = {u.id: u for u in rows}
@@ -362,6 +361,112 @@ async def post_platform_vs_applied_series(
     except Exception as e:
         logger.error("data_mgmt_platform_series_failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to load platform series: {e}") from e
+
+
+@router.get("/usage/overview", dependencies=[Depends(require_admin)])
+async def get_ai_usage_overview(
+    year: int = Query(..., ge=1970, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    timezone: str | None = Query(default="UTC"),
+    current_user: dict = Depends(require_admin),
+):
+    """Month AI spend: totals, per-user table with tailoring reruns, daily spend by feature."""
+    _require_user(current_user)
+    from app.services.data_management_usage import fetch_ai_usage_overview
+
+    try:
+        async with get_session() as session:
+            return await fetch_ai_usage_overview(session, year=year, month=month, tz_name=timezone)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("data_mgmt_usage_overview_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to load AI usage: {e}") from e
+
+
+class UserUsageSeriesRequest(BaseModel):
+    year: int = Field(..., ge=1970, le=2100)
+    month: int = Field(..., ge=1, le=12)
+    timezone: str | None = "UTC"
+    user_ids: list[str] = Field(..., min_length=1, max_length=25)
+    measure: Literal["cost", "tokens"] = "cost"
+
+
+async def _usage_user_labels(session, user_ids: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Any existing account, approved or not: spend history matters for rejected users too."""
+    from app.models.database import User
+    from app.storage.user_repository import user_applied_by_display_name
+
+    rows = (await session.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+    by_id = {u.id: u for u in rows}
+    valid = [uid for uid in user_ids if uid in by_id]
+    if not valid:
+        raise HTTPException(status_code=400, detail="No valid users selected.")
+    return valid, {uid: user_applied_by_display_name(by_id[uid]) for uid in valid}
+
+
+@router.post("/series/ai-usage", dependencies=[Depends(require_admin)])
+async def post_ai_usage_series(
+    body: UserUsageSeriesRequest,
+    current_user: dict = Depends(require_admin),
+):
+    _require_user(current_user)
+    from app.services.data_management_usage import fetch_ai_usage_user_series
+
+    try:
+        async with get_session() as session:
+            ids, labels = await _usage_user_labels(session, body.user_ids)
+            return await fetch_ai_usage_user_series(
+                session,
+                user_ids=ids,
+                measure=body.measure,
+                year=body.year,
+                month=body.month,
+                tz_name=body.timezone,
+                user_labels=labels,
+            )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("data_mgmt_usage_series_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to load AI usage series: {e}") from e
+
+
+class TailoringRunsSeriesRequest(BaseModel):
+    year: int = Field(..., ge=1970, le=2100)
+    month: int = Field(..., ge=1, le=12)
+    timezone: str | None = "UTC"
+    user_ids: list[str] = Field(..., min_length=1, max_length=25)
+
+
+@router.post("/series/tailoring-runs", dependencies=[Depends(require_admin)])
+async def post_tailoring_runs_series(
+    body: TailoringRunsSeriesRequest,
+    current_user: dict = Depends(require_admin),
+):
+    _require_user(current_user)
+    from app.services.data_management_usage import fetch_tailoring_runs_series
+
+    try:
+        async with get_session() as session:
+            ids, labels = await _usage_user_labels(session, body.user_ids)
+            return await fetch_tailoring_runs_series(
+                session,
+                user_ids=ids,
+                year=body.year,
+                month=body.month,
+                tz_name=body.timezone,
+                user_labels=labels,
+            )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error("data_mgmt_tailoring_series_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to load tailoring runs: {e}") from e
 
 
 @router.post("/preview", dependencies=[Depends(require_admin)])

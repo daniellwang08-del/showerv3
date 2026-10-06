@@ -41,8 +41,40 @@ export interface AgentDashboardFilters {
   reset?: boolean;
 }
 
+/** Saved by the `tailor_resume` tool. */
+export interface AgentDocumentResult {
+  resume_id?: string | null;
+  name?: string | null;
+  job_title?: string | null;
+  company?: string | null;
+  has_cover_letter?: boolean;
+  has_job_description?: boolean;
+  match_score?: number | null;
+}
+
+/** One entry of GET /agent/tools, for the composer's tools menu. */
+export interface AgentToolInfo {
+  name: string;
+  label: string;
+  category: string;
+  description: string;
+  example: string;
+  requires_confirmation: boolean;
+}
+
+export type ProgressStepStatus = 'pending' | 'active' | 'done' | 'failed';
+
+/** One line of a long tool's checklist (tailoring), sent whole with every progress event. */
+export interface ProgressStep {
+  id: string;
+  label: string;
+  status: ProgressStepStatus;
+}
+
 export type AgentEvent =
   | { type: 'tool_call'; tool: string; title?: string; args?: Record<string, unknown> }
+  | { type: 'progress'; tool: string; label: string; steps?: ProgressStep[]; expected_seconds?: number }
+  | { type: 'heartbeat' }
   | { type: 'tool_result'; tool: string; ok: boolean; summary: string; data?: unknown }
   | { type: 'refresh'; targets: string[] }
   | { type: 'ui_action'; action: string; filters?: AgentDashboardFilters; summary?: string }
@@ -66,6 +98,8 @@ export interface AgentChatPayload {
   history: AgentTurnInput[];
   timezone?: string | null;
   confirmed?: ConfirmedAction | null;
+  /** Tool picked in the composer's tools menu. */
+  tool?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +170,11 @@ export async function streamAgentChat(
   // Flush any trailing frame without a terminating blank line.
   const tail = parseFrame(buffer);
   if (tail) onEvent(tail);
+}
+
+export async function fetchAgentTools(): Promise<AgentToolInfo[]> {
+  const { data } = await apiClient.get<AgentToolInfo[]>('/agent/tools');
+  return data;
 }
 
 // ---------------------------------------------------------------------------

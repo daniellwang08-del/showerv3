@@ -11,6 +11,7 @@ import { useJobsStore } from '@/stores/jobsStore';
 import { useShellStore } from '@/stores/shellStore';
 import type { DashboardJob } from '@/types/scraper';
 import { JobsTable, type JobsTableTier } from './JobsTable';
+import { JobsSummary } from './JobsSummary';
 import { JobsToolbar, type JobsViewTab } from './JobsToolbar';
 import { BulkBar } from './BulkBar';
 import { useJobActions } from './useJobActions';
@@ -248,11 +249,7 @@ export function JobsPage() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Jobs</h1>
-          <p className="text-sm text-muted-foreground">
-            {stats
-              ? `${(stats.ready_jobs ?? 0).toLocaleString()} ready to apply · ${(stats.available_jobs ?? 0).toLocaleString()} upcoming · ${(stats.applied_today ?? 0).toLocaleString()} applied today`
-              : 'Every job you can act on, scored against your profile.'}
-          </p>
+          <p className="text-sm text-muted-foreground">Every job you can act on, scored against your profile.</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} className="hidden md:inline-flex">
@@ -263,6 +260,14 @@ export function JobsPage() {
           </Link>
         </div>
       </header>
+
+      <JobsSummary
+        ready={stats?.ready_jobs}
+        upcoming={stats?.available_jobs}
+        appliedToday={stats?.applied_today}
+        activeView={s.view}
+        onView={onView}
+      />
 
       <JobsToolbar
         tabs={tabs}

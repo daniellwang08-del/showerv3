@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as dm from '@/api/dataManagementApi';
 import { cleanupJobs } from '@/api/adminApi';
 import type { JobCleanupResult } from '@/types/admin';
-import type { MultiSeriesResult } from '@/types/dataManagement';
+import type { AiUsageOverview, AiUsageUserRow, MultiSeriesResult } from '@/types/dataManagement';
 import { AdminDataPage } from './AdminDataPage';
 
 vi.mock('@/api/dataManagementApi', () => ({
@@ -22,6 +22,9 @@ vi.mock('@/api/dataManagementApi', () => ({
   fetchScrapeHealthSeries: vi.fn(),
   fetchUserActivitySeries: vi.fn(),
   fetchPlatformVsAppliedSeries: vi.fn(),
+  fetchAiUsageOverview: vi.fn(),
+  fetchAiUsageSeries: vi.fn(),
+  fetchTailoringRunsSeries: vi.fn(),
 }));
 vi.mock('@/api/adminApi', () => ({ cleanupJobs: vi.fn() }));
 vi.mock('./DataCharts', () => ({
@@ -100,7 +103,70 @@ function seedAnalytics() {
   );
   api.fetchUserActivitySeries.mockResolvedValue(multi([['u0_applied', 'User 0 · Applied']]));
   api.fetchPlatformVsAppliedSeries.mockResolvedValue(multi([['linkedin', 'linkedin fetched'], ['applied', 'Applied']]));
+  api.fetchAiUsageOverview.mockResolvedValue(usageOverview);
+  api.fetchAiUsageSeries.mockResolvedValue(multi([['usage_u5', 'User 5']], { usage_u5: 1.5 }));
+  api.fetchTailoringRunsSeries.mockResolvedValue(
+    multi([['tailor_runs_u5', 'User 5 · runs'], ['tailor_jobs_u5', 'User 5 · unique jobs']]),
+  );
 }
+
+const usageRow = (over: Partial<AiUsageUserRow>): AiUsageUserRow => ({
+  user_id: 'u0',
+  name: 'User 0',
+  email: 'u0@x.io',
+  approval_status: 'approved',
+  calls: 0,
+  prompt_tokens: 0,
+  completion_tokens: 0,
+  total_tokens: 0,
+  cost_usd: 0,
+  last_used_at: null,
+  tailor_runs: 0,
+  tailored_jobs: 0,
+  reruns: 0,
+  max_runs_per_job: 0,
+  applied: 0,
+  cost_per_application: null,
+  features: [],
+  ...over,
+});
+
+const usageOverview: AiUsageOverview = {
+  year: 2026,
+  month: 10,
+  timezone: 'UTC',
+  totals: {
+    calls: 316,
+    prompt_tokens: 1_900_000,
+    completion_tokens: 530_000,
+    reasoning_tokens: 0,
+    total_tokens: 2_430_000,
+    cost_usd: 7.68,
+    users: 2,
+    unpriced_calls: 0,
+  },
+  users: [
+    usageRow({
+      user_id: 'u5',
+      name: 'User 5',
+      email: 'u5@x.io',
+      calls: 300,
+      total_tokens: 2_400_000,
+      cost_usd: 7.5,
+      tailor_runs: 127,
+      tailored_jobs: 110,
+      reruns: 17,
+      max_runs_per_job: 3,
+      applied: 10,
+      cost_per_application: 0.75,
+      features: [{ feature: 'resume_tailoring', total_tokens: 1_800_000, cost_usd: 6 }],
+    }),
+    usageRow({ user_id: 'u9', name: 'Rejected Person', email: 'r@x.io', approval_status: 'rejected', cost_usd: 0.18 }),
+  ],
+  by_feature: [{ feature: 'resume_tailoring', total_tokens: 1_800_000, cost_usd: 6 }],
+  days,
+  series: [{ key: 'feat_resume_tailoring', label: 'resume_tailoring', feature: 'resume_tailoring' }],
+};
 
 function LocationProbe() {
   const loc = useLocation();
@@ -167,7 +233,7 @@ describe('AdminDataPage, analytics', () => {
         month: 10,
         timezone: 'UTC',
         user_ids: ['u0', 'u1', 'u2', 'u3', 'u4'],
-        metrics: ['board_added', 'applied'],
+        metrics: ['applied'],
       }),
     );
     expect(api.fetchPlatformVsAppliedSeries).toHaveBeenCalledWith({
@@ -196,19 +262,41 @@ describe('AdminDataPage, analytics', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('month=2026-9');
   });
 
-  it('stops requesting user activity when every metric is deselected', async () => {
+  it('charts applications per user only, with no board-added metric', async () => {
+    renderPage();
+    expect(await screen.findByRole('figure', { name: 'October 2026 applications per user' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Board added' })).not.toBeInTheDocument();
+  });
+
+  it('shows AI cost per user with tailoring reruns, top spenders selected first', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('12,345');
-    await waitFor(() => expect(api.fetchUserActivitySeries).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('checkbox', { name: 'Board added' }));
+    const totals = await screen.findByRole('region', { name: 'AI usage totals' });
+    expect(within(totals).getByText('$7.68')).toBeInTheDocument();
+    expect(within(totals).getByText('17')).toBeInTheDocument();
+
+    const table = await screen.findByRole('table', { name: 'AI usage per user' });
+    const [, top, rejected] = within(table).getAllByRole('row');
+    expect(top).toHaveTextContent('User 5');
+    expect(top).toHaveTextContent('$7.50');
+    expect(top).toHaveTextContent('127');
+    expect(top).toHaveTextContent('110');
+    expect(top).toHaveTextContent('3×');
+    expect(top).toHaveTextContent('Resume tailoring');
+    expect(rejected).toHaveTextContent('rejected');
+
     await waitFor(() =>
-      expect(api.fetchUserActivitySeries).toHaveBeenLastCalledWith(expect.objectContaining({ metrics: ['applied'] })),
+      expect(api.fetchTailoringRunsSeries).toHaveBeenCalledWith(
+        expect.objectContaining({ year: 2026, month: 10, user_ids: ['u5', 'u9', 'u0', 'u1', 'u2'] }),
+      ),
     );
-    await user.click(screen.getByRole('checkbox', { name: 'Applied' }));
-    expect(await screen.findByText('Select at least one metric for this month.')).toBeInTheDocument();
-    expect(api.fetchUserActivitySeries).toHaveBeenCalledTimes(2);
+    expect(api.fetchAiUsageSeries).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 'cost' }));
+
+    await user.click(screen.getByRole('button', { name: 'Tokens' }));
+    await waitFor(() =>
+      expect(api.fetchAiUsageSeries).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 'tokens' })),
+    );
   });
 
   it('filters the platform series to the selected platforms', async () => {

@@ -18,13 +18,19 @@ the gate once) and then continues planning.
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 import re
 from collections.abc import AsyncIterator
 from typing import Any
 
 from app.core.config import get_settings
-from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
+from app.core.llm_client import (
+    chat_completion_with_empty_retry,
+    get_llm_client_for_user,
+    llm_failure_message,
+)
 from app.core.logging import get_logger
 from app.services.agent.base import ToolContext, catalog_prompt, get_tool
 
@@ -32,8 +38,13 @@ logger = get_logger(__name__)
 
 MAX_ITERATIONS = 6
 MAX_HISTORY_TURNS = 12
+# Earlier turns can be whole pasted job descriptions; the tools read those from
+# ToolContext, so the planner only needs the gist.
+MAX_HISTORY_TURN_CHARS = 6000
 PLANNER_MAX_TOKENS = 700
 OBSERVATION_DATA_LIMIT = 1800
+# nginx drops an upstream that sends nothing for 60 s; tailoring takes longer.
+HEARTBEAT_SECONDS = 15.0
 
 
 def _system_prompt(*, is_admin: bool = False) -> str:
@@ -58,7 +69,16 @@ def _system_prompt(*, is_admin: bool = False) -> str:
         "then pass those ids to the action tool.\n"
         "- Tools marked [REQUIRES CONFIRMATION] change data; request them normally - the app asks the "
         "user to confirm before running, so do not ask for confirmation yourself in text.\n"
-        "- Never invent job ids; only use ids returned by tools.\n"
+        "- Never invent job ids; only use ids returned by tools. Never show ids to the user; the app "
+        "renders result cards with links.\n"
+        "- The user's profile, work history, skills and personal details are ALREADY on file, and "
+        "tailor_resume uses them with the user's own resume template. NEVER ask the user to paste "
+        "their resume, experience or contact details.\n"
+        "- When the user pastes a job description or asks to tailor their resume or write a cover "
+        "letter for a role, call tailor_resume. Do NOT copy the job description into args; the app "
+        "reads it from the user's messages. Set include_cover_letter=true only when they also want a "
+        "cover letter. Put any extra wishes (tone, focus, length) in instructions. If no posting "
+        "was pasted yet, ask only for the job description.\n"
         "- Keep the final message concise, friendly and specific (cite real counts/titles).\n"
         "- Never use em dashes in your messages; use a comma, period, or hyphen instead.\n"
         "- If a tool fails, briefly explain and suggest a next step."
@@ -98,16 +118,79 @@ def _compact(data: Any) -> str:
     return raw
 
 
+def _selected_tool_rule(tool_name: str) -> str:
+    spec = get_tool(tool_name)
+    label = (spec.label if spec else "") or tool_name
+    return (
+        f"The user picked the '{label}' tool ({tool_name}) for this message. Act on the message "
+        f"with {tool_name}, filling its args from what they wrote (call search_jobs first only "
+        "when it needs job ids). Answer in text without a tool only when the message gives "
+        "nothing to act on, and then say what you need."
+    )
+
+
+# Asking for a tailored resume or cover letter, in the user's words.
+_TAILOR_INTENT_RE = re.compile(
+    r"\b(tailor(?:ed|ing)?|customi[sz]e|rewrite|adapt|optimi[sz]e|generate|create|write|make|build|prepare|draft)\b"
+    r"[^.\n]{0,60}\b(resume|r\u00e9sum\u00e9|cv|cover\s+letter)\b"
+    r"|\b(resume|r\u00e9sum\u00e9|cv|cover\s+letter)\b[^.\n]{0,40}\b(for|to|based on)\b[^.\n]{0,30}"
+    r"\b(this|the|following|below)\b[^.\n]{0,20}\b(job|role|position|posting|description|jd)\b",
+    re.IGNORECASE,
+)
+_COVER_LETTER_RE = re.compile(r"\bcover\s+letters?\b", re.IGNORECASE)
+_NO_COVER_LETTER_RE = re.compile(
+    r"\b(no|without|skip|don'?t\s+(?:need|want|include))\b[^.\n]{0,20}\bcover\s+letters?\b",
+    re.IGNORECASE,
+)
+_POSTING_HINT_RE = re.compile(
+    r"\b(responsibilit|requirement|qualification|experience|skills?|about the (?:role|job|team)"
+    r"|what you'?ll|you will|we are looking|benefits|salary|years)\w*",
+    re.IGNORECASE,
+)
+# Request words plus a pasted posting; shorter text is a question, not a posting.
+_HARD_ROUTE_MIN_CHARS = 400
+_INTENT_WINDOW_CHARS = 400
+
+
+def tailor_request_args(message: str) -> dict[str, Any] | None:
+    """``tailor_resume`` args when the message is a tailoring request with a pasted posting.
+
+    The request words must sit near the start or end of the message (around
+    the pasted text), so a posting that merely mentions "resume" is not routed.
+    """
+    text = (message or "").strip()
+    if len(text) < _HARD_ROUTE_MIN_CHARS:
+        return None
+    ends = f"{text[:_INTENT_WINDOW_CHARS]}\n{text[-_INTENT_WINDOW_CHARS:]}"
+    if not _TAILOR_INTENT_RE.search(ends):
+        return None
+    if len(_POSTING_HINT_RE.findall(text)) < 2:
+        return None
+    return {"include_cover_letter": wants_cover_letter(text)}
+
+
+def wants_cover_letter(message: str) -> bool:
+    """The request (around the pasted posting, not inside it) asks for a cover letter."""
+    text = (message or "").strip()
+    ends = f"{text[:_INTENT_WINDOW_CHARS]}\n{text[-_INTENT_WINDOW_CHARS:]}"
+    return bool(_COVER_LETTER_RE.search(ends)) and not _NO_COVER_LETTER_RE.search(ends)
+
+
 def _build_messages(
     message: str,
     history: list[dict[str, str]],
     *,
     is_admin: bool = False,
+    selected_tool: str | None = None,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [{"role": "system", "content": _system_prompt(is_admin=is_admin)}]
+    if selected_tool:
+        messages.append({"role": "system", "content": _selected_tool_rule(selected_tool)})
     for turn in history[-MAX_HISTORY_TURNS:]:
         role = "assistant" if turn.get("role") == "assistant" else "user"
         text = str(turn.get("content") or "").strip()
+        if len(text) > MAX_HISTORY_TURN_CHARS:
+            text = text[:MAX_HISTORY_TURN_CHARS] + " …(truncated)"
         if text:
             messages.append({"role": role, "content": text})
     messages.append({"role": "user", "content": message.strip()})
@@ -122,12 +205,43 @@ async def run_agent_turn(
     timezone: str | None = None,
     confirmed: dict[str, Any] | None = None,
     is_admin: bool = False,
+    selected_tool: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Drive one user turn, yielding SSE-ready event dicts."""
+    """Drive one user turn, yielding SSE-ready event dicts.
 
-    ctx = ToolContext(user_id=user_id, timezone=timezone, is_admin=is_admin)
+    ``selected_tool`` is the tool the user picked in the composer; the planner
+    is told to act with it. A tailoring request with a pasted posting runs
+    ``tailor_resume`` directly, without asking the planner first.
+    """
+    spec_selected = get_tool(selected_tool) if selected_tool else None
+    if spec_selected is None or (spec_selected.admin_only and not is_admin):
+        selected_tool = None
+    if not confirmed and selected_tool in (None, "tailor_resume"):
+        routed = tailor_request_args(message)
+        if routed is None and selected_tool == "tailor_resume":
+            routed = {"include_cover_letter": wants_cover_letter(message)}
+        if routed is not None:
+            confirmed = {"tool": "tailor_resume", "args": routed}
+
+    earlier = tuple(
+        str(t.get("content") or "")
+        for t in reversed(history or [])
+        if t.get("role") != "assistant" and str(t.get("content") or "").strip()
+    )
+    ctx = ToolContext(
+        user_id=user_id,
+        timezone=timezone,
+        is_admin=is_admin,
+        user_message=message,
+        earlier_user_messages=earlier,
+    )
     settings = get_settings()
-    messages = _build_messages(message, history or [], is_admin=is_admin)
+    messages = _build_messages(
+        message,
+        history or [],
+        is_admin=is_admin,
+        selected_tool=None if confirmed else selected_tool,
+    )
 
     try:
         client = await get_llm_client_for_user(user_id, job_type="agent")
@@ -136,7 +250,7 @@ async def run_agent_turn(
         yield {"type": "error", "message": "The AI assistant is not configured. Add an LLM API key in Settings."}
         return
 
-    async def _execute(tool_name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    async def _execute(tool_name: str, args: dict[str, Any], tool_ctx: ToolContext) -> dict[str, Any] | None:
         """Run a tool, emit its events, and return an observation dict for the loop."""
         spec = get_tool(tool_name)
         if spec is None:
@@ -144,7 +258,7 @@ async def run_agent_turn(
         if spec.admin_only and not ctx.is_admin:
             return {"observation": f"Tool '{tool_name}' is not available."}
         try:
-            result = await spec.handler(ctx, args or {})
+            result = await spec.handler(tool_ctx, args or {})
         except Exception as exc:  # noqa: BLE001 - never crash the stream
             logger.warning("agent_tool_failed", tool=tool_name, error=str(exc)[:300])
             _emit_buffer.append(
@@ -175,6 +289,36 @@ async def run_agent_turn(
     # Buffer lets the inner helper queue events that the generator then yields.
     _emit_buffer: list[dict[str, Any]] = []
 
+    async def _run_streaming(
+        tool_name: str, args: dict[str, Any], holder: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Run a tool in the background, relaying its progress and a heartbeat."""
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        async def progress(label: str, **detail: Any) -> None:
+            await queue.put({**detail, "type": "progress", "tool": tool_name, "label": label})
+
+        task = asyncio.create_task(_execute(tool_name, args, dataclasses.replace(ctx, progress=progress)))
+        try:
+            while True:
+                getter = asyncio.ensure_future(queue.get())
+                done, _pending = await asyncio.wait(
+                    {task, getter}, timeout=HEARTBEAT_SECONDS, return_when=asyncio.FIRST_COMPLETED
+                )
+                if getter in done:
+                    yield getter.result()
+                    continue
+                getter.cancel()
+                if task in done:
+                    break
+                yield {"type": "heartbeat"}
+            while not queue.empty():
+                yield queue.get_nowait()
+            holder["observation"] = task.result()
+        finally:
+            if not task.done():
+                task.cancel()
+
     # ── Pre-approved (confirmed) step, if any ──────────────────────────────
     if confirmed and confirmed.get("tool"):
         tool_name = str(confirmed["tool"])
@@ -186,7 +330,10 @@ async def run_agent_turn(
             "title": spec.running_title if spec else "Working",
             "args": args,
         }
-        observation = await _execute(tool_name, args)
+        holder: dict[str, Any] = {}
+        async for ev in _run_streaming(tool_name, args, holder):
+            yield ev
+        observation = holder.get("observation")
         for ev in _emit_buffer:
             yield ev
         _emit_buffer.clear()
@@ -212,7 +359,7 @@ async def run_agent_turn(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("agent_planner_failed", user_id=user_id, error=str(exc)[:300])
-            yield {"type": "error", "message": "The assistant is temporarily unavailable. Please try again."}
+            yield {"type": "error", "message": llm_failure_message(exc)}
             return
 
         plan = _parse_planner_json(content)
@@ -247,7 +394,10 @@ async def run_agent_turn(
                 "title": spec.running_title if spec else "Working",
                 "args": args,
             }
-            observation = await _execute(tool_name, args)
+            holder = {}
+            async for ev in _run_streaming(tool_name, args, holder):
+                yield ev
+            observation = holder.get("observation")
             for ev in _emit_buffer:
                 yield ev
             _emit_buffer.clear()

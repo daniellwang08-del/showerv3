@@ -708,6 +708,27 @@ _TRANSIENT_MAX_RETRIES = 2
 _TRANSIENT_MAX_DELAY_SECONDS = 8.0
 
 
+def llm_failure_message(exc: BaseException, *, feature: str = "The assistant") -> str:
+    """User-facing reason for a failed LLM call, specific enough to act on."""
+    name = type(exc).__name__
+    text = str(exc).lower()
+    if "insufficient_quota" in text or "credit_balance" in text or "billing" in text:
+        return (
+            f"{feature} can't run because the AI provider account is out of credits. "
+            "An admin needs to add credits or a backup provider key under Admin, Settings, LLM."
+        )
+    if name in {"AuthenticationError", "PermissionDeniedError"} or "invalid_api_key" in text:
+        return (
+            f"{feature} can't run because the AI provider rejected the API key. "
+            "An admin needs to update it under Admin, Settings, LLM."
+        )
+    if name == "RateLimitError":
+        return f"{feature} is getting too many requests right now. Please try again in a minute."
+    if name in {"APITimeoutError", "TimeoutError"}:
+        return "The AI provider took too long to respond. Please try again."
+    return f"{feature} is temporarily unavailable. Please try again."
+
+
 def _transient_retry_delay(exc: Exception, attempt: int) -> float | None:
     """Seconds to wait before retrying the same provider, or None to give up.
 
@@ -804,8 +825,11 @@ async def chat_completion_with_empty_retry(
     503s in production. Empty content is not a raised API error, so provider
     fallback also does not fire unless we retry here.
     """
+    from app.services.llm_usage import llm_call_label
+
     started = time.perf_counter()
-    response = await client.chat.completions.create(**create_kwargs)
+    with llm_call_label(observe=observe, job_type=job_type):
+        response = await client.chat.completions.create(**create_kwargs)
     text, finish_reason, usage = response_message_meta(response)
     if text:
         _log_llm_call_completed(observe, job_type, response, usage, started, create_kwargs)
@@ -823,7 +847,8 @@ async def chat_completion_with_empty_retry(
     )
     retry_kwargs = dict(create_kwargs)
     retry_kwargs["reasoning_effort"] = "low"
-    response = await client.chat.completions.create(**retry_kwargs)
+    with llm_call_label(observe=observe, job_type=job_type):
+        response = await client.chat.completions.create(**retry_kwargs)
     text, finish_reason, usage = response_message_meta(response)
     if text:
         _log_llm_call_completed(observe, job_type, response, usage, started, retry_kwargs)
@@ -999,6 +1024,36 @@ def _stream_openai_compatible(
 _Adapter = _OpenAIAdapter | _GeminiAdapter | _AnthropicAdapter
 
 
+def _record_call_usage(adapter: Any, response: Any) -> None:
+    from app.services.llm_usage import record_llm_usage, usage_from_response
+
+    usage = usage_from_response(response)
+    if usage is None:
+        return
+    prompt, completion, reasoning = usage
+    record_llm_usage(
+        provider=getattr(adapter, "name", None),
+        model=getattr(response, "model", None) or getattr(adapter, "_model", None),
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        reasoning_tokens=reasoning,
+    )
+
+
+def _record_stream_usage(adapter: Any, messages: list[dict[str, Any]], output: str) -> None:
+    from app.services.llm_usage import estimate_tokens, llm_call_label, record_llm_usage
+
+    prompt_text = "".join(str(m.get("content") or "") for m in messages if isinstance(m, dict))
+    with llm_call_label(observe="assistant_stream", job_type="assistant_chat"):
+        record_llm_usage(
+            provider=getattr(adapter, "name", None),
+            model=getattr(adapter, "_model", None),
+            prompt_tokens=estimate_tokens(prompt_text),
+            completion_tokens=estimate_tokens(output),
+            estimated=True,
+        )
+
+
 # ── Public wrapper that looks like AsyncOpenAI ────────────────────────────
 
 
@@ -1097,6 +1152,7 @@ class LLMFallbackClient:
             try:
                 result = await _create_with_transient_retry(primary, kwargs)
                 self._cb.record_success()
+                _record_call_usage(primary, result)
                 return result
             except primary.recoverable_errors as e:
                 primary_error = e
@@ -1120,6 +1176,7 @@ class LLMFallbackClient:
         for fb in fallbacks:
             try:
                 result = await fb.create(**kwargs)
+                _record_call_usage(fb, result)
                 logger.info(
                     "llm_fallback_used",
                     provider=fb.name,
@@ -1187,14 +1244,17 @@ class LLMFallbackClient:
 
         for adapter in providers:
             produced = False
+            streamed: list[str] = []
             try:
                 async for delta in adapter.stream(
                     messages=messages, temperature=temperature, max_tokens=max_tokens
                 ):
                     produced = True
+                    streamed.append(delta)
                     yield delta
                 if adapter is primary:
                     self._cb.record_success()
+                _record_stream_usage(adapter, messages, "".join(streamed))
                 return
             except Exception as exc:  # noqa: BLE001 - try every provider until one streams
                 last_error = exc

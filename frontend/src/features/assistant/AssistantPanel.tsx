@@ -7,6 +7,7 @@ import { useAgentStore } from '@/stores/agentStore';
 import { useShellStore } from '@/stores/shellStore';
 import { Composer } from './Composer';
 import { AssistantAvatar, Thread } from './Thread';
+import { ToolsMenu } from './ToolsMenu';
 import { ASSISTANT_SUGGESTIONS, useAssistantDraft } from './useAssistantDraft';
 
 /** Copilot-style contextual assistant docked on the right of any page (⌘J). */
@@ -15,7 +16,7 @@ export function AssistantPanel() {
   const sessionId = useAgentStore((s) => s.sessionId);
   const clear = useAgentStore((s) => s.clear);
   const setDocked = useShellStore((s) => s.setAssistantDocked);
-  const { draft, setDraft, submit, busy } = useAssistantDraft();
+  const { draft, setDraft, block, setBlock, submit, busy } = useAssistantDraft();
 
   return (
     <aside
@@ -95,6 +96,15 @@ export function AssistantPanel() {
           busy={busy}
           placeholder="Ask or paste job links…"
           urlActionLabel={(n) => `Submit ${n}`}
+          block={block}
+          onClearBlock={() => setBlock(null)}
+          tools={
+            <ToolsMenu
+              disabled={busy}
+              selectedId={block?.id}
+              onPickBlock={(b) => setBlock(block?.id === b.id ? null : b)}
+            />
+          }
         />
       </div>
     </aside>

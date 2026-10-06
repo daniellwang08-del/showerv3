@@ -22,6 +22,9 @@ from typing import Any, Awaitable, Callable
 ToolHandler = Callable[["ToolContext", dict[str, Any]], Awaitable["ToolResult"]]
 
 
+ProgressFn = Callable[..., Awaitable[None]]
+
+
 @dataclass(frozen=True)
 class ToolContext:
     """Server-injected execution context. Never populated from model output."""
@@ -29,6 +32,18 @@ class ToolContext:
     user_id: str
     timezone: str | None = None
     is_admin: bool = False
+    # The user's own words this turn and earlier, so tools that consume long
+    # pasted text (a job description) never depend on the model re-typing it.
+    user_message: str = ""
+    earlier_user_messages: tuple[str, ...] = ()
+    # Long-running tools report stage labels; the stream relays them as
+    # ``progress`` events, which also keeps the proxy connection alive.
+    progress: ProgressFn | None = field(default=None, compare=False)
+
+    async def report(self, label: str, **detail: Any) -> None:
+        """``detail`` is JSON-safe extras, e.g. ``steps=[{"id", "label", "status"}]``."""
+        if self.progress is not None:
+            await self.progress(label, **detail)
 
 
 @dataclass
@@ -61,6 +76,11 @@ class ToolSpec:
     running_title: str = "Working"
     # Admin-only tools are omitted from the applicant assistant catalog.
     admin_only: bool = False
+    # Tools menu metadata (GET /agent/tools): a short name, a group and a
+    # sample request the user can drop into the composer.
+    label: str = ""
+    category: str = "Jobs"
+    example: str = ""
 
     def prompt_signature(self) -> str:
         """One-line tool description for the planner catalog."""
@@ -92,7 +112,10 @@ def registered_tools() -> list[ToolSpec]:
     return list(_REGISTRY.values())
 
 
+def visible_tools(*, is_admin: bool = False) -> list[ToolSpec]:
+    return [spec for spec in _REGISTRY.values() if is_admin or not spec.admin_only]
+
+
 def catalog_prompt(*, is_admin: bool = False) -> str:
     """Render registered tools into a compact catalog for the system prompt."""
-    tools = [spec for spec in _REGISTRY.values() if is_admin or not spec.admin_only]
-    return "\n".join(spec.prompt_signature() for spec in tools)
+    return "\n".join(spec.prompt_signature() for spec in visible_tools(is_admin=is_admin))

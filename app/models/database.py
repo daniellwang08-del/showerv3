@@ -1,10 +1,17 @@
 from sqlalchemy import Column, String, Text, Date, DateTime, Float, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, LargeBinary, UniqueConstraint
-from sqlalchemy.orm import declarative_base, deferred
+from sqlalchemy.orm import declarative_base, deferred, validates
 from sqlalchemy.sql import func
 from app.models.schemas import ExtractionMethod, ExtractionStatus
 import uuid
 
 Base = declarative_base()
+
+
+def _location_without_work_mode(value: str | None) -> str | None:
+    from app.services.job_location_parse import strip_work_mode_from_location
+
+    cleaned = strip_work_mode_from_location(value)
+    return cleaned[:500] if cleaned else None
 
 
 class User(Base):
@@ -275,8 +282,18 @@ class ResumeDocument(Base):
     company = Column(String(300), nullable=True)
     # Cover letter body generated alongside a tailored resume (plain text, blank-line paragraphs).
     cover_letter = deferred(Column(Text, nullable=True))
+    # The pasted posting a resume was tailored to; the hash dedupes reruns of the same posting.
+    job_description = deferred(Column(Text, nullable=True))
+    job_description_hash = Column(String(64), nullable=True)
+    match_score = Column(Integer, nullable=True)
+    # "assistant" | "documents" | "builder" | "job" - where the tailoring was requested.
+    origin = Column(String(20), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_resume_documents_user_jd_hash", "user_id", "job_description_hash"),
+    )
 
 
 
@@ -346,6 +363,11 @@ class JobExtraction(Base):
         Index("ix_job_extractions_domain_status", "domain", "status"),
     )
 
+    @validates("location")
+    def _validate_location(self, _key, value):
+        # Work mode has its own column; Location holds only the place.
+        return _location_without_work_mode(value)
+
 
 class Job(Base):
     """Unified job table - every submitted/scraped job lives here exactly once."""
@@ -379,6 +401,23 @@ class Job(Base):
         Index("ix_jobs_created_at", "created_at"),
         Index("ix_jobs_work_mode", "work_mode"),
     )
+
+    @validates("location")
+    def _validate_location(self, _key, value):
+        from app.services.job_location_parse import split_work_mode_from_location
+
+        cleaned, mode = split_work_mode_from_location(value)
+        if mode:
+            # A board label such as "Remote" may be the only mode signal; keep it
+            # as a fallback that later classification can still overwrite.
+            self._location_work_mode = mode
+            if not self.work_mode:
+                self.work_mode = mode
+        return cleaned[:500] if cleaned else None
+
+    @validates("work_mode")
+    def _validate_work_mode(self, _key, value):
+        return value or getattr(self, "_location_work_mode", None)
 
 
 class UserJobStatus(Base):
@@ -713,6 +752,42 @@ class SystemLogEvent(Base):
 
     __table_args__ = (
         Index("ix_system_log_events_level_created", "level", "created_at"),
+    )
+
+
+class LlmUsageEvent(Base):
+    """One completed LLM call: who it was for, what feature ran it, tokens and cost.
+
+    Kept apart from system_log_events because logs are purged after a couple
+    of weeks while cost reporting needs months. ``run_id`` is the request id
+    shared by every call of one HTTP request or worker run, so a tailoring run
+    (resume + cover letter calls) counts once.
+    """
+    __tablename__ = "llm_usage_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    # No FKs: spend history must outlive user and job deletion, and a buffered
+    # batch must never fail because one referenced row disappeared.
+    user_id = Column(String(36), nullable=True)
+    job_id = Column(String(36), nullable=True)
+    run_id = Column(String(64), nullable=True)
+    feature = Column(String(80), nullable=False)
+    operation = Column(String(80), nullable=True)
+    provider = Column(String(20), nullable=True)
+    model = Column(String(200), nullable=True)
+    prompt_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    completion_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    reasoning_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    total_tokens = Column(Integer, nullable=False, default=0, server_default="0")
+    cost_usd = Column(Float, nullable=True)
+    # True when the provider gave no usage (streamed replies) and tokens were estimated.
+    estimated = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    __table_args__ = (
+        Index("ix_llm_usage_events_created_at", "created_at"),
+        Index("ix_llm_usage_events_user_created", "user_id", "created_at"),
+        Index("ix_llm_usage_events_feature_created", "feature", "created_at"),
     )
 
 

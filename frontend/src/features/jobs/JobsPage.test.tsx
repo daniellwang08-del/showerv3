@@ -124,9 +124,22 @@ describe('JobsPage', () => {
     expect(actions.loadJobs).toHaveBeenCalledTimes(1);
     expect(rows()).toHaveLength(2);
     expect(screen.getByText('Staff Engineer')).toBeInTheDocument();
-    expect(screen.getByText('Ready to apply', { selector: 'span' })).toBeInTheDocument();
+    expect(within(rows()[0]).getByText('Ready to apply', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getAllByText('Matching').length).toBeGreaterThan(0);
     expect(screen.getByText('1–2 of 2')).toBeInTheDocument();
+  });
+
+  it('summary cards show the headline counts and open their view', async () => {
+    const user = userEvent.setup();
+    seed([makeJob()], {
+      stats: { ready_jobs: 3, available_jobs: 7, applied_today: 2, applied_jobs: 9 },
+    });
+    renderPage();
+    const summary = screen.getByLabelText('Job summary');
+    expect(within(summary).getByRole('button', { name: 'Ready to apply: 3' })).toBeInTheDocument();
+    expect(within(summary).getByRole('button', { name: 'Upcoming: 7' })).toBeInTheDocument();
+    await user.click(within(summary).getByRole('button', { name: 'Applied today: 2' }));
+    expect(actions.setView).toHaveBeenCalledWith('applied_today');
   });
 
   it('hides dismissed duplicates', () => {

@@ -13,7 +13,7 @@ import json
 from typing import Any, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -187,6 +187,16 @@ async def list_documents(current_user: dict = Depends(get_current_user)):
                 )
             ).scalars()
         )
+        with_posting = set(
+            (
+                await session.execute(
+                    select(ResumeDocument.id).where(
+                        ResumeDocument.user_id == user_id,
+                        ResumeDocument.job_description.isnot(None),
+                    )
+                )
+            ).scalars()
+        )
         rows = (
             await session.execute(
                 select(ResumeBuildResult, Job)
@@ -207,6 +217,9 @@ async def list_documents(current_user: dict = Depends(get_current_user)):
             "company": d.company,
             "is_active": d.id == active_id,
             "has_cover_letter": d.id in with_letter,
+            "has_job_description": d.id in with_posting,
+            "match_score": d.match_score,
+            "origin": d.origin,
             "created_at": _iso(d.created_at),
             "updated_at": _iso(d.updated_at),
         }
@@ -233,6 +246,71 @@ async def list_documents(current_user: dict = Depends(get_current_user)):
         for b, j in rows
     ]
     return {"library": library, "builds": builds, "active_id": active_id}
+
+
+@router.get("/search")
+async def search_documents(
+    q: str = Query(..., min_length=2, max_length=200),
+    current_user: dict = Depends(get_current_user),
+):
+    """Ids of documents whose role, company or job description contains ``q``.
+
+    The list endpoint omits posting text, so the page asks here to search inside it.
+    """
+    from sqlalchemy import or_
+
+    from app.models.database import JobExtraction
+    from app.storage.resume_document_repository import resume_search_ilike_pattern
+
+    user_id = _user_id(current_user)
+    pattern = resume_search_ilike_pattern(q.strip())
+    async with get_session() as session:
+        library_ids = await ResumeDocumentRepository(session).search_text_for_user(user_id, q)
+        build_ids = list(
+            (
+                await session.execute(
+                    select(ResumeBuildResult.id)
+                    .join(Job, Job.id == ResumeBuildResult.job_id)
+                    .outerjoin(JobExtraction, JobExtraction.id == Job.extraction_id)
+                    .where(
+                        ResumeBuildResult.user_id == user_id,
+                        or_(
+                            Job.title.ilike(pattern, escape="\\"),
+                            Job.company.ilike(pattern, escape="\\"),
+                            JobExtraction.description.ilike(pattern, escape="\\"),
+                        ),
+                    )
+                    .limit(300)
+                )
+            ).scalars()
+        )
+    return {"library_ids": library_ids, "build_ids": build_ids}
+
+
+@router.get("/resumes/{resume_id}/job-description")
+async def get_library_job_description(resume_id: str, current_user: dict = Depends(get_current_user)):
+    """The posting a resume was tailored to, for interview prep."""
+    from sqlalchemy.orm import undefer
+
+    user_id = _user_id(current_user)
+    async with get_session() as session:
+        doc = (
+            await session.execute(
+                select(ResumeDocument)
+                .options(undefer(ResumeDocument.job_description))
+                .where(ResumeDocument.id == resume_id, ResumeDocument.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    return {
+        "job_description": doc.job_description,
+        "job_title": doc.job_title,
+        "company": doc.company,
+        "match_score": doc.match_score,
+        "origin": doc.origin,
+        "created_at": _iso(doc.created_at),
+    }
 
 
 async def _library_doc(user_id: str, resume_id: str) -> tuple[ResumeDesign, str | None]:
@@ -358,6 +436,7 @@ async def tailor_from_job_description(body: TailorRequest, current_user: dict = 
                     want_tailor=True,
                     extra_instructions=body.instructions,
                     emit=emit,
+                    free_scoring=True,
                 )
                 if out.get("error") == "no_profile":
                     await queue.put({
@@ -377,6 +456,8 @@ async def tailor_from_job_description(body: TailorRequest, current_user: dict = 
                     return
                 await queue.put({"stage": "saving", "label": "Saving to your documents"})
                 letter = out.get("cover_letter") or None
+                match = out.get("match") if isinstance(out.get("match"), dict) else {}
+                score = match.get("overall_score", match.get("score"))
                 payload = await save_ai_tailored_as_library_resume(
                     user_id,
                     content=tailored,
@@ -384,16 +465,21 @@ async def tailor_from_job_description(body: TailorRequest, current_user: dict = 
                     company=out.get("company"),
                     activate=False,
                     cover_letter=letter,
+                    job_description=body.job_description,
+                    match_score=score if isinstance(score, (int, float)) else None,
+                    origin="documents",
                 )
                 await queue.put({
                     "stage": "done",
                     "resume": payload.get("resume"),
-                    "match": out.get("match"),
+                    "match": {**match, "score": score} if match else None,
                     "has_cover_letter": bool((letter or "").strip()),
                 })
             except Exception as e:  # noqa: BLE001 - surface a clean SSE error
+                from app.core.llm_client import llm_failure_message
+
                 logger.exception("documents_tailor_failed", user_id=user_id, error=str(e))
-                await queue.put({"stage": "error", "message": "Tailoring failed. Please try again."})
+                await queue.put({"stage": "error", "message": llm_failure_message(e, feature="Tailoring")})
             finally:
                 await queue.put(None)
 

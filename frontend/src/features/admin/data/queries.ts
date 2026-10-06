@@ -1,5 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import {
+  fetchAiUsageOverview,
+  fetchAiUsageSeries,
+  fetchTailoringRunsSeries,
   fetchAnalysisPlatforms,
   fetchAnalysisUsers,
   fetchAppliedVsFetchedSeries,
@@ -12,7 +15,7 @@ import {
   fetchScrapeHealthSeries,
   fetchUserActivitySeries,
 } from '@/api/dataManagementApi';
-import type { UserActivityMetric } from '@/types/dataManagement';
+import type { AiUsageMeasure, UserActivityMetric } from '@/types/dataManagement';
 
 type Period = { year: number; month: number; timezone: string };
 
@@ -70,6 +73,33 @@ export function useUserActivitySeries(period: Period | null, userIds: string[], 
     queryKey: adminDataKeys.series('user-activity', period, { userIds, metrics }),
     queryFn: () => fetchUserActivitySeries({ ...period!, user_ids: userIds, metrics }),
     enabled: period != null && userIds.length > 0 && metrics.length > 0,
+    staleTime: STALE,
+  });
+}
+
+export function useAiUsageOverview(period: Period | null) {
+  return useQuery({
+    queryKey: adminDataKeys.series('ai-usage-overview', period),
+    queryFn: () => fetchAiUsageOverview(period!.year, period!.month, period!.timezone),
+    enabled: period != null,
+    staleTime: STALE,
+  });
+}
+
+export function useAiUsageSeries(period: Period | null, userIds: string[], measure: AiUsageMeasure) {
+  return useQuery({
+    queryKey: adminDataKeys.series('ai-usage', period, { userIds, measure }),
+    queryFn: () => fetchAiUsageSeries({ ...period!, user_ids: userIds, measure }),
+    enabled: period != null && userIds.length > 0,
+    staleTime: STALE,
+  });
+}
+
+export function useTailoringRunsSeries(period: Period | null, userIds: string[]) {
+  return useQuery({
+    queryKey: adminDataKeys.series('tailoring-runs', period, userIds),
+    queryFn: () => fetchTailoringRunsSeries({ ...period!, user_ids: userIds }),
+    enabled: period != null && userIds.length > 0,
     staleTime: STALE,
   });
 }
