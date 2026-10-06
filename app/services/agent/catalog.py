@@ -287,6 +287,10 @@ async def _submit_job(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     resp = await submit_job_route(req, bt, _cu(ctx))
     await _run_background_tasks(bt)
     d = resp.model_dump()
+    if d.get("success") and d.get("job_id") and not d.get("is_duplicate"):
+        from app.services.job_add_batches import record_job_add
+
+        await record_job_add(ctx.user_id, [d["job_id"]], source="manual")
     return ToolResult(
         ok=bool(d.get("success")),
         summary=d.get("message") or "Job submitted.",

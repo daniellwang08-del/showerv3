@@ -2408,12 +2408,13 @@ async def list_job_add_share_targets(
 @router.post("/job-add-batches", response_model=JobAddBatchOut | None)
 async def create_job_add_batch(
     body: JobAddBatchCreateRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ) -> JobAddBatchOut | None:
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    from app.services.job_add_batches import create_batch
+    from app.services.job_add_batches import create_batch, fanout_new_batch
 
     async with get_session() as session:
         row = await create_batch(
@@ -2425,6 +2426,8 @@ async def create_job_add_batch(
             share_user_ids=body.user_ids,
         )
         await session.commit()
+    if row:
+        background_tasks.add_task(fanout_new_batch, row)
     return JobAddBatchOut(**row) if row else None
 
 
@@ -2733,6 +2736,18 @@ def _applicant_preferred_pool_clause(
     return preferred_pool_visibility_clause(user_id, countries or [])
 
 
+def _applicant_pool_clauses(user_id: str, countries: list[str] | None) -> list:
+    """What an applicant's board may hold: not hidden by them, in their countries, shared with them."""
+    from app.services.job_add_batches import job_share_visibility_clause
+
+    clauses = [(UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")]
+    country_clause = _applicant_preferred_pool_clause(user_id, countries, is_admin=False)
+    if country_clause is not None:
+        clauses.append(country_clause)
+    clauses.append(job_share_visibility_clause(user_id))
+    return clauses
+
+
 def _dashboard_visible_base_filter(
     user_id: str,
     min_match_score: int | None = None,
@@ -2741,20 +2756,18 @@ def _dashboard_visible_base_filter(
     is_admin: bool = False,
 ) -> tuple[list, bool]:
     """Shared visibility filter for dashboard list / revision / sync (view=all)."""
-    base_filter = [
-        Job.status != "blocked",
-        (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
-    ]
+    base_filter = [Job.status != "blocked"]
     score_clauses, needs_match_join = _dashboard_min_score_clauses(min_match_score)
     base_filter.extend(score_clauses)
-    country_clause = _applicant_preferred_pool_clause(
-        user_id, country_preferences, is_admin=is_admin
-    )
-    if country_clause is not None:
-        base_filter.append(country_clause)
-    from app.services.job_add_batches import job_share_visibility_clause
+    if is_admin:
+        from app.services.job_add_batches import job_share_visibility_clause
 
-    base_filter.append(job_share_visibility_clause(user_id))
+        base_filter.append(
+            (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")
+        )
+        base_filter.append(job_share_visibility_clause(user_id))
+    else:
+        base_filter.extend(_applicant_pool_clauses(user_id, country_preferences))
     return base_filter, needs_match_join
 
 
@@ -3054,19 +3067,11 @@ async def get_dashboard_jobs(
             min_score = await UserRepository(session).get_effective_min_match_score(user_id)
 
         # Admins see the full non-blocked pool (matches admin stats). Applicants
-        # still hide jobs they marked duplicated / manual_hidden via UJS, and
-        # hide teammate / scraped jobs outside their country preferences.
+        # see what ``_applicant_pool_clauses`` allows.
         base_filter = [Job.status != "blocked"]
         if not is_admin:
-            base_filter.append(
-                (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")
-            )
             countries = await UserRepository(session).get_country_preferences(user_id)
-            country_clause = _applicant_preferred_pool_clause(
-                user_id, countries, is_admin=False
-            )
-            if country_clause is not None:
-                base_filter.append(country_clause)
+            base_filter.extend(_applicant_pool_clauses(user_id, countries))
         base_filter.extend(
             _dashboard_search_clauses(
                 q=q, title=title, company=company, source=source, remote_only=remote_only,
@@ -3241,15 +3246,11 @@ async def get_dashboard_sync(
 
         min_score_pref = await UserRepository(session).get_effective_min_match_score(user_id)
         countries = [] if is_admin else await UserRepository(session).get_country_preferences(user_id)
-        shared_filter = [
-            Job.status != "blocked",
-            (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active"),
-        ]
-        country_clause = _applicant_preferred_pool_clause(
-            user_id, countries, is_admin=is_admin
+        shared_filter, _ = _dashboard_visible_base_filter(
+            user_id,
+            country_preferences=countries,
+            is_admin=is_admin,
         )
-        if country_clause is not None:
-            shared_filter.append(country_clause)
 
         async def _count(view: str) -> int:
             view_clauses, needs_match_join = _dashboard_view_clauses(
@@ -3481,15 +3482,8 @@ async def get_dashboard_counts(
 
         shared_filter = [Job.status != "blocked"]
         if not is_admin:
-            shared_filter.append(
-                (UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")
-            )
             countries = await UserRepository(session).get_country_preferences(user_id)
-            country_clause = _applicant_preferred_pool_clause(
-                user_id, countries, is_admin=False
-            )
-            if country_clause is not None:
-                shared_filter.append(country_clause)
+            shared_filter.extend(_applicant_pool_clauses(user_id, countries))
         shared_filter.extend(
             _dashboard_search_clauses(
                 q=q, title=title, company=company, source=source, remote_only=remote_only,

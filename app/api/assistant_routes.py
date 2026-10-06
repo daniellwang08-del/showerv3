@@ -34,6 +34,7 @@ from app.api.routes import (
     VIEWS_NEEDING_APPLICATION_JOIN,
     VIEWS_NEEDING_RESUME_JOIN,
     _dashboard_min_score_clauses,
+    _dashboard_visible_base_filter,
     _dashboard_search_clauses,
     _dashboard_view_clauses,
     get_current_user,
@@ -2524,10 +2525,14 @@ async def next_job(
         score_clauses, score_needs_join = _dashboard_min_score_clauses(min_match_score)
         needs_match_join = needs_match_join or score_needs_join or True
         search_clauses = _dashboard_search_clauses(remote_only=remote_only)
+        is_admin = bool(current_user.get("is_admin"))
+        countries = [] if is_admin else await UserRepository(session).get_country_preferences(user_id)
+        pool_filter, _ = _dashboard_visible_base_filter(
+            user_id, country_preferences=countries, is_admin=is_admin
+        )
 
         filters = [
-            Job.status != "blocked",
-            or_(UserJobStatus.status.is_(None), UserJobStatus.status == "active"),
+            *pool_filter,
             ValidJobUserApplication.id.is_(None),  # never jump to already-applied
             *view_clauses,
             *score_clauses,

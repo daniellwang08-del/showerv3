@@ -112,8 +112,9 @@ async def _process_listing_job(
     extra_meta: dict,
     chain_analysis: bool,
     skip_phase_b: bool,
+    added_ids: list[str] | None = None,
 ) -> str:
-    """Returns 'created' | 'linked' | 'skipped'."""
+    """Returns 'created' | 'linked' | 'skipped'. Appends the job id to ``added_ids`` unless skipped."""
     url = board_job.url.strip()
     is_valid, _validation_error = URLManager.validate_url(url)
     if not is_valid:
@@ -156,6 +157,8 @@ async def _process_listing_job(
                     needs_analysis = match is None
             job_id = existing.id
             await session.commit()
+            if added_ids is not None:
+                added_ids.append(job_id)
             if needs_analysis:
                 await _enqueue_analysis(
                     job_id, user_id, extraction_id, skip_phase_b=skip_phase_b
@@ -188,6 +191,8 @@ async def _process_listing_job(
         await ujs_repo.upsert(user_id=user_id, job_id=job.id, status="active")
         extraction_id = extraction.id
         await session.commit()
+        if added_ids is not None:
+            added_ids.append(job.id)
 
     await _enqueue_extract(
         extraction_id,
@@ -210,8 +215,12 @@ async def ingest_board_jobs(
     skip_phase_b: bool,
     max_new: int = MAX_NEW_JOBS_PER_SYNC,
 ) -> dict[str, int]:
-    """Feed discovered listing URLs through create/link/skip. Caps new jobs."""
+    """Feed discovered listing URLs through create/link/skip. Caps new jobs.
+
+    Everything added lands in one add session that follows the user's share default.
+    """
     created = linked = skipped = 0
+    added_ids: list[str] = []
     for board_job in jobs:
         if created >= max_new:
             break
@@ -224,6 +233,7 @@ async def ingest_board_jobs(
                 extra_meta=extra_meta,
                 chain_analysis=chain_analysis,
                 skip_phase_b=skip_phase_b,
+                added_ids=added_ids,
             )
         except Exception as e:
             logger.warning(
@@ -239,6 +249,10 @@ async def ingest_board_jobs(
             linked += 1
         else:
             skipped += 1
+    if added_ids:
+        from app.services.job_add_batches import record_job_add
+
+        await record_job_add(user_id, added_ids, source="site")
     return {"created": created, "linked": linked, "skipped": skipped}
 
 

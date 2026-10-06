@@ -118,6 +118,13 @@ class _Rows:
     def all(self):
         return self._rows
 
+    def scalar_one_or_none(self):
+        return self._rows[0][0] if self._rows else None
+
+
+SCRAPED = [({"scraped_source": "remoterocketship"},)]
+OWNED = [({"submitted_data": {}, "submitted_by_user_id": "owner"},)]
+
 
 class _ScriptedSession:
     """Answers ``execute`` calls in order; records how many were made."""
@@ -131,29 +138,39 @@ class _ScriptedSession:
         return _Rows(self._results.pop(0))
 
 
-def test_unbatched_job_is_public():
-    session = _ScriptedSession([])
+def test_unbatched_scraped_job_is_public():
+    session = _ScriptedSession(SCRAPED, [])
     assert run(users_who_can_see_job(session, "j", ["a", "b"])) == {"a", "b"}
 
 
-def test_private_batch_only_reaches_owner():
-    session = _ScriptedSession([("b1", "owner", "private")])
+def test_unbatched_owned_job_only_reaches_owner():
+    session = _ScriptedSession(OWNED, [])
     assert run(users_who_can_see_job(session, "j", ["owner", "other"])) == {"owner"}
-    assert session.calls == 1
+
+
+def test_owner_keeps_a_job_someone_else_batched():
+    session = _ScriptedSession(OWNED, [("b1", "other", "private")])
+    assert run(users_who_can_see_job(session, "j", ["owner", "other", "x"])) == {"owner", "other"}
+
+
+def test_private_batch_only_reaches_owner():
+    session = _ScriptedSession(OWNED, [("b1", "owner", "private")])
+    assert run(users_who_can_see_job(session, "j", ["owner", "other"])) == {"owner"}
+    assert session.calls == 2
 
 
 def test_all_scope_reaches_everyone():
-    session = _ScriptedSession([("b1", "owner", "private"), ("b2", "x", "all")])
+    session = _ScriptedSession(OWNED, [("b1", "owner", "private"), ("b2", "x", "all")])
     assert run(users_who_can_see_job(session, "j", ["owner", "other"])) == {"owner", "other"}
 
 
 def test_team_scope_uses_approved_members():
-    session = _ScriptedSession([("b1", "owner", "team")], [("teammate",)])
+    session = _ScriptedSession(OWNED, [("b1", "owner", "team")], [("teammate",)])
     assert run(users_who_can_see_job(session, "j", ["owner", "teammate", "admin"])) == {"owner", "teammate"}
 
 
 def test_users_scope_uses_share_list():
-    session = _ScriptedSession([("b1", "owner", "users")], [("friend",)])
+    session = _ScriptedSession(OWNED, [("b1", "owner", "users")], [("friend",)])
     assert run(users_who_can_see_job(session, "j", ["owner", "friend", "stranger"])) == {"owner", "friend"}
 
 
