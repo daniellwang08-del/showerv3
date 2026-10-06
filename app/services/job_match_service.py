@@ -940,9 +940,11 @@ async def analyze_job_match_phase_a(
     job_preferences: str | None = None,
     custom_guidance: str | None = None,
     source_documents_context: str | None = None,
+    job_type: str = "job_analysis",
 ) -> tuple[dict, JobDescriptionSchema | None, bool]:
     """
     Phase A: validation, structured job extraction, and match scoring.
+    ``job_type`` picks the LLM binding (``match_quality_check`` for the second opinion).
     Returns (match_result_dict, structured_job_or_None, is_job_posting).
 
     Scores using profile + attached source documents + job preferences + custom guidance.
@@ -1026,9 +1028,9 @@ async def analyze_job_match_phase_a(
         system_prompt=JOB_MATCH_PHASE_A_SYSTEM_PROMPT,
         user_content=user_content,
         max_tokens=phase_a_max,
-        observe_name="phase_a",
+        observe_name="phase_a" if job_type == "job_analysis" else job_type,
         user_id=user_id,
-        job_type="job_analysis",
+        job_type=job_type,
     )
 
     requires_security_clearance = bool(parsed.get("requires_security_clearance", False))

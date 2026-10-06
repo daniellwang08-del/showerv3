@@ -116,6 +116,12 @@ _COMPANY_NOISE_TOKENS = frozenset(
 )
 
 _SPLIT_RE = re.compile(r"[\n\r|;•]+|(?<=[.!?])\s+")
+# Role word fused to the next block's text (``EngineerSenior``, ``EngineerAI``):
+# a sign the HTML lost its block boundaries, never a real title.
+_GLUED_ROLE_RE = re.compile(
+    r"(?:Engineer|Developer|Manager|Scientist|Analyst|Designer|Architect|"
+    r"Consultant|Director|Lead|Specialist|Intern|Officer)[A-Z]"
+)
 _WORD_RE = re.compile(r"\S+")
 _MULTI_SPACE = re.compile(r"\s+")
 
@@ -210,26 +216,38 @@ def generate_span_candidates(plain_text: str | None) -> list[str]:
         seen.add(key)
         out.append(span)
 
-    for chunk in _SPLIT_RE.split(head):
+    # Split on the raw head: ``_norm`` folds newlines, which are the strongest
+    # field boundary in page text.
+    chunks = [c for c in (_norm(c) for c in _SPLIT_RE.split(plain_text[:_MAX_SCAN_CHARS])) if c]
+    for chunk in chunks:
         _add(chunk)
 
-    words = _WORD_RE.findall(head)
-    # Sliding windows (3–12 tokens) over the start of the posting.
-    limit = min(len(words), 90)
+    # Sliding windows (3-12 tokens) over the start of the posting. Windows stay
+    # inside one line / ``|`` segment so ``Engineer | Career`` never forms.
+    segments: list[list[str]] = []
+    budget = 90
+    for chunk in chunks:
+        if budget <= 0:
+            break
+        words = _WORD_RE.findall(chunk)[:budget]
+        budget -= len(words)
+        segments.append(words)
     for n in (3, 4, 5, 6, 7, 8, 10, 12):
-        for i in range(0, max(0, limit - n + 1)):
-            _add(" ".join(words[i : i + n]))
-            if len(out) >= _MAX_CANDIDATES:
-                return out[:_MAX_CANDIDATES]
+        for words in segments:
+            for i in range(0, max(0, len(words) - n + 1)):
+                _add(" ".join(words[i : i + n]))
+                if len(out) >= _MAX_CANDIDATES:
+                    return out[:_MAX_CANDIDATES]
 
     # Capitalized multi-word runs (common for titles/companies in HTML text).
-    for m in re.finditer(
-        r"\b([A-Z][A-Za-z0-9+.#/&'’-]*(?:\s+(?:&|and|[A-Z][A-Za-z0-9+.#/&'’-]*)){0,8})\b",
-        head,
-    ):
-        _add(m.group(1))
-        if len(out) >= _MAX_CANDIDATES:
-            break
+    for chunk in chunks:
+        for m in re.finditer(
+            r"\b([A-Z][A-Za-z0-9+.#/&'’-]*(?:\s+(?:&|and|[A-Z][A-Za-z0-9+.#/&'’-]*)){0,8})\b",
+            chunk,
+        ):
+            _add(m.group(1))
+            if len(out) >= _MAX_CANDIDATES:
+                return out[:_MAX_CANDIDATES]
 
     return out[:_MAX_CANDIDATES]
 
@@ -246,6 +264,8 @@ def _looks_like_title(span: str) -> bool:
     if any(low.startswith(p) for p in _TITLE_NOISE_PREFIXES):
         return False
     if low.count(",") > 2:
+        return False
+    if _GLUED_ROLE_RE.search(text):
         return False
     # Prefer role-like phrases (Engineer/Manager/…) or short Title Case runs.
     role_hint = re.search(

@@ -285,15 +285,19 @@ export const autofill = (jobId, fields, preferences) =>
   });
 
 /** Canonical structured profile for deterministic engines (Workday) and cover letters. */
-export const getAutofillProfile = (jobId, resumeSource = "original") =>
-  apiFetch(`/assistant/autofill-profile${qs({ job_id: jobId, resume_source: resumeSource })}`, { timeoutMs: 45_000 });
+export const getAutofillProfile = (jobId) =>
+  apiFetch(`/assistant/autofill-profile${qs({ job_id: jobId })}`, { timeoutMs: 45_000 });
 
 /**
- * Generated resume / cover letter as base64, for page file inputs and downloads.
+ * Resume / cover letter as base64, for page file inputs and downloads. Resume
+ * files follow the account's "Resume for applications" setting (original or
+ * tailored, falling back to the original when no tailored file exists);
+ * ``source`` says which one came back.
  * @param {"resume_pdf"|"resume_docx"|"cover_letter_pdf"|"cover_letter_docx"} fileType
+ * @param {{source?: "original"|"tailored"}} [opts] override the account setting
  */
-export async function downloadResumeFile(jobId, fileType) {
-  const res = await send(`/jobs/valid/${encodeURIComponent(jobId)}/resume-build/download/${fileType}`, {
+export async function downloadResumeFile(jobId, fileType, { source } = {}) {
+  const res = await send(`/jobs/valid/${encodeURIComponent(jobId)}/resume-build/download/${fileType}${qs({ source })}`, {
     timeoutMs: 60_000,
   });
   await checkStatus(res, true);
@@ -308,6 +312,7 @@ export async function downloadResumeFile(jobId, fileType) {
     base64: bytesToBase64(bytes),
     filename: filenameFromDisposition(res.headers.get("Content-Disposition"), `${fileType}${isPdf ? ".pdf" : ".docx"}`),
     mime: isPdf ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    source: res.headers.get("X-Resume-Source") || null,
   };
 }
 

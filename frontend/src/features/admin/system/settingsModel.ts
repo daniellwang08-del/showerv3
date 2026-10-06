@@ -33,11 +33,15 @@ const NUMBER_KEYS = new Set<string>([
   'llm_circuit_breaker_cooldown_seconds',
   'auto_prepare_daily_cap_per_user',
   'auto_prepare_pending_cap_per_user',
+  'auto_score_on_visit_limit',
+  'auto_score_on_visit_cooldown_seconds',
+  'match_quality_check_daily_cap_per_user',
 ]);
 
 /** Smallest accepted value per numeric key (default 0). */
 const NUMBER_MIN: Record<string, number> = {
   ...Object.fromEntries(WORKER_KEYS.map((w) => [w.key, 1])),
+  auto_score_on_visit_cooldown_seconds: 30,
   openai_timeout_seconds: 1,
   anthropic_timeout_seconds: 1,
   gemini_timeout_seconds: 1,

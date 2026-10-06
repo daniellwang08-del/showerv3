@@ -134,6 +134,8 @@ const PIPELINE_EVENTS = new Set([
   'match_started',
   'match_completed',
   'match_failed',
+  'match_quality_check_completed',
+  'match_quality_check_failed',
   'tailored_content_started',
   'tailored_content_completed',
   'tailored_content_failed',
@@ -144,6 +146,28 @@ const PIPELINE_EVENTS = new Set([
   'resume_file_ready',
   'resume_file_failed',
 ]);
+
+const FILLED_FIELD_LABELS: Record<string, string> = {
+  title: 'title',
+  company: 'company',
+  location: 'location',
+  salary_range: 'salary',
+  employment_type: 'employment type',
+  work_mode: 'work mode',
+};
+
+function qualityCheckMessage(event: WsEvent): string {
+  const score = event.overall_score;
+  const free = event.free_score;
+  const head =
+    score == null
+      ? 'AI check finished.'
+      : free != null && free !== score
+        ? `AI check changed the score from ${free} to ${score}.`
+        : `AI check confirmed the score (${score}).`;
+  const filled = (event.filled_fields ?? []).map((f) => FILLED_FIELD_LABELS[f] ?? f);
+  return filled.length ? `${head} Filled in ${filled.join(', ')}.` : head;
+}
 
 function handleWsEvent(event: WsEvent) {
   const scraper = useScraperStore.getState();
@@ -182,6 +206,15 @@ function handleWsEvent(event: WsEvent) {
   if (event.type === 'match_failed') {
     const detail = (event.error || event.message || 'Match analysis failed').trim();
     useUIStore.getState().notify('error', detail, 8000);
+    refresh.lists();
+  }
+
+  if (event.type === 'match_quality_check_failed') {
+    useUIStore.getState().notify('warning', event.error || 'AI check could not run. The free score is kept.', 8000);
+  }
+
+  if (event.type === 'match_quality_check_completed') {
+    useUIStore.getState().notify('success', qualityCheckMessage(event), 6000);
     refresh.lists();
   }
 

@@ -2004,6 +2004,24 @@ button.row:hover,
   max-width: 60%;
 }
 
+.setting-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-bottom: 12px;
+}
+
+.setting-note > p.setting-hint {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.setting-note + .setting,
+.setting-note + .toggle-row {
+  border-top: 1px solid var(--border);
+}
+
 .setting-control:empty {
   display: none;
 }

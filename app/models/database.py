@@ -87,6 +87,16 @@ class User(Base):
     # Manual URL/paste submit depth: extract | match | full (default full).
     manual_submit_pipeline = Column(String(20), default="full", nullable=False, server_default="full")
 
+    # Résumé used for applications: "tailored" (per-job rewrite after scoring) or
+    # "original" (score only; extension uploads and fills from the original résumé).
+    application_resume_source = Column(String(20), default="tailored", nullable=False, server_default="tailored")
+
+    # LLM second opinion on the free vector score: "off", "rescore" (only when the
+    # user re-runs a scored job) or "auto" (also new jobs the free engine scores at
+    # or above match_quality_check_min_score).
+    match_quality_check = Column(String(20), default="rescore", nullable=False, server_default="rescore")
+    match_quality_check_min_score = Column(Integer, default=70, nullable=False, server_default="70")
+
     # OpenAI: "default" uses server OPENAI_API_KEY; "custom" uses encrypted user key.
     openai_key_mode = Column(String(20), default="default", nullable=False, server_default="default")
     openai_api_key_encrypted = deferred(Column(Text, nullable=True))

@@ -125,6 +125,65 @@ def job_share_visibility_clause(user_id: str):
     return or_(~in_any_batch, in_granting_batch)
 
 
+async def users_who_can_see_job(
+    session: AsyncSession,
+    job_id: str,
+    user_ids: Iterable[str],
+) -> set[str]:
+    """Subset of ``user_ids`` that ``job_share_visibility_clause`` lets see the job.
+
+    One pass over the job's batches instead of a per-user query, for fan-out.
+    """
+    candidates = {uid for uid in user_ids if uid}
+    if not candidates:
+        return set()
+    batches = (
+        await session.execute(
+            select(JobAddBatch.id, JobAddBatch.user_id, JobAddBatch.share_scope)
+            .join(JobAddBatchJob, JobAddBatchJob.batch_id == JobAddBatch.id)
+            .where(JobAddBatchJob.job_id == job_id)
+        )
+    ).all()
+    if not batches:
+        return candidates
+    visible: set[str] = set()
+    team_batch = False
+    user_batch_ids: list[str] = []
+    for batch_id, owner_id, scope in batches:
+        if scope == "all":
+            return candidates
+        if owner_id in candidates:
+            visible.add(owner_id)
+        if scope == "team":
+            team_batch = True
+        elif scope == "users":
+            user_batch_ids.append(batch_id)
+    if team_batch:
+        team = await session.execute(
+            select(User.id).where(
+                User.id.in_(candidates),
+                User.is_admin.is_(False),
+                User.is_active.is_(True),
+                User.approval_status == _TEAM_APPROVED,
+            )
+        )
+        visible.update(row[0] for row in team.all())
+    if user_batch_ids:
+        shared = await session.execute(
+            select(JobAddBatchShareUser.user_id).where(
+                JobAddBatchShareUser.batch_id.in_(user_batch_ids),
+                JobAddBatchShareUser.user_id.in_(candidates),
+            )
+        )
+        visible.update(row[0] for row in shared.all())
+    return visible
+
+
+async def batch_job_ids(session: AsyncSession, batch_id: str) -> list[str]:
+    rows = await session.execute(select(JobAddBatchJob.job_id).where(JobAddBatchJob.batch_id == batch_id))
+    return [row[0] for row in rows.all()]
+
+
 def serialize_batch(
     batch: JobAddBatch,
     share_users: list[User] | None = None,

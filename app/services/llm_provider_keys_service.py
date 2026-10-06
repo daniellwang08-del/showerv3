@@ -22,6 +22,10 @@ LLM_JOB_TYPES: dict[str, dict[str, str]] = {
         "label": "Job analysis (Phase A)",
         "description": "Match scoring and structured job extraction",
     },
+    "match_quality_check": {
+        "label": "Match quality check",
+        "description": "LLM second opinion on free match scores and missing job fields",
+    },
     "resume_tailoring": {
         "label": "Resume tailoring (Phase B)",
         "description": "Tailored resume JSON and cover letter generation",
@@ -400,9 +404,18 @@ async def resolve_job_llm_credentials(
         if user:
             user_model = (getattr(user, "llm_model", None) or "").strip() or None
 
+    quality_model = ""
+    if job_type == "match_quality_check" and not admin_bound_model and (openai_key or "").strip():
+        quality_model = str(await get_effective_value("match_quality_check_model", session) or "").strip()
+
     bound_model: str | None = None
     if admin_bound_model:
         bound_model = admin_bound_model
+    elif quality_model:
+        # The check exists to second-guess the free engine with a known-good
+        # model, so a user's own dashboard model does not replace it.
+        bound_model = quality_model
+        provider = "openai"
     elif user_model and (openai_key or "").strip():
         bound_model = user_model
         provider = "openai"

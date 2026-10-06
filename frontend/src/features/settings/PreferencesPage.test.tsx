@@ -24,6 +24,8 @@ vi.mock('@/api/settingsApi', () => ({
   saveDedupSettings: vi.fn(),
   saveAutoPrepareSettings: vi.fn(),
   saveManualSubmitPipelineSettings: vi.fn(),
+  saveApplicationResumeSource: vi.fn(),
+  saveMatchQualityCheckSettings: vi.fn(),
   saveJobShareDefaultSettings: vi.fn(),
   saveResumeTailoringPromptSettings: vi.fn(),
   saveCoverLetterPromptSettings: vi.fn(),
@@ -86,6 +88,9 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     auto_prepare_match: false,
     auto_prepare_full: false,
     manual_submit_pipeline: 'full',
+    application_resume_source: 'tailored',
+    match_quality_check: 'rescore',
+    match_quality_check_min_score: 70,
     job_share_default: 'private',
     resume_filename_mode: 'pattern',
     resume_filename_value: '{firstname}_{lastname}_{kind}',
@@ -318,6 +323,44 @@ describe('PreferencesPage', () => {
     resolve(makeSettings({ auto_prepare_match: true, auto_prepare_full: true }));
     const { toast } = await import('sonner');
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  });
+
+  it('saves the resume for applications and locks document prep in original mode', async () => {
+    api.saveApplicationResumeSource.mockResolvedValue(
+      makeSettings({ application_resume_source: 'original', auto_prepare_full: false }),
+    );
+    const user = userEvent.setup();
+    renderPage('/app/preferences?tab=matching');
+    expect(await screen.findByRole('radio', { name: 'Tailored resume per job' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Prepare documents automatically' })).not.toHaveAttribute('data-disabled');
+
+    await user.click(screen.getByRole('radio', { name: 'My original resume' }));
+    await waitFor(() =>
+      expect(api.saveApplicationResumeSource).toHaveBeenCalledWith({ application_resume_source: 'original' }),
+    );
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'My original resume' })).toBeChecked());
+    const docs = screen.getByRole('switch', { name: 'Prepare documents automatically' });
+    await waitFor(() => expect(docs).toHaveAttribute('data-disabled'));
+    expect(docs).not.toBeChecked();
+  });
+
+  it('saves the AI quality check mode and its auto threshold', async () => {
+    api.saveMatchQualityCheckSettings.mockImplementation(async (body) => makeSettings({ ...body, match_quality_check: 'auto' }));
+    const user = userEvent.setup();
+    renderPage('/app/preferences?tab=matching');
+    expect(await screen.findByRole('radio', { name: 'When I re-run a job' })).toBeChecked();
+    expect(screen.queryByLabelText('Check new matches scoring at least')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: 'Also for strong new matches' }));
+    await waitFor(() =>
+      expect(api.saveMatchQualityCheckSettings).toHaveBeenCalledWith({ match_quality_check: 'auto' }),
+    );
+    const threshold = await screen.findByLabelText('Check new matches scoring at least');
+    await user.clear(threshold);
+    await user.type(threshold, '150{Enter}');
+    await waitFor(() =>
+      expect(api.saveMatchQualityCheckSettings).toHaveBeenCalledWith({ match_quality_check_min_score: 100 }),
+    );
   });
 
   it('saves the paste-link pipeline immediately', async () => {

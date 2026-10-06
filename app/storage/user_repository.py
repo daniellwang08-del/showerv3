@@ -24,6 +24,11 @@ from app.utils.profile_converter import user_profile_to_openai_text
 from app.utils.secret_encryption import decrypt_secret, encrypt_secret, mask_api_key
 from app.services.resume_template_service import template_status_payload
 from app.services.cover_letter_template_service import template_status_payload as cover_letter_template_status_payload
+from app.services.job_pipeline_mode import normalize_application_resume_source
+from app.services.match_quality_check import (
+    normalize_min_score as normalize_quality_check_min_score,
+    normalize_mode as normalize_quality_check_mode,
+)
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -590,6 +595,13 @@ class UserRepository:
             "default_dedup_score_comparison_enabled": default_score_cmp,
             "auto_prepare_match": bool(getattr(user, "auto_prepare_match", False)),
             "auto_prepare_full": bool(getattr(user, "auto_prepare_full", False)),
+            "application_resume_source": normalize_application_resume_source(
+                getattr(user, "application_resume_source", None)
+            ),
+            "match_quality_check": normalize_quality_check_mode(getattr(user, "match_quality_check", None)),
+            "match_quality_check_min_score": normalize_quality_check_min_score(
+                getattr(user, "match_quality_check_min_score", None)
+            ),
             "manual_submit_pipeline": (
                 str(getattr(user, "manual_submit_pipeline", None) or "full").strip().lower()
                 if str(getattr(user, "manual_submit_pipeline", None) or "full").strip().lower()
@@ -663,6 +675,9 @@ class UserRepository:
         dedup_score_comparison_enabled: bool | None = None,
         auto_prepare_match: bool | None = None,
         auto_prepare_full: bool | None = None,
+        application_resume_source: str | None = None,
+        match_quality_check: str | None = None,
+        match_quality_check_min_score: int | None = None,
         manual_submit_pipeline: str | None = None,
         job_share_default: str | None = None,
         resume_filename_mode: str | None = None,
@@ -768,6 +783,21 @@ class UserRepository:
             if dedup_score_comparison_mode is None:
                 user.dedup_score_comparison_mode = "custom"
 
+        if application_resume_source is not None:
+            source = str(application_resume_source).strip().lower()
+            if source not in ("original", "tailored"):
+                raise ValueError("application_resume_source must be 'original' or 'tailored'")
+            user.application_resume_source = source
+
+        if match_quality_check is not None:
+            mode = str(match_quality_check).strip().lower()
+            if mode not in ("off", "rescore", "auto"):
+                raise ValueError("match_quality_check must be 'off', 'rescore', or 'auto'")
+            user.match_quality_check = mode
+
+        if match_quality_check_min_score is not None:
+            user.match_quality_check_min_score = normalize_quality_check_min_score(match_quality_check_min_score)
+
         if auto_prepare_match is not None:
             user.auto_prepare_match = bool(auto_prepare_match)
             if not user.auto_prepare_match:
@@ -779,6 +809,10 @@ class UserRepository:
             if user.auto_prepare_full:
                 # Full implies match.
                 user.auto_prepare_match = True
+
+        if normalize_application_resume_source(getattr(user, "application_resume_source", None)) == "original":
+            # Original résumé mode never writes tailored documents in the background.
+            user.auto_prepare_full = False
 
         if manual_submit_pipeline is not None:
             mode = str(manual_submit_pipeline).strip().lower()

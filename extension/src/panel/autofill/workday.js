@@ -336,18 +336,16 @@ export async function startWorkdayAutofill(tab, engine) {
     return;
   }
   setState({ autofill: { ...emptyAutofill(), active: true, running: true, tabId: tab.id, engine } });
-  // Default to the tailored resume; only use the original when explicitly chosen.
-  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-
   let profile;
   try {
-    profile = await getAutofillProfile(job.job_id, resumeSource);
+    profile = await getAutofillProfile(job.job_id);
   } catch (err) {
     setAutofill({ running: false, done: true, error: "Could not load your profile: " + ((err && err.message) || err) });
     return;
   }
 
-  // Best-effort resume attachment (skip silently if not generated for this job).
+  // Best-effort resume attachment. The server returns the tailored file or the
+  // original resume, following the account's "Resume for applications" setting.
   let resumeFile = null;
   try {
     resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
@@ -355,7 +353,7 @@ export async function startWorkdayAutofill(tab, engine) {
   } catch (e) {
     console.warn("[workday] resume PDF download failed:", (e && e.message) || e);
     resumeFile = null;
-    toast((e && e.message) || "Could not download the tailored resume PDF for upload.");
+    toast((e && e.message) || "Could not prepare your resume PDF for upload. Attach it on the page manually.");
   }
 
   // Auto-advance: drive the whole flow (fill → flush → recover → Save) until the
@@ -893,10 +891,8 @@ export async function rerunWorkday() {
     loopStop: false,
     loopFinished: null,
     loopMessage: null,
-  });
-  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-  try {
-    const profile = await getAutofillProfile(job.job_id, resumeSource);
+  });  try {
+    const profile = await getAutofillProfile(job.job_id);
     let resumeFile = null;
     try {
       resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
@@ -904,7 +900,7 @@ export async function rerunWorkday() {
     } catch (e) {
       console.warn("[workday] resume PDF download failed:", (e && e.message) || e);
       resumeFile = null;
-      toast((e && e.message) || "Could not download the tailored resume PDF for upload.");
+      toast((e && e.message) || "Could not prepare your resume PDF for upload. Attach it on the page manually.");
     }
     if (useLoop) {
       await autoAdvanceWorkday(tabId, profile, resumeFile);

@@ -13,6 +13,7 @@ from app.models.schemas import (
     JobSubmissionRequest,
     JobResponse,
     JobIdsBatchRequest,
+    PrepareJobsBatchRequest,
     AiJobSearchRequest,
     AiJobSearchResponse,
     DuplicatedJobResponse,
@@ -1355,10 +1356,13 @@ async def enqueue_job_match_analysis(
     extraction_id: str | None = None,
     force_requeue: bool = False,
     skip_phase_b: bool = False,
+    quality_check: bool = False,
 ) -> None:
     """
     Prefer Redis/arq for match analysis; fall back to FastAPI BackgroundTasks
     only outside production. Uses the dedicated analysis queue.
+
+    ``quality_check`` queues the LLM second opinion after the free score saves.
 
     The analysis worker enqueues ``save_analyzed_job`` (persist + Phase B). The
     in-process fallback must do the same via ``_run_analyze_and_enqueue_save``.
@@ -1372,6 +1376,7 @@ async def enqueue_job_match_analysis(
     pool = await try_get_analysis_pool()
     bind_logging_context(job_id=job_id, user_id=user_id)
     skip_b = bool(skip_phase_b)
+    qc = bool(quality_check)
     if pool:
         try:
             arq_id = pipeline_job_id("analyze", job_id, user_id)
@@ -1381,6 +1386,7 @@ async def enqueue_job_match_analysis(
                 user_id,
                 extraction_id,
                 skip_b,
+                qc,
                 _job_id=arq_id,
             )
             if job is None and force_requeue:
@@ -1393,6 +1399,7 @@ async def enqueue_job_match_analysis(
                     user_id,
                     extraction_id,
                     skip_b,
+                    qc,
                     _job_id=retry_id,
                 )
                 if job is None:
@@ -1405,6 +1412,7 @@ async def enqueue_job_match_analysis(
                         user_id,
                         extraction_id,
                         skip_b,
+                        qc,
                         _job_id=uniq_id,
                     )
                     retry_id = uniq_id
@@ -1484,15 +1492,18 @@ async def start_personal_job_analysis(
     background_tasks: BackgroundTasks | None = None,
     force: bool = False,
     skip_phase_b: bool = False,
+    quality_check: bool | None = False,
 ) -> dict:
     """Queue per-user analysis for a job that already has (or will use) shared JD.
 
     Returns a small status dict: queued | cached | in_progress | error detail keys.
 
     If a progress row already exists (stuck/aborted worker), still re-enqueue
-    analysis so Prepare never silently no-ops.
+    analysis so Prepare never silently no-ops. ``quality_check=None`` follows the
+    user's setting: re-running an already-scored job gets the LLM check.
     """
     from app.services.job_pipeline_mode import extraction_has_shared_jd
+    from app.services.match_quality_check import resolve_rescore_request
     from app.storage.repository import JobMatchInProgressRepository
 
     already_in_progress = False
@@ -1512,6 +1523,9 @@ async def start_personal_job_analysis(
         existing = await match_repo.get(job_id, user_id)
         if existing and not force and not already_in_progress:
             return {"status": "cached", "message": "Match already computed"}
+        run_check = await resolve_rescore_request(
+            user_id, requested=quality_check, rescore=existing is not None
+        )
         if existing and force:
             await match_repo.delete(job_id, user_id)
 
@@ -1537,9 +1551,11 @@ async def start_personal_job_analysis(
         extraction_id=extraction_id,
         force_requeue=already_in_progress or force,
         skip_phase_b=bool(skip_phase_b),
+        quality_check=run_check,
     )
     return {
         "status": "queued",
+        "quality_check": run_check,
         "message": (
             "Match analysis re-queued"
             if already_in_progress
@@ -1555,8 +1571,12 @@ async def prepare_job_for_user(
     background_tasks: BackgroundTasks | None = None,
     force_rescrape: bool = False,
     allow_force_rescrape: bool = False,
+    quality_check: bool | None = None,
 ) -> dict:
     """Smart entry for applicants: analyze if JD ready, else extract then analyze.
+
+    ``quality_check=None`` follows the user's setting (re-running a scored job
+    gets the LLM check); True/False is an explicit per-request choice.
 
     Applicants cannot force re-extract when a shared JD already exists
     (``allow_force_rescrape`` is admin-only). When extraction is already
@@ -1638,6 +1658,7 @@ async def prepare_job_for_user(
         user_id,
         background_tasks=background_tasks,
         force=True,
+        quality_check=quality_check,
     )
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result["message"])
@@ -1645,6 +1666,7 @@ async def prepare_job_for_user(
         "status": result["status"],
         "mode": "analyze",
         "job_id": job_id,
+        "quality_check": bool(result.get("quality_check")),
         "message": result.get("message")
         or "Analysis queued using the saved job description.",
     }
@@ -2410,11 +2432,13 @@ async def create_job_add_batch(
 async def update_job_add_batch_share(
     batch_id: str,
     body: JobAddBatchShareRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ) -> JobAddBatchOut:
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.auto_prepare_service import fanout_shared_batch
     from app.services.job_add_batches import update_share
 
     async with get_session() as session:
@@ -2431,6 +2455,8 @@ async def update_job_add_batch_share(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         await session.commit()
+    if row.get("share_scope") != "private":
+        background_tasks.add_task(fanout_shared_batch, batch_id)
     return JobAddBatchOut(**row)
 
 
@@ -2973,6 +2999,7 @@ async def get_dashboard_jobs(
     min_match_score: int | None = Query(None, ge=0, le=100),
     view: str = Query("all"),
     timezone: str | None = Query(None),
+    background_tasks: BackgroundTasks = None,
     current_user: dict = Depends(get_current_user),
 ) -> DashboardJobsPage:
     """Paginated jobs list. ``view`` narrows results (all/today/mine/suggested/
@@ -2982,6 +3009,12 @@ async def get_dashboard_jobs(
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    if page == 1 and background_tasks is not None:
+        # Free vector scoring for visible jobs that missed fan-out (throttled per user).
+        from app.services.auto_prepare_service import catch_up_free_scores_on_visit
+
+        background_tasks.add_task(catch_up_free_scores_on_visit, user_id)
 
     is_admin = bool(current_user.get("is_admin"))
     if view not in DASHBOARD_VIEWS:
@@ -4087,9 +4120,14 @@ async def trigger_job_match(
         False,
         description="If true, discard cached match and re-run (e.g. after profile update).",
     ),
+    quality_check: bool | None = Query(
+        None,
+        description="LLM check after the free score. Omit to follow the user's setting.",
+    ),
     current_user: dict = Depends(get_current_user),
 ):
     """Trigger AI job–profile match analysis. Returns 202 when queued, or 200 if already cached (unless force)."""
+    from app.services.match_quality_check import resolve_rescore_request
     from app.storage.repository import JobMatchInProgressRepository
 
     user_id = current_user.get("user_id")
@@ -4109,6 +4147,9 @@ async def trigger_job_match(
         existing = await match_repo.get(job_id, user_id)
         if existing and not force:
             return {"status": "cached", "message": "Match already computed"}
+        run_check = await resolve_rescore_request(
+            user_id, requested=quality_check, rescore=existing is not None
+        )
         if existing and force:
             await match_repo.delete(job_id, user_id)
         r = await session.execute(select(Job).where(Job.id == job_id, Job.status == "active"))
@@ -4123,8 +4164,10 @@ async def trigger_job_match(
             raise HTTPException(status_code=400, detail="Job description not yet scraped")
         await progress_repo.add(job_id, user_id)
         await session.commit()
-    await enqueue_job_match_analysis(job_id, user_id, background_tasks=background_tasks)
-    return {"status": "queued", "message": "Match analysis queued"}
+    await enqueue_job_match_analysis(
+        job_id, user_id, background_tasks=background_tasks, quality_check=run_check
+    )
+    return {"status": "queued", "quality_check": run_check, "message": "Match analysis queued"}
 
 
 class RescrapeRequest(BaseModel):
@@ -4197,6 +4240,8 @@ async def _prepare_job_rescrape_in_session(
 
 class RerunJobMatchBatchRequest(BaseModel):
     job_ids: list[str] = Field(..., min_length=1, max_length=100)
+    # Bulk re-runs (profile changed) stay on the free engine unless asked.
+    quality_check: bool = False
 
 
 @router.post("/jobs/valid/match/rerun", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(get_current_user)])
@@ -4303,6 +4348,9 @@ async def rerun_job_match_batch(
                     "analyze_job_match",
                     jid,
                     user_id,
+                    None,
+                    False,
+                    bool(body.quality_check),
                     _job_id=pipeline_job_id(
                         "analyze", jid, user_id, uuid.uuid4().hex[:10]
                     ),
@@ -4430,6 +4478,10 @@ async def prepare_valid_job(
         False,
         description="If true, reset shared extraction and re-scrape before analyzing.",
     ),
+    quality_check: bool | None = Query(
+        None,
+        description="LLM check after the free score. Omit to follow the user's setting.",
+    ),
     current_user: dict = Depends(get_current_user),
 ):
     """Start personal analysis using saved JD when ready; otherwise extract then analyze.
@@ -4454,6 +4506,7 @@ async def prepare_valid_job(
         background_tasks=background_tasks,
         force_rescrape=False,
         allow_force_rescrape=False,
+        quality_check=quality_check,
     )
 
 
@@ -4463,7 +4516,7 @@ async def prepare_valid_job(
     dependencies=[Depends(get_current_user)],
 )
 async def prepare_valid_jobs_batch(
-    body: JobIdsBatchRequest,
+    body: PrepareJobsBatchRequest,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
@@ -4503,6 +4556,7 @@ async def prepare_valid_jobs_batch(
                     user_id,
                     background_tasks=background_tasks,
                     force_rescrape=False,
+                    quality_check=body.quality_check,
                 )
             jobs_out.append(
                 {
@@ -4510,6 +4564,7 @@ async def prepare_valid_jobs_batch(
                     "mode": str(result.get("mode") or ""),
                     "status": str(result.get("status") or ""),
                     "extraction_id": str(result.get("extraction_id") or ""),
+                    "quality_check": bool(result.get("quality_check")),
                 }
             )
         except HTTPException as e:
@@ -4829,6 +4884,9 @@ class UserSettingsResponse(BaseModel):
     default_dedup_score_comparison_enabled: bool = False
     auto_prepare_match: bool = False
     auto_prepare_full: bool = False
+    application_resume_source: str = "tailored"
+    match_quality_check: str = "rescore"
+    match_quality_check_min_score: int = 70
     manual_submit_pipeline: str = "full"
     job_share_default: str = "private"
     resume_filename_mode: str = "pattern"
@@ -4887,6 +4945,9 @@ class UserSettingsUpdateRequest(BaseModel):
     dedup_score_comparison_enabled: bool | None = None
     auto_prepare_match: bool | None = None
     auto_prepare_full: bool | None = None
+    application_resume_source: str | None = Field(default=None, pattern="^(original|tailored)$")
+    match_quality_check: str | None = Field(default=None, pattern="^(off|rescore|auto)$")
+    match_quality_check_min_score: int | None = Field(default=None, ge=0, le=100)
     manual_submit_pipeline: str | None = None
     job_share_default: str | None = Field(default=None, pattern="^(private|team|all|ask)$")
     resume_filename_mode: str | None = Field(default=None, pattern="^(pattern|static)$")
@@ -5332,6 +5393,9 @@ async def update_user_settings(
                 dedup_score_comparison_enabled=body.dedup_score_comparison_enabled,
                 auto_prepare_match=body.auto_prepare_match,
                 auto_prepare_full=body.auto_prepare_full,
+                application_resume_source=body.application_resume_source,
+                match_quality_check=body.match_quality_check,
+                match_quality_check_min_score=body.match_quality_check_min_score,
                 manual_submit_pipeline=body.manual_submit_pipeline,
                 job_share_default=body.job_share_default,
                 resume_filename_mode=body.resume_filename_mode,
@@ -6690,10 +6754,23 @@ async def trigger_resume_build(
 async def download_resume_file(
     job_id: str,
     file_type: str,
+    source: str | None = Query(None, pattern="^(original|tailored)$"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Download a generated resume or cover letter file."""
-    from fastapi.responses import FileResponse
+    """Download a generated resume or cover letter file.
+
+    Without ``source``, résumé files follow the account's application résumé
+    source and a missing tailored build falls back to the original, so autofill
+    always has something to upload. ``source=original`` renders the user's own
+    résumé; ``source=tailored`` serves only the per-job build (404 when absent),
+    which is what document viewers want. ``X-Resume-Source`` reports which one
+    was returned.
+    """
+    from urllib.parse import quote
+
+    from fastapi.responses import FileResponse, Response
+
+    from app.services.job_pipeline_mode import normalize_application_resume_source
 
     user_id = current_user.get("user_id")
     if not user_id:
@@ -6703,15 +6780,57 @@ async def download_resume_file(
     if file_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid file_type. Must be one of: {valid_types}")
 
+    is_resume = file_type.startswith("resume_")
+    media_type = "application/pdf" if file_type.endswith("_pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    expose = {"Access-Control-Expose-Headers": "Content-Disposition, X-Resume-Source"}
+
     async with get_session() as session:
         repo = ResumeBuildRepository(session)
         row = await repo.get(job_id, user_id)
-        if not row:
-            raise HTTPException(status_code=404, detail="No resume build found")
+        user = await UserRepository(session).get_by_id(user_id) if is_resume else None
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none() if is_resume else None
+
+    async def _original() -> Response:
+        from app.services.resume_design_service import render_original_resume_file
+
+        try:
+            payload, filename = await render_original_resume_file(
+                user_id,
+                file_type,
+                company=(getattr(job, "company", None) or "") if job else "",
+                title=(getattr(job, "title", None) or "") if job else "",
+            )
+        except Exception as exc:  # noqa: BLE001 - surface a clean 503
+            logger.warning("original_resume_render_failed", user_id=user_id, job_id=job_id, error=str(exc)[:300])
+            raise HTTPException(status_code=503, detail="Could not build your original resume file. Please try again.")
+        ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "")
+        return Response(
+            content=payload,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}",
+                "Cache-Control": "no-store",
+                "X-Resume-Source": "original",
+                **expose,
+            },
+        )
+
+    fallback = is_resume and source is None
+    if is_resume:
+        wanted = source or normalize_application_resume_source(getattr(user, "application_resume_source", None))
+        if wanted == "original":
+            return await _original()
+
+    if not row:
+        if fallback:
+            return await _original()
+        raise HTTPException(status_code=404, detail="No resume build found")
 
     path_col = f"{file_type}_path"
     file_path = getattr(row, path_col, None)
     if not file_path:
+        if fallback:
+            return await _original()
         raise HTTPException(status_code=404, detail=f"{file_type} not generated yet")
 
     # Resolve relative DB paths against project root / RESUME_OUTPUT_ROOT so
@@ -6721,10 +6840,12 @@ async def download_resume_file(
 
     p = resolve_resume_artifact_path(file_path)
     if p is None or not p.is_file():
+        if fallback:
+            return await _original()
         raise HTTPException(status_code=404, detail="File not found on disk")
 
-    media_type = "application/pdf" if file_type.endswith("_pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    return FileResponse(path=str(p), filename=p.name, media_type=media_type)
+    headers = {"X-Resume-Source": "tailored", **expose} if is_resume else {}
+    return FileResponse(path=str(p), filename=p.name, media_type=media_type, headers=headers)
 
 
 # ---------------------------------------------------------------------------

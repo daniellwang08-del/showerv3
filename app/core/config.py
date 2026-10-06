@@ -189,6 +189,17 @@ class Settings(BaseSettings):
     auto_prepare_daily_cap_per_user: int = Field(default=0, ge=0, le=100_000)
     # Soft pending-in-progress cap before auto-prepare stops enqueueing for a user.
     auto_prepare_pending_cap_per_user: int = Field(default=100, ge=1, le=2000)
+    # Free-engine catch-up when a user opens Jobs: at most this many unscored
+    # visible jobs per visit, and at most one sweep per user per cooldown.
+    auto_score_on_visit_limit: int = Field(default=100, ge=0, le=1000)
+    auto_score_on_visit_cooldown_seconds: int = Field(default=300, ge=30, le=86_400)
+
+    # LLM quality check of free vector scores (user rescore, or automatic for top
+    # matches when the user opts in). An admin job binding for
+    # "match_quality_check" overrides this model.
+    match_quality_check_model: str = "gpt-5.6-luna"
+    # Per-user UTC-day cap on quality-check LLM calls (0 = unlimited).
+    match_quality_check_daily_cap_per_user: int = Field(default=200, ge=0, le=100_000)
 
     # Anthropic Claude - used as automatic fallback when OpenAI is unavailable
     # (insufficient_quota, rate-limit, auth failure, connection/timeout error).

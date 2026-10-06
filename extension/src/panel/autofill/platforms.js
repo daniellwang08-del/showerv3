@@ -5,7 +5,7 @@ import * as api from "../../api.js";
 import * as storage from "../../storage.js";
 import { setAutofill, state } from "../state.js";
 import { fetchRoleFile } from "./form.js";
-import { buildPreferences, debugLog, delay, getAutofillProfile, tabBroadcast, tabSend } from "./shared.js";
+import { debugLog, delay, getAutofillProfile, tabBroadcast, tabSend } from "./shared.js";
 
 // Greenhouse "Discipline" is a fixed-taxonomy dropdown that rarely contains a
 // candidate's actual discipline, so (mirroring the Workday standard field-of-
@@ -20,11 +20,9 @@ const GREENHOUSE_DEFAULT_DISCIPLINE = "Computer Science";
 // pass skips them. Best-effort: a fetch failure just fills Discipline on the
 // existing row(s).
 export async function prepareGreenhouseEducation(tabId) {
-  if (!state.job || !state.job.job_id || tabId == null) return;
-  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-  let entries = [];
+  if (!state.job || !state.job.job_id || tabId == null) return;  let entries = [];
   try {
-    const profile = await getAutofillProfile(state.job.job_id, resumeSource);
+    const profile = await getAutofillProfile(state.job.job_id);
     if (Array.isArray(profile.education)) {
       entries = profile.education.map((e) => ({
         school: (e && (e.school || e.university_name)) || "",
@@ -370,10 +368,8 @@ export async function prepareIcims(tabId, ctx) {
   let profile = null;
   if (ctx && "icimsProfile" in ctx) {
     profile = ctx.icimsProfile;
-  } else if (state.job && state.job.job_id) {
-    const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-    try {
-      profile = await getAutofillProfile(state.job.job_id, resumeSource);
+  } else if (state.job && state.job.job_id) {    try {
+      profile = await getAutofillProfile(state.job.job_id);
     } catch {
       profile = null;
     }
@@ -458,13 +454,11 @@ export async function prepareIcims(tabId, ctx) {
 // Filled controls then report filled, so the LLM pass skips them. Best-effort:
 // a fetch failure just lets the generic pass handle whatever it can.
 export async function prepareRecruiterFlow(tabId) {
-  if (!state.job || !state.job.job_id || tabId == null) return;
-  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-  let experience = [];
+  if (!state.job || !state.job.job_id || tabId == null) return;  let experience = [];
   let education = [];
   let country = "";
   try {
-    const profile = await getAutofillProfile(state.job.job_id, resumeSource);
+    const profile = await getAutofillProfile(state.job.job_id);
     if (Array.isArray(profile.workExperience)) {
       experience = profile.workExperience.map((w) => ({
         company: (w && w.company) || "",
@@ -499,13 +493,11 @@ export async function prepareRecruiterFlow(tabId) {
 // detection, so the prep owns them; personal info / resume are left to the LLM
 // pass. Best-effort: a fetch failure just lets the generic pass handle the rest.
 export async function prepareSmartRecruiters(tabId) {
-  if (!state.job || !state.job.job_id || tabId == null) return;
-  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-  let experience = [];
+  if (!state.job || !state.job.job_id || tabId == null) return;  let experience = [];
   let education = [];
   let home = null;
   try {
-    const profile = await getAutofillProfile(state.job.job_id, resumeSource);
+    const profile = await getAutofillProfile(state.job.job_id);
     const addr = (profile && profile.address) || {};
     home = {
       city: addr.city || "",
@@ -547,14 +539,12 @@ export async function prepareSmartRecruiters(tabId) {
 // entry BEFORE the generic fill. Repeating subtrees are excluded from generic
 // detection; personal info / summary / cover letter go to the LLM pass.
 export async function prepareWorkable(tabId) {
-  if (!state.job || !state.job.job_id || tabId == null) return;
-  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-  let experience = [];
+  if (!state.job || !state.job.job_id || tabId == null) return;  let experience = [];
   let education = [];
   let address = {};
   let eeo = {};
   try {
-    const profile = await getAutofillProfile(state.job.job_id, resumeSource);
+    const profile = await getAutofillProfile(state.job.job_id);
     address = (profile && profile.address) || {};
     eeo = (profile && profile.eeo) || {};
     if (Array.isArray(profile.workExperience)) {
@@ -630,11 +620,9 @@ export async function prepareWorkable(tabId) {
 // letter was generated for this job. Runs before extraction so the filled
 // textarea reports filled and the LLM pass skips it.
 export async function prepareCoverLetter(tabId) {
-  if (!state.job || !state.job.job_id || tabId == null) return;
-  const resumeSource = (buildPreferences() || {}).resume_source === "original" ? "original" : "tailored";
-  let text = "";
+  if (!state.job || !state.job.job_id || tabId == null) return;  let text = "";
   try {
-    const profile = await getAutofillProfile(state.job.job_id, resumeSource);
+    const profile = await getAutofillProfile(state.job.job_id);
     text = (profile && profile.coverLetter) || "";
   } catch {
     text = "";

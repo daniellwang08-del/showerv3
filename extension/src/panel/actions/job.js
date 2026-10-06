@@ -233,7 +233,8 @@ export async function downloadDoc(fileTypes, label) {
   let lastErr = null;
   for (const fileType of [].concat(fileTypes).filter(Boolean)) {
     try {
-      const file = await api.downloadResumeFile(job.job_id, fileType);
+      // The Documents panel lists this job's built files, so fetch those even in original mode.
+      const file = await api.downloadResumeFile(job.job_id, fileType, { source: "tailored" });
       const binary = atob(file.base64 || "");
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

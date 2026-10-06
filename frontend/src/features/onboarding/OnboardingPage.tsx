@@ -18,16 +18,27 @@ import { fetchUserSettings, updateUserSettings } from '@/api/settingsApi';
 import { PageTitle } from '@/components/app/PageTitle';
 import { CountryPicker } from '@/components/app/CountryPicker';
 import { Button } from '@/components/ui/button';
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { COUNTRY_CODES } from '@/constants/countryCodes';
 import { submitJobUrls } from '@/features/jobs/submitJobUrls';
+import { RESUME_SOURCE_OPTIONS } from '@/features/settings/resumeSourceOptions';
 import { cn } from '@/lib/utils';
 import type { ProfileFormData, UserProfile } from '@/types/profile';
+import type { ApplicationResumeSource } from '@/types/settings';
 import { extractHttpUrlsFromText } from '@/utils/extractHttpUrls';
 import { profileErrorFromUnknown } from '@/utils/profileErrors';
 import { profileToForm } from '@/utils/profileFormData';
@@ -534,13 +545,19 @@ function EssentialsStep({
 function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
   const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: ['settings'], queryFn: fetchUserSettings });
-  const [draft, setDraft] = useState<{ countries: string[]; prefs: string; autoScore: boolean } | null>(null);
+  const [draft, setDraft] = useState<{
+    countries: string[];
+    prefs: string;
+    autoScore: boolean;
+    resumeSource: ApplicationResumeSource;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const s = settings.data;
   const loaded = {
     countries: s?.country_preferences ?? [],
     prefs: s?.job_match_preferences ?? '',
     autoScore: s?.auto_prepare_match ?? false,
+    resumeSource: s?.application_resume_source ?? 'tailored',
   };
   const value = draft ?? loaded;
   type Draft = typeof value;
@@ -560,6 +577,7 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
         ...(prefs ? { job_match_preferences: prefs } : { clear_job_match_preferences: true }),
         auto_prepare_match: value.autoScore,
         ...(value.autoScore ? {} : { auto_prepare_full: false }),
+        application_resume_source: value.resumeSource,
       });
       queryClient.setQueryData(['settings'], next);
       onDone();
@@ -640,6 +658,31 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
               <FieldLabel htmlFor="onb-autoscore">Score new jobs automatically</FieldLabel>
               <FieldDescription>Every job you add gets a match analysis without asking.</FieldDescription>
             </div>
+          </Field>
+          <Field>
+            <FieldLabel id="onb-resume-source-label">Resume for applications</FieldLabel>
+            <RadioGroup
+              aria-labelledby="onb-resume-source-label"
+              value={value.resumeSource}
+              onValueChange={(next) => update({ resumeSource: next as ApplicationResumeSource })}
+            >
+              {RESUME_SOURCE_OPTIONS.map((opt) => (
+                <FieldLabel key={opt.value} htmlFor={`onb-resume-source-${opt.value}`}>
+                  <Field orientation="horizontal">
+                    <RadioGroupItem
+                      value={opt.value}
+                      id={`onb-resume-source-${opt.value}`}
+                      aria-labelledby={`onb-resume-source-${opt.value}-title`}
+                      aria-describedby={`onb-resume-source-${opt.value}-hint`}
+                    />
+                    <FieldContent>
+                      <FieldTitle id={`onb-resume-source-${opt.value}-title`}>{opt.label}</FieldTitle>
+                      <FieldDescription id={`onb-resume-source-${opt.value}-hint`}>{opt.hint}</FieldDescription>
+                    </FieldContent>
+                  </Field>
+                </FieldLabel>
+              ))}
+            </RadioGroup>
           </Field>
         </FieldGroup>
       )}

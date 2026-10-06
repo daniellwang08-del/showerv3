@@ -114,6 +114,12 @@ export async function openStudio() {
   await openNewTab(`${base}/app/studio`);
 }
 
+/** Matching preferences on the web app, where the resume-for-applications mode lives. */
+export async function openMatchingPreferences() {
+  const base = await storage.getBackendUrl();
+  await openNewTab(`${base}/app/preferences?tab=matching`);
+}
+
 /** Make a library resume active and open it in the studio. */
 export async function openLibraryResume(hit) {
   try {

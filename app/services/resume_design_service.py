@@ -921,6 +921,30 @@ async def generate_design_preview_pdf_bytes(user_id: str, design: ResumeDesign) 
     return pdf_bytes, cache_key
 
 
+async def render_original_resume_file(
+    user_id: str, file_type: str, *, company: str = "", title: str = ""
+) -> tuple[bytes, str]:
+    """Render the user's original résumé (active studio design + profile) for upload.
+
+    ``file_type`` is ``resume_pdf`` or ``resume_docx``. Returns ``(bytes, filename)``.
+    """
+    from app.services.resume_filename import document_stem_for_user
+
+    async with get_session() as session:
+        from app.storage.user_repository import UserRepository
+
+        user = await UserRepository(session).get_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+        design, _ = await load_design_for_render(session, user)
+        stem = document_stem_for_user(user, "resume", company=company, title=title)
+    if file_type == "resume_pdf":
+        pdf, _pages = await render_design_pdf(user_id, design)
+        return pdf, f"{stem}.pdf"
+    path = await generate_design_preview_docx(user_id, design)
+    return path.read_bytes(), f"{stem}.docx"
+
+
 async def generate_saved_design_docx(user_id: str) -> Path:
     """Render a downloadable .docx from the user's SAVED design (default theme if none).
 

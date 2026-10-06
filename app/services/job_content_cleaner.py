@@ -37,6 +37,19 @@ _REMOVE_TAGS: Final[frozenset[str]] = frozenset({
 
 _BR_TAGS_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
+# lxml ``text_content()`` concatenates text nodes verbatim, so minified markup
+# (``<h1>Engineer</h1><p>About</p>``) fuses into ``EngineerAbout``. Breaking
+# lines at block boundaries mirrors what a browser's ``innerText`` returns.
+_BLOCK_TAGS: Final[frozenset[str]] = frozenset({
+    "address", "article", "aside", "blockquote", "body", "caption", "dd",
+    "details", "dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure",
+    "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hgroup",
+    "legend", "li", "main", "nav", "ol", "option", "p", "pre", "section",
+    "summary", "table", "tbody", "tfoot", "thead", "title", "tr", "ul",
+})
+_VOID_BREAK_TAGS: Final[frozenset[str]] = frozenset({"br", "hr"})
+_CELL_TAGS: Final[frozenset[str]] = frozenset({"td", "th"})
+
 
 def _html_cleaner() -> Cleaner:
     return Cleaner(
@@ -83,6 +96,25 @@ def _truncate(text: str) -> str:
     return text[:_MAX_PLAIN_TEXT_CHARS]
 
 
+def _mark_block_boundaries(tree) -> None:
+    for el in tree.iter():
+        if not isinstance(el.tag, str):
+            continue
+        tag = el.tag.lower()
+        if tag in _BLOCK_TAGS:
+            el.text = "\n" + (el.text or "")
+            el.tail = "\n" + (el.tail or "")
+        elif tag in _VOID_BREAK_TAGS:
+            el.tail = "\n" + (el.tail or "")
+        elif tag in _CELL_TAGS:
+            el.tail = " " + (el.tail or "")
+
+
+def _block_text(tree) -> str:
+    _mark_block_boundaries(tree)
+    return tree.text_content()
+
+
 def _remove_non_content_elements(tree) -> None:
     for tag in _REMOVE_TAGS:
         for el in tree.xpath(f".//{tag}"):
@@ -115,7 +147,7 @@ def plain_text_from_document_html(html: str) -> str:
     _remove_non_content_elements(tree)
 
     try:
-        text = tree.text_content()
+        text = _block_text(tree)
     except Exception:
         text = re.sub(r"<[^>]+>", " ", html)
 
@@ -148,5 +180,5 @@ def plain_text_from_fragment_html(fragment: str) -> str:
     except Exception:
         pass
 
-    text = tree.text_content()
+    text = _block_text(tree)
     return _truncate(_normalize_plain_text(text))

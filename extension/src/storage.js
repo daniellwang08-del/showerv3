@@ -168,7 +168,6 @@ export async function dropLegacyCatalog() {
 // ── preferences ──────────────────────────────────────────────────────────────
 
 export const DEFAULT_MIN_SCORE = 0;
-export const DEFAULT_RESUME_SOURCE = "tailored";
 export const DEFAULT_DAILY_APPLY_TARGET = 50;
 export const PAGE_SIZES = [25, 50, 100];
 export const DEFAULT_ASK_HOTKEY = { ctrl: false, alt: true, shift: false, meta: false, key: "a" };
@@ -184,7 +183,6 @@ const PREFS = {
   minScore: (v) => clampInt(v, 0, 100, DEFAULT_MIN_SCORE),
   autoAdvance: (v) => v !== false,
   autoSubmit: (v) => v === true,
-  resumeSource: (v) => (v === "original" ? "original" : DEFAULT_RESUME_SOURCE),
   answerStrategy: (v) => (typeof v === "string" ? v.trim().slice(0, 2000) : ""),
   pageSize: (v) => (PAGE_SIZES.includes(Number(v)) ? Number(v) : PAGE_SIZES[0]),
   dailyApplyTarget: (v) => (v == null ? DEFAULT_DAILY_APPLY_TARGET : clampInt(v, 0, 200, DEFAULT_DAILY_APPLY_TARGET)),

@@ -127,11 +127,26 @@ def classify_work_mode_rules(
     plain_text: str | None = None,
     is_remote: bool = False,
 ) -> WorkMode | None:
-    """Deterministic high-precision rules (no model load)."""
-    for value in (workplace, remote_policy, location):
+    """Deterministic high-precision rules (no model load).
+
+    Explicit ATS workplace values win. Next come body statements about this
+    role ("3 days a week in the office", "not a remote role"), which beat a
+    location label such as "Remote, US" that boards attach to every listing.
+    """
+    from app.services.job_text_rules import classify_work_mode_phrases
+
+    for value in (workplace, remote_policy):
         mode = normalize_work_mode_display(value)
         if mode:
             return mode
+
+    phrase_mode, phrase_strong = classify_work_mode_phrases(plain_text)
+    if phrase_mode and phrase_strong:
+        return phrase_mode
+
+    mode = normalize_work_mode_display(location)
+    if mode:
+        return mode
 
     if title:
         # Prefer delimited markers ("| REMOTE", "(Hybrid)") over substring matches
@@ -159,6 +174,9 @@ def classify_work_mode_rules(
                 mode = normalize_work_mode_display(line.split(":", 1)[-1])
                 if mode:
                     return mode
+
+        if phrase_mode:
+            return phrase_mode
 
         # Body keyword scan on mode-bearing lines only.
         for hit in _BODY_SIGNAL_RE.findall(plain_text)[:12]:

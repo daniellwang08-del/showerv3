@@ -15,11 +15,14 @@ batch them on the GPU. Rows whose encodings were written by an older encoder
 are skipped: re-encode first (admin backfill), then re-score.
 
 Defaults to a dry run that reports the score movement it would cause. Pass
---apply to write.
+--apply to write. Pass --force to re-score rows already stamped with the
+current version, e.g. after reinstalling the cross-encoder, whose artifacts
+do not change the version string.
 
 Usage:
     python -m scripts.rescore_vector_matches
     python -m scripts.rescore_vector_matches --apply
+    python -m scripts.rescore_vector_matches --force --apply
 """
 
 from __future__ import annotations
@@ -38,7 +41,7 @@ from app.services.vector_match_service import current_scorer_version, score_pair
 from app.storage.database import close_database, get_session, init_database
 
 
-async def _rescore(apply_changes: bool, batch_size: int, concurrency: int) -> None:
+async def _rescore(apply_changes: bool, batch_size: int, concurrency: int, force: bool = False) -> None:
     await init_database()
     target = current_scorer_version()
     try:
@@ -73,7 +76,7 @@ async def _rescore(apply_changes: bool, batch_size: int, concurrency: int) -> No
             stale_encoder = 0
             todo = []
             for row in rows:
-                if row.scorer_version == target:
+                if row.scorer_version == target and not force:
                     already_current += 1
                     continue
                 job_enc = job_encs.get(row.job_id)
@@ -158,8 +161,11 @@ def main() -> None:
     )
     parser.add_argument("--batch-size", type=int, default=200)
     parser.add_argument("--concurrency", type=int, default=32)
+    parser.add_argument(
+        "--force", action="store_true", help="also re-score rows already on the current scorer version"
+    )
     args = parser.parse_args()
-    asyncio.run(_rescore(args.apply, args.batch_size, args.concurrency))
+    asyncio.run(_rescore(args.apply, args.batch_size, args.concurrency, args.force))
 
 
 if __name__ == "__main__":

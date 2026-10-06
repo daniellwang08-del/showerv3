@@ -28,15 +28,18 @@ import {
   previewMinMatchScore,
   saveAutoPrepareSettings,
   saveDedupSettings,
+  saveApplicationResumeSource,
   saveManualSubmitPipelineSettings,
+  saveMatchQualityCheckSettings,
   saveMinMatchScoreSettings,
   type DedupRulesPreview,
   type MinMatchScoreDraft,
   type MinMatchScorePreview,
 } from '@/api/settingsApi';
-import type { SettingsMode, UserSettings } from '@/types/settings';
+import type { ApplicationResumeSource, MatchQualityCheckMode, SettingsMode, UserSettings } from '@/types/settings';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { ModeToggle, SettingRow, StatTiles } from './controls';
+import { RESUME_SOURCE_OPTIONS } from './resumeSourceOptions';
 import { refreshJobStores, SETTINGS_KEY, useSetSettings } from './queries';
 import { useDraft, useReportDirty } from './useDraft';
 
@@ -50,6 +53,24 @@ const PIPELINE_OPTIONS: { value: Pipeline; label: string; hint: string }[] = [
   { value: 'extract', label: 'Extraction only', hint: 'Fetch the job description. Run matching and tailoring yourself later.' },
   { value: 'match', label: 'Up to analysis', hint: 'Extract and score the match. Skip the tailored resume and cover letter.' },
   { value: 'full', label: 'Full pipeline', hint: 'Extract, score, and write a tailored resume and cover letter (when allowed).' },
+];
+
+const QUALITY_CHECK_OPTIONS: { value: MatchQualityCheckMode; label: string; hint: string }[] = [
+  {
+    value: 'rescore',
+    label: 'When I re-run a job',
+    hint: 'Re-running a score asks the AI model to double-check it. Everything else stays on the free engine.',
+  },
+  {
+    value: 'auto',
+    label: 'Also for strong new matches',
+    hint: 'New jobs that score at or above your threshold are double-checked automatically, plus any job you re-run.',
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    hint: 'Always use the free engine, even when you re-run a job.',
+  },
 ];
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -487,12 +508,60 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
     () => 'Saved how pasted job links are processed.',
     'Failed to save submit pipeline.',
   );
+  const resumeSource = useImmediateSetting(
+    saveApplicationResumeSource,
+    (body) =>
+      body.application_resume_source === 'original'
+        ? 'Saved. Jobs are scored only, and applications use your original resume.'
+        : 'Saved. Jobs you score from now on get a tailored resume and cover letter.',
+    'Failed to save the resume for applications.',
+  );
 
   const match = settings.auto_prepare_match;
   const full = settings.auto_prepare_full;
+  const original = settings.application_resume_source === 'original';
 
   return (
     <>
+      <SectionCard
+        title="Resume for applications"
+        description="Choose what NAO prepares after scoring a job, and which resume the extension uploads and fills applications from."
+      >
+        <RadioGroup
+          aria-label="Resume for applications"
+          value={settings.application_resume_source}
+          disabled={resumeSource.isPending}
+          onValueChange={(value) => {
+            if (value !== settings.application_resume_source) {
+              resumeSource.mutate({ application_resume_source: value as ApplicationResumeSource });
+            }
+          }}
+        >
+          {RESUME_SOURCE_OPTIONS.map((opt) => (
+            <FieldLabel key={opt.value} htmlFor={`resume-source-${opt.value}`}>
+              <Field orientation="horizontal">
+                <RadioGroupItem
+                  value={opt.value}
+                  id={`resume-source-${opt.value}`}
+                  aria-labelledby={`resume-source-${opt.value}-title`}
+                  aria-describedby={`resume-source-${opt.value}-hint`}
+                />
+                <FieldContent>
+                  <FieldTitle id={`resume-source-${opt.value}-title`}>{opt.label}</FieldTitle>
+                  <FieldDescription id={`resume-source-${opt.value}-hint`}>{opt.hint}</FieldDescription>
+                </FieldContent>
+              </Field>
+            </FieldLabel>
+          ))}
+        </RadioGroup>
+        {!original ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Jobs scored before you switched keep their original resume until you build one from the job, or turn on
+            Prepare documents automatically below.
+          </p>
+        ) : null}
+      </SectionCard>
+
       <SectionCard
         title="Auto-prepare"
         description="When a job description is already available, prepare new jobs for you in the background. Scoring is on for new accounts."
@@ -501,7 +570,7 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
           <SettingRow
             id="auto-match"
             title="Score new jobs automatically"
-            description="Run the match analysis as soon as a description is ready, so jobs arrive scored."
+            description="Scoring uses the free built-in engine, so new and shared jobs arrive scored, and any you missed are caught up when you open Jobs."
           >
             <Switch
               aria-labelledby="auto-match-label"
@@ -515,18 +584,24 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
           <SettingRow
             id="auto-full"
             title="Prepare documents automatically"
-            description="Score plus a tailored resume and cover letter, so jobs are ready to apply. Turns on scoring too."
+            description={
+              original
+                ? 'Off while you apply with your original resume. Choose Tailored resume per job above to use it.'
+                : 'Score plus a tailored resume and cover letter, so jobs are ready to apply. Turns on scoring too.'
+            }
           >
             <Switch
               aria-labelledby="auto-full-label"
               aria-describedby="auto-full-desc"
-              checked={full}
-              disabled={autoPrepare.isPending}
+              checked={full && !original}
+              disabled={autoPrepare.isPending || original}
               onCheckedChange={(next) => autoPrepare.mutate({ auto_prepare_match: next ? true : match, auto_prepare_full: next })}
             />
           </SettingRow>
         </div>
       </SectionCard>
+
+      <QualityCheckSection settings={settings} />
 
       <SectionCard
         title="When you paste job links"
@@ -553,7 +628,11 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
                 />
                 <FieldContent>
                   <FieldTitle id={`pipeline-${opt.value}-title`}>{opt.label}</FieldTitle>
-                  <FieldDescription id={`pipeline-${opt.value}-hint`}>{opt.hint}</FieldDescription>
+                  <FieldDescription id={`pipeline-${opt.value}-hint`}>
+                    {original && opt.value === 'full'
+                      ? 'Extract and score the match. Tailoring is skipped while you apply with your original resume.'
+                      : opt.hint}
+                  </FieldDescription>
                 </FieldContent>
               </Field>
             </FieldLabel>
@@ -561,5 +640,91 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
         </RadioGroup>
       </SectionCard>
     </>
+  );
+}
+
+function QualityCheckSection({ settings }: { settings: UserSettings }) {
+  const save = useImmediateSetting(
+    saveMatchQualityCheckSettings,
+    (body) =>
+      body.match_quality_check === 'off'
+        ? 'Saved. Scores always come from the free engine.'
+        : body.match_quality_check === 'auto'
+          ? 'Saved. Strong new matches and re-runs get the AI check.'
+          : body.match_quality_check === 'rescore'
+            ? 'Saved. Re-running a job gets the AI check.'
+            : 'Saved the AI check threshold.',
+    'Failed to save the AI check setting.',
+  );
+  const mode = settings.match_quality_check;
+  const [threshold, setThreshold] = useState(String(settings.match_quality_check_min_score));
+  const [lastSaved, setLastSaved] = useState(settings.match_quality_check_min_score);
+  if (lastSaved !== settings.match_quality_check_min_score) {
+    setLastSaved(settings.match_quality_check_min_score);
+    setThreshold(String(settings.match_quality_check_min_score));
+  }
+
+  const commitThreshold = () => {
+    const next = clampScore(Number(threshold));
+    setThreshold(String(next));
+    if (next !== settings.match_quality_check_min_score) {
+      save.mutate({ match_quality_check_min_score: next });
+    }
+  };
+
+  return (
+    <SectionCard
+      title="AI quality check"
+      description="Free scores come from NAO's built-in engine. An AI model (GPT-5.6 Luna) can double-check a score: it rewrites the explanation and fills job details the posting left out, like salary or work mode. Each check uses your AI credits and is capped per day."
+    >
+      <RadioGroup
+        aria-label="AI quality check"
+        value={mode}
+        disabled={save.isPending}
+        onValueChange={(value) => {
+          if (value !== mode) save.mutate({ match_quality_check: value as MatchQualityCheckMode });
+        }}
+      >
+        {QUALITY_CHECK_OPTIONS.map((opt) => (
+          <FieldLabel key={opt.value} htmlFor={`quality-check-${opt.value}`}>
+            <Field orientation="horizontal">
+              <RadioGroupItem
+                value={opt.value}
+                id={`quality-check-${opt.value}`}
+                aria-labelledby={`quality-check-${opt.value}-title`}
+                aria-describedby={`quality-check-${opt.value}-hint`}
+              />
+              <FieldContent>
+                <FieldTitle id={`quality-check-${opt.value}-title`}>{opt.label}</FieldTitle>
+                <FieldDescription id={`quality-check-${opt.value}-hint`}>{opt.hint}</FieldDescription>
+              </FieldContent>
+            </Field>
+          </FieldLabel>
+        ))}
+      </RadioGroup>
+      {mode === 'auto' ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label htmlFor="quality-check-threshold" className="text-sm font-medium">
+            Check new matches scoring at least
+          </label>
+          <Input
+            id="quality-check-threshold"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={100}
+            className="w-20"
+            value={threshold}
+            disabled={save.isPending}
+            onChange={(e) => setThreshold(e.target.value)}
+            onBlur={commitThreshold}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitThreshold();
+            }}
+          />
+          <span className="text-sm text-muted-foreground">out of 100</span>
+        </div>
+      ) : null}
+    </SectionCard>
   );
 }

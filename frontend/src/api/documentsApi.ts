@@ -91,7 +91,7 @@ export async function fetchLibraryDocument(resumeId: string, fileType: DocumentF
 export async function fetchJobBuildDocument(jobId: string, fileType: DocumentFileType): Promise<File> {
   const res = await apiClient.get(
     `/jobs/valid/${encodeURIComponent(jobId)}/resume-build/download/${fileType}`,
-    { responseType: 'blob' },
+    { responseType: 'blob', params: { source: 'tailored' } },
   );
   const kind = kindOf(fileType);
   return toFile(res.data, res.headers?.['content-disposition'] as string | undefined, `${fileType}.${kind}`, kind);

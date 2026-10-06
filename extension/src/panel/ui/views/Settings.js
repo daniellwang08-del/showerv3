@@ -1,10 +1,11 @@
 import { html, useEffect, useLayoutEffect, useState } from "../../../lib/preact.js";
 import * as storage from "../../../storage.js";
 import { changeServer, refreshAccount, savePreference, signOut, updateAccountSetting } from "../../actions/session.js";
+import { openMatchingPreferences } from "../../actions/tailor.js";
 import { setState } from "../../state.js";
 import { toast } from "../../toast.js";
 import { ANSWER_TYPES, CHAT_STYLES } from "../Chat.js";
-import { Button, IconButton, Section, Segmented, Select, Toggle } from "../components.js";
+import { Badge, Button, IconButton, Section, Segmented, Select, Toggle } from "../components.js";
 
 const MIN_SCORE_PRESETS = [0, 50, 70, 80, 90];
 
@@ -13,6 +14,42 @@ const PIPELINE_OPTIONS = [
   { value: "match", label: "Score only" },
   { value: "extract", label: "Read only" },
 ];
+
+function usesOriginalResume(settings) {
+  return settings.application_resume_source === "original";
+}
+
+function pipelineOptions(settings) {
+  if (!usesOriginalResume(settings)) return PIPELINE_OPTIONS;
+  return PIPELINE_OPTIONS.map((o) => (o.value === "full" ? { ...o, label: "Score (original resume)" } : o));
+}
+
+/** Read-only: the mode is account-wide and changing it affects scoring, so it lives on the web app. */
+function ResumeSource({ settings }) {
+  const original = usesOriginalResume(settings);
+  return html`<div class="setting-note">
+    <${Row}
+      label="Resume for applications"
+      hint=${original
+        ? "Your original resume. NAO scores and ranks jobs, then uploads your resume as it is and fills every application from it."
+        : "Tailored per job. NAO uploads the tailored resume and fills answers from it, and uses your original resume for jobs that have none yet."}
+    >
+      <${Badge} tone=${original ? "muted" : "brand"}>${original ? "Original" : "Tailored"}</${Badge}>
+    </${Row}>
+    ${original
+      ? html`<p class="setting-hint">
+          To apply with a resume tailored to each job, open Preferences on the web app, go to Matching, and set
+          Resume for applications to Tailored resume per job. Turn on Prepare documents automatically to build one for
+          every newly scored job, or use Build resume on a single job. Tailored resumes keep your real employers, titles,
+          and dates, and rephrase your experience around each job description.
+        </p>`
+      : html`<p class="setting-hint">
+          This is an account setting so scoring and autofill stay in step. Change it in Preferences on the web app,
+          under Matching.
+        </p>`}
+    <${Button} size="sm" variant="secondary" icon="external" onClick=${openMatchingPreferences}>Open Preferences</${Button}>
+  </div>`;
+}
 
 function Row({ label, hint, children }) {
   return html`<div class="setting">
@@ -167,7 +204,7 @@ export function SettingsView({ s }) {
           <${Select}
             label="Jobs you add by link"
             value=${settings.manual_submit_pipeline || "full"}
-            options=${PIPELINE_OPTIONS}
+            options=${pipelineOptions(settings)}
             onChange=${async (v) => {
               const err = await updateAccountSetting({ manual_submit_pipeline: v });
               toast(err || "Saved.", err ? "danger" : "ok");
@@ -179,17 +216,7 @@ export function SettingsView({ s }) {
 
     <${Section} title="Autofill">
       <div class="card">
-        <${Row} label="Resume to upload">
-          <${Select}
-            label="Resume to upload"
-            value=${s.resumeSource}
-            options=${[
-              { value: "tailored", label: "Tailored when available" },
-              { value: "original", label: "Always my original" },
-            ]}
-            onChange=${(v) => savePreference("resumeSource", v)}
-          />
-        </${Row}>
+        <${ResumeSource} settings=${settings} />
         <${Toggle}
           label="Continue through Workday steps"
           hint="Fills each step and moves on until Review."

@@ -8,16 +8,16 @@ test("preferences are normalized on save", async () => {
   assert.equal(await storage.savePref("pageSize", 999), storage.PAGE_SIZES[0]);
   assert.equal(await storage.savePref("pageSize", 50), 50);
   assert.equal(await storage.savePref("chatStyle", "loud"), "standard");
-  assert.equal(await storage.savePref("resumeSource", "original"), "original");
-  assert.equal(await storage.savePref("resumeSource", "anything"), "tailored");
   assert.equal(await storage.savePref("dailyApplyTarget", 500), 200);
   const prefs = await storage.loadPrefs();
   assert.equal(prefs.pageSize, 50);
-  assert.equal(prefs.resumeSource, "tailored");
+  assert.equal("resumeSource" in prefs, false);
 });
 
 test("unknown preferences are rejected", async () => {
   await assert.rejects(() => storage.savePref("nope", 1));
+  // Résumé source is an account setting (web Preferences), not a panel pref.
+  await assert.rejects(() => storage.savePref("resumeSource", "original"));
 });
 
 test("server address normalizes to an origin", () => {

@@ -1,5 +1,12 @@
 import { apiClient } from './client';
-import type { LlmProvider, SettingsMode, UserSettings, UserSettingsUpdate } from '../types/settings';
+import {
+  MATCH_QUALITY_CHECK_MODES,
+  type LlmProvider,
+  type MatchQualityCheckMode,
+  type SettingsMode,
+  type UserSettings,
+  type UserSettingsUpdate,
+} from '../types/settings';
 
 export interface OpenAiKeyTestResult {
   ok: boolean;
@@ -76,6 +83,11 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     default_dedup_score_comparison_enabled: Boolean(data.default_dedup_score_comparison_enabled),
     auto_prepare_match: Boolean(data.auto_prepare_match),
     auto_prepare_full: Boolean(data.auto_prepare_full),
+    application_resume_source: data.application_resume_source === 'original' ? 'original' : 'tailored',
+    match_quality_check: MATCH_QUALITY_CHECK_MODES.includes(data.match_quality_check as MatchQualityCheckMode)
+      ? (data.match_quality_check as MatchQualityCheckMode)
+      : 'rescore',
+    match_quality_check_min_score: Math.min(100, Math.max(0, Number(data.match_quality_check_min_score ?? 70) || 0)),
     manual_submit_pipeline: (['extract', 'match', 'full'] as const).includes(
       data.manual_submit_pipeline as 'extract' | 'match' | 'full',
     )
@@ -218,6 +230,18 @@ export async function saveDedupSettings(
 
 export async function saveAutoPrepareSettings(
   body: Pick<UserSettingsUpdate, 'auto_prepare_match' | 'auto_prepare_full'>,
+) {
+  return updateUserSettings(body);
+}
+
+export async function saveApplicationResumeSource(
+  body: Pick<UserSettingsUpdate, 'application_resume_source'>,
+) {
+  return updateUserSettings(body);
+}
+
+export async function saveMatchQualityCheckSettings(
+  body: Pick<UserSettingsUpdate, 'match_quality_check' | 'match_quality_check_min_score'>,
 ) {
   return updateUserSettings(body);
 }

@@ -51,23 +51,26 @@ export function buildPreferences() {
     s.autofill_answer_strategy ||
     s.answer_strategy;
   if (strategy) prefs.answer_strategy = String(strategy);
-  prefs.resume_source = state.resumeSource === "original" ? "original" : "tailored";
   return prefs;
 }
 
-export function resumeSourcePref() {
-  return buildPreferences().resume_source;
+/** Résumé used for applications, set on the web Preferences page (account-wide). */
+export function accountResumeSource() {
+  const s = (state.cache && state.cache.settings) || {};
+  return s.application_resume_source === "original" ? "original" : "tailored";
 }
 
 // One autofill run asks for the same profile from several platform steps.
 const PROFILE_TTL_MS = 120_000;
 const profileCache = new Map();
 
-export function getAutofillProfile(jobId, resumeSource) {
-  const key = `${jobId}:${resumeSource}`;
+/** The server picks original vs tailored from the account setting; the
+ *  second argument is accepted for older callers and ignored. */
+export function getAutofillProfile(jobId, _legacySource) {
+  const key = String(jobId);
   const hit = profileCache.get(key);
   if (hit && Date.now() - hit.at < PROFILE_TTL_MS) return hit.promise;
-  const promise = api.getAutofillProfile(jobId, resumeSource).catch((err) => {
+  const promise = api.getAutofillProfile(jobId).catch((err) => {
     profileCache.delete(key);
     throw err;
   });

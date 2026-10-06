@@ -285,8 +285,15 @@ async def analyze_job_match(
     user_id: str,
     extraction_id: str | None = None,
     skip_phase_b: bool = False,
+    quality_check: bool = False,
 ) -> dict | None:
+    """Free (or admin-selected) match scoring, then the save drain.
+
+    ``quality_check`` asks for the LLM second opinion after the free score is
+    saved (user rescore). Auto mode adds it for high free scores on its own.
+    """
     from app.services.job_match_orchestrator import run_job_match_analysis
+    from app.services.match_quality_check import eligible_free_result, wants_auto_check
 
     set_request_id(new_request_id())
     bind_logging_context(worker_job_type="analyze_job_match", valid_job_id=valid_job_id, user_id=user_id)
@@ -295,6 +302,7 @@ async def analyze_job_match(
         valid_job_id=valid_job_id,
         user_id=user_id,
         skip_phase_b=bool(skip_phase_b),
+        quality_check=bool(quality_check),
     )
 
     await publish_ws_event({
@@ -312,54 +320,15 @@ async def analyze_job_match(
         )
         if result:
             logger.info("worker_analyze_job_match_completed", valid_job_id=valid_job_id, score=result.get("overall_score"))
-            pool = await get_save_pool()
-            from app.core.redis_support import pipeline_job_id
-            import uuid
-
-            # Prefer stable id; on collision (prior save still queued) use a unique
-            # id so completed match_data is never silently dropped.
-            arq_id = pipeline_job_id("save", valid_job_id, user_id)
-            job = await pool.enqueue_job(
-                "save_analyzed_job",
-                valid_job_id,
-                user_id,
-                extraction_id,
-                result,
-                _job_id=arq_id,
-            )
-            if job is None:
-                retry_id = pipeline_job_id(
-                    "save", valid_job_id, user_id, f"r{uuid.uuid4().hex[:10]}"
-                )
-                job = await pool.enqueue_job(
-                    "save_analyzed_job",
-                    valid_job_id,
-                    user_id,
-                    extraction_id,
-                    result,
-                    _job_id=retry_id,
-                )
-                logger.info(
-                    "worker_save_enqueued_unique_retry",
-                    valid_job_id=valid_job_id,
-                    user_id=user_id,
-                    arq_job_id=retry_id,
-                    already_queued=job is None,
-                )
-            if job is None:
-                # Last resort: persist in-process so LLM output is never dropped.
-                logger.warning(
-                    "worker_save_enqueue_collision_fallback_in_process",
-                    valid_job_id=valid_job_id,
-                    user_id=user_id,
-                )
-                await save_analyzed_job(
-                    {"redis": ctx.get("redis")},
-                    valid_job_id,
-                    user_id,
-                    extraction_id,
-                    result,
-                )
+            try:
+                if eligible_free_result(result):
+                    if quality_check:
+                        result["quality_check_requested"] = "user"
+                    elif await wants_auto_check(user_id, result):
+                        result["quality_check_requested"] = "auto"
+            except Exception as qc_err:
+                logger.warning("match_quality_check_decision_failed", valid_job_id=valid_job_id, error=str(qc_err))
+            await _enqueue_save(ctx, valid_job_id, user_id, extraction_id, result)
         else:
             # run_job_match_analysis already cleared progress on failure paths.
             logger.warning("worker_analyze_job_match_empty_result", valid_job_id=valid_job_id, user_id=user_id)
@@ -395,6 +364,128 @@ async def analyze_job_match(
         return None
     finally:
         clear_logging_context()
+
+
+async def _enqueue_save(
+    ctx: dict,
+    valid_job_id: str,
+    user_id: str,
+    extraction_id: str | None,
+    result: dict,
+) -> None:
+    """Hand a finished result to the per-user save drain; never drop it."""
+    import uuid
+
+    from app.core.redis_support import pipeline_job_id
+
+    pool = await get_save_pool()
+    # Prefer stable id; on collision (prior save still queued) use a unique
+    # id so completed match_data is never silently dropped.
+    arq_id = pipeline_job_id("save", valid_job_id, user_id)
+    job = await pool.enqueue_job(
+        "save_analyzed_job",
+        valid_job_id,
+        user_id,
+        extraction_id,
+        result,
+        _job_id=arq_id,
+    )
+    if job is None:
+        retry_id = pipeline_job_id(
+            "save", valid_job_id, user_id, f"r{uuid.uuid4().hex[:10]}"
+        )
+        job = await pool.enqueue_job(
+            "save_analyzed_job",
+            valid_job_id,
+            user_id,
+            extraction_id,
+            result,
+            _job_id=retry_id,
+        )
+        logger.info(
+            "worker_save_enqueued_unique_retry",
+            valid_job_id=valid_job_id,
+            user_id=user_id,
+            arq_job_id=retry_id,
+            already_queued=job is None,
+        )
+    if job is None:
+        # Last resort: persist in-process so LLM output is never dropped.
+        logger.warning(
+            "worker_save_enqueue_collision_fallback_in_process",
+            valid_job_id=valid_job_id,
+            user_id=user_id,
+        )
+        await save_analyzed_job(
+            {"redis": ctx.get("redis")},
+            valid_job_id,
+            user_id,
+            extraction_id,
+            result,
+        )
+
+
+async def quality_check_job_match(ctx: dict, valid_job_id: str, user_id: str) -> dict | None:
+    """LLM second opinion on a saved free score; saves through the same drain."""
+    from app.services.match_quality_check import run_match_quality_check
+
+    set_request_id(new_request_id())
+    bind_logging_context(worker_job_type="quality_check_job_match", valid_job_id=valid_job_id, user_id=user_id)
+    await publish_ws_event({
+        "type": "match_quality_check_started",
+        "user_id": user_id,
+        "valid_job_id": valid_job_id,
+    })
+    try:
+        result = await run_match_quality_check(valid_job_id, user_id)
+        if not result or result.get("status") == "capped":
+            await publish_ws_event({
+                "type": "match_quality_check_failed",
+                "user_id": user_id,
+                "valid_job_id": valid_job_id,
+                "error": (
+                    "Daily AI check limit reached. The free score is kept."
+                    if result
+                    else "AI check could not run. The free score is kept."
+                ),
+            })
+            return result
+        await _enqueue_save(ctx, valid_job_id, user_id, result.get("extraction_id"), result)
+        return {"overall_score": result.get("overall_score"), "free_score": result.get("free_score")}
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        job_try = int(ctx.get("job_try") or 1)
+        if _is_transient_infra_error(e) and job_try < _TRANSIENT_MAX_TRIES:
+            raise Retry(defer=2 * job_try) from e
+        logger.exception("worker_quality_check_failed", valid_job_id=valid_job_id, user_id=user_id, error=str(e))
+        await publish_ws_event({
+            "type": "match_quality_check_failed",
+            "user_id": user_id,
+            "valid_job_id": valid_job_id,
+            "error": "AI check failed. The free score is kept.",
+        })
+        return None
+    finally:
+        clear_logging_context()
+
+
+async def _enqueue_quality_check(job_id: str, user_id: str) -> None:
+    import time
+
+    from app.core.redis_support import pipeline_job_id
+
+    try:
+        pool = await get_analysis_pool()
+        # Minute bucket: collapses double clicks, still allows a later re-check.
+        await pool.enqueue_job(
+            "quality_check_job_match",
+            job_id,
+            user_id,
+            _job_id=pipeline_job_id("qualitycheck", job_id, user_id, str(int(time.time() // 60))),
+        )
+    except Exception as e:
+        logger.warning("match_quality_check_enqueue_failed", job_id=job_id, user_id=user_id, error=str(e))
 
 
 SAVE_DRAIN_BATCH = 25
@@ -564,7 +655,37 @@ async def _after_save(
         "valid_job_id": job_id,
         "overall_score": match_data.get("overall_score"),
         "recommendation": match_data.get("recommendation"),
+        "match_engine": match_data.get("match_engine"),
     })
+
+    if match_data.get("quality_check_result"):
+        # Second opinion only: tailoring and auto-posts already ran on the free result.
+        await publish_ws_event({
+            "type": "match_quality_check_completed",
+            "user_id": user_id,
+            "valid_job_id": job_id,
+            "overall_score": match_data.get("overall_score"),
+            "free_score": match_data.get("free_score"),
+            "filled_fields": match_data.get("filled_fields") or [],
+            "action": action,
+        })
+        if action == "saved_duplicated":
+            await publish_ws_event({
+                "type": "job_excluded_for_user",
+                "user_id": user_id,
+                "valid_job_id": job_id,
+                "exclusion_type": (dedup_result or {}).get("exclusion_type"),
+                "reason": (dedup_result or {}).get("reason"),
+            })
+        return
+
+    requested = match_data.get("quality_check_requested")
+    # A user re-run is checked even when the free score hid the job: the LLM may
+    # disagree. Auto checks only spend on jobs the user will actually see.
+    if (requested == "user" and action in ("saved_active", "saved_duplicated")) or (
+        requested == "auto" and action == "saved_active"
+    ):
+        await _enqueue_quality_check(job_id, user_id)
 
     if action == "saved_duplicated":
         await publish_ws_event({
@@ -1560,6 +1681,7 @@ class AnalysisWorkerSettings:
         analyze_job_match,
         # Drain any Phase B jobs still sitting on the old shared analysis queue.
         func(_forward_phase_b_to_tailoring_queue, name="generate_tailored_content"),
+        quality_check_job_match,
     ]
     redis_settings = _redis_settings
     queue_name = ANALYSIS_QUEUE

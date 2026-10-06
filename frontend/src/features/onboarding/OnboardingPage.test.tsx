@@ -136,12 +136,15 @@ describe('OnboardingPage', () => {
     expect(await screen.findByRole('heading', { name: 'What are you looking for?' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Remote only' }));
     await user.click(screen.getByRole('switch'));
+    expect(screen.getByRole('radio', { name: 'Tailored resume per job' })).toBeChecked();
+    await user.click(screen.getByRole('radio', { name: 'My original resume' }));
     await user.click(screen.getByRole('button', { name: 'Save and continue' }));
     await waitFor(() =>
       expect(api.updateUserSettings).toHaveBeenCalledWith({
         country_preferences: [],
         job_match_preferences: 'Remote only',
         auto_prepare_match: true,
+        application_resume_source: 'original',
       }),
     );
 

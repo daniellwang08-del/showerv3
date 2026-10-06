@@ -21,6 +21,11 @@ from app.services.job_field_utils import (
 )
 from app.services.job_location_parse import infer_location_from_text, prefer_job_location
 from app.services.job_source_boards import detect_board
+from app.services.job_text_rules import (
+    infer_employment_type,
+    infer_salary_from_text,
+    normalize_employment_type,
+)
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, JobRepository
 
@@ -372,6 +377,7 @@ def metadata_from_structured_data(data: dict[str, Any] | None) -> dict[str, str]
         "employment_type": ("employment_type", "commitment", "job_type", "type"),
         "workplace": ("workplace", "workplace_type", "workplaceType", "work_mode"),
         "salary_range": ("salary_range", "salary", "compensation"),
+        "posted_date": ("posted_date",),
     }
     out: dict[str, str] = {}
     for dest, keys in mapping.items():
@@ -442,6 +448,13 @@ def _parse_posted_date(raw: str | None) -> datetime | None:
     return None
 
 
+def _usable_salary(value: str | None) -> str | None:
+    """Drop labelled values that carry no amount (``Currency: USD``)."""
+    if value and any(ch.isdigit() for ch in value):
+        return value
+    return None
+
+
 def build_metadata(
     *,
     plain_text: str | None,
@@ -489,13 +502,18 @@ def build_metadata(
         infer_location_from_text(plain_text),
     ):
         location = prefer_job_location(location, candidate)
-    employment_type = clean_optional_job_field(
-        structured.get("employment_type") or labeled.get("employment_type")
-    )
-    salary_range = clean_optional_job_field(
-        structured.get("salary_range") or labeled.get("salary_range")
-    )
-    workplace = structured.get("workplace") or labeled.get("workplace")
+    employment_type = normalize_employment_type(
+        clean_optional_job_field(structured.get("employment_type") or labeled.get("employment_type"))
+    ) or infer_employment_type(title, plain_text)
+    salary_range = _usable_salary(
+        clean_optional_job_field(structured.get("salary_range") or labeled.get("salary_range"))
+    ) or infer_salary_from_text(plain_text)
+    explicit_workplace = structured.get("workplace") or labeled.get("workplace")
+    if (explicit_workplace or "").strip().lower() in {"yes", "true", "y"}:
+        explicit_workplace = "remote"
+    elif (explicit_workplace or "").strip().lower() in {"no", "false", "n"}:
+        explicit_workplace = None
+    workplace = explicit_workplace
     if not workplace and location and "remote" in location.lower():
         workplace = "remote"
     is_remote_flag = bool(structured.get("is_remote"))
@@ -512,8 +530,8 @@ def build_metadata(
     work_mode, _mode_explain = classify_work_mode(
         title=title,
         location=location,
-        workplace=workplace,
-        remote_policy=workplace,
+        workplace=explicit_workplace,
+        remote_policy=explicit_workplace,
         plain_text=plain_text,
         is_remote=is_remote_flag,
         use_vector=False,
@@ -529,7 +547,9 @@ def build_metadata(
         )
 
     description = body_description_from_plain_text(plain_text)
-    posted_date = _parse_posted_date(labeled.get("posted_date_raw"))
+    posted_date = _parse_posted_date(structured.get("posted_date")) or _parse_posted_date(
+        labeled.get("posted_date_raw")
+    )
     return {
         "title": title,
         "company": company,

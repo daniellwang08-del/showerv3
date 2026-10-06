@@ -298,6 +298,11 @@ class JobIdsBatchRequest(BaseModel):
     job_ids: list[str] = Field(..., min_length=1, max_length=200)
 
 
+class PrepareJobsBatchRequest(JobIdsBatchRequest):
+    # None follows the user's setting (re-running a scored job gets the LLM check).
+    quality_check: bool | None = None
+
+
 class JobMatchResponse(BaseModel):
     job_id: str
     overall_score: int

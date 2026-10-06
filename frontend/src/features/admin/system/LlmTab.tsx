@@ -36,6 +36,10 @@ const DRAFT_KEYS = [
   'llm_circuit_breaker_cooldown_seconds',
   'auto_prepare_daily_cap_per_user',
   'auto_prepare_pending_cap_per_user',
+  'auto_score_on_visit_limit',
+  'auto_score_on_visit_cooldown_seconds',
+  'match_quality_check_model',
+  'match_quality_check_daily_cap_per_user',
   ...PROVIDERS.flatMap((p) => [p.modelKey, p.timeoutKey]),
 ];
 
@@ -136,6 +140,44 @@ export function LlmTab({
             hint="Per user per day. 0 = unlimited."
           />
           <NumberSetting draft={draft} k="auto_prepare_pending_cap_per_user" label="Auto-prepare pending cap" hint="Per user." />
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Free scoring and AI check"
+        description="The vector engine scores for free when users open Jobs. The AI check is a paid second opinion users turn on in Preferences."
+      >
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <NumberSetting
+            draft={draft}
+            k="auto_score_on_visit_limit"
+            label="Catch-up per visit"
+            hint="Unscored jobs queued when a user opens Jobs. 0 = off."
+          />
+          <NumberSetting
+            draft={draft}
+            k="auto_score_on_visit_cooldown_seconds"
+            label="Catch-up cooldown"
+            suffix="s"
+            hint="Per user, minimum 30."
+          />
+          <Field>
+            <FieldLabel htmlFor="sys-match-quality-check-model">AI check model</FieldLabel>
+            <Input
+              id="sys-match-quality-check-model"
+              value={draft.value('match_quality_check_model')}
+              className="font-mono"
+              placeholder="gpt-5.6-luna"
+              onChange={(e) => draft.set('match_quality_check_model', e.target.value)}
+            />
+            <FieldDescription>OpenAI model id. A binding for the AI check job below wins over this.</FieldDescription>
+          </Field>
+          <NumberSetting
+            draft={draft}
+            k="match_quality_check_daily_cap_per_user"
+            label="AI check daily cap"
+            hint="Per user per day. 0 = unlimited."
+          />
         </div>
       </SectionCard>
 

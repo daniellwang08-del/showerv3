@@ -17,6 +17,7 @@ interface DocumentPreviewModalProps {
 async function fetchPdfFile(jobId: string, fileType: PreviewDocType): Promise<File> {
   const res = await apiClient.get(`/jobs/valid/${jobId}/resume-build/download/${fileType}`, {
     responseType: 'blob',
+    params: { source: 'tailored' },
   });
   const fallback =
     fileType === 'cover_letter_pdf'

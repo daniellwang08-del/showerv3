@@ -53,7 +53,7 @@ from app.models.database import (
     ValidJobUserApplication,
 )
 from app.models.schemas import ExtractionStatus
-from app.services.job_pipeline_mode import extraction_has_shared_jd
+from app.services.job_pipeline_mode import extraction_has_shared_jd, normalize_application_resume_source
 from app.storage.database import get_session
 from app.utils.company_name import companies_match
 from app.utils.date_bounds import day_bounds_for_timezone
@@ -644,6 +644,8 @@ async def get_data_version(current_user: dict = Depends(get_current_user)) -> Da
             user.llm_provider, user.openai_key_mode, user.anthropic_key_mode,
             user.gemini_key_mode, user.min_match_score_mode, user.min_match_score,
             user.dedup_recycle_days, user.dedup_recycle_mode,
+            user.application_resume_source, user.manual_submit_pipeline,
+            user.auto_prepare_match, user.auto_prepare_full,
         )
         prompts_hash = _hash_parts(
             user.resume_tailoring_prompt_mode, user.resume_tailoring_prompt_custom,
@@ -1419,6 +1421,20 @@ async def assistant_autofill(
         eeo_text = _eeo_preferences_text(eeo_prefs)
         if eeo_text:
             profile_text = (profile_text + "\n\n" + eeo_text).strip()
+        if normalize_application_resume_source(getattr(user, "application_resume_source", None)) == "tailored":
+            build_row = (
+                await session.execute(
+                    select(ResumeBuildResult).where(
+                        ResumeBuildResult.user_id == user_id,
+                        ResumeBuildResult.job_id == req.job_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            tailored_text = _tailored_resume_text(
+                build_row.tailored_resume_data if build_row else None, user.work_experience or []
+            )
+            if tailored_text:
+                profile_text = (profile_text + "\n\n" + tailored_text).strip()
 
         sess = (
             await session.execute(
@@ -1595,6 +1611,37 @@ def _contact_address_text(addr: Any) -> str:
     return "## Legal / Home Address\n" + "\n".join(lines)
 
 
+def _tailored_resume_text(tailored: Any, profile_we: list) -> str:
+    """Tailored résumé for this job, for the LLM autofill prompt.
+
+    Narrative (summary, skills, bullets) comes from the tailored résumé; company,
+    title, and dates stay on the saved profile so answers never contradict it.
+    """
+    data = tailored if isinstance(tailored, dict) else {}
+    work = _build_work_experience(profile_we, data.get("work_experience"), "tailored")
+    summary = _plain_text(data.get("profile_summary"))
+    skills = _split_skills(data.get("technical_skills") or [])
+    if not (summary or skills or data.get("work_experience")):
+        return ""
+    lines = [
+        "## Tailored Resume For This Job",
+        "Prefer this wording for summary, skills, and experience answers. Facts (employers, titles, dates) match the profile above.",
+    ]
+    if summary:
+        lines += ["### Summary", summary]
+    if skills:
+        lines += ["### Skills", ", ".join(skills)]
+    if data.get("work_experience"):
+        lines.append("### Experience")
+        for w in work:
+            period = " - ".join(p for p in (w.get("startMMYYYY"), "Present" if w.get("current") else w.get("endMMYYYY")) if p)
+            head = " | ".join(p for p in (w.get("company"), w.get("title"), period) if p)
+            lines.append(f"**{head}**" if head else "")
+            if w.get("description"):
+                lines.append(w["description"])
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
 def _eeo_preferences_text(prefs: Any) -> str:
     """Readable EEO / demographics block for the LLM autofill prompt. The resume
     cache omits these voluntary answers, so inject them explicitly."""
@@ -1697,9 +1744,13 @@ def _split_skills(technical_skills: list) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for block in technical_skills or []:
-        if not isinstance(block, dict):
+        if isinstance(block, str):
+            raw = block
+        elif isinstance(block, dict):
+            raw = str(block.get("skills", ""))
+        else:
             continue
-        for tok in str(block.get("skills", "")).split(","):
+        for tok in raw.split(","):
             tok = tok.strip()
             key = tok.lower()
             if tok and key not in seen:
@@ -2026,22 +2077,24 @@ class AutofillProfileResponse(BaseModel):
 @assistant_router.get("/assistant/autofill-profile", response_model=AutofillProfileResponse)
 async def assistant_autofill_profile(
     job_id: str = Query(..., min_length=1, max_length=36),
-    resume_source: str = Query("original"),
+    resume_source: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
 ) -> AutofillProfileResponse:
     """Canonical structured profile for deterministic platform engines (Workday).
     Static fields come from the user's structured profile; work-experience
-    narrative is merged from the tailored resume when resume_source='tailored'
-    (dates/location always sourced authoritatively, falling back to the profile
-    for content tailored before date-enrichment)."""
+    narrative is merged from the tailored resume when the source is 'tailored'
+    and a tailored resume exists for the job. The source defaults to the
+    account's application résumé setting; ``resumeSource`` reports the one used."""
     user_id = _require_user_id(current_user)
-    resume_source = "tailored" if str(resume_source).lower() == "tailored" else "original"
     settings = get_settings()
 
     async with get_session() as session:
         user = (await session.execute(select(User).options(undefer("*")).where(User.id == user_id))).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        resume_source = normalize_application_resume_source(
+            resume_source if resume_source else getattr(user, "application_resume_source", None)
+        )
 
         # Load the build row for BOTH sources: it carries the tailored work
         # narrative (tailored source) and the per-company office-location cache.
@@ -2062,6 +2115,8 @@ async def assistant_autofill_profile(
             if isinstance(build_row.cover_letter_data, dict):
                 cover_letter_body = str(build_row.cover_letter_data.get("body") or "").strip()
         tailored_we = build_data.get("work_experience") if resume_source == "tailored" else None
+        if resume_source == "tailored" and not tailored_we:
+            resume_source = "original"
 
         home_location = _home_location_str(getattr(user, "address", None))
         profile_we = user.work_experience or []

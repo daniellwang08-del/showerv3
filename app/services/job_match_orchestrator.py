@@ -545,8 +545,17 @@ async def run_job_match_analysis(
 
     ``skip_phase_b`` is used by auto-prepare match-only so Phase B is not chained.
     Manual Prepare/Run always passes False (Phase B still gated by system setting).
+    Users who apply with their original résumé never chain Phase B here.
     """
     bind_logging_context(job_id=job_id, user_id=user_id)
+    if not skip_phase_b:
+        try:
+            from app.services.job_pipeline_mode import user_uses_original_resume
+
+            if await user_uses_original_resume(user_id):
+                skip_phase_b = True
+        except Exception as mode_err:  # noqa: BLE001 - scoring must still run
+            logger.warning("application_resume_source_lookup_failed", user_id=user_id, error=str(mode_err))
     ext_id: str | None = None
     is_job_posting = False
     has_profile = False

@@ -43,6 +43,10 @@ ALLOWLISTED_KEYS: frozenset[str] = frozenset(
         "auto_prepare_enabled",
         "auto_prepare_daily_cap_per_user",
         "auto_prepare_pending_cap_per_user",
+        "auto_score_on_visit_limit",
+        "auto_score_on_visit_cooldown_seconds",
+        "match_quality_check_model",
+        "match_quality_check_daily_cap_per_user",
         # Vector match engine
         "match_engine",
         "encoding_worker_max_jobs",
@@ -96,6 +100,9 @@ _INT_KEYS = frozenset(
         "extension_token_expire_days",
         "auto_prepare_daily_cap_per_user",
         "auto_prepare_pending_cap_per_user",
+        "auto_score_on_visit_limit",
+        "auto_score_on_visit_cooldown_seconds",
+        "match_quality_check_daily_cap_per_user",
         "encoding_worker_max_jobs",
     }
 )

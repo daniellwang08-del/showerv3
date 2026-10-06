@@ -16,6 +16,28 @@ from typing import Any, Literal
 ManualSubmitPipeline = Literal["extract", "match", "full"]
 VALID_MANUAL_SUBMIT_PIPELINES = frozenset({"extract", "match", "full"})
 
+ApplicationResumeSource = Literal["original", "tailored"]
+
+
+def normalize_application_resume_source(raw: Any) -> ApplicationResumeSource:
+    return "original" if str(raw or "").strip().lower() == "original" else "tailored"
+
+
+async def user_uses_original_resume(user_id: str | None) -> bool:
+    """True when the user applies with their original résumé (no per-job tailoring)."""
+    if not user_id:
+        return False
+    from sqlalchemy import select
+
+    from app.models.database import User
+    from app.storage.database import get_session
+
+    async with get_session() as session:
+        raw = (
+            await session.execute(select(User.application_resume_source).where(User.id == user_id))
+        ).scalar_one_or_none()
+    return normalize_application_resume_source(raw) == "original"
+
 
 def normalize_manual_submit_pipeline(raw: Any) -> ManualSubmitPipeline:
     value = str(raw or "full").strip().lower()

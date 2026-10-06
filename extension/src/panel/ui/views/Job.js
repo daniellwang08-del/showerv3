@@ -67,6 +67,7 @@ function Documents({ job, s }) {
   const status = String(d.contentStatus || "").toLowerCase();
   const building = ["queued", "pending", "processing", "running", "generating"].includes(status) || s.tailor.runs.some((r) => r.jobId === job.job_id && r.status !== "error");
   const failed = status === "failed" || !!d.buildError;
+  const original = ((s.cache && s.cache.settings) || {}).application_resume_source === "original";
   return html`<${Section}
     title="Documents"
     action=${hasResume || building ? html`<${IconButton} icon="refresh" size=${14} label="Check again" onClick=${() => refreshDocs()} />` : null}
@@ -90,9 +91,16 @@ function Documents({ job, s }) {
         ? html`<p class="docs-status"><${Spinner} size=${13} />Writing your tailored ${hasResume ? "cover letter" : "resume"}. This updates on its own.</p>`
         : null}
       ${failed && !building ? html`<p class="docs-status is-danger"><${Icon} name="alert" size=${14} />The last build failed${d.buildError ? `: ${d.buildError}` : "."}</p>` : null}
+      ${original && (hasResume || building)
+        ? html`<p class="docs-status">Autofill uploads your original resume, as set in Preferences under Matching.</p>`
+        : null}
       ${!hasResume && !building
         ? html`<div class="docs-empty">
-            <p>${job.ready ? "No tailored resume for this job yet. Autofill will use your original resume." : "Analyze the job first, then build a tailored resume."}</p>
+            <p>${!job.ready
+              ? "Analyze the job first, then build a tailored resume."
+              : original
+                ? "Autofill uses your original resume, as set in Preferences under Matching. Build a tailored copy here if you want one for this job."
+                : "No tailored resume for this job yet. Autofill will use your original resume."}</p>
             ${job.ready
               ? html`<${Button} size="sm" variant="secondary" icon="sparkles" onClick=${() => buildForJob({ id: job.job_id, title: job.title, company: job.company })}>${failed ? "Try again" : "Build resume"}</${Button}>`
               : null}

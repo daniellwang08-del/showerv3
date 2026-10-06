@@ -71,7 +71,6 @@ if sys.platform != "win32":
         pass
 
 from arq import run_worker
-from arq import func
 from app.tasks.worker import (
     ExtractionWorkerSettings,
     AnalysisWorkerSettings,
@@ -82,9 +81,7 @@ from app.tasks.worker import (
     ScraperWorkerSettings,
     EncodingWorkerSettings,
     extract_job,
-    analyze_job_match,
     generate_tailored_content,
-    _forward_phase_b_to_tailoring_queue,
     save_analyzed_job,
     run_match_auto_posts_task,
     build_resume_task,
@@ -242,10 +239,7 @@ class ExtractionWorkerConfig(ExtractionWorkerSettings):
 class AnalysisWorkerConfig(AnalysisWorkerSettings):
     on_startup = analysis_startup
     on_shutdown = analysis_shutdown
-    functions = [
-        analyze_job_match,
-        func(_forward_phase_b_to_tailoring_queue, name="generate_tailored_content"),
-    ]
+    functions = list(AnalysisWorkerSettings.functions)
     queue_name = AnalysisWorkerSettings.queue_name
     job_timeout = AnalysisWorkerSettings.job_timeout
     max_jobs = AnalysisWorkerSettings.max_jobs

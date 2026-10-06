@@ -211,6 +211,7 @@ function ResumeBuildBadges({
     try {
       const res = await apiClient.get(`/jobs/valid/${validJobId}/resume-build/download/${downloadType}`, {
         responseType: 'blob',
+        params: { source: 'tailored' },
       });
       const ext = downloadType.endsWith('_pdf') ? '.pdf' : '.docx';
       const mime = downloadType.endsWith('_pdf')

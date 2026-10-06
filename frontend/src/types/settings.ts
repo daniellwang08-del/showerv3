@@ -3,6 +3,10 @@ export type SettingsMode = 'default' | 'custom';
 export type JobShareDefault = 'private' | 'team' | 'all' | 'ask';
 export type JobShareScope = 'private' | 'team' | 'all' | 'users';
 export type ResumeFilenameMode = 'pattern' | 'static';
+export type ApplicationResumeSource = 'original' | 'tailored';
+/** When the paid AI check reviews a free score: never, on re-run, or also on strong new matches. */
+export type MatchQualityCheckMode = 'off' | 'rescore' | 'auto';
+export const MATCH_QUALITY_CHECK_MODES: MatchQualityCheckMode[] = ['off', 'rescore', 'auto'];
 export const DEFAULT_RESUME_FILENAME_PATTERN = '{firstname}_{lastname}_{kind}';
 
 export type LlmProvider = 'openai' | 'anthropic' | 'gemini';
@@ -60,6 +64,11 @@ export interface UserSettings {
   default_dedup_score_comparison_enabled: boolean;
   auto_prepare_match: boolean;
   auto_prepare_full: boolean;
+  /** Résumé used for applications: tailored per job, or the original as-is (score only). */
+  application_resume_source: ApplicationResumeSource;
+  match_quality_check: MatchQualityCheckMode;
+  /** With ``auto``: only free scores at or above this get the AI check. */
+  match_quality_check_min_score: number;
   /** Depth for URL/paste submits: extract | match | full */
   manual_submit_pipeline: 'extract' | 'match' | 'full';
   /** Starting share for jobs this user adds: private | team | all | ask */
@@ -123,6 +132,9 @@ export interface UserSettingsUpdate {
   dedup_score_comparison_enabled?: boolean;
   auto_prepare_match?: boolean;
   auto_prepare_full?: boolean;
+  application_resume_source?: ApplicationResumeSource;
+  match_quality_check?: MatchQualityCheckMode;
+  match_quality_check_min_score?: number;
   manual_submit_pipeline?: 'extract' | 'match' | 'full';
   job_share_default?: JobShareDefault;
   resume_filename_mode?: ResumeFilenameMode;

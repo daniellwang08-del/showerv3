@@ -31,6 +31,7 @@ from app.services.extraction_merge import pick_best_text
 from app.services.validator import validate_extracted_text
 from app.extractors.api_detector import APIDetectorExtractor
 from app.extractors.ashby_api_extractor import AshbyApiExtractor, parse_ashby_jid_from_url
+from app.extractors.embedded_job_data_extractor import EmbeddedJobDataExtractor
 from app.extractors.greenhouse_board_extractor import (
     GreenhouseBoardExtractor,
     greenhouse_board_tokens_from_url,
@@ -95,6 +96,19 @@ def _is_adzuna_tracking_url(url: str) -> bool:
     return "adzuna.com/land/ad/" in url and "se=" in url
 
 
+def _fill_structured_gaps(best: dict | None, embedded: dict | None) -> dict | None:
+    """Keep the page's embedded ATS fields even when another candidate's text won."""
+    if not embedded:
+        return best
+    if not best:
+        return dict(embedded)
+    merged = dict(best)
+    for key, value in embedded.items():
+        if value and not merged.get(key):
+            merged[key] = value
+    return merged
+
+
 class ExtractionService:
     def __init__(self):
         self.http_service = HTTPService()
@@ -103,6 +117,7 @@ class ExtractionService:
         self.workable_api_extractor = WorkableApiExtractor(self.http_service)
         self.workday_extractor = WorkdayExtractor(self.http_service)
         self.api_extractor = APIDetectorExtractor()
+        self.embedded_job_extractor = EmbeddedJobDataExtractor()
         self.html_extractor = HTMLExtractor()
         self.browser_extractor = BrowserExtractor()
         self.greenhouse_board_extractor = GreenhouseBoardExtractor(self.http_service)
@@ -158,6 +173,17 @@ class ExtractionService:
 
         candidates: list[tuple[str, str, dict | None]] = []
         last_error: str | None = None
+        embedded_structured: dict | None = None
+
+        async def _collect_embedded(page_html: str | None) -> None:
+            nonlocal embedded_structured
+            if embedded_structured or not await self.embedded_job_extractor.can_extract(url, page_html):
+                return
+            emb_job = await self.embedded_job_extractor.extract(url, page_html)
+            if emb_job.structured_data:
+                embedded_structured = emb_job.structured_data
+            if emb_job.success and emb_job.raw_content:
+                candidates.append((emb_job.raw_content, ExtractionMethod.API_VENDOR.value, emb_job.structured_data))
 
         try:
             # 1a. Ashby public API (native URL - no HTML needed)
@@ -271,6 +297,9 @@ class ExtractionService:
                     logger.warning("http_fetch_failed_will_try_browser", job_id=job_id, error=last_error)
 
             if html_content is not None:
+                # 2b. ATS job record embedded in the page (Rippling __NEXT_DATA__, UKG)
+                await _collect_embedded(html_content)
+
                 # 3. Ashby embed (?ashby_jid=)
                 if parse_ashby_jid_from_url(url):
                     emb = await self.ashby_api_extractor.extract_embedded(url, html_content)
@@ -335,6 +364,8 @@ class ExtractionService:
                     # SPAs only reveal Greenhouse/Lever/Ashby tokens after JS runs.
                     rendered_html = browser_result.html or browser_result.raw_content
 
+                    await _collect_embedded(rendered_html)
+
                     if await self.greenhouse_board_extractor.can_extract(url, rendered_html):
                         gh_br = await self.greenhouse_board_extractor.extract(url, rendered_html)
                         if gh_br.success and gh_br.raw_content:
@@ -371,6 +402,7 @@ class ExtractionService:
 
             # 8. Pick best result and cache
             best_text, best_method, best_structured = pick_best_text(candidates)
+            best_structured = _fill_structured_gaps(best_structured, embedded_structured)
 
             if not best_text:
                 final_message = "All extraction methods failed"
@@ -392,7 +424,7 @@ class ExtractionService:
                         )
                         return await self._cache_and_mark_extracted(
                             job_id, url, fallback_text, fallback_method,
-                            structured_data=None,
+                            structured_data=embedded_structured,
                         )
                 return await self._mark_failed(job_id, f"Validation failed: {', '.join(validation.errors)}")
 

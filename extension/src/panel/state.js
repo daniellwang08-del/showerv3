@@ -49,7 +49,6 @@ function initialState() {
     minScore: 0,
     autoAdvance: true,
     autoSubmit: false,
-    resumeSource: "tailored",
     answerStrategy: "",
     pageSize: 25,
     dailyApplyTarget: 50,
