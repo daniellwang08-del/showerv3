@@ -4,7 +4,6 @@ import {
   dismissReportNotice,
   downloadDoc,
   openJob,
-  postToPumble,
   refreshDocs,
   reportExpired,
   runAnalysis,
@@ -18,7 +17,16 @@ import { Chat } from "../Chat.js";
 import { Avatar, Badge, Banner, Button, IconButton, Score, Spinner } from "../components.js";
 import { Icon } from "../icons.js";
 
-function Header({ job }) {
+function ResumeMode({ original }) {
+  return html`<${Badge}
+    tone=${original ? "muted" : "brand"}
+    title=${`Applications use your ${original ? "original" : "tailored"} resume. Change it in Preferences under Matching.`}
+  >
+    <${Icon} name=${original ? "file" : "sparkles"} size=${11} />${original ? "Original resume" : "Tailored resume"}
+  </${Badge}>`;
+}
+
+function Header({ job, original }) {
   const snap = job.snapshot || {};
   const mode = workMode(snap.remote_policy);
   const facts = [
@@ -37,13 +45,11 @@ function Header({ job }) {
       ${job.url ? html`<${IconButton} icon="external" size=${15} label="Open posting" onClick=${() => openInWorkTab(job.url)} />` : null}
       <${Score} value=${job.score} size="lg" />
     </div>
-    ${facts.length || job.applied || job.pumblePosted
-      ? html`<ul class="job-facts">
-          ${job.applied ? html`<li><${Badge} tone="ok" dot>Applied ${timeAgo(job.appliedAt) || ""}</${Badge}></li>` : null}
-          ${job.pumblePosted ? html`<li><${Badge} tone="muted">On Pumble</${Badge}></li>` : null}
-          ${facts.map((f) => html`<li><${Icon} name=${f.icon} size=${13} />${f.text}</li>`)}
-        </ul>`
-      : null}
+    <ul class="job-facts">
+      <li><${ResumeMode} original=${original} /></li>
+      ${job.applied ? html`<li><${Badge} tone="ok" dot>Applied ${timeAgo(job.appliedAt) || ""}</${Badge}></li>` : null}
+      ${facts.map((f) => html`<li><${Icon} name=${f.icon} size=${13} />${f.text}</li>`)}
+    </ul>
   </div>`;
 }
 
@@ -101,23 +107,13 @@ function Documents({ job, s }) {
       ? html`<p class="docs-note"><${Spinner} size=${12} />Writing your cover letter.</p>`
       : null}
     ${failed && !building ? html`<p class="docs-note is-danger"><${Icon} name="alert" size=${13} />The last build failed${d.buildError ? `: ${d.buildError}` : "."}</p>` : null}
-    ${original && hasResume ? html`<p class="docs-note">Autofill uploads your original resume (Preferences, Matching).</p>` : null}
   </div>`;
 }
 
 function ActionBar({ job, s }) {
-  const pumble = s.home.data && s.home.data.pumble_configured;
   return html`<footer class="actionbar">
     <${Button} variant="secondary" icon="clock" disabled=${s.skipping} title="Skip for now. It stays in In progress so you can apply later." onClick=${skipJob}>Skip</${Button}>
     <${Button} variant="ghost" icon="flag" title="Report this posting as expired" onClick=${reportExpired}>Expired</${Button}>
-    ${pumble
-      ? html`<${IconButton}
-          icon="message"
-          label=${job.pumblePosted ? "Already on Pumble" : "Post to Pumble"}
-          disabled=${s.postingToPumble || job.pumblePosted}
-          onClick=${() => postToPumble([job.job_id])}
-        />`
-      : null}
     <${Button} variant="primary" icon=${job.applied ? "chevron" : "check"} block onClick=${() => completeJob({ next: true })}>
       ${job.applied ? "Next job" : "Applied, next"}
     </${Button}>
@@ -142,7 +138,7 @@ export function JobView({ s }) {
             Reported ${s.reportNotice.title}${s.reportNotice.company ? ` at ${s.reportNotice.company}` : ""} as expired.
           </${Banner}>`
         : null}
-      <${Header} job=${job} />
+      <${Header} job=${job} original=${((s.cache && s.cache.settings) || {}).application_resume_source === "original"} />
       <${AutofillCard} s=${s} />
       <${Documents} job=${job} s=${s} />
     </div>
