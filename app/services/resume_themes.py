@@ -1,15 +1,16 @@
 """Curated theme presets, font catalog, and color palettes for the resume builder.
 
-Fonts are limited to families that are either standard on Windows/macOS or have
-metric-compatible substitutes installed with LibreOffice on the server, so the
-docx -> PDF conversion stays faithful to the in-browser preview.
+Every font maps to a bundled face (frontend/public/fonts) that both the studio and
+the server's Chromium PDF renderer load, so the PDF matches the preview exactly.
 """
 
 from __future__ import annotations
 
 from app.models.resume_design_schemas import (
+    CertificatesStyle,
     Colors,
     ColorPreset,
+    EducationStyle,
     ExperienceStyle,
     FontOption,
     LayoutConfig,
@@ -31,6 +32,12 @@ FONT_OPTIONS: list[FontOption] = [
     FontOption(id="cambria", label="Cambria", family="Cambria", category="serif"),
     FontOption(id="times", label="Times New Roman", family="Times New Roman", category="serif"),
     FontOption(id="garamond", label="Garamond", family="Garamond", category="serif"),
+    FontOption(id="inter", label="Inter", family="Inter", category="sans"),
+    FontOption(id="roboto", label="Roboto", family="Roboto", category="sans"),
+    FontOption(id="source-sans", label="Source Sans", family="Source Sans 3", category="sans"),
+    FontOption(id="open-sans", label="Open Sans", family="Open Sans", category="sans"),
+    FontOption(id="source-serif", label="Source Serif", family="Source Serif 4", category="serif"),
+    FontOption(id="lora", label="Lora", family="Lora", category="serif"),
 ]
 
 COLOR_PRESETS: list[ColorPreset] = [
@@ -187,7 +194,7 @@ def _e(
     project_style: str = "label",
     intro_style: str = "plain",
     marker: str = "dot",
-    label_style: str = "plain",
+    label_style: str = "bold",
     used_skills_style: str = "inline",
     badge_style: str = "inline",
     show_employment_type: bool = True,
@@ -231,7 +238,7 @@ def _e(
 # the control board; users can override any of them.
 EXPERIENCE_STYLE_PRESETS: list[ExperienceStyle] = [
     # --- Classic / inline header, date right-aligned (the default) ---
-    _e("classic", "Classic", marker="dot", label_style="plain"),
+    _e("classic", "Classic", marker="dot"),
     _e("classic-dash", "Classic Dash", marker="dash"),
     _e("classic-arrow", "Arrow Impact", marker="arrow"),
     _e("classic-chevron", "Chevron", marker="chevron"),
@@ -293,23 +300,53 @@ SECTION_META: list[SectionMeta] = [
 ]
 
 
+_SUMMARY_BY_ID = {s.id: s for s in SUMMARY_STYLE_PRESETS}
+_SKILLS_BY_ID = {s.id: s for s in SKILLS_STYLE_PRESETS}
+_EXPERIENCE_BY_ID = {e.id: e for e in EXPERIENCE_STYLE_PRESETS}
+
+
+def _sections(
+    *,
+    summary: str = "plain",
+    skills: str = "inline",
+    experience: str = "classic",
+    education: EducationStyle | None = None,
+    certificates: CertificatesStyle | None = None,
+) -> SectionOptions:
+    """One coherent treatment for every section, so a theme is a complete look."""
+    return SectionOptions(
+        summary_style=_SUMMARY_BY_ID[summary].model_copy(deep=True),
+        skills_style=_SKILLS_BY_ID[skills].model_copy(deep=True),
+        experience_style=_EXPERIENCE_BY_ID[experience].model_copy(deep=True),
+        education_style=education or EducationStyle(),
+        certificates_style=certificates or CertificatesStyle(),
+    )
+
+
 def _design(
     *,
     theme_id: str,
     font: str,
     colors: Colors,
+    sections: SectionOptions,
     columns: int = 1,
     uppercase: bool = True,
+    base_font_pt: float = 10.5,
+    line_spacing: float = 1.12,
     heading_scale: float = 1.25,
     name_scale: float = 2.0,
     header_align: str = "left",
     accent_rule: bool = True,
     header_background: str = "none",
+    margin_pt: float = 54,
+    section_gap_pt: float = 10,
 ) -> ResumeDesign:
     return ResumeDesign(
         theme_id=theme_id,
         typography=Typography(
             font_family=font,
+            base_font_pt=base_font_pt,
+            line_spacing=line_spacing,
             heading_scale=heading_scale,
             name_scale=name_scale,
             uppercase_headings=uppercase,
@@ -317,6 +354,8 @@ def _design(
         colors=colors,
         layout=LayoutConfig(
             columns=columns,  # type: ignore[arg-type]
+            margin_pt=margin_pt,
+            section_gap_pt=section_gap_pt,
             header_align=header_align,  # type: ignore[arg-type]
             accent_rule=accent_rule,
             header_background=header_background,  # type: ignore[arg-type]
@@ -324,59 +363,188 @@ def _design(
             contact_icon_offset_x_pt=0.0,
             contact_icon_offset_y_pt=0.0,
         ),
-        sections=SectionOptions(),
+        sections=sections,
     )
 
 
+_SLATE, _EMERALD, _BURGUNDY, _NAVY, _CHARCOAL, _VIOLET = (p.colors for p in COLOR_PRESETS)
+
+# Complete looks: typography, colour, header and every section's treatment are chosen
+# together, so picking one theme restyles the whole resume consistently.
 THEME_PRESETS: list[ThemePreset] = [
     ThemePreset(
         id="classic",
         label="Classic",
-        description="Timeless single-column layout with accent rules under each heading.",
+        description="Timeless single column, accent rules under headings, inline skills.",
         accent_swatch="#2563eb",
-        design=_design(theme_id="classic", font="Calibri", colors=COLOR_PRESETS[0].colors),
+        design=_design(
+            theme_id="classic",
+            font="Calibri",
+            colors=_SLATE,
+            sections=_sections(summary="plain", skills="inline", experience="classic"),
+        ),
     ),
     ThemePreset(
         id="modern",
         label="Modern",
-        description="Clean sans-serif, centered name, and a colored accent.",
+        description="Solid header band, centered name, two-column skills and accent subtitles.",
         accent_swatch="#059669",
         design=_design(
             theme_id="modern",
             font="Arial",
-            colors=COLOR_PRESETS[1].colors,
+            colors=_EMERALD,
             header_align="center",
             heading_scale=1.18,
             header_background="solid",
+            sections=_sections(
+                summary="plain",
+                skills="grid",
+                experience="accent-label",
+                education=EducationStyle(accent_target="university"),
+                certificates=CertificatesStyle(layout="inline"),
+            ),
         ),
     ),
     ThemePreset(
         id="executive",
         label="Executive",
-        description="Serif typography with understated, no-rule headings for a refined look.",
+        description="Serif type, understated headings and dates on their own line.",
         accent_swatch="#9f1239",
         design=_design(
             theme_id="executive",
             font="Georgia",
-            colors=COLOR_PRESETS[2].colors,
+            colors=_BURGUNDY,
             uppercase=False,
             heading_scale=1.35,
             name_scale=2.2,
             accent_rule=False,
+            sections=_sections(
+                summary="plain",
+                skills="inline",
+                experience="subline",
+                education=EducationStyle(date_position="below", accent_target="degree"),
+                certificates=CertificatesStyle(marker="dash"),
+            ),
         ),
     ),
     ThemePreset(
         id="minimal",
         label="Minimal",
-        description="Monochrome, no accent rules, generous spacing - maximum readability.",
+        description="Monochrome, no rules, pipe-separated skills and dash bullets.",
         accent_swatch="#111111",
         design=_design(
             theme_id="minimal",
             font="Helvetica",
-            colors=COLOR_PRESETS[4].colors,
+            colors=_CHARCOAL,
             accent_rule=False,
             heading_scale=1.12,
             name_scale=1.8,
+            sections=_sections(
+                summary="plain",
+                skills="pipe",
+                experience="classic-dash",
+                education=EducationStyle(accent_target="none"),
+                certificates=CertificatesStyle(layout="inline"),
+            ),
+        ),
+    ),
+    ThemePreset(
+        id="compact",
+        label="Compact",
+        description="Tighter type and spacing to fit more experience on one page.",
+        accent_swatch="#1d4ed8",
+        design=_design(
+            theme_id="compact",
+            font="Calibri",
+            colors=_NAVY,
+            base_font_pt=10,
+            line_spacing=1.06,
+            heading_scale=1.15,
+            name_scale=1.8,
+            margin_pt=40,
+            section_gap_pt=7,
+            sections=_sections(summary="plain", skills="inline", experience="classic"),
+        ),
+    ),
+    ThemePreset(
+        id="professional",
+        label="Professional",
+        description="Inter, two-column skills, right-aligned dates and dividers between roles.",
+        accent_swatch="#2563eb",
+        design=_design(
+            theme_id="professional",
+            font="Inter",
+            colors=_SLATE,
+            base_font_pt=10.5,
+            heading_scale=1.2,
+            sections=_sections(
+                summary="plain",
+                skills="grid",
+                experience="divider-right",
+                education=EducationStyle(surface="divider"),
+            ),
+        ),
+    ),
+    ThemePreset(
+        id="elegant",
+        label="Elegant",
+        description="Source Serif, centered header and caps skill labels.",
+        accent_swatch="#1d4ed8",
+        design=_design(
+            theme_id="elegant",
+            font="Source Serif 4",
+            colors=_NAVY,
+            header_align="center",
+            uppercase=True,
+            heading_scale=1.2,
+            name_scale=2.1,
+            accent_rule=False,
+            sections=_sections(
+                summary="plain",
+                skills="inline-caps",
+                experience="classic",
+                education=EducationStyle(accent_target="degree"),
+                certificates=CertificatesStyle(marker="dash"),
+            ),
+        ),
+    ),
+    ThemePreset(
+        id="timeline",
+        label="Timeline",
+        description="A rail down each role, accent chips for skills, soft header band.",
+        accent_swatch="#7c3aed",
+        design=_design(
+            theme_id="timeline",
+            font="Roboto",
+            colors=_VIOLET,
+            header_background="soft",
+            heading_scale=1.18,
+            sections=_sections(
+                summary="plain",
+                skills="chips-accent",
+                experience="timeline",
+                education=EducationStyle(surface="left_bar", pad_pt=10),
+                certificates=CertificatesStyle(layout="chips", accent_chips=True),
+            ),
+        ),
+    ),
+    ThemePreset(
+        id="developer",
+        label="Technical",
+        description="Open Sans, stacked skill groups and technology chips under each role.",
+        accent_swatch="#059669",
+        design=_design(
+            theme_id="developer",
+            font="Open Sans",
+            colors=_EMERALD,
+            base_font_pt=10,
+            heading_scale=1.18,
+            sections=_sections(
+                summary="plain",
+                skills="stacked",
+                experience="tech-chips",
+                certificates=CertificatesStyle(layout="chips"),
+            ),
         ),
     ),
 ]

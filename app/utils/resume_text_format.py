@@ -84,7 +84,29 @@ def parse_inline_markup(text: str) -> list[InlineSegment]:
         buf.append(ch)
         i += 1
     flush()
-    return [s for s in out if s.text]
+    return _unbold_word_fragments([s for s in out if s.text])
+
+
+def _unbold_word_fragments(segs: list[InlineSegment]) -> list[InlineSegment]:
+    """Bold that splits a word ("**Design**ed") is never intended: render the word plain."""
+    fixed: list[InlineSegment] = []
+    for idx, s in enumerate(segs):
+        if s.bold:
+            prev = segs[idx - 1] if idx > 0 else None
+            nxt = segs[idx + 1] if idx + 1 < len(segs) else None
+            joins_prev = prev is not None and not prev.bold and prev.text[-1:].isalpha() and s.text[:1].isalpha()
+            joins_next = nxt is not None and not nxt.bold and s.text[-1:].isalpha() and nxt.text[:1].isalpha()
+            if joins_prev or joins_next:
+                s = InlineSegment(s.text, False, s.italic, s.underline)
+        fixed.append(s)
+    merged: list[InlineSegment] = []
+    for s in fixed:
+        last = merged[-1] if merged else None
+        if last and (last.bold, last.italic, last.underline) == (s.bold, s.italic, s.underline):
+            merged[-1] = InlineSegment(last.text + s.text, s.bold, s.italic, s.underline)
+        else:
+            merged.append(s)
+    return merged
 
 
 def parse_bold_markers(text: str) -> list[tuple[str, bool]]:

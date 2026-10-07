@@ -87,8 +87,10 @@ function hydrateDesign(raw: ResumeDesign): ResumeDesign {
         if (legacyNoOffsets && rawIcons === 'outline') return 'brand';
         return rawIcons === 'outline' ? 'outline' : 'brand';
       })(),
-      contact_icon_offset_x_pt: raw.layout.contact_icon_offset_x_pt ?? 0,
-      contact_icon_offset_y_pt: raw.layout.contact_icon_offset_y_pt ?? 0,
+      // The PDF is printed from the preview itself, so icon nudges are no longer
+      // needed (or editable); stale offsets would only misplace the icons.
+      contact_icon_offset_x_pt: 0,
+      contact_icon_offset_y_pt: 0,
       section_order: normalizeOrder(raw.layout.section_order),
       hidden_sections: raw.layout.hidden_sections ?? [],
     },
@@ -109,6 +111,53 @@ function hydrateDesign(raw: ResumeDesign): ResumeDesign {
     // Expand legacy description blobs into structured contribution fields so the
     // Content editor matches what the live preview already derives.
     content: raw.content ? normalizeResumeContent(raw.content) : raw.content,
+  };
+}
+
+/** The design a theme produces for *current*: the theme decides the whole look
+ *  (type, colour, header, every section's treatment) while the user's content,
+ *  section order/visibility, paper, header image and show/hide choices are kept. */
+export function themeDesignFor(theme: ThemePreset, current: ResumeDesign): ResumeDesign {
+  const keepImage = current.layout.header_image ?? null;
+  const t = hydrateDesign(theme.design);
+  const curExp = current.sections.experience_style ?? DEFAULT_EXPERIENCE_STYLE;
+  const curEdu = current.sections.education_style ?? DEFAULT_EDUCATION_STYLE;
+  return {
+    ...t,
+    content: current.content ?? t.content ?? null,
+    layout: {
+      ...t.layout,
+      columns: 1,
+      contact_icons: current.layout.contact_icons ?? 'brand',
+      section_order: current.layout.section_order,
+      hidden_sections: current.layout.hidden_sections,
+      paper: current.layout.paper ?? 'letter',
+      header_image: keepImage,
+      header_background: keepImage ? 'image' : t.layout.header_background,
+      header_metrics: null,
+      layout_metrics: null,
+    },
+    sections: {
+      ...t.sections,
+      show_period: current.sections.show_period,
+      show_location: current.sections.show_location,
+      experience_style: {
+        ...t.sections.experience_style,
+        show_employment_type: curExp.show_employment_type,
+        show_arrangement: curExp.show_arrangement,
+        show_project_title: curExp.show_project_title,
+        show_intro: curExp.show_intro,
+        show_used_skills: curExp.show_used_skills,
+        show_contributions_label: curExp.show_contributions_label,
+      },
+      education_style: {
+        ...t.sections.education_style,
+        show_period: curEdu.show_period,
+        show_location: curEdu.show_location,
+        show_mark: curEdu.show_mark,
+        show_description: curEdu.show_description,
+      },
+    },
   };
 }
 
@@ -144,6 +193,8 @@ interface ResumeBuilderState {
   setLayoutMetrics: (m: LayoutMetrics) => void;
   setContent: (content: ResumeContent) => void;
   updateSectionOptions: (patch: Partial<SectionOptions>) => void;
+  /** One combined edit (e.g. a spacing preset touching type, layout and sections). */
+  updateDesign: (fn: (d: ResumeDesign) => ResumeDesign) => void;
   applySummaryStyle: (style: SummaryStyle) => void;
   applySkillsStyle: (style: SkillsStyle) => void;
   applyExperienceStyle: (style: ExperienceStyle) => void;
@@ -497,31 +548,7 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
   applyTheme: (theme) => {
     const current = get().design;
     if (!current) return;
-    // Keep user content, section visibility/order, and header image. Drop browser
-    // header/layout metrics whenever the theme changes columns or header chrome,
-    // Always drop browser metrics on theme apply so measure-only preview re-reports.
-    const keepImage = current.layout.header_image ?? null;
-    const next: ResumeDesign = {
-      ...theme.design,
-      content: current.content ?? theme.design.content ?? null,
-      layout: {
-        ...theme.design.layout,
-        columns: 1,
-        // Themes always ship brand icons; keep the user's manual icon offsets.
-        contact_icons: 'brand',
-        contact_icon_offset_x_pt: current.layout.contact_icon_offset_x_pt ?? 0,
-        contact_icon_offset_y_pt: current.layout.contact_icon_offset_y_pt ?? 0,
-        section_order: current.layout.section_order,
-        hidden_sections: current.layout.hidden_sections,
-        paper: current.layout.paper ?? 'letter',
-        header_image: keepImage,
-        header_background: keepImage ? 'image' : theme.design.layout.header_background,
-        header_metrics: null,
-        layout_metrics: null,
-      },
-      sections: { ...current.sections },
-    };
-    applyDesign(set, get, next);
+    applyDesign(set, get, themeDesignFor(theme, current));
   },
 
   updateTypography: (patch) => {
@@ -612,6 +639,12 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     const d = get().design;
     if (!d) return;
     applyDesign(set, get, { ...d, sections: { ...d.sections, ...patch } });
+  },
+
+  updateDesign: (fn) => {
+    const d = get().design;
+    if (!d) return;
+    applyDesign(set, get, fn(d));
   },
 
   setContent: (content) => {

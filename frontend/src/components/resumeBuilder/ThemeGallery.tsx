@@ -6,28 +6,12 @@ import { ControlCard } from './controls';
 import { ResumePreview } from './ResumePreview';
 import { RESUME_REF_WIDTH } from './PagedResumePreview';
 import { effectiveProfile } from '../../utils/resumeContent';
-import { useResumeBuilderStore } from '../../stores/resumeBuilderStore';
+import { themeDesignFor, useResumeBuilderStore } from '../../stores/resumeBuilderStore';
 
 const PAGE_SIZE = 6;
 
-/** Theme chrome + current resume content for a realistic tile preview. */
-function themeThumbDesign(theme: ThemePreset, current: ResumeDesign): ResumeDesign {
-  const keepImage = current.layout.header_image ?? null;
-  return {
-    ...theme.design,
-    layout: {
-      ...theme.design.layout,
-      section_order: current.layout.section_order,
-      hidden_sections: current.layout.hidden_sections,
-      header_image: keepImage,
-      header_background: keepImage ? 'image' : theme.design.layout.header_background,
-      header_metrics: null,
-      layout_metrics: null,
-    },
-    sections: { ...current.sections },
-    content: current.content ?? theme.design.content ?? null,
-  };
-}
+/** Exactly what applying the theme produces, with the current resume content. */
+const themeThumbDesign = themeDesignFor;
 
 function ThemeThumb({
   design,
@@ -105,10 +89,10 @@ export function ThemeGallery({
   };
 
   return (
-    <ControlCard icon={Palette} title="Theme">
+    <ControlCard icon={Palette} title="Resume style">
       <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
-        <p className="min-w-0 truncate text-xs text-slate-500">
-          {themes.length} theme{themes.length === 1 ? '' : 's'} · Loved first · {PAGE_SIZE}/page
+        <p className="min-w-0 text-xs text-muted-foreground">
+          One click restyles every section. Fine-tune below.
         </p>
         <div className="flex shrink-0 items-center gap-1">
           <button

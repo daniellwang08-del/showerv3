@@ -80,7 +80,32 @@ export function parseInlineMarkup(text: string): RichSegment[] {
     i += 1;
   }
   flush();
-  return out.filter((s) => s.text);
+  return unboldWordFragments(out.filter((s) => s.text));
+}
+
+const LETTER_END = /\p{L}$/u;
+const LETTER_START = /^\p{L}/u;
+
+/** Bold that splits a word ("**Design**ed") is never intended: render the word plain. */
+function unboldWordFragments(segs: RichSegment[]): RichSegment[] {
+  const fixed = segs.map((s, idx) => {
+    if (!s.bold) return s;
+    const prev = segs[idx - 1];
+    const next = segs[idx + 1];
+    const joinsPrev = prev && !prev.bold && LETTER_END.test(prev.text) && LETTER_START.test(s.text);
+    const joinsNext = next && !next.bold && LETTER_END.test(s.text) && LETTER_START.test(next.text);
+    return joinsPrev || joinsNext ? { ...s, bold: false } : s;
+  });
+  const merged: RichSegment[] = [];
+  for (const s of fixed) {
+    const last = merged[merged.length - 1];
+    if (last && last.bold === s.bold && last.italic === s.italic && last.underline === s.underline) {
+      last.text += s.text;
+    } else {
+      merged.push({ ...s });
+    }
+  }
+  return merged;
 }
 
 /** Render résumé text with inline markup into React nodes (bold/italic/underline). */

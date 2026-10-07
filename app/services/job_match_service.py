@@ -42,6 +42,7 @@ from app.utils.resume_keyword_emphasis import (
     apply_keyword_emphasis_to_resume,
     is_tech_like_keyword,
 )
+from app.utils.resume_skill_taxonomy import normalize_tailored_formatting
 
 logger = get_logger(__name__)
 
@@ -683,8 +684,8 @@ def tailored_resume_quality_issues(
             issues.append(f"work_experience[{idx}]_bullets_below_{minimum}")
         if idx < 2 and len(clean) >= max(4, minimum - 2):
             emphasized = sum(1 for b in clean if "**" in b)
-            # Require bold on a majority of recent-role bullets.
-            if emphasized < max(3, (len(clean) + 1) // 2):
+            # Bold is sparse by contract; flag only roles where it is nearly absent.
+            if emphasized < max(2, len(clean) // 3):
                 issues.append(f"work_experience[{idx}]_weak_keyword_emphasis")
         elif idx == 2 and len(clean) >= minimum:
             emphasized = sum(1 for b in clean if "**" in b)
@@ -1139,7 +1140,9 @@ async def generate_tailored_content_phase_b(
             reasoning_effort=reasoning_effort,
         )
         resume = _parse_tailored_resume(parsed.get("tailored_resume"))
-        return apply_keyword_emphasis_to_resume(resume, job_anchors) if resume else None
+        if not resume:
+            return None
+        return normalize_tailored_formatting(apply_keyword_emphasis_to_resume(resume, job_anchors))
 
     async def _cover_call(observe_name: str) -> dict | None:
         try:
@@ -1203,9 +1206,10 @@ async def generate_tailored_content_phase_b(
             + "\n\nQUALITY RETRY: Previous output failed these checks: "
             + ", ".join(blocking)
             + ". REWRITE (do not lightly edit): profile_summary must be substantive and name THIS "
-            "job's role/domain; technical_skills must use JD-driven categories with technologies "
-            "only (no soft-skill jargon); index 0-1 roles need at least 8 bullets each with dense "
-            "**keyword** emphasis on THIS job's tech/domain terms; index 2 at least 7 bullets; "
+            "job's role/domain; technical_skills must use 4-7 clean single-concept categories "
+            "(e.g. Languages, Frontend, Backend, Databases, Cloud, DevOps) with technologies only "
+            "(no soft-skill jargon, no **); index 0-1 roles need at least 8 bullets each, bolding at most 2 "
+            "named JD technologies or metrics per bullet (many bullets need none); index 2 at least 7 bullets; "
             "older roles at least 4. Map Must-cover requirements into the two most recent roles "
             "when the background supports them. Never invent employers, dates, or technologies."
         )

@@ -260,7 +260,7 @@ class ExperienceStyle(BaseModel):
     project_style: ExperienceProjectStyle = "label"
     intro_style: ExperienceIntroStyle = "plain"
     marker: ExperienceMarker = "dot"
-    label_style: ExperienceLabelStyle = "plain"
+    label_style: ExperienceLabelStyle = "bold"
     used_skills_style: ExperienceSkillsStyle = "inline"
     badge_style: ExperienceBadgeStyle = "inline"
     # Control board: optional item visibility

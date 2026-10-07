@@ -47,6 +47,12 @@ export const RESUME_FONT_RENDER: Record<string, string> = {
   Cambria: 'NAO Caladea',
   Georgia: 'NAO Gelasio',
   Garamond: 'NAO EB Garamond',
+  Inter: 'NAO Inter',
+  Roboto: 'NAO Roboto',
+  'Source Sans 3': 'NAO Source Sans 3',
+  'Open Sans': 'NAO Open Sans',
+  'Source Serif 4': 'NAO Source Serif 4',
+  Lora: 'NAO Lora',
 };
 
 /** A cover letter rendered with the resume's letterhead and summary styling. */
@@ -527,9 +533,12 @@ export function SummaryBlock({
   );
 }
 
-function splitSkills(s?: string): string[] {
+/** Skill lists are plain terms: `**` emphasis is dropped so only the category label
+ *  carries weight, and any separator style ("a,b", "a; b", "a | b") becomes one list. */
+export function splitSkills(s?: string): string[] {
   return (s || '')
-    .split(/[,;|\n]+/)
+    .replace(/\*\*/g, '')
+    .split(/[,;|\n\u00b7\u2022]+/)
     .map((x) => x.trim())
     .filter(Boolean);
 }
@@ -607,12 +616,12 @@ export function SkillsBlock({
           border: `1px solid ${accent ? tint(c.accent, 0.45) : '#e2e8f0'}`,
         }}
       >
-        {renderRich(skill)}
+        {skill}
       </span>
     );
   };
 
-  const bodyText: CSSProperties = { color: c.text, lineHeight: t.line_spacing };
+  const bodyText: CSSProperties = { color: c.text, lineHeight: t.line_spacing, fontWeight: 400 };
 
   // Per-skill bullet lists (one term per line) were dropped; coerce to chips.
   const layout = st.layout === 'bullets' ? 'chips' : st.layout;
@@ -634,7 +643,7 @@ export function SkillsBlock({
                 <span style={{ color: c.text }}>{labelGap}</span>
               </>
             )}
-            <span style={{ color: c.text }}>{renderRich(list.join(st.layout === 'pipe' ? '  |  ' : ', '))}</span>
+            <span style={{ color: c.text }}>{list.join(st.layout === 'pipe' ? '  |  ' : ', ')}</span>
           </p>
         );
         break;
@@ -642,7 +651,7 @@ export function SkillsBlock({
         content = (
           <div>
             {cat && <div style={{ marginBottom: 2 }}>{catLabel(cat)}</div>}
-            <p style={{ ...bodyText, margin: 0 }}>{renderRich(list.join(', '))}</p>
+            <p style={{ ...bodyText, margin: 0 }}>{list.join(', ')}</p>
           </div>
         );
         break;
@@ -663,7 +672,7 @@ export function SkillsBlock({
               {st.accent_chips ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{list.map((sk, i) => chip(sk, i))}</div>
               ) : (
-                <span style={{ color: c.text }}>{renderRich(list.join(', '))}</span>
+                <span style={{ color: c.text }}>{list.join(', ')}</span>
               )}
             </div>
           </div>
@@ -697,6 +706,10 @@ export function SkillsBlock({
 
   return <>{skills.map(renderCategory)}</>;
 }
+
+/** Gap above the "Key Contributions" subtitle and the Technologies line. Mirrored by
+ *  ``_EXP_SUBTITLE_GAP_PT`` in app/services/resume_builder_service.py. */
+const CONTRIBUTIONS_GAP_PX = 5;
 
 const MARKER_GLYPH: Record<string, string> = {
   dot: '\u2022',
@@ -945,15 +958,15 @@ export function ExperienceBlock({
           data-gap-role="exp-label"
           style={{
             ...bodyStyle,
-            margin: '2px 0 0',
-            fontWeight: st.label_style === 'bold' || st.label_style === 'accent' ? 700 : 400,
-            color: st.label_style === 'accent' ? c.accent : c.text,
+            margin: `${CONTRIBUTIONS_GAP_PX}px 0 0`,
+            fontWeight: 700,
+            color: st.label_style === 'accent' ? c.accent : c.heading,
             textTransform: upper ? 'uppercase' : 'none',
             letterSpacing: upper ? '0.05em' : 0,
             fontSize: upper ? base * 0.92 : base,
           }}
         >
-          Key Contributions:
+          Key Contributions
         </p>
       );
     }
@@ -1007,26 +1020,27 @@ export function ExperienceBlock({
     // across page edges. Without it, Technologies is hard-clipped mid-line
     // (top half on page N, bottom half on page N+1).
     let usedSkillsEl: ReactNode = null;
-    if (st.show_used_skills && st.used_skills_style !== 'hidden' && e.usedSkills) {
+    const usedList = splitSkills(e.usedSkills);
+    if (st.show_used_skills && st.used_skills_style !== 'hidden' && usedList.length > 0) {
       if (st.used_skills_style === 'inline') {
         usedSkillsEl = (
-          <p data-block data-gap-role="exp-used" style={{ ...mutedStyle, margin: '3px 0 0' }}>
+          <p data-block data-gap-role="exp-used" style={{ ...bodyStyle, margin: `${CONTRIBUTIONS_GAP_PX}px 0 0`, fontSize: base * 0.95 }}>
             <span style={{ fontWeight: 700, color: c.heading }}>Technologies: </span>
-            {renderRich(e.usedSkills)}
+            {usedList.join(', ')}
           </p>
         );
       } else if (st.used_skills_style === 'label') {
         usedSkillsEl = (
-          <p data-block data-gap-role="exp-used" style={{ ...bodyStyle, margin: '3px 0 0', fontSize: base * 0.9 }}>
-            <span style={{ fontWeight: 700, color: c.accent }}>Tech &middot; </span>
-            {renderRich(e.usedSkills)}
+          <p data-block data-gap-role="exp-used" style={{ ...bodyStyle, margin: `${CONTRIBUTIONS_GAP_PX}px 0 0`, fontSize: base * 0.95 }}>
+            <span style={{ fontWeight: 700, color: c.accent }}>Tech stack: </span>
+            {usedList.join(', ')}
           </p>
         );
       } else {
         const accent = st.used_skills_style === 'pill';
         usedSkillsEl = (
           <div data-block data-gap-role="exp-used" style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
-            {splitSkills(e.usedSkills).map((s, si) => skillChip(s, si, accent))}
+            {usedList.map((s, si) => skillChip(s, si, accent))}
           </div>
         );
       }
@@ -1393,7 +1407,7 @@ export function ResumePreview({ design, profile, paged = false, letter = null }:
   const mLeftPx = mSides.left * PT_TO_PX;
 
   const fontStack = useMemo(() => {
-    const serif = ['Georgia', 'Cambria', 'Times New Roman', 'Garamond'];
+    const serif = ['Georgia', 'Cambria', 'Times New Roman', 'Garamond', 'Source Serif 4', 'Lora'];
     const fallback = serif.includes(t.font_family) ? 'serif' : 'sans-serif';
     // Render with the same font the .docx/PDF uses so wrapping + page breaks match.
     // Calibri designs render with the bundled, metric-identical Carlito (the original

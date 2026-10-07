@@ -33,16 +33,12 @@ import { PageTitle } from '@/components/app/PageTitle';
 import { cn } from '@/lib/utils';
 import { BrandedLoader } from '@/components/layout/BrandedLoader';
 import { ThemeGallery } from '@/components/resumeBuilder/ThemeGallery';
-import { TypographyControls } from '@/components/resumeBuilder/TypographyControls';
+import { FontPicker } from '@/components/resumeBuilder/FontPicker';
 import { ColorControls } from '@/components/resumeBuilder/ColorControls';
-import { LayoutControls } from '@/components/resumeBuilder/LayoutControls';
+import { FormatControls } from '@/components/resumeBuilder/FormatControls';
+import { HeaderControls } from '@/components/resumeBuilder/HeaderControls';
 import { HeaderImageControls } from '@/components/resumeBuilder/HeaderImageControls';
-import { SummaryStyleGallery } from '@/components/resumeBuilder/SummaryStyleGallery';
-import { SkillsStyleGallery } from '@/components/resumeBuilder/SkillsStyleGallery';
-import { ExperienceStyleGallery } from '@/components/resumeBuilder/ExperienceStyleGallery';
-import { ExperienceControls } from '@/components/resumeBuilder/ExperienceControls';
-import { EducationControls } from '@/components/resumeBuilder/EducationControls';
-import { CertificatesControls } from '@/components/resumeBuilder/CertificatesControls';
+import { SectionDetails } from '@/components/resumeBuilder/SectionDetails';
 import { SectionManager } from '@/components/resumeBuilder/SectionManager';
 import { ContentControls } from '@/components/resumeBuilder/ContentControls';
 import { Toolbar } from '@/components/resumeBuilder/Toolbar';
@@ -60,12 +56,12 @@ import {
 } from '@/api/documentsApi';
 import type { PaperSize } from '@/types/resumeDesign';
 
-type Tab = 'theme' | 'type' | 'sections' | 'content';
+type Tab = 'style' | 'format' | 'sections' | 'content';
 type DocKind = 'resume' | 'letter';
 
 const TABS: { id: Tab; label: string; icon: typeof Palette }[] = [
-  { id: 'theme', label: 'Theme', icon: Palette },
-  { id: 'type', label: 'Type & layout', icon: Type },
+  { id: 'style', label: 'Style', icon: Palette },
+  { id: 'format', label: 'Format', icon: Type },
   { id: 'sections', label: 'Sections', icon: Rows3 },
   { id: 'content', label: 'Content', icon: PenLine },
 ];
@@ -93,7 +89,7 @@ export function ResumeStudioPage() {
   const store = useResumeBuilderStore();
   const dirty = useResumeBuilderStore(selectIsDirty);
   const [tab, setTab] = useState<Tab>(() =>
-    useResumeBuilderStore.getState().panelTab === 'content' ? 'content' : 'theme',
+    useResumeBuilderStore.getState().panelTab === 'content' ? 'content' : 'style',
   );
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('preview');
   const isDesktop = useMediaQuery('(min-width: 1024px)');
@@ -238,7 +234,7 @@ export function ResumeStudioPage() {
   const hasLetter = Boolean(letter && letter.trim());
 
   const panels: Record<Tab, ReactNode> = {
-    theme: (
+    style: (
       <>
         <ThemeGallery themes={catalog.themes} design={design} onApply={store.applyTheme} />
         <ColorControls
@@ -247,34 +243,34 @@ export function ResumeStudioPage() {
           onChange={store.updateColors}
           onApplyPreset={store.applyColorPreset}
         />
+        <FontPicker design={design} fonts={catalog.fonts} onChange={store.updateTypography} />
       </>
     ),
-    type: (
+    format: (
       <>
-        <TypographyControls design={design} fonts={catalog.fonts} onChange={store.updateTypography} />
-        <LayoutControls design={design} onLayout={store.updateLayout} onSections={store.updateSectionOptions} />
-        <HeaderImageControls design={design} image={design.layout.header_image} onChange={store.setHeaderImage} />
+        <FormatControls
+          design={design}
+          onTypography={store.updateTypography}
+          onLayout={store.updateLayout}
+          onDesign={store.updateDesign}
+        />
+        <HeaderControls design={design} onLayout={store.updateLayout} />
+        {design.layout.header_background === 'image' && (
+          <HeaderImageControls design={design} image={design.layout.header_image} onChange={store.setHeaderImage} />
+        )}
       </>
     ),
     sections: (
       <>
         <SectionManager design={design} onToggle={store.toggleSection} onMove={store.moveSection} />
-        {catalog.summary_styles?.length > 0 && (
-          <SummaryStyleGallery styles={catalog.summary_styles} design={design} onApply={store.applySummaryStyle} />
-        )}
-        {catalog.skills_styles?.length > 0 && (
-          <SkillsStyleGallery styles={catalog.skills_styles} design={design} onApply={store.applySkillsStyle} />
-        )}
-        {catalog.experience_styles?.length > 0 && (
-          <ExperienceStyleGallery
-            styles={catalog.experience_styles}
-            design={design}
-            onApply={store.applyExperienceStyle}
-          />
-        )}
-        <ExperienceControls style={design.sections.experience_style} onChange={store.updateExperienceStyle} />
-        <EducationControls style={design.sections.education_style} onChange={store.updateEducationStyle} />
-        <CertificatesControls style={design.sections.certificates_style} onChange={store.updateCertificatesStyle} />
+        <SectionDetails
+          design={design}
+          onSections={store.updateSectionOptions}
+          onSkills={store.applySkillsStyle}
+          onExperience={store.updateExperienceStyle}
+          onEducation={store.updateEducationStyle}
+          onCertificates={store.updateCertificatesStyle}
+        />
       </>
     ),
     content:

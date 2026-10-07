@@ -100,6 +100,7 @@ export function Toggle({
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={label}
         onClick={() => onChange(!checked)}
         className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-transparent p-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-5 sm:w-9 ${
           checked ? 'bg-brand' : 'bg-input'
@@ -121,11 +122,14 @@ export function Segmented<T extends string | number>({
   value,
   options,
   onChange,
+  compact = false,
 }: {
   label: string;
   value: T;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; title?: string }[];
   onChange: (v: T) => void;
+  /** Short glyph options (bullets) share one row instead of wrapping. */
+  compact?: boolean;
 }) {
   // Root cause of prior overflow: `inline-flex` + default `min-width: auto` on
   // buttons made 4–5 option rows refuse to shrink below label width, so the
@@ -144,8 +148,12 @@ export function Segmented<T extends string | number>({
             key={String(opt.value)}
             type="button"
             onClick={() => onChange(opt.value)}
-            title={opt.label}
-            className={`min-w-0 flex-1 basis-[3.75rem] rounded-md px-1.5 py-1.5 text-center text-[11px] font-medium leading-tight transition sm:basis-[4.25rem] sm:px-2 sm:text-xs ${
+            title={opt.title ?? opt.label}
+            aria-label={opt.title}
+            aria-pressed={value === opt.value}
+            className={`min-w-0 flex-1 rounded-md px-1.5 py-1.5 text-center text-[11px] font-medium leading-tight transition sm:px-2 sm:text-xs ${
+              compact ? 'basis-0' : 'basis-[3.75rem] sm:basis-[4.25rem]'
+            } ${
               value === opt.value
                 ? 'bg-card text-brand shadow-sm ring-1 ring-border'
                 : 'text-muted-foreground hover:text-foreground'

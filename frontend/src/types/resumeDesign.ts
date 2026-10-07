@@ -360,7 +360,7 @@ export const DEFAULT_EXPERIENCE_STYLE: ExperienceStyle = {
   project_style: 'label',
   intro_style: 'plain',
   marker: 'dot',
-  label_style: 'plain',
+  label_style: 'bold',
   used_skills_style: 'inline',
   badge_style: 'inline',
   show_employment_type: true,

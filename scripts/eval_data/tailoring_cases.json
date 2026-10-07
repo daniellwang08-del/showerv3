@@ -1,0 +1,1186 @@
+[
+  {
+    "id": 1,
+    "brief": "Senior Full Stack Engineer (React, TypeScript, Node.js, PostgreSQL, AWS) at a fintech payments startup",
+    "job_description": "About PayBridge Labs\nPayBridge Labs is a venture-backed fintech payments startup building modern payment orchestration, merchant onboarding, and reconciliation tools for software platforms and digital marketplaces. Our customers use PayBridge to route card and ACH payments, manage payouts, reduce payment failures, and understand transaction risk in real time. We are a small, product-focused engineering team that values ownership, pragmatic architecture, and close collaboration with product, design, compliance, and customer success.\n\nRole summary\nWe are hiring a Senior Full Stack Engineer to help build the next generation of our payments platform. You will work across our React and TypeScript frontend, Node.js services, PostgreSQL data layer, and AWS infrastructure. This role is ideal for someone who has shipped production SaaS products, enjoys solving complex business and data problems, and wants to have a meaningful impact on a growing fintech product.\n\nResponsibilities\n- Design, build, and maintain customer-facing web applications using React, TypeScript, and modern frontend patterns.\n- Develop reliable backend services and APIs in Node.js for payment flows, merchant configuration, reporting, reconciliation, and internal operations.\n- Model data and write efficient queries in PostgreSQL for transaction-heavy workflows.\n- Collaborate with product managers and designers to turn ambiguous requirements into secure, scalable features.\n- Improve system observability, test coverage, CI/CD workflows, and operational reliability.\n- Work with AWS services to deploy, monitor, and scale applications in production.\n- Participate in architecture discussions, code reviews, incident response, and technical planning.\n- Mentor other engineers and help raise the quality of our engineering practices.\n- Partner with compliance and security stakeholders to build features that support auditability, data protection, and payment industry expectations.\n\nRequired qualifications\n- 6+ years of professional software engineering experience, including significant full stack development.\n- Strong hands-on experience with React and TypeScript in production applications.\n- Professional experience building backend services with Node.js, preferably using frameworks such as Express, NestJS, Fastify, or similar.\n- Solid PostgreSQL experience, including schema design, indexing, migrations, and query optimization.\n- Experience deploying or operating applications on AWS, such as ECS, Lambda, RDS, S3, CloudWatch, SQS, or similar services.\n- Strong understanding of REST APIs, authentication, authorization, and secure coding practices.\n- Experience with automated testing, code reviews, CI/CD, and production debugging.\n- Ability to communicate clearly, make pragmatic tradeoffs, and work effectively in a fast-moving startup environment.\n\nNice-to-haves\n- Experience in payments, banking, lending, accounting, or another regulated financial domain.\n- Familiarity with payment processors, ACH, card networks, payouts, ledger systems, or reconciliation workflows.\n- Experience with event-driven architecture, queues, and asynchronous processing.\n- Knowledge of infrastructure as code tools such as Terraform or AWS CDK.\n- Experience with SOC 2, PCI DSS, or other compliance-oriented engineering practices.\n- Familiarity with analytics, experimentation, or data visualization for financial operations teams.\n\nBenefits\n- Competitive salary and meaningful equity package.\n- Medical, dental, and vision coverage for employees and dependents.\n- Flexible PTO and paid company holidays.\n- Remote-friendly work with quarterly team gatherings.\n- Home office stipend and monthly wellness allowance.\n- 401(k) plan with company match.\n- Learning budget for conferences, books, and professional development.\n- Opportunity to help shape the engineering culture and technical direction of an early-stage fintech company.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Rosen",
+      "profile_title": "Senior Full Stack Software Engineer",
+      "profile_email": "maya.rosen@example.com",
+      "profile_summary": "Full stack engineer with 9 years of experience building SaaS platforms, customer portals, internal operations tools, and data-heavy web applications. Strongest in React, TypeScript, Python and API design, with recent Node.js work on smaller services. Comfortable working with product teams, owning features end to end, and improving messy systems over time. Interested in fintech and payments, though most of my background is in logistics, subscription software, and B2B marketplaces.",
+      "technical_skills": [
+        {
+          "category": "Frontend & Libraries",
+          "skills": "React, TypeScript, JavaScript, Next.js, Redux Toolkit, React Query, HTML/CSS, Tailwind, Storybook, Jest, Testing Library"
+        },
+        {
+          "category": "Backend & APIs",
+          "skills": "Node.js, Express, Python, Django, FastAPI, REST APIs, GraphQL basics, OAuth2, JWT, background jobs"
+        },
+        {
+          "category": "Database & Storage",
+          "skills": "PostgreSQL, MySQL, Redis, DynamoDB, SQL tuning, migrations, S3"
+        },
+        {
+          "category": "Cloud / DevOps",
+          "skills": "AWS ECS, Lambda, RDS, CloudWatch, SQS, Docker, GitHub Actions, CircleCI, Terraform basics"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Datadog, Sentry, Jira, Figma, LaunchDarkly, Agile, incident support, PCI awareness but not hands-on certification work"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "LedgerLoop Software",
+          "job_title": "Senior Full Stack Engineer",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Remote, US",
+          "project_title": "Subscription Billing Operations Portal",
+          "project_intro": "Built tools used by finance and support teams to manage customer billing events, refunds, plan changes, and invoice investigations for a B2B SaaS platform.",
+          "contributions": [
+            "Led development of a React and TypeScript operations console that reduced average billing ticket handling time by about 28%.",
+            "Built several Node.js and Express APIs for invoice search, customer account updates, and refund approval workflows.",
+            "Reworked PostgreSQL tables and indexes for invoice event history, cutting one common report query from 14 seconds to under 2 seconds.",
+            "Partnered with product and finance stakeholders to define audit trail behavior for sensitive account changes.",
+            "Added GitHub Actions checks, Jest tests, and better error logging in Sentry. Not perfect coverage, but the critical paths improved a lot.",
+            "Helped with on-call rotation and production debugging during billing batch failures."
+          ],
+          "used_skills": "React,TypeScript,Node.js,Express,PostgreSQL,AWS RDS,S3,GitHub Actions,Sentry,Jest"
+        },
+        {
+          "company_name": "HarborStack",
+          "job_title": "Full Stack Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Boston, MA",
+          "project_title": "Marketplace Vendor Management Platform",
+          "project_intro": "Worked on a marketplace platform for managing vendor onboarding, order exceptions, approvals, and operational dashboards.",
+          "contributions": [
+            "Built React dashboard pages for vendor onboarding status, document collection, and exception queues.",
+            "Created REST endpoints in Python FastAPI and Django for workflow transitions and admin actions.",
+            "Designed PostgreSQL schemas for vendor profiles and approval history, with migrations and rollback plans.",
+            "Implemented role-based access for internal users and vendor users using JWTs and permission checks.",
+            "Worked with AWS Lambda and SQS for asynchronous notification jobs, although infrastructure was mostly handled by a platform team.",
+            "Did a lot of bug fixing and cleanup in older frontend code that had inconsistent state management."
+          ],
+          "used_skills": "React, TypeScript, Python,FastAPI,Django,PostgreSQL,Redis,AWS Lambda,SQS,Docker"
+        },
+        {
+          "company_name": "Northline Analytics",
+          "job_title": "Software Engineer",
+          "period_start": "Jan 2016",
+          "period_end": "Jun 2018",
+          "location": "Chicago, IL",
+          "project_title": "Logistics Reporting and Forecasting Suite",
+          "project_intro": "Developed web applications and APIs for transportation customers to review shipment performance, carrier costs, and service-level trends.",
+          "contributions": [
+            "Delivered reusable React components for charts, filter panels, and saved report views.",
+            "Built API endpoints in Django for reporting data and export jobs.",
+            "Wrote SQL for large reporting tables in PostgreSQL and helped tune slow dashboard loads.",
+            "Set up nightly jobs that generated CSV exports for enterprise customers.",
+            "Worked directly with customer success to troubleshoot confusing data issues and explain what the product was doing.",
+            "Helped migrate a few legacy pages from jQuery to React, but some old code stayed around."
+          ],
+          "used_skills": "React, JavaScript, Django,Python,PostgreSQL,MySQL,Redis,Jenkins"
+        },
+        {
+          "company_name": "BrightCart Labs",
+          "job_title": "Frontend Engineer",
+          "period_start": "Aug 2013",
+          "period_end": "Dec 2015",
+          "location": "New York, NY",
+          "project_title": "Ecommerce Admin Tools",
+          "project_intro": "Built admin UI features for a small ecommerce software company serving independent retailers.",
+          "contributions": [
+            "Created inventory, order search, and customer service screens using JavaScript and early React.",
+            "Worked with backend engineers to define REST API payloads and error states.",
+            "Improved form validation and UI feedback for several high-traffic admin workflows.",
+            "Wrote basic unit tests and manual QA notes before releases.",
+            "Learned a lot about shipping software quickly in a small team."
+          ],
+          "used_skills": "JavaScript,React,HTML,CSS,REST APIs,Git,Jasmine"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Illinois Urbana-Champaign",
+          "degree": "B.S. in Computer Science",
+          "period_start": "2009",
+          "period_end": "2013"
+        }
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "brief": "Data Engineer (Spark, Airflow, Snowflake, dbt, Python) at a healthcare analytics company",
+    "job_description": "About ClearPath Health Analytics\nClearPath Health Analytics is a healthcare data and insights company helping payers, provider groups, and value-based care organizations make better decisions using trusted data products. Our platform brings together claims, eligibility, clinical, pharmacy, and operational datasets to support population health, quality improvement, cost management, and care coordination. We are a remote-friendly team with offices in Denver and Boston, and we care deeply about data quality, patient privacy, and building systems that scale responsibly.\n\nRole Summary\nWe are hiring a Data Engineer to join our Data Platform team. In this role, you will build and maintain batch and near-real-time data pipelines that power analytics, reporting, and machine learning use cases across healthcare domains. You will work with Spark, Airflow, Snowflake, dbt, and Python to ingest, transform, validate, and model complex healthcare datasets. The ideal candidate has hands-on experience with modern cloud data platforms, understands data engineering best practices, and can collaborate closely with analytics engineers, data scientists, product managers, and compliance stakeholders.\n\nResponsibilities\n- Design, build, and maintain scalable data pipelines using Python, Apache Spark, and orchestration tools such as Airflow.\n- Develop and optimize Snowflake data models, tables, views, and warehouse usage patterns for analytics workloads.\n- Build and maintain dbt models, tests, documentation, and lineage for core data marts and reusable analytics layers.\n- Ingest and transform healthcare data sources including claims, eligibility files, provider rosters, clinical feeds, and third-party reference datasets.\n- Partner with analytics engineers and business stakeholders to translate reporting requirements into reliable data products.\n- Implement data quality checks, monitoring, alerting, and incident response processes for production pipelines.\n- Improve pipeline performance, cost efficiency, and reliability through code reviews, testing, and platform best practices.\n- Work with security and compliance teams to ensure data handling aligns with HIPAA, SOC 2, and internal governance standards.\n- Participate in agile planning, technical design discussions, and documentation of data architecture decisions.\n\nRequired Qualifications\n- 4+ years of professional data engineering experience building production data pipelines.\n- Strong Python programming skills for data processing, automation, and integration work.\n- Hands-on experience with Apache Spark or PySpark in production or large-scale data processing environments.\n- Experience orchestrating workflows with Apache Airflow or a comparable scheduler.\n- Strong SQL skills and experience with a cloud data warehouse such as Snowflake, BigQuery, or Redshift.\n- Experience designing dimensional models, data marts, or analytics-ready datasets.\n- Familiarity with CI/CD, version control with Git, and software engineering practices for data projects.\n- Ability to troubleshoot complex data issues and communicate clearly with technical and non-technical partners.\n\nNice-to-Haves\n- Direct experience with Snowflake and dbt in a production analytics environment.\n- Healthcare data experience, especially medical claims, eligibility, HL7, FHIR, or quality measures.\n- Experience with AWS services such as S3, Glue, Lambda, EMR, or IAM.\n- Knowledge of data governance, privacy, and security practices in regulated environments.\n- Experience with streaming tools such as Kafka or Kinesis.\n- Familiarity with Terraform, Docker, Kubernetes, or other infrastructure automation tools.\n- Exposure to observability tools such as Datadog, Monte Carlo, Great Expectations, or OpenLineage.\n\nBenefits\n- Competitive salary and annual performance bonus.\n- Medical, dental, and vision coverage with company-paid options.\n- 401(k) plan with employer match.\n- Flexible PTO, paid holidays, and paid parental leave.\n- Remote-first work environment with optional office hubs.\n- Annual learning budget for conferences, certifications, and courses.\n- Home office stipend and monthly wellness reimbursement.\n- Opportunity to work on data products that improve healthcare outcomes at scale.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Rosen",
+      "profile_title": "Senior Data Engineer",
+      "profile_email": "maya.rosen@example.com",
+      "profile_summary": "Data engineer with 8 years of experience building cloud data pipelines, analytics datasets, and reporting platforms for SaaS, insurance, and healthcare-adjacent companies. Strong with Python, SQL, AWS, Redshift, BigQuery, Airflow, and batch processing patterns. Some experience with PySpark and healthcare claims extracts, but still ramping up on Snowflake and dbt in production settings. Enjoys cleaning up messy pipelines, improving data quality, and working closely with analysts and product teams.",
+      "technical_skills": [
+        {
+          "category": "Languages & scripting",
+          "skills": "Python, SQL, Bash, Scala basics, R lightly"
+        },
+        {
+          "category": "Data Platforms / Warehouses",
+          "skills": "Redshift, BigQuery, PostgreSQL, Snowflake fundamentals, S3, Athena"
+        },
+        {
+          "category": "Pipelines and Orchestration",
+          "skills": "Airflow, AWS Glue, Step Functions, cron, dbt beginner, Luigi"
+        },
+        {
+          "category": "Big Data-ish",
+          "skills": "PySpark, Spark SQL, EMR, pandas, parquet, partitioning"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Git, Docker, Terraform basics, Jira, Looker, Tableau, Great Expectations, HIPAA awareness"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "Northstar Member Analytics",
+          "job_title": "Senior Data Engineer",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Remote",
+          "project_title": "Claims and Member Analytics Data Platform",
+          "project_intro": "Built pipelines and curated data sets for a healthcare benefits analytics product used by employer groups and care management teams.",
+          "contributions": [
+            "Designed Python and Airflow pipelines that ingested weekly eligibility, claims, and provider files from SFTP and S3 into a Redshift-based analytics platform.",
+            "Reduced claims load time from about 7 hours to under 2 hours by converting CSV-heavy processing to parquet staging and better partitioning.",
+            "Created SQL models for member months, allowed amounts, utilization categories, and high-cost claimant reporting, not always perfect but widely used by analysts.",
+            "Added Great Expectations checks for row counts, null member IDs, duplicate claim lines, and date range drift, cutting several recurring support issues.",
+            "Worked with compliance and security teams on PHI handling, access reviews, and audit questions related to HIPAA controls.",
+            "Started a proof of concept moving one data mart into Snowflake and dbt, mostly focused on learning model structure and tests."
+          ],
+          "used_skills": "Python,Airflow,Redshift,S3,SQL,Great Expectations,Parquet,Healthcare claims"
+        },
+        {
+          "company_name": "BrightLedger Software",
+          "job_title": "Data Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Austin, TX",
+          "project_title": "Customer Usage and Billing Warehouse",
+          "project_intro": "Supported a multi-tenant SaaS analytics warehouse combining product events, subscription data, billing data, and customer success metrics.",
+          "contributions": [
+            "Maintained Airflow DAGs for product event ingestion, account snapshots, and daily finance reporting feeds.",
+            "Built PySpark jobs on EMR to process semi-structured JSON events from S3 into curated tables for BigQuery and Redshift consumers.",
+            "Helped migrate legacy nightly scripts into version-controlled workflows with retries, SLAs, and basic alerting.",
+            "Partnered with analysts to define common customer usage metrics, although metric ownership was sometimes fuzzy.",
+            "Improved pipeline failure visibility by adding Slack alerts and run metadata tables.",
+            "Wrote onboarding docs for new engineers covering DAG patterns, backfills, and common SQL gotchas."
+          ],
+          "used_skills": "PySpark,EMR,Airflow,Python,SQL,BigQuery,Redshift,S3,Git"
+        },
+        {
+          "company_name": "Cedar Grove Insurance Services",
+          "job_title": "Analytics Engineer",
+          "period_start": "May 2016",
+          "period_end": "Jun 2018",
+          "location": "Chicago, IL",
+          "project_title": "Policy and Claims Reporting Modernization",
+          "project_intro": "Worked on a small data team modernizing reporting pipelines for property and casualty claims operations.",
+          "contributions": [
+            "Rebuilt several slow stored procedure reports into cleaner SQL transformations and scheduled batch jobs.",
+            "Created data marts for claims adjuster workload, policy renewals, loss ratios, and open reserves.",
+            "Used Python scripts to reconcile source system extracts with warehouse tables and generate exception files.",
+            "Supported Tableau dashboards for operations leaders and fixed issues when numbers did not match expectations.",
+            "Learned a lot about insurance claims data, effective dates, late arriving records, and the pain of unclear definitions."
+          ],
+          "used_skills": "SQL,Python,PostgreSQL,Tableau,SSIS,Data modeling"
+        },
+        {
+          "company_name": "OrbitBridge Media",
+          "job_title": "BI Developer",
+          "period_start": "Aug 2014",
+          "period_end": "Apr 2016",
+          "location": "New York, NY",
+          "project_title": "Advertising Performance Reporting",
+          "project_intro": "Developed internal dashboards and automated reporting for digital advertising campaign performance.",
+          "contributions": [
+            "Built daily ETL jobs pulling campaign delivery data from vendor APIs into PostgreSQL.",
+            "Created dashboards for impressions, clicks, spend, conversion rates, and pacing against budget.",
+            "Wrote messy but useful Python scripts to clean inconsistent vendor files and normalize campaign naming.",
+            "Helped sales and account management teams answer ad hoc questions, sometimes with same-day turnaround.",
+            "Documented common reporting definitions after repeated confusion between teams."
+          ],
+          "used_skills": "Python,SQL,PostgreSQL,APIs,Excel,Looker"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Illinois at Chicago",
+          "degree": "B.S. in Information Systems",
+          "period_start": "2010",
+          "period_end": "2014"
+        }
+      ]
+    }
+  },
+  {
+    "id": 3,
+    "brief": "Machine Learning Engineer (LLMs, PyTorch, RAG, MLOps on GCP) at a B2B SaaS company",
+    "job_description": "Company intro\nNorthstar Relay is a B2B SaaS company helping customer success, sales engineering, and support teams turn product knowledge into accurate answers for enterprise buyers and customers. Our platform connects to docs, tickets, CRM notes, call transcripts, and internal wikis to power AI search, workflow automation, and account intelligence. We serve mid-market and enterprise software companies and are growing our applied AI team after a recent Series B.\n\nRole summary\nWe are hiring a Machine Learning Engineer to build production LLM features with a focus on retrieval-augmented generation, model evaluation, and reliable deployment on Google Cloud Platform. You will work with product managers, backend engineers, data engineers, and customer-facing teams to ship AI capabilities that are useful, measurable, and safe for business users. This is a hands-on engineering role for someone who enjoys PyTorch, experimentation, and the realities of operating ML systems in production.\n\nResponsibilities\n- Design, build, and maintain RAG pipelines for enterprise knowledge sources, including document ingestion, chunking, embeddings, retrieval, reranking, prompting, and response generation.\n- Develop and fine-tune LLM-based features using PyTorch and modern transformer architectures where appropriate.\n- Create offline and online evaluation frameworks for answer quality, hallucination risk, latency, cost, and customer-specific success metrics.\n- Build model serving, monitoring, and retraining workflows on GCP using services such as Vertex AI, Cloud Run, GKE, BigQuery, Pub/Sub, and Cloud Storage.\n- Collaborate with backend engineers to expose ML services through secure APIs and integrate with a multi-tenant SaaS architecture.\n- Improve observability for ML systems, including drift detection, prompt/version tracking, data quality checks, and incident response playbooks.\n- Partner with security and compliance teams to handle sensitive customer data responsibly.\n- Mentor other engineers on LLM development practices, code quality, and reproducible experimentation.\n\nRequired qualifications\n- 5+ years of professional software or machine learning engineering experience, including at least 2 years building production ML systems.\n- Strong Python programming skills and hands-on experience with PyTorch.\n- Practical experience with LLMs, embeddings, vector search, RAG, prompt engineering, and model evaluation.\n- Experience deploying ML services in production on GCP or a comparable cloud platform.\n- Familiarity with MLOps practices such as CI/CD, model registry, experiment tracking, monitoring, containerization, and automated testing.\n- Solid understanding of distributed systems, APIs, data pipelines, and SQL.\n- Ability to communicate tradeoffs clearly to technical and non-technical stakeholders.\n\nNice-to-haves\n- Experience with Vertex AI, GKE, Dataflow, BigQuery, or Terraform on GCP.\n- Experience with vector databases such as Pinecone, Weaviate, Milvus, Chroma, or pgvector.\n- Experience with LangChain, LlamaIndex, Hugging Face Transformers, vLLM, or similar tooling.\n- Familiarity with SOC 2, GDPR, data residency, or enterprise security requirements.\n- Previous experience in B2B SaaS, customer support, CRM, sales enablement, or knowledge management products.\n\nBenefits\n- Competitive salary, equity, and annual performance bonus eligibility.\n- Medical, dental, and vision coverage for employees and dependents.\n- Flexible PTO, paid company holidays, and parental leave.\n- Remote-friendly work in the United States and Canada, with optional offices in Austin and Toronto.\n- Home office stipend, learning budget, and conference support.\n- Opportunity to shape the AI platform used by enterprise teams every day.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Raman",
+      "profile_title": "Senior Machine Learning Engineer",
+      "profile_email": "maya.raman@example.com",
+      "profile_summary": "Machine learning engineer with 8 years of experience building NLP, recommendation, and predictive analytics systems for SaaS and marketplace products. Most recently focused on LLM-powered search and support automation using embeddings, vector databases, and Python services. Strong in PyTorch, model evaluation, and production ML workflows, with deeper cloud experience on AWS than GCP. Enjoys working with product teams to turn ambiguous AI ideas into measurable features.",
+      "technical_skills": [
+        {
+          "category": "ML / NLP stuff",
+          "skills": "Python, PyTorch, scikit-learn, Hugging Face Transformers, sentence-transformers, spaCy, XGBoost, pandas, NumPy"
+        },
+        {
+          "category": "LLMs, Search, RAG",
+          "skills": "OpenAI API, Claude API, embeddings, prompt engineering, retrieval augmented generation, FAISS, Pinecone, Elasticsearch, LangChain, basic LlamaIndex"
+        },
+        {
+          "category": "Backend & APIs",
+          "skills": "FastAPI, Flask, REST APIs, GraphQL basics, Celery, Kafka, Docker, Kubernetes"
+        },
+        {
+          "category": "Cloud / MLOps",
+          "skills": "AWS SageMaker, EKS, Lambda, S3, CloudWatch, MLflow, Weights & Biases, GitHub Actions, Terraform basics, some GCP BigQuery and Cloud Storage"
+        },
+        {
+          "category": "Database & Storage",
+          "skills": "PostgreSQL, Redis, DynamoDB, Snowflake, BigQuery, S3, pgvector"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Git, Jira, Datadog, Looker, dbt exposure, A/B testing, model monitoring, Linux"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "KentroDesk",
+          "job_title": "Senior Machine Learning Engineer",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Remote, US",
+          "project_title": "LLM Search and Support Copilot",
+          "project_intro": "Built AI-assisted search and answer generation for a B2B helpdesk platform serving software vendors and internal support teams.",
+          "contributions": [
+            "Designed a RAG pipeline over help center articles, resolved tickets, and release notes using sentence-transformer embeddings, Pinecone, and a FastAPI service.",
+            "Improved accepted answer rate from 41% to 63% in a staged rollout by tuning chunking, retrieval filters, and prompt templates.",
+            "Built evaluation sets with support managers and created offline scoring for groundedness, citation quality, and answer usefulness.",
+            "Converted several prototype notebooks into production Python services with Docker, Kubernetes, CI checks, and basic runbooks.",
+            "Partnered with security team on PII redaction before indexing customer ticket text.",
+            "Some work was messy at first, but we stabilized latency to under 2.5 seconds p95 for the main answer endpoint."
+          ],
+          "used_skills": "Python,PyTorch,Hugging Face,OpenAI API,Pinecone,FastAPI,Docker,Kubernetes,AWS EKS,MLflow,PostgreSQL"
+        },
+        {
+          "company_name": "BrightCart Analytics",
+          "job_title": "Machine Learning Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Chicago, IL",
+          "project_title": "Personalization Models for Retail SaaS",
+          "project_intro": "Worked on recommendation and ranking models for a merchandising analytics product used by online retailers.",
+          "contributions": [
+            "Developed PyTorch ranking models that combined user behavior, product attributes, and inventory signals for personalized product recommendations.",
+            "Reduced nightly training time by around 35% by improving feature generation jobs and removing duplicate joins in Snowflake.",
+            "Served models behind Flask APIs and collaborated with backend engineers on caching and fallback behavior.",
+            "Added MLflow experiment tracking so we could compare model versions without digging through old notebooks.",
+            "Monitored conversion lift with A/B tests, although attribution was not always clean.",
+            "Helped hire and mentor two junior data scientists on production coding habits."
+          ],
+          "used_skills": "Python, PyTorch, scikit-learn, Snowflake, Flask, Redis,AWS SageMaker,Airflow,MLflow,Looker"
+        },
+        {
+          "company_name": "TraceWell Health",
+          "job_title": "Data Scientist",
+          "period_start": "May 2016",
+          "period_end": "Jun 2018",
+          "location": "Boston, MA",
+          "project_title": "Clinical Notes Classification",
+          "project_intro": "Built NLP models and analytics for a workflow platform used by care coordination teams.",
+          "contributions": [
+            "Created text classification models to route incoming clinical notes and patient messages to the right operations queue.",
+            "Tested TF-IDF baselines, spaCy features, and early transformer models; the simpler model was often easier to explain.",
+            "Built SQL dashboards tracking model errors, queue volume, and manual override rates.",
+            "Worked with compliance stakeholders on de-identification practices and access controls for sensitive data.",
+            "Wrote Python scripts that were useful but not always elegant.",
+            "Improved macro F1 from 0.71 to 0.82 on the main routing task before launch."
+          ],
+          "used_skills": "Python,scikit-learn,spaCy,SQL,PostgreSQL,Tableau,AWS S3,Jupyter"
+        },
+        {
+          "company_name": "Cobalt Ledger",
+          "job_title": "Software Engineer, Data Products",
+          "period_start": "Aug 2014",
+          "period_end": "Apr 2016",
+          "location": "New York, NY",
+          "project_title": "Risk Data APIs",
+          "project_intro": "Contributed to backend services and data pipelines for a financial risk reporting startup.",
+          "contributions": [
+            "Built REST endpoints in Flask for portfolio risk summaries and internal analyst tools.",
+            "Maintained ETL jobs that loaded customer files into PostgreSQL and generated daily reporting tables.",
+            "Added automated tests around data validation after several painful customer import bugs.",
+            "Worked with product managers directly when requirements were changing week to week.",
+            "Learned a lot about writing maintainable APIs and reading production logs."
+          ],
+          "used_skills": "Python,Flask,PostgreSQL,SQL,Redis,Git,Jenkins,Linux"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Illinois Urbana-Champaign",
+          "degree": "M.S. in Computer Science",
+          "period_start": "2012",
+          "period_end": "2014"
+        },
+        {
+          "university_name": "Purdue University",
+          "degree": "B.S. in Applied Mathematics",
+          "period_start": "2008",
+          "period_end": "2012"
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "brief": "Site Reliability Engineer (Kubernetes, Terraform, AWS, Prometheus, incident response) at an e-commerce marketplace",
+    "job_description": "About Cartlane\nCartlane is a fast-growing e-commerce marketplace connecting millions of buyers with independent sellers across home goods, apparel, electronics, and specialty retail. Our platform processes high-volume traffic spikes during promotions, product launches, and seasonal events, and reliability is central to our customer and seller experience. We are building a stronger infrastructure team to improve availability, deployment safety, observability, and incident response across our cloud-native environment.\n\nRole Summary\nWe are looking for a Site Reliability Engineer to join our Infrastructure and Platform Engineering group. In this role, you will help operate and improve our Kubernetes-based production systems running on AWS, build infrastructure with Terraform, strengthen monitoring and alerting with Prometheus, and participate in incident response for customer-facing services. You will work closely with backend engineers, data teams, security, and product groups to make our marketplace more resilient, scalable, and easier to operate.\n\nResponsibilities\n- Operate, maintain, and improve Kubernetes clusters supporting high-traffic marketplace services.\n- Build, review, and maintain infrastructure as code using Terraform across AWS environments.\n- Improve service reliability through SLOs, error budgets, alert tuning, runbooks, and post-incident reviews.\n- Participate in an on-call rotation and lead or support production incident response.\n- Develop automation for deployments, scaling, failover, and routine operational tasks.\n- Partner with engineering teams to improve service observability using Prometheus, Grafana, logs, and tracing tools.\n- Identify performance bottlenecks and reliability risks in distributed systems.\n- Support CI/CD pipelines and safe release practices, including canary deployments and rollback strategies.\n- Help manage AWS services such as EKS, EC2, ALB/NLB, RDS, S3, IAM, Route 53, CloudWatch, and VPC networking.\n- Contribute to security, compliance, cost optimization, and disaster recovery initiatives.\n\nRequired Qualifications\n- 5+ years of experience in infrastructure, DevOps, SRE, platform engineering, or production operations.\n- Hands-on experience running production workloads in AWS.\n- Practical experience with Kubernetes in a production or large staging environment.\n- Experience writing and maintaining Terraform or similar infrastructure as code.\n- Familiarity with Prometheus-based monitoring and alerting.\n- Experience responding to production incidents, writing postmortems, and improving operational processes.\n- Strong Linux, networking, and troubleshooting fundamentals.\n- Experience with CI/CD systems such as GitHub Actions, GitLab CI, Jenkins, CircleCI, or similar.\n- Ability to write scripts or small services in Python, Go, Bash, or similar languages.\n- Clear communication skills and comfort working across engineering teams.\n\nNice-to-Haves\n- Experience supporting e-commerce, payments, marketplace, or other high-traffic customer-facing platforms.\n- Experience with service mesh, OpenTelemetry, distributed tracing, or log aggregation platforms.\n- Familiarity with Argo CD, Helm, Kustomize, or GitOps workflows.\n- Experience with Kafka, Redis, PostgreSQL, or other stateful services in cloud environments.\n- AWS certifications or Kubernetes certifications such as CKA or CKAD.\n- Experience with chaos testing, load testing, or capacity planning for peak events.\n\nBenefits\n- Competitive salary, annual bonus eligibility, and equity grants.\n- Medical, dental, and vision coverage for employees and dependents.\n- Flexible PTO, paid holidays, and parental leave.\n- Remote-friendly work with quarterly team gatherings.\n- Home office stipend and monthly internet reimbursement.\n- Learning budget for conferences, certifications, and technical training.\n- 401(k) with company match.\n- A collaborative engineering culture focused on reliability, ownership, and continuous improvement.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Rosen",
+      "profile_title": "Senior DevOps Engineer",
+      "profile_email": "maya.rosen@example.com",
+      "profile_summary": "DevOps and infrastructure engineer with 8 years of experience supporting cloud platforms, CI/CD, observability, and production operations for SaaS and retail technology companies. Strong background in AWS, Linux, Docker, Jenkins, GitHub Actions, incident support, and automation with Python and Bash. Comfortable working with Kubernetes but not yet the primary cluster owner in most roles. Interested in moving deeper into SRE practices, reliability engineering, and scalable marketplace systems.",
+      "technical_skills": [
+        {
+          "category": "Cloud / Infra",
+          "skills": "AWS EC2, S3, RDS, IAM, VPC, Route 53, CloudWatch, ECS, some EKS, Azure basics"
+        },
+        {
+          "category": "Containers + Deployment",
+          "skills": "Docker, Kubernetes, Helm, ECS, blue/green deployments, GitHub Actions, Jenkins, GitLab CI"
+        },
+        {
+          "category": "IaC and Config",
+          "skills": "Terraform, CloudFormation, Ansible, Packer, Bash scripts"
+        },
+        {
+          "category": "Monitoring / Ops Stuff",
+          "skills": "Grafana, CloudWatch, Datadog, ELK, PagerDuty, Prometheus basics, incident response, runbooks"
+        },
+        {
+          "category": "Languages,Backend & APIs",
+          "skills": "Python, Bash, Node.js, REST APIs, Go beginner, SQL"
+        },
+        {
+          "category": "Database & Storage",
+          "skills": "PostgreSQL, MySQL, Redis, S3, DynamoDB, backup/restore"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Git, Jira, Confluence, Nginx, Linux, TCP/IP, DNS, load balancers, security patching"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "BrightCart Systems",
+          "job_title": "Senior DevOps Engineer",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Remote",
+          "project_title": "Retail SaaS Platform Reliability and AWS Modernization",
+          "project_intro": "BrightCart provides order management and storefront tools for mid-market retailers. I work on the infrastructure team supporting production services across AWS accounts.",
+          "contributions": [
+            "Built and maintained Terraform modules for VPCs, IAM roles, ECS services, RDS databases, S3 buckets, and shared load balancers across dev, staging, and production.",
+            "Helped migrate several containerized services from EC2 instances to ECS Fargate, reducing manual host patching and improving deployment consistency.",
+            "Supported an EKS proof of concept and converted two internal services to Helm charts, but day-to-day Kubernetes ownership stayed with another team.",
+            "Improved alert routing in PagerDuty and Datadog, cutting noisy after-hours pages by around 35% over two quarters.",
+            "Participated in weekly on-call rotation for customer-facing systems and wrote runbooks for checkout API latency, stuck background jobs, and RDS failover checks.",
+            "Created GitHub Actions workflows for build, test, image scan, and deployment steps. Some pipelines are still a little too custom but much better than before.",
+            "Worked with backend engineers during Black Friday readiness testing and found a Redis connection pool issue before launch week."
+          ],
+          "used_skills": "AWS,Terraform,ECS,EKS,Helm,Docker,Datadog,PagerDuty,GitHub Actions,Python,Bash,Redis,RDS"
+        },
+        {
+          "company_name": "North Pier Analytics",
+          "job_title": "DevOps Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Chicago, IL",
+          "project_title": "Cloud Infrastructure and CI/CD for Data Products",
+          "project_intro": "North Pier Analytics built reporting and forecasting tools for logistics and subscription commerce clients.",
+          "contributions": [
+            "Managed AWS infrastructure for web apps, ETL workers, and reporting APIs using Terraform and some CloudFormation.",
+            "Maintained Jenkins pipelines for Python and Node.js services, including automated tests, Docker image builds, and deployments to EC2 and ECS.",
+            "Set up Grafana dashboards using CloudWatch metrics and application logs so teams could actually see error rates and queue depth.",
+            "Handled production support during data pipeline failures, API outages, and database performance problems. Wrote post-incident notes when incidents were customer visible.",
+            "Automated AMI builds with Packer and Ansible, which reduced snowflake server problems.",
+            "Partnered with security consultant on IAM cleanup and removed a lot of overly broad policies."
+          ],
+          "used_skills": "AWS,Terraform,CloudFormation,Jenkins,Docker,EC2,ECS,Grafana,CloudWatch,Ansible,Packer,Python,Node.js"
+        },
+        {
+          "company_name": "LumaTrail Media",
+          "job_title": "Systems Engineer",
+          "period_start": "Jan 2016",
+          "period_end": "Jun 2018",
+          "location": "Denver, CO",
+          "project_title": "Linux Operations for Content Delivery Applications",
+          "project_intro": "LumaTrail Media operated content publishing and analytics applications used by regional media companies.",
+          "contributions": [
+            "Administered Linux servers running Nginx, PHP, Node.js services, MySQL, and internal batch jobs.",
+            "Wrote Bash and Python scripts for log rotation checks, disk cleanup, certificate renewal reminders, and basic deployment tasks.",
+            "Helped move static content and backups into S3, saving storage costs and making restores less painful.",
+            "Supported monitoring with Nagios and later ELK dashboards. Some alerts were basic but caught disk and CPU issues quickly.",
+            "Troubleshot DNS, TLS, slow queries, failed cron jobs, and network issues for production and staging environments.",
+            "Documented common fixes in Confluence and trained two junior support engineers."
+          ],
+          "used_skills": "Linux,Nginx,MySQL,AWS S3,Bash,Python,Nagios,ELK,DNS,TLS"
+        },
+        {
+          "company_name": "Greenhouse Byte Labs",
+          "job_title": "Junior Infrastructure Engineer",
+          "period_start": "Aug 2014",
+          "period_end": "Dec 2015",
+          "location": "Madison, WI",
+          "project_title": "Internal Platform Support",
+          "project_intro": "Greenhouse Byte Labs was a small software consultancy building web applications for education and nonprofit clients.",
+          "contributions": [
+            "Assisted with server provisioning, package upgrades, firewall rules, and routine Linux administration.",
+            "Maintained basic deployment scripts for Rails and Node.js applications.",
+            "Helped developers debug environment differences between local, QA, and production servers.",
+            "Set up simple uptime checks and email alerts for client sites.",
+            "Did a mix of support tickets, documentation, and whatever infrastructure task needed attention."
+          ],
+          "used_skills": "Linux,Ubuntu,Bash,Git,Nginx,PostgreSQL,Node.js,Rails"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Wisconsin-Milwaukee",
+          "degree": "Bachelor of Science in Information Science and Technology",
+          "period_start": "2010",
+          "period_end": "2014"
+        }
+      ]
+    }
+  },
+  {
+    "id": 5,
+    "brief": "Senior iOS Engineer (Swift, SwiftUI, Combine, Core Data, CI for mobile) at a consumer fitness app",
+    "job_description": "About PulsePeak\nPulsePeak is a fast-growing consumer fitness app helping millions of people build sustainable strength, cardio, and mobility routines at home and in the gym. Our product combines guided workouts, personalized plans, wearable insights, streaks, and social motivation to make training feel simple and rewarding. We are a product-led team that cares deeply about polish, accessibility, performance, and earning user trust with every release.\n\nRole Summary\nWe are looking for a Senior iOS Engineer to help shape the next generation of the PulsePeak app. You will build high-quality mobile experiences in Swift, SwiftUI, Combine, and Core Data while collaborating closely with product managers, designers, backend engineers, data scientists, and QA. This role is ideal for someone who enjoys owning features end to end, mentoring other engineers, and improving the technical foundation of a consumer-scale iOS app.\n\nResponsibilities\n- Design, build, test, and maintain iOS features for workout discovery, training plans, activity tracking, subscriptions, notifications, and wearable integrations.\n- Write clean, maintainable Swift code using SwiftUI, Combine, Core Data, and modern Apple frameworks.\n- Partner with product and design to translate user problems into elegant, accessible, and performant mobile experiences.\n- Improve app architecture, state management, offline behavior, caching, and data synchronization.\n- Optimize app startup, scrolling performance, memory usage, and battery impact.\n- Contribute to mobile CI/CD pipelines, automated testing, release workflows, and App Store submissions.\n- Review code, mentor mid-level engineers, and help raise engineering standards across the iOS team.\n- Collaborate with backend teams on API contracts, analytics events, experimentation, and observability.\n- Participate in planning, estimation, incident response, and continuous improvement of development practices.\n\nRequired Qualifications\n- 6+ years of professional software engineering experience, including 4+ years building native iOS applications.\n- Strong production experience with Swift and the iOS SDK.\n- Hands-on experience building complex user interfaces with SwiftUI.\n- Practical experience with Combine or equivalent reactive programming patterns.\n- Experience with Core Data, local persistence, offline-first workflows, or data synchronization.\n- Familiarity with mobile CI/CD tools such as Xcode Cloud, Bitrise, GitHub Actions, CircleCI, or Fastlane.\n- Solid understanding of REST APIs, authentication, JSON, networking, and error handling.\n- Experience writing unit tests and UI tests for iOS applications.\n- Ability to debug performance issues and reason about memory, concurrency, and app lifecycle behavior.\n- Clear communication skills and comfort working in a cross-functional product environment.\n\nNice-to-Haves\n- Experience in health, fitness, wellness, wearables, or subscription-based consumer apps.\n- Familiarity with HealthKit, WatchKit, StoreKit, Push Notifications, or App Intents.\n- Experience migrating UIKit screens to SwiftUI or maintaining a hybrid UIKit/SwiftUI app.\n- Knowledge of Swift concurrency, async/await, actors, or structured concurrency.\n- Experience with experimentation platforms, analytics instrumentation, or feature flags.\n- Contributions to shared design systems, internal developer tooling, or modular app architecture.\n\nBenefits\n- Competitive salary and equity package.\n- Medical, dental, and vision coverage for employees and dependents.\n- Flexible PTO, paid holidays, and parental leave.\n- Annual wellness stipend, fitness app membership, and home office support.\n- Remote-friendly work environment with optional office hubs in Austin and New York.\n- Learning budget for conferences, books, and professional development.\n- A collaborative team that values healthy debate, inclusion, and shipping products people love.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Kessler",
+      "profile_title": "Senior iOS Developer",
+      "profile_email": "maya.kessler@examplemail.com",
+      "profile_summary": "iOS engineer with 8 years of experience building consumer mobile apps in Swift and UIKit, with recent production work in SwiftUI and reactive MVVM patterns. I enjoy improving user-facing features, cleaning up app architecture, and working closely with product and design. Strong background in REST APIs, local storage, release coordination, and performance fixes. Interested in health and fitness products, though most of my recent work has been in media, food delivery, and personal finance.",
+      "technical_skills": [
+        {
+          "category": "iOS / Mobile",
+          "skills": "Swift, UIKit, SwiftUI, Objective-C basics, Auto Layout, XCTest, XCUITest, StoreKit, Push Notifications, Core Animation"
+        },
+        {
+          "category": "Frontend & Libraries",
+          "skills": "MVVM,Coordinator pattern, Combine basics, RxSwift, SnapKit, Kingfisher, Alamofire, Swift Package Manager"
+        },
+        {
+          "category": "Backend & APIs",
+          "skills": "REST, GraphQL client work, JSON, OAuth2, Firebase, Charles Proxy, Postman"
+        },
+        {
+          "category": "Database & Storage",
+          "skills": "SQLite, Realm, UserDefaults, Keychain, Core Data light usage, offline caching"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Git, GitHub Actions, Fastlane, Jenkins, Jira, Figma, App Store Connect, Crashlytics, Amplitude"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "BrightBite Labs",
+          "job_title": "Senior iOS Engineer",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Seattle, WA",
+          "project_title": "Meal planning and grocery subscription app",
+          "project_intro": "Worked on a consumer app used by subscribers to plan weekly meals, manage grocery deliveries, and track nutrition preferences.",
+          "contributions": [
+            "Built SwiftUI screens for meal plan editing, recipe filtering, and subscription upsell flows inside a mostly UIKit app.",
+            "Refactored several networking and view model layers toward MVVM with reactive bindings using RxSwift and some Combine.",
+            "Improved checkout reliability by adding retry handling, clearer API errors, and better logging with Crashlytics.",
+            "Reduced cold start time by about 18% by delaying noncritical SDK initialization and cleaning up launch work.",
+            "Helped maintain Fastlane lanes for beta distribution and App Store release builds, but was not the main CI owner.",
+            "Partnered with designers on accessibility fixes including Dynamic Type, contrast, and VoiceOver labels."
+          ],
+          "used_skills": "Swift,SwiftUI,UIKit,RxSwift,Combine,REST,Fastlane,Crashlytics,Amplitude"
+        },
+        {
+          "company_name": "Northstar Wallet",
+          "job_title": "iOS Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Portland, OR",
+          "project_title": "Personal budgeting mobile app",
+          "project_intro": "Developed iOS features for a personal finance app focused on budgeting, spending insights, account connections, and bill reminders.",
+          "contributions": [
+            "Owned budgeting dashboard improvements from API contract review through release and post-launch bug fixes.",
+            "Implemented local caching with Realm for transaction lists and spending category summaries.",
+            "Wrote XCTest coverage for currency formatting, account state handling, and date-based budget calculations.",
+            "Worked on push notification flows for bill reminders and low-balance alerts.",
+            "Fixed a lot of UI bugs around empty states, loading states, and weird bank data.",
+            "Collaborated with backend engineers on OAuth2 connection flows and edge cases for expired credentials."
+          ],
+          "used_skills": "Swift, UIKit, Realm, XCTest, OAuth2, REST,Jenkins,Jira"
+        },
+        {
+          "company_name": "StreamNest Media",
+          "job_title": "Mobile Software Engineer",
+          "period_start": "May 2016",
+          "period_end": "Jun 2018",
+          "location": "Los Angeles, CA",
+          "project_title": "Video streaming app for independent creators",
+          "project_intro": "Supported a native iOS streaming application with creator channels, subscriptions, playlists, and personalized recommendations.",
+          "contributions": [
+            "Built UIKit screens for browsing channels, managing playlists, and viewing subscription status.",
+            "Integrated StoreKit purchase and restore flows for monthly creator subscriptions.",
+            "Added analytics events to improve funnel visibility, including signup, trial conversion, and video completion.",
+            "Helped migrate networking from older Objective-C services to Swift wrappers.",
+            "Troubleshot memory issues in image-heavy collection views and reduced some crash clusters.",
+            "Created simple UI tests for login and playback smoke checks."
+          ],
+          "used_skills": "Swift,Objective-C,UIKit,StoreKit,REST,XCUITest,Firebase"
+        },
+        {
+          "company_name": "RideSprout",
+          "job_title": "Junior iOS Developer",
+          "period_start": "Sep 2014",
+          "period_end": "Apr 2016",
+          "location": "Denver, CO",
+          "project_title": "Local transportation booking app",
+          "project_intro": "Contributed to an early-stage app for booking shuttles and local rides, with live trip status and driver communication.",
+          "contributions": [
+            "Implemented basic booking confirmation and trip detail screens using Objective-C and early Swift.",
+            "Worked with senior developers to add map annotations, route status updates, and simple polling for trip changes.",
+            "Fixed layout problems across iPhone screen sizes.",
+            "Added Keychain storage for auth tokens after a security review.",
+            "Did QA builds and helped prepare App Store screenshots and release notes."
+          ],
+          "used_skills": "Objective-C,Swift,UIKit,MapKit,Keychain,Git,App Store Connect"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Colorado Boulder",
+          "degree": "B.S. in Computer Science",
+          "period_start": "2010",
+          "period_end": "2014"
+        }
+      ]
+    }
+  },
+  {
+    "id": 6,
+    "brief": "QA Automation Engineer (Playwright, Cypress, API testing, Java or TypeScript, CI) at an insurance company",
+    "job_description": "About NorthBridge Mutual\nNorthBridge Mutual is a regional insurance company providing auto, home, life, and small business coverage to customers across the Midwest and Southeast. We are modernizing our digital quoting, policy servicing, claims intake, and agent portal platforms while maintaining the reliability and security expected in a regulated financial services environment. Our technology teams work closely with product, actuarial, underwriting, and claims operations to deliver software that is dependable, accessible, and easy to use.\n\nRole summary\nWe are seeking a QA Automation Engineer to join our Quality Engineering team. In this role, you will design, build, and maintain automated tests for web applications, APIs, and integration workflows used by customers, agents, and internal associates. You will work primarily with Playwright and Cypress, contribute to TypeScript or Java based test frameworks, and help embed automated quality checks into CI pipelines. The ideal candidate is hands-on, collaborative, comfortable analyzing requirements, and able to balance test coverage, maintainability, and delivery timelines.\n\nResponsibilities\n- Build and maintain end-to-end automated tests for customer and agent-facing web applications using Playwright and Cypress.\n- Develop API tests for REST services supporting quoting, billing, claims, policy documents, and authentication workflows.\n- Create reusable test utilities, page objects, fixtures, and test data strategies in TypeScript and/or Java.\n- Integrate automated test suites into CI pipelines using tools such as GitHub Actions, Jenkins, GitLab CI, or Azure DevOps.\n- Partner with developers, product owners, business analysts, and manual QA analysts to define acceptance criteria and test coverage.\n- Review user stories, technical designs, and production defects to identify risk areas and automation opportunities.\n- Analyze failed test runs, triage defects, document root cause findings, and work with engineers to resolve issues quickly.\n- Support regression, smoke, integration, and release validation activities in a predictable sprint-based delivery model.\n- Contribute to quality standards for test naming, reporting, code review, data privacy, and maintainable automation.\n- Participate in continuous improvement efforts related to test stability, execution speed, flaky test reduction, and environment readiness.\n\nRequired qualifications\n- 4+ years of experience in software quality assurance, including at least 3 years building automated tests.\n- Hands-on experience with Playwright and/or Cypress for browser-based test automation.\n- Experience writing automated API tests using tools or libraries such as REST Assured, Postman/Newman, Playwright API, SuperTest, Karate, or similar.\n- Proficiency with Java or TypeScript, including common test frameworks and coding practices.\n- Experience running automated tests in CI/CD pipelines.\n- Working knowledge of Git, branching workflows, pull requests, and code review.\n- Ability to write clear defect reports, test plans, and automation documentation.\n- Understanding of Agile/Scrum delivery and collaboration with cross-functional teams.\n- Strong troubleshooting skills and attention to detail.\n\nNice-to-haves\n- Experience in insurance, banking, healthcare, or another regulated industry.\n- Familiarity with accessibility testing, performance testing, or contract testing.\n- Experience with SQL and test data setup across multiple environments.\n- Knowledge of cloud platforms such as AWS or Azure.\n- Experience testing applications built with React, Angular, or modern microservice architectures.\n- Exposure to security testing concepts, authentication flows, or identity providers such as Okta or Azure AD.\n\nBenefits\n- Competitive salary and annual performance bonus.\n- Medical, dental, and vision coverage with company contribution.\n- 401(k) plan with company match.\n- Paid time off, holidays, volunteer time, and parental leave.\n- Hybrid work model with flexible scheduling.\n- Professional development budget, certification reimbursement, and internal learning programs.\n- Supportive team culture focused on reliability, inclusion, and continuous improvement.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Rosen",
+      "profile_title": "Senior QA Automation Analyst",
+      "profile_email": "maya.rosen@example.com",
+      "profile_summary": "QA automation professional with 8 years of experience testing web applications, APIs, and data-heavy business systems in fintech, healthcare scheduling, and retail technology. Strong background in Selenium, Cypress, Java, REST Assured, Postman, SQL, and Jenkins-based CI. Recently started using Playwright on a personal migration project and looking to grow deeper in modern TypeScript automation. Known for practical test coverage, cleaning up flaky suites, and working well with developers and product owners, though still building more formal experience with insurance domain workflows.",
+      "technical_skills": [
+        {
+          "category": "Automation and Test Frameworks",
+          "skills": "Cypress, Selenium WebDriver, TestNG, JUnit, REST Assured, Postman, Newman, Cucumber, basic Playwright"
+        },
+        {
+          "category": "Languages / scripting",
+          "skills": "Java, JavaScript, TypeScript basics, SQL, Bash"
+        },
+        {
+          "category": "Backend & APIs",
+          "skills": "REST APIs, JSON, XML, Swagger/OpenAPI, OAuth2 testing, microservices testing, Kafka basics"
+        },
+        {
+          "category": "Frontend & Libraries",
+          "skills": "React app testing, Angular app testing, Chrome DevTools, HTML/CSS familiarity"
+        },
+        {
+          "category": "Database & Storage",
+          "skills": "PostgreSQL, MySQL, SQL Server, test data setup, data validation queries"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Jenkins, Git,GitHub, Jira, Confluence, Docker basics, Sauce Labs, Agile/Scrum, Windows,Linux"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "Cedarstone Payments",
+          "job_title": "Senior QA Automation Analyst",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Columbus, OH",
+          "project_title": "Merchant Portal Modernization",
+          "project_intro": "Worked on a React-based merchant servicing portal used for onboarding, payment disputes, account changes, and transaction search.",
+          "contributions": [
+            "Built and maintained Cypress regression suites covering merchant onboarding, document upload, user permissions, and dispute workflows.",
+            "Created REST Assured tests in Java for account profile, transaction lookup, fee calculation, and notification services.",
+            "Reduced nightly regression runtime from about 3.5 hours to 95 minutes by splitting suites, removing duplicate cases, and improving test data setup.",
+            "Worked with developers to troubleshoot flaky UI tests, but some older tests were only partially refactored due to release pressure.",
+            "Added Jenkins pipeline stages for smoke and regression execution with HTML reports and Slack notifications.",
+            "Reviewed user stories and helped product owners add better acceptance criteria for edge cases around role-based access."
+          ],
+          "used_skills": "Cypress,Java,REST Assured,Jenkins,Git,PostgreSQL,Jira,React"
+        },
+        {
+          "company_name": "BrightHarbor Health Systems",
+          "job_title": "QA Automation Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Cincinnati, OH",
+          "project_title": "Patient Scheduling and Eligibility Platform",
+          "project_intro": "Supported a web platform for appointment scheduling, insurance eligibility checks, and provider search used by clinics and call centers.",
+          "contributions": [
+            "Designed Selenium WebDriver automation for scheduling, patient registration, eligibility responses, and provider availability screens.",
+            "Wrote Postman and Newman collections for REST APIs and ran them from Jenkins as part of release validation.",
+            "Built SQL scripts to create test patients, reset appointment slots, and verify eligibility data across environments.",
+            "Documented recurring environment issues so the team could stop blaming automation for every failure.",
+            "Helped manual testers convert high-value regression scenarios into automated tests, increasing automated coverage by roughly 40%.",
+            "Participated in HIPAA-focused testing practices and masked sensitive data in screenshots and defect reports."
+          ],
+          "used_skills": "Selenium WebDriver,Java,Postman,Newman,Jenkins,SQL Server,Git,Jira"
+        },
+        {
+          "company_name": "MarketLoom Retail Tech",
+          "job_title": "Software QA Engineer",
+          "period_start": "Jan 2016",
+          "period_end": "Jun 2018",
+          "location": "Indianapolis, IN",
+          "project_title": "E-commerce Order Management Suite",
+          "project_intro": "Tested order capture, inventory allocation, customer service tools, and returns processing for mid-market retail clients.",
+          "contributions": [
+            "Created automated browser checks with Selenium and TestNG for checkout, refund, order status, and admin configuration flows.",
+            "Performed API testing with SoapUI and later Postman for order, inventory, and customer profile services.",
+            "Validated database updates with MySQL queries and compared API responses to stored order records.",
+            "Did a lot of exploratory testing before seasonal releases and found several checkout issues that were missed in scripted testing.",
+            "Maintained regression test documentation in Confluence, not always as current as it should have been.",
+            "Worked in two-week sprints with developers and business analysts across three client implementations."
+          ],
+          "used_skills": "Selenium,TestNG,Java,Postman,SoapUI,MySQL,Confluence,Agile"
+        },
+        {
+          "company_name": "Northline Analytics",
+          "job_title": "QA Analyst",
+          "period_start": "May 2014",
+          "period_end": "Dec 2015",
+          "location": "Dayton, OH",
+          "project_title": "Business Reporting Dashboard",
+          "project_intro": "Supported QA for a subscription analytics dashboard with configurable reports, exports, and user administration features.",
+          "contributions": [
+            "Executed functional and regression testing for reporting dashboards, CSV exports, filters, and admin pages.",
+            "Started the team's first small Selenium scripts for login, report generation, and permission checks.",
+            "Logged detailed defects with screenshots, browser console information, and steps that developers could actually reproduce.",
+            "Used SQL queries to validate report totals against source tables.",
+            "Helped with release smoke testing on production evenings, sometimes manually due to limited automation at the time."
+          ],
+          "used_skills": "Manual testing,Selenium,SQL,Java basics,Jira,Chrome DevTools"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Cincinnati",
+          "degree": "Bachelor of Science in Information Technology",
+          "period_start": "2010",
+          "period_end": "2014"
+        }
+      ]
+    }
+  },
+  {
+    "id": 7,
+    "brief": "Cloud Security Engineer (AWS security, IAM, SIEM, threat detection, Python automation; no clearance) at a gov-tech vendor",
+    "job_description": "Company intro\nCivitas Forge is a growing gov-tech vendor that builds secure cloud platforms, data exchange services, and case management tools for public sector agencies. Our teams support state, local, and federal civilian programs that need modern software delivered with strong security, auditability, and uptime. We are a remote-friendly company with delivery hubs in Arlington, VA, Austin, TX, and Denver, CO. This role does not require an active security clearance.\n\nRole summary\nWe are hiring a Cloud Security Engineer to help secure AWS-based environments that support public sector customers. You will work with infrastructure, platform, and application teams to improve identity and access management, strengthen detection and response, automate security controls, and support compliance activities. The ideal candidate has hands-on AWS security experience, understands IAM deeply, can write Python automation, and is comfortable working in SIEM and threat detection workflows.\n\nResponsibilities\n- Design, review, and improve AWS security controls across multi-account environments, including IAM, Organizations, SCPs, CloudTrail, GuardDuty, Security Hub, KMS, VPC security, and logging.\n- Build and maintain least-privilege IAM policies, permission boundaries, role trust policies, and access review processes.\n- Develop Python scripts and lightweight services to automate security checks, evidence collection, alert enrichment, and remediation tasks.\n- Create, tune, and investigate SIEM detections using logs from AWS, endpoint tools, identity providers, containers, and SaaS applications.\n- Partner with DevOps teams to embed security into CI/CD pipelines, infrastructure as code, and cloud landing zone patterns.\n- Respond to security alerts, perform triage, document findings, and recommend practical containment and remediation steps.\n- Support vulnerability management, configuration monitoring, and cloud risk reporting for internal stakeholders and customer-facing reviews.\n- Contribute to incident response playbooks, threat models, runbooks, and secure engineering standards.\n- Assist with compliance readiness for frameworks such as NIST 800-53, FedRAMP Moderate, SOC 2, or CIS AWS Foundations.\n\nRequired qualifications\n- 5+ years of experience in security engineering, cloud security, DevSecOps, or a related infrastructure security role.\n- 3+ years of hands-on experience securing production AWS environments.\n- Strong working knowledge of AWS IAM, logging, network security, encryption, and account governance.\n- Experience with a SIEM such as Splunk, Elastic, Microsoft Sentinel, Sumo Logic, or similar.\n- Experience creating or tuning security detections for cloud activity, identity events, endpoint alerts, or application logs.\n- Proficiency with Python for automation, API integrations, data parsing, or security tooling.\n- Familiarity with infrastructure as code such as Terraform or CloudFormation.\n- Ability to communicate security risks clearly to engineers, product managers, and customer stakeholders.\n- U.S. work authorization and ability to pass a standard background check. No clearance is required.\n\nNice-to-haves\n- AWS Certified Security Specialty, Solutions Architect, or equivalent practical experience.\n- Experience supporting FedRAMP, NIST 800-53, FISMA, or public sector audits.\n- Familiarity with container security for ECS, EKS, Docker, or Kubernetes.\n- Experience with SOAR tools, incident response automation, or detection-as-code.\n- Knowledge of threat modeling, MITRE ATT&CK, Sigma, YARA, or security data lakes.\n- Experience with Okta, Entra ID, GitHub Actions, GitLab CI, or Jenkins security controls.\n\nBenefits\n- Competitive salary, annual bonus eligibility, and equity grants.\n- Medical, dental, and vision coverage with company contribution.\n- 401(k) with employer match.\n- Remote-first work environment with flexible hours and occasional customer travel.\n- Professional development budget for certifications, conferences, and training.\n- Generous PTO, paid holidays, parental leave, and volunteer time off.\n- Opportunity to work on mission-focused systems used by public servants and communities.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Rodriguez",
+      "profile_title": "Cloud Security and DevSecOps Engineer",
+      "profile_email": "maya.rodriguez@example.com",
+      "profile_summary": "Cloud security engineer with 8 years of experience across AWS infrastructure, DevSecOps, incident response, and security automation. Most of my work has been in SaaS and healthcare-adjacent environments, with recent projects involving AWS IAM cleanup, Terraform guardrails, CloudTrail logging, vulnerability reporting, and Splunk dashboards. Comfortable working between security and platform teams. Strong in Python scripting and AWS operations, still building deeper experience with formal FedRAMP packages and advanced detection-as-code.",
+      "technical_skills": [
+        {
+          "category": "Cloud / Infrastructure",
+          "skills": "AWS IAM, EC2, S3, VPC, CloudTrail, GuardDuty, Security Hub, KMS, Lambda, Organizations, Azure basics, Docker, ECS"
+        },
+        {
+          "category": "Security Tools",
+          "skills": "Splunk, CrowdStrike, Prisma Cloud, AWS Inspector, Nessus, Wiz trial usage, Okta logs, Jira Service Management"
+        },
+        {
+          "category": "Automation and Scripting",
+          "skills": "Python, Bash, boto3, PowerShell basic, REST APIs, JSON parsing, Lambda functions"
+        },
+        {
+          "category": "IaC / CI-CD stuff",
+          "skills": "Terraform, CloudFormation reading, GitHub Actions, Jenkins, Git, checkov, tfsec"
+        },
+        {
+          "category": "Compliance, Monitoring, Other",
+          "skills": "SOC 2, HIPAA, CIS Benchmarks, NIST CSF, incident runbooks, vulnerability management, Linux, some Kubernetes"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "Northstar Civic Systems",
+          "job_title": "Senior Cloud Security Engineer",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Remote, Denver, CO",
+          "project_title": "AWS Security Modernization for Public Benefits Platform",
+          "project_intro": "Worked on the security engineering team for a SaaS platform used by state agencies to manage benefits eligibility and document intake.",
+          "contributions": [
+            "Reviewed and refactored IAM roles across 40+ AWS accounts, removing unused admin policies and introducing permission boundaries for developer roles.",
+            "Built Python/boto3 scripts to collect CloudTrail, IAM credential report, Security Hub, and GuardDuty findings into weekly risk summaries.",
+            "Partnered with platform engineers to add Terraform checks in GitHub Actions using checkov and custom policy scripts.",
+            "Created Splunk dashboards for AWS ConsoleLogin, root account activity, public S3 changes, GuardDuty severity trends, and unusual API calls.",
+            "Supported incident triage for exposed access keys and wrote a basic playbook for key rotation, containment, and customer communication.",
+            "Helped with SOC 2 evidence collection and mapped several cloud controls to NIST 800-53, but was not the main compliance owner."
+          ],
+          "used_skills": "AWS IAM,CloudTrail,GuardDuty,Security Hub,Splunk,Python,boto3,Terraform,GitHub Actions,SOC 2,NIST 800-53"
+        },
+        {
+          "company_name": "HelioMint Health",
+          "job_title": "DevSecOps Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Austin, TX",
+          "project_title": "Secure CI/CD and Cloud Controls for Healthcare Analytics",
+          "project_intro": "Joined a small security team supporting AWS-hosted analytics applications that processed healthcare operational data.",
+          "contributions": [
+            "Integrated SAST and dependency scanning into Jenkins pipelines and reduced critical dependency findings by roughly 45% in two quarters.",
+            "Managed AWS security group reviews, S3 bucket checks, KMS key usage reviews, and basic VPC flow log monitoring.",
+            "Wrote Lambda functions in Python to tag untagged resources, alert on public buckets, and create Jira tickets for expired TLS certificates.",
+            "Worked with Splunk admins to onboard application logs and some AWS logs, mostly for audit search and after-the-fact investigations.",
+            "Coordinated monthly vulnerability review meetings. Sometimes too manual but it got teams moving.",
+            "Assisted with HIPAA and SOC 2 audits by gathering screenshots, config exports, and change records."
+          ],
+          "used_skills": "AWS,S3,KMS,Lambda,Python,Jenkins,Splunk,Nessus,Jira,HIPAA,SOC 2,security groups"
+        },
+        {
+          "company_name": "Ridgetop Software Lab",
+          "job_title": "Cloud Infrastructure Engineer",
+          "period_start": "May 2016",
+          "period_end": "Jun 2018",
+          "location": "Charlotte, NC",
+          "project_title": "AWS Migration and Operations",
+          "project_intro": "Supported migration of customer-facing web applications from a managed hosting provider to AWS.",
+          "contributions": [
+            "Provisioned EC2, ALB, RDS, Route 53, and S3 resources using Terraform modules maintained by the infrastructure team.",
+            "Set up CloudWatch alarms and log groups for production services, with some basic alerting to PagerDuty.",
+            "Helped implement MFA enforcement and cleaned up old IAM users after an internal access review.",
+            "Maintained Linux servers, patched AMIs, and documented repeatable build steps for operations handoff.",
+            "Participated in on-call rotation and handled routine outages, cert renewals, and capacity issues.",
+            "Security work was not my whole job, but I became the person people asked about AWS permissions."
+          ],
+          "used_skills": "AWS EC2,RDS,S3,Terraform,CloudWatch,Linux,IAM,Route 53,PagerDuty,Bash"
+        },
+        {
+          "company_name": "Blue Lantern Digital",
+          "job_title": "Security Analyst",
+          "period_start": "Jan 2014",
+          "period_end": "Apr 2016",
+          "location": "Raleigh, NC",
+          "project_title": "Managed Security Monitoring for Mid-Market Clients",
+          "project_intro": "Worked in a small SOC supporting log monitoring, vulnerability scans, and customer security tickets.",
+          "contributions": [
+            "Monitored SIEM alerts for Windows, firewall, VPN, and endpoint activity and escalated suspicious events to senior analysts.",
+            "Created simple correlation searches for repeated failed logins, malware detections, and impossible travel VPN patterns.",
+            "Prepared weekly vulnerability scan reports and tracked remediation status with client IT teams.",
+            "Did first-pass phishing review and user follow-up. Not glamorous but useful experience.",
+            "Documented recurring alert handling steps, which reduced some repeated questions during weekend shifts."
+          ],
+          "used_skills": "SIEM, firewall logs, VPN logs, Nessus, Windows events, phishing triage, Excel, ticketing"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "North Carolina State University",
+          "degree": "B.S. in Information Technology",
+          "period_start": "2010",
+          "period_end": "2013"
+        }
+      ]
+    }
+  },
+  {
+    "id": 8,
+    "brief": "Data Analyst / BI Analyst (SQL, Tableau, dbt, Excel, A/B testing) at an omnichannel retailer",
+    "job_description": "BrightLane Market is a fast-growing omnichannel retailer serving customers through 180 neighborhood stores, a national e-commerce site, mobile app, and same-day pickup and delivery partnerships. We sell home goods, seasonal products, pantry essentials, and private-label brands, and we are investing heavily in analytics to improve pricing, inventory, loyalty, and customer experience across every channel.\n\nWe are hiring a Data Analyst / BI Analyst to join our Customer and Commercial Analytics team. In this role, you will turn complex retail data into clear reporting, analysis, and recommendations for merchandising, marketing, store operations, and digital product leaders. You will work with data from point-of-sale systems, web analytics, CRM, loyalty, inventory, promotions, and experimentation platforms. The ideal candidate is strong in SQL, comfortable building trusted BI dashboards in Tableau, and able to explain the business meaning behind trends, tests, and KPIs.\n\nResponsibilities:\n- Build, maintain, and improve Tableau dashboards covering sales performance, margin, customer behavior, digital conversion, promotion effectiveness, inventory availability, and store operations.\n- Write efficient SQL queries to analyze large datasets in Snowflake and validate data across transactional, customer, and digital sources.\n- Partner with merchandising, marketing, e-commerce, and operations stakeholders to define KPIs, gather requirements, and translate business questions into practical analysis.\n- Use dbt models and documentation standards to help transform raw data into reliable analytics-ready datasets.\n- Analyze A/B tests and other experiments, including test design input, sample size considerations, metric selection, readouts, and recommendations.\n- Produce recurring reporting, ad hoc analysis, and executive-ready summaries with clear insights and next steps.\n- Investigate data quality issues, reconcile discrepancies between systems, and work with data engineering to improve pipeline reliability.\n- Support customer segmentation, cohort analysis, funnel analysis, and promotion performance evaluation.\n- Improve self-service analytics by organizing metrics, documenting definitions, and training business users on dashboard usage.\n\nRequired qualifications:\n- 4+ years of experience in data analytics, BI, business analytics, or a similar role.\n- Advanced SQL skills, including joins, CTEs, window functions, aggregations, and query optimization.\n- Hands-on experience building business-facing dashboards in Tableau.\n- Experience analyzing retail, e-commerce, marketplace, consumer, or loyalty data.\n- Strong Excel or Google Sheets skills for modeling, QA, pivot tables, and stakeholder-ready analysis.\n- Working knowledge of A/B testing concepts such as control/treatment groups, statistical significance, confidence intervals, and metric guardrails.\n- Ability to communicate findings clearly to technical and non-technical audiences.\n- Comfort working with imperfect data and ambiguous business questions.\n\nNice-to-haves:\n- Experience with dbt, Snowflake, Airflow, Looker, or Mode.\n- Familiarity with Python or R for analysis and automation.\n- Knowledge of marketing attribution, lifecycle campaigns, inventory planning, pricing, or promotion analytics.\n- Experience with Amplitude, Google Analytics, Adobe Analytics, or similar digital analytics tools.\n- Prior work in omnichannel retail, grocery, consumer goods, or subscription commerce.\n\nBenefits:\n- Competitive salary, annual bonus eligibility, and employee stock purchase plan.\n- Medical, dental, and vision coverage with company contributions.\n- 401(k) with company match.\n- Flexible PTO, paid holidays, and parental leave.\n- Hybrid work schedule with collaboration days in our Chicago office.\n- Employee discount, wellness stipend, learning budget, and access to internal analytics communities.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Rosen",
+      "profile_title": "Senior Business Intelligence Analyst",
+      "profile_email": "maya.rosen@example.com",
+      "profile_summary": "BI and analytics professional with 8 years of experience turning customer, sales, and operations data into dashboards, reporting, and practical recommendations. Strong SQL, Tableau, Excel, and stakeholder management background across retail-adjacent consumer services, subscription commerce, and logistics. Comfortable working with messy data and explaining trends to business teams. Some exposure to experimentation and data modeling, but not a dedicated dbt developer.",
+      "technical_skills": [
+        {
+          "category": "BI / Reporting",
+          "skills": "Tableau, Power BI, Looker Studio, dashboard design, KPI reporting, executive scorecards, self-service reporting"
+        },
+        {
+          "category": "Data, SQL and Storage",
+          "skills": "SQL, PostgreSQL, BigQuery, Snowflake basics, Redshift, data validation, CTEs, window functions, stored procedures"
+        },
+        {
+          "category": "Excel + Analysis Stuff",
+          "skills": "Excel, Google Sheets, pivot tables, VLOOKUP/XLOOKUP, Power Query, cohort analysis, funnel analysis, forecasting, variance analysis"
+        },
+        {
+          "category": "Experimentation / Digital",
+          "skills": "A/B test readouts, Google Analytics, Mixpanel, campaign reporting, conversion metrics, segmentation, retention analysis"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Jira, Confluence, GitHub, Fivetran, basic dbt exposure, Python pandas beginner, Slack, Salesforce"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "Hearth & Parcel",
+          "job_title": "Senior Business Intelligence Analyst",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Chicago, IL",
+          "project_title": "Commercial Analytics for Home Delivery and Retail Partners",
+          "project_intro": "Led BI reporting and ad hoc analysis for a consumer home delivery company with online ordering and retail partner pickup locations.",
+          "contributions": [
+            "Built and maintained 18 Tableau dashboards for weekly sales, customer retention, regional performance, fulfillment issues, and promotion tracking.",
+            "Wrote SQL against BigQuery and PostgreSQL datasets to combine order, customer, product, and support ticket data for business teams.",
+            "Created an Excel-based promo planning tracker that helped category managers compare planned vs actual margin and units sold.",
+            "Partnered with marketing on A/B test readouts for email offers and landing page changes, mostly focused on conversion rate and average order value.",
+            "Reduced recurring reporting time from roughly 9 hours per week to 2 hours by automating data extracts and cleaning up dashboard filters.",
+            "Did a lot of one-off analyses for leadership, sometimes under vague direction."
+          ],
+          "used_skills": "Tableau,SQL,BigQuery,PostgreSQL,Excel,Google Analytics,A/B testing, stakeholder management"
+        },
+        {
+          "company_name": "Northline Outfitters",
+          "job_title": "BI Analyst",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Milwaukee, WI",
+          "project_title": "Merchandising and E-commerce Performance Reporting",
+          "project_intro": "Supported merchandising, digital marketing, and operations teams for a mid-sized apparel and outdoor gear retailer with stores and an e-commerce site.",
+          "contributions": [
+            "Developed Tableau dashboards for sales by channel, product category, markdown performance, store ranking, and online conversion funnel.",
+            "Used SQL window functions and CTEs to create repeat customer, product affinity, and basket size analyses.",
+            "Worked with merchandising leads to identify slow-moving SKUs and improve weekly reporting on sell-through and inventory aging.",
+            "Built Excel models for seasonal assortment reviews and helped reconcile POS exports with e-commerce order data.",
+            "Presented monthly performance summaries to directors with clear takeaways, though slide design was not always fancy.",
+            "Helped QA a migration from legacy reporting to a Snowflake warehouse, mainly by comparing totals and investigating mismatches."
+          ],
+          "used_skills": "SQL, Tableau, Excel, Snowflake, retail analytics, POS data, e-commerce analytics"
+        },
+        {
+          "company_name": "CivicCart Labs",
+          "job_title": "Data Analyst",
+          "period_start": "May 2016",
+          "period_end": "Jun 2018",
+          "location": "Madison, WI",
+          "project_title": "Subscription Customer Analytics",
+          "project_intro": "Analyzed acquisition, retention, and support data for a subscription-based meal planning and grocery list application.",
+          "contributions": [
+            "Created weekly KPI reporting in Tableau and Google Sheets covering signups, activation, churn, and paid conversion.",
+            "Segmented customers by signup source, plan type, and early product behavior to support lifecycle email targeting.",
+            "Ran churn and cohort analyses that showed first-week engagement was a stronger retention signal than discount depth.",
+            "Supported a pricing test by preparing control and treatment reporting, but statistics review was handled by a data scientist.",
+            "Documented metric definitions in Confluence after different teams were using different churn numbers.",
+            "Used Mixpanel and SQL together to answer product funnel questions."
+          ],
+          "used_skills": "Tableau,SQL,Mixpanel,Google Sheets,cohort analysis, customer segmentation, Confluence"
+        },
+        {
+          "company_name": "Blue Harbor Logistics",
+          "job_title": "Reporting Analyst",
+          "period_start": "Jan 2014",
+          "period_end": "Apr 2016",
+          "location": "Indianapolis, IN",
+          "project_title": "Operations Reporting and Service Level Dashboards",
+          "project_intro": "Built operational reporting for a regional logistics provider serving retail and consumer goods clients.",
+          "contributions": [
+            "Maintained Excel and Power BI reports for shipment volume, on-time delivery, exceptions, and account performance.",
+            "Pulled data from SQL Server and cleaned recurring files from account teams.",
+            "Improved monthly client reporting turnaround by standardizing templates and removing manual copy-paste steps.",
+            "Worked with operations managers to flag late shipment patterns by carrier lane and warehouse.",
+            "Learned a lot about data quality the hard way."
+          ],
+          "used_skills": "Excel, SQL Server, Power BI, data cleaning, operations reporting"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Wisconsin-Madison",
+          "degree": "Bachelor of Business Administration in Information Systems and Marketing",
+          "period_start": "2010",
+          "period_end": "2013"
+        }
+      ]
+    }
+  },
+  {
+    "id": 9,
+    "brief": "Embedded Firmware Engineer (C, C++, FreeRTOS, ARM Cortex-M, BLE, hardware bring-up) at a medical device maker",
+    "job_description": "About LumaVita Medical\nLumaVita Medical is a growing medical device company developing connected patient monitoring and therapy support products used in hospitals, outpatient clinics, and home care settings. Our devices combine low-power embedded electronics, secure wireless connectivity, and cloud-integrated workflows to help clinicians make faster decisions and improve patient outcomes. We are expanding our firmware team as we move several new Class II products from prototype into verification, validation, and manufacturing.\n\nRole Summary\nWe are seeking an Embedded Firmware Engineer to design, implement, test, and maintain firmware for ARM Cortex-M based medical devices. In this role, you will work closely with electrical engineers, systems engineers, quality, manufacturing, and mobile/cloud teams. The ideal candidate is comfortable bringing up new hardware, writing reliable C/C++ firmware, debugging real-time issues, and working within a regulated product development process.\n\nResponsibilities\n- Develop production firmware in C and C++ for ARM Cortex-M microcontrollers running FreeRTOS or similar RTOS environments.\n- Implement and maintain device drivers and board support packages for peripherals such as SPI, I2C, UART, ADC, GPIO, PWM, timers, flash memory, and sensors.\n- Support hardware bring-up activities, including schematic review, board validation, oscilloscope and logic analyzer debugging, and root-cause analysis.\n- Design and optimize low-power firmware for battery-operated medical devices.\n- Develop and troubleshoot BLE communication features, including GATT services, pairing/bonding behavior, and interoperability with mobile applications.\n- Participate in architecture discussions for bootloaders, firmware update mechanisms, diagnostics, device logging, and fault handling.\n- Write unit tests, integration tests, and verification support tools for embedded software.\n- Create and maintain documentation required for regulated development, including software requirements, design descriptions, risk controls, traceability, and test evidence.\n- Collaborate with quality and regulatory teams to support IEC 62304 aligned development practices and design control processes.\n- Work with manufacturing engineers to support production test fixtures, device calibration, and field issue investigation.\n\nRequired Qualifications\n- Bachelor's degree in Electrical Engineering, Computer Engineering, Computer Science, or related technical discipline.\n- 5+ years of professional embedded firmware development experience.\n- Strong programming skills in C and working knowledge of C++ in resource-constrained embedded systems.\n- Hands-on experience with ARM Cortex-M microcontrollers and common embedded debug tools such as JTAG/SWD, oscilloscopes, and logic analyzers.\n- Experience developing firmware with FreeRTOS or another RTOS, including tasks, queues, semaphores, timers, and interrupt handling.\n- Practical experience with peripheral interfaces such as SPI, I2C, UART, ADC, and GPIO.\n- Experience supporting hardware bring-up and collaborating with electrical engineering teams.\n- Familiarity with software version control, issue tracking, code reviews, and disciplined release practices.\n- Strong problem-solving skills and ability to communicate clearly across engineering disciplines.\n\nNice-to-Haves\n- Experience developing BLE-enabled embedded products, especially using Nordic, Silicon Labs, STM32WB, or similar wireless SoCs.\n- Prior experience in medical device, life sciences, aerospace, automotive, or other regulated industries.\n- Familiarity with IEC 62304, ISO 13485, ISO 14971, FDA design controls, or cybersecurity expectations for connected devices.\n- Experience with bootloaders, secure firmware update, cryptographic libraries, or secure element integration.\n- Python scripting for test automation, log parsing, or hardware-in-the-loop testing.\n- Experience with Zephyr, STM32CubeIDE, IAR, Keil, GCC toolchains, Git, Jira, and CI systems.\n\nBenefits\n- Competitive salary, annual bonus eligibility, and equity participation.\n- Medical, dental, and vision coverage with company contribution.\n- 401(k) with employer match.\n- Flexible paid time off, paid holidays, and parental leave.\n- Hybrid work schedule for roles that require lab access.\n- Professional development budget and conference support.\n- Opportunity to work on products that directly affect patient care.",
+    "profile": {
+      "name_first": "Daniel",
+      "name_last": "Morrison",
+      "profile_title": "Senior Embedded Software Engineer",
+      "profile_email": "daniel.morrison@example.com",
+      "profile_summary": "Embedded software engineer with 9 years of experience building firmware for connected industrial, consumer health, and low-power sensing products. Strong C background with practical C++ use, ARM Cortex-M development, board bring-up, peripheral drivers, and RTOS-based applications. Comfortable working with electrical teams in the lab and debugging timing, power, and communication issues. Have supported regulated-style documentation and verification work, though most medical device exposure has been indirect through a consumer wellness product rather than FDA-cleared devices.",
+      "technical_skills": [
+        {
+          "category": "Embedded / Firmware",
+          "skills": "C, C++, ARM Cortex-M, STM32, Nordic nRF52, bare metal firmware, FreeRTOS basics, Zephyr exposure, bootloaders, device drivers"
+        },
+        {
+          "category": "Protocols and Buses",
+          "skills": "I2C, SPI, UART, ADC, GPIO, PWM, CAN, BLE GATT, MQTT, USB CDC"
+        },
+        {
+          "category": "Tools / Lab Stuff",
+          "skills": "JTAG,SWD, oscilloscope, logic analyzer, Segger J-Link, STM32CubeIDE, GCC, CMake, Git, Jira"
+        },
+        {
+          "category": "Testing, Scripts, Other",
+          "skills": "Python, pytest, hardware-in-loop test scripts, serial log parsing, unit test stubs, Jenkins, Confluence"
+        },
+        {
+          "category": "Process-ish",
+          "skills": "requirements review, design docs, code reviews, traceability spreadsheets, ISO 9001 environment, risk assessment participation"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "PulseBridge Technologies",
+          "job_title": "Senior Embedded Software Engineer",
+          "period_start": "Mar 2021",
+          "period_end": "",
+          "location": "Minneapolis, MN",
+          "project_title": "Wearable Vital Sign Gateway",
+          "project_intro": "Developed firmware for a rechargeable wearable gateway that collected sensor data and transmitted summaries to a mobile app over BLE.",
+          "contributions": [
+            "Implemented C firmware modules for Nordic nRF52840, including sensor polling, BLE GATT characteristics, battery monitoring, and persistent settings.",
+            "Helped move the application from mostly bare metal scheduling to a small FreeRTOS design with separate tasks for sensor collection, BLE communication, and logging.",
+            "Reduced average current draw by about 28% by changing sampling intervals, improving sleep transitions, and fixing a GPIO leakage issue.",
+            "Worked with the EE team during two board spins, brought up I2C sensors, SPI flash, charger status pins, and several painful reset line problems.",
+            "Wrote Python scripts to parse serial logs and run overnight connection stability tests against iOS and Android phones.",
+            "Contributed to requirements, design notes, and verification evidence for a product developed under an ISO 13485-inspired quality process, but not formally released as a cleared medical device."
+          ],
+          "used_skills": "C, C++,FreeRTOS, Nordic nRF52, BLE, I2C,SPI, UART, Python, J-Link, oscilloscopes, Git, Jira"
+        },
+        {
+          "company_name": "Northstar Controls Lab",
+          "job_title": "Embedded Firmware Engineer",
+          "period_start": "Jul 2018",
+          "period_end": "Feb 2021",
+          "location": "Madison, WI",
+          "project_title": "Industrial Sensor Node Platform",
+          "project_intro": "Built reusable firmware for ARM-based environmental and vibration sensor nodes used in industrial monitoring deployments.",
+          "contributions": [
+            "Developed device drivers for STM32L4 peripherals including ADC with DMA, SPI accelerometer, I2C temperature sensors, UART debug shell, and watchdog handling.",
+            "Owned hardware bring-up for prototype boards and created a checklist for clock tree, power rails, boot mode pins, and peripheral smoke tests.",
+            "Added a dual-image bootloader and CRC validation for field updates over a gateway link.",
+            "Debugged intermittent lockups that turned out to be ISR priority and shared buffer issues.",
+            "Maintained CMake/GCC build files and helped migrate the team away from manual IDE-only builds.",
+            "Documentation was decent, but not always as formal as it should have been."
+          ],
+          "used_skills": "C, STM32,ARM Cortex-M4, SPI,I2C,UART, ADC, DMA, bootloader, GCC, CMake, logic analyzer"
+        },
+        {
+          "company_name": "Aster Home Robotics",
+          "job_title": "Embedded Software Developer",
+          "period_start": "May 2016",
+          "period_end": "Jun 2018",
+          "location": "Chicago, IL",
+          "project_title": "Low-Cost Motor and Sensor Controller",
+          "project_intro": "Worked on firmware for a Cortex-M based controller board handling motors, proximity sensors, and communication with a Linux host.",
+          "contributions": [
+            "Wrote C and some C++ code for motor control state machines, fault reporting, EEPROM configuration storage, and UART packet handling.",
+            "Implemented peripheral support for PWM, timers, GPIO interrupts, ADC current sensing, and I2C expanders.",
+            "Used oscilloscope captures to troubleshoot noisy encoder signals and helped electrical engineering choose filter values.",
+            "Improved startup diagnostics so factory technicians could identify bad motors and miswired harnesses faster.",
+            "Fixed bugs, reviewed code, and generally did whatever was needed before pilot builds.",
+            "Created a simple host-side Python utility for firmware flashing and configuration."
+          ],
+          "used_skills": "C,C++, ARM Cortex-M3, UART, PWM, ADC, GPIO, EEPROM, Python, oscilloscope, Git"
+        },
+        {
+          "company_name": "Clearwater Metering Systems",
+          "job_title": "Firmware Engineer",
+          "period_start": "Aug 2014",
+          "period_end": "Apr 2016",
+          "location": "Milwaukee, WI",
+          "project_title": "Battery-Powered Utility Meter Module",
+          "project_intro": "Supported firmware maintenance and feature development for long-life remote meter modules.",
+          "contributions": [
+            "Maintained embedded C firmware for low-power metering products using MSP430 and early ARM Cortex-M0 boards.",
+            "Worked on sleep scheduling, RTC wakeups, pulse counting, UART diagnostics, and flash data storage.",
+            "Investigated field returns by reproducing failures on bench setups and reading corrupted logs when possible.",
+            "Helped reduce production test time by adding a few automated diagnostic commands.",
+            "Learned a lot about writing code that must run for years on a small battery."
+          ],
+          "used_skills": "Embedded C, MSP430, ARM Cortex-M0, UART, flash, low power, production test, SVN"
+        },
+        {
+          "company_name": "Lakeview Instruments",
+          "job_title": "Junior Embedded Engineer",
+          "period_start": "Jun 2013",
+          "period_end": "Jul 2014",
+          "location": "Evanston, IL",
+          "project_title": "Handheld Measurement Tool Firmware",
+          "project_intro": "Assisted senior engineers with firmware updates for handheld electronic measurement tools.",
+          "contributions": [
+            "Fixed small bugs in C firmware related to LCD menu behavior and calibration value storage.",
+            "Ran manual verification tests and documented results in shared spreadsheets.",
+            "Used a logic analyzer for the first time to debug an SPI display issue.",
+            "Updated build instructions and helped clean up old source branches."
+          ],
+          "used_skills": "C, SPI, LCD, calibration, logic analyzer, Git"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Wisconsin-Madison",
+          "degree": "B.S. Electrical Engineering",
+          "period_start": "Sep 2009",
+          "period_end": "May 2013"
+        }
+      ]
+    }
+  },
+  {
+    "id": 10,
+    "brief": "Technical Product Manager (API platform, B2B SaaS, roadmap, SQL, analytics, developer experience)",
+    "job_description": "Company Intro\nRelayForge is a fast-growing B2B SaaS company helping logistics, fintech, and healthcare teams automate partner data exchange through secure APIs, workflow orchestration, and real-time analytics. Our platform processes more than 900 million API calls per month and serves product, engineering, and operations teams at mid-market and enterprise customers. We are remote-friendly, pragmatic, and focused on building developer tools that are powerful without being painful to adopt.\n\nRole Summary\nWe are hiring a Technical Product Manager to lead core initiatives for our API platform. This person will own roadmap discovery and delivery for developer experience, API lifecycle tooling, usage analytics, and customer-facing platform capabilities. You will work closely with engineering, design, customer success, sales engineering, and external developers to turn ambiguous platform needs into well-scoped product investments. This role is ideal for someone who can discuss API design tradeoffs with engineers, analyze product usage in SQL, and translate customer problems into a clear roadmap.\n\nResponsibilities\n- Own the roadmap for API platform capabilities including onboarding, authentication flows, API documentation, usage dashboards, and self-service configuration.\n- Partner with engineering leads to define requirements, prioritize technical debt, and make tradeoffs across scalability, usability, security, and delivery timelines.\n- Conduct customer discovery with technical buyers, developers, solution architects, and internal go-to-market teams.\n- Use SQL, product analytics, and customer feedback to identify adoption bottlenecks, measure feature success, and recommend improvements.\n- Write clear PRDs, API workflow diagrams, release notes, and launch plans for technical and non-technical audiences.\n- Improve developer experience by simplifying integration paths, reducing time to first successful API call, and improving documentation quality.\n- Collaborate with product marketing and sales engineering to package platform capabilities for B2B SaaS customers.\n- Define success metrics, monitor performance after launch, and iterate based on data and customer input.\n\nRequired Qualifications\n- 5+ years of product management experience, including at least 2 years working on API platforms, developer tools, integrations, or technical B2B SaaS products.\n- Strong understanding of REST APIs, authentication patterns, webhooks, SDKs, API documentation, and integration workflows.\n- Hands-on ability to query data using SQL and interpret product usage analytics.\n- Experience building and communicating product roadmaps, prioritization frameworks, requirements, and launch plans.\n- Proven ability to work closely with engineering teams on complex technical products.\n- Strong written communication skills, especially for technical documentation, customer-facing release notes, and executive updates.\n- Comfort working with enterprise customers, technical stakeholders, and cross-functional teams.\n\nNice-to-Haves\n- Experience with GraphQL, OAuth 2.0, OpenAPI, Postman, Datadog, Snowflake, Looker, Amplitude, or Segment.\n- Background in logistics, fintech, healthcare data exchange, or other integration-heavy industries.\n- Experience improving developer portals, API reference documentation, SDK adoption, or sandbox environments.\n- Familiarity with pricing, packaging, or monetization for API usage-based products.\n- Technical degree or previous experience as an engineer, solutions architect, data analyst, or technical consultant.\n\nBenefits\n- Competitive salary and equity package.\n- Remote-first work environment in the United States with optional office hubs in Austin and Denver.\n- Medical, dental, and vision insurance with generous employer contribution.\n- 401(k) plan, paid parental leave, flexible PTO, and company-wide recharge days.\n- Annual learning stipend, home office budget, and conference support.\n- Opportunity to shape a high-scale API platform used by thousands of developers and enterprise teams.",
+    "profile": {
+      "name_first": "Maya",
+      "name_last": "Kapoor",
+      "profile_title": "Senior Product Manager, Integrations and Data Products",
+      "profile_email": "maya.kapoor@example.com",
+      "profile_summary": "Product manager with 8 years of experience across B2B SaaS, integrations, customer data workflows, and analytics-heavy internal tools. I have led roadmap planning, shipped API-adjacent integration features, and worked closely with engineers, implementation teams, and enterprise customers. Strong in SQL, discovery, metrics, and cross-functional delivery. Less hands-on with formal developer portals and SDK strategy, but comfortable partnering with technical teams and learning complex domains quickly.",
+      "technical_skills": [
+        {
+          "category": "Product & Delivery",
+          "skills": "Roadmapping, PRDs, customer discovery, prioritization, agile delivery, launch planning, stakeholder updates, beta programs"
+        },
+        {
+          "category": "Data / Analytics stuff",
+          "skills": "SQL, Mode, Looker, Tableau, event funnels, cohort analysis, usage reporting, Excel"
+        },
+        {
+          "category": "Backend & APIs",
+          "skills": "REST APIs, webhooks, JSON, basic OAuth concepts, integration mapping, Postman, Zapier, SFTP"
+        },
+        {
+          "category": "Tools/Other",
+          "skills": "Jira, Confluence, Figma, Miro, Salesforce, Pendo, Segment, GitHub basics, Slack"
+        }
+      ],
+      "work_experience": [
+        {
+          "company_name": "Northstar Ledger",
+          "job_title": "Senior Product Manager, Integrations",
+          "period_start": "Apr 2021",
+          "period_end": "",
+          "location": "Chicago, IL",
+          "project_title": "Partner Integrations and Data Sync Platform",
+          "project_intro": "Led product work for a B2B finance operations platform that connected customer ERP, billing, and payment systems.",
+          "contributions": [
+            "Owned a 4-quarter roadmap for integrations used by mid-market finance teams, balancing customer asks with platform reliability work.",
+            "Partnered with engineering to ship webhook-based status updates and a redesigned integration setup flow, cutting average implementation time from 18 days to 11 days.",
+            "Used SQL and Looker to identify drop-off points in connector activation and drove changes that improved activation by 22%.",
+            "Wrote PRDs, release notes, internal FAQs, and customer-facing setup guides for integration launches.",
+            "Worked with sales engineers on enterprise discovery calls where buyers asked about API behavior, sync timing, security, and error handling.",
+            "Made prioritization cleaner, although some early projects still had too much custom customer logic."
+          ],
+          "used_skills": "SQL,Looker,REST APIs,webhooks,Jira,Confluence,customer discovery,roadmaps"
+        },
+        {
+          "company_name": "CivitasFlow",
+          "job_title": "Product Manager, Data Products",
+          "period_start": "Jan 2019",
+          "period_end": "Mar 2021",
+          "location": "Remote",
+          "project_title": "Operational Analytics Workspace",
+          "project_intro": "Built reporting and workflow products for public sector operations teams managing permits, inspections, and service requests.",
+          "contributions": [
+            "Launched a self-service analytics module that let operations managers build saved reports without needing analysts.",
+            "Created requirements for data filtering, permissions, export workflows, and scheduled email delivery.",
+            "Queried production replica data in SQL to validate customer issues and estimate impact before prioritizing fixes.",
+            "Coordinated with backend engineers on data model changes and API endpoints needed by the reporting UI.",
+            "Improved weekly active usage of reporting features by 31% over two quarters.",
+            "Ran customer interviews, but mainly with admins and managers rather than developers."
+          ],
+          "used_skills": "SQL,Tableau,product analytics,permissions,API endpoints,Figma,Jira"
+        },
+        {
+          "company_name": "ParcelBright Technologies",
+          "job_title": "Associate Product Manager",
+          "period_start": "Jun 2016",
+          "period_end": "Dec 2018",
+          "location": "Atlanta, GA",
+          "project_title": "Carrier Connectivity Tools",
+          "project_intro": "Supported product development for shipping label, tracking, and carrier data tools used by ecommerce merchants.",
+          "contributions": [
+            "Worked on carrier onboarding tools that supported label generation, tracking events, and exception workflows.",
+            "Gathered requirements from support, implementation, and a few strategic customers for integration pain points.",
+            "Helped document REST API behaviors and common error cases for internal support teams.",
+            "Built dashboards in Mode to monitor failed shipment requests and carrier timeout trends.",
+            "Assisted with launch plans for three new carrier connections.",
+            "Did a lot of coordination and cleanup work that was not very glamorous but kept projects moving."
+          ],
+          "used_skills": "Mode,SQL,REST APIs,JSON,shipping workflows,Confluence,customer support"
+        },
+        {
+          "company_name": "BlueOak Subscription Systems",
+          "job_title": "Business Analyst",
+          "period_start": "Aug 2014",
+          "period_end": "May 2016",
+          "location": "Boston, MA",
+          "project_title": "Billing Operations Improvements",
+          "project_intro": "Analyzed billing workflows and supported product operations for a subscription management SaaS platform.",
+          "contributions": [
+            "Documented customer billing processes, edge cases, and manual workarounds for product and engineering teams.",
+            "Created weekly KPI reports for churn risk, failed payments, and invoice disputes.",
+            "Used SQL with help from data engineering to pull customer segments and revenue impact estimates.",
+            "Supported UAT for invoice adjustment and payment retry features.",
+            "Presented findings to product leadership and customer success managers."
+          ],
+          "used_skills": "SQL,Excel,Salesforce,billing workflows,UAT,requirements documentation"
+        }
+      ],
+      "education": [
+        {
+          "university_name": "University of Michigan",
+          "degree": "Bachelor of Science in Information, Minor in Economics",
+          "period_start": "Sep 2010",
+          "period_end": "May 2014"
+        }
+      ]
+    }
+  }
+]

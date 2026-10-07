@@ -97,19 +97,45 @@ def _already_bolded(text: str, start: int, end: int) -> bool:
     return before.count("**") % 2 == 1
 
 
-def emphasize_keywords_in_text(text: str, keywords: Iterable[str]) -> str:
+def _splits_proper_name(text: str, start: int, end: int, word: str) -> bool:
+    """True when a Title-case single word would be bolded as a fragment.
+
+    Covers sentence-initial words ("**Machine** learning engineer") and pieces of a
+    longer name ("**BrightLane** Market"). Acronyms, CamelCase and dotted names
+    (AWS, PostgreSQL, Node.js) are never treated as fragments.
+    """
+    if " " in word or not word[:1].isupper() or not word[1:].islower():
+        return False
+    before = text[:start].rstrip("* ")
+    if not before or before[-1] in ".!?:\n":
+        return True
+    after = text[end:].lstrip("* ")
+    prev_word = before.split()[-1] if before.split() else ""
+    next_word = after.split()[0] if after.split() else ""
+    return prev_word[:1].isupper() or next_word[:1].isupper()
+
+
+def emphasize_keywords_in_text(
+    text: str, keywords: Iterable[str], *, max_spans: int | None = None
+) -> str:
     """Wrap whole-word occurrences of *keywords* in ``**...**`` when not already bold.
 
-    Longer keywords are applied first to prefer multi-word phrases.
+    Longer keywords are applied first to prefer multi-word phrases. With *max_spans*,
+    only the first occurrence of each term is wrapped and nothing is added once the
+    text holds that many bold spans.
     """
+    from app.utils.resume_skill_taxonomy import is_strong_emphasis_term
+
     if not text or not keywords:
         return text or ""
+    if max_spans is not None and text.count("**") // 2 >= max_spans:
+        return text
     # Preserve order by length desc, unique case-insensitive.
     seen: set[str] = set()
     ordered: list[str] = []
     for raw in keywords:
         term = str(raw or "").strip()
-        if not term or not is_tech_like_keyword(term):
+        if not term or not is_tech_like_keyword(term) or not is_strong_emphasis_term(term):
             continue
         key = term.lower()
         if key in seen:
@@ -132,12 +158,20 @@ def emphasize_keywords_in_text(text: str, keywords: Iterable[str]) -> str:
                 re.IGNORECASE,
             )
 
+        if max_spans is not None and out.count("**") // 2 >= max_spans:
+            break
         pieces: list[str] = []
         last = 0
+        wrapped = False
         for m in pattern.finditer(out):
             start, end = m.start(1), m.end(1)
             pieces.append(out[last:start])
             if _already_bolded(out, start, end):
+                pieces.append(m.group(1))
+            elif term != term.lower() and m.group(1) == m.group(1).lower():
+                # "Go" / "Swift" / "REST" must not bold the plain words go, swift, rest.
+                pieces.append(m.group(1))
+            elif _splits_proper_name(out, start, end, m.group(1)):
                 pieces.append(m.group(1))
             elif (
                 start >= 2
@@ -146,8 +180,11 @@ def emphasize_keywords_in_text(text: str, keywords: Iterable[str]) -> str:
                 and out[end : end + 2] == "**"
             ):
                 pieces.append(m.group(1))
+            elif max_spans is not None and wrapped:
+                pieces.append(m.group(1))
             else:
                 pieces.append(f"**{m.group(1)}**")
+                wrapped = True
             last = end
         pieces.append(out[last:])
         out = "".join(pieces)
@@ -158,7 +195,14 @@ def apply_keyword_emphasis_to_resume(
     resume: dict | None,
     keywords: Iterable[str],
 ) -> dict | None:
-    """Return a copy of *resume* with JD tech keywords bolded in narrative fields."""
+    """Return a copy of *resume* with JD tech keywords bolded in the summary.
+
+    Only the summary is topped up (to ``MAX_BOLD_IN_SUMMARY``). Bullets, project
+    descriptions and skill lists keep the model's own sparse picks; topping those up
+    made nearly every line bold.
+    """
+    from app.utils.resume_skill_taxonomy import MAX_BOLD_IN_SUMMARY
+
     if not resume or not isinstance(resume, dict):
         return resume
     terms = [str(k).strip() for k in keywords if str(k or "").strip()]
@@ -167,36 +211,8 @@ def apply_keyword_emphasis_to_resume(
 
     out = dict(resume)
     if isinstance(out.get("profile_summary"), str):
-        out["profile_summary"] = emphasize_keywords_in_text(out["profile_summary"], terms)
+        out["profile_summary"] = emphasize_keywords_in_text(
+            out["profile_summary"], terms, max_spans=MAX_BOLD_IN_SUMMARY
+        )
 
-    skills_out: list[dict] = []
-    for item in out.get("technical_skills") or []:
-        if not isinstance(item, dict):
-            continue
-        row = dict(item)
-        if isinstance(row.get("skills"), str):
-            row["skills"] = emphasize_keywords_in_text(row["skills"], terms)
-        skills_out.append(row)
-    if skills_out or out.get("technical_skills") is not None:
-        out["technical_skills"] = skills_out
-
-    exp_out: list[dict] = []
-    for entry in out.get("work_experience") or []:
-        if not isinstance(entry, dict):
-            continue
-        row = dict(entry)
-        if isinstance(row.get("project_description"), str):
-            row["project_description"] = emphasize_keywords_in_text(
-                row["project_description"], terms
-            )
-        if isinstance(row.get("used_skills"), str):
-            row["used_skills"] = emphasize_keywords_in_text(row["used_skills"], terms)
-        bullets = []
-        for b in row.get("bullets") or []:
-            if isinstance(b, str) and b.strip():
-                bullets.append(emphasize_keywords_in_text(b, terms))
-        row["bullets"] = bullets
-        exp_out.append(row)
-    if exp_out or out.get("work_experience") is not None:
-        out["work_experience"] = exp_out
     return out

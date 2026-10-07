@@ -387,11 +387,14 @@ def _split_anchor_around_tag(
 
 # ── Resume content builders ───────────────────────────────────────────────
 
-_SKILLS_SPLIT_RE = re.compile(r"[,;|\n]+")
+_SKILLS_SPLIT_RE = re.compile(r"[,;|\n\u00b7\u2022]+")
 
 
 def _split_skill_values(s: str) -> list[str]:
-    return [x.strip() for x in _SKILLS_SPLIT_RE.split(s or "") if x.strip()]
+    """Plain skill terms: ``**`` emphasis is dropped (only category labels are bold)
+    and any separator style collapses to one list, matching ``splitSkills`` in the preview."""
+    plain = (s or "").replace("**", "")
+    return [x.strip() for x in _SKILLS_SPLIT_RE.split(plain) if x.strip()]
 
 
 def _tint_hex(value: str | None, keep: float) -> str:
@@ -554,14 +557,14 @@ def _build_skills_elements(
             runs = list(cat_runs)
             if cat:
                 runs.append(_make_run(" " if cat_style == "badge" else ": ", rPr_tpl))
-            runs.extend(_runs_from_marked_text(sep.join(vals), rPr_tpl))
+            runs.append(_make_run(sep.join(vals), rPr_tpl, bold=False))
             cat_paras.append(_make_paragraph_from_anchor(anchor_p, runs))
         elif layout == "stacked":
             if cat:
                 lbl = _make_paragraph_from_anchor(anchor_p, cat_runs)
                 _set_para_space_after(lbl, stacked_label_gap_pt)
                 cat_paras.append(lbl)
-            cat_paras.append(_make_paragraph_from_anchor(anchor_p, _runs_from_marked_text(", ".join(vals), rPr_tpl)))
+            cat_paras.append(_make_paragraph_from_anchor(anchor_p, [_make_run(", ".join(vals), rPr_tpl, bold=False)]))
         elif layout == "chips":
             if cat:
                 lbl = _make_paragraph_from_anchor(anchor_p, cat_runs)
@@ -580,7 +583,7 @@ def _build_skills_elements(
             runs = list(cat_runs)
             if cat:
                 runs.append(_make_run(": ", rPr_tpl))
-            runs.extend(_runs_from_marked_text(", ".join(vals), rPr_tpl))
+            runs.append(_make_run(", ".join(vals), rPr_tpl, bold=False))
             cat_paras.append(_make_paragraph_from_anchor(anchor_p, runs))
 
         if cat_paras:
@@ -685,14 +688,13 @@ _EXP_MARKER_GLYPH: dict[str, str] = {
 
 
 def _exp_label_runs(label_style: str, rPr_tpl, accent: str | None, heading: str | None) -> list[OxmlElement]:
-    text = "Key Contributions:"
-    if label_style == "bold":
-        return [_styled_run(text, rPr_tpl, bold=True, color_hex=heading)]
+    """The "Key Contributions" subtitle is always bold; legacy ``plain`` renders as ``bold``."""
+    text = "Key Contributions"
     if label_style == "accent":
         return [_styled_run(text, rPr_tpl, bold=True, color_hex=accent or heading)]
     if label_style == "caps":
-        return [_styled_run("KEY CONTRIBUTIONS:", rPr_tpl, bold=True, color_hex=heading, size_pt=_rpr_base_pt(rPr_tpl) * 0.92)]
-    return [_make_run(text, rPr_tpl, bold=False)]
+        return [_styled_run(text.upper(), rPr_tpl, bold=True, color_hex=heading, size_pt=_rpr_base_pt(rPr_tpl) * 0.92)]
+    return [_styled_run(text, rPr_tpl, bold=True, color_hex=heading)]
 
 
 def _exp_used_skills_paragraphs(
@@ -704,29 +706,27 @@ def _exp_used_skills_paragraphs(
     heading: str | None,
     text_col: str | None,
 ) -> list[OxmlElement]:
-    used_skills = (used_skills or "").strip()
-    if not used_skills:
+    values = _split_skill_values(used_skills)
+    if not values:
         return []
-    # Mirror the preview's used-skills font sizes (ResumePreview.tsx): inline 0.92 (muted),
-    # label 0.9, chips/pill 0.85.
+    # Mirror the preview's used-skills font sizes (ResumePreview.tsx): inline / label 0.95
+    # in the body text colour, chips/pill 0.85.
     base_pt = _rpr_base_pt(rPr_tpl)
-    if used_style == "inline":
-        inline_pt = base_pt * 0.92
-        runs = [_styled_run("Technologies: ", rPr_tpl, bold=True, color_hex=heading, size_pt=inline_pt)]
-        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl, size_pt=inline_pt))
-        return [_make_paragraph_from_anchor(anchor_p, runs)]
-    if used_style == "label":
-        label_pt = base_pt * 0.9
-        runs = [_styled_run("Tech \u00b7 ", rPr_tpl, bold=True, color_hex=accent or heading, size_pt=label_pt)]
-        runs.extend(_runs_from_marked_text(used_skills, rPr_tpl, size_pt=label_pt))
-        return [_make_paragraph_from_anchor(anchor_p, runs)]
+    if used_style in ("inline", "label"):
+        line_pt = base_pt * 0.95
+        if used_style == "inline":
+            label = _styled_run("Technologies: ", rPr_tpl, bold=True, color_hex=heading, size_pt=line_pt)
+        else:
+            label = _styled_run("Tech stack: ", rPr_tpl, bold=True, color_hex=accent or heading, size_pt=line_pt)
+        body = _styled_run(", ".join(values), rPr_tpl, color_hex=text_col, size_pt=line_pt)
+        return [_make_paragraph_from_anchor(anchor_p, [label, body])]
     # chips / pill - each skill is a shaded segment
     accent_pill = used_style == "pill"
     fill = _tint_hex(accent, 0.16) if (accent_pill and accent) else "eef2f7"
     chip_color = accent if (accent_pill and accent) else text_col
     chip_pt = base_pt * 0.85
     runs: list[OxmlElement] = []
-    for sk in _split_skill_values(used_skills):
+    for sk in values:
         runs.append(_styled_run(f"  {sk}  ", rPr_tpl, color_hex=chip_color, fill_hex=fill, size_pt=chip_pt))
         runs.append(_make_run("  ", rPr_tpl))
     if not runs:
@@ -839,10 +839,12 @@ _PX_TO_PT = 72.0 / 96.0
 # ``exp_company_pt``); the last body line therefore just stays at space_after 0.
 _EXP_ROLE_GAP: dict[str, tuple[str, float]] = {
     "lead": ("exp_lead_pt", 2.0 * _PX_TO_PT),     # project / description <p margin-top 2px>
-    "label": ("exp_label_pt", 3.0 * _PX_TO_PT),   # "Key Contributions:" <p margin-top 3px>
+    "label": ("exp_label_pt", 5.0 * _PX_TO_PT),   # "Key Contributions" <p margin-top 5px>
     "bullet": ("exp_bullet_pt", 1.5 * _PX_TO_PT), # bullet row, gap before each line
-    "used": ("exp_used_pt", 3.0 * _PX_TO_PT),     # used-skills line <p margin-top 3px>
+    "used": ("exp_used_pt", 5.0 * _PX_TO_PT),     # used-skills line <p margin-top 5px>
 }
+# Gap above the "Key Contributions" subtitle (CONTRIBUTIONS_GAP_PX in ResumePreview.tsx).
+_EXP_SUBTITLE_GAP_PT = 5.0 * _PX_TO_PT
 # Uniform body rhythm (pt) for lead / label / bullet lines. Measured per-role gaps from
 # 2-col layouts are noisy (cross-column measure noise, wrapped vs single-line rows) and
 # produced visibly uneven spacing between consecutive body lines in the PDF.
@@ -862,7 +864,9 @@ def _apply_experience_spacing(
     if not paragraphs:
         return
     for p, role in zip(paragraphs, roles):
-        if role in ("lead", "label", "bullet"):
+        if role == "label":
+            _set_para_space_before(p, _EXP_SUBTITLE_GAP_PT)
+        elif role in ("lead", "bullet"):
             _set_para_space_before(p, _UNIFORM_BODY_GAP_PT)
         else:
             field, fallback = _EXP_ROLE_GAP.get(role, ("exp_bullet_pt", 1.5 * _PX_TO_PT))
