@@ -7,12 +7,14 @@ import type {
   ResumeDesign,
   SectionOptions,
   SkillsStyle,
+  SummaryStyle,
 } from '../../types/resumeDesign';
 import {
   DEFAULT_CERTIFICATES_STYLE,
   DEFAULT_EDUCATION_STYLE,
   DEFAULT_EXPERIENCE_STYLE,
   DEFAULT_SKILLS_STYLE,
+  DEFAULT_SUMMARY_STYLE,
 } from '../../types/resumeDesign';
 import { ControlCard, Segmented, Toggle } from './controls';
 
@@ -59,8 +61,25 @@ export function SectionDetails({
       : 'inline';
   const certLayout = ce.layout === 'chips' || ce.layout === 'inline' ? ce.layout : 'list';
 
+  const su = design.sections.summary_style ?? DEFAULT_SUMMARY_STYLE;
+  const onSummary = (patch: Partial<SummaryStyle>) => onSections({ summary_style: { ...su, ...patch } });
+
   return (
     <ControlCard icon={Settings2} title="Section details">
+      <Group title="Professional summary">
+        <Segmented<SummaryStyle['align']>
+          label="Alignment"
+          value={su.align}
+          options={[
+            { value: 'left', label: 'Left' },
+            { value: 'justify', label: 'Justified' },
+            { value: 'center', label: 'Center' },
+          ]}
+          onChange={(v) => onSummary({ align: v })}
+        />
+        <Toggle label="Italic text" checked={su.italic} onChange={(v) => onSummary({ italic: v })} />
+      </Group>
+
       <Group title="Technical skills">
         <Segmented<SkillsLayoutChoice>
           label="Layout"
@@ -86,6 +105,26 @@ export function SectionDetails({
       </Group>
 
       <Group title="Work experience">
+        <Segmented<'inline' | 'stacked'>
+          label="Company and role"
+          value={ex.header_layout === 'stacked' ? 'stacked' : 'inline'}
+          options={[
+            { value: 'inline', label: 'One line' },
+            { value: 'stacked', label: 'Two lines' },
+          ]}
+          onChange={(v) => onExperience({ header_layout: v })}
+        />
+        <Segmented<ExperienceStyle['accent_target']>
+          label="Accent color on"
+          value={ex.accent_target}
+          options={[
+            { value: 'company', label: 'Company' },
+            { value: 'role', label: 'Role' },
+            { value: 'date', label: 'Dates' },
+            { value: 'none', label: 'None' },
+          ]}
+          onChange={(v) => onExperience({ accent_target: v })}
+        />
         <Segmented<ExperienceStyle['date_position']>
           label="Dates"
           value={ex.date_position}
@@ -125,6 +164,19 @@ export function SectionDetails({
             )
           }
         />
+        {ex.show_project_title && (
+          <Segmented<'label' | 'bold' | 'italic' | 'accent'>
+            label="Project title"
+            value={ex.project_style === 'hidden' ? 'label' : ex.project_style}
+            options={[
+              { value: 'label', label: 'Project: X' },
+              { value: 'bold', label: 'Bold' },
+              { value: 'italic', label: 'Italic' },
+              { value: 'accent', label: 'Accent' },
+            ]}
+            onChange={(v) => onExperience({ project_style: v })}
+          />
+        )}
         <Toggle
           label="Key Contributions subtitle"
           checked={ex.show_contributions_label && ex.label_style !== 'hidden'}
@@ -139,7 +191,36 @@ export function SectionDetails({
       </Group>
 
       <Group title="Education">
-        <Toggle label="Dates" checked={ed.show_period} onChange={(v) => onEducation({ show_period: v })} />
+        <Segmented<'inline' | 'stacked'>
+          label="School and degree"
+          value={ed.header_layout}
+          options={[
+            { value: 'inline', label: 'One line' },
+            { value: 'stacked', label: 'Two lines' },
+          ]}
+          onChange={(v) => onEducation({ header_layout: v })}
+        />
+        <Segmented<EducationStyle['date_position']>
+          label="Dates"
+          value={ed.date_position}
+          options={[
+            { value: 'right', label: 'Right' },
+            { value: 'inline', label: 'Inline' },
+            { value: 'below', label: 'Below' },
+          ]}
+          onChange={(v) => onEducation({ date_position: v })}
+        />
+        <Segmented<EducationStyle['accent_target']>
+          label="Accent color on"
+          value={ed.accent_target}
+          options={[
+            { value: 'university', label: 'School' },
+            { value: 'degree', label: 'Degree' },
+            { value: 'none', label: 'None' },
+          ]}
+          onChange={(v) => onEducation({ accent_target: v })}
+        />
+        <Toggle label="Show dates" checked={ed.show_period} onChange={(v) => onEducation({ show_period: v })} />
         <Toggle label="Grade / GPA" checked={ed.show_mark} onChange={(v) => onEducation({ show_mark: v })} />
         <Toggle label="Location" checked={ed.show_location} onChange={(v) => onEducation({ show_location: v })} />
         <Toggle label="Description" checked={ed.show_description} onChange={(v) => onEducation({ show_description: v })} />

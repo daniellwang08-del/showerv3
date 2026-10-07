@@ -1,6 +1,7 @@
 import { PanelTop } from 'lucide-react';
 import type { LayoutConfig, ResumeDesign } from '../../types/resumeDesign';
-import { ControlCard, Segmented, Slider } from './controls';
+import { headerPadSides } from '../../types/resumeDesign';
+import { BoxSidesField, ControlCard, Segmented, Slider } from './controls';
 
 /** Name and contact block: alignment, band, contact display and spacing. */
 export function HeaderControls({
@@ -53,17 +54,32 @@ export function HeaderControls({
         ]}
         onChange={(v) => onLayout({ contact_icons: v })}
       />
-      <Slider
-        label={band ? 'Band padding' : 'Space below header'}
-        value={l.header_pad_bottom_pt ?? l.header_padding_pt}
-        min={0}
-        max={band ? 48 : 32}
-        step={1}
-        suffix=" pt"
-        onChange={(v) =>
-          onLayout({ header_padding_pt: v, header_pad_top_pt: v, header_pad_bottom_pt: v, header_pad_left_pt: null, header_pad_right_pt: null })
-        }
-      />
+      {band ? (
+        <BoxSidesField
+          label="Band padding"
+          suffix=" (pt)"
+          values={headerPadSides(l)}
+          min={0}
+          max={72}
+          step={1}
+          onChangeSide={(side, v) => onLayout({ [`header_pad_${side}_pt`]: v } as Partial<LayoutConfig>)}
+          onChangeAll={(v) =>
+            onLayout({ header_padding_pt: v, header_pad_top_pt: v, header_pad_right_pt: v, header_pad_bottom_pt: v, header_pad_left_pt: v })
+          }
+        />
+      ) : (
+        <Slider
+          label="Space below header"
+          value={l.header_pad_bottom_pt ?? l.header_padding_pt}
+          min={0}
+          max={32}
+          step={1}
+          suffix=" pt"
+          onChange={(v) =>
+            onLayout({ header_padding_pt: v, header_pad_top_pt: v, header_pad_bottom_pt: v, header_pad_left_pt: null, header_pad_right_pt: null })
+          }
+        />
+      )}
     </ControlCard>
   );
 }
