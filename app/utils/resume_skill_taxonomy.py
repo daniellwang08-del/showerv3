@@ -111,7 +111,7 @@ def normalize_skill_list(raw: str) -> str:
     items: list[str] = []
     seen: set[str] = set()
     for part in _ITEM_SPLIT_RE.split(strip_bold_markers(raw)):
-        item = part.strip(" .\t")
+        item = part.strip(" \t").rstrip(".").strip()
         if not item:
             continue
         key = item.lower()
@@ -202,6 +202,8 @@ _LEXICON: dict[str, tuple[str, ...]] = {
         "mssql", "cassandra", "dynamodb", "elasticsearch", "opensearch", "neo4j", "couchbase",
         "cockroach", "supabase", "snowflake", "clickhouse", "memcached", "prisma", "sqlalchemy",
         "hibernate", "typeorm", "sequelize", "pinecone", "pgvector", "weaviate", "milvus",
+        "cosmos", "azure cosmos", "azure sql", "timescale", "influx", "amazon timestream", "amazon rds",
+        "aurora", "bigtable", "firestore", "spanner",
     ),
     "Messaging": ("kafka", "rabbitmq", "sqs", "sns", "pub/sub", "nats", "activemq", "kinesis", "celery", "zeromq"),
     "Observability": (
@@ -237,6 +239,34 @@ def _lexicon_home(item: str, candidates: list[str]) -> str | None:
                     continue  # "r", "go" must match exactly
                 return cat
     return None
+
+
+def rehome_misplaced_skills(skills: list[dict]) -> list[dict]:
+    """Move an item the lexicon places elsewhere ("Node.js" under Languages) into that category.
+
+    Only moves into a category the section already has, and only when the item does not
+    also belong where it is (DynamoDB stays under Databases or Cloud).
+    """
+    rows = [dict(r) for r in skills or [] if isinstance(r, dict)]
+    names = [str(r.get("category") or "") for r in rows]
+    known = [n for n in names if n in _LEXICON]
+    buckets = [[i for i in normalize_skill_list(str(r.get("skills") or "")).split(", ") if i] for r in rows]
+    moves: dict[int, list[str]] = {}
+    for idx, (name, items) in enumerate(zip(names, buckets)):
+        if name not in _LEXICON:
+            continue
+        keep: list[str] = []
+        for item in items:
+            others = [n for n in known if n != name]
+            home = None if _lexicon_home(item, [name]) else _lexicon_home(item, others)
+            if home:
+                moves.setdefault(names.index(home), []).append(item)
+            else:
+                keep.append(item)
+        buckets[idx] = keep
+    for idx, items in moves.items():
+        buckets[idx] = buckets[idx] + [i for i in items if i not in buckets[idx]]
+    return [{**r, "skills": ", ".join(b)} for r, b in zip(rows, buckets) if b]
 
 
 def _split_compound(parts: list[str], items: list[str]) -> list[tuple[str, list[str]]]:

@@ -35,6 +35,10 @@ def test_skill_list_is_plain_and_spaced():
     assert normalize_skill_list("AWS; GCP | Azure \u00b7 aws") == "AWS, GCP, Azure"
 
 
+def test_skill_list_keeps_leading_dot():
+    assert normalize_skill_list(".NET, C#, Python.") == ".NET, C#, Python"
+
+
 def test_compound_category_is_split_by_lexicon():
     out = normalize_skill_categories(
         [{"category": "Cloud & DevOps", "skills": "AWS, Docker, Kubernetes, GCP, Terraform"}]

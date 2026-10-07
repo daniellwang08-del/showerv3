@@ -42,7 +42,18 @@ from app.utils.resume_keyword_emphasis import (
     apply_keyword_emphasis_to_resume,
     is_tech_like_keyword,
 )
-from app.utils.resume_skill_taxonomy import normalize_tailored_formatting
+from app.utils.resume_evidence import (
+    build_role_evidence_block,
+    build_source_facts_block,
+    build_supported_terms_block,
+    cap_skills_section,
+    copied_job_phrases,
+    enforce_role_evidence,
+    expand_acronyms_once,
+    summary_unattributed_terms,
+    unattributed_role_terms,
+)
+from app.utils.resume_skill_taxonomy import normalize_tailored_formatting, rehome_misplaced_skills
 
 logger = get_logger(__name__)
 
@@ -398,21 +409,6 @@ def _parse_tailored_resume(parsed: dict | None) -> dict | None:
                 period_end = _clean_factual(entry.get("period_end"))
                 location = _clean_factual(entry.get("location"))
                 employment_type = _clean_factual(entry.get("employment_type"))
-                role_index = len(experience)
-                if role_index < 2:
-                    min_bullets = 8
-                elif role_index == 2:
-                    min_bullets = 7
-                else:
-                    min_bullets = 4
-                if len(bullets) < min_bullets:
-                    logger.warning(
-                        "tailored_resume_bullet_count_below_minimum",
-                        company=company,
-                        role_index=role_index,
-                        bullet_count=len(bullets),
-                        minimum=min_bullets,
-                    )
                 experience.append({
                     "company_name": company,
                     "job_title": title,
@@ -469,14 +465,6 @@ _GENERIC_SKILL_CATEGORIES = frozenset(
         "core skills",
     }
 )
-
-
-def _min_bullets_for_role(role_index: int) -> int:
-    if role_index < 2:
-        return 8
-    if role_index == 2:
-        return 7
-    return 4
 
 
 def _job_anchor_terms(*text_blobs: str, limit: int = 32) -> list[str]:
@@ -632,10 +620,16 @@ def tailored_resume_quality_issues(
     *,
     job_anchor_terms: list[str] | None = None,
     role_domain_cues: list[str] | None = None,
+    profile_text: str = "",
+    evidence_text: str = "",
+    job_text: str = "",
+    claim_terms: list[str] | None = None,
 ) -> list[str]:
     """Return soft quality problems that warrant one Phase B regeneration retry.
 
     Does not reject the payload forever, callers may still accept after retry.
+    The role-evidence checks run only when *profile_text* is given; *claim_terms*
+    (all job technologies, supported or not) widens what they look for.
     """
     if not resume or not isinstance(resume, dict):
         return ["missing_tailored_resume"]
@@ -643,6 +637,8 @@ def tailored_resume_quality_issues(
     summary = str(resume.get("profile_summary") or "").strip()
     if len(summary) < 80:
         issues.append("profile_summary_too_short")
+    if len(summary.replace("**", "").split()) > _MAX_SUMMARY_WORDS:
+        issues.append("profile_summary_too_long")
     skills = resume.get("technical_skills") or []
     if not isinstance(skills, list) or len(skills) < 1:
         issues.append("technical_skills_missing")
@@ -671,6 +667,7 @@ def tailored_resume_quality_issues(
         issues.append("work_experience_missing")
         return issues
 
+    total_bullets = 0
     for idx, entry in enumerate(experience):
         if not isinstance(entry, dict):
             issues.append(f"work_experience[{idx}]_invalid")
@@ -679,18 +676,25 @@ def tailored_resume_quality_issues(
         if not isinstance(bullets, list):
             bullets = []
         clean = [b for b in bullets if isinstance(b, str) and b.strip()]
-        minimum = _min_bullets_for_role(idx)
-        if len(clean) < minimum:
-            issues.append(f"work_experience[{idx}]_bullets_below_{minimum}")
-        if idx < 2 and len(clean) >= max(4, minimum - 2):
+        total_bullets += len(clean)
+        if not clean:
+            issues.append(f"work_experience[{idx}]_no_bullets")
+        if idx < 2 and len(clean) >= 4:
             emphasized = sum(1 for b in clean if "**" in b)
             # Bold is sparse by contract; flag only roles where it is nearly absent.
-            if emphasized < max(2, len(clean) // 3):
+            if emphasized < max(1, len(clean) // 4):
                 issues.append(f"work_experience[{idx}]_weak_keyword_emphasis")
-        elif idx == 2 and len(clean) >= minimum:
-            emphasized = sum(1 for b in clean if "**" in b)
-            if emphasized == 0:
-                issues.append(f"work_experience[{idx}]_no_keyword_emphasis")
+    if total_bullets > _MAX_TOTAL_BULLETS:
+        issues.append("too_many_bullets")
+
+    if profile_text:
+        terms = claim_terms if claim_terms is not None else job_anchor_terms
+        for idx in unattributed_role_terms(resume, profile_text, evidence_text, terms):
+            issues.append(f"work_experience[{idx}]_unattributed_technology")
+        if summary_unattributed_terms(resume, profile_text, evidence_text, terms):
+            issues.append("profile_summary_unattributed_technology")
+    if len(copied_job_phrases(resume, job_text)) >= 2:
+        issues.append("copies_job_posting_phrases")
 
     cues = [c for c in (role_domain_cues or []) if isinstance(c, str) and c.strip()]
     if cues and summary:
@@ -709,6 +713,9 @@ def tailored_resume_quality_issues(
 
 _MIN_SUPPORTED_ANCHORS = 3
 _SUPPORTED_ANCHOR_COVERAGE = 0.7
+_MAX_SUMMARY_WORDS = 90
+# The prompt budgets 20-26 bullets for a senior profile; past this the resume is padded.
+_MAX_TOTAL_BULLETS = 30
 
 # Issues a second LLM call does not fix: anchors are a noisy keyword list (a rerun
 # lands on the same coverage) and emphasis is applied deterministically.
@@ -721,9 +728,62 @@ _COVER_LETTER_MAX_TOKENS = 4096
 
 
 def _is_advisory_quality_issue(issue: str) -> bool:
-    return issue in _ADVISORY_QUALITY_ISSUES or issue.endswith(
-        ("_weak_keyword_emphasis", "_no_keyword_emphasis")
-    )
+    return issue in _ADVISORY_QUALITY_ISSUES or issue.endswith("_weak_keyword_emphasis")
+
+
+def quality_retry_instructions(
+    resume: dict | None,
+    blocking: list[str],
+    *,
+    job_anchor_terms: list[str] | None = None,
+    role_domain_cues: list[str] | None = None,
+    profile_text: str = "",
+    evidence_text: str = "",
+    job_text: str = "",
+    claim_terms: list[str] | None = None,
+) -> str:
+    """Rewrite instructions naming exactly what the previous draft got wrong."""
+    terms = claim_terms if claim_terms is not None else job_anchor_terms
+    lines = ["QUALITY RETRY: rewrite the resume (do not lightly edit) and fix every point below."]
+    entries = (resume or {}).get("work_experience") or []
+    if any(i.endswith("_unattributed_technology") for i in blocking) and resume:
+        for idx, bad in unattributed_role_terms(resume, profile_text, evidence_text, terms).items():
+            company = entries[idx].get("company_name") if idx < len(entries) else f"role {idx}"
+            lines.append(
+                f"- {company}: the profile never ties {', '.join(bad)} to this role. Remove them from its "
+                "bullets, project_description and used_skills; describe the work with the technologies "
+                "the Role evidence map lists for it. They may stay in technical_skills."
+            )
+    if "profile_summary_unattributed_technology" in blocking and resume:
+        bad = summary_unattributed_terms(resume, profile_text, evidence_text, terms)
+        lines.append(
+            f"- profile_summary claims hands-on use of {', '.join(bad)}, which no role shows. "
+            "Name only technologies a dated role evidences; leave the rest to technical_skills."
+        )
+    if "profile_summary_too_long" in blocking:
+        lines.append(f"- profile_summary: 3-4 sentences, at most {_MAX_SUMMARY_WORDS - 15} words, no technology lists.")
+    if "profile_summary_too_short" in blocking:
+        lines.append("- profile_summary: 3-4 substantive sentences naming this role's title family and domain.")
+    if "too_many_bullets" in blocking:
+        lines.append(
+            f"- Too many bullets (over {_MAX_TOTAL_BULLETS}). Follow the length budget: 6-8 for each of the two "
+            "most recent roles, 4-5 for the third, 3-4 for older or short roles. Merge or drop the least relevant."
+        )
+    if "copies_job_posting_phrases" in blocking and resume:
+        copied = copied_job_phrases(resume, job_text)[:4]
+        lines.append(
+            "- These runs are copied from the posting; say what the candidate did in their own terms: "
+            + "; ".join(f'"{c}"' for c in copied)
+        )
+    if any(i.startswith("technical_skills") for i in blocking):
+        lines.append(
+            "- technical_skills: 5-6 clean single-concept categories (e.g. Languages, Backend, Databases, "
+            "Cloud, DevOps) with named technologies only: no soft skills, no generic labels, no **."
+        )
+    if any(i.endswith("_no_bullets") or i.endswith("_invalid") or i.endswith("_missing") for i in blocking):
+        lines.append("- Include exactly one work_experience entry, with bullets, for every company in the profile.")
+    lines.append("Never invent employers, dates, technologies, metrics, scale or ownership.")
+    return "\n".join(lines)
 
 
 def recent_anchor_coverage(resume: dict | None, anchors: list[str]) -> float:
@@ -762,6 +822,10 @@ def _pick_better_tailored_resume(
     *,
     job_anchor_terms: list[str] | None = None,
     role_domain_cues: list[str] | None = None,
+    profile_text: str = "",
+    evidence_text: str = "",
+    job_text: str = "",
+    claim_terms: list[str] | None = None,
 ) -> dict | None:
     """Prefer the draft with fewer quality issues, then higher coverage."""
     if first and not second:
@@ -770,12 +834,16 @@ def _pick_better_tailored_resume(
         return second
     if not first and not second:
         return None
-    issues_a = tailored_resume_quality_issues(
-        first, job_anchor_terms=job_anchor_terms, role_domain_cues=role_domain_cues
-    )
-    issues_b = tailored_resume_quality_issues(
-        second, job_anchor_terms=job_anchor_terms, role_domain_cues=role_domain_cues
-    )
+    checks = {
+        "job_anchor_terms": job_anchor_terms,
+        "role_domain_cues": role_domain_cues,
+        "profile_text": profile_text,
+        "evidence_text": evidence_text,
+        "job_text": job_text,
+        "claim_terms": claim_terms,
+    }
+    issues_a = tailored_resume_quality_issues(first, **checks)
+    issues_b = tailored_resume_quality_issues(second, **checks)
     if len(issues_b) < len(issues_a):
         return second
     if len(issues_a) < len(issues_b):
@@ -1092,6 +1160,9 @@ async def generate_tailored_content_phase_b(
     structured_block = structured_context or "No structured job data available."
     must_cover = build_must_cover_requirements(structured_block, job_truncated)
     domain_cues = build_company_domain_cues(structured_block, job_truncated)
+    job_anchors = _job_anchor_terms(structured_block, job_truncated, must_cover)
+    truthful_anchors = supported_job_anchors(job_anchors, profile_truncated, evidence_truncated)
+    role_cues = _role_domain_cues_from_context(structured_block, job_truncated)
     user_content = JOB_MATCH_PHASE_B_USER_TEMPLATE.format(
         job_text=job_truncated,
         profile_text=profile_truncated,
@@ -1100,10 +1171,20 @@ async def generate_tailored_content_phase_b(
         company_domain_cues=domain_cues,
         match_summary=match_summary or "No match summary available.",
         project_evidence_context=evidence_truncated,
+        role_evidence_map=build_role_evidence_block(profile_truncated, evidence_truncated, job_anchors),
+        source_facts=build_source_facts_block(profile_truncated, evidence_truncated),
+        supported_job_terms=build_supported_terms_block(
+            truthful_anchors, profile_truncated, evidence_truncated
+        ),
     )
-    job_anchors = _job_anchor_terms(structured_block, job_truncated, must_cover)
-    truthful_anchors = supported_job_anchors(job_anchors, profile_truncated, evidence_truncated)
-    role_cues = _role_domain_cues_from_context(structured_block, job_truncated)
+    checks = {
+        "job_anchor_terms": truthful_anchors,
+        "role_domain_cues": role_cues,
+        "profile_text": profile_truncated,
+        "evidence_text": evidence_truncated,
+        "job_text": job_truncated,
+        "claim_terms": job_anchors,
+    }
     phase_b_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_b_max_tokens")))
     phase_b_max = min(phase_b_max, 32768)
     # Slightly higher than Phase A: encourage job-specific rewrite while staying factual.
@@ -1142,7 +1223,14 @@ async def generate_tailored_content_phase_b(
         resume = _parse_tailored_resume(parsed.get("tailored_resume"))
         if not resume:
             return None
-        return normalize_tailored_formatting(apply_keyword_emphasis_to_resume(resume, job_anchors))
+        resume = enforce_role_evidence(resume, profile_truncated, evidence_truncated)
+        resume = normalize_tailored_formatting(apply_keyword_emphasis_to_resume(resume, job_anchors))
+        resume = expand_acronyms_once(resume, truthful_anchors)
+        if resume and resume.get("technical_skills"):
+            resume["technical_skills"] = cap_skills_section(
+                rehome_misplaced_skills(resume["technical_skills"]), job_truncated
+            )
+        return resume
 
     async def _cover_call(observe_name: str) -> dict | None:
         try:
@@ -1171,11 +1259,7 @@ async def generate_tailored_content_phase_b(
     tailored_resume = first_resume
     cover_missing = include_cover_letter and not cover_letter
 
-    quality_issues = tailored_resume_quality_issues(
-        tailored_resume,
-        job_anchor_terms=truthful_anchors,
-        role_domain_cues=role_cues,
-    )
+    quality_issues = tailored_resume_quality_issues(tailored_resume, **checks)
     blocking = [i for i in quality_issues if not _is_advisory_quality_issue(i)]
     coverage = round(recent_anchor_coverage(tailored_resume, truthful_anchors), 3)
     if quality_issues and not blocking:
@@ -1193,6 +1277,7 @@ async def generate_tailored_content_phase_b(
                 await on_stage("quality_retry")
             except Exception:  # noqa: BLE001 - progress reporting must never break the run
                 pass
+        retry_note = quality_retry_instructions(tailored_resume, blocking, **checks)
         logger.warning(
             "phase_b_quality_soft_retry",
             issues=quality_issues,
@@ -1200,26 +1285,9 @@ async def generate_tailored_content_phase_b(
             supported_anchors=len(truthful_anchors),
             jd_anchors=len(job_anchors),
             coverage=coverage,
+            retry_note=retry_note,
         )
-        retry_user = (
-            user_content
-            + "\n\nQUALITY RETRY: Previous output failed these checks: "
-            + ", ".join(blocking)
-            + ". REWRITE (do not lightly edit): profile_summary must be substantive and name THIS "
-            "job's role/domain; technical_skills must use 4-7 clean single-concept categories "
-            "(e.g. Languages, Frontend, Backend, Databases, Cloud, DevOps) with technologies only "
-            "(no soft-skill jargon, no **); index 0-1 roles need at least 8 bullets each, bolding at most 2 "
-            "named JD technologies or metrics per bullet (many bullets need none); index 2 at least 7 bullets; "
-            "older roles at least 4. Map Must-cover requirements into the two most recent roles "
-            "when the background supports them. Never invent employers, dates, or technologies."
-        )
-        if truthful_anchors:
-            retry_user += (
-                "\nJob technologies/terms the candidate's background supports; "
-                "surface them where the evidence is: "
-                + ", ".join(truthful_anchors[:16])
-                + "."
-            )
+        retry_user = user_content + "\n\n" + retry_note
 
         retry_resume, retry_cover = await asyncio.gather(
             _resume_call(retry_user, "phase_b_quality_retry") if blocking else _no_result(),
@@ -1228,19 +1296,10 @@ async def generate_tailored_content_phase_b(
         if retry_cover:
             cover_letter = retry_cover
         if blocking:
-            chosen = _pick_better_tailored_resume(
-                first_resume,
-                retry_resume,
-                job_anchor_terms=truthful_anchors,
-                role_domain_cues=role_cues,
-            )
+            chosen = _pick_better_tailored_resume(first_resume, retry_resume, **checks)
             if chosen is not None:
                 tailored_resume = chosen
-            remaining = tailored_resume_quality_issues(
-                tailored_resume,
-                job_anchor_terms=truthful_anchors,
-                role_domain_cues=role_cues,
-            )
+            remaining = tailored_resume_quality_issues(tailored_resume, **checks)
             if any(not _is_advisory_quality_issue(i) for i in remaining):
                 logger.warning(
                     "phase_b_quality_issues_after_retry",
