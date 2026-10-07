@@ -29,6 +29,9 @@ _PLACEHOLDER = frozenset({
 _LOCATION_LINE_RE = re.compile(
     r"(?im)^(?:job\s+)?(?:all\s+)?locations?\s*[:\-]\s*(.+)$"
 )
+# JSON-LD text puts the address on the line after a bare "Location:" label
+# ("Location:\nCountry: US"), and the value capture runs onto that line.
+_ADDRESS_PART_LABEL_RE = re.compile(r"(?i)^(?:country|city|state/region|state|region)\s*:\s*")
 _BASED_IN_RE = re.compile(
     r"(?i)\b(?:based in|located in|this role is (?:based|located) in)\s+"
     r"([A-Z][A-Za-z '\-]{1,40}(?:,\s*[A-Z][A-Za-z '\-]{1,30}){0,2})"
@@ -197,6 +200,7 @@ def infer_location_from_text(text: str | None) -> str | None:
     candidates: list[str] = []
     for match in _LOCATION_LINE_RE.finditer(window):
         raw = match.group(1).strip().split("\n", 1)[0].strip()
+        raw = _ADDRESS_PART_LABEL_RE.sub("", raw)
         raw = re.split(r"\s*[|•]\s*", raw, maxsplit=1)[0].strip()
         raw = raw.rstrip(" .")
         if raw and len(raw) <= 80:

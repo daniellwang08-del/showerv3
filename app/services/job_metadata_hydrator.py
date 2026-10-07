@@ -101,6 +101,8 @@ _ATS_PATH_COMPANY = {
 }
 _ATS_PATH_NOISE = frozenset({"apply", "jobs", "job", "companies", "careers"})
 _TRINET_ID_PREFIX_RE = re.compile(r"^\d+-")
+# www., www1., www2. (JobDiva serves portals from www1.jobdiva.com).
+_WWW_PREFIX_RE = re.compile(r"^www\d*\.")
 
 # Job boards / aggregators: the host is never the employer, so a hostname-derived
 # name here would label every posting with the board's own name.
@@ -115,6 +117,7 @@ _NON_EMPLOYER_HOSTS = frozenset({
     "ashbyhq",
     "myworkdayjobs",
     "ats",
+    "jobdiva",
     "dice",
     "indeed",
     "ziprecruiter",
@@ -177,7 +180,8 @@ def infer_company_from_url(url: str | None) -> str | None:
                 if slug and slug.lower() not in _ATS_PATH_NOISE:
                     return _slug_to_company(slug)
             return None
-    for prefix in ("www.", "jobs.", "careers.", "apply.", "boards.", "job-boards."):
+    host = _WWW_PREFIX_RE.sub("", host)
+    for prefix in ("jobs.", "careers.", "apply.", "boards.", "job-boards."):
         if host.startswith(prefix):
             host = host[len(prefix) :]
             break

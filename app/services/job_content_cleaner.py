@@ -119,8 +119,18 @@ def _remove_non_content_elements(tree) -> None:
     for tag in _REMOVE_TAGS:
         for el in tree.xpath(f".//{tag}"):
             parent = el.getparent()
-            if parent is not None:
-                parent.remove(el)
+            if parent is None:
+                continue
+            # lxml's remove() also drops el.tail, the text AFTER the element
+            # (``<span><svg/>Remote</span>`` loses "Remote"), so re-home it.
+            tail = el.tail
+            if tail:
+                prev = el.getprevious()
+                if prev is not None:
+                    prev.tail = (prev.tail or "") + tail
+                else:
+                    parent.text = (parent.text or "") + tail
+            parent.remove(el)
 
 
 def plain_text_from_document_html(html: str) -> str:

@@ -299,6 +299,48 @@ def _looks_like_company(span: str) -> bool:
     return True
 
 
+_TITLE_CONNECTORS = frozenset({"of", "and", "the", "for", "in", "to", "with", "at", "a", "an", "&", "-", "/", "|"})
+_MAX_TITLE_WORDS = 12
+
+
+def _title_shaped_line(line: str) -> bool:
+    text = _norm(line)
+    if not text or text[-1] in ".!?:" or len(text) > _MAX_TITLE_LEN:
+        return False
+    words = [w for w in text.split() if w.lower() not in _TITLE_CONNECTORS]
+    if not words or len(text.split()) > _MAX_TITLE_WORDS:
+        return False
+    capitalized = sum(1 for w in words if w[:1].isupper() or w[:1].isdigit())
+    return capitalized / len(words) >= 0.75
+
+
+def _whole_line_for(
+    span: str,
+    plain_text: str | None,
+    title_scores: list[tuple[float, float, float, int, str]],
+) -> tuple[float, float, float, str] | None:
+    """Upgrade a sliding-window pick to the full line that contains it.
+
+    Short windows embed closer to the short title prototypes than the full
+    title does (``Engineer - Senior`` outscores ``Full Stack Generative AI
+    Engineer - Senior``), so the window that wins is usually a fragment.
+    """
+    lines = {_norm(c).lower() for c in _SPLIT_RE.split((plain_text or "")[:_MAX_SCAN_CHARS]) if _norm(c)}
+    low = span.lower()
+    if low in lines:
+        return None
+    for margin, cos, noise, _idx, cand in title_scores:
+        cl = cand.lower()
+        if cl == low or cl not in lines or low not in cl:
+            continue
+        if cos < _MIN_TITLE_COS or margin < _MIN_MARGIN_VS_NOISE:
+            continue
+        if not _looks_like_title(cand) or not _title_shaped_line(cand):
+            continue
+        return (margin, cos, noise, cand)
+    return None
+
+
 def extract_title_company_ml(
     plain_text: str | None,
     *,
@@ -363,6 +405,9 @@ def extract_title_company_ml(
             picked_title = (margin, cos, noise, span)
             break
         if picked_title:
+            whole = _whole_line_for(picked_title[3], plain_text, title_scores)
+            if whole is not None:
+                picked_title = whole
             margin, cos, noise, span = picked_title
             title_out = span
             explain["title_best"] = {

@@ -187,7 +187,9 @@ class APIDetectorExtractor(BaseExtractor):
 
             for script in scripts:
                 try:
-                    data = json.loads(script.text_content())
+                    # strict=False: JobDiva (and other CMSs) emit raw newlines
+                    # inside the description string, which strict JSON rejects.
+                    data = json.loads(script.text_content(), strict=False)
                     job_data = self._extract_job_posting(data)
                     if job_data:
                         return job_data
