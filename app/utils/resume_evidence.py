@@ -505,6 +505,70 @@ def summary_unattributed_terms(
     return bad
 
 
+_SENIORITY_WORDS = frozenset(
+    {"senior", "sr", "staff", "principal", "lead", "junior", "jr", "mid", "level", "distinguished", "a", "an"}
+)
+# Levels a summary may only claim when a profile title already holds them.
+_ABOVE_SENIOR = frozenset({"staff", "principal", "lead", "distinguished"})
+# Words that name a broad engineering family any software engineer can claim truthfully.
+_FAMILY_WORDS = frozenset(
+    {
+        "software", "development", "engineer", "engineers", "developer", "full", "stack", "full-stack", "backend", "back-end",
+        "back", "end", "frontend", "front-end", "front", "web", "ai", "ml", "machine", "learning", "data",
+        "platform", "cloud", "applied", "application", "applications", "systems", "infrastructure", "mobile",
+        "python", "llm", "genai", "generative", "and", "/", "&", "focused", "oriented", "minded", "driven",
+    }
+)
+_ROLE_NOUN_RE = re.compile(
+    r"\b(engineer|developer|sdet|architect|manager|director|scientist|analyst|researcher|consultant|"
+    r"administrator|specialist|tester|designer)\b",
+    re.IGNORECASE,
+)
+_OPENING_CUT_RE = re.compile(
+    r"\s+(?:with|who|having|specializing|specialising|focused|building|bringing|experienced|skilled|that|across)\b|[,;:(]",
+    re.IGNORECASE,
+)
+
+
+def summary_opening_title(summary: str) -> str:
+    """The job title a summary opens with ("Senior Software Engineer with 8 years" -> that title)."""
+    first = re.split(r"(?<=[.!?])\s+", (summary or "").replace("**", "").strip(), maxsplit=1)[0]
+    head = _OPENING_CUT_RE.split(first, maxsplit=1)[0].strip()
+    noun = _ROLE_NOUN_RE.search(head)
+    if not noun:
+        return ""
+    suffix = re.match(r"\s+in\s+test\b", head[noun.end():], re.IGNORECASE)
+    head = head[: noun.end() + (suffix.end() if suffix else 0)].strip()
+    return head if len(head.split()) <= 8 else ""
+
+
+def summary_unheld_title(resume: dict | None, profile_text: str) -> str:
+    """The summary's opening title when it names a role family the candidate never held, else "".
+
+    "Senior Software Engineer" or "Machine Learning Engineer" are fine for any software
+    engineer; "Software Development Engineer in Test" or "Engineering Manager" are not,
+    unless a profile title says so.
+    """
+    if not resume or not isinstance(resume, dict):
+        return ""
+    title = summary_opening_title(str(resume.get("profile_summary") or ""))
+    if not title:
+        return ""
+    roles = parse_profile_roles(profile_text)
+    words = _norm(title).split()
+    held_words = {w for r in roles for w in _norm(r.title).split()}
+    if any(w in _ABOVE_SENIOR and w not in held_words for w in words):
+        return title
+    core = [w for w in words if w not in _SENIORITY_WORDS]
+    if all(w in _FAMILY_WORDS for w in core):
+        return ""
+    for role in roles:
+        held = set(_norm(role.title).split())
+        if set(core) <= held or is_mentioned(" ".join(core), role.title):
+            return ""
+    return title
+
+
 def build_role_evidence_block(
     profile_text: str,
     evidence_text: str = "",

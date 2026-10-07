@@ -58,9 +58,15 @@ roles and numbers. Write for both readers: evidence inside the right role, the p
 
 ## 4. profile_summary
 - 3-4 sentences, 45-75 words.
-- Sentence 1: the target title family plus truthful years in the discipline the profile actually shows
-  (e.g. "Senior software engineer with 8 years building backend services"). Never attach the total career
-  length to a specialty the profile shows for fewer years.
+- Sentence 1: the posting's title family plus truthful years in the discipline the profile shows
+  (e.g. "Senior Machine Learning Engineer with 8 years building production ML systems"). Engineering families
+  the candidate's work supports are fine even if their exact titles differed: Software, Backend, Full-Stack,
+  Machine Learning, AI, Data or Platform Engineer. Never claim a different profession or specialty the
+  profile never held (SDET or QA, Site Reliability, Architect, Data Scientist, Analyst, Manager): use
+  "Senior Software Engineer" and show that fit through the work ("...including test automation and model
+  evaluation"). Keep the candidate's own level: never Staff, Principal or Lead unless a profile title says so,
+  but keep the posting's family (a Senior candidate for "Staff AI Engineer" opens "Senior AI Engineer").
+  Never attach the total career length to a specialty the profile shows for fewer years.
 - Sentences 2-3: the two or three strongest proofs for THIS job, including the best metric from Facts to preserve.
 - Name at most 4 technologies, all evidenced in a dated role. No technology lists, no pitch for the hiring
   company, no "strong fit for", "passionate", "results-driven" or "proven track record".
@@ -184,6 +190,8 @@ PHASE_B_FORMAT_CONTRACT = """
   26 in total, chosen by relevance to the posting; `profile_summary` is 3-4 sentences and at most 75 words;
   `technical_skills` holds at most 30 items. Never pad to reach a count.
 - No run of 6 or more words copied from the job description.
+- `profile_summary` opens with the posting's engineering title family, never a profession or specialty the
+  profile never held (SDET, Architect, Data Scientist, Manager), and never a level above the highest held.
 - `technical_skills`: 4-6 categories with short Title Case names that each name one concept (e.g. Languages,
   Frontend, Backend, Databases, Cloud, DevOps, Testing, Machine Learning, Data Processing). No "&" or "/" joins,
   no filler words (Libraries, APIs, Storage, Frameworks, Platforms, Tools & Technologies), never "Skills",
@@ -305,7 +313,8 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
    naming in each role only the technologies its Role evidence map line allows.
 4. Keep every Facts to preserve item that is relevant to the posting, with its number, specifics and ownership verb.
 5. Length budget: index 0-1 get 6-8 bullets each, index 2 gets 4-5, older roles 3-4; 20-26 in total.
-6. Summary: 3-4 sentences, 45-75 words, truthful years in the right discipline, one metric, at most 4 technologies.
+6. Summary: 3-4 sentences, 45-75 words, opening with the posting's engineering title family (never an unheld
+   specialty), truthful years in the right discipline, one metric, at most 4 technologies.
 7. Technical skills: 4-6 clean single-concept categories, at most 30 technologies from the profile, plain text, no `**`.
 8. Bold sparingly with ``**double asterisks**``: at most 2 named job technologies or figures per bullet.
 9. Return the tailored resume JSON as specified.

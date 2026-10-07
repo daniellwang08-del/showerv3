@@ -51,6 +51,7 @@ from app.utils.resume_evidence import (
     enforce_role_evidence,
     expand_acronyms_once,
     summary_unattributed_terms,
+    summary_unheld_title,
     unattributed_role_terms,
 )
 from app.utils.resume_skill_taxonomy import normalize_tailored_formatting, rehome_misplaced_skills
@@ -693,6 +694,8 @@ def tailored_resume_quality_issues(
             issues.append(f"work_experience[{idx}]_unattributed_technology")
         if summary_unattributed_terms(resume, profile_text, evidence_text, terms):
             issues.append("profile_summary_unattributed_technology")
+        if summary_unheld_title(resume, profile_text):
+            issues.append("profile_summary_unheld_title")
     if len(copied_job_phrases(resume, job_text)) >= 2:
         issues.append("copies_job_posting_phrases")
 
@@ -759,6 +762,13 @@ def quality_retry_instructions(
         lines.append(
             f"- profile_summary claims hands-on use of {', '.join(bad)}, which no role shows. "
             "Name only technologies a dated role evidences; leave the rest to technical_skills."
+        )
+    if "profile_summary_unheld_title" in blocking and resume:
+        title = summary_unheld_title(resume, profile_text)
+        lines.append(
+            f'- profile_summary opens with "{title}", a specialty or level the candidate has never held. Open '
+            "with an engineering family their work supports at their own level (e.g. Senior Software "
+            "Engineer) and show the fit for this role through the work, not by claiming its title."
         )
     if "profile_summary_too_long" in blocking:
         lines.append(f"- profile_summary: 3-4 sentences, at most {_MAX_SUMMARY_WORDS - 15} words, no technology lists.")

@@ -14,7 +14,9 @@ from app.utils.resume_evidence import (
     parse_profile_roles,
     parse_profile_skills,
     split_skill_items,
+    summary_opening_title,
     summary_unattributed_terms,
+    summary_unheld_title,
     unattributed_role_terms,
 )
 from app.utils.resume_skill_taxonomy import rehome_misplaced_skills
@@ -111,6 +113,34 @@ def test_summary_unattributed_terms():
     assert summary_unattributed_terms(_resume(), PROFILE) == []
     resume = _resume(profile_summary="Engineer running Kubernetes clusters and Python services at scale for years.")
     assert summary_unattributed_terms(resume, PROFILE) == ["Kubernetes"]
+
+
+def test_summary_opening_title():
+    assert summary_opening_title("Senior **Software Engineer** with 8 years of experience. More.") == (
+        "Senior Software Engineer"
+    )
+    assert summary_opening_title("Software Development Engineer in Test, building QA systems.") == (
+        "Software Development Engineer in Test"
+    )
+    assert summary_opening_title("Senior Software Engineer targeting Staff roles.") == "Senior Software Engineer"
+    assert summary_opening_title("Built Python services for 8 years.") == ""
+
+
+def test_summary_unheld_title_allows_engineering_families_only():
+    def opening(text):
+        return summary_unheld_title(_resume(profile_summary=text), PROFILE)
+
+    assert opening("Senior Software Engineer with 7 years building services.") == ""
+    assert opening("Senior Machine Learning Engineer with 7 years of production ML.") == ""
+    assert opening("Senior Full-Stack Engineer with 7 years.") == ""
+    assert opening("Senior data-focused software engineer with 7 years.") == ""
+    assert opening("Senior Software Development Engineer with 7 years.") == ""
+    assert opening("Senior Software Development Engineer in Test with 7 years.") == (
+        "Senior Software Development Engineer in Test"
+    )
+    assert opening("Engineering Manager with 7 years leading teams.") == "Engineering Manager"
+    assert opening("Staff AI Engineer with 7 years.") == "Staff AI Engineer"
+    assert opening("Senior AI Engineer with 7 years.") == ""
 
 
 def test_role_evidence_block_lists_skills_without_a_role():

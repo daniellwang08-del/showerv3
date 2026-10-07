@@ -13,6 +13,7 @@ and validator changes on identical inputs:
     python scripts/eval_tailoring_real.py tailor --label after
     python scripts/eval_tailoring_real.py judge --label after --against before
     python scripts/eval_tailoring_real.py judge --label before --against stored   # vs the resumes saved in the DB
+    EVAL_TAILOR_MODEL=gpt-6.1-sol EVAL_TAILOR_EFFORT=high python scripts/eval_tailoring_real.py tailor --label ceiling
 
 Files land in ``$EVAL_OUT`` (default /tmp/nao_eval). They contain the user's profile,
 so keep them out of the repository.
@@ -160,10 +161,41 @@ async def snapshot(email: str, job_ids: list[str], pasted: list[tuple[str, str]]
     print(f"wrote {len(cases)} cases to {CASES_PATH}")
 
 
+def _override_tailor_model() -> None:
+    """Point Phase B at ``$EVAL_TAILOR_MODEL`` / ``$EVAL_TAILOR_EFFORT`` for this process only."""
+    model = os.environ.get("EVAL_TAILOR_MODEL", "").strip()
+    effort = os.environ.get("EVAL_TAILOR_EFFORT", "").strip()
+    if not model and not effort:
+        return
+    from app.core import llm_client
+    from app.core.llm_client import get_llm_client
+    from app.services import job_match_service as svc
+
+    if model:
+        is_reasoning = llm_client._is_openai_reasoning_model
+        llm_client._is_openai_reasoning_model = lambda m: m == model or is_reasoning(m)
+
+        async def _client(user_id=None, job_type=None):
+            return get_llm_client(provider="openai", openai_model=model)
+
+        svc.get_llm_client_for_user = _client
+    original = svc._call_openai_json
+
+    async def _call(**kwargs):
+        if effort:
+            kwargs["reasoning_effort"] = effort
+            kwargs["max_tokens"] = max(kwargs.get("max_tokens") or 0, 32000)
+        return await original(**kwargs)
+
+    svc._call_openai_json = _call
+    print(f"tailor override: model={model or 'default'} effort={effort or 'default'}", flush=True)
+
+
 async def tailor(label: str) -> None:
     from app.services.job_match_service import generate_tailored_content_phase_b
     from app.storage.database import init_database
 
+    _override_tailor_model()
     await init_database()
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
     sem = asyncio.Semaphore(int(os.environ.get("EVAL_CONCURRENCY", "6")))
