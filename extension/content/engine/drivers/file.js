@@ -95,6 +95,18 @@
           if (dz === "resume-upload") label = "Resume";
         } catch {}
       }
+      // Rippling wraps each hidden input in <label aria-labelledby="file-input-N
+      // field-M-label">: the first id is a screen-reader "Total 0 file selected"
+      // counter, the second the field title ("Résumé" / "Cover letter"). The
+      // label's own text is just "Drop or select (.doc / .docx / .pdf)" on both.
+      if (!label) {
+        const wrap = root.closest && root.closest("label[aria-labelledby]");
+        if (wrap) {
+          label = clean(
+            textOfIds(wrap.getAttribute("aria-labelledby")).replace(/total\s+\d+\s+files?\s+selected/gi, "")
+          );
+        }
+      }
       if (!label) label = labelForControl(root);
       // Pinpoint structured attachments: question title distinguishes Resume vs Cover Letter.
       if (!label && AF.pinpoint && AF.pinpoint.questionTitleFor) {
@@ -119,7 +131,8 @@
       // Grid Dynamics / CF7 vacancy-form-file: option label is just "File"; the
       // section heading ("Resume*" / "Additional files") or name/id is the real role.
       try {
-        const nameId = `${root.name || ""} ${root.id || ""}`.toLowerCase();
+        const testId = (root.getAttribute && root.getAttribute("data-testid")) || "";
+        const nameId = `${root.name || ""} ${root.id || ""} ${testId}`.toLowerCase();
         if (/additional_files|cover.?letter/.test(nameId)) {
           label = "Cover Letter";
         } else if (/(^|\s)resume(\s|$)/.test(nameId) || nameId.includes("resume-input")) {

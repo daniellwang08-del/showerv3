@@ -305,8 +305,16 @@ async function countUnfilledControls(tabId, handles, attemptedKeys) {
   }
 }
 
+// "Résumé" (Rippling) must match the same as "Resume".
+function foldLabel(label) {
+  return String(label || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function looksLikeResumeOrCoverLabel(label) {
-  const t = String(label || "").toLowerCase();
+  const t = foldLabel(label);
   if (!t) return false;
   if (/\bcover\s*letter\b/.test(t)) return true;
   if (/\badditional\s*files?\b/.test(t)) return true;
@@ -314,7 +322,7 @@ function looksLikeResumeOrCoverLabel(label) {
 }
 
 function inferFileRoleFromLabel(label) {
-  const t = String(label || "").toLowerCase();
+  const t = foldLabel(label);
   if (/\bcover\s*letter\b/.test(t)) return "cover_letter";
   // Grid Dynamics / CF7: section is "Additional files" with Add cover letter.
   if (/\badditional\s*files?\b/.test(t)) return "cover_letter";
@@ -336,12 +344,28 @@ function normalizeFileRolesInResults(results, specs) {
   for (const r of results || []) {
     for (const c of r.controls || []) {
       if (!fileCids.has(c.cid)) continue;
+      // A label naming exactly one document beats the model's guess: identical
+      // upload widgets (Rippling) otherwise get the resume attached twice.
+      const strict = strictFileRoleFromLabel(labelByCid[c.cid]);
+      if (strict) {
+        c.file_role = strict;
+        continue;
+      }
       const role = String(c.file_role || "").toLowerCase();
       if (role === "resume" || role === "cover_letter") continue;
       const inferred = inferFileRoleFromLabel(labelByCid[c.cid]);
       if (inferred) c.file_role = inferred;
     }
   }
+}
+
+function strictFileRoleFromLabel(label) {
+  const t = foldLabel(label);
+  const cover = /\bcover\s*letter\b/.test(t);
+  const resume = /\b(resume|cv|curriculum\s*vitae)\b/.test(t);
+  if (cover && !resume) return "cover_letter";
+  if (resume && !cover) return "resume";
+  return null;
 }
 
 // Fetch a generated file for a role, preferring PDF (or whatever the field

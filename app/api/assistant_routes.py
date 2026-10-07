@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any
 
@@ -1278,7 +1279,11 @@ def _parse_autofill_results(
                 # leaves file_role empty/"other" - the extension attaches these
                 # from the job's generated files, not from profile text.
                 if file_role == "other":
-                    lab = (spec.label or "").lower()
+                    lab = "".join(
+                        ch
+                        for ch in unicodedata.normalize("NFD", spec.label or "")
+                        if not unicodedata.combining(ch)
+                    ).lower()
                     if "cover letter" in lab:
                         file_role = "cover_letter"
                     elif any(tok in lab for tok in ("resume", "cv", "curriculum vitae")):
