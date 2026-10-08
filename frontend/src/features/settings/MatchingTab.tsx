@@ -32,15 +32,22 @@ import {
   saveManualSubmitPipelineSettings,
   saveMatchQualityCheckSettings,
   saveMinMatchScoreSettings,
+  saveTailoringStrategy,
   uploadOriginalResume,
   type DedupRulesPreview,
   type MinMatchScoreDraft,
   type MinMatchScorePreview,
 } from '@/api/settingsApi';
-import type { ApplicationResumeSource, MatchQualityCheckMode, SettingsMode, UserSettings } from '@/types/settings';
+import type {
+  ApplicationResumeSource,
+  MatchQualityCheckMode,
+  SettingsMode,
+  TailoringStrategy,
+  UserSettings,
+} from '@/types/settings';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { ModeToggle, SettingRow, StatTiles } from './controls';
-import { RESUME_SOURCE_OPTIONS } from './resumeSourceOptions';
+import { RESUME_SOURCE_OPTIONS, TAILORING_STRATEGY_OPTIONS } from './resumeSourceOptions';
 import { ORIGINAL_RESUME_KEY, refreshJobStores, SETTINGS_KEY, useOriginalResumeQuery, useSetSettings } from './queries';
 import { useDraft, useReportDirty } from './useDraft';
 
@@ -584,6 +591,14 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
         : 'Saved. Jobs you score from now on get a tailored resume and cover letter.',
     'Failed to save the resume for applications.',
   );
+  const strategy = useImmediateSetting(
+    saveTailoringStrategy,
+    (body) =>
+      body.resume_tailoring_strategy === 'evidence'
+        ? 'Saved. Tailored resumes stay close to your own experience.'
+        : 'Saved. Tailored resumes are rebuilt around each job.',
+    'Failed to save how tailoring writes your experience.',
+  );
 
   const match = settings.auto_prepare_match;
   const full = settings.auto_prepare_full;
@@ -628,6 +643,40 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
             : 'Jobs scored before you switched keep their original resume until you build one from the job, or turn on Prepare documents automatically below.'}
         </p>
         <OriginalResumeFileRow required={original} />
+        {!original && (
+          <div className="mt-5 space-y-2">
+            <p className="text-sm font-medium" id="tailoring-strategy-label">
+              How tailoring writes your experience
+            </p>
+            <RadioGroup
+              aria-labelledby="tailoring-strategy-label"
+              value={settings.resume_tailoring_strategy}
+              disabled={strategy.isPending}
+              onValueChange={(value) => {
+                if (value !== settings.resume_tailoring_strategy) {
+                  strategy.mutate({ resume_tailoring_strategy: value as TailoringStrategy });
+                }
+              }}
+            >
+              {TAILORING_STRATEGY_OPTIONS.map((opt) => (
+                <FieldLabel key={opt.value} htmlFor={`tailoring-strategy-${opt.value}`}>
+                  <Field orientation="horizontal">
+                    <RadioGroupItem
+                      value={opt.value}
+                      id={`tailoring-strategy-${opt.value}`}
+                      aria-labelledby={`tailoring-strategy-${opt.value}-title`}
+                      aria-describedby={`tailoring-strategy-${opt.value}-hint`}
+                    />
+                    <FieldContent>
+                      <FieldTitle id={`tailoring-strategy-${opt.value}-title`}>{opt.label}</FieldTitle>
+                      <FieldDescription id={`tailoring-strategy-${opt.value}-hint`}>{opt.hint}</FieldDescription>
+                    </FieldContent>
+                  </Field>
+                </FieldLabel>
+              ))}
+            </RadioGroup>
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard

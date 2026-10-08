@@ -84,6 +84,7 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     auto_prepare_match: Boolean(data.auto_prepare_match),
     auto_prepare_full: Boolean(data.auto_prepare_full),
     application_resume_source: data.application_resume_source === 'original' ? 'original' : 'tailored',
+    resume_tailoring_strategy: data.resume_tailoring_strategy === 'evidence' ? 'evidence' : 'job_first',
     match_quality_check: MATCH_QUALITY_CHECK_MODES.includes(data.match_quality_check as MatchQualityCheckMode)
       ? (data.match_quality_check as MatchQualityCheckMode)
       : 'rescore',
@@ -237,6 +238,10 @@ export async function saveAutoPrepareSettings(
 export async function saveApplicationResumeSource(
   body: Pick<UserSettingsUpdate, 'application_resume_source'>,
 ) {
+  return updateUserSettings(body);
+}
+
+export async function saveTailoringStrategy(body: Pick<UserSettingsUpdate, 'resume_tailoring_strategy'>) {
   return updateUserSettings(body);
 }
 

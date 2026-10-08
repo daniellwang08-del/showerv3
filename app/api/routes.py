@@ -4956,6 +4956,7 @@ class UserSettingsResponse(BaseModel):
     auto_prepare_match: bool = False
     auto_prepare_full: bool = False
     application_resume_source: str = "tailored"
+    resume_tailoring_strategy: str = "job_first"
     match_quality_check: str = "rescore"
     match_quality_check_min_score: int = 70
     manual_submit_pipeline: str = "full"
@@ -5017,6 +5018,7 @@ class UserSettingsUpdateRequest(BaseModel):
     auto_prepare_match: bool | None = None
     auto_prepare_full: bool | None = None
     application_resume_source: str | None = Field(default=None, pattern="^(original|tailored)$")
+    resume_tailoring_strategy: str | None = Field(default=None, pattern="^(job_first|evidence)$")
     match_quality_check: str | None = Field(default=None, pattern="^(off|rescore|auto)$")
     match_quality_check_min_score: int | None = Field(default=None, ge=0, le=100)
     manual_submit_pipeline: str | None = None
@@ -5466,6 +5468,7 @@ async def update_user_settings(
                 auto_prepare_match=body.auto_prepare_match,
                 auto_prepare_full=body.auto_prepare_full,
                 application_resume_source=body.application_resume_source,
+                resume_tailoring_strategy=body.resume_tailoring_strategy,
                 match_quality_check=body.match_quality_check,
                 match_quality_check_min_score=body.match_quality_check_min_score,
                 manual_submit_pipeline=body.manual_submit_pipeline,

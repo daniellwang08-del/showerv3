@@ -97,6 +97,9 @@ class User(Base):
     # Résumé used for applications: "tailored" (per-job rewrite after scoring) or
     # "original" (score only; extension uploads and fills from the original résumé).
     application_resume_source = Column(String(20), default="tailored", nullable=False, server_default="tailored")
+    # How tailoring writes experience: "job_first" (rewritten around the posting's stack,
+    # keeping employers, titles, dates and domains) or "evidence" (only what the profile shows).
+    resume_tailoring_strategy = Column(String(20), default="job_first", nullable=False, server_default="job_first")
 
     # LLM second opinion on the free vector score: "off", "rescore" (only when the
     # user re-runs a scored job) or "auto" (also new jobs the free engine scores at

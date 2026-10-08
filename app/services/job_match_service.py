@@ -30,7 +30,23 @@ from app.prompts.job_match_phase_b_prompt import (
     JOB_MATCH_PHASE_B_USER_TEMPLATE,
     PHASE_B_RESUME_SYSTEM_PROMPT,
 )
+from app.prompts.job_first_tailoring_prompt import JOB_FIRST_SYSTEM_PROMPT, JOB_FIRST_USER_TEMPLATE
 from app.models.schemas import JobDescriptionSchema
+from app.services.job_first_tailoring import (
+    DEFAULT_STRATEGY,
+    MAX_REWRITE_RETRIES,
+    STRATEGY_JOB_FIRST,
+    build_job_first_plan,
+    career_facts_block,
+    education_block,
+    experience_skill_coverage,
+    finalize_job_first_resume,
+    job_first_problems,
+    job_first_retry_note,
+    normalize_strategy,
+    tailored_resume_to_profile_text,
+    target_stack_block,
+)
 from app.services.job_field_utils import (
     clean_optional_job_field,
     infer_title_from_description,
@@ -1082,6 +1098,8 @@ async def generate_tailored_content_phase_b(
     include_cover_letter: bool = True,
     include_resume: bool = True,
     on_stage: Callable[[str], Awaitable[None]] | None = None,
+    job_id: str | None = None,
+    strategy: str | None = None,
 ) -> tuple[dict | None, dict | None]:
     """
     Phase B: tailored resume JSON and cover letter body.
@@ -1090,6 +1108,8 @@ async def generate_tailored_content_phase_b(
     ``include_cover_letter=False`` skips the cover letter call entirely.
     ``include_resume=False`` writes only the cover letter (original résumé mode).
     ``on_stage`` is awaited with "quality_retry" when a rewrite pass starts.
+    ``strategy`` overrides the user's tailoring strategy ("job_first" or "evidence");
+    ``job_id`` lets job-first score the tailored resume against the job's encoding.
     """
     settings = get_settings()
     job_truncated = _truncate_job_text_preserve_layout(job_text, MAX_JOB_LENGTH)
@@ -1145,12 +1165,20 @@ async def generate_tailored_content_phase_b(
 
     if user_id:
         async with get_session() as session:
-            user_repo = UserRepository(session)
-            resume_system, cover_system = await user_repo.get_effective_phase_b_system_prompts(
-                user_id
-            )
+            repo = UserRepository(session)
+            user_strategy, resume_system, cover_system = await repo.get_phase_b_bundle(user_id)
+            wanted = normalize_strategy(strategy) if strategy is not None else user_strategy
+            if wanted != user_strategy:
+                resume_system = (
+                    JOB_FIRST_SYSTEM_PROMPT
+                    if wanted == STRATEGY_JOB_FIRST
+                    else (await repo.get_effective_phase_b_system_prompts(user_id))[0]
+                )
+        strategy = wanted
     else:
-        resume_system, cover_system = PHASE_B_RESUME_SYSTEM_PROMPT, COVER_LETTER_SYSTEM_PROMPT
+        strategy = normalize_strategy(strategy or DEFAULT_STRATEGY)
+        resume_system = JOB_FIRST_SYSTEM_PROMPT if strategy == STRATEGY_JOB_FIRST else PHASE_B_RESUME_SYSTEM_PROMPT
+        cover_system = COVER_LETTER_SYSTEM_PROMPT
 
     cover_user = COVER_LETTER_USER_TEMPLATE.format(
         job_text=job_truncated,
@@ -1218,6 +1246,25 @@ async def generate_tailored_content_phase_b(
             logger.warning("cover_letter_section_missing_or_invalid", resume="original")
         return None, cover_letter
 
+    if strategy == STRATEGY_JOB_FIRST:
+        return await _job_first_phase_b(
+            job_text=job_truncated,
+            profile_text=profile_truncated,
+            structured_block=structured_block,
+            must_cover=must_cover,
+            domain_cues=domain_cues,
+            role_cues=role_cues,
+            resume_system=resume_system,
+            cover_system=cover_system,
+            user_id=user_id,
+            job_id=job_id,
+            include_cover_letter=include_cover_letter,
+            on_stage=on_stage,
+            max_tokens=phase_b_max,
+            temperature=phase_b_temperature,
+            reasoning_effort=reasoning_effort,
+        )
+
     first_resume, cover_letter = await asyncio.gather(
         _resume_call(user_content, "phase_b"),
         _cover_call("phase_b_cover_letter") if include_cover_letter else _no_result(),
@@ -1278,3 +1325,207 @@ async def generate_tailored_content_phase_b(
     if cover_missing and not cover_letter:
         logger.warning("cover_letter_section_missing_or_invalid")
     return tailored_resume, cover_letter
+
+
+# Worth a retry note, but a draft that covers more of the posting still wins over one without them.
+_JOB_FIRST_SOFT_ISSUES = frozenset({"copies_job_posting_phrases"})
+
+
+def _format_retry_lines(resume: dict | None, issues: list[str], *, anchors: list[str], job_text: str) -> list[str]:
+    """The evidence path's retry wording for layout issues, without its evidence-only rules."""
+    if not issues:
+        return []
+    note = quality_retry_instructions(resume, issues, job_anchor_terms=anchors, job_text=job_text)
+    return [ln[2:] for ln in note.splitlines()[1:-1] if ln.startswith("- ")]
+
+
+async def _job_first_phase_b(
+    *,
+    job_text: str,
+    profile_text: str,
+    structured_block: str,
+    must_cover: str,
+    domain_cues: str,
+    role_cues: list[str],
+    resume_system: str,
+    cover_system: str,
+    user_id: str | None,
+    job_id: str | None,
+    include_cover_letter: bool,
+    on_stage: Callable[[str], Awaitable[None]] | None,
+    max_tokens: int,
+    temperature: float,
+    reasoning_effort: str | None,
+) -> tuple[dict | None, dict | None]:
+    """Job-first Phase B: draft, check, and rewrite until the resume meets every rule and the match target."""
+    from app.services.tailored_match_check import (
+        REQUIREMENT_MATCH_TARGET,
+        posting_requirements,
+        requirement_match,
+        score_tailored_resume,
+    )
+
+    plan = build_job_first_plan(
+        job_skill_terms(job_text, structured_block, company=_structured_company(structured_block)),
+        profile_text,
+        job_text,
+    )
+    anchors = plan.terms
+    tasks, _facts = posting_requirements(structured_block, job_text)
+    user_content = JOB_FIRST_USER_TEMPLATE.format(
+        career_facts=career_facts_block(plan),
+        education=education_block(profile_text),
+        job_text=job_text,
+        structured_context=structured_block,
+        must_cover_requirements="\n".join(f"- {t}" for t in tasks) if tasks else must_cover,
+        company_domain_cues=domain_cues,
+        target_stack=target_stack_block(plan),
+    )
+
+    async def draft(content: str, observe_name: str) -> dict | None:
+        parsed = await _call_openai_json(
+            system_prompt=resume_system,
+            user_content=content,
+            max_tokens=max_tokens,
+            observe_name=observe_name,
+            user_id=user_id,
+            job_type="resume_tailoring",
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+        )
+        resume = _parse_tailored_resume(parsed.get("tailored_resume"))
+        if not resume:
+            return None
+        resume = normalize_tailored_formatting(apply_keyword_emphasis_to_resume(resume, anchors))
+        resume = expand_acronyms_once(resume, anchors)
+        if resume and resume.get("technical_skills"):
+            resume["technical_skills"] = rehome_misplaced_skills(resume["technical_skills"])
+        return finalize_job_first_resume(resume, plan, profile_text, job_text)
+
+    best: dict | None = None
+    best_key: tuple | None = None
+    best_report: tuple[list[str], dict[str, str], dict] = ([], {}, {})
+    content = user_content
+    for attempt in range(1 + MAX_REWRITE_RETRIES):
+        observe = "phase_b" if attempt == 0 else f"phase_b_quality_retry_{attempt}"
+        try:
+            resume = await draft(content, observe)
+        except AIParsingError:
+            if attempt == 0:
+                raise
+            logger.warning("job_first_retry_call_failed", attempt=attempt)
+            continue
+        if not resume:
+            continue
+        layout = [
+            i
+            for i in tailored_resume_quality_issues(
+                resume, job_anchor_terms=anchors, role_domain_cues=role_cues, job_text=job_text
+            )
+            if not _is_advisory_quality_issue(i)
+        ]
+        problems = job_first_problems(resume, plan, profile_text)
+        try:
+            match = await requirement_match(
+                resume, skills=plan.placeable, structured_context=structured_block, job_text=job_text
+            )
+        except Exception as e:  # noqa: BLE001 - the rate steers retries; the draft stands without it
+            logger.warning("requirement_match_failed", error=str(e)[:300])
+            match = {}
+        rate = match.get("rate")
+        soft = [i for i in layout if i in _JOB_FIRST_SOFT_ISSUES]
+        key = (len(layout) - len(soft) + len(problems), -(rate or 0), len(soft))
+        if best_key is None or key < best_key:
+            best, best_key, best_report = resume, key, (layout, problems, match)
+        logger.info(
+            "job_first_draft",
+            attempt=attempt,
+            issues=layout + list(problems),
+            requirement_match=rate,
+            uncovered_lines=len(match.get("uncovered_lines") or []),
+            coverage=experience_skill_coverage(resume, plan),
+        )
+        layout, problems, match = best_report
+        rate = match.get("rate")
+        below = rate is not None and rate < REQUIREMENT_MATCH_TARGET
+        if attempt == MAX_REWRITE_RETRIES or (not layout and not problems and not below):
+            break
+        if on_stage is not None:
+            try:
+                await on_stage("quality_retry")
+            except Exception:  # noqa: BLE001 - progress reporting must never break the run
+                pass
+        extra = _format_retry_lines(best, layout, anchors=anchors, job_text=job_text)
+        uncovered = match.get("uncovered_lines") or []
+        if below and uncovered:
+            extra.append(
+                f"Requirement match is {rate}%; the target is {REQUIREMENT_MATCH_TARGET}%. No bullet does the work of "
+                "these posting lines. For each, write a bullet in one of the two most recent roles that does that "
+                "work with the posting's stack, inside the role's product or domain, using the line's key words "
+                "in your own sentence (never a run of 8 or more words copied from the posting): "
+                + " | ".join(f'"{line}"' for line in uncovered)
+            )
+        previous = {k: v for k, v in best.items() if k != "match_check"}
+        content = (
+            user_content
+            + "\n\n## Your previous draft\n"
+            + json.dumps({"tailored_resume": previous}, ensure_ascii=False)
+            + "\n\n"
+            + job_first_retry_note(problems, extra)
+        )
+
+    if best is None:
+        logger.warning("tailored_resume_section_missing_or_invalid", strategy=STRATEGY_JOB_FIRST)
+    else:
+        layout, problems, match = best_report
+        score = await score_tailored_resume(
+            job_id, best, tailored_resume_to_profile_text(best, profile_text), user_id=user_id
+        )
+        best["match_check"] = {
+            "strategy": STRATEGY_JOB_FIRST,
+            "target": REQUIREMENT_MATCH_TARGET,
+            "requirement_match": match.get("rate"),
+            "skill_coverage": match.get("skill_coverage", experience_skill_coverage(best, plan)),
+            "line_coverage": match.get("line_coverage"),
+            "missing_skills": match.get("missing_skills") or [],
+            "uncovered_lines": match.get("uncovered_lines") or [],
+            "fact_lines": match.get("fact_lines") or [],
+            "resume_fit": score.get("resume_fit") if score else None,
+            "overall": score.get("overall") if score else None,
+            "open_issues": layout + list(problems),
+        }
+
+    cover_letter = None
+    if include_cover_letter:
+        cover_user = COVER_LETTER_USER_TEMPLATE.format(
+            job_text=job_text,
+            profile_text=tailored_resume_to_profile_text(best, profile_text) if best else profile_text,
+            structured_context=structured_block,
+            company_domain_cues=domain_cues,
+            match_summary=(
+                "The candidate profile above is the resume sent with this application. The letter tells the same "
+                "story: the same employers, work, technologies and results, nothing it does not state."
+            ),
+            project_evidence_context="Not used: the candidate profile above is the resume for this application.",
+        )
+        for observe in ("phase_b_cover_letter", "phase_b_cover_letter_retry"):
+            try:
+                parsed = await _call_openai_json(
+                    system_prompt=cover_system,
+                    user_content=cover_user,
+                    max_tokens=_COVER_LETTER_MAX_TOKENS,
+                    observe_name=observe,
+                    user_id=user_id,
+                    job_type="resume_tailoring",
+                    temperature=temperature,
+                    reasoning_effort=reasoning_effort,
+                )
+            except AIParsingError as e:
+                logger.warning("cover_letter_call_failed", observe=observe, error=str(e))
+                continue
+            cover_letter = _parse_cover_letter(parsed.get("cover_letter"))
+            if cover_letter:
+                break
+        if not cover_letter:
+            logger.warning("cover_letter_section_missing_or_invalid", strategy=STRATEGY_JOB_FIRST)
+    return best, cover_letter

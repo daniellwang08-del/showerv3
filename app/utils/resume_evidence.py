@@ -363,6 +363,34 @@ def _role_candidates(profile_text: str, role: ProfileRole, extra_terms: list[str
     return own + parse_profile_skills(profile_text) + list(extra_terms)
 
 
+def restore_role_facts(
+    resume: dict, profile_text: str, roles: list[ProfileRole] | None = None
+) -> list[int | None]:
+    """Copy company, title, dates and project title back from the profile; returns each entry's role index.
+
+    An empty project description falls back to the profile's.
+    """
+    roles = parse_profile_roles(profile_text) if roles is None else roles
+    entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
+    matched = _match_roles(entries, roles)
+    for entry, idx in zip(entries, matched):
+        if idx is None:
+            continue
+        role = roles[idx]
+        entry["company_name"] = role.company or entry.get("company_name")
+        if role.title:
+            entry["job_title"] = role.title
+        if role.period_start:
+            entry["period_start"] = role.period_start
+            entry["period_end"] = role.period_end or None
+        project_title, project_desc = role_project(role)
+        if project_title:
+            entry["project_name"] = project_title
+        if project_desc and not str(entry.get("project_description") or "").strip():
+            entry["project_description"] = project_desc
+    return matched
+
+
 def enforce_role_evidence(
     resume: dict | None,
     profile_text: str,
@@ -383,21 +411,9 @@ def enforce_role_evidence(
         return resume
     texts = role_evidence_texts(roles, evidence_text)
     entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
-    for entry, idx in zip(entries, _match_roles(entries, roles)):
+    for entry, idx in zip(entries, restore_role_facts(resume, profile_text, roles)):
         if idx is None:
             continue
-        role = roles[idx]
-        entry["company_name"] = role.company or entry.get("company_name")
-        if role.title:
-            entry["job_title"] = role.title
-        if role.period_start:
-            entry["period_start"] = role.period_start
-            entry["period_end"] = role.period_end or None
-        project_title, project_desc = role_project(role)
-        if project_title:
-            entry["project_name"] = project_title
-        if project_desc and not str(entry.get("project_description") or "").strip():
-            entry["project_description"] = project_desc
         raw = entry.get("used_skills")
         if isinstance(raw, str) and raw.strip():
             kept = [s for s in split_skill_items(raw) if is_mentioned(s, texts[idx])]

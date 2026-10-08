@@ -25,6 +25,7 @@ vi.mock('@/api/settingsApi', () => ({
   saveAutoPrepareSettings: vi.fn(),
   saveManualSubmitPipelineSettings: vi.fn(),
   saveApplicationResumeSource: vi.fn(),
+  saveTailoringStrategy: vi.fn(),
   fetchOriginalResume: vi.fn(async () => null),
   uploadOriginalResume: vi.fn(),
   saveMatchQualityCheckSettings: vi.fn(),
@@ -91,6 +92,7 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     auto_prepare_full: false,
     manual_submit_pipeline: 'full',
     application_resume_source: 'tailored',
+    resume_tailoring_strategy: 'job_first',
     match_quality_check: 'rescore',
     match_quality_check_min_score: 70,
     job_share_default: 'private',
@@ -352,6 +354,26 @@ describe('PreferencesPage', () => {
       expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('applications use your original resume file')),
     );
     expect(await screen.findByText('No resume file on record')).toBeInTheDocument();
+  });
+
+  it('saves how tailoring writes experience', async () => {
+    api.saveTailoringStrategy.mockResolvedValue(makeSettings({ resume_tailoring_strategy: 'evidence' }));
+    const user = userEvent.setup();
+    renderPage('/app/preferences?tab=matching');
+    expect(await screen.findByRole('radio', { name: 'Rebuild around the job' })).toBeChecked();
+
+    await user.click(screen.getByRole('radio', { name: 'Stay close to my resume' }));
+    await waitFor(() =>
+      expect(api.saveTailoringStrategy).toHaveBeenCalledWith({ resume_tailoring_strategy: 'evidence' }),
+    );
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Stay close to my resume' })).toBeChecked());
+  });
+
+  it('hides the tailoring choice when applications use the original resume', async () => {
+    api.fetchUserSettings.mockResolvedValue(makeSettings({ application_resume_source: 'original' }));
+    renderPage('/app/preferences?tab=matching');
+    expect(await screen.findByRole('radio', { name: 'My original resume' })).toBeChecked();
+    expect(screen.queryByRole('radio', { name: 'Rebuild around the job' })).not.toBeInTheDocument();
   });
 
   it('shows and replaces the resume file applications upload', async () => {
