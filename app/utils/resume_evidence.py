@@ -43,6 +43,30 @@ _ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
     ("machine learning", "ml"),
     ("nlp", "natural language processing"),
     ("generative ai", "genai", "gen ai"),
+    ("spark", "apache spark", "pyspark"),
+    ("kafka", "apache kafka"),
+    ("airflow", "apache airflow"),
+    ("hadoop", "apache hadoop"),
+    ("flink", "apache flink"),
+    ("iceberg", "apache iceberg"),
+    ("hudi", "apache hudi"),
+    ("delta lake", "delta tables"),
+    ("data lakehouse", "lakehouse", "lakehouses", "lakehouse architecture", "lakehouse architectures"),
+    ("data warehousing", "data warehouse", "data warehouses"),
+    ("distributed systems", "distributed system", "distributed computing"),
+    ("data modeling", "data modelling"),
+    ("etl", "etl pipelines", "etl processes", "etl pipeline"),
+    ("a/b testing", "ab testing", "a/b tests", "a/b test"),
+    ("microservices", "microservice", "micro services"),
+    ("mlops", "ml ops"),
+    ("scikit learn", "sklearn"),
+    ("rag", "retrieval augmented generation"),
+    ("javascript", "js"),
+    ("golang", "go language"),
+    ("c++", "cpp"),
+    ("c#", "csharp"),
+    ("gitlab ci", "gitlab ci/cd"),
+    ("github actions", "gh actions"),
 )
 _ALIASES: dict[str, tuple[str, ...]] = {a: group for group in _ALIAS_GROUPS for a in group}
 
@@ -200,18 +224,21 @@ def evidence_by_company(evidence_text: str) -> dict[str, str]:
     out: dict[str, str] = {}
     current = ""
     buf: list[str] = []
+
+    def _flush() -> None:
+        if current:
+            out[current] = "\n".join(p for p in (out.get(current, ""), "\n".join(buf)) if p)
+
     for line in (evidence_text or "").splitlines():
         m = _SECTION_RE.match(line.strip())
         if m:
-            if current:
-                out[current] = "\n".join(buf)
+            _flush()
             current = normalize_company_name(m.group(1))
             buf = []
             continue
         if current:
             buf.append(line)
-    if current:
-        out[current] = "\n".join(buf)
+    _flush()
     return out
 
 
@@ -315,6 +342,19 @@ def role_terms(text: str, candidates: list[str], *, limit: int = 30) -> list[str
     return out
 
 
+def role_project(role: ProfileRole) -> tuple[str, str]:
+    """The role's project title and project description, as ``user_profile_to_openai_text`` writes them."""
+    title = desc = ""
+    for line in role.text.splitlines():
+        s = line.strip()
+        low = s.lower()
+        if low.startswith("project description:"):
+            desc = desc or s.split(":", 1)[1].strip()
+        elif low.startswith("project:"):
+            title = title or s.split(":", 1)[1].strip()
+    return title, desc
+
+
 def _role_candidates(profile_text: str, role: ProfileRole, extra_terms: list[str]) -> list[str]:
     own: list[str] = []
     for line in role.text.splitlines():
@@ -332,7 +372,8 @@ def enforce_role_evidence(
 
     - company, title and dates come from the matching profile role;
     - ``used_skills`` keeps only items that role's text or Project Evidence mentions;
-    - ``technical_skills`` keeps only items the profile or evidence mentions anywhere.
+    - ``technical_skills`` keeps only items the profile or evidence mentions anywhere;
+    - the project title is the profile's, and an empty project description falls back to it.
     Bullets are left alone: they need a rewrite, which ``unattributed_role_terms`` reports.
     """
     if not resume or not isinstance(resume, dict):
@@ -352,6 +393,11 @@ def enforce_role_evidence(
         if role.period_start:
             entry["period_start"] = role.period_start
             entry["period_end"] = role.period_end or None
+        project_title, project_desc = role_project(role)
+        if project_title:
+            entry["project_name"] = project_title
+        if project_desc and not str(entry.get("project_description") or "").strip():
+            entry["project_description"] = project_desc
         raw = entry.get("used_skills")
         if isinstance(raw, str) and raw.strip():
             kept = [s for s in split_skill_items(raw) if is_mentioned(s, texts[idx])]
@@ -626,34 +672,6 @@ def build_source_facts_block(profile_text: str, evidence_text: str = "", *, limi
     if not facts:
         return "- None stated. Describe scope and outcomes qualitatively; never invent numbers."
     return "\n".join(facts)
-
-
-def build_supported_terms_block(
-    terms: list[str],
-    profile_text: str,
-    evidence_text: str = "",
-    *,
-    limit: int = 24,
-) -> str:
-    """Where each supported job term is evidenced: named roles, or the skills list only."""
-    roles = parse_profile_roles(profile_text)
-    texts = role_evidence_texts(roles, evidence_text) if roles else []
-    lines: list[str] = []
-    seen: set[str] = set()
-    for term in terms:
-        key = _norm(term)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        where = [r.company for r, t in zip(roles, texts) if is_mentioned(term, t)]
-        line = f"- {term}: " + (", ".join(where) if where else "skills list or summary only")
-        long_form = _EXPANSIONS.get(key)
-        if long_form and long_form.lower() != key:
-            line += f" (spell out once: {long_form} ({term}))"
-        lines.append(line)
-        if len(lines) >= limit:
-            break
-    return "\n".join(lines) if lines else "- (No job terms matched the profile.)"
 
 
 def copied_job_phrases(resume: dict | None, job_text: str, *, n: int = 8) -> list[str]:

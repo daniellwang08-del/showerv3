@@ -360,6 +360,27 @@ def _tailored_work_to_content(entry: dict) -> ContentWork:
     )
 
 
+def _with_profile_project(work: ContentWork, profile_rows: list[ContentWork]) -> ContentWork:
+    """Keep the profile's project title and brief description when the tailored role left them out."""
+    if work.project_title and work.project_intro:
+        return work
+    from app.utils.company_name import companies_match
+    from app.utils.profile_converter import split_role_description
+
+    match = next((r for r in profile_rows if companies_match(r.company_name, work.company_name)), None)
+    if match is None:
+        return work
+    has_contributions = any(str(c or "").strip() for c in match.contributions or [])
+    desc = (match.description or "").strip()
+    intro = (match.project_intro or "").strip() or (desc if has_contributions else split_role_description(desc)[0])
+    return work.model_copy(
+        update={
+            "project_title": work.project_title or (match.project_title or "").strip(),
+            "project_intro": work.project_intro or intro,
+        }
+    )
+
+
 def _merge_tailored_into_design(base: ResumeDesign, tailored: dict) -> ResumeDesign:
     """Merge Phase-B tailored sections onto a base design (keeps theme/header/edu/certs)."""
     base_content = base.content.model_copy(deep=True) if base.content else ResumeContent()
@@ -376,12 +397,13 @@ def _merge_tailored_into_design(base: ResumeDesign, tailored: dict) -> ResumeDes
                 skills.append(ContentSkill(category=cat, skills=vals))
     exp_raw = tailored.get("work_experience") or []
     experience: list[ContentWork] = []
+    profile_rows = list(base_content.work_experience or [])
     if isinstance(exp_raw, list):
         for entry in exp_raw:
             if isinstance(entry, dict):
                 w = _tailored_work_to_content(entry)
                 if w.company_name and w.job_title:
-                    experience.append(w)
+                    experience.append(_with_profile_project(w, profile_rows))
 
     merged = base_content.model_copy(
         update={

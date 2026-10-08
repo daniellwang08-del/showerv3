@@ -3,6 +3,7 @@ Convert user profile data to OpenAI-optimized text format.
 Produces a resume-style document for use as context in Chat Completions.
 """
 
+import re
 from typing import Any
 
 from app.utils.flexible_date import format_flexible_date, format_flexible_period
@@ -30,6 +31,38 @@ def _list(obj: Any, key: str) -> list:
 
 def _format_period(start: str, end: str) -> str:
     return format_flexible_period(start, end)
+
+
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*\u2022\u25AA\u2023\u2043]|\d+[.)])\s+(.*)$")
+
+
+def split_role_description(desc: str) -> tuple[str, list[str]]:
+    """(project description, contributions) of a free-form role description.
+
+    Text above the first bullet, or the first of several paragraphs, is the brief project
+    description; the bullets or later paragraphs are the contributions. A single paragraph
+    has no such split and returns ("", []).
+    """
+    text = (desc or "").strip()
+    if not text:
+        return "", []
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if sum(1 for ln in lines if _BULLET_LINE_RE.match(ln)) >= 2:
+        lead: list[str] = []
+        items: list[str] = []
+        for ln in lines:
+            m = _BULLET_LINE_RE.match(ln)
+            if m:
+                items.append(m.group(1).strip())
+            elif items:
+                items[-1] = f"{items[-1]} {ln}"
+            else:
+                lead.append(ln)
+        return " ".join(lead), items
+    paragraphs = [" ".join(p.split()) for p in re.split(r"\n\s*\n", text) if p.strip()]
+    if len(paragraphs) >= 2:
+        return paragraphs[0], paragraphs[1:]
+    return "", []
 
 
 def user_profile_to_openai_text(profile: Any) -> str:
@@ -134,18 +167,30 @@ def user_profile_to_openai_text(profile: Any) -> str:
             meta = [m for m in [location, job_type, employment_type] if m]
             if meta:
                 sub_parts.append(", ".join(meta))
+            contribs = [
+                c.strip() for c in (contributions if isinstance(contributions, (list, tuple)) else [])
+                if isinstance(c, str) and c.strip()
+            ]
+            # The brief project description renders above the contributions, so it is labelled
+            # for the tailoring prompt; a description written next to contributions plays that part.
+            intro, leftover = str(project_intro).strip(), ""
+            if desc and contribs:
+                intro = intro or desc
+            elif desc:
+                desc_intro, desc_contribs = split_role_description(desc)
+                if desc_contribs:
+                    intro, contribs = intro or desc_intro, desc_contribs
+                else:
+                    leftover = desc
             if project_title:
                 sub_parts.append(f"Project: {project_title}")
-            if project_intro:
-                sub_parts.append(project_intro)
-            if isinstance(contributions, (list, tuple)):
-                for c in contributions:
-                    if isinstance(c, str) and c.strip():
-                        sub_parts.append(f"- {c.strip()}")
+            if intro:
+                sub_parts.append(f"Project description: {' '.join(intro.split())}")
+            sub_parts.extend(f"- {c}" for c in contribs)
             if used_skills:
                 sub_parts.append(f"Technologies: {used_skills}")
-            if desc and not (project_intro or contributions):
-                sub_parts.append(desc)
+            if leftover:
+                sub_parts.append(leftover)
             parts.append("\n".join(sub_parts))
             parts.append("")
         parts.append("")

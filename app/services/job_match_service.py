@@ -36,6 +36,15 @@ from app.services.job_field_utils import (
     infer_title_from_description,
     parse_job_title,
 )
+from app.services.required_skills import (
+    SkillPlan,
+    ensure_required_skills,
+    job_skill_terms,
+    missing_from_experience,
+    plan_required_skills,
+    required_skills_block,
+    requirement_lines,
+)
 from app.storage.database import get_session
 from app.storage.user_repository import UserRepository
 from app.utils.resume_keyword_emphasis import (
@@ -45,7 +54,6 @@ from app.utils.resume_keyword_emphasis import (
 from app.utils.resume_evidence import (
     build_role_evidence_block,
     build_source_facts_block,
-    build_supported_terms_block,
     cap_skills_section,
     copied_job_phrases,
     enforce_role_evidence,
@@ -468,102 +476,14 @@ _GENERIC_SKILL_CATEGORIES = frozenset(
 )
 
 
-def _job_anchor_terms(*text_blobs: str, limit: int = 32) -> list[str]:
-    """Extract distinctive job terms used to verify the tailored resume is job-specific.
-
-    Prefers tech-like tokens and short requirement fragments over soft stopwords.
-    """
-    stop = {
-        "and", "the", "for", "with", "you", "your", "our", "are", "will", "this", "that",
-        "from", "have", "has", "been", "using", "use", "used", "ability", "experience",
-        "years", "year", "team", "work", "working", "role", "job", "including", "etc",
-        "strong", "good", "preferred", "required", "requirements", "responsibilities",
-        "knowledge", "skills", "plus", "must", "able", "across", "into", "about",
-        "leadership", "communication", "collaboration", "agile", "scrum",
-    }
-    found: list[str] = []
-    seen: set[str] = set()
-
-    def _add(term: str) -> None:
-        t = term.strip(" .,;:/\\|\"'`()[]{}").strip()
-        if len(t) < 2:
-            return
-        key = t.lower()
-        if key in seen or key in stop:
-            return
-        if not is_tech_like_keyword(t) and " " not in t:
-            return
-        if not is_tech_like_keyword(t):
-            return
-        seen.add(key)
-        found.append(t)
-
-    for blob in text_blobs:
-        text = str(blob or "")
-        if not text:
-            continue
-        for line in text.splitlines():
-            s = line.strip()
-            if s.startswith(("-", "*", "•")):
-                phrase = re.sub(r"^[\-\*•]\s*", "", s)
-                phrase = re.sub(r"\s+", " ", phrase).strip()
-                if 3 <= len(phrase) <= 48:
-                    _add(phrase)
-        for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9.+#/-]{1,}\b", text):
-            _add(m.group(0))
-        if len(found) >= limit:
-            break
-    return found[:limit]
-
-
 def build_must_cover_requirements(
     structured_context: str = "",
     job_text: str = "",
     *,
     limit: int = 18,
 ) -> str:
-    """Human-readable must-cover list for the Phase B user prompt."""
-    lines: list[str] = []
-    seen: set[str] = set()
-
-    def _push(raw: str) -> None:
-        s = re.sub(r"\s+", " ", str(raw or "").strip())
-        if not s or len(s) < 3:
-            return
-        key = s.lower()
-        if key in seen:
-            return
-        seen.add(key)
-        lines.append(f"- {s}")
-
-    for blob in (structured_context, job_text):
-        text = str(blob or "")
-        in_reqs = False
-        for line in text.splitlines():
-            stripped = line.strip()
-            lower = stripped.lower()
-            if lower.startswith("key requirements") or lower.startswith("requirements"):
-                in_reqs = True
-                continue
-            if lower.startswith("key responsibilities") or lower.startswith("responsibilities"):
-                in_reqs = True
-                continue
-            if stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("• "):
-                _push(re.sub(r"^[\-\*•]\s*", "", stripped))
-                if len(lines) >= limit:
-                    return "\n".join(lines)
-            elif in_reqs and stripped and not stripped.endswith(":"):
-                # End of list section when a new heading appears.
-                if stripped[0].isalpha() and stripped.endswith(":") and len(stripped) < 40:
-                    in_reqs = False
-        if len(lines) >= limit:
-            break
-
-    if not lines:
-        for term in _job_anchor_terms(structured_context, job_text, limit=limit):
-            _push(term)
-            if len(lines) >= limit:
-                break
+    """Human-readable must-cover list for the Phase B user prompt: requirements first, then preferences, then duties."""
+    lines = ["- " + " ".join(line.split()) for line in requirement_lines(job_text, structured_context, limit=limit)]
     return "\n".join(lines) if lines else "- (Derive must-cover items from the Job Description above.)"
 
 
@@ -577,7 +497,7 @@ def build_company_domain_cues(structured_context: str = "", job_text: str = "") 
                 cues.append(line.strip())
                 break
     # Domain-ish tokens from title/industry lines.
-    anchors = _job_anchor_terms(structured_context, limit=8)
+    anchors = [s.term for s in job_skill_terms("", structured_context)][:8]
     if anchors:
         cues.append("Stack / domain signals: " + ", ".join(anchors[:8]))
     return "\n".join(cues) if cues else "Infer company and domain cues from the Job Description."
@@ -625,6 +545,7 @@ def tailored_resume_quality_issues(
     evidence_text: str = "",
     job_text: str = "",
     claim_terms: list[str] | None = None,
+    required_skills: SkillPlan | None = None,
 ) -> list[str]:
     """Return soft quality problems that warrant one Phase B regeneration retry.
 
@@ -698,6 +619,8 @@ def tailored_resume_quality_issues(
             issues.append("profile_summary_unheld_title")
     if len(copied_job_phrases(resume, job_text)) >= 2:
         issues.append("copies_job_posting_phrases")
+    if missing_from_experience(resume, required_skills):
+        issues.append("required_skills_missing_from_experience")
 
     cues = [c for c in (role_domain_cues or []) if isinstance(c, str) and c.strip()]
     if cues and summary:
@@ -744,6 +667,7 @@ def quality_retry_instructions(
     evidence_text: str = "",
     job_text: str = "",
     claim_terms: list[str] | None = None,
+    required_skills: SkillPlan | None = None,
 ) -> str:
     """Rewrite instructions naming exactly what the previous draft got wrong."""
     terms = claim_terms if claim_terms is not None else job_anchor_terms
@@ -770,6 +694,13 @@ def quality_retry_instructions(
             "with an engineering family their work supports at their own level (e.g. Senior Software "
             "Engineer) and show the fit for this role through the work, not by claiming its title."
         )
+    if "required_skills_missing_from_experience" in blocking and resume:
+        missing = missing_from_experience(resume, required_skills)
+        lines.append(
+            "- The posting requires these skills, but no bullet names them. Name each in the spelling shown in a "
+            "bullet of the role shown, describing how that role's real work used it: "
+            + "; ".join(f"{s.term} ({s.roles[0]})" for s in missing)
+        )
     if "profile_summary_too_long" in blocking:
         lines.append(f"- profile_summary: 3-4 sentences, at most {_MAX_SUMMARY_WORDS - 15} words, no technology lists.")
     if "profile_summary_too_short" in blocking:
@@ -792,7 +723,9 @@ def quality_retry_instructions(
         )
     if any(i.endswith("_no_bullets") or i.endswith("_invalid") or i.endswith("_missing") for i in blocking):
         lines.append("- Include exactly one work_experience entry, with bullets, for every company in the profile.")
-    lines.append("Never invent employers, dates, technologies, metrics, scale or ownership.")
+    lines.append(
+        "Never invent employers, dates, metrics, scale or ownership, or technologies beyond the Required skills checklist."
+    )
     return "\n".join(lines)
 
 
@@ -815,17 +748,6 @@ def recent_anchor_coverage(resume: dict | None, anchors: list[str]) -> float:
     return sum(1 for t in terms if t.lower() in blob) / len(terms)
 
 
-def supported_job_anchors(anchors: list[str], *evidence: str) -> list[str]:
-    """JD anchor terms that the candidate's own material actually mentions.
-
-    Coverage against every JD term rewards weaving in technologies the person
-    never used. Measuring only the supported ones keeps the check (and the
-    retry prompt) on the truthful side.
-    """
-    blob = " ".join(e for e in evidence if e).lower()
-    return [a for a in anchors if isinstance(a, str) and a.strip() and a.lower() in blob]
-
-
 def _pick_better_tailored_resume(
     first: dict | None,
     second: dict | None,
@@ -836,6 +758,7 @@ def _pick_better_tailored_resume(
     evidence_text: str = "",
     job_text: str = "",
     claim_terms: list[str] | None = None,
+    required_skills: SkillPlan | None = None,
 ) -> dict | None:
     """Prefer the draft with fewer quality issues, then higher coverage."""
     if first and not second:
@@ -851,6 +774,7 @@ def _pick_better_tailored_resume(
         "evidence_text": evidence_text,
         "job_text": job_text,
         "claim_terms": claim_terms,
+        "required_skills": required_skills,
     }
     issues_a = tailored_resume_quality_issues(first, **checks)
     issues_b = tailored_resume_quality_issues(second, **checks)
@@ -861,6 +785,15 @@ def _pick_better_tailored_resume(
     score_a = tailored_resume_coverage_score(first, job_anchor_terms=job_anchor_terms)
     score_b = tailored_resume_coverage_score(second, job_anchor_terms=job_anchor_terms)
     return second if score_b > score_a else first
+
+
+def _structured_company(structured_context: str) -> str:
+    for line in str(structured_context or "").splitlines():
+        s = line.strip()
+        if s.lower().startswith("company:"):
+            name = s.split(":", 1)[1].strip()
+            return "" if name.lower() == "unknown" else name
+    return ""
 
 
 def _role_domain_cues_from_context(structured_context: str, job_text: str) -> list[str]:
@@ -1172,8 +1105,17 @@ async def generate_tailored_content_phase_b(
     structured_block = structured_context or "No structured job data available."
     must_cover = build_must_cover_requirements(structured_block, job_truncated)
     domain_cues = build_company_domain_cues(structured_block, job_truncated)
-    job_anchors = _job_anchor_terms(structured_block, job_truncated, must_cover)
-    truthful_anchors = supported_job_anchors(job_anchors, profile_truncated, evidence_truncated)
+    skill_plan = plan_required_skills(
+        job_skill_terms(job_truncated, structured_block, company=_structured_company(structured_block)),
+        profile_truncated,
+        evidence_truncated,
+    )
+    job_anchors = skill_plan.posting_terms
+    truthful_anchors = skill_plan.supported_terms
+    # Required skills the profile lacks are assigned to a role, so the evidence checks accept them there.
+    evidence_checked = "\n\n".join(p for p in (evidence_truncated, skill_plan.evidence_addendum()) if p)
+    # The skills cap never drops a checklist item, even one spelled out beyond the posting ("Delta Lake").
+    keep_skills_text = "\n".join([job_truncated, ", ".join(truthful_anchors)])
     role_cues = _role_domain_cues_from_context(structured_block, job_truncated)
     user_content = JOB_MATCH_PHASE_B_USER_TEMPLATE.format(
         job_text=job_truncated,
@@ -1183,19 +1125,18 @@ async def generate_tailored_content_phase_b(
         company_domain_cues=domain_cues,
         match_summary=match_summary or "No match summary available.",
         project_evidence_context=evidence_truncated,
-        role_evidence_map=build_role_evidence_block(profile_truncated, evidence_truncated, job_anchors),
+        role_evidence_map=build_role_evidence_block(profile_truncated, evidence_checked, truthful_anchors),
         source_facts=build_source_facts_block(profile_truncated, evidence_truncated),
-        supported_job_terms=build_supported_terms_block(
-            truthful_anchors, profile_truncated, evidence_truncated
-        ),
+        supported_job_terms=required_skills_block(skill_plan),
     )
     checks = {
         "job_anchor_terms": truthful_anchors,
         "role_domain_cues": role_cues,
         "profile_text": profile_truncated,
-        "evidence_text": evidence_truncated,
+        "evidence_text": evidence_checked,
         "job_text": job_truncated,
         "claim_terms": job_anchors,
+        "required_skills": skill_plan,
     }
     phase_b_max = max(settings.openai_max_tokens, int(get_effective_value_sync("phase_b_max_tokens")))
     phase_b_max = min(phase_b_max, 32768)
@@ -1235,13 +1176,16 @@ async def generate_tailored_content_phase_b(
         resume = _parse_tailored_resume(parsed.get("tailored_resume"))
         if not resume:
             return None
-        resume = enforce_role_evidence(resume, profile_truncated, evidence_truncated)
+        resume = enforce_role_evidence(resume, profile_truncated, evidence_checked)
         resume = normalize_tailored_formatting(apply_keyword_emphasis_to_resume(resume, job_anchors))
         resume = expand_acronyms_once(resume, truthful_anchors)
         if resume and resume.get("technical_skills"):
             resume["technical_skills"] = cap_skills_section(
-                rehome_misplaced_skills(resume["technical_skills"]), job_truncated
+                rehome_misplaced_skills(resume["technical_skills"]), keep_skills_text
             )
+        resume = ensure_required_skills(resume, skill_plan, profile_truncated)
+        if resume and resume.get("technical_skills"):
+            resume["technical_skills"] = cap_skills_section(resume["technical_skills"], keep_skills_text)
         return resume
 
     async def _cover_call(observe_name: str) -> dict | None:

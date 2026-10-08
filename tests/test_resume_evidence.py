@@ -5,7 +5,6 @@ from app.services.job_match_service import (
 from app.utils.resume_evidence import (
     build_role_evidence_block,
     build_source_facts_block,
-    build_supported_terms_block,
     cap_skills_section,
     copied_job_phrases,
     enforce_role_evidence,
@@ -150,14 +149,10 @@ def test_role_evidence_block_lists_skills_without_a_role():
     assert "Skills list only" in block and "Kubernetes" in block and "GraphQL" not in block
 
 
-def test_source_facts_and_supported_terms():
+def test_source_facts_block():
     facts = build_source_facts_block(PROFILE)
     assert "60%" in facts and "2M users" in facts and "large fleets" in facts
     assert facts.splitlines()[-1] == "- [Acme Corp] Mentored four engineers on API design and code reviews."
-    terms = build_supported_terms_block(["Lambda", "Terraform", "AWS"], PROFILE)
-    assert "- Lambda: Acme Corp" in terms
-    assert "- Terraform: skills list or summary only" in terms
-    assert "- AWS: Acme Corp (spell out once: Amazon Web Services (AWS))" in terms
 
 
 def test_copied_job_phrases():

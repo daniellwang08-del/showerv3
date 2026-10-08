@@ -32,8 +32,10 @@ roles and numbers. Write for both readers: evidence inside the right role, the p
 - Never move a technology, project, metric or responsibility from one employer to another, and never tie a
   technology to a specific accomplishment unless the profile's line for that accomplishment names it.
 - When Project Evidence lists technologies_to_emphasize for a company, use them in that company's bullets.
-- A job requirement the candidate cannot support stays out. Do not hint at it with "exposure to", "familiar
-  with" or adjacent wording. A credible 80% match beats an inflated 95% that fails the interview and the ATS audit.
+- The one exception: skills under "Add to the resume" in the Required skills checklist. Each is tied to the
+  role listed for it; name it in that role as part of the work the profile describes there.
+- Any other job requirement the candidate cannot support stays out. Do not hint at it with "exposure to",
+  "familiar with" or adjacent wording.
 - Company names, job titles, dates, locations and employment types are copied verbatim from the profile.
 
 ## 2. Preserve facts
@@ -49,10 +51,17 @@ roles and numbers. Write for both readers: evidence inside the right role, the p
   replaced, who used it) instead of "improving efficiency" or "measurable outcomes".
 
 ## 3. Speak the posting's language
-- Use the posting's exact spelling for each item under **Job terms the candidate supports** at least once,
-  inside a role that evidences it ("PostgreSQL" not "Postgres" when the posting says PostgreSQL).
+- The **Required skills checklist** lists every skill and technique the posting asks for. None may be missing,
+  and each uses the spelling shown ("PostgreSQL" not "Postgres" when the posting says PostgreSQL). Each goes in
+  technical_skills under its category. Each one tied to a role is also named in at least one bullet of that
+  role (the most recent such role first, required skills before preferred) and in its used_skills. Practices
+  (data quality, distributed systems, data modeling) are shown in a bullet.
+- "Add to the resume" items: write them into the listed role's existing work, the way that system would use
+  them (a streaming ingestion bullet names Kafka, a table-format bullet names Iceberg). Keep the role's real
+  product, scope, metrics and ownership; never invent a new project, employer or number for them.
+- Items under "Not in the profile" stay out entirely. Items under "Related evidence" use the profile's term.
 - Spell out acronyms once alongside the abbreviation, in the summary or the first role that uses them:
-  "Large Language Models (LLMs)". Job terms the candidate supports marks the ones to spell out.
+  "Large Language Models (LLMs)". The Required skills checklist marks the ones to spell out.
 - Mirror the posting's vocabulary, not its sentences. Never copy a run of 6 or more words from the posting:
   ATS audits flag resumes that echo the job description.
 
@@ -86,12 +95,18 @@ Profile order is most recent first. Length budget (keeps a senior resume to abou
 - Banned openers and filler: "Responsible for", "Worked on", "Helped", "Involved in", "Supported X by",
   "Leveraged", "Spearheaded", "Utilized", "production-oriented", "end-to-end solutions", "cutting-edge",
   "robust and scalable" as decoration, "measurable outcomes" without a number.
-- project_description: one short sentence about the product or client the profile names, or empty.
-- used_skills: 4-10 technologies from that role's evidence line, the posting's terms first.
+- project_name: the role's "Project:" title from the profile, copied verbatim; null when it has none.
+- project_description: the role's "Project description:" from the profile, kept as 1-2 sentences (20-45 words)
+  about the same product or client, its purpose and scale, reworded toward the posting where truthful. It
+  renders above the role's bullets, so never drop or shorten it to a fragment. Empty only when the profile
+  gives the role no project description.
+- used_skills: 4-12 technologies from that role's evidence line, the posting's terms first.
 
 ## 6. technical_skills
-- 4-6 categories and at most 30 items in total, only technologies the profile states somewhere. A long list
-  dilutes the match: first keep every item the posting names, then the role family's core stack, and cut the rest.
+- 4-6 categories and at most 30 items in total, only technologies the profile states somewhere or the Required
+  skills checklist lists. A long list
+  dilutes the match: first keep every item of the Required skills checklist and every other item the posting
+  names, then the role family's core stack, and cut the rest.
 - Lead with the categories and items the posting asks for.
 - Place items correctly: runtimes and frameworks (Node.js, Django, React) are not Languages; managed search,
   queues and AI services are not Databases; cloud services go under Cloud.
@@ -121,8 +136,8 @@ Return ONLY valid JSON:
         "period_end": "<string copied verbatim from profile, or empty if current>",
         "location": "<string copied verbatim from profile, or empty>",
         "employment_type": "<string copied verbatim from profile, or empty>",
-        "project_name": "<string or null>",
-        "project_description": "<one sentence from the profile, or empty>",
+        "project_name": "<the profile's project title for this role, verbatim, or null>",
+        "project_description": "<the profile's project description for this role, 1-2 sentences, or empty when it has none>",
         "used_skills": "<comma-separated technologies this role's evidence shows, or empty>",
         "bullets": ["<one sentence - 6-8 for the two most recent roles, 4-5 for the third, 3-4 for older>", ...]
       }
@@ -186,6 +201,11 @@ PHASE_B_FORMAT_CONTRACT = """
 ## Formatting contract (overrides any conflicting instruction above)
 - Role evidence: a role's bullets, `project_description` and `used_skills` name only technologies the Role
   evidence map ties to that role. Never move work, tools or metrics between employers.
+- Required skills: every item of the Required skills checklist (including "Add to the resume") appears, in the
+  spelling shown, in `technical_skills` under its category and, when a role is listed for it, in a bullet and
+  `used_skills` of that role. Never add anything listed under "Not in the profile".
+- Projects: `project_name` is the profile's project title and `project_description` keeps the role's profile
+  project description (1-2 sentences); neither is dropped when the profile has one.
 - Length: 6-8 bullets for each of the two most recent roles, 4-5 for the third, 3-4 for older roles, at most
   26 in total, chosen by relevance to the posting; `profile_summary` is 3-4 sentences and at most 75 words;
   `technical_skills` holds at most 30 items. Never pad to reach a count.
@@ -299,7 +319,7 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
 
 ---
 
-## Job terms the candidate supports (use the posting's spelling, in the role listed)
+## Required skills checklist (the posting's skills the profile supports; none may be missing)
 {supported_job_terms}
 
 ---
@@ -307,6 +327,8 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
 ## Execution checklist
 1. List the posting's requirements (Must-cover first) and, for each, the role that truthfully evidences it.
    Requirements with no evidence stay out of the resume.
+   Then tick off the Required skills checklist: each item in technical_skills, and in a bullet and used_skills
+   of every role listed for it (at least the most recent one).
 2. Put the strongest evidence in the two most recent roles; their first bullets match the posting's primary function.
    Choose and order each role's bullets by relevance to the posting, not by profile order.
 3. **Rewrite** (do not lightly edit) the summary, skills and bullets so THIS job's evidenced stack dominates,
@@ -315,8 +337,10 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
 5. Length budget: index 0-1 get 6-8 bullets each, index 2 gets 4-5, older roles 3-4; 20-26 in total.
 6. Summary: 3-4 sentences, 45-75 words, opening with the posting's engineering title family (never an unheld
    specialty), truthful years in the right discipline, one metric, at most 4 technologies.
-7. Technical skills: 4-6 clean single-concept categories, at most 30 technologies from the profile, plain text, no `**`.
-8. Bold sparingly with ``**double asterisks**``: at most 2 named job technologies or figures per bullet.
-9. Return the tailored resume JSON as specified.
+7. Technical skills: 4-6 clean single-concept categories, at most 30 technologies from the profile (every
+   checklist item included), plain text, no `**`.
+8. Keep each role's project title and project description from the profile (1-2 sentences above the bullets).
+9. Bold sparingly with ``**double asterisks**``: at most 2 named job technologies or figures per bullet.
+10. Return the tailored resume JSON as specified.
 
 Include exactly one work_experience entry for EVERY company in the profile - do not skip any."""
