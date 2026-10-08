@@ -18,7 +18,7 @@ from app.utils.resume_evidence import (
     summary_unheld_title,
     unattributed_role_terms,
 )
-from app.utils.resume_skill_taxonomy import rehome_misplaced_skills
+from app.utils.resume_skill_taxonomy import fill_thin_skill_rows, fold_small_skill_rows, rehome_misplaced_skills
 
 PROFILE = """## Summary
 Backend engineer.
@@ -179,6 +179,31 @@ def test_rehome_misplaced_skills_only_into_existing_categories():
     ]
     assert rehome_misplaced_skills([{"category": "Languages", "skills": "Python, Node.js"}]) == [
         {"category": "Languages", "skills": "Python, Node.js"}
+    ]
+    # "sql" is a whole word, not the start of "SQLAlchemy".
+    assert rehome_misplaced_skills(
+        [{"category": "Languages", "skills": "Python, SQL"}, {"category": "Backend", "skills": "SQLAlchemy"}]
+    ) == [{"category": "Languages", "skills": "Python, SQL"}, {"category": "Backend", "skills": "SQLAlchemy"}]
+
+
+def test_fold_small_skill_rows_moves_strays_into_their_category():
+    rows = [
+        {"category": "Cloud", "skills": "AWS, Azure, GCP"},
+        {"category": "Tools", "skills": "Amazon S3"},
+        {"category": "Security", "skills": "SOC 2"},
+    ]
+    assert fold_small_skill_rows(rows) == [
+        {"category": "Cloud", "skills": "AWS, Azure, GCP, Amazon S3"},
+        {"category": "Security", "skills": "SOC 2"},
+    ]
+
+
+def test_fill_thin_skill_rows_tops_up_from_the_matching_category():
+    rows = [{"category": "Cloud", "skills": "AWS, Amazon S3"}, {"category": "Languages", "skills": "Python"}]
+    out = fill_thin_skill_rows(rows, ["Amazon S3", "Docker", "Amazon SQS", "AWS Lambda", "Azure"], 4)
+    assert out == [
+        {"category": "Cloud", "skills": "AWS, Amazon S3, Amazon SQS, AWS Lambda"},
+        {"category": "Languages", "skills": "Python"},
     ]
 
 

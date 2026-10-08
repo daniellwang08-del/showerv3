@@ -30,19 +30,19 @@ from app.prompts.job_match_phase_b_prompt import (
     JOB_MATCH_PHASE_B_USER_TEMPLATE,
     PHASE_B_RESUME_SYSTEM_PROMPT,
 )
-from app.prompts.job_first_tailoring_prompt import JOB_FIRST_SYSTEM_PROMPT, JOB_FIRST_USER_TEMPLATE
+from app.prompts.resume_tailoring_prompt import TAILORING_SYSTEM_PROMPT, TAILORING_USER_TEMPLATE
 from app.models.schemas import JobDescriptionSchema
-from app.services.job_first_tailoring import (
+from app.services.resume_tailoring import (
     DEFAULT_STRATEGY,
     MAX_REWRITE_RETRIES,
-    STRATEGY_JOB_FIRST,
-    build_job_first_plan,
+    STRATEGY_REBUILD,
+    build_tailoring_plan,
     career_facts_block,
     education_block,
     experience_skill_coverage,
-    finalize_job_first_resume,
-    job_first_problems,
-    job_first_retry_note,
+    finalize_tailored_resume,
+    tailoring_problems,
+    tailoring_retry_note,
     normalize_strategy,
     tailored_resume_to_profile_text,
     target_stack_block,
@@ -562,6 +562,7 @@ def tailored_resume_quality_issues(
     job_text: str = "",
     claim_terms: list[str] | None = None,
     required_skills: SkillPlan | None = None,
+    max_bullets: int | None = None,
 ) -> list[str]:
     """Return soft quality problems that warrant one Phase B regeneration retry.
 
@@ -622,7 +623,7 @@ def tailored_resume_quality_issues(
             # Bold is sparse by contract; flag only roles where it is nearly absent.
             if emphasized < max(1, len(clean) // 4):
                 issues.append(f"work_experience[{idx}]_weak_keyword_emphasis")
-    if total_bullets > _MAX_TOTAL_BULLETS:
+    if total_bullets > (max_bullets or _MAX_TOTAL_BULLETS):
         issues.append("too_many_bullets")
 
     if profile_text:
@@ -1109,7 +1110,7 @@ async def generate_tailored_content_phase_b(
     ``include_resume=False`` writes only the cover letter (original résumé mode).
     ``on_stage`` is awaited with "quality_retry" when a rewrite pass starts.
     ``strategy`` overrides the user's tailoring strategy ("job_first" or "evidence");
-    ``job_id`` lets job-first score the tailored resume against the job's encoding.
+    ``job_id`` lets tailoring score the tailored resume against the job's encoding.
     """
     settings = get_settings()
     job_truncated = _truncate_job_text_preserve_layout(job_text, MAX_JOB_LENGTH)
@@ -1170,14 +1171,14 @@ async def generate_tailored_content_phase_b(
             wanted = normalize_strategy(strategy) if strategy is not None else user_strategy
             if wanted != user_strategy:
                 resume_system = (
-                    JOB_FIRST_SYSTEM_PROMPT
-                    if wanted == STRATEGY_JOB_FIRST
+                    TAILORING_SYSTEM_PROMPT
+                    if wanted == STRATEGY_REBUILD
                     else (await repo.get_effective_phase_b_system_prompts(user_id))[0]
                 )
         strategy = wanted
     else:
         strategy = normalize_strategy(strategy or DEFAULT_STRATEGY)
-        resume_system = JOB_FIRST_SYSTEM_PROMPT if strategy == STRATEGY_JOB_FIRST else PHASE_B_RESUME_SYSTEM_PROMPT
+        resume_system = TAILORING_SYSTEM_PROMPT if strategy == STRATEGY_REBUILD else PHASE_B_RESUME_SYSTEM_PROMPT
         cover_system = COVER_LETTER_SYSTEM_PROMPT
 
     cover_user = COVER_LETTER_USER_TEMPLATE.format(
@@ -1246,12 +1247,11 @@ async def generate_tailored_content_phase_b(
             logger.warning("cover_letter_section_missing_or_invalid", resume="original")
         return None, cover_letter
 
-    if strategy == STRATEGY_JOB_FIRST:
-        return await _job_first_phase_b(
+    if strategy == STRATEGY_REBUILD:
+        return await _tailor_resume(
             job_text=job_truncated,
             profile_text=profile_truncated,
             structured_block=structured_block,
-            must_cover=must_cover,
             domain_cues=domain_cues,
             role_cues=role_cues,
             resume_system=resume_system,
@@ -1328,7 +1328,7 @@ async def generate_tailored_content_phase_b(
 
 
 # Worth a retry note, but a draft that covers more of the posting still wins over one without them.
-_JOB_FIRST_SOFT_ISSUES = frozenset({"copies_job_posting_phrases"})
+_TAILORING_SOFT_ISSUES = frozenset({"copies_job_posting_phrases", "technical_skills_too_thin"})
 
 
 def _format_retry_lines(resume: dict | None, issues: list[str], *, anchors: list[str], job_text: str) -> list[str]:
@@ -1339,12 +1339,11 @@ def _format_retry_lines(resume: dict | None, issues: list[str], *, anchors: list
     return [ln[2:] for ln in note.splitlines()[1:-1] if ln.startswith("- ")]
 
 
-async def _job_first_phase_b(
+async def _tailor_resume(
     *,
     job_text: str,
     profile_text: str,
     structured_block: str,
-    must_cover: str,
     domain_cues: str,
     role_cues: list[str],
     resume_system: str,
@@ -1357,7 +1356,7 @@ async def _job_first_phase_b(
     temperature: float,
     reasoning_effort: str | None,
 ) -> tuple[dict | None, dict | None]:
-    """Job-first Phase B: draft, check, and rewrite until the resume meets every rule and the match target."""
+    """Phase B tailoring: draft, check, and rewrite until the resume meets every rule and the match target."""
     from app.services.tailored_match_check import (
         REQUIREMENT_MATCH_TARGET,
         posting_requirements,
@@ -1365,19 +1364,23 @@ async def _job_first_phase_b(
         score_tailored_resume,
     )
 
-    plan = build_job_first_plan(
+    plan = build_tailoring_plan(
         job_skill_terms(job_text, structured_block, company=_structured_company(structured_block)),
         profile_text,
         job_text,
     )
     anchors = plan.terms
     tasks, _facts = posting_requirements(structured_block, job_text)
-    user_content = JOB_FIRST_USER_TEMPLATE.format(
+    user_content = TAILORING_USER_TEMPLATE.format(
         career_facts=career_facts_block(plan),
         education=education_block(profile_text),
         job_text=job_text,
         structured_context=structured_block,
-        must_cover_requirements="\n".join(f"- {t}" for t in tasks) if tasks else must_cover,
+        must_cover_requirements=(
+            "\n".join(f"- {t}" for t in tasks)
+            if tasks
+            else "- The posting lists no separate requirements: cover the role and technologies it describes."
+        ),
         company_domain_cues=domain_cues,
         target_stack=target_stack_block(plan),
     )
@@ -1400,7 +1403,7 @@ async def _job_first_phase_b(
         resume = expand_acronyms_once(resume, anchors)
         if resume and resume.get("technical_skills"):
             resume["technical_skills"] = rehome_misplaced_skills(resume["technical_skills"])
-        return finalize_job_first_resume(resume, plan, profile_text, job_text)
+        return finalize_tailored_resume(resume, plan, profile_text, job_text)
 
     best: dict | None = None
     best_key: tuple | None = None
@@ -1413,18 +1416,22 @@ async def _job_first_phase_b(
         except AIParsingError:
             if attempt == 0:
                 raise
-            logger.warning("job_first_retry_call_failed", attempt=attempt)
+            logger.warning("tailoring_retry_call_failed", attempt=attempt)
             continue
         if not resume:
             continue
         layout = [
             i
             for i in tailored_resume_quality_issues(
-                resume, job_anchor_terms=anchors, role_domain_cues=role_cues, job_text=job_text
+                resume,
+                job_anchor_terms=anchors,
+                role_domain_cues=role_cues,
+                job_text=job_text,
+                max_bullets=plan.max_bullets + len(plan.roles),
             )
             if not _is_advisory_quality_issue(i)
         ]
-        problems = job_first_problems(resume, plan, profile_text)
+        problems = tailoring_problems(resume, plan, profile_text)
         try:
             match = await requirement_match(
                 resume, skills=plan.placeable, structured_context=structured_block, job_text=job_text
@@ -1433,12 +1440,12 @@ async def _job_first_phase_b(
             logger.warning("requirement_match_failed", error=str(e)[:300])
             match = {}
         rate = match.get("rate")
-        soft = [i for i in layout if i in _JOB_FIRST_SOFT_ISSUES]
-        key = (len(layout) - len(soft) + len(problems), -(rate or 0), len(soft))
+        soft = [i for i in [*layout, *problems] if i in _TAILORING_SOFT_ISSUES]
+        key = (len(layout) + len(problems) - len(soft), -(rate or 0), len(soft))
         if best_key is None or key < best_key:
             best, best_key, best_report = resume, key, (layout, problems, match)
         logger.info(
-            "job_first_draft",
+            "tailoring_draft",
             attempt=attempt,
             issues=layout + list(problems),
             requirement_match=rate,
@@ -1471,18 +1478,18 @@ async def _job_first_phase_b(
             + "\n\n## Your previous draft\n"
             + json.dumps({"tailored_resume": previous}, ensure_ascii=False)
             + "\n\n"
-            + job_first_retry_note(problems, extra)
+            + tailoring_retry_note(problems, extra)
         )
 
     if best is None:
-        logger.warning("tailored_resume_section_missing_or_invalid", strategy=STRATEGY_JOB_FIRST)
+        logger.warning("tailored_resume_section_missing_or_invalid", strategy=STRATEGY_REBUILD)
     else:
         layout, problems, match = best_report
         score = await score_tailored_resume(
             job_id, best, tailored_resume_to_profile_text(best, profile_text), user_id=user_id
         )
         best["match_check"] = {
-            "strategy": STRATEGY_JOB_FIRST,
+            "strategy": STRATEGY_REBUILD,
             "target": REQUIREMENT_MATCH_TARGET,
             "requirement_match": match.get("rate"),
             "skill_coverage": match.get("skill_coverage", experience_skill_coverage(best, plan)),
@@ -1527,5 +1534,5 @@ async def _job_first_phase_b(
             if cover_letter:
                 break
         if not cover_letter:
-            logger.warning("cover_letter_section_missing_or_invalid", strategy=STRATEGY_JOB_FIRST)
+            logger.warning("cover_letter_section_missing_or_invalid", strategy=STRATEGY_REBUILD)
     return best, cover_letter

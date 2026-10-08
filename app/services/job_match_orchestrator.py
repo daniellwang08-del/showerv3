@@ -965,12 +965,12 @@ async def run_tailored_content_generation(
                 profile_text = (
                     f"## Original Resume (sent with this application)\n{original_text}\n\n{profile_text}"
                 ).strip()
-        from app.services.job_first_tailoring import STRATEGY_JOB_FIRST, normalize_strategy
+        from app.services.resume_tailoring import STRATEGY_REBUILD, normalize_strategy
 
         job_first = not cover_only and normalize_strategy(
             getattr(user, "resume_tailoring_strategy", None)
-        ) == STRATEGY_JOB_FIRST
-        # Job-first writes each role from the career facts alone, so per-company evidence is unused.
+        ) == STRATEGY_REBUILD
+        # Rebuild mode writes each role from the career facts alone, so per-company evidence is unused.
         if user and source_docs and not job_first:
             try:
                 project_evidence_context = await extract_job_evidence_pack(

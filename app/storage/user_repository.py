@@ -24,7 +24,7 @@ from app.utils.profile_converter import user_profile_to_openai_text
 from app.utils.secret_encryption import decrypt_secret, encrypt_secret, mask_api_key
 from app.services.resume_template_service import template_status_payload
 from app.services.cover_letter_template_service import template_status_payload as cover_letter_template_status_payload
-from app.services.job_first_tailoring import STRATEGY_EVIDENCE, STRATEGY_JOB_FIRST, normalize_strategy
+from app.services.resume_tailoring import STRATEGY_EVIDENCE, STRATEGY_REBUILD, normalize_strategy
 from app.services.job_pipeline_mode import normalize_application_resume_source
 from app.services.match_quality_check import (
     normalize_min_score as normalize_quality_check_min_score,
@@ -435,18 +435,18 @@ class UserRepository:
     async def get_phase_b_bundle(self, user_id: str) -> tuple[str, str, str]:
         """(tailoring strategy, resume system prompt, cover letter system prompt).
 
-        Job-first has its own instructions; a custom tailoring prompt is appended to them as guidance.
+        Rebuild mode has its own instructions; a custom tailoring prompt is appended to them as guidance.
         """
-        from app.prompts.job_first_tailoring_prompt import build_job_first_system_prompt
+        from app.prompts.resume_tailoring_prompt import build_tailoring_system_prompt
 
         user = await self.get_by_id(user_id)
         strategy = normalize_strategy(getattr(user, "resume_tailoring_strategy", None) if user else None)
         cover = build_cover_letter_system_prompt(self._cover_letter_instructions_for_user(user))
-        if strategy == STRATEGY_JOB_FIRST:
+        if strategy == STRATEGY_REBUILD:
             custom = ""
             if user and (getattr(user, "resume_tailoring_prompt_mode", None) or "default") == "custom":
                 custom = (getattr(user, "resume_tailoring_prompt_custom", None) or "").strip()
-            return strategy, build_job_first_system_prompt(custom), cover
+            return strategy, build_tailoring_system_prompt(custom), cover
         return strategy, build_phase_b_resume_system_prompt(self._resume_tailoring_instructions_for_user(user)), cover
 
     async def get_effective_resume_tailoring_instructions(self, user_id: str) -> str:
@@ -813,7 +813,7 @@ class UserRepository:
 
         if resume_tailoring_strategy is not None:
             strategy = str(resume_tailoring_strategy).strip().lower()
-            if strategy not in (STRATEGY_JOB_FIRST, STRATEGY_EVIDENCE):
+            if strategy not in (STRATEGY_REBUILD, STRATEGY_EVIDENCE):
                 raise ValueError("resume_tailoring_strategy must be 'job_first' or 'evidence'")
             user.resume_tailoring_strategy = strategy
 

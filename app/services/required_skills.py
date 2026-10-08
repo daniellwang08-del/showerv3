@@ -113,6 +113,7 @@ _NEW_SECTION = {
 _ACRONYM_STOP = frozenset(
     """
     US USA UK EU EMEA APAC LATAM NA CA WA NY NJ PA CT TX FL IL MA CO HI MD MN VT DC OR AZ GA NC VA OH MI
+    AL AK AR DE IA IN KS KY LA ME MO MS MT ND NE NH NM NV RI SC SD TN UT WI WV WY
     EEO EEOC DEI PTO HQ CEO CTO CFO COO CPO VP SVP EVP II III IV OTE LLC INC FAQ ASAP FTE TBD USD OSS
     CAD EUR GBP HR IT PR MBA BS BA MS MSC PHD ID OK AM PM ET PT CT MT FYI ADA OFCCP LGBTQ DOE BSC
     """.split()
@@ -123,6 +124,7 @@ _LIST_CUE_RE = re.compile(
 )
 _LIST_ITEM_RE = re.compile(r"^[A-Z][A-Za-z0-9.+#/-]*(?:\s+[A-Z0-9][A-Za-z0-9.+#/-]*){0,2}$")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9+#.\-/]+")
+_PERCENTILE_RE = re.compile(r"[Pp]\d{2,3}(?:\.\d+)?")
 # "Department: Engineering", "- Remote policy: remote": posting metadata, not requirements.
 _METADATA_LINE_RE = re.compile(
     r"^(?:[-*\u2022]\s*)?(?:department|office|offices|remote policy|workplace(?: type)?|work mode|employment type|"
@@ -361,6 +363,9 @@ def job_skill_terms(job_text: str, structured_context: str = "", *, company: str
         key = _alias_key(term)
         if not term or not key or key in _GENERIC_SURFACES:
             return
+        # "P99" is a latency percentile and "TN" a state, not skills.
+        if term in _ACRONYM_STOP or _PERCENTILE_RE.fullmatch(term) or "," in term:
+            return
         if company_key and _norm(term) in {company_key, *company_key.split()}:
             return
         prev = found.get(key)
@@ -598,6 +603,15 @@ def _pick_category(rows: list[dict], skill: RequiredSkill, profile_text: str) ->
 def _dedupe_skill_rows(rows: list[dict], plan: SkillPlan) -> list[dict]:
     """One item per skill across the section ("Amazon Web Services, AWS" -> "AWS"), in the posting's spelling."""
     posting = {_alias_key(s.term): s.term for s in plan.supported}
+    merged: dict[str, dict] = {}
+    for row in rows:
+        name = str(row.get("category") or "").strip().lower()
+        if name in merged:
+            prev = merged[name]
+            prev["skills"] = ", ".join(x for x in (str(prev.get("skills") or ""), str(row.get("skills") or "")) if x)
+        else:
+            merged[name] = dict(row)
+    rows = list(merged.values())
     seen: dict[str, tuple[int, int]] = {}
     cleaned: list[list[str]] = []
     for r_idx, row in enumerate(rows):

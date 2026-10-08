@@ -237,8 +237,49 @@ def _lexicon_home(item: str, candidates: list[str]) -> str | None:
             if low == term or low.startswith(term + " ") or low.startswith(term):
                 if len(term) <= 2 and low != term:
                     continue  # "r", "go" must match exactly
+                if len(term) <= 3 and low[len(term) : len(term) + 1].isalnum():
+                    continue  # "sql" is not "SQLAlchemy"
                 return cat
     return None
+
+
+def fold_small_skill_rows(skills: list[dict], minimum: int = 3) -> list[dict]:
+    """Move the items of a row under *minimum* into the larger categories the lexicon files them under."""
+    rows = [dict(r) for r in skills or [] if isinstance(r, dict)]
+    buckets = [[i for i in normalize_skill_list(str(r.get("skills") or "")).split(", ") if i] for r in rows]
+    names = [str(r.get("category") or "") for r in rows]
+    for idx, items in enumerate(buckets):
+        if not items or len(items) >= minimum:
+            continue
+        targets = [n for j, n in enumerate(names) if j != idx and len(buckets[j]) >= minimum]
+        keep: list[str] = []
+        for item in items:
+            home = _lexicon_home(item, targets)
+            if home:
+                buckets[names.index(home)].append(item)
+            else:
+                keep.append(item)
+        buckets[idx] = keep
+    return [{**r, "skills": ", ".join(b)} for r, b in zip(rows, buckets) if b]
+
+
+def fill_thin_skill_rows(skills: list[dict], candidates: list[str], minimum: int) -> list[dict]:
+    """Top up categories under *minimum* items with *candidates* the lexicon files under them."""
+    rows = [dict(r) for r in skills or [] if isinstance(r, dict)]
+    buckets = [[i for i in normalize_skill_list(str(r.get("skills") or "")).split(", ") if i] for r in rows]
+    listed = {i.lower() for b in buckets for i in b}
+    for row, items in zip(rows, buckets):
+        cat = str(row.get("category") or "")
+        if cat not in _LEXICON or len(items) >= minimum:
+            continue
+        for item in candidates:
+            if len(items) >= minimum:
+                break
+            if item.lower() not in listed and _lexicon_home(item, [cat]):
+                items.append(item)
+                listed.add(item.lower())
+        row["skills"] = ", ".join(items)
+    return rows
 
 
 def rehome_misplaced_skills(skills: list[dict]) -> list[dict]:

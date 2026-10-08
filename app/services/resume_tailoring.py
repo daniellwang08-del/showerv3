@@ -1,13 +1,14 @@
-"""Job-first tailoring: the experience is rewritten around the posting's stack.
+"""Resume tailoring: the candidate's real career, written to fit one posting.
 
 The original resume supplies who the candidate is (contact details, education),
-where and when they worked (company, title, dates, location) and what each
-company's product or domain was. What each role says the candidate did is
-written for the posting: its required skills become the primary stack of the
-two most recent roles, older roles use the parts of that stack that existed
-while they ran, and the only numbers allowed are ones the original resume
-states for the same company. Technologies from the original resume survive only
-when they complement the posting's stack (another cloud, another database).
+where and when they worked (company, title, dates, location), what each
+company's product or domain was, and the technologies each role used. What each
+role says the candidate did is written fresh: the posting's required skills
+become the primary stack of the two most recent roles, every role's scope fits
+its tenure and career stage (a first job reads as learning, a long senior role
+reads as owning systems), and the candidate's wider stack stays, so the career
+reads as one engineer's story rather than a copy of the posting. The only
+numbers allowed are ones the original resume states for the same company.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from app.services.required_skills import (
     lexicon_hits,
 )
 from app.services.skill_lexicon import SKILLS
-from app.services.tech_eras import current_year, period_year, usable_in_role
+from app.services.tech_eras import current_year, period_month_index, period_year, usable_in_role
 from app.utils.resume_evidence import (
     _ABOVE_SENIOR,
     _EXPANSIONS,
@@ -55,17 +56,31 @@ from app.utils.resume_evidence import (
     split_skill_items,
     summary_opening_title,
 )
+from app.utils.resume_skill_taxonomy import fill_thin_skill_rows, fold_small_skill_rows
 
-STRATEGY_JOB_FIRST = "job_first"
+STRATEGY_REBUILD = "job_first"
 STRATEGY_EVIDENCE = "evidence"
-DEFAULT_STRATEGY = STRATEGY_JOB_FIRST
+DEFAULT_STRATEGY = STRATEGY_REBUILD
 
 MAX_REWRITE_RETRIES = 2
 
 _MAX_SKILLS = 40
-_MAX_COMPLEMENTARY = 8
+# The candidate's own technologies beyond the posting's: the breadth a real career has.
+_MAX_BREADTH = 30
 _MAX_METRICS_PER_ROLE = 6
-_MAX_USED_SKILLS = 14
+_MAX_USED_SKILLS = 16
+# A senior engineer's skills section: 5-7 categories of 6 or more items each.
+MIN_SKILL_CATEGORIES = 5
+MIN_SKILLS_PER_CATEGORY = 6
+MAX_SKILL_ITEMS = 56
+# A summary describes the engineer; the skills section lists the stack.
+MAX_SUMMARY_TECHNOLOGIES = 3
+# Two technologies beyond the posting's per recent role keep the story from reading copied from it.
+MIN_BREADTH_PER_RECENT_ROLE = 2
+MAX_TERMS_PER_BULLET = 6
+# Acronyms the lexicon does not know (KYC, SOC 2, PII) are the posting's domain vocabulary: bullets may
+# name them, but they are not technologies to add to the skills section.
+_DOMAIN_ACRONYM_RE = re.compile(r"(?=(?:[^A-Z]*[A-Z]){2})[A-Za-z]{2,5}(?: \d+)?")
 _DOMAIN_CLUE_CHARS = 320
 # A tailored bullet sharing this many consecutive words with an original bullet reuses it.
 _REUSE_RUN = 6
@@ -76,15 +91,18 @@ _NOT_SKILLS = frozenset(
     {
         "ui", "ux", "api", "apis", "ip", "time", "fast", "full time", "part time", "medical", "dental", "vision",
         "401k", "insurance", "equity", "benefits", "dod", "itc", "rfp", "rfi", "remote", "hybrid",
-        "onsite", "on site", "discovery", "growth", "platform", "us", "usa", "eeo",
+        "onsite", "on site", "discovery", "growth", "platform", "us", "usa", "eeo", "linkedin", "fortune 500",
     }
 )
-# Employer pitch and legal text; skills found only in these lines are not the job's.
+# Employer pitch, legal text and recruiter outreach ("I reviewed your LinkedIn profile"); skills found
+# only in these lines are not the job's.
 BOILERPLATE_RE = re.compile(
     r"\b(?:equal opportunity|without regard to|join us|our (?:core )?values|our mission|our culture|about us|"
     r"we(?:'|\u2019)re (?:legendary|proud|one of|committed)|we are (?:proud|committed|an equal)|"
     r"journey starts|reasonable (?:accommodations?|adjustments)|pronouns|celebrate diversity|posting notes|"
-    r"(?:still )?want to hear from you)\b",
+    r"(?:still )?want to hear from you|dear [A-Z][a-z]+|your (?:linkedin|profile|background|resume)|"
+    r"linkedin profile|phone (?:conversation|call)|actively looking|accurate resource|near future|"
+    r"(?:had|have) a chance to review|reach(?:ing)? out|current work situation|interested in hearing)\b",
     re.IGNORECASE,
 )
 # Certifications are earned, not shown in work: tailoring never adds them.
@@ -97,8 +115,53 @@ _TRAILING_VERSION_RE = re.compile(r"\s*v?\d+(?:\.\d+)*\+?$")
 _PRACTICE_CATEGORIES = frozenset({"practice", "architecture"})
 
 
+STAGE_EARLY = "early"
+STAGE_MID = "mid"
+STAGE_SENIOR = "senior"
+_EARLY_TITLE_RE = re.compile(r"\b(intern|internship|trainee|junior|jr\.?|graduate|apprentice|entry[- ]level)\b", re.I)
+_SENIOR_TITLE_RE = re.compile(r"\b(senior|sr\.?|lead|staff|principal|architect|head|director|manager)\b", re.I)
+# (tenure in months below which, (min, max) bullets)
+_BULLETS_BY_TENURE: tuple[tuple[int, tuple[int, int]], ...] = (
+    (6, (2, 3)),
+    (12, (3, 4)),
+    (24, (4, 5)),
+    (36, (5, 6)),
+    (60, (6, 8)),
+    (10**6, (7, 9)),
+)
+_STAGE_SCOPE = {
+    STAGE_EARLY: (
+        "early career: learning the craft on real work. Implements features and fixes under code review, "
+        "writes tests, learns the codebase, tooling and delivery process, and grows into owning small "
+        "components. Never leads, architects or mentors."
+    ),
+    STAGE_MID: (
+        "mid-level: owns features and services end to end inside an existing architecture, designs components, "
+        "improves reliability and performance, reviews peers' code and works directly with product partners."
+    ),
+    STAGE_SENIOR: (
+        "senior: owns the design and technical direction of the product area, makes architecture and tradeoff "
+        "decisions, builds and evolves several major systems over the tenure, raises engineering standards "
+        "(testing, CI/CD, observability, security), mentors engineers and leads cross-team work."
+    ),
+}
+
+
+def role_stage(title: str, career_year: float | None) -> str:
+    """Career stage from the title first, then from *career_year*: years of experience halfway through the role."""
+    if _EARLY_TITLE_RE.search(title or ""):
+        return STAGE_EARLY
+    if _SENIOR_TITLE_RE.search(title or ""):
+        return STAGE_SENIOR
+    if career_year is None:
+        return STAGE_MID
+    if career_year < 2:
+        return STAGE_EARLY
+    return STAGE_MID if career_year < 5 else STAGE_SENIOR
+
+
 def normalize_strategy(raw: object) -> str:
-    return STRATEGY_EVIDENCE if str(raw or "").strip().lower() == STRATEGY_EVIDENCE else STRATEGY_JOB_FIRST
+    return STRATEGY_EVIDENCE if str(raw or "").strip().lower() == STRATEGY_EVIDENCE else STRATEGY_REBUILD
 
 
 @dataclass
@@ -112,22 +175,67 @@ class RolePlan:
     project_description: str
     domain_clues: str
     metrics: list[str]
+    months: int | None = None
+    # Years of professional experience when the role started.
+    career_year: float | None = None
+    stage: str = STAGE_MID
     stack: list[str] = field(default_factory=list)
     too_new: list[str] = field(default_factory=list)
+    own_stack: list[str] = field(default_factory=list)
 
     @property
     def period(self) -> str:
         return " - ".join(p for p in (self.role.period_start, self.role.period_end or "Present") if p)
 
+    @property
+    def tenure(self) -> str:
+        if self.months is None:
+            return "undated"
+        years, months = divmod(self.months, 12)
+        parts = [f"{years} year{'s' if years != 1 else ''}"] if years else []
+        if months or not years:
+            parts.append(f"{months} month{'s' if months != 1 else ''}")
+        return " ".join(parts)
+
+    @property
+    def bullet_range(self) -> tuple[int, int]:
+        """Bullets the role's tenure supports: a six-month first job is not a four-year senior role."""
+        m = self.months
+        if m is None:
+            return (4, 6)
+        for limit, span in _BULLETS_BY_TENURE:
+            if m < limit:
+                return span
+        return _BULLETS_BY_TENURE[-1][1]
+
 
 @dataclass
-class JobFirstPlan:
+class TailoringPlan:
     skills: list[RequiredSkill]
     roles: list[RolePlan]
-    complementary: list[str]
-    off_target: list[str]
+    breadth: list[str]
     total_years: float | None
     has_required_section: bool
+
+    @property
+    def max_bullets(self) -> int:
+        return sum(r.bullet_range[1] for r in self.roles)
+
+    @property
+    def years_label(self) -> str:
+        years = self.total_years or 0
+        whole = int(years)
+        return f"{whole}+ years" if years - whole >= 0.5 else f"{max(whole, 1)} years"
+
+    @property
+    def career_level(self) -> str:
+        top = self.roles[0].stage if self.roles else STAGE_MID
+        years = self.total_years or 0
+        if top == STAGE_SENIOR or years >= 6:
+            return "a senior engineer whose depth, judgment and scope show in every recent role"
+        if top == STAGE_EARLY or years < 2:
+            return "an early-career engineer who learned fast and shipped real work"
+        return "a mid-level engineer who owns features and services end to end"
 
     @property
     def terms(self) -> list[str]:
@@ -184,7 +292,9 @@ def _is_technology(term: str) -> bool:
     return is_named_technology(term)
 
 
-def profile_technologies(profile_text: str, roles: list[ProfileRole] | None = None) -> list[str]:
+def profile_technologies(
+    profile_text: str, roles: list[ProfileRole] | None = None, *, include_skills_section: bool = True
+) -> list[str]:
     """Every named technology the original resume mentions, most recent role first."""
     roles = parse_profile_roles(profile_text) if roles is None else roles
     found: list[str] = []
@@ -195,7 +305,8 @@ def profile_technologies(profile_text: str, roles: list[ProfileRole] | None = No
                 found.extend(split_skill_items(s.split(":", 1)[1]))
             else:
                 found.extend(surface for _, surface in lexicon_hits(s))
-    found.extend(parse_profile_skills(profile_text))
+    if include_skills_section:
+        found.extend(parse_profile_skills(profile_text))
     seen: set[str] = set()
     out: list[str] = []
     for term in found:
@@ -231,30 +342,30 @@ def _role_metrics(role: ProfileRole) -> list[str]:
     return out[:_MAX_METRICS_PER_ROLE]
 
 
+def _role_span(role: ProfileRole) -> tuple[int, int] | None:
+    """(first month, last month) of the role, both inclusive, as year * 12 + month indexes."""
+    start = period_month_index(role.period_start)
+    end = period_month_index(role.period_end, is_end=True)
+    if start is None or end is None or end < start:
+        return None
+    return start, end
+
+
 def _total_years(roles: list[ProfileRole]) -> float | None:
-    now = current_year()
-    spans: list[tuple[int, int]] = []
-    for role in roles:
-        start = period_year(role.period_start)
-        if start is None:
-            continue
-        end = period_year(role.period_end) if role.period_end else now
-        end = end or now
-        if start <= end <= now + 1:
-            spans.append((start, end))
+    """Years worked, overlapping roles counted once."""
+    spans = sorted(s for s in (_role_span(r) for r in roles) if s)
     if not spans:
         return None
-    spans.sort()
     total = 0
     cur_start, cur_end = spans[0]
     for start, end in spans[1:]:
-        if start <= cur_end:
+        if start <= cur_end + 1:
             cur_end = max(cur_end, end)
         else:
-            total += cur_end - cur_start
+            total += cur_end - cur_start + 1
             cur_start, cur_end = start, end
-    total += cur_end - cur_start
-    return float(max(total, 1))
+    total += cur_end - cur_start + 1
+    return max(round(total / 12, 1), 0.5)
 
 
 def _carryable(skill: JobSkill, category: str | None, job_text: str) -> bool:
@@ -282,7 +393,7 @@ def _carryable(skill: JobSkill, category: str | None, job_text: str) -> bool:
     return listed and len(term.split()) <= 3
 
 
-def build_job_first_plan(job_skills: list[JobSkill], profile_text: str, job_text: str = "") -> JobFirstPlan:
+def build_tailoring_plan(job_skills: list[JobSkill], profile_text: str, job_text: str = "") -> TailoringPlan:
     """The posting's skills, where each may go in the career, and what the profile keeps."""
     roles = parse_profile_roles(profile_text)
     has_required = any(s.importance == REQUIRED for s in job_skills)
@@ -305,7 +416,9 @@ def build_job_first_plan(job_skills: list[JobSkill], profile_text: str, job_text
         if category in _PRACTICE_CATEGORIES:
             category = "practice"
         injectable = (
-            category in _TECH_CATEGORIES and category != "practice" if category else is_named_technology(term)
+            category in _TECH_CATEGORIES and category != "practice"
+            if category
+            else is_named_technology(term) and not _DOMAIN_ACRONYM_RE.fullmatch(term)
         ) and _norm(term) not in _GENERIC_SURFACES
         skills.append(
             RequiredSkill(term=term, importance=skill.importance, injectable=injectable, category=category, added=True)
@@ -321,14 +434,21 @@ def build_job_first_plan(job_skills: list[JobSkill], profile_text: str, job_text
         )
     ]
 
+    def is_posting_skill(term: str) -> bool:
+        return any(_alias_key(term) == _alias_key(s.term) or is_mentioned(term, s.term) for s in skills)
+
+    spans = [_role_span(r) for r in roles]
+    career_start = min((s[0] for s in spans if s), default=None)
     role_plans: list[RolePlan] = []
-    for idx, role in enumerate(roles):
+    for idx, (role, span) in enumerate(zip(roles, spans)):
         is_current = not role.period_end
         end_year = current_year() if is_current else period_year(role.period_end)
         name, desc = role_project(role)
         clues = ""
         if not desc:
             clues = " ".join(_contribution_lines(role))[:_DOMAIN_CLUE_CHARS].strip()
+        career_year = round((span[0] - career_start) / 12, 1) if span and career_start is not None else None
+        midpoint = career_year + (span[1] - span[0] + 1) / 24 if span and career_year is not None else None
         plan_role = RolePlan(
             index=idx,
             role=role,
@@ -339,6 +459,13 @@ def build_job_first_plan(job_skills: list[JobSkill], profile_text: str, job_text
             project_description=desc,
             domain_clues=clues,
             metrics=_role_metrics(role),
+            months=span[1] - span[0] + 1 if span else None,
+            career_year=career_year,
+            stage=role_stage(role.title, midpoint),
+            own_stack=[
+                t for t in profile_technologies(profile_text, [role], include_skills_section=False)
+                if not is_posting_skill(t)
+            ][:12],
         )
         for s in skills:
             (plan_role.stack if usable_in_role(s.term, end_year, is_current=is_current) else plan_role.too_new).append(
@@ -346,11 +473,10 @@ def build_job_first_plan(job_skills: list[JobSkill], profile_text: str, job_text
             )
         role_plans.append(plan_role)
 
-    plan = JobFirstPlan(
+    plan = TailoringPlan(
         skills=skills,
         roles=role_plans,
-        complementary=[],
-        off_target=[],
+        breadth=[t for t in profile_technologies(profile_text, roles) if not is_posting_skill(t)][:_MAX_BREADTH],
         total_years=_total_years(roles),
         has_required_section=has_required,
     )
@@ -360,34 +486,34 @@ def build_job_first_plan(job_skills: list[JobSkill], profile_text: str, job_text
         if id(s) not in primary_ids:
             homes = homes[:1]
         s.roles = [r.role.company for r in homes]
-
-    job_categories = {s.category for s in skills if s.category and s.category != "practice"}
-    for term in profile_technologies(profile_text, roles):
-        if any(_alias_key(term) == _alias_key(s.term) or is_mentioned(term, s.term) for s in skills):
-            continue
-        if _term_category(term) in job_categories:
-            if len(plan.complementary) < _MAX_COMPLEMENTARY:
-                plan.complementary.append(term)
-        else:
-            plan.off_target.append(term)
     return plan
 
 
 # ── prompt blocks ───────────────────────────────────────────────────────────
 
 
-def career_facts_block(plan: JobFirstPlan) -> str:
+def career_facts_block(plan: TailoringPlan) -> str:
     if not plan.roles:
         return "No structured work history found in the profile."
     lines: list[str] = []
     if plan.total_years:
-        lines.append(f"Total professional experience: about {int(plan.total_years)} years (from the dates below).")
-    lines.append("Roles, most recent first (index in brackets):")
+        lines.append(
+            f"Total professional experience: about {plan.years_label} (from the dates below). The resume reads "
+            f"as an engineer with that career: {plan.career_level}."
+        )
+    lines.append(
+        f"Roles, most recent first (index in brackets). Bullets: {plan.max_bullets} at most in total; each role "
+        "uses the range shown, so a long role carries more work than a short one."
+    )
     for r in plan.roles:
         head = f"- [{r.index}] {r.role.company} | {r.role.title} | {r.period}"
         if r.meta:
             head += f" | {r.meta}"
         lines.append(head)
+        low, high = r.bullet_range
+        career = f", starting {r.career_year:g} years into the career" if r.career_year is not None else ""
+        lines.append(f"  Tenure: {r.tenure}{career}. Bullets: {low}-{high}.")
+        lines.append(f"  Scope: {_STAGE_SCOPE[r.stage]}")
         if r.project_name:
             lines.append(f"  Project: {r.project_name}")
         if r.project_description:
@@ -419,7 +545,7 @@ def _spell_out(term: str) -> str:
     return f" (spell out once: {long_form} ({term}))" if long_form and long_form.lower() != _norm(term) else ""
 
 
-def target_stack_block(plan: JobFirstPlan) -> str:
+def target_stack_block(plan: TailoringPlan) -> str:
     if not plan.skills:
         return "- The posting names no specific technologies; write the work around its responsibilities."
     lines: list[str] = []
@@ -442,38 +568,35 @@ def target_stack_block(plan: JobFirstPlan) -> str:
             )
     older = plan.roles[2:]
     if older:
-        lines.append("Older roles use the posting's stack too, limited to what existed while they ran:")
+        # Terms the lexicon knows; the rest is the posting's own vocabulary (KYC, SOC 2, product names).
+        technologies = {s.term for s in plan.skills if s.category}
+        lines.append(
+            "Older roles may use the posting's technologies where their own product would, limited to what "
+            "existed while they ran; never the posting's domain or compliance vocabulary:"
+        )
         for r in older:
-            stack = ", ".join(r.stack) or "(none of the posting's technologies existed yet)"
+            stack = ", ".join(t for t in r.stack if t in technologies) or "(none of the posting's technologies existed yet)"
             line = f"- [{r.index}] {r.role.company} ({r.period}): {stack}"
             if r.too_new:
                 line += f". Never here: {', '.join(r.too_new)}"
             lines.append(line)
-    if plan.complementary:
-        lines.append(
-            "Complementary skills from the candidate's background (technical_skills after the posting's "
-            "skills; at most one bullet per role may name one): " + ", ".join(plan.complementary)
-        )
-    if plan.off_target:
-        lines.append(
-            "Never name anywhere (the candidate's old stack, which this posting does not use): "
-            + ", ".join(plan.off_target[:40])
-        )
+    lines.append(
+        "Career breadth (a real engineer's stack is wider than one posting). Each role also names technologies "
+        f"beyond the posting's (at least {MIN_BREADTH_PER_RECENT_ROLE} in each of {recent}): first the ones the "
+        "candidate actually used there, listed below; then the surrounding ecosystem a senior engineer with "
+        "this stack uses in that kind of product (testing, CI/CD, observability, security, data stores, cloud "
+        "services, messaging). Only technologies that existed while the role ran, and in the two most recent "
+        "roles the posting's skills stay the lead."
+    )
+    for r in plan.roles:
+        if r.own_stack:
+            lines.append(f"- [{r.index}] {r.role.company} used: {', '.join(r.own_stack)}")
+    if plan.breadth:
+        lines.append("- Elsewhere in the candidate's background: " + ", ".join(plan.breadth))
     return "\n".join(lines)
 
 
 # ── finishing a draft ───────────────────────────────────────────────────────
-
-
-def _canonical_term(item: str, allowed: list[str]) -> str | None:
-    key = _alias_key(item)
-    for term in allowed:
-        if key == _alias_key(term):
-            return term
-    for term in allowed:
-        if is_mentioned(item, term) or is_mentioned(term, item):
-            return term
-    return None
 
 
 def order_skills_for_posting(rows: list[dict], terms: list[str]) -> list[dict]:
@@ -497,48 +620,105 @@ def order_skills_for_posting(rows: list[dict], terms: list[str]) -> list[dict]:
     return [row for _, _, row in ordered]
 
 
-def finalize_job_first_resume(resume: dict | None, plan: JobFirstPlan, profile_text: str, job_text: str) -> dict | None:
-    """Restore the career facts and make the skills sections the posting's stack."""
+_SOFT_SKILLS = frozenset(
+    {
+        "communication", "leadership", "teamwork", "collaboration", "problem solving", "problem-solving",
+        "mentoring", "ownership", "time management", "critical thinking", "adaptability", "agile", "scrum",
+        "kanban", "stakeholder management", "attention to detail",
+    }
+)
+
+
+def _skill_item(item: str, plan: TailoringPlan, role: RolePlan | None = None) -> str | None:
+    """The item as the skills sections show it: the posting's spelling, or the technology itself.
+
+    None for soft skills, for practices the posting does not list, and for anything the role's
+    dates predate.
+    """
+    key = _alias_key(item)
+    # Exact match only: "AWS Lambda" is its own skill, not the posting's "AWS".
+    posting = next((t for t in plan.terms if _alias_key(t) == key), None)
+    if posting:
+        return posting if role is None or posting in role.stack else None
+    clean = item.strip()
+    if not clean or _norm(clean) in _SOFT_SKILLS or not _is_technology(clean):
+        return None
+    if role is not None and not usable_in_role(clean, role.end_year, is_current=role.is_current):
+        return None
+    return clean
+
+
+# Parsers such as Taleo garble typographic punctuation.
+_PLAIN_PUNCTUATION = str.maketrans(
+    {"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2026": "...", "\u00a0": " "}
+)
+
+
+def _plain_prose(resume: dict) -> None:
+    if isinstance(resume.get("profile_summary"), str):
+        resume["profile_summary"] = resume["profile_summary"].translate(_PLAIN_PUNCTUATION)
+    for entry in resume.get("work_experience") or []:
+        if not isinstance(entry, dict):
+            continue
+        if isinstance(entry.get("project_description"), str):
+            entry["project_description"] = entry["project_description"].translate(_PLAIN_PUNCTUATION)
+        entry["bullets"] = [
+            b.translate(_PLAIN_PUNCTUATION) if isinstance(b, str) else b for b in entry.get("bullets") or []
+        ]
+
+
+def finalize_tailored_resume(resume: dict | None, plan: TailoringPlan, profile_text: str, job_text: str) -> dict | None:
+    """Restore the career facts; skills sections lead with the posting's stack and keep the career's breadth."""
     if not resume or not isinstance(resume, dict):
         return resume
+    _plain_prose(resume)
     matched = restore_role_facts(resume, profile_text)
     entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
     roles = {r.index: r for r in plan.roles}
     recent = {r.index for r in plan.recent}
     primary = [s.term for s in plan.primary]
+    rank = {t: i for i, t in enumerate(plan.terms)}
     for entry, idx in zip(entries, matched):
         role = roles.get(idx) if idx is not None else None
-        allowed = (role.stack if role else plan.terms) + plan.complementary
+        # A role lists what its own bullets show, not the posting's whole stack.
+        work = " ".join(str(b) for b in entry.get("bullets") or []).replace("**", "")
         items: list[str] = []
-        for item in split_skill_items(str(entry.get("used_skills") or "")):
-            term = _canonical_term(item, allowed)
-            if term and term not in items:
-                items.append(term)
+        candidates = split_skill_items(str(entry.get("used_skills") or ""))
         if role and idx in recent:
-            for term in primary:
-                if term in role.stack and term not in items:
-                    items.append(term)
-        order = {t: i for i, t in enumerate(allowed)}
-        items.sort(key=lambda t: order.get(t, len(order)))
+            candidates += [t for t in primary if t in role.stack]
+        # Proper names only: "architecture" or the "NET" of ".NET" is not a listed technology.
+        candidates += [t for t in _technologies_in(work) if t != t.lower()]
+        for item in candidates:
+            term = _skill_item(item, plan, role)
+            if (
+                term
+                and _is_technology(term)
+                and is_mentioned(term, work)
+                and not any(_alias_key(term) == _alias_key(t) or is_mentioned(term, t) for t in items)
+            ):
+                items.append(term)
+        items.sort(key=lambda t: rank.get(t, len(rank)))
         entry["used_skills"] = ", ".join(items[:_MAX_USED_SKILLS]) or None
 
-    allowed_skills = plan.terms + plan.complementary
     rows: list[dict] = []
     for row in resume.get("technical_skills") or []:
         if not isinstance(row, dict):
             continue
         kept: list[str] = []
         for item in split_skill_items(str(row.get("skills") or "")):
-            term = _canonical_term(item, allowed_skills)
-            if term and term not in kept:
+            term = _skill_item(item, plan)
+            if term and all(_alias_key(term) != _alias_key(t) for t in kept):
                 kept.append(term)
         if kept:
             rows.append({**row, "skills": ", ".join(kept)})
     resume["technical_skills"] = rows
     resume = ensure_required_skills(resume, plan.skill_plan, profile_text) or resume
     rows = _dedupe_skill_rows(resume.get("technical_skills") or [], plan.skill_plan)
+    rows = fill_thin_skill_rows(fold_small_skill_rows(rows), plan.placeable + plan.breadth, MIN_SKILLS_PER_CATEGORY)
     keep_text = "\n".join([job_text, ", ".join(plan.terms)])
-    resume["technical_skills"] = order_skills_for_posting(cap_skills_section(rows, keep_text), plan.terms)
+    resume["technical_skills"] = order_skills_for_posting(
+        cap_skills_section(rows, keep_text, limit=MAX_SKILL_ITEMS), plan.terms
+    )
     return resume
 
 
@@ -646,7 +826,119 @@ def _named(terms: list[str], text: str) -> list[str]:
     return [t for t in terms if is_mentioned(t, text)]
 
 
-def job_first_problems(resume: dict | None, plan: JobFirstPlan, profile_text: str) -> dict[str, str]:
+def _technologies_in(text: str) -> list[str]:
+    """Lexicon technologies *text* names, each once, in the text's spelling."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in (text or "").replace("**", "").splitlines():
+        for canonical, surface in lexicon_hits(line):
+            if canonical not in seen and _is_technology(surface):
+                seen.add(canonical)
+                out.append(surface)
+    return out
+
+
+_ABOVE_EARLY_RE = re.compile(
+    r"\b(led|architected|mentored|directed|spearheaded|headed|set the technical direction|"
+    r"owned the (?:architecture|technical direction))\b",
+    re.IGNORECASE,
+)
+_SENIOR_SCOPE_RE = re.compile(
+    r"\b(architect\w*|designed|led|mentor\w*|owned|drove|defined|established|standardi[sz]ed|"
+    r"technical direction|roadmap|cross-team|tradeoffs?)\b",
+    re.IGNORECASE,
+)
+_MIN_SENIOR_SCOPE_BULLETS = 2
+
+
+def _role_shape_problems(pos: int, entry: dict, role: RolePlan, plan: TailoringPlan) -> dict[str, str]:
+    """Bullets for the tenure, scope for the career stage, and breadth beyond the posting."""
+    problems: dict[str, str] = {}
+    company = role.role.company
+    bullets = [b.replace("**", "") for b in entry.get("bullets") or [] if isinstance(b, str) and b.strip()]
+    low, high = role.bullet_range
+    if len(bullets) < low:
+        problems[f"work_experience[{pos}]_too_few_bullets_for_tenure"] = (
+            f"{company} ({role.tenure}) has {len(bullets)} bullets; that tenure carries {low}-{high}. Add work of "
+            "the scope the role's stage shows."
+        )
+    elif len(bullets) > high + 1:
+        problems[f"work_experience[{pos}]_too_many_bullets_for_tenure"] = (
+            f"{company} ({role.tenure}) has {len(bullets)} bullets; that tenure carries {low}-{high}. Merge the "
+            "least important."
+        )
+    if role.stage == STAGE_EARLY:
+        above = [b[:80] for b in bullets if _ABOVE_EARLY_RE.search(b)]
+        if above:
+            problems[f"work_experience[{pos}]_scope_above_stage"] = (
+                f"{company} is an early-career role ({role.tenure}); it implements, tests and learns, never leads, "
+                "architects or mentors: " + "; ".join(f'"{b}"' for b in above[:2])
+            )
+    elif role.stage == STAGE_SENIOR and len(bullets) >= 3:
+        if sum(1 for b in bullets if _SENIOR_SCOPE_RE.search(b)) < _MIN_SENIOR_SCOPE_BULLETS:
+            problems[f"work_experience[{pos}]_scope_below_stage"] = (
+                f"{company} is a senior role ({role.tenure}) but reads like task work. Show design decisions, "
+                "technical direction, standards the candidate set and engineers they mentored."
+            )
+    stuffed = [b[:80] for b in bullets if len(_named_terms(b, plan)) > MAX_TERMS_PER_BULLET]
+    if stuffed:
+        problems[f"work_experience[{pos}]_keyword_stuffing"] = (
+            f"{company}: a bullet names at most {MAX_TERMS_PER_BULLET} technologies or posting terms; these read as "
+            "keyword lists. Keep the ones the work really used and describe what was built: "
+            + "; ".join(f'"{b}"' for b in stuffed[:2])
+        )
+    is_recent = any(r.index == role.index for r in plan.recent)
+    if not is_recent:
+        jargon = [
+            s.term
+            for s in plan.skills
+            if not s.category
+            and any(is_mentioned(s.term, b) for b in bullets)
+            and not is_mentioned(s.term, role.role.text)
+        ]
+        if jargon:
+            problems[f"work_experience[{pos}]_posting_domain_in_older_role"] = (
+                f"{company}: {', '.join(jargon[:6])} belong to the posting's domain, not to this earlier role. "
+                "Older roles keep their own product and domain."
+            )
+    if is_recent:
+        beyond = [t for t in _technologies_in("\n".join(bullets)) if not plan_mentions_term(plan, t)]
+        if len(beyond) < MIN_BREADTH_PER_RECENT_ROLE:
+            problems[f"work_experience[{pos}]_no_career_breadth"] = (
+                f"{company} names only the posting's technologies, which reads as written for this job. Also show "
+                f"at least {MIN_BREADTH_PER_RECENT_ROLE} technologies the work would really involve beyond the "
+                "posting's (testing, CI/CD, observability, data stores, cloud services), starting with: "
+                + (", ".join(role.own_stack[:6]) or "the ecosystem around the posting's stack")
+            )
+    return problems
+
+
+def _named_terms(bullet: str, plan: TailoringPlan) -> list[str]:
+    posting = [s.term for s in plan.skills if is_mentioned(s.term, bullet)]
+    return posting + [t for t in _technologies_in(bullet) if not plan_mentions_term(plan, t)]
+
+
+def plan_mentions_term(plan: TailoringPlan, term: str) -> bool:
+    return any(_alias_key(term) == _alias_key(s.term) or is_mentioned(term, s.term) for s in plan.skills)
+
+
+def _skills_section_problems(resume: dict) -> dict[str, str]:
+    rows = [r for r in resume.get("technical_skills") or [] if isinstance(r, dict)]
+    sizes = [(str(r.get("category") or ""), len(split_skill_items(str(r.get("skills") or "")))) for r in rows]
+    thin = [f"{cat} ({n})" for cat, n in sizes if n < MIN_SKILLS_PER_CATEGORY]
+    if len(sizes) >= MIN_SKILL_CATEGORIES and not thin:
+        return {}
+    return {
+        "technical_skills_too_thin": (
+            f"technical_skills has {len(sizes)} categories" + (f"; too few items in {', '.join(thin)}" if thin else "")
+            + f". A senior engineer's skills section has {MIN_SKILL_CATEGORIES}-7 categories with at least "
+            f"{MIN_SKILLS_PER_CATEGORY} items each, from the whole career: the posting's stack first, then the "
+            "related tools, services and libraries the work used."
+        )
+    }
+
+
+def tailoring_problems(resume: dict | None, plan: TailoringPlan, profile_text: str) -> dict[str, str]:
     """Issue code -> what is wrong, for the retry note. Empty when the draft meets every rule."""
     if not resume or not isinstance(resume, dict):
         return {"missing_tailored_resume": "No resume was returned."}
@@ -669,18 +961,18 @@ def job_first_problems(resume: dict | None, plan: JobFirstPlan, profile_text: st
                 problems[f"work_experience[{pos}]_missing_primary_skills"] = (
                     f"{company}: no bullet names {', '.join(missing)}. Write them into this role's work."
                 )
-        off = _named(plan.off_target, prose + "\n" + str(entry.get("used_skills") or ""))
-        if off:
-            problems[f"work_experience[{pos}]_off_target_technology"] = (
-                f"{company}: names {', '.join(off)}, which the posting does not use. Describe the same work "
-                "with the posting's stack instead."
-            )
         early = _named(role.too_new, prose)
+        early += [
+            t for t in _technologies_in(prose)
+            if t not in early and not usable_in_role(t, role.end_year, is_current=role.is_current)
+        ]
         if early:
             problems[f"work_experience[{pos}]_anachronistic_technology"] = (
-                f"{company} ({role.period}): {', '.join(early)} did not exist yet. Use only that role's listed stack."
+                f"{company} ({role.period}): {', '.join(early)} did not exist yet. Use only technologies that "
+                "existed while the role ran."
             )
-        invented = _invented_numbers(entry, role, plan.terms + plan.complementary)
+        problems.update(_role_shape_problems(pos, entry, role, plan))
+        invented = _invented_numbers(entry, role, plan.terms + plan.breadth + _technologies_in(prose))
         if invented:
             problems[f"work_experience[{pos}]_invented_metric"] = (
                 f"{company}: {'; '.join(invented[:4])} is not a result the profile states for this company. Use "
@@ -698,11 +990,14 @@ def job_first_problems(resume: dict | None, plan: JobFirstPlan, profile_text: st
             "No bullet names " + ", ".join(missing_any) + ". Name each in a bullet of one of the two most recent roles."
         )
     summary = str(resume.get("profile_summary") or "")
-    off = _named(plan.off_target, summary)
-    if off:
-        problems["profile_summary_off_target_technology"] = (
-            f"profile_summary names {', '.join(off)}; lead with the posting's primary skills instead."
+    named = _technologies_in(summary)
+    if len(named) > MAX_SUMMARY_TECHNOLOGIES:
+        problems["profile_summary_lists_technologies"] = (
+            f"profile_summary names {len(named)} technologies ({', '.join(named[:8])}), repeating the skills and "
+            f"experience sections. Name at most {MAX_SUMMARY_TECHNOLOGIES}; describe the engineer instead: the "
+            "kind of systems and domains across the career, how they work and lead, and what they are known for."
         )
+    problems.update(_skills_section_problems(resume))
     title = summary_opening_title(summary)
     held = {w for r in roles for w in _norm(r.title).split()}
     over = [w for w in _norm(title).split() if w in _ABOVE_SENIOR and w not in held]
@@ -714,7 +1009,7 @@ def job_first_problems(resume: dict | None, plan: JobFirstPlan, profile_text: st
     return problems
 
 
-def experience_skill_coverage(resume: dict | None, plan: JobFirstPlan) -> float:
+def experience_skill_coverage(resume: dict | None, plan: TailoringPlan) -> float:
     """Share of the placeable posting skills named inside a role's bullets or project description."""
     pool = plan.placeable
     if not resume or not pool:
@@ -723,7 +1018,7 @@ def experience_skill_coverage(resume: dict | None, plan: JobFirstPlan) -> float:
     return round(sum(1 for t in pool if is_mentioned(t, prose)) / len(pool), 3)
 
 
-def job_first_retry_note(problems: dict[str, str], extra: list[str] | None = None) -> str:
+def tailoring_retry_note(problems: dict[str, str], extra: list[str] | None = None) -> str:
     lines = [
         "QUALITY RETRY: revise your previous draft above and return the full resume. Keep the bullets that "
         "already work; rewrite or add bullets to fix every point below."

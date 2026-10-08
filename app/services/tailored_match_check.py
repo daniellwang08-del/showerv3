@@ -21,7 +21,7 @@ import re
 
 from app.core.logging import get_logger
 from app.prompts.job_match_phase_a_prompt import MATCH_DIMENSION_WEIGHTS
-from app.services.job_first_tailoring import BOILERPLATE_RE
+from app.services.resume_tailoring import BOILERPLATE_RE
 from app.services.required_skills import CORE, PREFERRED, REQUIRED, lexicon_hits, posting_sections
 from app.utils.resume_evidence import is_mentioned
 
@@ -145,6 +145,9 @@ def posting_requirements(structured_context: str, job_text: str) -> tuple[list[s
         listed = [line for kind, line in sections if kind in (REQUIRED, PREFERRED)]
         if not listed:
             listed = [line for kind, line in sections if kind == CORE and _BULLET_RE.match(line)]
+        if not listed:
+            # Prose postings and recruiter emails: their sentences; outreach and benefits drop below.
+            listed = [line for kind, line in sections if kind == CORE and len(line.split()) >= 6]
         lines = [_clean_line(line) for line in listed]
     tasks: list[str] = []
     facts: list[str] = []

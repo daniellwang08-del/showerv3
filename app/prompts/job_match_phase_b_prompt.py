@@ -19,7 +19,7 @@ Do NOT re-score the job match. Do NOT re-extract structured job fields.
 ---
 """
 
-RESUME_TAILORING_INSTRUCTIONS = """Your goal is a **truthful, job-first resume** for THIS posting. Modern ATS platforms (Workday
+RESUME_TAILORING_INSTRUCTIONS = """Your goal is a **truthful, tailored resume** for THIS posting. Modern ATS platforms (Workday
 HiredScore, Greenhouse, Lever, Ashby, iCIMS) parse the resume into dated roles, then rank it by how well each
 job requirement is evidenced, and recruiters search it with the posting's literal terms. A skill only counts as
 experience when it appears inside a dated role. A recruiter's first skim lasts seconds and keys on titles, recent

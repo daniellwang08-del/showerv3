@@ -93,6 +93,39 @@ def period_year(period: str) -> int | None:
     return int(m.group(0)) if m else None
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), start=1
+)}
+_NUMERIC_MONTH_RE = re.compile(r"\b(\d{1,2})\s*[/.-]\s*((?:19|20)\d{2})\b|\b((?:19|20)\d{2})\s*[/.-]\s*(\d{1,2})\b")
+
+
+def period_month_index(period: str | None, *, is_end: bool = False) -> int | None:
+    """year * 12 + month (0-based) for "Mar 2021", "03/2021", "2021-03" or "2021"; None when undated.
+
+    A bare year counts as January for a start and December for an end; an empty end is now.
+    """
+    text = (period or "").strip()
+    if not text or text.lower() in ("present", "current", "now", "today"):
+        if not is_end:
+            return None
+        now = datetime.now(timezone.utc)
+        return now.year * 12 + now.month - 1
+    year = period_year(text)
+    if year is None:
+        return None
+    month = None
+    m = _NUMERIC_MONTH_RE.search(text)
+    if m:
+        month = int(m.group(1) or m.group(4))
+    else:
+        word = re.search(r"[A-Za-z]{3,}", text)
+        if word:
+            month = _MONTHS.get(word.group(0)[:3].lower())
+    if not month or not 1 <= month <= 12:
+        month = 12 if is_end else 1
+    return year * 12 + month - 1
+
+
 def usable_in_role(term: str, end_year: int | None, *, is_current: bool) -> bool:
     """True when *term* existed while the role ran (released before its last year)."""
     year = intro_year(term)
