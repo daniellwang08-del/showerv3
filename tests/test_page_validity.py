@@ -187,6 +187,14 @@ def test_validator_reports_issue():
             "https://applicants.bairesdev.com/job/3/301997/apply?utm_source=x",
             "https://applicants.bairesdev.com/job/3/301997?utm_source=x",
         ),
+        (
+            "https://my.greenhouse.io/jobs/freestar/8873020002",
+            "https://job-boards.greenhouse.io/freestar/jobs/8873020002",
+        ),
+        (
+            "https://my.greenhouse.io/jobs/search?query=Senior",
+            "https://my.greenhouse.io/jobs/search?query=Senior",
+        ),
         # Unchanged: posting pages, and hosts whose apply path is the posting.
         (f"https://jobs.lever.co/Flex/{UUID}", f"https://jobs.lever.co/Flex/{UUID}"),
         (

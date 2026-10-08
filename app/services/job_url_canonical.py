@@ -17,6 +17,9 @@ _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _SMARTRECRUITERS_ONECLICK = re.compile(
     rf"^/oneclick-ui/company/([^/]+)/publication/({_UUID})", re.I
 )
+# MyGreenhouse (the candidate-account site) wraps a public board posting
+# behind a sign-in wall: my.greenhouse.io/jobs/{board}/{job id}.
+_MY_GREENHOUSE_JOB = re.compile(r"^/jobs/([A-Za-z0-9_-]+)/(\d+)/?$")
 _ICIMS_JOB = re.compile(r"^(/jobs/\d+/[^/]+)(?:/(?:job|login|apply|candidate)\b.*)?$", re.I)
 _WORKDAY_APPLY = re.compile(r"^(.*/job/.+?)/apply(?:/.*)?$", re.I)
 _TRAILING_APPLY = re.compile(r"^(.+?)/(?:apply|application|applynow|apply-now)/?$", re.I)
@@ -47,6 +50,12 @@ def description_url(url: str | None) -> str:
         m = _SMARTRECRUITERS_ONECLICK.match(path)
         if m:
             return urlunparse(("https", host, f"/{m.group(1)}/{m.group(2)}", "", "", ""))
+        return url
+
+    if host == "my.greenhouse.io":
+        m = _MY_GREENHOUSE_JOB.match(path)
+        if m:
+            return urlunparse(("https", "job-boards.greenhouse.io", f"/{m.group(1)}/jobs/{m.group(2)}", "", "", ""))
         return url
 
     if host.endswith("builtin.com") and path.lower().startswith("/apply/job/"):
