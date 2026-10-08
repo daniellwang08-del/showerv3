@@ -55,6 +55,16 @@ _ATS_EMBED_HOST_MARKERS: tuple[str, ...] = (
     "recruitee.com",
 )
 
+_CHALLENGE_MARKERS: tuple[str, ...] = (
+    "just a moment...",
+    "performing security verification",
+    "checking your browser",
+    "checking if the site connection is secure",
+    "verify you are human",
+    "verifying you are human",
+)
+_CHALLENGE_MAX_WAIT_S = 25.0
+
 
 async def _dismiss_cookie_consent(page: Page) -> bool:
     for sel in _COOKIE_CLICK_SELECTORS:
@@ -456,12 +466,27 @@ class BrowserExtractor(BaseExtractor):
         elapsed = 0.0
         mid_cookie_dismiss = False
         spa_extended = False
+        challenge_extended = False
 
         while elapsed < max_wait_s:
             try:
                 text_len = await self._page_text_length(page)
             except Exception:
                 text_len = 0
+
+            # Interstitial bot checks ("Just a moment...") often clear on their
+            # own after a few seconds of JS; their text is stable, so the
+            # length check alone would return the challenge page.
+            if await self._is_bot_challenge(page):
+                if not challenge_extended:
+                    max_wait_s = max(max_wait_s, _CHALLENGE_MAX_WAIT_S)
+                    challenge_extended = True
+                    logger.info("bot_challenge_detected", extending_wait_s=max_wait_s)
+                stable_rounds = 0
+                observed_last = -1
+                await asyncio.sleep(1.0)
+                elapsed += 1.0
+                continue
 
             if not mid_cookie_dismiss and elapsed >= 4.0 and text_len < min_chars:
                 await _dismiss_cookie_consent(page)
@@ -504,6 +529,15 @@ class BrowserExtractor(BaseExtractor):
         except Exception:
             pass
         return best
+
+    async def _is_bot_challenge(self, page: Page) -> bool:
+        try:
+            head = await page.evaluate(
+                "() => (document.title + ' ' + (document.body?.innerText || '').slice(0, 600)).toLowerCase()"
+            )
+        except Exception:
+            return False
+        return any(marker in head for marker in _CHALLENGE_MARKERS)
 
     async def _is_spa_loading(self, page: Page) -> bool:
         """Detect SPA skeleton/loading state that signals content will render later."""

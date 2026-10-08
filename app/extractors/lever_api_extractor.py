@@ -17,7 +17,7 @@ import json
 import re
 from urllib.parse import urlparse
 
-from app.extractors.base import BaseExtractor, ExtractionResult
+from app.extractors.base import GONE_STATUSES, BaseExtractor, ExtractionResult, http_status_of
 from app.models.schemas import ExtractionMethod
 from app.services.http_client import HTTPService
 from app.services.job_content_cleaner import plain_text_from_fragment_html
@@ -26,26 +26,33 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 LEVER_API_BASE = "https://api.lever.co/v0/postings"
+LEVER_EU_API_BASE = "https://api.eu.lever.co/v0/postings"
 
-# jobs.lever.co/{company}/{posting_id}[/apply]
+# jobs[.eu].lever.co/{company}/{posting_id}[/apply]
 _LEVER_URL_PATTERN = re.compile(
-    r"jobs\.(?:eu\.)?lever\.co/([^/?#]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    r"jobs\.(eu\.)?lever\.co/([^/?#]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
 # Some companies host Lever under their own subdomain via jobs.lever.co iframe,
 # leaving the posting id in HTML as `data-posting-id` or in api.lever.co links.
 _LEVER_HTML_API_PATTERN = re.compile(
-    r"api\.lever\.co/v0/postings/([^/\"'\s<>]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    r"api\.(eu\.)?lever\.co/v0/postings/([^/\"'\s<>]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
 _LEVER_EMBEDDED_PATTERN = re.compile(
-    r"jobs\.lever\.co/([^/\"'\s<>]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    r"jobs\.(eu\.)?lever\.co/([^/\"'\s<>]+)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
     re.IGNORECASE,
 )
 
 
-def _parse_lever_url(url: str) -> tuple[str, str] | None:
-    """Return (company_slug, posting_id) or None."""
+def _ref(m: re.Match[str]) -> tuple[str, str, bool]:
+    # The postings API matches the company slug case-sensitively
+    # (``Flex`` resolves, ``flex`` is a 404), so the slug keeps its case.
+    return m.group(2).strip(), m.group(3).lower(), bool(m.group(1))
+
+
+def _parse_lever_url(url: str) -> tuple[str, str, bool] | None:
+    """Return (company_slug, posting_id, is_eu) or None."""
     if not url:
         return None
     try:
@@ -54,32 +61,32 @@ def _parse_lever_url(url: str) -> tuple[str, str] | None:
     except Exception:
         return None
     m = _LEVER_URL_PATTERN.search(full)
-    if m:
-        return m.group(1).strip().lower(), m.group(2).lower()
-    return None
+    return _ref(m) if m else None
 
 
 def is_lever_job_url(url: str) -> bool:
     return _parse_lever_url(url) is not None
 
 
-def extract_lever_refs_from_html(html: str | None) -> list[tuple[str, str]]:
-    """Pull (company_slug, posting_id) tuples from embedded HTML.
+def extract_lever_refs_from_html(html: str | None) -> list[tuple[str, str, bool]]:
+    """Pull (company_slug, posting_id, is_eu) tuples from embedded HTML.
     Useful when a careers page iframes/links a Lever posting.
     """
     if not html:
         return []
-    seen: list[tuple[str, str]] = []
+    seen: list[tuple[str, str, bool]] = []
     for pat in (_LEVER_HTML_API_PATTERN, _LEVER_EMBEDDED_PATTERN):
         for m in pat.finditer(html):
-            slug = m.group(1).strip().lower()
-            pid = m.group(2).lower()
-            ref = (slug, pid)
+            ref = _ref(m)
             if ref not in seen:
                 seen.append(ref)
             if len(seen) >= 4:
                 return seen
     return seen
+
+
+def _slug_variants(slug: str) -> list[str]:
+    return [slug] if slug == slug.lower() else [slug, slug.lower()]
 
 
 class LeverApiExtractor(BaseExtractor):
@@ -99,7 +106,7 @@ class LeverApiExtractor(BaseExtractor):
 
     async def extract(self, url: str, html: str | None = None) -> ExtractionResult:
         ref = _parse_lever_url(url)
-        candidates: list[tuple[str, str]] = []
+        candidates: list[tuple[str, str, bool]] = []
         if ref:
             candidates.append(ref)
         for embedded in extract_lever_refs_from_html(html):
@@ -114,28 +121,36 @@ class LeverApiExtractor(BaseExtractor):
             )
 
         last_err: str | None = None
-        for company_slug, posting_id in candidates:
-            res = await self._fetch_and_convert(company_slug, posting_id, url)
-            if res.success:
-                logger.info(
-                    "lever_api_extraction_success",
-                    url=url,
-                    company_slug=company_slug,
-                    posting_id=posting_id,
-                )
-                return res
-            last_err = res.error
+        native_gone = False
+        for company_slug, posting_id, is_eu in candidates:
+            gone = True
+            for slug in _slug_variants(company_slug):
+                res = await self._fetch_and_convert(slug, posting_id, url, is_eu=is_eu)
+                if res.success:
+                    logger.info(
+                        "lever_api_extraction_success",
+                        url=url,
+                        company_slug=slug,
+                        posting_id=posting_id,
+                    )
+                    return res
+                last_err = res.error
+                gone = gone and res.closed
+            if ref and (company_slug, posting_id, is_eu) == ref:
+                native_gone = gone
 
         return ExtractionResult(
             success=False,
             method=self.method,
             error=last_err or "Lever API extraction failed",
+            closed=native_gone,
         )
 
     async def _fetch_and_convert(
-        self, company_slug: str, posting_id: str, source_url: str
+        self, company_slug: str, posting_id: str, source_url: str, *, is_eu: bool = False
     ) -> ExtractionResult:
-        api_url = f"{LEVER_API_BASE}/{company_slug}/{posting_id}?mode=json"
+        base = LEVER_EU_API_BASE if is_eu else LEVER_API_BASE
+        api_url = f"{base}/{company_slug}/{posting_id}?mode=json"
 
         try:
             text, status_code, _ = await self._http.fetch_impersonated(api_url)
@@ -148,6 +163,7 @@ class LeverApiExtractor(BaseExtractor):
                     success=False,
                     method=self.method,
                     error=f"Lever API request failed: {e2}",
+                    closed=http_status_of(e2) in GONE_STATUSES,
                 )
 
         if status_code != 200:
@@ -155,6 +171,7 @@ class LeverApiExtractor(BaseExtractor):
                 success=False,
                 method=self.method,
                 error=f"Lever API returned {status_code}",
+                closed=status_code in GONE_STATUSES,
             )
 
         try:

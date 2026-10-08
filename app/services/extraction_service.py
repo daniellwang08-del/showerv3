@@ -6,7 +6,10 @@ plain text from the page, stores it in Redis cache, and the downstream analysis
 engine (LLM) determines the structured content.
 
 Pipeline order:
-  1. Vendor APIs by URL (Ashby / Lever / Workday / Greenhouse / WTTJ) - no HTML required
+  0. Apply / login / one-click URLs are mapped to the posting page
+     (job_url_canonical.description_url)
+  1. Vendor APIs by URL (Ashby / Lever / Workable / Workday / WTTJ /
+     SmartRecruiters / Greenhouse) - no HTML required
   2. HTTP fetch (httpx, auto-falls-back to curl_cffi Chrome impersonation
      on 401/403 to bypass Lever/Workday/careers anti-bot)
      - SKIPPED for known job-aggregator domains (adzuna.com, etc.) that block
@@ -16,8 +19,13 @@ Pipeline order:
      Static HTML
   4. Browser render (Playwright) when on-page candidates are still thin
   5. Re-run vendor extractors on browser-rendered HTML for embedded ATSs
+  Every candidate is classified as it arrives (posting_validity.classify_page):
+  bot walls, error shells, closed notices, login walls, application forms,
+  unrendered templates and careers indexes are set aside, so they neither
+  win the pick nor stop the browser pass from running.
   6. Score candidates by JD keyword density (extraction_merge.pick_best_text)
-  7. Validate & cache in Redis for the analysis worker
+  7. Cache in Redis for the analysis worker, or fail with the page's reason
+     (closed, removed, blocked, not a description) so the job is hidden
 """
 
 from urllib.parse import urlparse
@@ -38,6 +46,12 @@ from app.extractors.greenhouse_board_extractor import (
     parse_greenhouse_job_id_from_url,
 )
 from app.extractors.lever_api_extractor import LeverApiExtractor, is_lever_job_url
+from app.extractors.smartrecruiters_api_extractor import (
+    SmartRecruitersApiExtractor,
+    is_smartrecruiters_job_url,
+)
+from app.services.job_url_canonical import description_url
+from app.services.posting_validity import PageIssue, classify_page, has_description_body
 from app.extractors.workable_api_extractor import (
     WorkableApiExtractor,
     is_workable_job_url,
@@ -116,6 +130,7 @@ class ExtractionService:
         self.lever_api_extractor = LeverApiExtractor(self.http_service)
         self.workable_api_extractor = WorkableApiExtractor(self.http_service)
         self.workday_extractor = WorkdayExtractor(self.http_service)
+        self.smartrecruiters_api_extractor = SmartRecruitersApiExtractor(self.http_service)
         self.api_extractor = APIDetectorExtractor()
         self.embedded_job_extractor = EmbeddedJobDataExtractor()
         self.html_extractor = HTMLExtractor()
@@ -171,9 +186,40 @@ class ExtractionService:
                 )
         # ────────────────────────────────────────────────────────────────────
 
+        fetch_url = description_url(url)
+        if fetch_url != url:
+            logger.info("extraction_description_url", job_id=job_id, original_url=url, fetch_url=fetch_url)
+            url = fetch_url
+
         candidates: list[tuple[str, str, dict | None]] = []
+        rejected: list[PageIssue] = []
+        vendor_gone: str | None = None
         last_error: str | None = None
         embedded_structured: dict | None = None
+
+        def add_candidate(item: tuple[str, str, dict | None]) -> None:
+            text, method, _structured = item
+            issue = classify_page(text)
+            if issue:
+                rejected.append(issue)
+                logger.info(
+                    "extraction_candidate_rejected",
+                    job_id=job_id,
+                    method=method,
+                    reason=issue.reason,
+                    evidence=issue.evidence,
+                    content_length=len(text or ""),
+                )
+                return
+            candidates.append(item)
+
+        def note_vendor(vendor: str, result) -> None:
+            nonlocal vendor_gone, last_error
+            if result.error:
+                last_error = result.error
+                logger.warning(f"{vendor}_extract_failed", job_id=job_id, error=result.error, closed=result.closed)
+            if result.closed and not vendor_gone:
+                vendor_gone = vendor
 
         async def _collect_embedded(page_html: str | None) -> None:
             nonlocal embedded_structured
@@ -183,69 +229,36 @@ class ExtractionService:
             if emb_job.structured_data:
                 embedded_structured = emb_job.structured_data
             if emb_job.success and emb_job.raw_content:
-                candidates.append((emb_job.raw_content, ExtractionMethod.API_VENDOR.value, emb_job.structured_data))
+                add_candidate((emb_job.raw_content, ExtractionMethod.API_VENDOR.value, emb_job.structured_data))
 
         try:
             # 1a. Ashby public API (native URL - no HTML needed)
-            if await self.ashby_api_extractor.can_extract(url):
-                logger.info("ashby_api_attempt", job_id=job_id)
-                result = await self.ashby_api_extractor.extract(url)
+            # 1a-1f. Vendor APIs addressed by the URL itself (no HTML needed):
+            # Ashby, Lever, Workable, Workday cxs, WTTJ Algolia (bypasses AWS
+            # WAF), SmartRecruiters (bypasses its bot wall), and Greenhouse
+            # boards when the token and job id are both in the URL.
+            native_vendors = (
+                ("ashby_api", await self.ashby_api_extractor.can_extract(url), self.ashby_api_extractor),
+                ("lever_api", is_lever_job_url(url), self.lever_api_extractor),
+                ("workable_api", is_workable_job_url(url), self.workable_api_extractor),
+                ("workday", is_workday_job_url(url), self.workday_extractor),
+                ("wttj_algolia", is_wttj_job_url(url), self.wttj_algolia_extractor),
+                ("smartrecruiters_api", is_smartrecruiters_job_url(url), self.smartrecruiters_api_extractor),
+                (
+                    "greenhouse_api",
+                    bool(parse_greenhouse_job_id_from_url(url) and greenhouse_board_tokens_from_url(url)),
+                    self.greenhouse_board_extractor,
+                ),
+            )
+            for vendor, applies, extractor in native_vendors:
+                if not applies:
+                    continue
+                logger.info(f"{vendor}_attempt", job_id=job_id)
+                result = await extractor.extract(url)
                 if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
-                elif result.error:
-                    last_error = result.error
-                    logger.warning("ashby_api_extract_failed", job_id=job_id, error=result.error)
-
-            # 1b. Lever public Postings API (native URL - no HTML needed)
-            if is_lever_job_url(url):
-                logger.info("lever_api_attempt", job_id=job_id)
-                result = await self.lever_api_extractor.extract(url)
-                if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
-                elif result.error:
-                    last_error = result.error
-                    logger.warning("lever_api_extract_failed", job_id=job_id, error=result.error)
-
-            # 1b2. Workable public job API (native URL - no HTML / API key needed)
-            if is_workable_job_url(url):
-                logger.info("workable_api_attempt", job_id=job_id)
-                result = await self.workable_api_extractor.extract(url)
-                if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
-                elif result.error:
-                    last_error = result.error
-                    logger.warning("workable_api_extract_failed", job_id=job_id, error=result.error)
-
-            # 1c. Workday cxs JSON (native URL - no HTML needed)
-            if is_workday_job_url(url):
-                logger.info("workday_api_attempt", job_id=job_id)
-                result = await self.workday_extractor.extract(url)
-                if result.success and result.raw_content:
-                    candidates.append((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
-                elif result.error:
-                    last_error = result.error
-                    logger.warning("workday_extract_failed", job_id=job_id, error=result.error)
-
-            # 1d. WTTJ Algolia API - bypasses AWS WAF on public job pages
-            if is_wttj_job_url(url):
-                logger.info("wttj_algolia_attempt", job_id=job_id)
-                wttj_result = await self.wttj_algolia_extractor.extract(url)
-                if wttj_result.success and wttj_result.raw_content:
-                    candidates.append((wttj_result.raw_content, ExtractionMethod.API_VENDOR.value, wttj_result.structured_data))
-                elif wttj_result.error:
-                    last_error = wttj_result.error
-                    logger.warning("wttj_algolia_extract_failed", job_id=job_id, error=wttj_result.error)
-
-            # 1e. Greenhouse Job Board API for native boards.greenhouse.io URLs
-            # (token + job id already in the URL, no HTML / browser needed).
-            if parse_greenhouse_job_id_from_url(url) and greenhouse_board_tokens_from_url(url):
-                logger.info("greenhouse_api_attempt", job_id=job_id, url=url)
-                gh_early = await self.greenhouse_board_extractor.extract(url)
-                if gh_early.success and gh_early.raw_content:
-                    candidates.append((gh_early.raw_content, ExtractionMethod.API_VENDOR.value, gh_early.structured_data))
-                elif gh_early.error:
-                    last_error = gh_early.error
-                    logger.warning("greenhouse_api_extract_failed", job_id=job_id, error=gh_early.error)
+                    add_candidate((result.raw_content, ExtractionMethod.API_VENDOR.value, result.structured_data))
+                else:
+                    note_vendor(vendor, result)
 
             # Strong vendor hit, skip HTTP + browser (avoids repeating slow failures).
             early_best, early_method, early_structured = pick_best_text(candidates)
@@ -256,16 +269,9 @@ class ExtractionService:
                     method=early_method,
                     content_length=len(early_best),
                 )
-                validation = validate_extracted_text(early_best)
-                if validation.is_valid:
-                    return await self._cache_and_mark_extracted(
-                        job_id, url, early_best, early_method,
-                        structured_data=early_structured,
-                    )
-                logger.warning(
-                    "extraction_early_vendor_failed_validation",
-                    job_id=job_id,
-                    errors=validation.errors,
+                return await self._cache_and_mark_extracted(
+                    job_id, url, early_best, early_method,
+                    structured_data=early_structured,
                 )
 
             # 2. Fetch HTML (httpx → curl_cffi auto-fallback on 401/403)
@@ -304,7 +310,7 @@ class ExtractionService:
                 if parse_ashby_jid_from_url(url):
                     emb = await self.ashby_api_extractor.extract_embedded(url, html_content)
                     if emb.success and emb.raw_content:
-                        candidates.append((emb.raw_content, ExtractionMethod.API_VENDOR.value, emb.structured_data))
+                        add_candidate((emb.raw_content, ExtractionMethod.API_VENDOR.value, emb.structured_data))
                     elif emb.error:
                         logger.debug("ashby_embedded_not_used", job_id=job_id, error=emb.error)
 
@@ -312,7 +318,7 @@ class ExtractionService:
                 if await self.greenhouse_board_extractor.can_extract(url, html_content):
                     gh = await self.greenhouse_board_extractor.extract(url, html_content)
                     if gh.success and gh.raw_content:
-                        candidates.append((gh.raw_content, ExtractionMethod.API_VENDOR.value, gh.structured_data))
+                        add_candidate((gh.raw_content, ExtractionMethod.API_VENDOR.value, gh.structured_data))
                     elif gh.error:
                         logger.debug("greenhouse_board_api_not_used", job_id=job_id, error=gh.error)
 
@@ -321,7 +327,7 @@ class ExtractionService:
                     if await self.lever_api_extractor.can_extract(url, html_content):
                         lev_emb = await self.lever_api_extractor.extract(url, html_content)
                         if lev_emb.success and lev_emb.raw_content:
-                            candidates.append((lev_emb.raw_content, ExtractionMethod.API_VENDOR.value, lev_emb.structured_data))
+                            add_candidate((lev_emb.raw_content, ExtractionMethod.API_VENDOR.value, lev_emb.structured_data))
                         elif lev_emb.error:
                             logger.debug("lever_embedded_not_used", job_id=job_id, error=lev_emb.error)
 
@@ -330,7 +336,7 @@ class ExtractionService:
                     if await self.workable_api_extractor.can_extract(url, html_content):
                         wk_emb = await self.workable_api_extractor.extract(url, html_content)
                         if wk_emb.success and wk_emb.raw_content:
-                            candidates.append((wk_emb.raw_content, ExtractionMethod.API_VENDOR.value, wk_emb.structured_data))
+                            add_candidate((wk_emb.raw_content, ExtractionMethod.API_VENDOR.value, wk_emb.structured_data))
                         elif wk_emb.error:
                             logger.debug("workable_embedded_not_used", job_id=job_id, error=wk_emb.error)
 
@@ -338,14 +344,14 @@ class ExtractionService:
                 if await self.api_extractor.can_extract(url, html_content):
                     ld_result = await self.api_extractor.extract(url, html_content)
                     if ld_result.success and ld_result.raw_content:
-                        candidates.append((ld_result.raw_content, ExtractionMethod.API_JSON_LD.value, ld_result.structured_data))
+                        add_candidate((ld_result.raw_content, ExtractionMethod.API_JSON_LD.value, ld_result.structured_data))
                     elif ld_result.error:
                         last_error = ld_result.error
 
                 # 6. Static HTML (full page text)
                 html_result = await self.html_extractor.extract(url, html_content)
                 if html_result.success and html_result.raw_content:
-                    candidates.append((html_result.raw_content, ExtractionMethod.STATIC_HTML.value, html_result.structured_data))
+                    add_candidate((html_result.raw_content, ExtractionMethod.STATIC_HTML.value, html_result.structured_data))
                 elif html_result.error:
                     last_error = html_result.error
 
@@ -358,7 +364,7 @@ class ExtractionService:
             if needs_browser and await self.browser_extractor.can_extract(url):
                 browser_result = await self.browser_extractor.extract(url)
                 if browser_result.success and browser_result.raw_content:
-                    candidates.append((browser_result.raw_content, ExtractionMethod.BROWSER_RENDER.value, browser_result.structured_data))
+                    add_candidate((browser_result.raw_content, ExtractionMethod.BROWSER_RENDER.value, browser_result.structured_data))
 
                     # Re-run vendor extractors on browser-rendered HTML - many
                     # SPAs only reveal Greenhouse/Lever/Ashby tokens after JS runs.
@@ -369,29 +375,29 @@ class ExtractionService:
                     if await self.greenhouse_board_extractor.can_extract(url, rendered_html):
                         gh_br = await self.greenhouse_board_extractor.extract(url, rendered_html)
                         if gh_br.success and gh_br.raw_content:
-                            candidates.append((gh_br.raw_content, ExtractionMethod.API_VENDOR.value, gh_br.structured_data))
+                            add_candidate((gh_br.raw_content, ExtractionMethod.API_VENDOR.value, gh_br.structured_data))
 
                     if not is_lever_job_url(url):
                         if await self.lever_api_extractor.can_extract(url, rendered_html):
                             lev_br = await self.lever_api_extractor.extract(url, rendered_html)
                             if lev_br.success and lev_br.raw_content:
-                                candidates.append((lev_br.raw_content, ExtractionMethod.API_VENDOR.value, lev_br.structured_data))
+                                add_candidate((lev_br.raw_content, ExtractionMethod.API_VENDOR.value, lev_br.structured_data))
 
                     if parse_ashby_jid_from_url(url):
                         ash_br = await self.ashby_api_extractor.extract_embedded(url, rendered_html)
                         if ash_br.success and ash_br.raw_content:
-                            candidates.append((ash_br.raw_content, ExtractionMethod.API_VENDOR.value, ash_br.structured_data))
+                            add_candidate((ash_br.raw_content, ExtractionMethod.API_VENDOR.value, ash_br.structured_data))
 
                     if not is_workable_job_url(url) and parse_workable_shortcode_from_url(url):
                         if await self.workable_api_extractor.can_extract(url, rendered_html):
                             wk_br = await self.workable_api_extractor.extract(url, rendered_html)
                             if wk_br.success and wk_br.raw_content:
-                                candidates.append((wk_br.raw_content, ExtractionMethod.API_VENDOR.value, wk_br.structured_data))
+                                add_candidate((wk_br.raw_content, ExtractionMethod.API_VENDOR.value, wk_br.structured_data))
 
                     if await self.api_extractor.can_extract(url, rendered_html):
                         ld_br = await self.api_extractor.extract(url, rendered_html)
                         if ld_br.success and ld_br.raw_content:
-                            candidates.append((ld_br.raw_content, ExtractionMethod.API_JSON_LD.value, ld_br.structured_data))
+                            add_candidate((ld_br.raw_content, ExtractionMethod.API_JSON_LD.value, ld_br.structured_data))
                 elif browser_result.error:
                     last_error = browser_result.error
             elif needs_browser:
@@ -404,31 +410,36 @@ class ExtractionService:
             best_text, best_method, best_structured = pick_best_text(candidates)
             best_structured = _fill_structured_gaps(best_structured, embedded_structured)
 
-            if not best_text:
-                final_message = "All extraction methods failed"
-                if last_error:
-                    final_message = f"{final_message}: {last_error}"
-                return await self._mark_failed(job_id, final_message)
+            issue = _primary_issue(rejected)
+            if best_text and not _gone_overrides(best_text, candidates, issue, vendor_gone):
+                return await self._cache_and_mark_extracted(
+                    job_id, url, best_text, best_method, structured_data=best_structured,
+                )
+            if best_text:
+                logger.info(
+                    "extraction_gone_overrides_candidate",
+                    job_id=job_id,
+                    method=best_method,
+                    content_length=len(best_text),
+                    page_issue=issue.reason if issue else None,
+                    vendor_gone=vendor_gone,
+                )
 
-            validation = validate_extracted_text(best_text)
-            if not validation.is_valid:
+            if not vendor_gone and (issue is None or issue.reason in _FALLBACK_REASONS):
                 fallback = await self._try_scraped_description_fallback(job_id, url)
-                if fallback:
+                if fallback and validate_extracted_text(fallback[0]).is_valid:
                     fallback_text, fallback_method = fallback
-                    fallback_validation = validate_extracted_text(fallback_text)
-                    if fallback_validation.is_valid:
-                        logger.info(
-                            "extraction_scraped_description_fallback",
-                            job_id=job_id,
-                            content_length=len(fallback_text),
-                        )
-                        return await self._cache_and_mark_extracted(
-                            job_id, url, fallback_text, fallback_method,
-                            structured_data=embedded_structured,
-                        )
-                return await self._mark_failed(job_id, f"Validation failed: {', '.join(validation.errors)}")
-
-            return await self._cache_and_mark_extracted(job_id, url, best_text, best_method, structured_data=best_structured)
+                    logger.info(
+                        "extraction_scraped_description_fallback",
+                        job_id=job_id,
+                        content_length=len(fallback_text),
+                        page_issue=issue.reason if issue else None,
+                    )
+                    return await self._cache_and_mark_extracted(
+                        job_id, url, fallback_text, fallback_method,
+                        structured_data=embedded_structured,
+                    )
+            return await self._mark_failed(job_id, _failure_message(issue, vendor_gone, last_error))
 
         except Exception as e:
             logger.error("extraction_service_failed", job_id=job_id, error=str(e))
@@ -580,6 +591,66 @@ _UNREACHABLE_PATTERNS = (
 )
 
 MIN_SCRAPED_FALLBACK_LENGTH = 100
+
+# Most specific first: a closed notice explains a page better than the bot
+# wall another fetch path hit.
+_ISSUE_PRIORITY = (
+    "closed", "not_found", "careers_index", "login_wall", "blocked",
+    "error_page", "apply_form", "unrendered", "too_thin",
+)
+_GONE_REASONS = frozenset({"closed", "not_found"})
+# The page itself was unreadable, so the scraper's stored description is the
+# best copy left. Closed, removed and index pages mean the job is gone.
+_FALLBACK_REASONS = frozenset({"blocked", "login_wall", "error_page", "apply_form", "unrendered", "too_thin"})
+
+_VENDOR_NAMES = {
+    "ashby_api": "Ashby",
+    "lever_api": "Lever",
+    "greenhouse_api": "Greenhouse",
+    "smartrecruiters_api": "SmartRecruiters",
+}
+
+
+def _gone_overrides(
+    best_text: str,
+    candidates: list[tuple[str, str, dict | None]],
+    issue: PageIssue | None,
+    vendor_gone: str | None,
+) -> bool:
+    """Whether a "closed" or "removed" signal outranks the best usable text.
+
+    The site saying so on its own page wins over every other page text
+    (Phenom serves "has been filled" while its browser render shows only
+    navigation and similar jobs); only a live vendor API record outranks it.
+    A vendor API 404 alone wins only over text without a description body,
+    since the page may still show a posting the API does not list.
+    """
+    if issue is not None and issue.reason in _GONE_REASONS and not issue.weak:
+        return not any(method == ExtractionMethod.API_VENDOR.value for _, method, _ in candidates)
+    return bool(vendor_gone) and not has_description_body(best_text)
+
+
+def _primary_issue(rejected: list[PageIssue]) -> PageIssue | None:
+    if not rejected:
+        return None
+    rank = {reason: i for i, reason in enumerate(_ISSUE_PRIORITY)}
+    return min(rejected, key=lambda issue: rank.get(issue.reason, len(rank)))
+
+
+def _failure_message(issue: PageIssue | None, vendor_gone: str | None, last_error: str | None) -> str:
+    """The reason shown in Hidden jobs when no candidate is a usable description."""
+    if issue and issue.reason in _GONE_REASONS:
+        label = "Posting closed" if issue.reason == "closed" else "Posting removed"
+        return f"{label}: {issue.description} ('{issue.evidence}')"
+    if vendor_gone:
+        vendor = _VENDOR_NAMES.get(vendor_gone, vendor_gone)
+        return f"Posting removed: {vendor} no longer publishes this posting"
+    if issue and issue.reason == "blocked":
+        return f"Blocked by bot protection: {issue.description} ('{issue.evidence}')"
+    if issue:
+        return f"Not a job description: {issue.description} ('{issue.evidence}')"
+    message = "All extraction methods failed"
+    return f"{message}: {last_error}" if last_error else message
 
 
 def _is_site_unreachable_error(error: str) -> bool:

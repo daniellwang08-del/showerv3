@@ -9,6 +9,8 @@ visible text is a JS shell or a run of unlabeled sidebar chips:
   ``<script id="__NEXT_DATA__">`` with ``props.pageProps.apiData.jobPost``.
 - UKG Pro Recruiting (``*.rec.pro.ukg.net``): inline
   ``new US.Opportunity.CandidateOpportunityDetail({...})`` constructor call.
+- Phenom career sites (``careers.<company>.com/us/en/job/...``): inline
+  ``phApp.ddo = {"jobDetail": {"data": {"job": {...}}}}``.
 
 Detection is by payload shape, not host, so custom career domains on the same
 ATS are covered too. No extra network calls.
@@ -34,6 +36,7 @@ _NEXT_DATA_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _UKG_OPPORTUNITY_MARKER = "CandidateOpportunityDetail("
+_PHENOM_DDO_MARKER = "phApp.ddo"
 _UKG_LOGO_ALT_RE = re.compile(
     r"<img\b[^>]*data-automation=[\"']navbar-(?:small|large)-logo[\"'][^>]*>",
     re.IGNORECASE,
@@ -304,9 +307,59 @@ def parse_ukg_opportunity(html: str | None) -> tuple[dict[str, Any], str] | None
     return fields, _description_text(opp.get("Description"))
 
 
+# ── Phenom ────────────────────────────────────────────────────────────────
+
+
+def _phenom_job(html: str) -> dict[str, Any] | None:
+    idx = html.find(_PHENOM_DDO_MARKER)
+    if idx < 0:
+        return None
+    start = html.find("{", idx + len(_PHENOM_DDO_MARKER))
+    if start < 0:
+        return None
+    try:
+        ddo, _end = json.JSONDecoder().raw_decode(html, start)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    detail = ddo.get("jobDetail") if isinstance(ddo, dict) else None
+    data = detail.get("data") if isinstance(detail, dict) else None
+    job = data.get("job") if isinstance(data, dict) else None
+    return job if isinstance(job, dict) else None
+
+
+def parse_phenom_ddo(html: str | None) -> tuple[dict[str, Any], str] | None:
+    """Phenom career sites ship the posting in ``phApp.ddo.jobDetail.data.job``.
+
+    Their server HTML also carries a "the job you are trying to apply for has
+    been filled" block on every job page, shown or hidden client-side, so the
+    page text alone cannot tell an open job from a filled one.
+    """
+    if not html:
+        return None
+    job = _phenom_job(html)
+    if not job or not _clean(job.get("title")):
+        return None
+    locations = job.get("multi_location") if isinstance(job.get("multi_location"), list) else []
+    location = "; ".join(dict.fromkeys(
+        loc for loc in (_clean(x) for x in locations) if loc
+    )) or _clean(job.get("location")) or _clean(job.get("cityStateCountry"))
+    # ``companyName`` holds tenant codes on some sites ("IIIIIIUS"), so the
+    # company is left to the page-level hydrator.
+    fields: dict[str, Any] = {
+        "title": _clean(job.get("title")),
+        "location": location,
+        "department": _clean(job.get("category")),
+        "employment_type": _clean(job.get("type")),
+        "workplace": "remote" if location and "remote" in location.lower() else None,
+        "posted_date": _iso_date(job.get("postedDate")) or _iso_date(job.get("dateCreated")),
+    }
+    return fields, _description_text(job.get("description"))
+
+
 _PARSERS: tuple[tuple[str, Callable[[str | None], tuple[dict[str, Any], str] | None]], ...] = (
     ("rippling", parse_rippling_next_data),
     ("ukg", parse_ukg_opportunity),
+    ("phenom", parse_phenom_ddo),
 )
 
 
@@ -332,7 +385,9 @@ class EmbeddedJobDataExtractor(BaseExtractor):
         return ExtractionMethod.API_VENDOR
 
     async def can_extract(self, url: str, html: str | None = None) -> bool:
-        return bool(html) and ("__NEXT_DATA__" in html or _UKG_OPPORTUNITY_MARKER in html)
+        return bool(html) and any(
+            marker in html for marker in ("__NEXT_DATA__", _UKG_OPPORTUNITY_MARKER, _PHENOM_DDO_MARKER)
+        )
 
     async def extract(self, url: str, html: str | None = None) -> ExtractionResult:
         parsed = parse_embedded_job(html)

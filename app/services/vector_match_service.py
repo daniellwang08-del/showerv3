@@ -41,6 +41,7 @@ from app.models.database import JobEncoding, UserEncoding
 from app.prompts.job_match_phase_a_prompt import MATCH_DIMENSION_WEIGHTS
 from app.services.encoding_service import b64_to_vec, bytes_to_matrix, bytes_to_vec
 from app.services.industry_taxonomy import industry_overlap
+from app.services.posting_validity import describe_page_issue
 from app.services.role_taxonomy import (
     MID_LEVEL,
     SPECIALTY_FAMILIES,
@@ -187,13 +188,6 @@ _LEVEL_LABELS = {
     4.0: "principal or director",
     5.0: "VP or executive",
 }
-
-_POSTING_ISSUE_TEXT = {
-    "closed": "the posting has been closed",
-    "not_found": "the page no longer exists",
-    "careers_index": "the page is a careers index, not a single posting",
-}
-
 
 def _cos(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
     if a is None or b is None or a.size == 0 or b.size == 0 or a.size != b.size:
@@ -696,7 +690,7 @@ def _score_v4(
         return _gated_result(
             job_enc,
             user_enc,
-            summary=f"Not a job posting: {_POSTING_ISSUE_TEXT.get(posting_issue, posting_issue)}.",
+            summary=f"Not a job posting: {describe_page_issue(posting_issue)}.",
             gate="not_a_job_posting",
             explain=explain,
             requires_clearance=False,

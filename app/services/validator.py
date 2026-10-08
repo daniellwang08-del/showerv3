@@ -6,10 +6,9 @@ Two-stage validation:
 2. ``validate_job_data`` - after LLM structuring, checks structured output.
 """
 
-import re
-
 from app.models.schemas import JobDescriptionSchema
 from app.core.logging import get_logger
+from app.services.posting_validity import PageIssue, classify_page
 from dataclasses import dataclass
 
 logger = get_logger(__name__)
@@ -19,41 +18,21 @@ MIN_TITLE_LENGTH = 3
 MAX_TITLE_LENGTH = 500
 MIN_DESCRIPTION_LENGTH = 50
 
-# Patterns that indicate the extraction returned a login/auth wall, captcha,
-# 404 page or empty SPA shell instead of a real job description.
-_WALL_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bplease (?:log\s*in|sign\s*in) to (?:view|continue|see)\b", re.I),
-    re.compile(r"\b(?:log\s*in|sign\s*in) (?:required|to view this job)\b", re.I),
-    re.compile(r"\bcreate (?:a free )?account to (?:view|apply)\b", re.I),
-    re.compile(r"\b(?:are you a robot|verifying you are human|cloudflare ray)\b", re.I),
-    re.compile(r"\b(?:access denied|403 forbidden|you don't have permission)\b", re.I),
-    re.compile(r"\bpage not found\b|\b404\s+error\b|\bthis job (?:is no longer|has expired)\b", re.I),
-    re.compile(r"\bjavascript is required\b|\benable javascript\b", re.I),
-)
-
 
 @dataclass
 class ValidationResult:
     is_valid: bool
     errors: list[str]
     warnings: list[str]
-
-
-def _detect_wall(text: str) -> str | None:
-    """Return a wall pattern label if the text looks like a non-JD wall."""
-    sample = text[:4000]
-    for pat in _WALL_PATTERNS:
-        m = pat.search(sample)
-        if m:
-            return m.group(0)[:80]
-    return None
+    issue: PageIssue | None = None
 
 
 def validate_extracted_text(text: str) -> ValidationResult:
     """Validate plain text quality after extraction, before caching.
 
-    Treats login/captcha/404 walls and JS-only SPA shells as hard failures
-    so the LLM never sees them and we don't cache a useless extraction.
+    Bot walls, error shells, closed notices, login walls, bare application
+    forms, unrendered templates and careers indexes are hard failures, so the
+    LLM never sees them and a useless extraction is never cached.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -66,9 +45,9 @@ def validate_extracted_text(text: str) -> ValidationResult:
     if len(stripped) < MIN_EXTRACTED_TEXT_LENGTH:
         warnings.append(f"Extracted text is short ({len(stripped)} chars)")
 
-    wall_hit = _detect_wall(stripped)
-    if wall_hit:
-        errors.append(f"Extraction looks like a wall/error page: '{wall_hit}'")
+    issue = classify_page(stripped)
+    if issue:
+        errors.append(f"{issue.reason}: {issue.description} ('{issue.evidence}')")
 
     if errors or warnings:
         logger.info(
@@ -82,6 +61,7 @@ def validate_extracted_text(text: str) -> ValidationResult:
         is_valid=len(errors) == 0,
         errors=errors,
         warnings=warnings,
+        issue=issue,
     )
 
 

@@ -25,6 +25,7 @@ from app.services.job_location_parse import (
     strip_work_mode_from_location,
 )
 from app.services.job_source_boards import detect_board
+from app.services.posting_validity import non_posting_reason
 from app.services.job_text_rules import (
     infer_employment_type,
     infer_salary_from_text,
@@ -607,9 +608,9 @@ async def hydrate_job_metadata(
     """Patch job + extraction display fields from non-LLM signals.
 
     When ``mark_completed`` is True (vector-engine path), also advances the
-    extraction to COMPLETED / is_job_posting=True like the old LLM structuring
-    pass did, without rewriting an already-rich LLM structured description
-    unless description was empty.
+    extraction to COMPLETED like the old LLM structuring pass did, with
+    ``is_job_posting`` from ``posting_validity``, without rewriting an
+    already-rich LLM structured description unless description was empty.
     """
     async with get_session() as session:
         ext_repo = JobExtractionRepository(session)
@@ -641,6 +642,7 @@ async def hydrate_job_metadata(
             existing_work_mode=(extraction.work_mode if extraction else None)
             or (job.work_mode if job else None),
         )
+        is_posting = non_posting_reason(text) is None
         schema = to_job_description_schema(meta)
         if schema is None:
             logger.warning(
@@ -651,7 +653,7 @@ async def hydrate_job_metadata(
                 desc_len=len(meta.get("description") or ""),
             )
             if mark_completed and extraction is not None:
-                await ext_repo.update_is_job_posting(extraction_id, True)
+                await ext_repo.update_is_job_posting(extraction_id, is_posting)
                 from app.models.schemas import ExtractionStatus
 
                 await ext_repo.update_status(extraction_id, ExtractionStatus.COMPLETED)
@@ -667,7 +669,7 @@ async def hydrate_job_metadata(
             await ext_repo.update_extraction_result(
                 extraction_id,
                 schema,
-                is_job_posting=True,
+                is_job_posting=is_posting,
             )
         else:
             await ext_repo.patch_display_metadata(extraction_id, schema)

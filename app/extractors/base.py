@@ -3,6 +3,9 @@ from app.models.schemas import ExtractionMethod
 from dataclasses import dataclass
 from typing import Any
 
+# Statuses a vendor posting API returns once a posting is unpublished.
+GONE_STATUSES = frozenset({404, 410})
+
 
 @dataclass
 class ExtractionResult:
@@ -13,6 +16,15 @@ class ExtractionResult:
     error: str | None = None
     # Rendered DOM from the browser pass, for vendor detectors that need markup.
     html: str | None = None
+    # The vendor's own API says the posting no longer exists.
+    closed: bool = False
+
+
+def http_status_of(exc: BaseException) -> int | None:
+    """Status code carried by an ``HTTPService`` ``NetworkError``, if any."""
+    details = getattr(exc, "details", None)
+    status = details.get("status_code") if isinstance(details, dict) else None
+    return status if isinstance(status, int) else None
 
 
 class BaseExtractor(ABC):
@@ -28,5 +40,3 @@ class BaseExtractor(ABC):
     @abstractmethod
     async def extract(self, url: str, html: str | None = None) -> ExtractionResult:
         pass
-
-

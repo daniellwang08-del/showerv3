@@ -36,6 +36,9 @@ _REMOVE_TAGS: Final[frozenset[str]] = frozenset({
 })
 
 _BR_TAGS_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+# Untranslated i18n keys some ATS pages ship in server HTML (Breezy:
+# ``%LABEL_POSITION_TYPE_FULL_TIME%``).
+_TEMPLATE_TOKEN_RE = re.compile(r"%[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+%")
 
 # lxml ``text_content()`` concatenates text nodes verbatim, so minified markup
 # (``<h1>Engineer</h1><p>About</p>``) fuses into ``EngineerAbout``. Breaking
@@ -78,6 +81,7 @@ def _sanitize_html_input(html: str | None) -> str:
 def _normalize_plain_text(text: str) -> str:
     if not text:
         return ""
+    text = _TEMPLATE_TOKEN_RE.sub(" ", text)
     text = re.sub(r"[\r\n]+", "\n", text)
     text = re.sub(r"[ \t]+", " ", text)
     lines = [ln.strip() for ln in text.split("\n")]

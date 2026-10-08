@@ -97,7 +97,7 @@ class AshbyApiExtractor(BaseExtractor):
             )
 
         company_slug, job_id = parsed
-        return await self._fetch_and_convert(company_slug, job_id, url)
+        return await self._fetch_and_convert(company_slug, job_id, url, native=True)
 
     async def extract_embedded(self, url: str, html: str) -> ExtractionResult:
         """
@@ -135,7 +135,9 @@ class AshbyApiExtractor(BaseExtractor):
             error=last_err or "Ashby embedded extraction failed",
         )
 
-    async def _fetch_and_convert(self, company_slug: str, job_id: str, url: str) -> ExtractionResult:
+    async def _fetch_and_convert(
+        self, company_slug: str, job_id: str, url: str, *, native: bool = False,
+    ) -> ExtractionResult:
         api_url = f"{ASHBY_API_BASE}/{company_slug}?includeCompensation=true"
 
         try:
@@ -194,6 +196,8 @@ class AshbyApiExtractor(BaseExtractor):
                 success=False,
                 method=self.method,
                 error=f"Job {job_id} not found in Ashby API response ({len(jobs)} jobs)",
+                # A live board that no longer lists the job has unpublished it.
+                closed=native and bool(jobs),
             )
 
         plain_text = self._job_to_plain_text(job)

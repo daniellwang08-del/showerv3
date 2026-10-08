@@ -14,7 +14,9 @@ from __future__ import annotations
 import html as html_lib
 import json
 import re
-from app.extractors.base import BaseExtractor, ExtractionResult
+from urllib.parse import urlparse
+
+from app.extractors.base import GONE_STATUSES, BaseExtractor, ExtractionResult, http_status_of
 from app.models.schemas import ExtractionMethod
 from app.services.http_client import HTTPService
 from app.services.job_content_cleaner import plain_text_from_fragment_html
@@ -156,12 +158,36 @@ def extract_greenhouse_board_tokens_from_html(html: str | None) -> list[str]:
     return seen
 
 
+_GENERIC_HOST_LABELS = frozenset({"www", "careers", "jobs", "job", "apply", "boards", "en", "us"})
+
+
+def greenhouse_board_tokens_from_domain(url: str) -> list[str]:
+    """Board tokens guessed from a company careers domain (``voxel51.com`` -> ``voxel51``).
+
+    Many companies render ``?gh_jid=`` postings with a client-side widget, so
+    the board token never appears in the fetched HTML. The token is usually
+    the company's domain name.
+    """
+    if "gh_jid" not in (url or "").lower():
+        return []
+    host = (urlparse(url).netloc or "").lower().split(":")[0]
+    labels = [p for p in host.split(".") if p and p not in _GENERIC_HOST_LABELS]
+    if len(labels) < 2 or "greenhouse" in labels:
+        return []
+    name = labels[-2]
+    out = [name]
+    if "-" in name:
+        out.append(name.replace("-", ""))
+    return out
+
+
 def greenhouse_extraction_token_candidates(url: str, html: str | None) -> list[str]:
     out: list[str] = []
-    for t in greenhouse_board_tokens_from_url(url):
-        if t not in out:
-            out.append(t)
-    for t in extract_greenhouse_board_tokens_from_html(html):
+    for t in (
+        *greenhouse_board_tokens_from_url(url),
+        *extract_greenhouse_board_tokens_from_html(html),
+        *greenhouse_board_tokens_from_domain(url),
+    ):
         if t not in out:
             out.append(t)
     return out
@@ -207,6 +233,8 @@ class GreenhouseBoardExtractor(BaseExtractor):
                 error="No Greenhouse board token (company slug) found in URL or HTML",
             )
         last_err: str | None = None
+        url_tokens = greenhouse_board_tokens_from_url(url)
+        native_gone = False
         for board_token in tokens:
             res = await self._fetch_job(board_token, job_id, url)
             if res.success:
@@ -218,10 +246,13 @@ class GreenhouseBoardExtractor(BaseExtractor):
                 )
                 return res
             last_err = res.error
+            if url_tokens and board_token == url_tokens[0]:
+                native_gone = res.closed
         return ExtractionResult(
             success=False,
             method=self.method,
             error=last_err or "Greenhouse board API extraction failed",
+            closed=native_gone,
         )
 
     async def _fetch_job(self, board_token: str, job_id: str, source_url: str) -> ExtractionResult:
@@ -234,12 +265,14 @@ class GreenhouseBoardExtractor(BaseExtractor):
                 success=False,
                 method=self.method,
                 error=str(e),
+                closed=http_status_of(e) in GONE_STATUSES,
             )
         if status_code != 200:
             return ExtractionResult(
                 success=False,
                 method=self.method,
                 error=f"Greenhouse API returned {status_code}",
+                closed=status_code in GONE_STATUSES,
             )
         try:
             data = json.loads(text)
