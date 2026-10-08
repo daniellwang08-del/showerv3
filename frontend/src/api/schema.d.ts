@@ -4710,6 +4710,16 @@ export interface components {
              * @default job_sites
              */
             added_from: string;
+            /**
+             * Visibility
+             * @default all
+             */
+            visibility: string;
+            /**
+             * Visibility User Count
+             * @default 0
+             */
+            visibility_user_count: number;
             /** Pool Added At */
             pool_added_at?: string | null;
         };

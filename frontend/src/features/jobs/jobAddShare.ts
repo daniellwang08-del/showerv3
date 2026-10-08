@@ -16,7 +16,7 @@ export const JOB_SHARE_DEFAULT_OPTIONS: {
   {
     value: 'private',
     label: 'Keep them private',
-    hint: 'Only you can see jobs you add until you share them.',
+    hint: 'Only you can see jobs you add.',
   },
   {
     value: 'team',
@@ -28,11 +28,6 @@ export const JOB_SHARE_DEFAULT_OPTIONS: {
     label: 'Share with everyone',
     hint: 'Every approved account, including admins, can see them.',
   },
-  {
-    value: 'ask',
-    label: 'Ask me each time',
-    hint: 'Start private, then choose from the 5-second notice after each add.',
-  },
 ];
 
 export function jobAddCountLabel(count: number): string {
@@ -43,20 +38,61 @@ export function shareScopeLabel(scope: JobShareScope | string): string {
   return JOB_SHARE_SCOPE_LABELS[scope as JobShareScope] ?? 'Only you';
 }
 
-export function shareToastTitle(batch: JobAddBatch): string {
+export function addNoticeTitle(batch: JobAddBatch): string {
   return jobAddCountLabel(batch.job_count);
 }
 
-export function shareToastPrompt(batch: JobAddBatch): string {
-  if (batch.share_scope === 'team') return 'Shared with the team. Change who can see them:';
-  if (batch.share_scope === 'all') return 'Shared with everyone. Change who can see them:';
-  if (batch.share_scope === 'users') {
-    const n = batch.share_users.length;
-    return n
-      ? `Shared with ${n} ${n === 1 ? 'person' : 'people'}. Change who can see them:`
-      : 'Share these jobs?';
+function peopleLabel(n: number): string {
+  return `${n} ${n === 1 ? 'person' : 'people'}`;
+}
+
+/** How a fresh add was stored, from the user's default. Informational only. */
+export function addNoticeDescription(batch: JobAddBatch): string {
+  const them = batch.job_count === 1 ? 'it' : 'them';
+  switch (batch.share_scope) {
+    case 'team':
+      return `Shared with the team. Teammates can see ${them} in their jobs list.`;
+    case 'all':
+      return `Shared with everyone. Every approved account can see ${them}.`;
+    case 'users':
+      return `Shared with ${peopleLabel(batch.share_users.length)}.`;
+    default:
+      return `Private. Only you can see ${them}.`;
   }
-  return 'Share these jobs?';
+}
+
+export interface JobVisibility {
+  scope: JobShareScope;
+  label: string;
+  hint: string;
+}
+
+/** Who besides the owner can see a jobs-table row. */
+export function jobVisibility(
+  visibility: string | null | undefined,
+  userCount = 0,
+  fromMe = false,
+): JobVisibility {
+  switch (visibility) {
+    case 'private':
+      return {
+        scope: 'private',
+        label: fromMe ? 'Only you' : 'Private',
+        hint: fromMe ? 'Hidden from everyone else.' : 'Only the person who added it can see it.',
+      };
+    case 'team':
+      return { scope: 'team', label: 'Team', hint: 'Visible to every applicant on this workspace.' };
+    case 'users':
+      return {
+        scope: 'users',
+        label: userCount ? peopleLabel(userCount) : 'Specific people',
+        hint: fromMe
+          ? `You shared it with ${userCount ? peopleLabel(userCount) : 'specific people'}.`
+          : 'Shared with specific people, including you.',
+      };
+    default:
+      return { scope: 'all', label: 'Everyone', hint: 'Visible to every approved account.' };
+  }
 }
 
 export function formatAddedAgo(dateStr: string | null | undefined, now = Date.now()): string {

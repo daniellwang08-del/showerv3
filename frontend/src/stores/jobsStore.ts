@@ -51,7 +51,7 @@ async function submitExtractedUrls(
   urls: string[],
   warnings?: string[],
   source: 'paste' | 'attachment' = 'paste',
-): Promise<{ posted: number; duplicate: number; failed: number; total: number; shareToastShown: boolean }> {
+): Promise<{ posted: number; duplicate: number; failed: number; total: number; addNoticeShown: boolean }> {
   let posted = 0;
   let duplicate = 0;
   let failed = 0;
@@ -140,22 +140,22 @@ async function submitExtractedUrls(
     });
   }
 
-  let shareToastShown = false;
+  let addNoticeShown = false;
   if (jobIds.length > 0 && !(failed > 0 && posted === 0 && duplicate === 0)) {
     try {
       const { useJobAddStore } = await import('./jobAddStore');
-      const { showJobAddShareToast } = await import('@/features/jobs/JobAddShareToast');
+      const { showJobAddNotice } = await import('@/features/jobs/JobAddNotice');
       const batch = await useJobAddStore.getState().recordAfterSubmit(jobIds, source);
       if (batch) {
-        showJobAddShareToast(batch);
-        shareToastShown = true;
+        showJobAddNotice(batch);
+        addNoticeShown = true;
       }
     } catch {
-      // History / share toast is best-effort.
+      // History / add notice is best-effort.
     }
   }
 
-  if (!shareToastShown) {
+  if (!addNoticeShown) {
     try {
       const { useUIStore } = await import('./uiStore');
       useUIStore.getState().notify(toastKind, summary, 9000);
@@ -164,7 +164,7 @@ async function submitExtractedUrls(
     }
   }
 
-  return { posted, duplicate, failed, total: urls.length, shareToastShown };
+  return { posted, duplicate, failed, total: urls.length, addNoticeShown };
 }
 
 let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -237,7 +237,7 @@ type JobsState = {
   submitJob: (submittedUrl: string) => Promise<void>;
   submitAttachmentFiles: (files: File[]) => Promise<void>;
   /** Parse pasted text for http(s) URLs and submit them (same pipeline as attachments). */
-  submitPastedText: (text: string) => Promise<{ shareToastShown: boolean } | void>;
+  submitPastedText: (text: string) => Promise<{ addNoticeShown: boolean } | void>;
 
   markApplied: (items: SubmittedUrlItem[]) => Promise<void>;
   markUnapplied: (items: SubmittedUrlItem[]) => Promise<void>;
@@ -641,11 +641,11 @@ export const useJobsStore = create<JobsState>((set, get) => ({
         if (response.job_id && !response.is_duplicate) {
           try {
             const { useJobAddStore } = await import('./jobAddStore');
-            const { showJobAddShareToast } = await import('@/features/jobs/JobAddShareToast');
+            const { showJobAddNotice } = await import('@/features/jobs/JobAddNotice');
             const batch = await useJobAddStore.getState().recordAfterSubmit([response.job_id], 'manual');
-            if (batch) showJobAddShareToast(batch);
+            if (batch) showJobAddNotice(batch);
           } catch {
-            // History / share toast is best-effort.
+            // History / add notice is best-effort.
           }
         }
       } else {

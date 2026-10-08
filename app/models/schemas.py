@@ -262,6 +262,10 @@ class DashboardJobResponse(BaseModel):
     # How the job entered the pool: "manual" (FM), "admin_manual" (FA), a scraper slug
     # (remoterocketship, jobright, …), or legacy "job_sites".
     added_from: str = "job_sites"
+    # Who besides the owner can see the job: "private" | "team" | "all" | "users".
+    visibility: str = "all"
+    # People granted through "users" shares (0 for other scopes).
+    visibility_user_count: int = 0
     # When the job entered this user's visible pool (UserJobStatus.created_at,
     # falling back to Job.created_at). Used by the extension for client-side
     # "today" list derivation.

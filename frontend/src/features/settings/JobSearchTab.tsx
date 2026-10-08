@@ -163,7 +163,7 @@ export function JobSearchTab({
 
       <SectionCard
         title="When you add jobs"
-        description="Jobs you add stay hidden from others until you share them. This sets the starting choice. You can still change it from the sidebar or the 5-second notice after each add."
+        description="Every job you add is stored with this sharing. You can change it later for a single add from the sidebar history."
       >
         <RadioGroup
           aria-label="Default sharing for jobs you add"

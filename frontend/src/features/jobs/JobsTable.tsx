@@ -1,6 +1,17 @@
 import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, FileText, Loader2, Mail, MoreHorizontal } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  FileText,
+  Globe,
+  Loader2,
+  Lock,
+  Mail,
+  MoreHorizontal,
+  UserCheck,
+  Users,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,6 +29,7 @@ import {
   type JobMenuContext,
 } from './jobMenu';
 import { JobMenuItems } from './JobMenu';
+import { jobVisibility } from './jobAddShare';
 import {
   isApplied,
   isDocsBuilding,
@@ -425,7 +437,10 @@ function Cell({
           <div className={cn('truncate font-medium', applied ? 'text-muted-foreground' : 'text-foreground')}>
             {job.title || 'Untitled role'}
           </div>
-          <div className="truncate text-xs text-muted-foreground">{sub || '-'}</div>
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="truncate">{sub || '-'}</span>
+            {tier !== 'full' && <VisibilityLabel job={job} iconOnly />}
+          </div>
         </div>
       );
     }
@@ -454,7 +469,12 @@ function Cell({
       );
     }
     case 'source':
-      return <span className="truncate text-xs text-muted-foreground">{sourceLabel(job)}</span>;
+      return (
+        <div className="min-w-0">
+          <div className="truncate text-xs text-muted-foreground">{sourceLabel(job)}</div>
+          <VisibilityLabel job={job} />
+        </div>
+      );
     case 'posted':
       return <time className="text-xs tabular-nums text-muted-foreground">{relativeTime(job.posted_date)}</time>;
     case 'added':
@@ -581,6 +601,32 @@ function TrackButton({
         {children}
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+const VISIBILITY_ICONS = { private: Lock, team: Users, users: UserCheck, all: Globe } as const;
+
+function VisibilityLabel({ job, iconOnly = false }: { job: DashboardJob; iconOnly?: boolean }) {
+  const vis = jobVisibility(job.visibility, job.visibility_user_count, job.from_me);
+  const Icon = VISIBILITY_ICONS[vis.scope];
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={`Visible to: ${vis.label}`}
+            className={cn(
+              'inline-flex max-w-full shrink-0 items-center gap-1 text-[11px] leading-4',
+              vis.scope === 'private' ? 'text-foreground/80' : 'text-muted-foreground',
+            )}
+          />
+        }
+      >
+        <Icon className="size-3 shrink-0" aria-hidden />
+        {!iconOnly && <span className="truncate">{vis.label}</span>}
+      </TooltipTrigger>
+      <TooltipContent>{iconOnly ? `${vis.label}. ${vis.hint}` : vis.hint}</TooltipContent>
     </Tooltip>
   );
 }

@@ -1,6 +1,6 @@
 export type SettingsMode = 'default' | 'custom';
 
-export type JobShareDefault = 'private' | 'team' | 'all' | 'ask';
+export type JobShareDefault = 'private' | 'team' | 'all';
 export type JobShareScope = 'private' | 'team' | 'all' | 'users';
 export type ResumeFilenameMode = 'pattern' | 'static';
 export type ApplicationResumeSource = 'original' | 'tailored';

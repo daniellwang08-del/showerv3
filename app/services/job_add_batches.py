@@ -28,7 +28,7 @@ from app.models.database import (
 logger = get_logger(__name__)
 
 SHARE_SCOPES = frozenset({"private", "team", "all", "users"})
-SHARE_DEFAULTS = frozenset({"private", "team", "all", "ask"})
+SHARE_DEFAULTS = frozenset({"private", "team", "all"})
 BATCH_SOURCES = frozenset({"manual", "paste", "attachment", "extension", "site"})
 MAX_BATCH_JOBS = 2000
 MAX_SHARE_USERS = 200
@@ -56,9 +56,8 @@ def normalize_batch_source(raw: Any) -> str:
 
 
 def initial_scope_from_default(raw: Any) -> str:
-    """`ask` starts private. The toast can change it after the add."""
-    pref = normalize_share_default(raw)
-    return "private" if pref == "ask" else pref
+    """The user's saved default. Legacy `ask` normalizes to private."""
+    return normalize_share_default(raw)
 
 
 def _unique_ids(values: Iterable[str], *, limit: int) -> list[str]:
@@ -217,6 +216,65 @@ async def users_who_can_see_job(
         )
         visible.update(row[0] for row in shared.all())
     return visible
+
+
+# Widest grant wins: a job any add session shares with everyone is public.
+_SCOPE_RANK = {"private": 0, "users": 1, "team": 2, "all": 3}
+
+
+async def job_visibility_map(session: AsyncSession, jobs: Iterable[Job]) -> dict[str, tuple[str, int]]:
+    """Who besides the owner can see each job: ``{job_id: (scope, people)}``.
+
+    Mirrors ``job_share_visibility_clause``: unowned, unbatched inventory is
+    ``all``; an owned job with no add session is ``private``; otherwise the
+    widest scope across its add sessions. ``people`` counts distinct users
+    granted through ``users`` sessions (0 for other scopes).
+    """
+    job_list = [job for job in jobs if job is not None]
+    ids = [job.id for job in job_list]
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(JobAddBatchJob.job_id, JobAddBatch.id, JobAddBatch.share_scope)
+            .join(JobAddBatch, JobAddBatch.id == JobAddBatchJob.batch_id)
+            .where(JobAddBatchJob.job_id.in_(ids))
+        )
+    ).all()
+    scopes: dict[str, str] = {}
+    user_batches: dict[str, set[str]] = {}
+    for job_id, batch_id, raw_scope in rows:
+        scope = normalize_share_scope(raw_scope)
+        current = scopes.get(job_id)
+        if current is None or _SCOPE_RANK[scope] > _SCOPE_RANK[current]:
+            scopes[job_id] = scope
+        if scope == "users":
+            user_batches.setdefault(job_id, set()).add(batch_id)
+
+    people_by_batch: dict[str, set[str]] = {}
+    wanted = {bid for bids in user_batches.values() for bid in bids}
+    if wanted:
+        share_rows = await session.execute(
+            select(JobAddBatchShareUser.batch_id, JobAddBatchShareUser.user_id).where(
+                JobAddBatchShareUser.batch_id.in_(wanted)
+            )
+        )
+        for batch_id, uid in share_rows.all():
+            people_by_batch.setdefault(batch_id, set()).add(uid)
+
+    out: dict[str, tuple[str, int]] = {}
+    for job in job_list:
+        scope = scopes.get(job.id)
+        if scope is None:
+            scope = "private" if job_owner_id(job.raw_metadata) else "all"
+        people = 0
+        if scope == "users":
+            granted: set[str] = set()
+            for batch_id in user_batches.get(job.id, ()):
+                granted |= people_by_batch.get(batch_id, set())
+            people = len(granted)
+        out[job.id] = (scope, people)
+    return out
 
 
 async def batch_job_ids(session: AsyncSession, batch_id: str) -> list[str]:

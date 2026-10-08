@@ -91,6 +91,10 @@ export interface DashboardJob {
   added_by_name?: string | null;
   /** How the job entered the pool: manual (FM) | admin_manual (FA) | scraper slug | legacy job_sites. */
   added_from?: 'manual' | 'admin_manual' | 'job_sites' | string | null;
+  /** Who besides the owner can see the job. */
+  visibility?: 'private' | 'team' | 'all' | 'users' | string;
+  /** People granted through a "users" share (0 for other scopes). */
+  visibility_user_count?: number;
   /** When the job entered this user's visible pool (for "today" filtering). */
   pool_added_at?: string | null;
 }

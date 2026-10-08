@@ -81,6 +81,9 @@ export const useJobAddStore = create<JobAddState>((set, get) => ({
     try {
       const batch = await updateJobAddBatchShare(batchId, { share_scope, user_ids });
       set((s) => ({ batches: upsertBatch(s.batches, batch) }));
+      void import('./jobsStore')
+        .then(({ useJobsStore }) => useJobsStore.getState().refreshLists({ showLoading: false, reset: false }))
+        .catch(() => undefined);
       return batch;
     } catch (err) {
       toast.error(extractApiErrorMessage(err, 'Could not update who can see these jobs.'));
