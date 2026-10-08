@@ -142,12 +142,19 @@ export function monogram(label) {
 
 const done = (v) => String(v || "").toLowerCase() === "completed";
 
-/** Where a job is in the tailoring pipeline, for one status chip. */
+/** Where a job is in the document pipeline, for one status chip. */
 export function resumeStage(job) {
   const content = String(job.content_generation_status || "").toLowerCase();
   const docx = String(job.resume_build_status || job.resume_docx_status || "").toLowerCase();
   const pdf = String(job.resume_pdf_status || "").toLowerCase();
   if (done(docx) || done(pdf)) return { id: "ready", label: "Resume ready", tone: "ok" };
+  // Original resume mode: the imported file is used as is, only a cover letter is built.
+  if (done(content) && (docx === "skipped" || pdf === "skipped")) {
+    const cover = [job.cover_letter_pdf_status, job.cover_letter_docx_status].map((v) => String(v || "").toLowerCase());
+    if (cover.some(done)) return { id: "ready", label: "Cover letter ready", tone: "ok" };
+    if (cover.includes("failed")) return { id: "failed", label: "Cover letter failed", tone: "danger" };
+    return { id: "building", label: "Writing cover letter", tone: "warn" };
+  }
   if (content === "failed" || content === "skipped" || docx === "failed" || pdf === "failed") {
     return { id: "failed", label: "Resume failed", tone: "danger" };
   }

@@ -512,6 +512,10 @@ class SessionDocsOut(BaseModel):
     cover_docx: bool = False
     content_status: str | None = None
     build_error: str | None = None
+    # Which résumé applications upload: "tailored" (per-job build) or "original".
+    resume_source: str = "tailored"
+    # The imported résumé file used in original mode (and before a tailored build exists).
+    original_filename: str | None = None
 
 
 class SessionOpenOut(ApplicationSessionOut):
@@ -694,6 +698,9 @@ async def assistant_chat(req: AssistantChatRequest, current_user: dict = Depends
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         profile_text = user.profile_openai_cache or ""
+        documents_text = await _application_documents_text(session, user, req.job_id)
+        if documents_text:
+            profile_text = (profile_text + "\n\n" + documents_text).strip()
 
         # Prefer the session's frozen snapshot; fall back to the live job.
         sess = (
@@ -1431,20 +1438,9 @@ async def assistant_autofill(
         eeo_text = _eeo_preferences_text(eeo_prefs)
         if eeo_text:
             profile_text = (profile_text + "\n\n" + eeo_text).strip()
-        if normalize_application_resume_source(getattr(user, "application_resume_source", None)) == "tailored":
-            build_row = (
-                await session.execute(
-                    select(ResumeBuildResult).where(
-                        ResumeBuildResult.user_id == user_id,
-                        ResumeBuildResult.job_id == req.job_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            tailored_text = _tailored_resume_text(
-                build_row.tailored_resume_data if build_row else None, user.work_experience or []
-            )
-            if tailored_text:
-                profile_text = (profile_text + "\n\n" + tailored_text).strip()
+        documents_text = await _application_documents_text(session, user, req.job_id)
+        if documents_text:
+            profile_text = (profile_text + "\n\n" + documents_text).strip()
 
         sess = (
             await session.execute(
@@ -1650,6 +1646,61 @@ def _tailored_resume_text(tailored: Any, profile_we: list) -> str:
             if w.get("description"):
                 lines.append(w["description"])
     return "\n".join(line for line in lines if line is not None).strip()
+
+
+def _original_resume_block(text: str) -> str:
+    body = str(text or "").strip()[:24_000]
+    if not body:
+        return ""
+    return (
+        "## Original Resume (the file uploaded with this application)\n"
+        "This is the résumé the employer receives. Answer summary, skills, and experience questions from it, "
+        "and never claim anything it does not support.\n\n" + body
+    )
+
+
+def _cover_letter_block(body: str) -> str:
+    text = str(body or "").strip()
+    if not text:
+        return ""
+    return (
+        "## Cover Letter For This Job\n"
+        "Paste this text unchanged into cover letter fields. Keep other answers consistent with it.\n\n" + text
+    )
+
+
+async def _application_documents_text(session: Any, user: Any, job_id: str) -> str:
+    """The résumé and cover letter this application uses, for the LLM prompts.
+
+    Tailored mode uses the job's tailored résumé. Original mode, or tailored
+    mode before a tailored résumé exists (the upload then falls back to the
+    original file), uses the text of the résumé file the user imported. The
+    job's cover letter is added in both modes.
+    """
+    from app.models.database import UserOriginalResume
+    from app.services.job_pipeline_mode import has_tailored_resume
+
+    build_row = (
+        await session.execute(
+            select(ResumeBuildResult).where(
+                ResumeBuildResult.user_id == user.id,
+                ResumeBuildResult.job_id == job_id,
+            )
+        )
+    ).scalar_one_or_none()
+    mode = normalize_application_resume_source(getattr(user, "application_resume_source", None))
+    tailored = build_row.tailored_resume_data if build_row else None
+    blocks: list[str] = []
+    if mode == "tailored" and has_tailored_resume(tailored):
+        blocks.append(_tailored_resume_text(tailored, user.work_experience or []))
+    else:
+        original_text = await session.scalar(
+            select(UserOriginalResume.text).where(UserOriginalResume.user_id == user.id)
+        )
+        blocks.append(_original_resume_block(original_text or ""))
+    cover = build_row.cover_letter_data if build_row and isinstance(build_row.cover_letter_data, dict) else {}
+    blocks.append(_cover_letter_block(cover.get("body") or ""))
+    return "\n\n".join(b for b in blocks if b).strip()
 
 
 def _eeo_preferences_text(prefs: Any) -> str:
@@ -2333,9 +2384,14 @@ async def get_session_detail(
         )
 
 
-def _docs_from_build(row: ResumeBuildResult | None) -> SessionDocsOut:
+def _docs_from_build(
+    row: ResumeBuildResult | None,
+    *,
+    resume_source: str = "tailored",
+    original_filename: str | None = None,
+) -> SessionDocsOut:
     if row is None:
-        return SessionDocsOut()
+        return SessionDocsOut(resume_source=resume_source, original_filename=original_filename)
 
     def done(value: str | None) -> bool:
         return str(value or "").lower() == "completed"
@@ -2347,6 +2403,30 @@ def _docs_from_build(row: ResumeBuildResult | None) -> SessionDocsOut:
         cover_docx=done(row.cover_letter_docx_status),
         content_status=getattr(row, "content_generation_status", None),
         build_error=row.error_message or getattr(row, "content_generation_error", None),
+        resume_source=resume_source,
+        original_filename=original_filename,
+    )
+
+
+async def _session_docs(session: Any, user_id: str, job_id: str) -> SessionDocsOut:
+    from app.models.database import UserOriginalResume
+
+    build = (
+        await session.execute(
+            select(ResumeBuildResult).where(
+                ResumeBuildResult.user_id == user_id,
+                ResumeBuildResult.job_id == job_id,
+            )
+        )
+    ).scalar_one_or_none()
+    raw_source = await session.scalar(select(User.application_resume_source).where(User.id == user_id))
+    filename = await session.scalar(
+        select(UserOriginalResume.filename).where(UserOriginalResume.user_id == user_id)
+    )
+    return _docs_from_build(
+        build,
+        resume_source=normalize_application_resume_source(raw_source),
+        original_filename=filename,
     )
 
 
@@ -2377,14 +2457,7 @@ async def open_session(
                 )
             )
         ).scalar_one_or_none()
-        build = (
-            await session.execute(
-                select(ResumeBuildResult).where(
-                    ResumeBuildResult.user_id == user_id,
-                    ResumeBuildResult.job_id == job_id,
-                )
-            )
-        ).scalar_one_or_none()
+        docs = await _session_docs(session, user_id, job_id)
         pumble_posted_at = (
             await session.execute(select(Job.pumble_posted_at).where(Job.id == job_id))
         ).scalar_one_or_none()
@@ -2393,24 +2466,16 @@ async def open_session(
         **base.model_dump(),
         applied_at=_iso(applied_at) if applied_at else None,
         pumble_posted=pumble_posted_at is not None,
-        docs=_docs_from_build(build),
+        docs=docs,
     )
 
 
 @assistant_router.get("/assistant/sessions/{job_id}/docs", response_model=SessionDocsOut)
 async def session_docs(job_id: str, current_user: dict = Depends(get_current_user)) -> SessionDocsOut:
-    """Tailored resume / cover letter readiness for one job (200 even before a build exists)."""
+    """Resume / cover letter readiness for one job (200 even before a build exists)."""
     user_id = _require_user_id(current_user)
     async with get_session() as session:
-        build = (
-            await session.execute(
-                select(ResumeBuildResult).where(
-                    ResumeBuildResult.user_id == user_id,
-                    ResumeBuildResult.job_id == job_id,
-                )
-            )
-        ).scalar_one_or_none()
-    return _docs_from_build(build)
+        return await _session_docs(session, user_id, job_id)
 
 
 @assistant_router.patch("/assistant/sessions/{job_id}", response_model=ApplicationSessionOut)

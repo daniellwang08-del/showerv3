@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, bindparam, case, func, or_, select, text
+from sqlalchemy import and_, bindparam, case, func, not_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import (
@@ -17,6 +17,7 @@ from app.models.database import (
     ValidJobUserApplication,
 )
 from app.models.schemas import ExtractionStatus
+from app.services.job_pipeline_mode import documents_ready_clause
 
 BEST_MATCH_SCORE = 75
 GOOD_MATCH_SCORE = 50
@@ -174,7 +175,7 @@ async def fetch_dashboard_stats(
                 ).label("extracted_jobs"),
                 func.count().filter(
                     and_(
-                        ResumeBuildResult.resume_docx_status == "completed",
+                        documents_ready_clause(ResumeBuildResult),
                         ValidJobUserApplication.id.is_(None),
                     )
                 ).label("ready_jobs"),
@@ -183,7 +184,7 @@ async def fetch_dashboard_stats(
                     and_(
                         added_at >= day_start,
                         added_at < day_end,
-                        ResumeBuildResult.resume_docx_status == "completed",
+                        documents_ready_clause(ResumeBuildResult),
                         ValidJobUserApplication.id.is_(None),
                     )
                 ).label("today_ready_jobs"),
@@ -197,7 +198,7 @@ async def fetch_dashboard_stats(
                         or_(
                             ResumeBuildResult.id.is_(None),
                             ResumeBuildResult.resume_docx_status.is_(None),
-                            ResumeBuildResult.resume_docx_status != "completed",
+                            not_(documents_ready_clause(ResumeBuildResult)),
                         ),
                         ValidJobUserApplication.id.is_(None),
                     )
@@ -234,7 +235,7 @@ async def fetch_dashboard_stats(
                         or_(
                             ResumeBuildResult.id.is_(None),
                             ResumeBuildResult.resume_docx_status.is_(None),
-                            ResumeBuildResult.resume_docx_status != "completed",
+                            not_(documents_ready_clause(ResumeBuildResult)),
                         ),
                         ValidJobUserApplication.id.is_(None),
                     )

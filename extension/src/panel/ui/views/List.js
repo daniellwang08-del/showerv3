@@ -7,7 +7,7 @@ import { LISTS, MIN_SCORES, SORTS } from "../../lists.js";
 import { Avatar, Badge, Banner, Button, Empty, Pager, Score, Select, SkeletonRows } from "../components.js";
 import { Icon } from "../icons.js";
 
-function JobRow({ job, showBuild, run }) {
+function JobRow({ job, showBuild, run, original }) {
   const sub = [job.company, job.location || (job.mode && WORK_MODE_LABEL[job.mode])].filter(Boolean).join(" · ");
   const modeLabel = job.mode && job.location && !job.location.toLowerCase().includes(job.mode) ? WORK_MODE_LABEL[job.mode] : null;
   const posted = timeAgo(job.postedAt);
@@ -31,7 +31,7 @@ function JobRow({ job, showBuild, run }) {
       ${showBuild && job.stage.id === "none"
         ? run && run.status === "done"
           ? html`<${Badge} tone="warn" dot>Queued</${Badge}>`
-          : html`<${Button} size="sm" variant="secondary" icon="sparkles" busy=${run && run.status === "running"} onClick=${() => buildForJob(job)} title="Build a tailored resume">Build</${Button}>`
+          : html`<${Button} size="sm" variant="secondary" icon="sparkles" busy=${run && run.status === "running"} onClick=${() => buildForJob(job)} title=${original ? "Write a cover letter. Your original resume is used as is." : "Build a tailored resume and cover letter"}>Build</${Button}>`
         : null}
     </span>
   </div>`;
@@ -62,6 +62,7 @@ export function ListView({ s }) {
   const filtered = !!(s.filters.q || s.filters.minScore || s.filters.remoteOnly);
   const runs = s.tailor.runs;
   const cards = list.items.map(toJobCard);
+  const original = ((s.cache && s.cache.settings) || {}).application_resume_source === "original";
   return html`<div class="stack list-view">
     <div class="list-head">
       <p class="muted small">${def.hint}</p>
@@ -83,6 +84,7 @@ export function ListView({ s }) {
                 key=${job.id}
                 job=${job}
                 showBuild=${!!def.tailor}
+                original=${original}
                 run=${runs.find((r) => r.jobId === job.id)}
               />`,
             )}

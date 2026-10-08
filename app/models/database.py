@@ -296,6 +296,30 @@ class ResumeDocument(Base):
     )
 
 
+class UserOriginalResume(Base):
+    """The résumé file the user imported, byte for byte, one per user.
+
+    "My original resume" mode uploads this file to applications unchanged and
+    fills answers from its text, instead of re-rendering the profile through a
+    Resume Studio theme."""
+    __tablename__ = "user_original_resumes"
+
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    filename = Column(String(255), nullable=False)
+    kind = Column(String(10), nullable=False)  # pdf | docx
+    byte_size = Column(Integer, nullable=False, default=0)
+    file_bytes = deferred(Column(LargeBinary, nullable=False))
+    # PDF rendering of a DOCX upload, for forms that only take PDFs. Built lazily.
+    pdf_bytes = deferred(Column(LargeBinary, nullable=True))
+    text = deferred(Column(Text, nullable=True))
+    uploaded_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
 
 class ProfileSourceDocument(Base):
     """Per-user project source documents for resume tailoring (C: structured on upload)."""

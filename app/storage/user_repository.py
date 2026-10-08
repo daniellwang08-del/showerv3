@@ -613,7 +613,7 @@ class UserRepository:
             "job_share_default": (
                 str(getattr(user, "job_share_default", None) or "private").strip().lower()
                 if str(getattr(user, "job_share_default", None) or "private").strip().lower()
-                in ("private", "team", "all", "ask")
+                in ("private", "team", "all")
                 else "private"
             ),
             "resume_filename_mode": (
@@ -812,10 +812,6 @@ class UserRepository:
                 # Full implies match.
                 user.auto_prepare_match = True
 
-        if normalize_application_resume_source(getattr(user, "application_resume_source", None)) == "original":
-            # Original résumé mode never writes tailored documents in the background.
-            user.auto_prepare_full = False
-
         if manual_submit_pipeline is not None:
             mode = str(manual_submit_pipeline).strip().lower()
             if mode not in ("extract", "match", "full"):
@@ -824,8 +820,11 @@ class UserRepository:
 
         if job_share_default is not None:
             share = str(job_share_default).strip().lower()
-            if share not in ("private", "team", "all", "ask"):
-                raise ValueError("job_share_default must be 'private', 'team', 'all', or 'ask'")
+            if share == "ask":
+                # Retired: adds no longer prompt, so "ask" meant private anyway.
+                share = "private"
+            if share not in ("private", "team", "all"):
+                raise ValueError("job_share_default must be 'private', 'team', or 'all'")
             user.job_share_default = share
 
         if resume_filename_mode is not None or resume_filename_value is not None:

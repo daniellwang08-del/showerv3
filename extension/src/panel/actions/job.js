@@ -30,7 +30,15 @@ function docsFrom(raw) {
     coverDocx: !!d.cover_docx,
     contentStatus: d.content_status || null,
     buildError: d.build_error || null,
+    resumeSource: d.resume_source === "original" ? "original" : d.resume_source === "tailored" ? "tailored" : null,
+    originalFilename: d.original_filename || null,
   };
+}
+
+/** Résumé mode for one job's documents: the server's answer, else the cached account setting. */
+export function docsResumeSource(docs) {
+  if (docs && docs.resumeSource) return docs.resumeSource;
+  return ((state.cache && state.cache.settings) || {}).application_resume_source === "original" ? "original" : "tailored";
 }
 
 function jobFromSession(s) {
@@ -150,7 +158,9 @@ function patchJob(jobId, patch) {
 let watchTimer = null;
 
 function docsComplete(d) {
-  return (d.resumePdf || d.resumeDocx) && (d.coverPdf || d.coverDocx);
+  const cover = d.coverPdf || d.coverDocx;
+  if (docsResumeSource(d) === "original") return cover;
+  return (d.resumePdf || d.resumeDocx) && cover;
 }
 
 function docsBuilding(d) {
@@ -227,14 +237,14 @@ export async function runAnalysis() {
   }
 }
 
-export async function downloadDoc(fileTypes, label) {
+export async function downloadDoc(fileTypes, label, { source = "tailored" } = {}) {
   const job = state.job;
   if (!job) return;
   let lastErr = null;
   for (const fileType of [].concat(fileTypes).filter(Boolean)) {
     try {
-      // The Documents panel lists this job's built files, so fetch those even in original mode.
-      const file = await api.downloadResumeFile(job.job_id, fileType, { source: "tailored" });
+      // Built files come from this job's build; "original" fetches the imported resume file.
+      const file = await api.downloadResumeFile(job.job_id, fileType, { source });
       const binary = atob(file.base64 || "");
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

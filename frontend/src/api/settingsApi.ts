@@ -93,10 +93,10 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     )
       ? (data.manual_submit_pipeline as 'extract' | 'match' | 'full')
       : 'full',
-    job_share_default: (['private', 'team', 'all', 'ask'] as const).includes(
-      data.job_share_default as 'private' | 'team' | 'all' | 'ask',
+    job_share_default: (['private', 'team', 'all'] as const).includes(
+      data.job_share_default as 'private' | 'team' | 'all',
     )
-      ? (data.job_share_default as 'private' | 'team' | 'all' | 'ask')
+      ? (data.job_share_default as 'private' | 'team' | 'all')
       : 'private',
     resume_filename_mode: data.resume_filename_mode === 'static' ? 'static' : 'pattern',
     resume_filename_value: String(data.resume_filename_value ?? '{firstname}_{lastname}_{kind}'),
@@ -238,6 +238,27 @@ export async function saveApplicationResumeSource(
   body: Pick<UserSettingsUpdate, 'application_resume_source'>,
 ) {
   return updateUserSettings(body);
+}
+
+/** The resume file applications upload in "My original resume" mode. */
+export interface OriginalResumeFile {
+  filename: string;
+  kind: 'pdf' | 'docx' | string;
+  byte_size: number;
+  uploaded_at: string | null;
+  has_text: boolean;
+}
+
+export async function fetchOriginalResume(): Promise<OriginalResumeFile | null> {
+  const { data } = await apiClient.get<OriginalResumeFile | null>('/profile/original-resume');
+  return data ?? null;
+}
+
+export async function uploadOriginalResume(file: File): Promise<OriginalResumeFile> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const { data } = await apiClient.put<OriginalResumeFile>('/profile/original-resume', fd);
+  return data;
 }
 
 export async function saveMatchQualityCheckSettings(

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Search } from 'lucide-react';
+import { FileText, Loader2, Search, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { SectionCard } from '@/components/app/PageLayout';
 import { SaveBar } from '@/components/app/SaveBar';
@@ -32,6 +32,7 @@ import {
   saveManualSubmitPipelineSettings,
   saveMatchQualityCheckSettings,
   saveMinMatchScoreSettings,
+  uploadOriginalResume,
   type DedupRulesPreview,
   type MinMatchScoreDraft,
   type MinMatchScorePreview,
@@ -40,7 +41,7 @@ import type { ApplicationResumeSource, MatchQualityCheckMode, SettingsMode, User
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { ModeToggle, SettingRow, StatTiles } from './controls';
 import { RESUME_SOURCE_OPTIONS } from './resumeSourceOptions';
-import { refreshJobStores, SETTINGS_KEY, useSetSettings } from './queries';
+import { ORIGINAL_RESUME_KEY, refreshJobStores, SETTINGS_KEY, useOriginalResumeQuery, useSetSettings } from './queries';
 import { useDraft, useReportDirty } from './useDraft';
 
 const DEDUP_SLIDER_MAX = 365;
@@ -494,6 +495,73 @@ function useImmediateSetting<T extends Partial<UserSettings>>(
   });
 }
 
+const formatBytes = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** The imported resume file that original mode uploads unchanged, with a way to replace it. */
+function OriginalResumeFileRow({ required }: { required: boolean }) {
+  const queryClient = useQueryClient();
+  const file = useOriginalResumeQuery();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const upload = useMutation({
+    mutationFn: (picked: File) => uploadOriginalResume(picked),
+    onSuccess: (data) => {
+      queryClient.setQueryData(ORIGINAL_RESUME_KEY, data);
+      toast.success(`Saved ${data.filename}. Applications upload it as is.`);
+    },
+    onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not save that file. Upload a PDF or DOCX.')),
+  });
+  const current = file.data;
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5">
+      <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <div className="min-w-0 flex-1 text-sm">
+        {file.isLoading ? (
+          <span className="text-muted-foreground">Checking your resume file…</span>
+        ) : current ? (
+          <>
+            <p className="truncate font-medium">{current.filename}</p>
+            <p className="text-xs text-muted-foreground">
+              {current.kind === 'docx' ? 'Word file' : 'PDF'}, {formatBytes(current.byte_size)}. Uploaded to applications
+              exactly as imported.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-medium">No resume file on record</p>
+            <p className={required ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+              {required
+                ? 'Add the resume you want employers to receive. Until then, applications get a copy rendered from your profile.'
+                : 'Add your resume file so applications can use it before a tailored resume is built.'}
+            </p>
+          </>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        className="sr-only"
+        aria-label="Resume file for applications"
+        onChange={(e) => {
+          const picked = e.currentTarget.files?.[0];
+          e.currentTarget.value = '';
+          if (picked) upload.mutate(picked);
+        }}
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={upload.isPending}
+        onClick={() => inputRef.current?.click()}
+      >
+        {upload.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
+        {current ? 'Replace file' : 'Add resume file'}
+      </Button>
+    </div>
+  );
+}
+
 function AutomationSection({ settings }: { settings: UserSettings }) {
   const autoPrepare = useImmediateSetting(
     saveAutoPrepareSettings,
@@ -512,7 +580,7 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
     saveApplicationResumeSource,
     (body) =>
       body.application_resume_source === 'original'
-        ? 'Saved. Jobs are scored only, and applications use your original resume.'
+        ? 'Saved. Jobs get a cover letter, and applications use your original resume file.'
         : 'Saved. Jobs you score from now on get a tailored resume and cover letter.',
     'Failed to save the resume for applications.',
   );
@@ -554,12 +622,12 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
             </FieldLabel>
           ))}
         </RadioGroup>
-        {!original ? (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Jobs scored before you switched keep their original resume until you build one from the job, or turn on
-            Prepare documents automatically below.
-          </p>
-        ) : null}
+        <p className="mt-3 text-xs text-muted-foreground">
+          {original
+            ? 'Jobs prepared before you switched keep their documents until you build again from the job.'
+            : 'Jobs scored before you switched keep their original resume until you build one from the job, or turn on Prepare documents automatically below.'}
+        </p>
+        <OriginalResumeFileRow required={original} />
       </SectionCard>
 
       <SectionCard
@@ -586,15 +654,15 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
             title="Prepare documents automatically"
             description={
               original
-                ? 'Off while you apply with your original resume. Choose Tailored resume per job above to use it.'
+                ? 'Score plus a cover letter, so jobs are ready to apply with your original resume. Turns on scoring too.'
                 : 'Score plus a tailored resume and cover letter, so jobs are ready to apply. Turns on scoring too.'
             }
           >
             <Switch
               aria-labelledby="auto-full-label"
               aria-describedby="auto-full-desc"
-              checked={full && !original}
-              disabled={autoPrepare.isPending || original}
+              checked={full}
+              disabled={autoPrepare.isPending}
               onCheckedChange={(next) => autoPrepare.mutate({ auto_prepare_match: next ? true : match, auto_prepare_full: next })}
             />
           </SettingRow>
@@ -630,8 +698,10 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
                   <FieldTitle id={`pipeline-${opt.value}-title`}>{opt.label}</FieldTitle>
                   <FieldDescription id={`pipeline-${opt.value}-hint`}>
                     {original && opt.value === 'full'
-                      ? 'Extract and score the match. Tailoring is skipped while you apply with your original resume.'
-                      : opt.hint}
+                      ? 'Extract, score, and write a cover letter. Your original resume is used as is.'
+                      : original && opt.value === 'match'
+                        ? 'Extract and score the match. Skip the cover letter.'
+                        : opt.hint}
                   </FieldDescription>
                 </FieldContent>
               </Field>

@@ -36,6 +36,7 @@ from app.core.config import get_settings
 from app.core.exceptions import AIParsingError
 from app.core.logging import get_logger
 from app.core.llm_client import chat_completion_with_empty_retry, get_llm_client_for_user
+from app.services.job_pipeline_mode import DOCUMENTS_READY_SQL
 
 logger = get_logger(__name__)
 
@@ -650,9 +651,9 @@ def _build_scraper_search_sql(
             sql += f" AND ({' OR '.join(clauses)})"
 
     if spec.has_resume is True:
-        sql += " AND rb.resume_docx_status = 'completed'"
+        sql += f" AND {DOCUMENTS_READY_SQL}"
     elif spec.has_resume is False:
-        sql += " AND (rb.resume_docx_status IS NULL OR rb.resume_docx_status <> 'completed')"
+        sql += f" AND (rb.resume_docx_status IS NULL OR NOT {DOCUMENTS_READY_SQL})"
 
     # ── Recency ───────────────────────────────────────────────────────────────
 

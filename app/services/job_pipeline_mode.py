@@ -23,6 +23,39 @@ def normalize_application_resume_source(raw: Any) -> ApplicationResumeSource:
     return "original" if str(raw or "").strip().lower() == "original" else "tailored"
 
 
+def has_tailored_resume(data: Any) -> bool:
+    """True when a build row holds real tailored résumé content.
+
+    Autofill also caches lookups on that column, so a dict alone is not enough.
+    """
+    if not isinstance(data, dict):
+        return False
+    return bool(data.get("work_experience") or data.get("profile_summary") or data.get("technical_skills"))
+
+
+def documents_ready_clause(build_model: Any) -> Any:
+    """SQL: the job's application documents are built.
+
+    Tailored mode needs the tailored résumé. Original résumé mode builds only
+    the cover letter (résumé files are ``skipped``), so that counts too.
+    """
+    from sqlalchemy import and_, or_
+
+    return or_(
+        build_model.resume_docx_status == "completed",
+        and_(
+            build_model.resume_docx_status == "skipped",
+            build_model.cover_letter_docx_status == "completed",
+        ),
+    )
+
+
+DOCUMENTS_READY_SQL = (
+    "(rb.resume_docx_status = 'completed' OR "
+    "(rb.resume_docx_status = 'skipped' AND rb.cover_letter_docx_status = 'completed'))"
+)
+
+
 async def user_uses_original_resume(user_id: str | None) -> bool:
     """True when the user applies with their original résumé (no per-job tailoring)."""
     if not user_id:

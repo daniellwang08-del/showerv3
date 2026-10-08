@@ -1147,6 +1147,7 @@ async def generate_tailored_content_phase_b(
     project_evidence_context: str = "",
     user_id: str | None = None,
     include_cover_letter: bool = True,
+    include_resume: bool = True,
     on_stage: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[dict | None, dict | None]:
     """
@@ -1154,6 +1155,7 @@ async def generate_tailored_content_phase_b(
     Returns (tailored_resume_or_None, cover_letter_or_None).
 
     ``include_cover_letter=False`` skips the cover letter call entirely.
+    ``include_resume=False`` writes only the cover letter (original résumé mode).
     ``on_stage`` is awaited with "quality_retry" when a rewrite pass starts.
     """
     settings = get_settings()
@@ -1261,6 +1263,16 @@ async def generate_tailored_content_phase_b(
 
     async def _no_result() -> None:
         return None
+
+    if not include_resume:
+        if not include_cover_letter:
+            return None, None
+        cover_letter = await _cover_call("phase_b_cover_letter")
+        if not cover_letter:
+            cover_letter = await _cover_call("phase_b_cover_letter_retry")
+        if not cover_letter:
+            logger.warning("cover_letter_section_missing_or_invalid", resume="original")
+        return None, cover_letter
 
     first_resume, cover_letter = await asyncio.gather(
         _resume_call(user_content, "phase_b"),

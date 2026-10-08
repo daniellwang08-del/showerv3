@@ -39,6 +39,7 @@ from app.services.resume_design_compiler import compile_design
 from app.services.resume_design_service import load_design_for_render
 from app.api.websocket import publish_resume_event
 from app.services.document_content import tailored_design
+from app.services.job_pipeline_mode import has_tailored_resume
 from app.services.document_renderer import (
     profile_payload,
     render_cover_letter_pdf,
@@ -191,11 +192,14 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                 logger.warning("resume_build_no_row", job_id=job_id)
                 return None
 
-            tailored = build.tailored_resume_data
+            tailored = build.tailored_resume_data if has_tailored_resume(build.tailored_resume_data) else None
             cover_data = build.cover_letter_data
-            if not tailored:
+            has_cover_body = bool(isinstance(cover_data, dict) and cover_data.get("body"))
+            if not tailored and not has_cover_body:
                 logger.warning("resume_build_no_tailored_data", job_id=job_id)
                 return None
+            # Original résumé mode: the user's own file is used as is, so only the cover letter is built.
+            cover_only = not tailored
 
             user = await user_repo.get_by_id(user_id)
             if not user:
@@ -229,17 +233,20 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
             cover_scratch = out_dir / f"_scratch_{cover_stem}.docx"
 
             results: dict[str, str | None] = {}
-            render_context = build_render_context(user, tailored, job)
             profile = profile_payload(user)
-            job_design = tailored_design(design, profile, tailored)
+            render_context = None if cover_only else build_render_context(user, tailored, job)
+            job_design = None if cover_only else tailored_design(design, profile, tailored)
             display_name = " ".join(p for p in (first, last) if p) or "Resume"
             build_id = build.id
-            has_cover_body = bool(cover_data and cover_data.get("body"))
 
             # --- Parallel DOCX fills (independent template dirs) ---
-            await _mark_processing(
-                repo, build_id, user_id=user_id, job_id=job_id, file_type="resume_docx",
-            )
+            if cover_only:
+                for ft in ("resume_docx", "resume_pdf"):
+                    await repo.update_file_status(build_id, ft, "skipped")
+            else:
+                await _mark_processing(
+                    repo, build_id, user_id=user_id, job_id=job_id, file_type="resume_docx",
+                )
             if has_cover_body:
                 await _mark_processing(
                     repo, build_id, user_id=user_id, job_id=job_id, file_type="cover_letter_docx",
@@ -288,7 +295,7 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
                 except Exception as e:
                     return ("cover_letter_docx", None, str(e))
 
-            docx_tasks = [_resume_docx_task()]
+            docx_tasks = [] if cover_only else [_resume_docx_task()]
             if has_cover_body:
                 docx_tasks.append(_cover_docx_task())
 

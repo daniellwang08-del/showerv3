@@ -25,6 +25,8 @@ vi.mock('@/api/settingsApi', () => ({
   saveAutoPrepareSettings: vi.fn(),
   saveManualSubmitPipelineSettings: vi.fn(),
   saveApplicationResumeSource: vi.fn(),
+  fetchOriginalResume: vi.fn(async () => null),
+  uploadOriginalResume: vi.fn(),
   saveMatchQualityCheckSettings: vi.fn(),
   saveJobShareDefaultSettings: vi.fn(),
   saveResumeTailoringPromptSettings: vi.fn(),
@@ -249,12 +251,14 @@ describe('PreferencesPage', () => {
   });
 
   it('saves the default job-sharing choice immediately', async () => {
-    api.saveJobShareDefaultSettings.mockResolvedValue(makeSettings({ job_share_default: 'ask' }));
+    api.saveJobShareDefaultSettings.mockResolvedValue(makeSettings({ job_share_default: 'team' }));
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole('radio', { name: 'Ask me each time' }));
+    expect(await screen.findByRole('radio', { name: /Keep them private/ })).toBeChecked();
+    expect(screen.queryByRole('radio', { name: /Ask me each time/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: /Share with the team/ }));
     await waitFor(() =>
-      expect(api.saveJobShareDefaultSettings).toHaveBeenCalledWith({ job_share_default: 'ask' }),
+      expect(api.saveJobShareDefaultSettings).toHaveBeenCalledWith({ job_share_default: 'team' }),
     );
   });
 
@@ -325,14 +329,14 @@ describe('PreferencesPage', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
   });
 
-  it('saves the resume for applications and locks document prep in original mode', async () => {
+  it('saves the resume for applications and keeps cover letter prep in original mode', async () => {
     api.saveApplicationResumeSource.mockResolvedValue(
-      makeSettings({ application_resume_source: 'original', auto_prepare_full: false }),
+      makeSettings({ application_resume_source: 'original', auto_prepare_match: true, auto_prepare_full: true }),
     );
+    api.fetchUserSettings.mockResolvedValue(makeSettings({ auto_prepare_match: true, auto_prepare_full: true }));
     const user = userEvent.setup();
     renderPage('/app/preferences?tab=matching');
     expect(await screen.findByRole('radio', { name: 'Tailored resume per job' })).toBeChecked();
-    expect(screen.getByRole('switch', { name: 'Prepare documents automatically' })).not.toHaveAttribute('data-disabled');
 
     await user.click(screen.getByRole('radio', { name: 'My original resume' }));
     await waitFor(() =>
@@ -340,8 +344,43 @@ describe('PreferencesPage', () => {
     );
     await waitFor(() => expect(screen.getByRole('radio', { name: 'My original resume' })).toBeChecked());
     const docs = screen.getByRole('switch', { name: 'Prepare documents automatically' });
-    await waitFor(() => expect(docs).toHaveAttribute('data-disabled'));
-    expect(docs).not.toBeChecked();
+    expect(docs).not.toHaveAttribute('data-disabled');
+    expect(docs).toBeChecked();
+    expect(screen.getByText(/Score plus a cover letter/)).toBeInTheDocument();
+    const { toast } = await import('sonner');
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('applications use your original resume file')),
+    );
+    expect(await screen.findByText('No resume file on record')).toBeInTheDocument();
+  });
+
+  it('shows and replaces the resume file applications upload', async () => {
+    api.fetchOriginalResume.mockResolvedValue({
+      filename: 'Jane Doe.pdf',
+      kind: 'pdf',
+      byte_size: 204800,
+      uploaded_at: '2026-10-01T00:00:00Z',
+      has_text: true,
+    });
+    api.uploadOriginalResume.mockResolvedValue({
+      filename: 'Jane Doe 2026.docx',
+      kind: 'docx',
+      byte_size: 51200,
+      uploaded_at: '2026-10-07T00:00:00Z',
+      has_text: true,
+    });
+    const user = userEvent.setup();
+    renderPage('/app/preferences?tab=matching');
+    expect(await screen.findByText('Jane Doe.pdf')).toBeInTheDocument();
+    expect(screen.getByText(/PDF, 200 KB/)).toBeInTheDocument();
+
+    const file = new File(['PK'], 'Jane Doe 2026.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    await user.upload(screen.getByLabelText('Resume file for applications'), file);
+    await waitFor(() => expect(api.uploadOriginalResume).toHaveBeenCalledWith(file));
+    expect(await screen.findByText('Jane Doe 2026.docx')).toBeInTheDocument();
+    expect(screen.getByText(/Word file, 50 KB/)).toBeInTheDocument();
   });
 
   it('saves the AI quality check mode and its auto threshold', async () => {

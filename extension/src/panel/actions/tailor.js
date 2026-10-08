@@ -74,11 +74,12 @@ export async function buildForJob(job) {
   if (!job || !job.id) return;
   const id = `job-${job.id}`;
   if (state.tailor.runs.some((r) => r.id === id && r.status === "running")) return;
+  const original = ((state.cache && state.cache.settings) || {}).application_resume_source === "original";
   addRun({ id, kind: "job", jobId: job.id, title: job.title, company: job.company, label: "Queued", status: "running" });
   try {
     await api.triggerResumeBuild(job.id);
     patchRun(id, { status: "done", label: "Building. It moves to Ready to apply when done." });
-    toast(`Building a resume for ${job.title}.`, "ok");
+    toast(original ? `Writing a cover letter for ${job.title}.` : `Building a resume for ${job.title}.`, "ok");
   } catch (err) {
     patchRun(id, { status: "error", label: messageOf(err, "Could not start the build.") });
     toast(messageOf(err, "Could not start the build."), "danger");

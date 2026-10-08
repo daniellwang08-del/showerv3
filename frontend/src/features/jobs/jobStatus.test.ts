@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { makeJob, readyJob } from '@/test/jobFixtures';
 import {
   isApplyReady,
+  isCoverLetterOnly,
   isDocsBuilding,
   isHiddenRow,
   isInFlight,
@@ -38,6 +39,25 @@ describe('readiness', () => {
     expect(isDocsBuilding(rerun)).toBe(true);
     expect(isApplyReady(rerun)).toBe(false);
     expect(isDocsBuilding(readyJob({ content_generation_status: 'failed', resume_build_status: 'processing' }))).toBe(false);
+  });
+
+  it('treats an original resume job with its cover letter as ready', () => {
+    const coverOnly = readyJob({
+      content_generation_status: 'completed',
+      resume_build_status: 'skipped',
+      resume_pdf_status: 'skipped',
+    });
+    expect(isCoverLetterOnly(coverOnly)).toBe(true);
+    expect(isApplyReady(coverOnly)).toBe(true);
+    expect(jobStage(coverOnly)).toBe('ready');
+
+    const writing = { ...coverOnly, cover_letter_pdf_status: 'processing' };
+    expect(isDocsBuilding(writing)).toBe(true);
+    expect(isApplyReady(writing)).toBe(false);
+    expect(jobStage(writing)).toBe('documents');
+
+    expect(isApplyReady({ ...coverOnly, cover_letter_pdf_status: 'failed' })).toBe(false);
+    expect(isCoverLetterOnly(readyJob())).toBe(false);
   });
 
   it('flags rows that should keep the fallback poll alive', () => {

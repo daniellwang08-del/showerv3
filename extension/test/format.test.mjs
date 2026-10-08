@@ -56,6 +56,19 @@ test("resumeStage reads build statuses", () => {
   assert.equal(resumeStage({}).id, "none");
 });
 
+test("resumeStage treats original resume mode as cover letter only", () => {
+  const coverOnly = { content_generation_status: "completed", resume_build_status: "skipped", resume_pdf_status: "skipped" };
+  assert.deepEqual(resumeStage({ ...coverOnly, cover_letter_pdf_status: "completed" }), {
+    id: "ready",
+    label: "Cover letter ready",
+    tone: "ok",
+  });
+  assert.equal(resumeStage({ ...coverOnly, cover_letter_pdf_status: "processing" }).id, "building");
+  assert.equal(resumeStage({ ...coverOnly, cover_letter_pdf_status: "failed" }).label, "Cover letter failed");
+  // Tailored mode still needs the resume file.
+  assert.equal(resumeStage({ content_generation_status: "completed", resume_build_status: "processing" }).label, "Tailoring");
+});
+
 test("toJobCard normalizes a dashboard row", () => {
   const card = toJobCard({
     id: 7,

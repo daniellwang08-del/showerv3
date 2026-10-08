@@ -78,6 +78,19 @@ export function getAutofillProfile(jobId, _legacySource) {
   return promise;
 }
 
+/** The résumé an application uploads: PDF first, the Word file when only that exists. */
+export async function downloadApplicationResume(jobId) {
+  try {
+    return await api.downloadResumeFile(jobId, "resume_pdf");
+  } catch (pdfErr) {
+    try {
+      return await api.downloadResumeFile(jobId, "resume_docx");
+    } catch {
+      throw pdfErr;
+    }
+  }
+}
+
 export function clearProfileCache() {
   profileCache.clear();
 }

@@ -4,11 +4,11 @@ export const RESUME_SOURCE_OPTIONS: { value: ApplicationResumeSource; label: str
   {
     value: 'tailored',
     label: 'Tailored resume per job',
-    hint: 'After scoring, NAO rewrites your resume and cover letter for the job. The extension uploads and fills from that version.',
+    hint: 'After scoring, NAO rewrites your resume and writes a cover letter for the job. The extension uploads and fills from that version.',
   },
   {
     value: 'original',
     label: 'My original resume',
-    hint: 'NAO only scores and ranks jobs. The extension uploads your resume as it is and fills every application from it.',
+    hint: 'NAO writes only a cover letter for each job. The extension uploads the resume file you imported, unchanged, and fills applications from it.',
   },
 ];

@@ -872,8 +872,8 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       const roleLabel = m.role === "cover_letter" ? "Cover letter" : "Resume";
       const why =
         m.role === "cover_letter"
-          ? "no cover letter file was generated for this job (set up a cover letter template and build it)"
-          : "no resume file was generated for this job yet";
+          ? "no cover letter was written for this job yet (use Build or Write in the panel)"
+          : "no resume file is available (add your resume file in NAO Preferences under Matching)";
       // Avoid duplicate rows if a prior pass already reported this cid.
       if (!ctx.needsUser.some((x) => x.cid === m.cid)) {
         ctx.needsUser.push({

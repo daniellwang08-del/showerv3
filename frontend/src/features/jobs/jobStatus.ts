@@ -3,11 +3,19 @@ import { dashboardJobMarkedApplied } from '@/utils/appliedStatus';
 
 export { dashboardJobMarkedApplied as isApplied };
 
-/** Tailored content or the resume build is queued/running (re-runs keep stale PDFs marked completed). */
+/** Original resume mode: the imported file is used as is, so only a cover letter is built. */
+export function isCoverLetterOnly(job: DashboardJob): boolean {
+  return job.content_generation_status === 'completed' && job.resume_build_status === 'skipped';
+}
+
+/** Tailored content or the document build is queued/running (re-runs keep stale PDFs marked completed). */
 export function isDocsBuilding(job: DashboardJob): boolean {
   const cg = job.content_generation_status;
   if (cg === 'pending' || cg === 'processing') return true;
   if (cg && cg !== 'completed') return false;
+  if (isCoverLetterOnly(job)) {
+    return job.cover_letter_pdf_status === 'pending' || job.cover_letter_pdf_status === 'processing';
+  }
   return job.resume_build_status === 'pending' || job.resume_build_status === 'processing';
 }
 
@@ -19,12 +27,15 @@ export function isJdReady(job: DashboardJob): boolean {
   );
 }
 
-/** Apply with Assistant needs a score, both PDFs, and nothing in flight. */
+/** Apply with Assistant needs a score, the job's PDFs, and nothing in flight.
+ *  Cover-letter-only builds (original resume mode) need just the cover letter. */
 export function isApplyReady(job: DashboardJob): boolean {
   if (job.match_overall_score == null || job.match_in_progress) return false;
   if (job.extraction_status === 'pending' || job.extraction_status === 'processing') return false;
   if (isDocsBuilding(job)) return false;
-  return job.resume_pdf_status === 'completed' && job.cover_letter_pdf_status === 'completed';
+  const cover = job.cover_letter_pdf_status === 'completed';
+  if (isCoverLetterOnly(job)) return cover;
+  return job.resume_pdf_status === 'completed' && cover;
 }
 
 export function isInFlight(job: DashboardJob): boolean {

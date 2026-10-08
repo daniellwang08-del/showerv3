@@ -12,6 +12,7 @@ import {
   buildPreferences,
   debugLog,
   delay,
+  downloadApplicationResume,
   getAutofillProfile,
   tabBroadcast,
   tabSend,
@@ -348,7 +349,7 @@ export async function startWorkdayAutofill(tab, engine) {
   // original resume, following the account's "Resume for applications" setting.
   let resumeFile = null;
   try {
-    resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
+    resumeFile = await downloadApplicationResume(job.job_id);
     debugLog("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)", "b64=", resumeFile && resumeFile.base64 && resumeFile.base64.length);
   } catch (e) {
     console.warn("[workday] resume PDF download failed:", (e && e.message) || e);
@@ -895,7 +896,7 @@ export async function rerunWorkday() {
     const profile = await getAutofillProfile(job.job_id);
     let resumeFile = null;
     try {
-      resumeFile = await api.downloadResumeFile(job.job_id, "resume_pdf");
+      resumeFile = await downloadApplicationResume(job.job_id);
       debugLog("[workday] resume PDF downloaded:", (resumeFile && resumeFile.filename) || "(unnamed)", "b64=", resumeFile && resumeFile.base64 && resumeFile.base64.length);
     } catch (e) {
       console.warn("[workday] resume PDF download failed:", (e && e.message) || e);

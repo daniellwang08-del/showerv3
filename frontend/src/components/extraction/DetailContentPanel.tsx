@@ -169,7 +169,7 @@ function ResumeBuildBadges({
   if (cg === 'pending' || cg === 'processing') {
     return (
       <span className="rounded-md border border-status-ready/30 bg-status-ready/10 px-2 py-1 text-[10px] font-medium text-foreground animate-pulse">
-        Generating resume…
+        Writing documents…
       </span>
     );
   }
@@ -234,9 +234,18 @@ function ResumeBuildBadges({
     } catch { /* ignore */ }
   };
 
+  // Original resume mode builds only the cover letter; the imported resume goes out unchanged.
+  const coverOnly = build.resume_docx_status === 'skipped' && build.resume_pdf_status === 'skipped';
+  const badges = coverOnly ? FILE_BADGE_META.filter(({ downloadType }) => !downloadType.startsWith('resume_')) : FILE_BADGE_META;
+
   return (
     <div className="flex items-center gap-1.5">
-      {FILE_BADGE_META.map(({ key, label, downloadType }) => {
+      {coverOnly && (
+        <span className="text-[10px] text-muted-foreground" title="Applications upload the resume file you imported, unchanged.">
+          Uses original resume
+        </span>
+      )}
+      {badges.map(({ key, label, downloadType }) => {
         const status = (build[key] as string) || 'pending';
         const isReady = status === 'completed';
         return (
@@ -821,7 +830,7 @@ export function DetailContentPanel({
                   analysis.resume_build.content_generation_status === 'processing') && (
                 <p className="flex items-start gap-2 text-sm text-muted-foreground">
                   <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-status-ready animate-pulse" aria-hidden />
-                  <span>Generating tailored resume and cover letter…</span>
+                  <span>Writing the documents for this job…</span>
                 </p>
               )}
 

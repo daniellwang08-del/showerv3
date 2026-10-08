@@ -743,6 +743,32 @@ class ResumeBuildRepository:
         )
         return row
 
+    async def complete_cover_letter_generation(
+        self,
+        job_id: str,
+        user_id: str,
+        *,
+        cover_letter_data: dict,
+    ) -> ResumeBuildResult:
+        """Original résumé mode: only a cover letter is written for the job.
+
+        Any earlier tailored résumé is dropped so the build and every download
+        follow the current mode, and the résumé files are marked ``skipped``.
+        """
+        row = await self.upsert(
+            job_id,
+            user_id,
+            cover_letter_data=cover_letter_data,
+            content_generation_status="completed",
+        )
+        row.tailored_resume_data = None
+        row.resume_docx_status = "skipped"
+        row.resume_pdf_status = "skipped"
+        row.resume_docx_path = None
+        row.resume_pdf_path = None
+        await self._session.flush()
+        return row
+
     @staticmethod
     def _clear_unbuilt_file_statuses(row: ResumeBuildResult, *, status: str = "skipped") -> None:
         """Stop leftover file `pending` from looking in-flight after content fails/skips."""

@@ -81,7 +81,8 @@ from app.models.database import (
     ValidJobUserApplication,
     ResumeBuildResult,
 )
-from sqlalchemy import delete as sa_delete, select, func, update as sa_update, nullslast, text, and_, or_, true
+from sqlalchemy import delete as sa_delete, select, func, update as sa_update, nullslast, text, and_, or_, not_, true
+from app.services.job_pipeline_mode import documents_ready_clause
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -940,6 +941,12 @@ async def resume_parse(
     try:
         result = await parse_resume_bytes(raw=raw, filename=file.filename or "", user_id=user_id)
         try:
+            from app.services.original_resume_service import save_original_resume
+
+            await save_original_resume(user_id, raw, file.filename or "")
+        except Exception as keep_err:  # noqa: BLE001 - the parse result still matters
+            logger.warning("resume_parse_keep_original_failed", user_id=user_id, error=str(keep_err)[:300])
+        try:
             await _apply_detected_countries_from_resume(user_id, result)
         except Exception as country_err:
             # Country auto-detect must never fail the parse itself.
@@ -991,6 +998,65 @@ async def resume_parse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=format_profile_unexpected_error(e, "Résumé parsing failed. See server logs for details."),
         )
+
+
+class OriginalResumeResponse(BaseModel):
+    filename: str
+    kind: str
+    byte_size: int
+    uploaded_at: datetime | None = None
+    has_text: bool = False
+
+
+def _original_resume_out(meta) -> OriginalResumeResponse:
+    return OriginalResumeResponse(
+        filename=meta.filename,
+        kind=meta.kind,
+        byte_size=meta.byte_size,
+        uploaded_at=meta.uploaded_at,
+        has_text=meta.has_text,
+    )
+
+
+@router.get("/profile/original-resume", response_model=OriginalResumeResponse | None)
+async def get_original_resume(current_user: dict = Depends(get_current_user)) -> OriginalResumeResponse | None:
+    """The résumé file applications use in "My original resume" mode, or null when none is stored."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.original_resume_service import get_original_resume_meta
+
+    meta = await get_original_resume_meta(user_id)
+    return _original_resume_out(meta) if meta else None
+
+
+@router.put("/profile/original-resume", response_model=OriginalResumeResponse)
+async def put_original_resume(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+) -> OriginalResumeResponse:
+    """Store a résumé file for applications as is, without changing the profile."""
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.original_resume_service import save_original_resume
+
+    try:
+        meta = await save_original_resume(user_id, await file.read(), file.filename or "")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e) or "Upload a PDF or DOCX file.")
+    return _original_resume_out(meta)
+
+
+@router.delete("/profile/original-resume", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_original_resume(current_user: dict = Depends(get_current_user)) -> Response:
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.services.original_resume_service import delete_original_resume
+
+    await delete_original_resume(user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/profile/openai-text")
@@ -2571,13 +2637,13 @@ def _dashboard_view_clauses(
             or_(
                 ResumeBuildResult.id.is_(None),
                 ResumeBuildResult.resume_docx_status.is_(None),
-                ResumeBuildResult.resume_docx_status != "completed",
+                not_(documents_ready_clause(ResumeBuildResult)),
             )
         )
         clauses.append(ValidJobUserApplication.id.is_(None))
     elif view == "ready":
-        # Tailored resume ready AND not yet applied"Ready to apply".
-        clauses.append(ResumeBuildResult.resume_docx_status == "completed")
+        # Application documents built AND not yet applied: "Ready to apply".
+        clauses.append(documents_ready_clause(ResumeBuildResult))
         clauses.append(ValidJobUserApplication.id.is_(None))
     elif view == "sheet_posted":
         clauses.append(Job.sheet_posted_at.is_not(None))
@@ -2837,8 +2903,16 @@ async def _dashboard_jobs_from_rows(session, rows, viewer_id: str) -> list[Dashb
             await session.execute(select(User).where(User.id.in_(submitter_ids)))
         ).scalars().all()
         names = {u.id: user_applied_by_display_name(u) for u in users}
+    from app.services.job_add_batches import job_visibility_map
+
+    visibility = await job_visibility_map(session, [row[0] for row in rows])
     return [
-        _row_to_dashboard_job(row, viewer_id=viewer_id, submitter_names=names)
+        _row_to_dashboard_job(
+            row,
+            viewer_id=viewer_id,
+            submitter_names=names,
+            visibility=visibility.get(row[0].id),
+        )
         for row in rows
     ]
 
@@ -2848,6 +2922,7 @@ def _row_to_dashboard_job(
     *,
     viewer_id: str | None = None,
     submitter_names: dict[str, str] | None = None,
+    visibility: tuple[str, int] | None = None,
 ) -> DashboardJobResponse:
     from app.services.job_location_classifier import detect_countries_in_text
 
@@ -2929,6 +3004,8 @@ def _row_to_dashboard_job(
         from_me=from_me,
         added_by_name=added_by_name,
         added_from=resolve_dashboard_added_from(meta),
+        visibility=visibility[0] if visibility else "all",
+        visibility_user_count=visibility[1] if visibility else 0,
         pool_added_at=pool_added_at,
     )
 
@@ -4943,6 +5020,7 @@ class UserSettingsUpdateRequest(BaseModel):
     match_quality_check: str | None = Field(default=None, pattern="^(off|rescore|auto)$")
     match_quality_check_min_score: int | None = Field(default=None, ge=0, le=100)
     manual_submit_pipeline: str | None = None
+    # "ask" is retired but still accepted from old clients; it saves as private.
     job_share_default: str | None = Field(default=None, pattern="^(private|team|all|ask)$")
     resume_filename_mode: str | None = Field(default=None, pattern="^(pattern|static)$")
     resume_filename_value: str | None = Field(default=None, max_length=200)
@@ -6712,16 +6790,26 @@ async def trigger_resume_build(
     job_id: str,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Manually (re-)trigger tailored content generation or resume DOCX/PDF build."""
+    """Manually (re-)trigger content generation or the DOCX/PDF build.
+
+    Tailored mode writes a tailored résumé and cover letter. Original résumé
+    mode writes only the cover letter; the uploaded résumé is used as is.
+    Content that already matches the mode is only rebuilt into files.
+    """
+    from app.services.job_pipeline_mode import has_tailored_resume, user_uses_original_resume
+
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    original = await user_uses_original_resume(user_id)
     async with get_session() as session:
         repo = ResumeBuildRepository(session)
         row = await repo.get(job_id, user_id)
 
-    if row and row.tailored_resume_data:
+    tailored_ready = bool(row and has_tailored_resume(row.tailored_resume_data))
+    cover_ready = bool(row and isinstance(row.cover_letter_data, dict) and row.cover_letter_data.get("body"))
+    if row and ((not original and tailored_ready) or (original and cover_ready and not tailored_ready)):
         async with get_session() as session:
             repo = ResumeBuildRepository(session)
             await repo.upsert(job_id, user_id, row.tailored_resume_data, row.cover_letter_data)
@@ -6729,7 +6817,7 @@ async def trigger_resume_build(
         from app.tasks.worker import get_resume_build_pool
         pool = await get_resume_build_pool()
         await pool.enqueue_job("build_resume_task", job_id, user_id)
-        return {"success": True, "message": "Resume build enqueued"}
+        return {"success": True, "message": "Cover letter build enqueued" if original else "Resume build enqueued"}
 
     from app.services.job_match_orchestrator import enqueue_tailored_content_generation
     enqueued = await enqueue_tailored_content_generation(job_id, user_id, manual=True)
@@ -6755,8 +6843,9 @@ async def download_resume_file(
 
     Without ``source``, résumé files follow the account's application résumé
     source and a missing tailored build falls back to the original, so autofill
-    always has something to upload. ``source=original`` renders the user's own
-    résumé; ``source=tailored`` serves only the per-job build (404 when absent),
+    always has something to upload. ``source=original`` serves the résumé file
+    the user uploaded, unchanged (a studio render only when none was ever
+    stored); ``source=tailored`` serves only the per-job build (404 when absent),
     which is what document viewers want. ``X-Resume-Source`` reports which one
     was returned.
     """
@@ -6776,7 +6865,7 @@ async def download_resume_file(
 
     is_resume = file_type.startswith("resume_")
     media_type = "application/pdf" if file_type.endswith("_pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    expose = {"Access-Control-Expose-Headers": "Content-Disposition, X-Resume-Source"}
+    expose = {"Access-Control-Expose-Headers": "Content-Disposition, X-Resume-Source, X-Resume-Origin"}
 
     async with get_session() as session:
         repo = ResumeBuildRepository(session)
@@ -6785,7 +6874,28 @@ async def download_resume_file(
         job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none() if is_resume else None
 
     async def _original() -> Response:
+        from app.services.original_resume_service import get_original_resume_file, get_original_resume_meta
         from app.services.resume_design_service import render_original_resume_file
+
+        if await get_original_resume_meta(user_id):
+            stored = await get_original_resume_file(user_id, file_type)
+            if stored is None:
+                kind = "Word" if file_type == "resume_docx" else "PDF"
+                raise HTTPException(status_code=404, detail=f"Your uploaded resume has no {kind} version.")
+            ascii_stored = stored.filename.encode("ascii", "replace").decode("ascii").replace('"', "")
+            return Response(
+                content=stored.content,
+                media_type=stored.media_type,
+                headers={
+                    "Content-Disposition": (
+                        f"attachment; filename=\"{ascii_stored}\"; filename*=UTF-8''{quote(stored.filename)}"
+                    ),
+                    "Cache-Control": "no-store",
+                    "X-Resume-Source": "original",
+                    "X-Resume-Origin": "upload",
+                    **expose,
+                },
+            )
 
         try:
             payload, filename = await render_original_resume_file(
@@ -6805,6 +6915,7 @@ async def download_resume_file(
                 "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}",
                 "Cache-Control": "no-store",
                 "X-Resume-Source": "original",
+                "X-Resume-Origin": "studio",
                 **expose,
             },
         )

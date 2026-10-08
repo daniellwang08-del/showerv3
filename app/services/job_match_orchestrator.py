@@ -545,17 +545,10 @@ async def run_job_match_analysis(
 
     ``skip_phase_b`` is used by auto-prepare match-only so Phase B is not chained.
     Manual Prepare/Run always passes False (Phase B still gated by system setting).
-    Users who apply with their original résumé never chain Phase B here.
+    For users who apply with their original résumé, Phase B writes only the
+    cover letter.
     """
     bind_logging_context(job_id=job_id, user_id=user_id)
-    if not skip_phase_b:
-        try:
-            from app.services.job_pipeline_mode import user_uses_original_resume
-
-            if await user_uses_original_resume(user_id):
-                skip_phase_b = True
-        except Exception as mode_err:  # noqa: BLE001 - scoring must still run
-            logger.warning("application_resume_source_lookup_failed", user_id=user_id, error=str(mode_err))
     ext_id: str | None = None
     is_job_posting = False
     has_profile = False
@@ -876,7 +869,11 @@ async def run_tailored_content_generation(
     extraction_id: str | None = None,
     manual: bool = False,
 ) -> dict | None:
-    """Phase B: tailored resume JSON + cover letter, then enqueue DOCX/PDF build."""
+    """Phase B: tailored resume JSON + cover letter, then enqueue DOCX/PDF build.
+
+    Users who apply with their original résumé get the cover letter only; their
+    uploaded résumé file goes to applications unchanged.
+    """
     bind_logging_context(job_id=job_id, user_id=user_id)
 
     try:
@@ -886,9 +883,13 @@ async def run_tailored_content_generation(
             async with get_session() as session:
                 repo = ResumeBuildRepository(session)
                 existing = await repo.get(job_id, user_id)
-                if not (existing and existing.tailored_resume_data):
+                if not (existing and (existing.tailored_resume_data or existing.cover_letter_data)):
                     await repo.mark_content_skipped(job_id, user_id)
             return None
+
+        from app.services.job_pipeline_mode import user_uses_original_resume
+
+        cover_only = await user_uses_original_resume(user_id)
 
         loaded = await _load_job_and_profile(job_id, user_id, extraction_id)
         if not loaded:
@@ -955,6 +956,15 @@ async def run_tailored_content_generation(
         structured_context = build_structured_context(structured_job)
 
         project_evidence_context = "No project source evidence available."
+        if cover_only:
+            from app.services.original_resume_service import get_original_resume_text
+
+            original_text = await get_original_resume_text(user_id)
+            if original_text:
+                # First, so the profile length cap trims profile extras rather than the résumé sent.
+                profile_text = (
+                    f"## Original Resume (sent with this application)\n{original_text}\n\n{profile_text}"
+                ).strip()
         if user and source_docs:
             try:
                 project_evidence_context = await extract_job_evidence_pack(
@@ -988,6 +998,7 @@ async def run_tailored_content_generation(
                 match_summary=match_summary,
                 project_evidence_context=project_evidence_context,
                 user_id=user_id,
+                include_resume=not cover_only,
             )
         except Exception as e:
             logger.error(
@@ -1006,7 +1017,14 @@ async def run_tailored_content_generation(
             })
             return None
 
-        if not tailored_resume:
+        if cover_only and not cover_letter:
+            async with get_session() as session:
+                await ResumeBuildRepository(session).fail_content_generation(
+                    job_id, user_id, "Cover letter could not be written"
+                )
+            return None
+
+        if not cover_only and not tailored_resume:
             async with get_session() as session:
                 await ResumeBuildRepository(session).fail_content_generation(
                     job_id, user_id, "Tailored resume section missing or invalid"
@@ -1014,12 +1032,16 @@ async def run_tailored_content_generation(
             return None
 
         async with get_session() as session:
-            await ResumeBuildRepository(session).complete_content_generation(
-                job_id,
-                user_id,
-                tailored_resume_data=tailored_resume,
-                cover_letter_data=cover_letter,
-            )
+            repo = ResumeBuildRepository(session)
+            if cover_only:
+                await repo.complete_cover_letter_generation(job_id, user_id, cover_letter_data=cover_letter)
+            else:
+                await repo.complete_content_generation(
+                    job_id,
+                    user_id,
+                    tailored_resume_data=tailored_resume,
+                    cover_letter_data=cover_letter,
+                )
 
         await publish_ws_event({
             "type": "tailored_content_completed",
@@ -1028,8 +1050,8 @@ async def run_tailored_content_generation(
         })
 
         await _enqueue_resume_doc_build(job_id, user_id)
-        logger.info("job_match_phase_b_stored", job_id=job_id, user_id=user_id)
-        return tailored_resume
+        logger.info("job_match_phase_b_stored", job_id=job_id, user_id=user_id, cover_only=cover_only)
+        return tailored_resume or cover_letter
     except asyncio.CancelledError:
         try:
             async with get_session() as session:

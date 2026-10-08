@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import and_, cast, func, or_, select
+from sqlalchemy import and_, cast, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Date
 
@@ -24,6 +24,7 @@ from app.models.database import (
     ValidJobUserApplication,
 )
 from app.models.schemas import ExtractionStatus
+from app.services.job_pipeline_mode import documents_ready_clause
 from app.services.dashboard_stats import (
     BEST_MATCH_SCORE,
     _is_remote_expr,
@@ -201,7 +202,7 @@ async def fetch_board_trend_series(
             .select_from(_dashboard_from(user_id, with_resume=True))
             .where(
                 visible,
-                ResumeBuildResult.resume_docx_status == "completed",
+                documents_ready_clause(ResumeBuildResult),
                 ready_ts.is_not(None),
                 ready_ts >= start_utc,
                 ready_ts < end_utc,
@@ -262,7 +263,7 @@ async def fetch_board_trend_series(
                 or_(
                     ResumeBuildResult.id.is_(None),
                     ResumeBuildResult.resume_docx_status.is_(None),
-                    ResumeBuildResult.resume_docx_status != "completed",
+                    not_(documents_ready_clause(ResumeBuildResult)),
                 ),
                 ValidJobUserApplication.id.is_(None),
             )
