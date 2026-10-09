@@ -26,6 +26,9 @@ export interface Job {
  *  'outside_preferred_countries' – location outside the user's preferred countries
  *  'location_unknown'        – legacy: location missing/ambiguous (no longer auto-hidden by default)
  *  'blocked_domain'        – domain blocked at submit
+ *  'linkedin_job'          – LinkedIn job page (not supported)
+ *  'not_a_job_posting'     – page is not an open role
+ *  'security_clearance'    – role requires a security clearance
  */
 export type ExclusionType =
   | 'applied_company'
@@ -40,6 +43,9 @@ export type ExclusionType =
   | 'outside_preferred_countries'
   | 'location_unknown'
   | 'blocked_domain'
+  | 'linkedin_job'
+  | 'not_a_job_posting'
+  | 'security_clearance'
   | 'manual_invalid'
   | 'manual_duplicate'
   | null;

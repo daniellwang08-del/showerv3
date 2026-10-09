@@ -25,6 +25,8 @@ class CredentialField:
     placeholder: str = ""
     help_url: str = ""
     secret: bool = True
+    required: bool = True
+    help_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -125,6 +127,8 @@ class JobSitePlugin:
                     "placeholder": f.placeholder,
                     "help_url": f.help_url or None,
                     "secret": f.secret,
+                    "required": f.required,
+                    "help_text": f.help_text or None,
                 }
                 for f in self.credential_fields
             ],

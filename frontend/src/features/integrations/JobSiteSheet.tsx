@@ -321,7 +321,9 @@ function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnect
   const submit = () => {
     const filled = plugin.credential_fields.filter((f) => (flow.values[f.key] ?? '').trim());
     if (plugin.auth_type === 'api_key') {
-      const empty = plugin.credential_fields.filter((f) => !(flow.values[f.key] ?? '').trim()).map((f) => f.key);
+      const empty = plugin.credential_fields
+        .filter((f) => f.required !== false && !(flow.values[f.key] ?? '').trim())
+        .map((f) => f.key);
       setMissing(empty);
       if (empty.length) return;
     } else if (hasFields && filled.length === 0) {
@@ -584,7 +586,12 @@ function CredentialFields({
         return (
           <Field key={field.key} data-invalid={invalid || undefined}>
             <div className="flex items-center justify-between gap-2">
-              <FieldLabel htmlFor={id}>{field.label}</FieldLabel>
+              <FieldLabel htmlFor={id}>
+                {field.label}
+                {field.required === false ? (
+                  <span className="text-xs font-normal text-muted-foreground">Optional</span>
+                ) : null}
+              </FieldLabel>
               {field.help_url ? (
                 <a
                   href={field.help_url}
@@ -592,7 +599,7 @@ function CredentialFields({
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-brand hover:underline"
                 >
-                  {plugin.auth_type === 'account' ? 'Open site' : 'Get key'}
+                  {plugin.auth_type === 'account' || field.required === false ? 'Open site' : 'Get key'}
                   <ExternalLink className="size-3" />
                 </a>
               ) : null}
@@ -619,6 +626,7 @@ function CredentialFields({
                 autoComplete={field.key === 'email' ? 'username' : field.secret ? 'current-password' : 'off'}
               />
             )}
+            {field.help_text ? <FieldDescription>{field.help_text}</FieldDescription> : null}
             {invalid ? <FieldError>{field.label} is required.</FieldError> : null}
           </Field>
         );

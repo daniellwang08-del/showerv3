@@ -255,7 +255,8 @@ async def verify_and_fetch(plugin_slug: str, credentials: dict, ctx: FetchContex
         missing = [
             field.label
             for field in plugin.credential_fields
-            if not str(credentials.get(field.key) or "").strip()
+            if field.required
+            and not str(credentials.get(field.key) or "").strip()
             and not (field.key == "email" and ctx.user_email)
         ]
         if missing:

@@ -185,6 +185,46 @@ describe('IntegrationsPage, job sites', () => {
     );
   });
 
+  it('connects without an optional field and explains it', async () => {
+    const user = userEvent.setup();
+    db.plugins.push(
+      makePlugin({
+        slug: 'remoterocketship',
+        name: 'RemoteRocketship',
+        auth_type: 'api_key',
+        sort_order: 0,
+        credential_fields: [
+          { key: 'api_key', label: 'API key', placeholder: '', help_url: null, secret: true },
+          {
+            key: 'search_url',
+            label: 'Search link',
+            placeholder: '',
+            help_url: 'https://rrs.example/remote-jobs/',
+            secret: false,
+            required: false,
+            help_text: 'Paste the address bar link.',
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Connect RemoteRocketship' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText('Optional')).toBeInTheDocument();
+    expect(within(sheet).getByText('Paste the address bar link.')).toBeInTheDocument();
+    expect(within(sheet).getByRole('link', { name: /Open site/ })).toHaveAttribute('href', 'https://rrs.example/remote-jobs/');
+
+    await user.click(within(sheet).getByRole('button', { name: 'Verify & connect' }));
+    expect(within(sheet).getByText('API key is required.')).toBeInTheDocument();
+    expect(within(sheet).queryByText('Search link is required.')).not.toBeInTheDocument();
+
+    await user.type(within(sheet).getByLabelText('API key'), 'key-1');
+    await user.click(within(sheet).getByRole('button', { name: 'Verify & connect' }));
+    await waitFor(() =>
+      expect(api.connectJobSite).toHaveBeenCalledWith('remoterocketship', { credentials: { api_key: 'key-1' } }),
+    );
+  });
+
   it('shows the API error when credentials are rejected', async () => {
     const user = userEvent.setup();
     api.connectJobSite.mockRejectedValue({ response: { data: { detail: 'Invalid Adzuna key' } } });

@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 
 from app.models.database import Job, JobMatchResult, ValidJobUserApplication, UserJobStatus, JobExtraction
 from app.services.job_exclusion_types import (
@@ -60,6 +60,16 @@ _EMPLOYER_SLUG_FROM_URL = re.compile(
 )
 
 _TITLE_STRIP_RE = re.compile(r"[^\w\s]")
+
+
+_COMPANY_NOISE_WORDS = frozenset(
+    {"inc", "llc", "corp", "ltd", "co", "corporation", "limited", "the"}
+)
+
+
+def _first_company_token(company: str) -> str:
+    tokens = [t for t in re.findall(r"\w+", company.lower()) if t not in _COMPANY_NOISE_WORDS]
+    return tokens[0] if tokens else ""
 
 
 def normalize_company(company: str | None) -> str:
@@ -200,12 +210,18 @@ async def _list_active_peer_jobs(
         )
     )
 
-    # Pre-filter by company name or domain at the SQL level so we don't load
-    # every active job into Python.  The exact employer_key match is still
-    # verified in Python since it involves URL-slug parsing that can't be
-    # expressed in SQL easily.
-    if company_name:
-        stmt = stmt.where(func.lower(Job.company) == company_name.lower())
+    # The SQL prefilter must be looser than resolve_employer_key ("Acme Inc"
+    # and "acme" share a key; slug keys ignore the company text), otherwise
+    # real peers are dropped before the exact Python check below.
+    candidates = []
+    kind, _, key_value = employer_key.partition(":")
+    if kind == "slug":
+        candidates.append(func.lower(Job.source_url).contains(key_value, autoescape=True))
+    name_sources = [company_name or "", key_value if kind == "name" else ""]
+    for token in {_first_company_token(source) for source in name_sources} - {""}:
+        candidates.append(func.lower(Job.company).contains(token, autoescape=True))
+    if candidates:
+        stmt = stmt.where(or_(*candidates))
     elif domain:
         stmt = stmt.where(Job.domain == domain)
 

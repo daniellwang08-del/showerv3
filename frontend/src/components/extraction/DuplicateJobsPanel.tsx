@@ -45,6 +45,9 @@ const EXCLUSION_TYPE_LABELS: Record<NonNullable<ExclusionType>, string> = {
   outside_preferred_countries: 'Other country',
   location_unknown: 'Location review',
   blocked_domain: 'Blocked domain',
+  linkedin_job: 'LinkedIn',
+  not_a_job_posting: 'Not a job',
+  security_clearance: 'Clearance',
   manual_invalid: 'Hidden',
   manual_duplicate: 'Manual dup',
 };
@@ -62,6 +65,9 @@ const EXCLUSION_TYPE_COLORS: Record<NonNullable<ExclusionType>, string> = {
   outside_preferred_countries: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
   location_unknown: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
   blocked_domain: 'bg-muted text-foreground border-border',
+  linkedin_job: 'bg-muted text-foreground border-border',
+  not_a_job_posting: 'bg-muted text-foreground border-border',
+  security_clearance: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
   manual_invalid: 'bg-destructive/10 text-destructive border-destructive/30',
   manual_duplicate: 'bg-status-preparing/10 text-foreground border-status-preparing/30',
 };
@@ -109,7 +115,7 @@ const DUP_TABS: { id: DupTabId; label: string; icon: LucideIcon; accent: AccentK
     icon: TrendingDown,
     accent: 'rose',
     noun: 'low-match jobs',
-    emptyHint: 'Jobs below your minimum match score will appear here after AI analysis.',
+    emptyHint: 'Jobs below your minimum match score, pages that are not open roles, and clearance-only roles appear here after AI analysis.',
   },
   {
     id: 'extraction_failed',

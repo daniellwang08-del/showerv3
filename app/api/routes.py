@@ -4763,13 +4763,7 @@ async def get_invalid_job_counts(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """Counts for duplicates modal tabs - single query with conditional aggregation."""
-    from app.services.job_exclusion_types import (
-        BELOW_MIN_SCORE_EXCLUSION,
-        EXTRACTION_FAILED_EXCLUSION,
-        NON_US_LOCATION_EXCLUSION,
-        OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION,
-        _EXCLUDED_FROM_DUPLICATES_TAB,
-    )
+    from app.services.job_exclusion_types import sql_filter_for_invalid_category
 
     user_id = current_user.get("user_id")
     if not user_id:
@@ -4779,14 +4773,10 @@ async def get_invalid_job_counts(
         et = UserJobStatus.exclusion_type
         row = (await session.execute(
             select(
-                func.count().filter(et == BELOW_MIN_SCORE_EXCLUSION).label("low_score"),
-                func.count().filter(et == EXTRACTION_FAILED_EXCLUSION).label("extraction_failed"),
-                func.count().filter(
-                    et.in_([NON_US_LOCATION_EXCLUSION, OUTSIDE_PREFERRED_COUNTRIES_EXCLUSION])
-                ).label("non_us"),
-                func.count().filter(
-                    (et.is_(None)) | (et.notin_(list(_EXCLUDED_FROM_DUPLICATES_TAB)))
-                ).label("duplicates"),
+                *(
+                    func.count().filter(sql_filter_for_invalid_category(et, category)).label(category)
+                    for category in ("low_score", "extraction_failed", "non_us", "duplicates")
+                ),
             )
             .select_from(UserJobStatus)
             .where(
@@ -5465,6 +5455,35 @@ async def preview_document_filename(
     return DocumentFilenamePreviewResponse(**names)
 
 
+_DEDUP_RULE_SETTING_KEYS = (
+    "dedup_applied_company_enabled",
+    "dedup_score_comparison_enabled",
+    "dedup_recycle_days",
+)
+
+
+def schedule_job_rule_reconciles(
+    background_tasks: BackgroundTasks, user_id: str, prev: dict, data: dict
+) -> None:
+    """Re-check existing jobs when a save changes the effective min score or dedup rules.
+
+    The engine only applies rules to newly analyzed jobs, so without this a
+    raised minimum leaves older low scorers on the Valid board.
+    """
+    new_min_score = int(data.get("min_match_score") or 0)
+    if new_min_score != int(prev.get("min_match_score") or 0):
+        from app.services.min_match_score_reconcile import reconcile_min_match_score_for_user
+
+        background_tasks.add_task(reconcile_min_match_score_for_user, user_id, new_min_score)
+        logger.info("min_match_score_reconcile_scheduled", user_id=user_id, min_score=new_min_score)
+
+    if any(data.get(key) != prev.get(key) for key in _DEDUP_RULE_SETTING_KEYS):
+        from app.services.dedup_rules_reconcile import reconcile_dedup_rules_for_user
+
+        background_tasks.add_task(reconcile_dedup_rules_for_user, user_id)
+        logger.info("dedup_rules_reconcile_scheduled", user_id=user_id)
+
+
 @router.put(
     "/settings",
     response_model=UserSettingsResponse,
@@ -5542,6 +5561,8 @@ async def update_user_settings(
             user_id=user_id,
             countries=data.get("country_preferences"),
         )
+
+    schedule_job_rule_reconciles(background_tasks, user_id, prev, data)
 
     if (
         body.job_match_preferences is not None

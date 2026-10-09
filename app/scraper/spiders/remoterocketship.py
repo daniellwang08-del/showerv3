@@ -26,6 +26,7 @@ from scrapy import signals
 from app.scraper.spiders.base import BaseJobSpider
 from app.scraper.utils.cloudflare import CloudflareSession
 from app.scraper.models.db import Base, ScrapeCheckpoint, get_engine, get_session
+from app.services.remoterocketship_search import default_search, parse_search_link
 
 logger = logging.getLogger(__name__)
 
@@ -63,25 +64,11 @@ def _parse_rrs_created_at(value) -> datetime | None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
 
-DEFAULT_JOB_TITLES = [
-    "Software Engineer",
-    "Backend Engineer",
-    "Frontend Engineer",
-    "Application Engineer",
-    "AI Engineer",
-    "Data Engineer",
-    "Artificial Intelligence",
-    "Cloud Engineer",
-    "Implementation Specialist",
-    "Computer Vision Engineer",
-    "DevOps Engineer",
-    "Infrastructure Engineer",
-    "Solutions Engineer",
-    "IT Support",
-]
-DEFAULT_LOCATION = "United States"
-DEFAULT_MIN_SALARY = 140000
 DEFAULT_SORT = "DateAdded"
+
+
+def _csv(value: str | None) -> list[str]:
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
 
 
 class RemoteRocketshipSpider(BaseJobSpider):
@@ -107,9 +94,12 @@ class RemoteRocketshipSpider(BaseJobSpider):
     }
 
     def __init__(self, *args, **kwargs):
+        search_url = kwargs.pop("search_url", None)
         job_titles = kwargs.pop("job_titles", None)
         locations = kwargs.pop("locations", None)
         min_salary = kwargs.pop("min_salary", None)
+        seniority = kwargs.pop("seniority", None)
+        employment_types = kwargs.pop("employment_types", None)
         sort = kwargs.pop("sort", None)
 
         super().__init__(*args, **kwargs)
@@ -121,15 +111,18 @@ class RemoteRocketshipSpider(BaseJobSpider):
         self._marker_hit = False
         self._close_reason: str | None = None
 
-        if self._use_filtered_search:
-            self.job_titles = (
-                [t.strip() for t in job_titles.split(",") if t.strip()]
-                if job_titles
-                else DEFAULT_JOB_TITLES
-            )
-            self.filter_locations = locations if locations else DEFAULT_LOCATION
-            self.min_salary = int(min_salary) if min_salary else DEFAULT_MIN_SALARY
-            self.sort_order = sort if sort else DEFAULT_SORT
+        self.search = parse_search_link(search_url) if search_url else default_search()
+        if job_titles:
+            self.search.job_titles = _csv(job_titles)
+        if locations:
+            self.search.locations = _csv(locations)
+        if min_salary:
+            self.search.min_salary = int(min_salary)
+        if seniority:
+            self.search.seniority = _csv(seniority)
+        if employment_types:
+            self.search.employment_types = _csv(employment_types)
+        self.sort_order = sort if sort else DEFAULT_SORT
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -222,12 +215,12 @@ class RemoteRocketshipSpider(BaseJobSpider):
 
     def _build_api_query(self, page: int) -> dict:
         """Build the JSON query object for /api/fetch_job_openings/."""
-        locations = self.filter_locations if self._use_filtered_search else ""
-        location_list = [locations] if locations else []
+        filtered = self._use_filtered_search
+        search_filters = self.search.api_filters() if filtered else {}
 
         return {
-            "seniorityFilters": [],
-            "locationFilters": location_list,
+            "seniorityFilters": search_filters.get("seniorityFilters", []),
+            "locationFilters": search_filters.get("locationFilters", []),
             "locationUSStatesFilters": [],
             "locationCityFilters": [],
             "showHybridJobs": False,
@@ -236,13 +229,13 @@ class RemoteRocketshipSpider(BaseJobSpider):
             "techStackFilters": [],
             "requiredLanguagesFilters": [],
             "excludeRequiredLanguagesFilters": [],
-            "jobTitleFilters": self.job_titles if self._use_filtered_search else [],
-            "keywordFilters": [self.query] if not self._use_filtered_search and self.query else [],
+            "jobTitleFilters": search_filters.get("jobTitleFilters", []),
+            "keywordFilters": [self.query] if not filtered and self.query else [],
             "excludedKeywordFilters": [],
             "companySizeFilters": [],
-            "employmentTypeFilters": [],
+            "employmentTypeFilters": search_filters.get("employmentTypeFilters", []),
             "visaFilter": None,
-            "minSalaryFilter": self.min_salary if self._use_filtered_search else 0,
+            "minSalaryFilter": search_filters.get("minSalaryFilter", 0),
             "showJobsWithoutSalaryWithMinSalaryFilter": True,
             "degreeRequiredFilter": None,
             "isOnLinkedInFilter": None,
@@ -251,7 +244,7 @@ class RemoteRocketshipSpider(BaseJobSpider):
             "companyIdFilter": None,
             "page": page,
             "itemsPerPage": JOBS_PER_PAGE,
-            "sortBy": self.sort_order if self._use_filtered_search else DEFAULT_SORT,
+            "sortBy": self.sort_order if filtered else DEFAULT_SORT,
             "showOnlySavedJobs": False,
             "showOnlyAppliedJobs": False,
             "showOnlyHiddenJobs": False,
@@ -290,9 +283,11 @@ class RemoteRocketshipSpider(BaseJobSpider):
 
         if self._use_filtered_search:
             self.logger.info(
-                "Starting filtered search: titles=%s, location=%s, minSalary=%s, sort=%s",
-                ",".join(self.job_titles), self.filter_locations,
-                self.min_salary, self.sort_order,
+                "Starting filtered search: titles=%s, locations=%s, minSalary=%s, "
+                "seniority=%s, employment=%s, sort=%s",
+                ",".join(self.search.job_titles), ",".join(self.search.locations),
+                self.search.min_salary, ",".join(self.search.seniority),
+                ",".join(self.search.employment_types), self.sort_order,
             )
         else:
             self.logger.info("Starting keyword search: query=%s", self.query)

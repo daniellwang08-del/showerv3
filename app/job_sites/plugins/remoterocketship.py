@@ -18,6 +18,7 @@ from app.job_sites.errors import ConnectionConfigError, QuotaExhausted, RateLimi
 from app.job_sites.http import post_json
 from app.job_sites.registry import register
 from app.services.job_source_boards import BoardJob
+from app.services.remoterocketship_search import SearchLinkError, parse_search_link
 
 API_URL = "https://www.remoterocketship.com/api/openclaw/jobs"
 SITE = "https://www.remoterocketship.com"
@@ -37,16 +38,27 @@ def _error_message(response: httpx.Response) -> str:
     return str(body.get("message") or "") if isinstance(body, dict) else ""
 
 
-def _filters(ctx: FetchContext) -> dict:
-    filters: dict[str, Any] = {
-        "page": 1,
-        "itemsPerPage": min(MAX_PER_PAGE, ctx.max_jobs),
-        "sortBy": "DateAdded",
-        "showRemoteJobs": True,
-    }
-    country = COUNTRY_NAMES.get(ctx.primary_country)
-    if ctx.country_codes and country:
-        filters["locationFilters"] = [country]
+def _filters(ctx: FetchContext, search_link: str = "") -> dict:
+    filters: dict[str, Any] = {}
+    if search_link.strip():
+        try:
+            filters.update(parse_search_link(search_link).api_filters())
+        except SearchLinkError as e:
+            raise ConnectionConfigError(str(e)) from e
+    if not filters.get("locationFilters"):
+        filters.pop("locationFilters", None)
+        country = COUNTRY_NAMES.get(ctx.primary_country)
+        if ctx.country_codes and country:
+            filters["locationFilters"] = [country]
+    filters.update(
+        {
+            "page": 1,
+            "itemsPerPage": min(MAX_PER_PAGE, ctx.max_jobs),
+            # Newest first regardless of the link's sort, so each sync sees new postings.
+            "sortBy": "DateAdded",
+            "showRemoteJobs": True,
+        }
+    )
     return filters
 
 
@@ -88,7 +100,10 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
     try:
         payload = await post_json(
             API_URL,
-            json_body={"filters": _filters(ctx), "includeJobDescription": False},
+            json_body={
+                "filters": _filters(ctx, str(credentials.get("search_url") or "")),
+                "includeJobDescription": False,
+            },
             headers={"Authorization": f"Bearer {api_key}", "RR-API-Version": "1"},
         )
     except httpx.HTTPStatusError as e:
@@ -119,18 +134,31 @@ register(
     JobSitePlugin(
         slug="remoterocketship",
         name="RemoteRocketship",
-        blurb="Search RemoteRocketship's remote roles with your personal API key.",
+        blurb="Sync new remote roles from your saved RemoteRocketship search with your personal API key.",
         homepage=SITE + "/",
         signup_url=SITE + "/developers/",
         auth_type=AuthType.API_KEY,
         logo_file="remoterocketship.svg",
-        sort_order=20,
+        sort_order=1,
         credential_fields=(
             CredentialField(
                 key="api_key",
                 label="API key",
                 placeholder="Advanced, API access, Generate key",
                 help_url=SITE + "/api-docs/",
+            ),
+            CredentialField(
+                key="search_url",
+                label="Search link",
+                placeholder=SITE + "/remote-jobs/?jobTitle=...&locations=United+States",
+                help_url=SITE + "/remote-jobs/",
+                secret=False,
+                required=False,
+                help_text=(
+                    "Set your filters on RemoteRocketship (job titles, location, salary, seniority, "
+                    "employment type), then paste the address bar link. Without it, sync pulls every "
+                    "new remote role in your preferred country."
+                ),
             ),
         ),
         fetch=_fetch,

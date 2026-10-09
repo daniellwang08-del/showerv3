@@ -20,20 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # ZipRecruiter spider code remains under spiders/ziprecruiter.py but is
 # intentionally omitted from this list for now.
 ALL_SPIDERS: list[tuple[str, dict[str, str]]] = [
-    ("remoterocketship", {
-        "pages": "100",
-        "job_titles": (
-            "Software Engineer,Backend Engineer,Frontend Engineer,"
-            "Application Engineer,AI Engineer,Data Engineer,"
-            "Artificial Intelligence,Cloud Engineer,"
-            "Implementation Specialist,Computer Vision Engineer,"
-            "DevOps Engineer,Infrastructure Engineer,"
-            "Solutions Engineer,IT Support"
-        ),
-        "locations": "United States",
-        "min_salary": "140000",
-        "sort": "DateAdded",
-    }),
+    # Filters default to app.services.remoterocketship_search.default_search().
+    ("remoterocketship", {"pages": "100", "sort": "DateAdded"}),
     ("jobright", {"pages": "5"}),
     ("welcometothejungle", {
         "mode": "remote_us",

@@ -165,6 +165,7 @@ async def _prior_request_count(user_id: str, plugin, credentials: dict) -> int:
     same_key = all(
         str(stored.get(f.key) or "").strip() == str(credentials.get(f.key) or "").strip()
         for f in plugin.credential_fields
+        if f.secret
     )
     return (row.request_count or 0) if same_key else 0
 

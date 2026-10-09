@@ -8,6 +8,9 @@ export interface JobSiteCredentialField {
   placeholder: string;
   help_url: string | null;
   secret: boolean;
+  /** Absent on older catalogs; treat as required. */
+  required?: boolean;
+  help_text?: string | null;
 }
 
 export interface JobSiteSessionCapture {
