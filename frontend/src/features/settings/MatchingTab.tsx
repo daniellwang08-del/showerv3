@@ -47,6 +47,7 @@ import type {
 } from '@/types/settings';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { ModeToggle, SettingRow, StatTiles } from './controls';
+import { DocumentFilenameSection } from './DocumentFilenameSection';
 import { RESUME_SOURCE_OPTIONS, TAILORING_STRATEGY_OPTIONS } from './resumeSourceOptions';
 import { ORIGINAL_RESUME_KEY, refreshJobStores, SETTINGS_KEY, useOriginalResumeQuery, useSetSettings } from './queries';
 import { useDraft, useReportDirty } from './useDraft';
@@ -678,6 +679,8 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
           </div>
         )}
       </SectionCard>
+
+      <DocumentFilenameSection settings={settings} />
 
       <SectionCard
         title="Auto-prepare"

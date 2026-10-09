@@ -47,16 +47,18 @@ def _disposition(filename: str, inline: bool = False) -> str:
     return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
 
-async def _person_stem(user_id: str, kind: str) -> tuple[str, str]:
-    """``(file_stem, display_name)`` for the signed-in user."""
-    from app.services.resume_builder_service import person_document_stem
+async def _person_stem(user_id: str, kind: str, *, company: str = "", title: str = "") -> tuple[str, str]:
+    """``(file_stem, display_name)`` for the signed-in user, named by their file name rule."""
+    from app.services.resume_filename import document_stem_for_user, person_document_stem
 
     async with get_session() as session:
         user = await UserRepository(session).get_by_id(user_id)
         first = ((user.name_first if user else "") or "").strip()
         last = ((user.name_last if user else "") or "").strip()
     display = " ".join(p for p in (first, last) if p) or "Resume"
-    return person_document_stem(first, last, kind), display
+    if not user:
+        return person_document_stem(first, last, kind), display
+    return document_stem_for_user(user, kind, company=company, title=title), display
 
 
 def _pdf_response(pdf: bytes, filename: str, page_count: int | None, inline: bool) -> Response:
@@ -313,7 +315,8 @@ async def get_library_job_description(resume_id: str, current_user: dict = Depen
     }
 
 
-async def _library_doc(user_id: str, resume_id: str) -> tuple[ResumeDesign, str | None]:
+async def _library_doc(user_id: str, resume_id: str) -> tuple[ResumeDesign, str | None, dict]:
+    """``(design, cover_letter, name_context)``; the context names downloads after the doc's job."""
     from sqlalchemy.orm import undefer
 
     async with get_session() as session:
@@ -330,13 +333,13 @@ async def _library_doc(user_id: str, resume_id: str) -> tuple[ResumeDesign, str 
             design = ResumeDesign.model_validate(doc.design or {})
         except Exception:
             raise HTTPException(status_code=422, detail="This resume's design could not be read.")
-        return design, doc.cover_letter
+        return design, doc.cover_letter, {"company": doc.company or "", "title": doc.job_title or ""}
 
 
 @router.get("/resumes/{resume_id}/cover-letter")
 async def get_library_cover_letter(resume_id: str, current_user: dict = Depends(get_current_user)):
     user_id = _user_id(current_user)
-    _design, letter = await _library_doc(user_id, resume_id)
+    _design, letter, _names = await _library_doc(user_id, resume_id)
     return {"cover_letter": letter}
 
 
@@ -369,11 +372,11 @@ async def download_library_document(
     from app.services.resume_design_service import generate_design_preview_docx, render_design_pdf
 
     user_id = _user_id(current_user)
-    design, letter = await _library_doc(user_id, resume_id)
+    design, letter, names = await _library_doc(user_id, resume_id)
     is_letter = file_type.startswith("cover_letter")
     if is_letter and not (letter or "").strip():
         raise HTTPException(status_code=404, detail="This resume has no cover letter.")
-    stem, _ = await _person_stem(user_id, "cover_letter" if is_letter else "resume")
+    stem, _ = await _person_stem(user_id, "cover_letter" if is_letter else "resume", **names)
     try:
         if file_type == "resume_pdf":
             pdf, pages = await render_design_pdf(user_id, design)

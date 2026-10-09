@@ -37,6 +37,7 @@ import { useScraperStore } from '../../stores/scraperStore';
 import { namedDownloadFile } from '../../utils/resumeFileName';
 import { BrandedLoader } from '../layout/BrandedLoader';
 import { JobLocationLabel } from '../app/JobLocationLabel';
+import { JobFilenameEditor, type JobDocumentNames } from './JobFilenameEditor';
 
 type JobData = {
   title: string;
@@ -83,6 +84,8 @@ type ResumeBuildStatus = {
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
+  filename_override?: string | null;
+  file_names?: JobDocumentNames | null;
 };
 
 type JobAnalysisResponse = {
@@ -766,6 +769,22 @@ export function DetailContentPanel({
                   />
                 )}
               </div>
+              {analysis.resume_build?.content_generation_status === 'completed' && (
+                <JobFilenameEditor
+                  validJobId={analysis.job_id}
+                  override={analysis.resume_build.filename_override}
+                  names={analysis.resume_build.file_names}
+                  coverOnly={
+                    analysis.resume_build.resume_docx_status === 'skipped' &&
+                    analysis.resume_build.resume_pdf_status === 'skipped'
+                  }
+                  onSaved={(result) =>
+                    setAnalysis((prev) =>
+                      prev?.resume_build ? { ...prev, resume_build: { ...prev.resume_build, ...result } } : prev,
+                    )
+                  }
+                />
+              )}
 
               {analysis.match_in_progress && !analysis.match && (
                 <div className="flex flex-col items-center gap-3 py-6">

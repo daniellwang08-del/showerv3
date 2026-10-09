@@ -30,6 +30,8 @@ vi.mock('@/api/settingsApi', () => ({
   uploadOriginalResume: vi.fn(),
   saveMatchQualityCheckSettings: vi.fn(),
   saveJobShareDefaultSettings: vi.fn(),
+  saveResumeFilenameSettings: vi.fn(),
+  previewDocumentFilename: vi.fn(async () => ({ resume: 'Jane_Doe_resume.pdf', cover_letter: 'Jane_Doe_cover_letter.pdf' })),
   saveResumeTailoringPromptSettings: vi.fn(),
   saveCoverLetterPromptSettings: vi.fn(),
   saveOpenAiSettings: vi.fn(),
@@ -422,6 +424,55 @@ describe('PreferencesPage', () => {
     await waitFor(() =>
       expect(api.saveMatchQualityCheckSettings).toHaveBeenCalledWith({ match_quality_check_min_score: 100 }),
     );
+  });
+
+  it('builds a document file name pattern with fields and previews it before saving', async () => {
+    api.previewDocumentFilename.mockImplementation(async ({ value }) => ({
+      resume: `${value.replace('{company}', 'Acme')}.pdf`,
+      cover_letter: `${value.replace('{company}', 'Acme')}_cover_letter.pdf`,
+    }));
+    api.saveResumeFilenameSettings.mockImplementation(async (body) => makeSettings(body));
+    const user = userEvent.setup();
+    renderPage('/app/preferences?tab=matching');
+    const card = await screen.findByRole('region', { name: 'Document file names' });
+    expect(await within(card).findByTestId('filename-preview-resume')).toHaveTextContent('{firstname}_{lastname}_{kind}.pdf');
+    const save = within(card).getByRole('button', { name: 'Save file names' });
+    expect(save).toBeDisabled();
+
+    const input = within(card).getByLabelText('File name pattern');
+    await user.clear(input);
+    await user.type(input, 'Jane');
+    await user.click(within(card).getByRole('button', { name: '{company}' }));
+    expect(input).toHaveValue('Jane_{company}');
+    await waitFor(() => expect(within(card).getByTestId('filename-preview-resume')).toHaveTextContent('Jane_Acme.pdf'));
+
+    await user.click(save);
+    await waitFor(() =>
+      expect(api.saveResumeFilenameSettings).toHaveBeenCalledWith({
+        resume_filename_mode: 'pattern',
+        resume_filename_value: 'Jane_{company}',
+      }),
+    );
+    await waitFor(() => expect(save).toBeDisabled());
+  });
+
+  it('shows why a file name is rejected and blocks a fixed name left empty', async () => {
+    api.previewDocumentFilename.mockImplementation(async ({ value }) => {
+      if (value.includes('{salary}')) throw { response: { data: { detail: 'Unknown field {salary}.' } } };
+      return { resume: 'x.pdf', cover_letter: 'x_cover_letter.pdf' };
+    });
+    const user = userEvent.setup();
+    renderPage('/app/preferences?tab=matching');
+    const card = await screen.findByRole('region', { name: 'Document file names' });
+    const input = within(card).getByLabelText('File name pattern');
+    fireEvent.change(input, { target: { value: '{salary}' } });
+    expect(await within(card).findByText('Unknown field {salary}.')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Save file names' })).toBeDisabled();
+
+    await user.click(within(card).getByRole('radio', { name: /Same name for every job/ }));
+    expect(within(card).getByLabelText('File name')).toHaveValue('');
+    expect(within(card).getByText('Enter a file name.')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Save file names' })).toBeDisabled();
   });
 
   it('saves the paste-link pipeline immediately', async () => {

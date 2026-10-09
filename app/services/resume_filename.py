@@ -3,11 +3,17 @@
 Users pick a static name or a token pattern such as ``{firstname}_{lastname}_{kind}``.
 Separators may be ``_``, ``-``, or ``.``. Empty tokens (no company, no last name)
 drop their neighboring separators so stems stay clean.
+
+Names are resolved when a file is served, not when it is built, so a changed
+rule applies to every existing build, and ``{company}`` / ``{title}`` follow the
+job being downloaded. A job may also carry its own name (same syntax), which
+wins over the account rule.
 """
 
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
 DEFAULT_FILENAME_PATTERN = "{firstname}_{lastname}_{kind}"
@@ -25,13 +31,19 @@ TOKEN_ALIASES = {
     "jobtitle": "title",
     "role": "title",
     "kind": "kind",
+    "date": "date",
 }
+TOKENS = ("firstname", "lastname", "fullname", "company", "title", "kind", "date")
 
-# ``{firstname}`` or a bare ``firstname`` word.
-_TOKEN_RE = re.compile(
-    r"\{([A-Za-z]+)\}|(firstname|lastname|fullname|company|jobtitle|title|role|kind|first|last)",
-    re.IGNORECASE,
-)
+# Braced only, so plain words such as "Title" or "Last" in a typed name stay literal.
+_TOKEN_RE = re.compile(r"\{([A-Za-z]+)\}")
+_BRACED_RE = re.compile(r"\{([^{}]*)\}")
+FILE_TYPES = {
+    "resume_pdf": ("resume", ".pdf"),
+    "resume_docx": ("resume", ".docx"),
+    "cover_letter_pdf": ("cover_letter", ".pdf"),
+    "cover_letter_docx": ("cover_letter", ".docx"),
+}
 _UNSAFE_CHARS = re.compile(r"[^\w.\s-]", re.UNICODE)
 _MULTI_SEP = re.compile(r"[-_.]{2,}")
 
@@ -48,7 +60,17 @@ def normalize_filename_value(mode: str, value: str | None) -> str:
         if not text:
             raise ValueError("Enter a file name.")
         return text[:FILENAME_VALUE_MAX]
+    unknown = [m.group(1) for m in _BRACED_RE.finditer(text) if m.group(1).strip().lower() not in TOKEN_ALIASES]
+    if unknown:
+        allowed = ", ".join("{" + t + "}" for t in TOKENS)
+        raise ValueError(f"Unknown field {{{unknown[0]}}}. Use {allowed}.")
     return (text or DEFAULT_FILENAME_PATTERN)[:FILENAME_VALUE_MAX]
+
+
+def normalize_job_filename(value: str | None) -> str | None:
+    """A job's own file name (pattern syntax); None clears it back to the account rule."""
+    text = (value or "").strip()
+    return normalize_filename_value("pattern", text) if text else None
 
 
 def sanitize_filename_part(value: str, *, fallback: str = "") -> str:
@@ -65,6 +87,7 @@ def _token_context(
     kind: str,
     company: str = "",
     title: str = "",
+    on: date | None = None,
 ) -> dict[str, str]:
     first = sanitize_filename_part(first_name)
     last = sanitize_filename_part(last_name)
@@ -77,6 +100,7 @@ def _token_context(
         "company": sanitize_filename_part(company),
         "title": sanitize_filename_part(title),
         "kind": kind_s,
+        "date": (on or date.today()).isoformat(),
     }
 
 
@@ -86,7 +110,7 @@ def _tokenize_pattern(pattern: str) -> list[tuple[str, str]]:
     for match in _TOKEN_RE.finditer(pattern):
         if match.start() > pos:
             out.append(("lit", pattern[pos : match.start()]))
-        raw = (match.group(1) or match.group(2) or "").lower()
+        raw = match.group(1).lower()
         key = TOKEN_ALIASES.get(raw)
         if key:
             out.append(("token", key))
@@ -125,6 +149,7 @@ def resolve_document_stem(
     kind: str = "resume",
     company: str = "",
     title: str = "",
+    on: date | None = None,
 ) -> str:
     """Return a filesystem-safe stem (no extension) for a resume or cover letter."""
     mode_n = normalize_filename_mode(mode)
@@ -134,6 +159,7 @@ def resolve_document_stem(
         kind=kind,
         company=company,
         title=title,
+        on=on,
     )
     fallback = ctx["fullname"] or ctx["kind"] or "Resume"
 
@@ -180,13 +206,31 @@ def document_stem_for_user(
     *,
     company: str = "",
     title: str = "",
+    job_filename: str | None = None,
 ) -> str:
+    """The stem for *user*'s document; *job_filename* (a job's own name) wins over the account rule."""
+    override = (job_filename or "").strip()
     return resolve_document_stem(
-        mode=getattr(user, "resume_filename_mode", None),
-        value=getattr(user, "resume_filename_value", None),
+        mode="pattern" if override else getattr(user, "resume_filename_mode", None),
+        value=override or getattr(user, "resume_filename_value", None),
         first_name=(getattr(user, "name_first", None) or ""),
         last_name=(getattr(user, "name_last", None) or ""),
         kind=kind,
         company=company,
         title=title,
     )
+
+
+def document_filename_for_user(user: Any, file_type: str, **context: Any) -> str:
+    """Full file name (stem plus extension) for a ``resume_pdf`` / ``cover_letter_docx`` style file type."""
+    kind, ext = FILE_TYPES[file_type]
+    return document_stem_for_user(user, kind, **context) + ext
+
+
+def job_document_names(user: Any, *, company: str = "", title: str = "", job_filename: str | None = None) -> dict:
+    """The resume and cover letter names a job's downloads and application uploads use."""
+    context = {"company": company, "title": title, "job_filename": job_filename}
+    return {
+        "resume": document_stem_for_user(user, "resume", **context),
+        "cover_letter": document_stem_for_user(user, "cover_letter", **context),
+    }

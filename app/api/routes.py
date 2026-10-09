@@ -849,6 +849,8 @@ async def patch_profile_eeo(
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
             await session.commit()
+            # The UPDATE expires updated_at (onupdate=func.now()); a sync lazy load would raise MissingGreenlet.
+            await session.refresh(user, ["updated_at"])
             return _user_to_profile_response(user)
     except HTTPException:
         raise
@@ -876,6 +878,7 @@ async def patch_profile_address(
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
             await session.commit()
+            await session.refresh(user, ["updated_at"])
             return _user_to_profile_response(user)
     except HTTPException:
         raise
@@ -4075,19 +4078,8 @@ async def get_job_analysis_panel(
         resume_repo = ResumeBuildRepository(session)
         rb_row = await resume_repo.get(job_id, user_id)
         if rb_row:
-            resume_build_payload = ResumeBuildStatusResponse(
-                job_id=rb_row.job_id,
-                content_generation_status=getattr(rb_row, "content_generation_status", None) or "pending",
-                content_generation_error=getattr(rb_row, "content_generation_error", None),
-                resume_docx_status=rb_row.resume_docx_status,
-                resume_pdf_status=rb_row.resume_pdf_status,
-                cover_letter_docx_status=rb_row.cover_letter_docx_status,
-                cover_letter_pdf_status=rb_row.cover_letter_pdf_status,
-                output_directory=rb_row.output_directory,
-                error_message=rb_row.error_message,
-                created_at=rb_row.created_at,
-                updated_at=rb_row.updated_at,
-            )
+            viewer = await UserRepository(session).get_by_id(user_id)
+            resume_build_payload = _resume_build_status(rb_row, viewer, job)
 
         return JobAnalysisResponse(
             job_id=job.id,
@@ -5422,6 +5414,57 @@ async def get_user_settings(
     return UserSettingsResponse(**data)
 
 
+class DocumentFilenamePreviewRequest(BaseModel):
+    mode: str = Field(default="pattern", pattern="^(pattern|static)$")
+    value: str | None = Field(default=None, max_length=200)
+    company: str = Field(default="Acme", max_length=200)
+    title: str = Field(default="Software Engineer", max_length=200)
+
+
+class DocumentFilenamePreviewResponse(BaseModel):
+    resume: str
+    cover_letter: str
+
+
+@router.post(
+    "/settings/document-filename/preview",
+    response_model=DocumentFilenamePreviewResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def preview_document_filename(
+    body: DocumentFilenamePreviewRequest,
+    current_user: dict = Depends(get_current_user),
+) -> DocumentFilenamePreviewResponse:
+    """The PDF names an unsaved file name rule gives, for the signed-in user and a sample job."""
+    from app.services.resume_filename import normalize_filename_value, resolve_document_stem
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        value = normalize_filename_value(body.mode, body.value)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    async with get_session() as session:
+        user = await UserRepository(session).get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    names = {
+        kind: resolve_document_stem(
+            mode=body.mode,
+            value=value,
+            first_name=user.name_first or "",
+            last_name=user.name_last or "",
+            kind=kind,
+            company=body.company,
+            title=body.title,
+        )
+        + ".pdf"
+        for kind in ("resume", "cover_letter")
+    }
+    return DocumentFilenamePreviewResponse(**names)
+
+
 @router.put(
     "/settings",
     response_model=UserSettingsResponse,
@@ -5713,7 +5756,7 @@ async def preview_resume_template_design(
     """Return the real dxpdf PDF for the builder's native PDF viewer embed."""
     from urllib.parse import quote
 
-    from app.services.resume_builder_service import person_document_stem
+    from app.services.resume_filename import document_stem_for_user, person_document_stem
     from app.services.resume_design_service import (
         generate_design_preview_pdf_bytes,
         register_preview_pdf_token,
@@ -5735,13 +5778,10 @@ async def preview_resume_template_design(
         )
 
     # Named file so the browser PDF chrome shows ``Name_resume.pdf`` instead of a blob UUID.
-    first = last = ""
     async with get_session() as session:
         user = await UserRepository(session).get_by_id(user_id)
-        if user:
-            first = (user.name_first or "").strip()
-            last = (user.name_last or "").strip()
-    filename = f"{person_document_stem(first, last, 'resume')}.pdf"
+    stem = document_stem_for_user(user, "resume") if user else person_document_stem("", "", "resume")
+    filename = f"{stem}.pdf"
     token = register_preview_pdf_token(user_id, cache_key, filename)
     # Path ends with the real filename so Chromium's PDF viewer title is not a UUID.
     preview_path = f"/api/v1/settings/resume-template/design/preview-doc/{token}/{quote(filename)}"
@@ -6769,20 +6809,75 @@ async def get_resume_build_status(
         row = await repo.get(job_id, user_id)
         if not row:
             raise HTTPException(status_code=404, detail="No resume build found for this job")
+        user = await UserRepository(session).get_by_id(user_id)
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+        return _resume_build_status(row, user, job)
 
-        return ResumeBuildStatusResponse(
-            job_id=row.job_id,
-            content_generation_status=getattr(row, "content_generation_status", None) or "pending",
-            content_generation_error=getattr(row, "content_generation_error", None),
-            resume_docx_status=row.resume_docx_status,
-            resume_pdf_status=row.resume_pdf_status,
-            cover_letter_docx_status=row.cover_letter_docx_status,
-            cover_letter_pdf_status=row.cover_letter_pdf_status,
-            output_directory=row.output_directory,
-            error_message=row.error_message,
-            created_at=row.created_at,
-            updated_at=row.updated_at,
-        )
+
+def _job_name_context(job, row) -> dict:
+    """``company`` / ``title`` / ``job_filename`` for :mod:`app.services.resume_filename`."""
+    return {
+        "company": (getattr(job, "company", None) or "") if job else "",
+        "title": (getattr(job, "title", None) or "") if job else "",
+        "job_filename": getattr(row, "filename_override", None) if row else None,
+    }
+
+
+def _resume_build_status(row, user, job) -> ResumeBuildStatusResponse:
+    from app.services.resume_filename import job_document_names
+
+    return ResumeBuildStatusResponse(
+        job_id=row.job_id,
+        content_generation_status=getattr(row, "content_generation_status", None) or "pending",
+        content_generation_error=getattr(row, "content_generation_error", None),
+        resume_docx_status=row.resume_docx_status,
+        resume_pdf_status=row.resume_pdf_status,
+        cover_letter_docx_status=row.cover_letter_docx_status,
+        cover_letter_pdf_status=row.cover_letter_pdf_status,
+        output_directory=row.output_directory,
+        error_message=row.error_message,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        filename_override=getattr(row, "filename_override", None),
+        file_names=job_document_names(user, **_job_name_context(job, row)) if user else None,
+    )
+
+
+class JobFilenameRequest(BaseModel):
+    # Same tokens as the account rule; empty or null goes back to the account rule.
+    filename: str | None = Field(default=None, max_length=200)
+
+
+@router.put(
+    "/jobs/valid/{job_id}/resume-build/filename",
+    response_model=ResumeBuildStatusResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def set_job_document_filename(
+    job_id: str,
+    body: JobFilenameRequest,
+    current_user: dict = Depends(get_current_user),
+) -> ResumeBuildStatusResponse:
+    """Name this job's resume and cover letter files, overriding the account rule for this job only."""
+    from app.services.resume_filename import normalize_job_filename
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        override = normalize_job_filename(body.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    async with get_session() as session:
+        row = await ResumeBuildRepository(session).get(job_id, user_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="No resume build found for this job")
+        row.filename_override = override
+        await session.commit()
+        await session.refresh(row, ["updated_at"])
+        user = await UserRepository(session).get_by_id(user_id)
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+        return _resume_build_status(row, user, job)
 
 
 @router.post(
@@ -6873,8 +6968,9 @@ async def download_resume_file(
     async with get_session() as session:
         repo = ResumeBuildRepository(session)
         row = await repo.get(job_id, user_id)
-        user = await UserRepository(session).get_by_id(user_id) if is_resume else None
-        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none() if is_resume else None
+        user = await UserRepository(session).get_by_id(user_id)
+        job = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+    name_context = _job_name_context(job, row)
 
     async def _original() -> Response:
         from app.services.original_resume_service import get_original_resume_file, get_original_resume_meta
@@ -6901,12 +6997,7 @@ async def download_resume_file(
             )
 
         try:
-            payload, filename = await render_original_resume_file(
-                user_id,
-                file_type,
-                company=(getattr(job, "company", None) or "") if job else "",
-                title=(getattr(job, "title", None) or "") if job else "",
-            )
+            payload, filename = await render_original_resume_file(user_id, file_type, **name_context)
         except Exception as exc:  # noqa: BLE001 - surface a clean 503
             logger.warning("original_resume_render_failed", user_id=user_id, job_id=job_id, error=str(exc)[:300])
             raise HTTPException(status_code=503, detail="Could not build your original resume file. Please try again.")
@@ -6952,8 +7043,12 @@ async def download_resume_file(
             return await _original()
         raise HTTPException(status_code=404, detail="File not found on disk")
 
-    headers = {"X-Resume-Source": "tailored", **expose} if is_resume else {}
-    return FileResponse(path=str(p), filename=p.name, media_type=media_type, headers=headers)
+    from app.services.resume_filename import document_filename_for_user
+
+    # Files keep their build-time name on disk; the download name follows the current rule.
+    filename = document_filename_for_user(user, file_type, **name_context) if user else p.name
+    headers = {"X-Resume-Source": "tailored", **expose} if is_resume else {"Access-Control-Expose-Headers": "Content-Disposition"}
+    return FileResponse(path=str(p), filename=filename, media_type=media_type, headers=headers)
 
 
 # ---------------------------------------------------------------------------

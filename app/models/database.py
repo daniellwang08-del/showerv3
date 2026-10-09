@@ -859,6 +859,9 @@ class ResumeBuildResult(Base):
 
     output_directory = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
+    # This job's own document file name (same tokens as users.resume_filename_value);
+    # null uses the account rule. Applied when files are served, never on disk.
+    filename_override = Column(String(200), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

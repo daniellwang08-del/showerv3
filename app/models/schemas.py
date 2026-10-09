@@ -339,6 +339,9 @@ class ResumeBuildStatusResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # This job's own file name pattern (null = account rule) and the stems downloads use.
+    filename_override: str | None = None
+    file_names: dict[str, str] | None = None
 
 
 class JobAnalysisResponse(BaseModel):

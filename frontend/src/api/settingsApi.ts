@@ -3,6 +3,7 @@ import {
   MATCH_QUALITY_CHECK_MODES,
   type LlmProvider,
   type MatchQualityCheckMode,
+  type ResumeFilenameMode,
   type SettingsMode,
   type UserSettings,
   type UserSettingsUpdate,
@@ -288,6 +289,22 @@ export async function saveResumeFilenameSettings(
   body: Pick<UserSettingsUpdate, 'resume_filename_mode' | 'resume_filename_value'>,
 ) {
   return updateUserSettings(body);
+}
+
+export interface DocumentFilenamePreview {
+  resume: string;
+  cover_letter: string;
+}
+
+/** The PDF names an unsaved rule gives for the signed-in user and a sample job. */
+export async function previewDocumentFilename(body: {
+  mode: ResumeFilenameMode;
+  value: string;
+  company?: string;
+  title?: string;
+}): Promise<DocumentFilenamePreview> {
+  const { data } = await apiClient.post<DocumentFilenamePreview>('/settings/document-filename/preview', body);
+  return data;
 }
 
 export async function saveMinMatchScoreSettings(

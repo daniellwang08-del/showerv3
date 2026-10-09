@@ -985,7 +985,7 @@ async def generate_design_preview_pdf_bytes(user_id: str, design: ResumeDesign) 
 
 
 async def render_original_resume_file(
-    user_id: str, file_type: str, *, company: str = "", title: str = ""
+    user_id: str, file_type: str, *, company: str = "", title: str = "", job_filename: str | None = None
 ) -> tuple[bytes, str]:
     """Render the user's original résumé (active studio design + profile) for upload.
 
@@ -1000,7 +1000,7 @@ async def render_original_resume_file(
         if not user:
             raise ValueError("User not found")
         design, _ = await load_design_for_render(session, user)
-        stem = document_stem_for_user(user, "resume", company=company, title=title)
+        stem = document_stem_for_user(user, "resume", company=company, title=title, job_filename=job_filename)
     if file_type == "resume_pdf":
         pdf, _pages = await render_design_pdf(user_id, design)
         return pdf, f"{stem}.pdf"
