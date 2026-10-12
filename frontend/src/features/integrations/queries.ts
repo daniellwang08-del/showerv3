@@ -1,11 +1,13 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
-import { fetchJobSites } from '@/api/jobSitesApi';
+import { fetchJobSiteActivity, fetchJobSites } from '@/api/jobSitesApi';
 import { fetchSheetsConfig, fetchSheetsStatus } from '@/api/googleSheetsApi';
 import { fetchPumbleConfig, fetchPumbleStatus } from '@/api/pumbleApi';
 import type { PumbleData, SheetsData } from './status';
 
 export const integrationKeys = {
   jobSites: ['integrations', 'job-sites'] as const,
+  /** Running job-site syncs; polled while non-empty (Jobs header progress line). */
+  jobSiteActivity: ['integrations', 'job-site-activity'] as const,
   sheets: ['integrations', 'sheets'] as const,
   pumble: ['integrations', 'pumble'] as const,
   /** Read by the Jobs page (`useIntegrationTargets`) to offer "Post to…" actions. */
@@ -13,8 +15,25 @@ export const integrationKeys = {
   jobsPumbleConfig: ['integrations', 'pumble-config'] as const,
 };
 
+/** Poll cadence while a sync is running; websocket events refresh in between. */
+export const SYNC_POLL_MS = 4000;
+
 export function useJobSites() {
-  return useQuery({ queryKey: integrationKeys.jobSites, queryFn: fetchJobSites });
+  return useQuery({
+    queryKey: integrationKeys.jobSites,
+    queryFn: fetchJobSites,
+    refetchInterval: (query) => (query.state.data?.connections.some((c) => c.sync) ? SYNC_POLL_MS : false),
+  });
+}
+
+export function useJobSiteActivity(enabled = true) {
+  return useQuery({
+    queryKey: integrationKeys.jobSiteActivity,
+    queryFn: fetchJobSiteActivity,
+    enabled,
+    staleTime: 2000,
+    refetchInterval: (query) => (query.state.data?.length ? SYNC_POLL_MS : false),
+  });
 }
 
 export function useSheets() {
@@ -49,4 +68,5 @@ export function invalidatePumble(qc: QueryClient) {
 
 export function invalidateJobSites(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: integrationKeys.jobSites });
+  void qc.invalidateQueries({ queryKey: integrationKeys.jobSiteActivity });
 }

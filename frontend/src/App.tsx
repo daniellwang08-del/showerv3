@@ -14,6 +14,7 @@ import { LegacyPage } from './shells/LegacyPage';
 import { adminNav, applicantNav, legacyRedirects } from './shells/nav';
 import { coalesce } from './lib/coalesce';
 import { queryClient } from './lib/queryClient';
+import { integrationKeys } from './features/integrations/queries';
 import { Skeleton } from './components/ui/skeleton';
 import { PageTitle } from './components/app/PageTitle';
 
@@ -117,6 +118,7 @@ const refresh = {
   lists: coalesce(() => void useJobsStore.getState().refreshLists({ showLoading: false, reset: false })),
   afterSubmit: coalesce(() => void useScraperStore.getState().refreshAfterJobSubmit()),
   queries: coalesce(() => void queryClient.invalidateQueries({ queryKey: ['jobs'] })),
+  syncActivity: coalesce(() => void queryClient.invalidateQueries({ queryKey: integrationKeys.jobSiteActivity })),
 };
 
 const SCRAPER_EVENTS = new Set([
@@ -193,6 +195,25 @@ function handleWsEvent(event: WsEvent) {
     return;
   }
 
+  if (event.type === 'job_site_sync') {
+    void queryClient.invalidateQueries({ queryKey: integrationKeys.jobSites });
+    void queryClient.invalidateQueries({ queryKey: integrationKeys.jobSiteActivity });
+    const name = event.plugin_name || event.plugin_slug || 'Job site';
+    if (event.phase === 'synced') {
+      const found = event.new_jobs ?? 0;
+      if (found > 0) {
+        const noun = found === 1 ? 'new job' : 'new jobs';
+        useUIStore.getState().notify('success', `${name}: ${found} ${noun} found. Scoring them now.`, 6000);
+      }
+      refresh.afterSubmit();
+      refresh.lists();
+      refresh.queries();
+    } else if (event.phase === 'failed') {
+      useUIStore.getState().notify('warning', `${name} sync failed: ${event.error || 'unknown error'}.`, 10000);
+    }
+    return;
+  }
+
   if (event.type === 'scrape_promoted' || event.type === 'job_submitted') {
     refresh.afterSubmit();
     refresh.lists();
@@ -201,6 +222,7 @@ function handleWsEvent(event: WsEvent) {
   if (event.type === 'job_excluded_for_user' || event.type === 'extraction_failed') {
     refresh.lists();
     refresh.jobs();
+    refresh.syncActivity();
   }
 
   if (event.type === 'match_failed') {
@@ -226,6 +248,7 @@ function handleWsEvent(event: WsEvent) {
   if (PIPELINE_EVENTS.has(event.type)) {
     refresh.jobs();
     refresh.stats();
+    refresh.syncActivity();
     const detailJobId = event.valid_job_id || event.job_id;
     if (detailJobId) scraper.bumpAnalysisPanelRefresh(detailJobId);
   }

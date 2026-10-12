@@ -20,6 +20,7 @@ from app.services.job_site_connection_sync import (
     STATUS_RATE_LIMITED,
     credential_hints,
     decrypt_credentials,
+    connection_sync_activity,
     describe_fetch_error,
     encrypt_credentials,
     fetch_context_for_user,
@@ -46,6 +47,16 @@ class JobSiteUpdateRequest(BaseModel):
     enabled: bool | None = None
 
 
+class JobSiteSyncActivity(BaseModel):
+    plugin_slug: str
+    plugin_name: str
+    # queued | fetching | analyzing
+    phase: str
+    total: int = 0
+    done: int = 0
+    started_at: str | None = None
+
+
 class JobSiteConnectionResponse(BaseModel):
     id: str
     plugin_slug: str
@@ -61,6 +72,7 @@ class JobSiteConnectionResponse(BaseModel):
     next_sync_at: str | None = None
     last_success_at: str | None = None
     request_count: int = 0
+    sync: JobSiteSyncActivity | None = None
 
 
 class JobSiteCatalogResponse(BaseModel):
@@ -77,7 +89,26 @@ def _require_user_id(current_user: dict) -> str:
     return user_id
 
 
-def _to_response(row: UserJobSiteConnection, hints: dict[str, str] | None = None) -> JobSiteConnectionResponse:
+def _activity_response(row: UserJobSiteConnection, activity: dict | None) -> JobSiteSyncActivity | None:
+    if not activity:
+        return None
+    plugin = get_plugin(row.plugin_slug)
+    started = activity.get("started_at")
+    return JobSiteSyncActivity(
+        plugin_slug=row.plugin_slug,
+        plugin_name=plugin.name if plugin else row.plugin_slug,
+        phase=activity["phase"],
+        total=activity.get("total", 0),
+        done=activity.get("done", 0),
+        started_at=started.isoformat() if started else None,
+    )
+
+
+def _to_response(
+    row: UserJobSiteConnection,
+    hints: dict[str, str] | None = None,
+    activity: dict | None = None,
+) -> JobSiteConnectionResponse:
     if hints is None:
         try:
             hints = credential_hints(row.plugin_slug, decrypt_credentials(row.credentials_encrypted))
@@ -98,6 +129,7 @@ def _to_response(row: UserJobSiteConnection, hints: dict[str, str] | None = None
         next_sync_at=row.next_sync_at.isoformat() if row.next_sync_at else None,
         last_success_at=row.last_success_at.isoformat() if row.last_success_at else None,
         request_count=row.request_count or 0,
+        sync=_activity_response(row, activity),
     )
 
 
@@ -112,6 +144,7 @@ async def _user_fetch_context(user_id: str) -> FetchContext:
 
 
 async def _enqueue_connection_sync(connection_id: str) -> bool:
+    await _mark_queued(connection_id, True)
     try:
         from app.core.redis_support import pipeline_job_id
         from app.tasks.worker import get_scraper_pool
@@ -129,6 +162,7 @@ async def _enqueue_connection_sync(connection_id: str) -> bool:
             connection_id=connection_id,
             error=str(e),
         )
+        await _mark_queued(connection_id, False)
         return False
 
 
@@ -212,11 +246,54 @@ async def list_job_sites(
             .scalars()
             .all()
         )
-        connections = [_to_response(row) for row in rows]
+        activity = await connection_sync_activity(session, list(rows))
+        connections = [_to_response(row, activity=activity.get(row.id)) for row in rows]
     return JobSiteCatalogResponse(
         plugins=[p.catalog_dict() for p in list_plugins()],
         connections=connections,
     )
+
+
+@router.get("/activity", response_model=list[JobSiteSyncActivity])
+async def job_site_sync_activity(
+    current_user: dict = Depends(get_current_user),
+) -> list[JobSiteSyncActivity]:
+    """Syncs still running for this user (fetching listings or scoring new jobs)."""
+    user_id = _require_user_id(current_user)
+    async with get_session() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(UserJobSiteConnection).where(
+                        UserJobSiteConnection.user_id == user_id,
+                        UserJobSiteConnection.enabled.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        activity = await connection_sync_activity(session, list(rows))
+        out = [_activity_response(row, activity.get(row.id)) for row in rows]
+    return [item for item in out if item is not None]
+
+
+async def _mark_queued(connection_id: str, queued: bool) -> None:
+    async with get_session() as session:
+        row = (
+            await session.execute(
+                select(UserJobSiteConnection).where(UserJobSiteConnection.id == connection_id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return
+        if queued and row.sync_phase == "fetching":
+            return
+        if queued:
+            row.sync_phase = "queued"
+            row.sync_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        elif row.sync_phase == "queued":
+            row.sync_phase = None
 
 
 @router.post("/{slug}/connect", response_model=JobSiteConnectionResponse)

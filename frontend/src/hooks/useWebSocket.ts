@@ -33,6 +33,9 @@ export interface WsEvent {
   plugin_slug?: string;
   plugin_name?: string;
   status?: string;
+  /** job_site_sync: fetching | synced | failed. */
+  phase?: string;
+  new_jobs?: number;
   /** match_quality_check_completed: the free score the AI check replaced. */
   free_score?: number | null;
   filled_fields?: string[];

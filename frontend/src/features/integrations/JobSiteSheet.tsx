@@ -15,8 +15,6 @@ import {
 import { toast } from 'sonner';
 import {
   disconnectJobSite,
-  syncJobSiteNow,
-  updateJobSite,
   type JobSiteCatalog,
   type JobSiteConnection,
   type JobSitePlugin,
@@ -43,23 +41,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { integrationKeys, invalidateJobSites } from './queries';
 import { InlineError, Section, SheetFrame } from './SheetFrame';
-import {
-  errorDetail,
-  jobSiteStatus,
-  needsReconnect,
-  parseServerDate,
-  relativeTime,
-  resumeLabel,
-} from './status';
+import { errorDetail, jobSiteStatus, parseServerDate, relativeTime } from './status';
+import { SyncProgress } from './SyncProgress';
 import { useJobSiteConnect, type ConnectLogLine, type StepState } from './useJobSiteConnect';
-
-function upsertConnection(qc: ReturnType<typeof useQueryClient>, row: JobSiteConnection) {
-  qc.setQueryData<JobSiteCatalog>(integrationKeys.jobSites, (prev) =>
-    prev
-      ? { ...prev, connections: [...prev.connections.filter((c) => c.plugin_slug !== row.plugin_slug), row] }
-      : prev,
-  );
-}
+import { upsertConnection, useJobSiteControls } from './useJobSiteControls';
 
 export function JobSiteSheet({
   plugin,
@@ -79,7 +64,7 @@ export function JobSiteSheet({
     invalidateJobSites(qc);
     setReconnecting(false);
     toast.success(`${plugin.name} connected`, {
-      description: 'First sync started. New jobs appear on your dashboard shortly.',
+      description: 'First sync started. Progress shows here and at the top of the Jobs page.',
     });
   };
 
@@ -140,26 +125,10 @@ function ConnectedSite({
 }) {
   const qc = useQueryClient();
   const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const toggle = useMutation({
-    mutationFn: (enabled: boolean) => updateJobSite(plugin.slug, { enabled }),
-    onSuccess: (row) => {
-      upsertConnection(qc, row);
-      invalidateJobSites(qc);
-      toast.success(row.enabled ? `Auto-sync resumed for ${plugin.name}` : `Auto-sync paused for ${plugin.name}`);
-    },
-    onError: (err) => toast.error(errorDetail(err, 'Failed to update this job site.')),
-  });
-
-  const sync = useMutation({
-    mutationFn: () => syncJobSiteNow(plugin.slug),
-    onSuccess: () => {
-      toast.success('Sync started', { description: 'New jobs appear on your dashboard shortly.' });
-      // The sync runs in the background; re-read counts once it has had time to land.
-      window.setTimeout(() => invalidateJobSites(qc), 8000);
-    },
-    onError: (err) => toast.error(errorDetail(err, 'Failed to start the sync.')),
-  });
+  const { toggle, sync, enabled, state, reauth, resume, waiting, canSync, nextSync } = useJobSiteControls(
+    plugin,
+    connection,
+  );
 
   const disconnect = useMutation({
     mutationFn: () => disconnectJobSite(plugin.slug),
@@ -175,15 +144,9 @@ function ConnectedSite({
     onError: (err) => toast.error(errorDetail(err, 'Failed to disconnect this job site.')),
   });
 
-  const enabled = toggle.isPending ? Boolean(toggle.variables) : connection.enabled;
   const synced = parseServerDate(connection.last_synced_at);
   const hints = Object.entries(connection.credential_hints ?? {});
-  const state = connection.status ?? 'connected';
-  const reauth = needsReconnect(connection);
-  const resume = resumeLabel(connection.next_sync_at);
-  const waiting = (state === 'rate_limited' || state === 'quota_exhausted') && Boolean(resume);
   const cap = plugin.lifetime_request_cap ?? null;
-  const nextSync = enabled && state !== 'needs_reauth' ? resume : null;
 
   return (
     <div className="space-y-6">
@@ -232,7 +195,7 @@ function ConnectedSite({
           <Button
             variant="outline"
             size="sm"
-            disabled={sync.isPending || !enabled || reauth || waiting}
+            disabled={!canSync}
             onClick={() => sync.mutate()}
           >
             {sync.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
@@ -240,6 +203,7 @@ function ConnectedSite({
           </Button>
         }
       >
+        {connection.sync ? <SyncProgress activity={[connection.sync]} /> : null}
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">Last sync</dt>
           <dd className="tabular-nums" title={synced?.toLocaleString()}>

@@ -721,6 +721,13 @@ class UserJobSiteConnection(Base):
     last_success_at = Column(DateTime, nullable=True)
     # Lifetime fetches with the stored key, for boards with a lifetime cap.
     request_count = Column(Integer, nullable=False, default=0, server_default="0")
+    # queued | fetching while a sync runs; None when idle. Analysis progress is
+    # derived from last_sync_jobs, so it needs no phase of its own.
+    sync_phase = Column(String(20), nullable=True)
+    sync_started_at = Column(DateTime, nullable=True)
+    # {"job_ids": [...], "analyze": bool}: what the last successful sync added
+    # and whether the user's pipeline scores those jobs.
+    last_sync_jobs = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

@@ -253,7 +253,7 @@ async def ingest_board_jobs(
         from app.services.job_add_batches import record_job_add
 
         await record_job_add(user_id, added_ids, source="site")
-    return {"created": created, "linked": linked, "skipped": skipped}
+    return {"created": created, "linked": linked, "skipped": skipped, "job_ids": added_ids}
 
 
 async def sync_user_job_source(source_id: str) -> dict:

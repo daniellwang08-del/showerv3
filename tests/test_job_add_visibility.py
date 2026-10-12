@@ -65,5 +65,5 @@ def test_source_sync_records_one_add_session_for_new_and_linked_jobs(monkeypatch
             skip_phase_b=True,
         )
     )
-    assert counts == {"created": 1, "linked": 1, "skipped": 1}
+    assert counts == {"created": 1, "linked": 1, "skipped": 1, "job_ids": ["j1", "j2"]}
     assert recorded == {"user_id": "u1", "job_ids": ["j1", "j2"], "source": "site"}

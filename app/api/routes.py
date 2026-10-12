@@ -3518,6 +3518,67 @@ class DashboardCountsResponse(BaseModel):
     remote: int = 0  # Remote jobs in the visible pool
 
 
+class NewJobsCountResponse(BaseModel):
+    count: int
+    latest_added_at: str | None = None
+
+
+@router.get(
+    "/jobs/dashboard/new-count",
+    response_model=NewJobsCountResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_new_jobs_count(
+    since: str = Query(..., description="ISO-8601 time the user last looked at the Jobs page."),
+    current_user: dict = Depends(get_current_user),
+) -> NewJobsCountResponse:
+    """Scored jobs that entered the viewer's board after ``since`` (sidebar badge).
+
+    Only jobs with a match result count: unscored rows can still be hidden by
+    dedupe moments later, and the badge must not count jobs that vanish.
+    """
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    try:
+        since_dt = datetime.fromisoformat(since.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid since timestamp; use ISO-8601.",
+        )
+    if since_dt.tzinfo is not None:
+        since_dt = since_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+    is_admin = bool(current_user.get("is_admin"))
+    async with get_session() as session:
+        countries = None if is_admin else await UserRepository(session).get_country_preferences(user_id)
+        base_filter, _ = _dashboard_visible_base_filter(
+            user_id, country_preferences=countries, is_admin=is_admin
+        )
+        added_at = func.coalesce(UserJobStatus.created_at, Job.created_at)
+        row = (
+            await session.execute(
+                select(func.count(), func.max(added_at))
+                .select_from(Job)
+                .outerjoin(
+                    UserJobStatus,
+                    (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id),
+                )
+                .join(
+                    JobMatchResult,
+                    (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == user_id),
+                )
+                .where(*base_filter, added_at > since_dt)
+            )
+        ).one()
+    count, latest = row
+    return NewJobsCountResponse(
+        count=int(count or 0),
+        latest_added_at=latest.isoformat() if latest else None,
+    )
+
+
 @router.get(
     "/jobs/dashboard/counts",
     response_model=DashboardCountsResponse,

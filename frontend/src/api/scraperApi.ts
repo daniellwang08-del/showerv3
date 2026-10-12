@@ -97,6 +97,17 @@ export async function fetchDashboardCounts(params: {
   };
 }
 
+export interface NewJobsCount {
+  count: number;
+  latest_added_at: string | null;
+}
+
+/** Scored jobs that reached the board after ``since`` (sidebar badge). */
+export async function fetchNewJobsCount(since: string): Promise<NewJobsCount> {
+  const { data } = await apiClient.get<NewJobsCount>('/jobs/dashboard/new-count', { params: { since } });
+  return { count: data?.count ?? 0, latest_added_at: data?.latest_added_at ?? null };
+}
+
 export async function fetchScrapedJob(id: string) {
   const { data } = await apiClient.get(`/scraper/jobs/${id}`);
   return data;

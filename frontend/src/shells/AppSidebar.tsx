@@ -12,6 +12,9 @@ import { UserMenu, type ShellUser } from './UserMenu';
 import { useOpenJob } from '@/features/jobs/useOpenJob';
 import { JobAddHistory } from '@/features/jobs/JobAddHistory';
 import { usePendingSignupCount } from '@/features/admin/users/signupRequests';
+import { JOBS_PATH, newJobsBadgeText, useNewJobsBadge } from '@/features/jobs/useNewJobsBadge';
+
+type NavBadge = { count: number; text: string; label: string; tone: 'solid' | 'soft' };
 
 type AppSidebarProps = {
   nav: NavSection[];
@@ -48,7 +51,21 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const openJob = useOpenJob();
   const isApplicant = variant === 'applicant';
   const pendingSignups = usePendingSignupCount(variant === 'admin');
-  const navBadges: Record<string, number> = { '/admin/users': pendingSignups };
+  const newJobs = useNewJobsBadge(isApplicant);
+  const navBadges: Record<string, NavBadge> = {
+    '/admin/users': {
+      count: pendingSignups,
+      text: String(pendingSignups),
+      label: `${pendingSignups} pending signup${pendingSignups === 1 ? '' : 's'}`,
+      tone: 'solid',
+    },
+    [JOBS_PATH]: {
+      count: newJobs,
+      text: `${newJobsBadgeText(newJobs)} new`,
+      label: `${newJobs} new job${newJobs === 1 ? '' : 's'} since your last visit`,
+      tone: 'soft',
+    },
+  };
 
   const recentChats = isApplicant ? sessions.slice(0, 5) : [];
   const onAssistantPage = location.pathname.startsWith('/app/assistant');
@@ -121,9 +138,10 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
             {section.label && collapsed ? <div className="mx-3 mb-2 border-t" /> : null}
             <div className="space-y-0.5">
               {section.items.map(({ to, label, icon: Icon, end }) => {
-                const badge = navBadges[to] ?? 0;
+                const badge = navBadges[to];
+                const shown = badge && badge.count > 0 ? badge : null;
                 return (
-                  <RailTooltip key={to} label={badge ? `${label} (${badge} pending)` : label} collapsed={collapsed}>
+                  <RailTooltip key={to} label={shown ? `${label} (${shown.label})` : label} collapsed={collapsed}>
                     <NavLink
                       to={to}
                       end={end}
@@ -139,15 +157,24 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
                     >
                       <Icon />
                       {!collapsed && <span className="flex-1 truncate">{label}</span>}
-                      {badge > 0 &&
+                      {shown &&
                         (collapsed ? (
-                          <span aria-hidden className="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" />
+                          <span
+                            aria-hidden
+                            className="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand ring-2 ring-sidebar"
+                          />
                         ) : (
                           <span
-                            className="rounded-full bg-brand px-1.5 text-xs font-semibold text-white tabular-nums"
-                            aria-label={`${badge} pending signup${badge === 1 ? '' : 's'}`}
+                            className={cn(
+                              'shrink-0 rounded-full px-1.5 text-xs font-semibold tabular-nums',
+                              shown.tone === 'solid'
+                                ? 'bg-brand text-white'
+                                : 'animate-content-in border border-brand/25 bg-brand-soft py-px text-[11px] leading-4 text-brand',
+                            )}
+                            aria-label={shown.label}
+                            title={shown.label}
                           >
-                            {badge}
+                            {shown.text}
                           </span>
                         ))}
                     </NavLink>

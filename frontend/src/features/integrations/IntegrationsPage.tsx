@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { CardGrid, IntegrationCard, IntegrationCardError, IntegrationCardSkeleton } from './IntegrationCard';
 import { GoogleSheetsSheet, SHEETS_BLURB, SHEETS_LOGO, SHEETS_NAME } from './GoogleSheetsSheet';
+import { JobSiteManagePanel } from './JobSiteManagePanel';
 import { JobSiteSheet } from './JobSiteSheet';
 import { PumbleSheet, PUMBLE_BLURB, PUMBLE_LOGO, PUMBLE_NAME } from './PumbleSheet';
 import { useJobSites, usePumble, useSheets } from './queries';
@@ -27,6 +28,11 @@ export function IntegrationsPage() {
 
   const plugins = [...(jobSites.data?.plugins ?? [])].sort((a, b) => a.sort_order - b.sort_order);
   const connectionFor = (slug: string) => jobSites.data?.connections.find((c) => c.plugin_slug === slug);
+  const connected = plugins.flatMap((plugin) => {
+    const connection = connectionFor(plugin.slug);
+    return connection && plugin.connectable ? [{ plugin, connection }] : [];
+  });
+  const available = plugins.filter((plugin) => !connected.some((c) => c.plugin.slug === plugin.slug));
 
   let sheetBody: ReactNode = null;
   if (active?.kind === 'job-site') {
@@ -54,6 +60,69 @@ export function IntegrationsPage() {
       width="wide"
     >
       <div className="space-y-10">
+        {connected.length > 0 ? (
+          <Group
+            title="Your job sites"
+            description="Each connected site syncs on its own schedule. Sync now runs it right away; progress also shows at the top of the Jobs page."
+          >
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              {connected.map(({ plugin, connection }) => (
+                <JobSiteManagePanel
+                  key={plugin.slug}
+                  plugin={plugin}
+                  connection={connection}
+                  onManage={() => show({ kind: 'job-site', slug: plugin.slug })}
+                />
+              ))}
+            </div>
+          </Group>
+        ) : null}
+
+        <Group
+          title={connected.length > 0 ? 'Add a job site' : 'Job sites'}
+          description="Connect boards with your account, an API key, or a public feed. Account sites open in a new tab and connect automatically if you're already signed in."
+        >
+          {jobSites.isPending ? (
+            <CardGrid>
+              {Array.from({ length: 6 }, (_, i) => (
+                <IntegrationCardSkeleton key={i} />
+              ))}
+            </CardGrid>
+          ) : jobSites.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Couldn't load job sites</AlertTitle>
+              <AlertDescription>{errorDetail(jobSites.error, 'Failed to load job sites.')}</AlertDescription>
+              <AlertAction>
+                <Button variant="outline" size="sm" onClick={() => void jobSites.refetch()}>
+                  <RotateCw />
+                  Retry
+                </Button>
+              </AlertAction>
+            </Alert>
+          ) : plugins.length === 0 ? (
+            <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
+              No job sites are available on this server yet.
+            </p>
+          ) : available.length === 0 ? (
+            <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
+              Every available job site is connected.
+            </p>
+          ) : (
+            <CardGrid>
+              {available.map((plugin) => (
+                <IntegrationCard
+                  key={plugin.slug}
+                  name={plugin.name}
+                  description={plugin.blurb}
+                  logoSrc={plugin.logo_src}
+                  status={jobSiteStatus(plugin, connectionFor(plugin.slug))}
+                  onOpen={() => show({ kind: 'job-site', slug: plugin.slug })}
+                />
+              ))}
+            </CardGrid>
+          )}
+        </Group>
+
         <Group title="Post matching jobs" description="After jobs are scored, auto-post matching URLs to a spreadsheet or a chat channel.">
           <CardGrid>
             {sheets.isPending ? (
@@ -91,47 +160,6 @@ export function IntegrationsPage() {
               />
             )}
           </CardGrid>
-        </Group>
-
-        <Group
-          title="Job sites"
-          description="Connect boards with your account, an API key, or a public feed. Account sites open in a new tab and connect automatically if you're already signed in."
-        >
-          {jobSites.isPending ? (
-            <CardGrid>
-              {Array.from({ length: 6 }, (_, i) => (
-                <IntegrationCardSkeleton key={i} />
-              ))}
-            </CardGrid>
-          ) : jobSites.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Couldn't load job sites</AlertTitle>
-              <AlertDescription>{errorDetail(jobSites.error, 'Failed to load job sites.')}</AlertDescription>
-              <AlertAction>
-                <Button variant="outline" size="sm" onClick={() => void jobSites.refetch()}>
-                  <RotateCw />
-                  Retry
-                </Button>
-              </AlertAction>
-            </Alert>
-          ) : plugins.length === 0 ? (
-            <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
-              No job sites are available on this server yet.
-            </p>
-          ) : (
-            <CardGrid>
-              {plugins.map((plugin) => (
-                <IntegrationCard
-                  key={plugin.slug}
-                  name={plugin.name}
-                  description={plugin.blurb}
-                  logoSrc={plugin.logo_src}
-                  status={jobSiteStatus(plugin, connectionFor(plugin.slug))}
-                  onOpen={() => show({ kind: 'job-site', slug: plugin.slug })}
-                />
-              ))}
-            </CardGrid>
-          )}
         </Group>
       </div>
 

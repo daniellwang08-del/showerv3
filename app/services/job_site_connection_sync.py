@@ -176,6 +176,23 @@ async def _publish_status(user_id: str, plugin: JobSitePlugin | None, slug: str,
         logger.warning("job_site_status_publish_failed", plugin_slug=slug, error=str(e))
 
 
+async def _publish_sync(user_id: str, plugin: JobSitePlugin | None, slug: str, phase: str, **extra) -> None:
+    """Live sync progress for the Jobs header and Integrations page."""
+    from app.api.websocket import publish_ws_event
+
+    try:
+        await publish_ws_event({
+            "type": "job_site_sync",
+            "user_id": user_id,
+            "plugin_slug": slug,
+            "plugin_name": plugin.name if plugin else slug,
+            "phase": phase,
+            **extra,
+        })
+    except Exception as e:
+        logger.warning("job_site_sync_publish_failed", plugin_slug=slug, error=str(e))
+
+
 def encrypt_credentials(payload: dict) -> str:
     return encrypt_secret(json.dumps(payload, separators=(",", ":")))
 
@@ -299,6 +316,7 @@ async def _record_failure(
         row.consecutive_failures = failures
         row.status = status
         row.next_sync_at = next_at
+        row.sync_phase = None
         if counted_request:
             row.request_count = (row.request_count or 0) + 1
         # Alert once per transition into a state only the user can fix.
@@ -306,6 +324,8 @@ async def _record_failure(
             status == STATUS_NEEDS_REAUTH or (status == STATUS_QUOTA_EXHAUSTED and next_at is None)
         ):
             notify = (row.user_id, row.plugin_slug)
+        user_id, slug = row.user_id, row.plugin_slug
+    await _publish_sync(user_id, plugin, slug, "failed", error=error_text)
     if notify:
         await _publish_status(notify[0], plugin, notify[1], status, error_text)
     logger.warning(
@@ -335,6 +355,7 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
             await session.execute(select(User).where(User.id == row.user_id))
         ).scalar_one_or_none()
         if not can_use_app(user):
+            row.sync_phase = None
             return {"connection_id": connection_id, "status": "user_inactive"}
         plugin_slug = row.plugin_slug
         user_id = row.user_id
@@ -346,17 +367,21 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
             row.last_error = f"Could not decrypt credentials: {e}"[:500]
             row.status = STATUS_NEEDS_REAUTH
             row.next_sync_at = None
+            row.sync_phase = None
             return {"connection_id": connection_id, "status": "decrypt_failed"}
         pipeline = normalize_manual_submit_pipeline(
             getattr(user, "manual_submit_pipeline", None)
         )
         ctx = fetch_context_for_user(user)
+        row.sync_phase = "fetching"
+        row.sync_started_at = _now()
 
     _uid, chain_analysis, skip_phase_b = manual_submit_enqueue_flags(
         pipeline, is_admin=False, user_id=user_id
     )
 
     plugin = get_plugin(plugin_slug)
+    await _publish_sync(user_id, plugin, plugin_slug, "fetching")
     if lifetime_cap_reached(plugin, request_count):
         return await _record_failure(
             connection_id, plugin, _lifetime_cap_error(plugin), counted_request=False
@@ -367,21 +392,30 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
     except Exception as e:
         return await _record_failure(connection_id, plugin, e, counted_request=counts_request)
 
-    counts = await ingest_board_jobs(
-        listing,
-        user_id=user_id,
-        scraped_source=plugin_slug,
-        company_fallback=plugin.name if plugin else plugin_slug,
-        extra_meta={
-            "user_job_site": {
-                "connection_id": connection_id,
-                "user_id": user_id,
-                "plugin_slug": plugin_slug,
+    try:
+        counts = await ingest_board_jobs(
+            listing,
+            user_id=user_id,
+            scraped_source=plugin_slug,
+            company_fallback=plugin.name if plugin else plugin_slug,
+            extra_meta={
+                "user_job_site": {
+                    "connection_id": connection_id,
+                    "user_id": user_id,
+                    "plugin_slug": plugin_slug,
+                },
             },
-        },
-        chain_analysis=chain_analysis,
-        skip_phase_b=skip_phase_b,
-    )
+            chain_analysis=chain_analysis,
+            skip_phase_b=skip_phase_b,
+        )
+    except Exception:
+        async with get_session() as session:
+            row = await _load_row(session, connection_id)
+            if row is not None:
+                row.sync_phase = None
+        await _publish_sync(user_id, plugin, plugin_slug, "failed")
+        raise
+    job_ids = counts.pop("job_ids", [])
 
     now = _now()
     async with get_session() as session:
@@ -395,8 +429,13 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
             row.next_sync_at = now + sync_interval(plugin)
             row.last_listing_count = len(listing)
             row.last_new_jobs = counts["created"]
+            row.sync_phase = None
+            row.last_sync_jobs = {"job_ids": job_ids, "analyze": chain_analysis}
             if counts_request:
                 row.request_count = (row.request_count or 0) + 1
+    await _publish_sync(
+        user_id, plugin, plugin_slug, "synced", new_jobs=counts["created"], total=len(job_ids)
+    )
 
     logger.info(
         "job_site_connection_synced",
@@ -411,6 +450,82 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
         "listings": len(listing),
         **counts,
     }
+
+
+# A queued/fetching phase older than this belongs to a worker that died mid-sync.
+STALE_SYNC_PHASE = timedelta(minutes=15)
+# Analysis progress is only reported this long after a sync; past it, jobs that
+# never settle (stopped workers) must not pin the progress bar forever.
+ANALYSIS_PROGRESS_WINDOW = timedelta(hours=2)
+
+
+async def _count_unsettled_jobs(session, user_id: str, job_ids: list[str], analyze: bool) -> int:
+    """Jobs from a sync still on their way through extraction (and scoring)."""
+    from sqlalchemy import and_, exists, func
+
+    from app.models.database import Job, JobExtraction, JobMatchResult, UserJobStatus
+    from app.models.schemas import ExtractionStatus
+
+    hidden = exists().where(
+        UserJobStatus.job_id == Job.id,
+        UserJobStatus.user_id == user_id,
+        UserJobStatus.status != "active",
+    )
+    clauses = [
+        Job.id.in_(job_ids),
+        Job.status.notin_(["blocked", "extraction_failed"]),
+        or_(JobExtraction.status.is_(None), JobExtraction.status != ExtractionStatus.FAILED),
+        ~hidden,
+    ]
+    if analyze:
+        clauses.append(
+            ~exists().where(JobMatchResult.job_id == Job.id, JobMatchResult.user_id == user_id)
+        )
+    else:
+        clauses.append(
+            or_(
+                JobExtraction.status.is_(None),
+                JobExtraction.status.notin_([ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED]),
+            )
+        )
+    stmt = (
+        select(func.count())
+        .select_from(Job)
+        .outerjoin(JobExtraction, Job.extraction_id == JobExtraction.id)
+        .where(and_(*clauses))
+    )
+    return int((await session.execute(stmt)).scalar() or 0)
+
+
+async def connection_sync_activity(session, rows: list[UserJobSiteConnection]) -> dict[str, dict]:
+    """Running syncs keyed by connection id.
+
+    ``phase`` is queued | fetching (listing not back yet) or analyzing (new jobs
+    are still being read and scored; ``done`` of ``total`` have settled). Idle
+    connections are absent.
+    """
+    now = _now()
+    activity: dict[str, dict] = {}
+    for row in rows:
+        started = row.sync_started_at
+        if row.sync_phase in ("queued", "fetching") and started and now - started < STALE_SYNC_PHASE:
+            activity[row.id] = {"phase": row.sync_phase, "total": 0, "done": 0, "started_at": started}
+            continue
+        last = row.last_sync_jobs if isinstance(row.last_sync_jobs, dict) else {}
+        job_ids = [str(j) for j in last.get("job_ids") or [] if j]
+        if not job_ids or not row.last_success_at or now - row.last_success_at > ANALYSIS_PROGRESS_WINDOW:
+            continue
+        pending = await _count_unsettled_jobs(
+            session, row.user_id, job_ids, bool(last.get("analyze", True))
+        )
+        if pending:
+            activity[row.id] = {
+                "phase": "analyzing",
+                "total": len(job_ids),
+                "done": len(job_ids) - pending,
+                "started_at": started or row.last_success_at,
+            }
+    return activity
 
 
 async def sync_due_job_site_connections() -> dict:

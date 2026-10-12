@@ -14,6 +14,7 @@ import { JobsTable, type JobsTableTier } from './JobsTable';
 import { JobsSummary } from './JobsSummary';
 import { JobsToolbar, type JobsViewTab } from './JobsToolbar';
 import { BulkBar } from './BulkBar';
+import { JobSyncStatus } from './JobSyncStatus';
 import { useJobActions } from './useJobActions';
 import { useOpenJob, JOB_PARAM } from './useOpenJob';
 import { isHiddenRow, isInFlight } from './jobStatus';
@@ -259,6 +260,7 @@ export function JobsPage() {
             <BarChart3 /> Insights
           </Link>
         </div>
+        <JobSyncStatus />
       </header>
 
       <JobsSummary

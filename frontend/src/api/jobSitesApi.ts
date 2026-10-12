@@ -66,6 +66,21 @@ export interface JobSiteConnection {
   next_sync_at?: string | null;
   last_success_at?: string | null;
   request_count?: number;
+  /** Present while a sync runs (fetching listings or scoring the new jobs). */
+  sync?: JobSiteSyncActivity | null;
+}
+
+export type JobSiteSyncPhase = 'queued' | 'fetching' | 'analyzing';
+
+export interface JobSiteSyncActivity {
+  plugin_slug: string;
+  plugin_name: string;
+  phase: JobSiteSyncPhase;
+  /** Jobs the sync added; 0 until the listing is back. */
+  total: number;
+  /** Of ``total``, jobs already read and scored (or set aside). */
+  done: number;
+  started_at: string | null;
 }
 
 export interface JobSiteCatalog {
@@ -107,4 +122,9 @@ export async function disconnectJobSite(slug: string): Promise<void> {
 
 export async function syncJobSiteNow(slug: string): Promise<void> {
   await apiClient.post(`/job-sites/${slug}/sync`);
+}
+
+export async function fetchJobSiteActivity(): Promise<JobSiteSyncActivity[]> {
+  const { data } = await apiClient.get<JobSiteSyncActivity[]>('/job-sites/activity');
+  return Array.isArray(data) ? data : [];
 }

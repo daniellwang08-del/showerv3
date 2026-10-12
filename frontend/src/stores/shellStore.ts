@@ -8,6 +8,8 @@ type Persisted = {
   recentJobs: RecentJob[];
   /** User the recent jobs belong to; another account signing in on this browser starts empty. */
   owner: string | null;
+  /** ISO time the owner last looked at the Jobs page; drives the sidebar "new" badge. */
+  jobsSeenAt: string | null;
 };
 
 export type RecentJob = { id: string; title: string; company: string; at: number };
@@ -23,10 +25,17 @@ type ShellState = Persisted & {
   toggleAssistant: () => void;
   pushRecentJob: (job: Omit<RecentJob, 'at'>) => void;
   setOwner: (userId: string | null) => void;
+  markJobsSeen: () => void;
 };
 
 function load(): Persisted {
-  const fallback: Persisted = { sidebarCollapsed: false, assistantDocked: false, recentJobs: [], owner: null };
+  const fallback: Persisted = {
+    sidebarCollapsed: false,
+    assistantDocked: false,
+    recentJobs: [],
+    owner: null,
+    jobsSeenAt: null,
+  };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? { ...fallback, ...(JSON.parse(raw) as Partial<Persisted>) } : fallback;
@@ -44,6 +53,7 @@ function save(s: Persisted) {
         assistantDocked: s.assistantDocked,
         recentJobs: s.recentJobs,
         owner: s.owner,
+        jobsSeenAt: s.jobsSeenAt,
       }),
     );
   } catch {
@@ -72,7 +82,8 @@ export const useShellStore = create<ShellState>((set, get) => {
       }),
     setOwner: (userId) => {
       if (get().owner === userId) return;
-      patch({ owner: userId, recentJobs: [] });
+      patch({ owner: userId, recentJobs: [], jobsSeenAt: null });
     },
+    markJobsSeen: () => patch({ jobsSeenAt: new Date().toISOString() }),
   };
 });

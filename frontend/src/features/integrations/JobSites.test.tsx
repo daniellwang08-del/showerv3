@@ -14,6 +14,7 @@ vi.mock('@/api/jobSitesApi', () => ({
   updateJobSite: vi.fn(),
   disconnectJobSite: vi.fn(),
   syncJobSiteNow: vi.fn(),
+  fetchJobSiteActivity: vi.fn(async () => []),
 }));
 vi.mock('@/api/googleSheetsApi', () => ({
   fetchSheetsStatus: vi.fn(async () => ({ server_configured: true, service_account_email: 'bot@sa.iam' })),
@@ -135,6 +136,48 @@ describe('IntegrationsPage, job sites', () => {
     expect(within(card('LinkedIn')).getByText('Unavailable')).toBeInTheDocument();
     expect(within(card('LinkedIn')).getByRole('button', { name: 'Why not? LinkedIn' })).toBeInTheDocument();
     expect(await screen.findByRole('article', { name: 'Google Sheets' })).toHaveTextContent('Not connected');
+  });
+
+  it('puts connected sites first as sync panels and the posting integrations last', async () => {
+    renderPage();
+    const yours = await screen.findByRole('region', { name: 'Your job sites' });
+    const add = screen.getByRole('region', { name: 'Add a job site' });
+    const posting = screen.getByRole('region', { name: 'Post matching jobs' });
+    expect(within(yours).getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual(['Jobicy', 'Reed', 'Arbeitnow']);
+    expect(within(add).queryByRole('article', { name: 'Jobicy' })).not.toBeInTheDocument();
+    expect(within(add).getByRole('article', { name: 'Remotive' })).toBeInTheDocument();
+    expect(yours.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(add.compareDocumentPosition(posting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(posting).getByRole('article', { name: 'Google Sheets' })).toBeInTheDocument();
+  });
+
+  it('syncs from the panel and shows live progress', async () => {
+    const user = userEvent.setup();
+    api.syncJobSiteNow.mockImplementation(async () => {
+      db.connections = db.connections.map((c) =>
+        c.plugin_slug === 'jobicy'
+          ? { ...c, sync: { plugin_slug: 'jobicy', plugin_name: 'Jobicy', phase: 'analyzing', total: 8, done: 2, started_at: null } }
+          : c,
+      );
+    });
+    renderPage();
+    const panel = await screen.findByRole('article', { name: 'Jobicy' });
+    expect(within(panel).queryByRole('progressbar')).not.toBeInTheDocument();
+    await user.click(within(panel).getByRole('button', { name: 'Sync Jobicy now' }));
+    await waitFor(() => expect(api.syncJobSiteNow).toHaveBeenCalledWith('jobicy'));
+    const bar = await within(card('Jobicy')).findByRole('progressbar', { name: 'Scoring new jobs from Jobicy' });
+    expect(bar).toHaveAttribute('aria-valuenow', '25');
+    expect(within(card('Jobicy')).getByText('2 of 8')).toBeInTheDocument();
+  });
+
+  it('pauses auto-sync from the panel and blocks sync now', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const panel = await screen.findByRole('article', { name: 'Jobicy' });
+    await user.click(within(panel).getByRole('switch', { name: 'Auto-sync Jobicy' }));
+    await waitFor(() => expect(api.updateJobSite).toHaveBeenCalledWith('jobicy', { enabled: false }));
+    await waitFor(() => expect(within(card('Jobicy')).getByRole('button', { name: 'Sync Jobicy now' })).toBeDisabled());
+    expect(within(card('Jobicy')).getByText('Paused')).toBeInTheDocument();
   });
 
   it('shows an inline error with retry when the catalog fails', async () => {
