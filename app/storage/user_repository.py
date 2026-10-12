@@ -262,18 +262,16 @@ class UserRepository:
 
     async def get_profile_openai_text(self, user_id: str) -> str:
         """
-        Get cached OpenAI-ready profile text. Uses cache if present,
-        otherwise computes from profile and backfills cache.
+        OpenAI-ready profile text. Rebuilt from the profile on every read so a converter change
+        reaches every user; the cache is refreshed when it differs.
         """
         user = await self.get_by_id(user_id)
         if not user:
             return ""
-        cached = getattr(user, "profile_openai_cache", None)
-        if cached and str(cached).strip():
-            return str(cached)
         text = user_profile_to_openai_text(user)
-        user.profile_openai_cache = text
-        await self.session.flush()
+        if text != (getattr(user, "profile_openai_cache", None) or ""):
+            user.profile_openai_cache = text
+            await self.session.flush()
         return text
 
     async def get_dedup_recycle_days(self, user_id: str) -> int:

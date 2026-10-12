@@ -491,6 +491,18 @@ def build_tailoring_plan(job_skills: list[JobSkill], profile_text: str, job_text
 
 # ── prompt blocks ───────────────────────────────────────────────────────────
 
+_LEFTOVER_JOINERS_RE = re.compile(r"(?:\s*(?:,|/|&|\+|\band\b)\s*){2,}|\(\s*[,/&\s]*\)")
+_DANGLING_PREPOSITION_RE = re.compile(r"\b(?:using|with|via|on|in|and)\s*(?=[,.;:]|$)", re.IGNORECASE)
+
+
+def _product_context(text: str) -> str:
+    """The original product text without its technology names, so the stack comes from the posting and bullets."""
+    stripped = _without_technology_names(text, _technologies_in(text))
+    stripped = _LEFTOVER_JOINERS_RE.sub(", ", stripped)
+    stripped = _DANGLING_PREPOSITION_RE.sub("", stripped)
+    stripped = re.sub(r"\s+([,.;:])", r"\1", re.sub(r"\s{2,}", " ", stripped))
+    return re.sub(r"(?:,\s*){2,}", ", ", stripped).strip(" ,;")
+
 
 def career_facts_block(plan: TailoringPlan) -> str:
     if not plan.roles:
@@ -517,11 +529,14 @@ def career_facts_block(plan: TailoringPlan) -> str:
         if r.project_name:
             lines.append(f"  Project: {r.project_name}")
         if r.project_description:
-            lines.append(f"  Product / domain: {r.project_description}")
+            lines.append(
+                "  Product / domain (what the company built; its technologies and wording are the original "
+                f"resume's, not this one's): {_product_context(r.project_description)}"
+            )
         elif r.domain_clues:
             lines.append(
                 "  Domain clues (only to learn the product and industry; never reuse these tasks, tools or "
-                f"wording): {r.domain_clues}"
+                f"wording): {_product_context(r.domain_clues)}"
             )
         if r.metrics:
             lines.append("  Results you may reuse at this company only: " + "; ".join(r.metrics))
@@ -822,6 +837,129 @@ def _reused_bullets(entry: dict, role: RolePlan) -> list[str]:
     return out
 
 
+_DESCRIPTION_MAX_WORDS = 60
+# Shared six-word runs with the original role text before a description counts as copied.
+_DESCRIPTION_REUSE_LIMIT = 2
+
+
+def _entry_bullets(entry: dict) -> str:
+    return "\n".join(b for b in entry.get("bullets") or [] if isinstance(b, str)).replace("**", "")
+
+
+def description_issues(entry: dict, role: ProfileRole, posting_terms: list[str], *, recent: bool) -> list[str]:
+    """Why a role's project description does not introduce the work its bullets show; empty when it does."""
+    desc = str(entry.get("project_description") or "").replace("**", "").strip()
+    bullets = _entry_bullets(entry)
+    if not desc:
+        if role_project(role)[1] or _contribution_lines(role):
+            return [
+                "project_description is empty. Write 1-2 sentences (20-45 words) on the product or client this "
+                "role served and the system its bullets build, naming the main technologies those bullets use"
+            ]
+        return []
+    out: list[str] = []
+    if "\u2022" in desc or len(desc.split()) > _DESCRIPTION_MAX_WORDS:
+        out.append("project_description must be 1-2 sentences of prose (20-45 words), not a list of contributions")
+    bullet_tech = _technologies_in(bullets)
+
+    def in_bullets(term: str) -> bool:
+        return is_mentioned(term, bullets) or any(_alias_key(term) == _alias_key(t) for t in bullet_tech)
+
+    named = _technologies_in(desc) + [t for t in posting_terms if _is_technology(t) and is_mentioned(t, desc)]
+    off: list[str] = []
+    for term in named:
+        if not in_bullets(term) and all(_alias_key(term) != _alias_key(t) for t in off):
+            off.append(term)
+    if off:
+        out.append(
+            f"project_description names {', '.join(off[:6])}, which no bullet of this role uses; it introduces "
+            "the system the bullets build, so it names only their technologies"
+        )
+    if recent:
+        shown = [t for t in posting_terms if _is_technology(t) and is_mentioned(t, bullets)]
+        if shown and not any(is_mentioned(t, desc) for t in shown):
+            out.append(
+                "project_description names none of the posting's technologies this role's bullets use; name the "
+                f"main ones ({', '.join(shown[:4])})"
+            )
+    original = _tokens(role.text)
+    grams = {tuple(original[i:i + _REUSE_RUN]) for i in range(len(original) - _REUSE_RUN + 1)}
+    toks = _tokens(desc)
+    shared = {tuple(toks[i:i + _REUSE_RUN]) for i in range(len(toks) - _REUSE_RUN + 1)} & grams
+    if len(shared) >= _DESCRIPTION_REUSE_LIMIT:
+        out.append("project_description repeats the original resume's wording; write it fresh for this posting")
+    return out
+
+
+def project_description_problems(resume: dict | None, profile_text: str, posting_terms: list[str]) -> dict[int, str]:
+    """Entry position -> what is wrong with its project description, for every role that needs a rewrite."""
+    if not resume or not isinstance(resume, dict):
+        return {}
+    roles = parse_profile_roles(profile_text)
+    entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
+    out: dict[int, str] = {}
+    for pos, (entry, idx) in enumerate(zip(entries, _match_roles(entries, roles))):
+        if idx is None:
+            continue
+        issues = description_issues(entry, roles[idx], posting_terms, recent=idx < 2)
+        if issues:
+            out[pos] = f"{roles[idx].company}: " + "; ".join(issues) + "."
+    return out
+
+
+def description_repair_roles(resume: dict, profile_text: str, problems: dict[int, str]) -> list[dict]:
+    """What a focused rewrite needs per flagged role: its product (without the original stack) and its bullets."""
+    roles = parse_profile_roles(profile_text)
+    entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
+    out: list[dict] = []
+    for pos, (entry, idx) in enumerate(zip(entries, _match_roles(entries, roles))):
+        if pos not in problems or idx is None:
+            continue
+        role = roles[idx]
+        product = role_project(role)[1] or " ".join(_contribution_lines(role))[:_DOMAIN_CLUE_CHARS]
+        out.append(
+            {
+                "index": pos,
+                "company": role.company,
+                "title": role.title,
+                "product_or_domain": _product_context(product),
+                "bullets": [b.replace("**", "") for b in entry.get("bullets") or [] if isinstance(b, str)],
+                "current_description": str(entry.get("project_description") or "").replace("**", ""),
+                "problem": problems[pos],
+            }
+        )
+    return out
+
+
+def apply_description_repairs(
+    resume: dict, profile_text: str, posting_terms: list[str], rewrites: object
+) -> list[int]:
+    """Take each rewritten description that fixes its role's problems (or at least has fewer); returns positions taken."""
+    if not isinstance(rewrites, list):
+        return []
+    roles = parse_profile_roles(profile_text)
+    entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
+    matched = _match_roles(entries, roles)
+    taken: list[int] = []
+    for item in rewrites:
+        if not isinstance(item, dict):
+            continue
+        try:
+            pos = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        text = " ".join(str(item.get("project_description") or "").split()).translate(_PLAIN_PUNCTUATION)
+        if not text or not 0 <= pos < len(entries) or matched[pos] is None:
+            continue
+        entry, role = entries[pos], roles[matched[pos]]
+        before = description_issues(entry, role, posting_terms, recent=matched[pos] < 2)
+        after = description_issues({**entry, "project_description": text}, role, posting_terms, recent=matched[pos] < 2)
+        if not after or len(after) < len(before):
+            entry["project_description"] = text
+            taken.append(pos)
+    return taken
+
+
 def _named(terms: list[str], text: str) -> list[str]:
     return [t for t in terms if is_mentioned(t, text)]
 
@@ -984,6 +1122,8 @@ def tailoring_problems(resume: dict | None, plan: TailoringPlan, profile_text: s
                 f"{company}: these bullets repeat the original resume; write new work for the posting: "
                 + "; ".join(f'"{b}"' for b in reused[:3])
             )
+    for pos, text in project_description_problems(resume, profile_text, plan.terms).items():
+        problems[f"work_experience[{pos}]_project_description"] = text
     missing_any = [s.term for s in plan.secondary if s.roles and not is_mentioned(s.term, all_prose)]
     if missing_any:
         problems["posting_skills_missing_from_experience"] = (
@@ -1027,6 +1167,7 @@ def tailoring_retry_note(problems: dict[str, str], extra: list[str] | None = Non
     lines += [f"- {text}" for text in extra or []]
     lines.append(
         "Keep company names, titles and dates verbatim and keep each role's product and domain; every other "
-        "sentence is written for this posting."
+        "sentence is written for this posting, including each project_description, which introduces the system "
+        "that role's bullets build with their technologies."
     )
     return "\n".join(lines)

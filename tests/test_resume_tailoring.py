@@ -133,7 +133,8 @@ def _good_resume() -> dict:
                 "company_name": "Globex Health",
                 "job_title": "Software Engineer",
                 "period_start": "Mar 2018",
-                "project_description": "",
+                "project_description": "Clinic scheduling platform for 120 clinics, rebuilt as Python and FastAPI "
+                "booking services on Kubernetes with PostgreSQL storage.",
                 "used_skills": "Python, Celery, Jenkins",
                 "bullets": [
                     "Designed **Python** **FastAPI** scheduling APIs for 120 clinics, deployed as **Docker** "
@@ -151,6 +152,8 @@ def _good_resume() -> dict:
             {
                 "company_name": "Initech",
                 "job_title": "Junior Developer",
+                "project_description": "Internal billing tools for the finance desk, where invoice processing moved "
+                "onto Python jobs backed by PostgreSQL.",
                 "bullets": [
                     "Implemented **Python** billing jobs that loaded invoices into **PostgreSQL**, refining them "
                     "with feedback from senior developers.",
@@ -217,10 +220,11 @@ def test_prompt_blocks_carry_facts_not_contributions():
     plan = _plan()
     facts = career_facts_block(plan)
     assert "[0] Acme Payments | Senior Software Engineer | Jan 2021 - Present | Remote, Full-time" in facts
-    assert "Product / domain: Ledger platform" in facts
+    assert "not this one's): Ledger platform that reconciles card payments for 4,000 merchants." in facts
     assert "cut reconciliation time by 40%" in facts
-    # A role without a project description gets domain clues, labelled as context only.
-    assert "Domain clues" in facts and "patient scheduling" in facts
+    # A role without a project description gets domain clues, labelled as context only, without its stack.
+    clues = next(line for line in facts.splitlines() if "Domain clues" in line)
+    assert "Wrote modules for patient scheduling used by 120 clinics." in clues and "PHP" not in clues
     assert "Tenure: 2 years 9 months, starting 0 years into the career. Bullets: 5-6." in facts
     assert "early career: learning the craft" in facts and "senior: owns the design" in facts
     assert "a senior engineer" in facts
@@ -263,6 +267,7 @@ def test_checks_catch_eras_invented_numbers_reuse_and_thin_roles():
     resume = finalize_tailored_resume(_good_resume(), plan, PROFILE, JOB)
     bad = copy.deepcopy(resume)
     globex = bad["work_experience"][1]
+    globex["project_description"] = "Clinic scheduling platform."
     globex["bullets"] = [
         "Wrote PHP modules for patient scheduling used by 120 clinics with SVN.",
         "Migrated nightly reports from SVN scripts to Jenkins jobs, lifting uptime to 99.9%.",
@@ -279,6 +284,100 @@ def test_checks_catch_eras_invented_numbers_reuse_and_thin_roles():
     over = copy.deepcopy(resume)
     over["profile_summary"] = "Staff Backend Engineer with 9 years building Python platforms on AWS for payments."
     assert "profile_summary_level_above_held" in tailoring_problems(over, plan, PROFILE)
+
+
+def test_project_description_must_introduce_the_tailored_bullets():
+    plan = _plan()
+    resume = finalize_tailored_resume(_good_resume(), plan, PROFILE, JOB)
+    stale = copy.deepcopy(resume)
+    # The original resume's description and stack, though the bullets now run on the posting's stack.
+    stale["work_experience"][0]["project_description"] = (
+        "Ledger platform that reconciles card payments for 4,000 merchants, built with Java, PHP and MySQL."
+    )
+    problems = tailoring_problems(stale, plan, PROFILE)
+    issue = problems["work_experience[0]_project_description"]
+    assert issue.startswith("Acme Payments:")
+    assert "Java, PHP, MySQL, which no bullet of this role uses" in issue
+    assert "names none of the posting's technologies this role's bullets use" in issue
+    assert "repeats the original resume's wording" in issue
+
+    empty = copy.deepcopy(resume)
+    empty["work_experience"][1]["project_description"] = ""
+    assert "project_description is empty" in tailoring_problems(empty, plan, PROFILE)[
+        "work_experience[1]_project_description"
+    ]
+
+    listed = copy.deepcopy(resume)
+    listed["work_experience"][2]["project_description"] = "\u2022 Built **Python** billing jobs \u2022 Wrote tests"
+    assert "not a list of contributions" in tailoring_problems(listed, plan, PROFILE)[
+        "work_experience[2]_project_description"
+    ]
+
+
+def test_phase_b_repairs_descriptions_the_rewrites_left_stale(monkeypatch):
+    calls: list[str] = []
+    stale = _good_resume()
+    stale["work_experience"][0]["project_description"] = (
+        "Ledger platform that reconciles card payments for 4,000 merchants, built with Java, PHP and MySQL."
+    )
+    seen: dict[str, str] = {}
+
+    async def fake_call(*, observe_name, user_content, **_kwargs):
+        calls.append(observe_name)
+        if observe_name == "phase_b_project_descriptions":
+            seen["repair"] = user_content
+            return {
+                "project_descriptions": [
+                    {
+                        "index": 0,
+                        "project_description": "Card payment ledger for merchants, where reconciliation runs as "
+                        "Python and FastAPI services on Kubernetes with PostgreSQL and Kafka settlement events.",
+                    }
+                ]
+            }
+        return {"tailored_resume": copy.deepcopy(stale)}
+
+    monkeypatch.setattr(job_match_service, "_call_openai_json", fake_call)
+    resume, _ = asyncio.run(
+        job_match_service.generate_tailored_content_phase_b(
+            JOB, PROFILE, structured_context=STRUCTURED, include_cover_letter=False
+        )
+    )
+    assert calls[-1] == "phase_b_project_descriptions" and calls.count("phase_b_project_descriptions") == 1
+    # The rewrite sees the product without the original stack, plus the final bullets.
+    assert "Ledger platform that reconciles card payments for 4,000 merchants" in seen["repair"]
+    assert "Java, PHP" not in seen["repair"].split("## Roles to fix")[1].split('"bullets"')[0]
+    assert "Designed the Python and FastAPI reconciliation services" in seen["repair"]
+    assert resume["work_experience"][0]["project_description"].startswith("Card payment ledger")
+    assert not any(i.endswith("_project_description") for i in resume["match_check"]["open_issues"])
+
+
+def test_repairs_that_name_other_technologies_are_rejected():
+    from app.services.resume_tailoring import apply_description_repairs
+
+    resume = finalize_tailored_resume(_good_resume(), _plan(), PROFILE, JOB)
+    before = resume["work_experience"][1]["project_description"]
+    taken = apply_description_repairs(
+        resume,
+        PROFILE,
+        _plan().terms,
+        [{"index": 1, "project_description": "Clinic scheduling built with Angular, Spring Boot and Oracle."}],
+    )
+    assert taken == [] and resume["work_experience"][1]["project_description"] == before
+
+
+def test_tailoring_contract_rewrites_the_project_description():
+    from app.prompts.job_match_phase_b_prompt import (
+        PHASE_B_PROJECT_DESCRIPTION_PLACEHOLDER,
+        PHASE_B_RESUME_SYSTEM_PROMPT,
+    )
+    from app.prompts.resume_tailoring_prompt import TAILORING_SYSTEM_PROMPT
+
+    assert PHASE_B_PROJECT_DESCRIPTION_PLACEHOLDER in PHASE_B_RESUME_SYSTEM_PROMPT
+    assert PHASE_B_PROJECT_DESCRIPTION_PLACEHOLDER not in TAILORING_SYSTEM_PROMPT
+    assert "introducing this role's bullets" in TAILORING_SYSTEM_PROMPT
+    for prompt in (PHASE_B_RESUME_SYSTEM_PROMPT, TAILORING_SYSTEM_PROMPT):
+        assert "keeps the role's profile" not in prompt and "kept as 1-2 sentences" not in prompt
 
 
 def test_checks_keep_each_role_at_its_career_stage():

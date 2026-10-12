@@ -30,13 +30,21 @@ from app.prompts.job_match_phase_b_prompt import (
     JOB_MATCH_PHASE_B_USER_TEMPLATE,
     PHASE_B_RESUME_SYSTEM_PROMPT,
 )
-from app.prompts.resume_tailoring_prompt import TAILORING_SYSTEM_PROMPT, TAILORING_USER_TEMPLATE
+from app.prompts.resume_tailoring_prompt import (
+    PROJECT_DESCRIPTION_SYSTEM_PROMPT,
+    PROJECT_DESCRIPTION_USER_TEMPLATE,
+    TAILORING_SYSTEM_PROMPT,
+    TAILORING_USER_TEMPLATE,
+)
 from app.models.schemas import JobDescriptionSchema
 from app.services.resume_tailoring import (
     DEFAULT_STRATEGY,
     MAX_REWRITE_RETRIES,
     STRATEGY_REBUILD,
+    apply_description_repairs,
     build_tailoring_plan,
+    description_repair_roles,
+    project_description_problems,
     career_facts_block,
     education_block,
     experience_skill_coverage,
@@ -1322,6 +1330,16 @@ async def generate_tailored_content_phase_b(
 
     if not tailored_resume:
         logger.warning("tailored_resume_section_missing_or_invalid")
+    else:
+        await _repair_project_descriptions(
+            tailored_resume,
+            profile_text=profile_truncated,
+            posting_terms=[s.term for s in skill_plan.supported],
+            job_text=job_truncated,
+            user_id=user_id,
+            temperature=phase_b_temperature,
+            reasoning_effort=reasoning_effort,
+        )
     if cover_missing and not cover_letter:
         logger.warning("cover_letter_section_missing_or_invalid")
     return tailored_resume, cover_letter
@@ -1337,6 +1355,53 @@ def _format_retry_lines(resume: dict | None, issues: list[str], *, anchors: list
         return []
     note = quality_retry_instructions(resume, issues, job_anchor_terms=anchors, job_text=job_text)
     return [ln[2:] for ln in note.splitlines()[1:-1] if ln.startswith("- ")]
+
+
+_DESCRIPTION_REPAIR_MAX_TOKENS = 2000
+_DESCRIPTION_REPAIR_JOB_CHARS = 6000
+
+
+async def _repair_project_descriptions(
+    resume: dict | None,
+    *,
+    profile_text: str,
+    posting_terms: list[str],
+    job_text: str,
+    user_id: str | None,
+    temperature: float,
+    reasoning_effort: str | None,
+) -> None:
+    """Rewrite, in place, every project description that still does not introduce its role's bullets."""
+    problems = project_description_problems(resume, profile_text, posting_terms)
+    if not resume or not problems:
+        return
+    roles = description_repair_roles(resume, profile_text, problems)
+    content = PROJECT_DESCRIPTION_USER_TEMPLATE.format(
+        job_text=(job_text or "")[:_DESCRIPTION_REPAIR_JOB_CHARS],
+        posting_terms=", ".join(posting_terms) or "(none listed)",
+        roles_json=json.dumps(roles, ensure_ascii=False, indent=1),
+    )
+    try:
+        parsed = await _call_openai_json(
+            system_prompt=PROJECT_DESCRIPTION_SYSTEM_PROMPT,
+            user_content=content,
+            max_tokens=_DESCRIPTION_REPAIR_MAX_TOKENS,
+            observe_name="phase_b_project_descriptions",
+            user_id=user_id,
+            job_type="resume_tailoring",
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+        )
+    except AIParsingError as e:
+        logger.warning("project_description_repair_failed", error=str(e)[:300])
+        return
+    taken = apply_description_repairs(resume, profile_text, posting_terms, parsed.get("project_descriptions"))
+    logger.info(
+        "project_description_repair",
+        flagged=sorted(problems),
+        rewritten=taken,
+        remaining=sorted(project_description_problems(resume, profile_text, posting_terms)),
+    )
 
 
 async def _tailor_resume(
@@ -1485,6 +1550,17 @@ async def _tailor_resume(
         logger.warning("tailored_resume_section_missing_or_invalid", strategy=STRATEGY_REBUILD)
     else:
         layout, problems, match = best_report
+        if any(k.endswith("_project_description") for k in problems):
+            await _repair_project_descriptions(
+                best,
+                profile_text=profile_text,
+                posting_terms=plan.terms,
+                job_text=job_text,
+                user_id=user_id,
+                temperature=temperature,
+                reasoning_effort=reasoning_effort,
+            )
+            problems = tailoring_problems(best, plan, profile_text)
         score = await score_tailored_resume(
             job_id, best, tailored_resume_to_profile_text(best, profile_text), user_id=user_id
         )

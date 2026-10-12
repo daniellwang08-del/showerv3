@@ -287,6 +287,36 @@ def test_profile_text_labels_the_project_description():
     assert "Project description: Metrics platform for analysts.\n- Built Spark jobs.\n- Cut cost 30%." in text
 
 
+def test_a_bulleted_description_beside_contributions_is_not_the_project_brief():
+    # The description repeats the contributions as bullets: no brief, and nothing listed twice.
+    text = user_profile_to_openai_text(
+        _profile(
+            contributions=["Built PySpark jobs for the lakehouse.", "Cut storage cost 30% with Iceberg."],
+            description="\u2022 Built PySpark jobs for the lakehouse.\n\u2022 Cut storage cost 30% with Iceberg.",
+        )
+    )
+    assert "Project description:" not in text
+    assert text.count("Built PySpark jobs for the lakehouse.") == 1
+
+    # A lead line above the bullets is the brief; bullets the contributions lack are kept.
+    text = user_profile_to_openai_text(
+        _profile(
+            contributions=["Built PySpark jobs for the lakehouse."],
+            description="Lakehouse for analysts.\n- Built PySpark jobs for the lakehouse.\n- Added dbt models.",
+        )
+    )
+    assert "Project description: Lakehouse for analysts.\n- Built PySpark jobs for the lakehouse.\n- Added dbt models." in text
+
+    # A paragraph restating a contribution is not a project brief either.
+    text = user_profile_to_openai_text(
+        _profile(
+            contributions=["Built PySpark jobs that load product analytics into the lakehouse every hour."],
+            description="Built PySpark jobs that load product analytics into the lakehouse every hour.",
+        )
+    )
+    assert "Project description:" not in text
+
+
 def test_render_keeps_profile_project_when_tailored_left_it_out():
     profile_rows = [
         ContentWork(

@@ -6,7 +6,10 @@ contribution is written fresh, at the scope the role's tenure and career stage
 support, so the posting's stack reads as the candidate's own work.
 """
 
-from app.prompts.job_match_phase_b_prompt import PHASE_B_RESUME_OUTPUT_CONTRACT
+from app.prompts.job_match_phase_b_prompt import (
+    PHASE_B_PROJECT_DESCRIPTION_PLACEHOLDER,
+    PHASE_B_RESUME_OUTPUT_CONTRACT,
+)
 
 _TAILORING_HEADER = """You are an elite resume writer and technical career strategist.
 Write the **Tailored Resume Content** for ONE job posting as one JSON response.
@@ -29,6 +32,8 @@ terms; and a hiring manager who must believe this is one engineer's career, not 
 - Each role's work stays in its own product and domain (a payments company stays payments, a healthcare
   platform stays healthcare). Everything the role says the candidate built, used or achieved is written fresh.
 - Do not reuse the original resume's tasks or wording. Domain clues only explain what the company did.
+- The Product / domain line says what the company built, nothing more: the original resume's technologies
+  and sentences never carry over, including into project_description.
 - Numbers: only the "Results you may reuse" of the same company, attached to the new work they fit. Never
   move a number to another company and never invent one; without a number, state the concrete result (what
   shipped, what it replaced, who used it, what it made possible).
@@ -97,8 +102,12 @@ terms; and a hiring manager who must believe this is one engineer's career, not 
 - Banned openers and filler: "Responsible for", "Worked on", "Helped", "Involved in", "Leveraged",
   "Spearheaded", "Utilized", "end-to-end solutions", "cutting-edge", "robust and scalable" as decoration.
 - project_name: the role's project title from Career facts, verbatim; null when it has none.
-- project_description: 1-2 sentences (20-45 words) about the same product or client and its purpose and how
-  it is built. Empty only when Career facts gives no product.
+- project_description: written last, after the role's bullets, because it introduces them. 1-2 sentences
+  (20-45 words): the same product or client and its purpose, then the system this role's bullets build,
+  framed for THIS posting's work and naming 2-4 of the technologies those bullets use (the posting's primary
+  skills first). It names no technology the bullets do not, states no task or number the bullets do not,
+  and never reuses the original resume's description or stack. A reader of the description alone should
+  expect exactly the bullets below it. Empty only when Career facts gives no product.
 - used_skills: 8-16 technologies that role's own bullets name, the posting's primary skills first, then the
   role's breadth. Nothing the bullets do not name.
 
@@ -127,6 +136,8 @@ TAILORING_FORMAT_CONTRACT = """
   Nothing a role's dates predate. At most 6 technologies or posting terms per bullet; the posting's domain
   and compliance vocabulary only in the two most recent roles.
 - Numbers only from the same company's reusable results.
+- `project_description`: 1-2 sentences written for this posting that introduce the role's own bullets: the
+  same product, the system the bullets build, and only technologies those bullets name.
 - `profile_summary`: 3-4 sentences, at most 80 words, at most 3 technology names.
 - `technical_skills`: 5-7 categories, each with at least 6 items, at most 56 items in total. Short Title Case
   category names that each name one concept (e.g. Languages, Frontend, Backend, Databases, Cloud, DevOps,
@@ -183,17 +194,20 @@ TAILORING_USER_TEMPLATE = """## Career facts (from the original resume)
    other skill in at least one bullet; older roles keep their own product, domain and stack.
 5. Add each role's breadth: the technologies it really used and the ecosystem around the posting's stack.
 6. Attach each company's reusable results to the new work they fit; no other numbers.
-7. Summary: who this engineer is across the career, how they work, what they are known for; at most 3
+7. Write each role's project_description from its finished bullets: same product, the system they build,
+   their technologies (the posting's first), never the original resume's stack or wording.
+8. Summary: who this engineer is across the career, how they work, what they are known for; at most 3
    technology names.
-8. technical_skills: 5-7 categories of 6 or more items, the posting's stack first, then the career's breadth.
-9. Return the tailored resume JSON as specified.
+9. technical_skills: 5-7 categories of 6 or more items, the posting's stack first, then the career's breadth.
+10. Return the tailored resume JSON as specified.
 
 Include exactly one work_experience entry for EVERY role in Career facts."""
 
 
 TAILORING_OUTPUT_CONTRACT = PHASE_B_RESUME_OUTPUT_CONTRACT.replace(
-    "<the profile's project description for this role, 1-2 sentences, or empty when it has none>",
-    "<1-2 sentences on the role's product and how it is built, or empty when Career facts gives none>",
+    PHASE_B_PROJECT_DESCRIPTION_PLACEHOLDER,
+    "<1-2 sentences introducing this role's bullets: the product, the system they build and their "
+    "technologies, written for this posting; empty when Career facts gives no product>",
 ).replace(
     "<comma-separated technologies this role's evidence shows, or empty>",
     "<comma-separated technologies the role's bullets show, the posting's primary skills first>",
@@ -201,6 +215,38 @@ TAILORING_OUTPUT_CONTRACT = PHASE_B_RESUME_OUTPUT_CONTRACT.replace(
     "<the profile's project title for this role, verbatim, or null>",
     "<the role's project title from Career facts, verbatim, or null>",
 )
+
+
+PROJECT_DESCRIPTION_SYSTEM_PROMPT = """You write the brief project description that sits above a role's bullets on a
+resume tailored to one job posting. The bullets are final; the description introduces them.
+
+For each role you get its company, title, what the company built (product_or_domain), its final bullets, the
+current description and what is wrong with it. Write a new project_description for each:
+- 1-2 sentences, 20-45 words, plain prose.
+- First the same product or client and its purpose (from product_or_domain; keep the company's real product
+  and industry), then the system this role's bullets build, framed around the posting's work.
+- Name 2-4 technologies the bullets name, the posting's first. Never name a technology the bullets do not.
+- No task, result or number the bullets do not state; no wording copied from product_or_domain or the bullets
+  (never 6 or more words in a row).
+- Straight quotes and hyphens only; never em dashes.
+
+Return ONLY valid JSON:
+{"project_descriptions": [{"index": <the role's index as given>, "project_description": "<string>"}]}"""
+
+PROJECT_DESCRIPTION_USER_TEMPLATE = """## Job posting
+{job_text}
+
+---
+
+## Posting skills (spelling to use)
+{posting_terms}
+
+---
+
+## Roles to fix (JSON)
+{roles_json}
+
+Return one project_description for every role above."""
 
 
 def build_tailoring_system_prompt(extra_guidance: str = "") -> str:

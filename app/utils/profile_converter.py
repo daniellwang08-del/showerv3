@@ -65,6 +65,16 @@ def split_role_description(desc: str) -> tuple[str, list[str]]:
     return "", []
 
 
+def _contribution_key(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))[:60]
+
+
+def _repeats_contributions(desc: str, contribs: list[str]) -> bool:
+    """True when a free-form description restates a contribution instead of describing the project."""
+    flat = " ".join(re.findall(r"[a-z0-9]+", (desc or "").lower()))
+    return any(len(key) >= 30 and key in flat for key in (_contribution_key(c) for c in contribs))
+
+
 def user_profile_to_openai_text(profile: Any) -> str:
     """
     Convert user profile to OpenAI-optimized resume-style text.
@@ -175,7 +185,14 @@ def user_profile_to_openai_text(profile: Any) -> str:
             # for the tailoring prompt; a description written next to contributions plays that part.
             intro, leftover = str(project_intro).strip(), ""
             if desc and contribs:
-                intro = intro or desc
+                desc_intro, desc_contribs = split_role_description(desc)
+                if desc_contribs:
+                    # A bulleted description is contributions, not the project brief.
+                    known = {_contribution_key(c) for c in contribs}
+                    contribs += [c for c in desc_contribs if _contribution_key(c) not in known]
+                    intro = intro or desc_intro
+                elif not intro and not _repeats_contributions(desc, contribs):
+                    intro = desc
             elif desc:
                 desc_intro, desc_contribs = split_role_description(desc)
                 if desc_contribs:

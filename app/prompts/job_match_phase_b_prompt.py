@@ -96,10 +96,12 @@ Profile order is most recent first. Length budget (keeps a senior resume to abou
   "Leveraged", "Spearheaded", "Utilized", "production-oriented", "end-to-end solutions", "cutting-edge",
   "robust and scalable" as decoration, "measurable outcomes" without a number.
 - project_name: the role's "Project:" title from the profile, copied verbatim; null when it has none.
-- project_description: the role's "Project description:" from the profile, kept as 1-2 sentences (20-45 words)
-  about the same product or client, its purpose and scale, reworded toward the posting where truthful. It
-  renders above the role's bullets, so never drop or shorten it to a fragment. Empty only when the profile
-  gives the role no project description.
+- project_description: rewritten for THIS posting from the role's "Project description:" in the profile,
+  1-2 sentences (20-45 words). It renders above the role's bullets and introduces them: the same product or
+  client, its purpose and scale, then the part of the system the bullets show, framed around the posting's
+  work and naming 2-4 of the technologies those bullets use (the posting's first). Never name a technology
+  the bullets do not, and never keep the profile's sentence or stack as it was. Write it after the bullets.
+  Empty only when the profile gives the role no project description.
 - used_skills: 4-12 technologies from that role's evidence line, the posting's terms first.
 
 ## 6. technical_skills
@@ -137,7 +139,7 @@ Return ONLY valid JSON:
         "location": "<string copied verbatim from profile, or empty>",
         "employment_type": "<string copied verbatim from profile, or empty>",
         "project_name": "<the profile's project title for this role, verbatim, or null>",
-        "project_description": "<the profile's project description for this role, 1-2 sentences, or empty when it has none>",
+        "project_description": "<1-2 sentences on the same product, rewritten for this posting to introduce this role's bullets and name only their technologies, or empty when the profile has none>",
         "used_skills": "<comma-separated technologies this role's evidence shows, or empty>",
         "bullets": ["<one sentence - 6-8 for the two most recent roles, 4-5 for the third, 3-4 for older>", ...]
       }
@@ -147,6 +149,12 @@ Return ONLY valid JSON:
     "body": "<string - paragraphs separated by \\n\\n>"
   }
 }"""
+
+
+PHASE_B_PROJECT_DESCRIPTION_PLACEHOLDER = (
+    "<1-2 sentences on the same product, rewritten for this posting to introduce this role's bullets and name "
+    "only their technologies, or empty when the profile has none>"
+)
 
 
 def build_phase_b_system_prompt(
@@ -204,8 +212,9 @@ PHASE_B_FORMAT_CONTRACT = """
 - Required skills: every item of the Required skills checklist (including "Add to the resume") appears, in the
   spelling shown, in `technical_skills` under its category and, when a role is listed for it, in a bullet and
   `used_skills` of that role. Never add anything listed under "Not in the profile".
-- Projects: `project_name` is the profile's project title and `project_description` keeps the role's profile
-  project description (1-2 sentences); neither is dropped when the profile has one.
+- Projects: `project_name` is the profile's project title. `project_description` is 1-2 sentences about the
+  same product, rewritten for this posting so it introduces the role's own bullets and names only technologies
+  they name; neither is dropped when the profile has one.
 - Length: 6-8 bullets for each of the two most recent roles, 4-5 for the third, 3-4 for older roles, at most
   26 in total, chosen by relevance to the posting; `profile_summary` is 3-4 sentences and at most 75 words;
   `technical_skills` holds at most 30 items. Never pad to reach a count.
@@ -339,7 +348,8 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
    specialty), truthful years in the right discipline, one metric, at most 4 technologies.
 7. Technical skills: 4-6 clean single-concept categories, at most 30 technologies from the profile (every
    checklist item included), plain text, no `**`.
-8. Keep each role's project title and project description from the profile (1-2 sentences above the bullets).
+8. Keep each role's project title; rewrite its project description for this posting from the finished
+   bullets (same product, the system they build, their technologies), 1-2 sentences above the bullets.
 9. Bold sparingly with ``**double asterisks**``: at most 2 named job technologies or figures per bullet.
 10. Return the tailored resume JSON as specified.
 
