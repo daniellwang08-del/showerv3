@@ -495,9 +495,23 @@ _LEFTOVER_JOINERS_RE = re.compile(r"(?:\s*(?:,|/|&|\+|\band\b)\s*){2,}|\(\s*[,/&
 _DANGLING_PREPOSITION_RE = re.compile(r"\b(?:using|with|via|on|in|and)\s*(?=[,.;:]|$)", re.IGNORECASE)
 
 
-def _product_context(text: str) -> str:
+def _role_technology_items(role: ProfileRole) -> list[str]:
+    """Items of the role's "Technologies:" lines, as written (lexicon reading misses names like "Go")."""
+    items: list[str] = []
+    for line in role.text.splitlines():
+        if line.strip().lower().startswith("technologies:"):
+            items.extend(split_skill_items(line.split(":", 1)[1]))
+    return [i for i in items if i.strip()]
+
+
+def _product_context(text: str, role: ProfileRole | None = None) -> str:
     """The original product text without its technology names, so the stack comes from the posting and bullets."""
-    stripped = _without_technology_names(text, _technologies_in(text))
+    terms = _technologies_in(text) + (_role_technology_items(role) if role is not None else [])
+    stripped = text or ""
+    for term in sorted({t.strip() for t in terms if t.strip()}, key=len, reverse=True):
+        stripped = re.sub(
+            rf"(?<![\w.#+]){re.escape(term)}(?:\s?v?\d+(?:\.\d+)*\+?)?(?![\w#+])", " ", stripped, flags=re.IGNORECASE
+        )
     stripped = _LEFTOVER_JOINERS_RE.sub(", ", stripped)
     stripped = _DANGLING_PREPOSITION_RE.sub("", stripped)
     stripped = re.sub(r"\s+([,.;:])", r"\1", re.sub(r"\s{2,}", " ", stripped))
@@ -531,12 +545,12 @@ def career_facts_block(plan: TailoringPlan) -> str:
         if r.project_description:
             lines.append(
                 "  Product / domain (what the company built; its technologies and wording are the original "
-                f"resume's, not this one's): {_product_context(r.project_description)}"
+                f"resume's, not this one's): {_product_context(r.project_description, r.role)}"
             )
         elif r.domain_clues:
             lines.append(
                 "  Domain clues (only to learn the product and industry; never reuse these tasks, tools or "
-                f"wording): {_product_context(r.domain_clues)}"
+                f"wording): {_product_context(r.domain_clues, r.role)}"
             )
         if r.metrics:
             lines.append("  Results you may reuse at this company only: " + "; ".join(r.metrics))
@@ -865,7 +879,10 @@ def description_issues(entry: dict, role: ProfileRole, posting_terms: list[str],
     def in_bullets(term: str) -> bool:
         return is_mentioned(term, bullets) or any(_alias_key(term) == _alias_key(t) for t in bullet_tech)
 
-    named = _technologies_in(desc) + [t for t in posting_terms if _is_technology(t) and is_mentioned(t, desc)]
+    # Proper names only: practices such as "event-driven" may describe the system in any words.
+    named = [t for t in _technologies_in(desc) if t != t.lower()] + [
+        t for t in posting_terms if t != t.lower() and _is_technology(t) and is_mentioned(t, desc)
+    ]
     off: list[str] = []
     for term in named:
         if not in_bullets(term) and all(_alias_key(term) != _alias_key(t) for t in off):
@@ -922,7 +939,7 @@ def description_repair_roles(resume: dict, profile_text: str, problems: dict[int
                 "index": pos,
                 "company": role.company,
                 "title": role.title,
-                "product_or_domain": _product_context(product),
+                "product_or_domain": _product_context(product, role),
                 "bullets": [b.replace("**", "") for b in entry.get("bullets") or [] if isinstance(b, str)],
                 "current_description": str(entry.get("project_description") or "").replace("**", ""),
                 "problem": problems[pos],

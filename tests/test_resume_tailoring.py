@@ -314,6 +314,23 @@ def test_project_description_must_introduce_the_tailored_bullets():
     ]
 
 
+def test_product_context_drops_the_original_stack_only():
+    from app.services.resume_tailoring import _product_context
+    from app.utils.resume_evidence import parse_profile_roles
+
+    profile = (
+        "## Work Experience\n**SAP** | Engineer | Jan 2022 - Present\n"
+        "- Architected AI business platforms using Go, Python, TypeScript, React, and Azure OpenAI, governing "
+        "automation that reduced repetitive operations by 45%\nTechnologies: Go, Python, Azure OpenAI\n"
+    )
+    role = parse_profile_roles(profile)[0]
+    text = role.text.splitlines()[1][2:]
+    out = _product_context(text, role)
+    assert out == (
+        "Architected AI business platforms, governing automation that reduced repetitive operations by 45%"
+    )
+
+
 def test_phase_b_repairs_descriptions_the_rewrites_left_stale(monkeypatch):
     calls: list[str] = []
     stale = _good_resume()
