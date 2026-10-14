@@ -8,8 +8,10 @@
     <title>NAO · Stop hunting jobs. Start closing them.</title>
     <meta
       name="description"
-      content="AI job application workspace: source roles, score the fit, tailor your résumé and cover letter, then autofill 14 ATS platforms. You keep the final click."
+      content="NAO is an AI job application workspace: source roles, score the fit, tailor your résumé and cover letter, then autofill 14 ATS platforms. Optional read-only Gmail search. You keep the final click."
     />
+    <meta name="application-name" content="NAO" />
+    <link rel="canonical" href="https://nao.it.com/" />
     <script>
       // Apply the saved theme before paint to avoid a flash of the wrong mode.
       (function () {
@@ -24,6 +26,31 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <main style="max-width:42rem;margin:2rem auto;padding:0 1.25rem;font-family:system-ui,sans-serif;line-height:1.55;color:#111">
+        <h1>NAO</h1>
+        <p>
+          NAO is an AI job application workspace at
+          <a href="https://nao.it.com">https://nao.it.com</a>. It helps people source job openings,
+          score fit against their profile, tailor résumés and cover letters, and autofill application
+          forms they choose to submit.
+        </p>
+        <p>
+          Optional Google Gmail access is read-only so users can search their own inbox for recruiter
+          mail. NAO does not send or delete email, and is not used for AI-generated non-consensual
+          intimate imagery (AI NCII).
+        </p>
+        <p>
+          <a href="/privacy-policy">Privacy Policy</a>
+          ·
+          <a href="/terms">Terms of Service</a>
+          ·
+          <a href="/login">Sign in</a>
+          ·
+          <a href="/signup">Sign up</a>
+        </p>
+      </main>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

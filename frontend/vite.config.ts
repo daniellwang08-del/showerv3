@@ -111,12 +111,27 @@ function attachProxyErrorHandler(proxy: { on(event: 'error', listener: (err: Nod
   })
 }
 
+/** Inject Search Console meta when VITE_GOOGLE_SITE_VERIFICATION is set at build/dev. */
+function googleSiteVerificationMeta(token: string) {
+  const value = token.trim()
+  return {
+    name: 'nao-google-site-verification',
+    transformIndexHtml(html: string) {
+      if (!value) return html
+      const tag = `    <meta name="google-site-verification" content="${value}" />\n`
+      if (html.includes('name="google-site-verification"')) return html
+      return html.replace('</head>', `${tag}</head>`)
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiTarget = env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000'
   const wsTarget = apiTarget.replace(/^http/i, 'ws')
   const lanHost = detectLanHost()
   const port = Number(env.VITE_DEV_PORT || 5173)
+  const googleSiteVerification = env.VITE_GOOGLE_SITE_VERIFICATION || ''
 
   const proxy: Record<string, ProxyOptions> = {
     '/api/v1/ws': {
@@ -137,6 +152,7 @@ export default defineConfig(({ mode }) => {
       react({
         babel: { plugins: [['babel-plugin-react-compiler', {}]] },
       }),
+      googleSiteVerificationMeta(googleSiteVerification),
     ],
     resolve: {
       alias: { '@': path.resolve(__dirname, './src') },

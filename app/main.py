@@ -38,6 +38,7 @@ from app.api.data_management_routes import router as data_management_router
 from app.api.admin_routes import router as admin_router
 from app.api.job_sources_routes import router as job_sources_router
 from app.api.job_sites_routes import router as job_sites_router
+from app.api.gmail_routes import router as gmail_router
 from app.api.billing_routes import router as billing_router
 from app.api.document_routes import router as document_router
 from app.api.logs_routes import router as logs_router
@@ -412,6 +413,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, prefix="/api/v1")
     app.include_router(job_sources_router, prefix="/api/v1")
     app.include_router(job_sites_router, prefix="/api/v1")
+    app.include_router(gmail_router, prefix="/api/v1")
     app.include_router(billing_router, prefix="/api/v1")
     app.include_router(document_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")

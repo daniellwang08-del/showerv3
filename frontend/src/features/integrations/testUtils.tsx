@@ -15,12 +15,12 @@ export function stubLayout() {
   Element.prototype.scrollTo = function scrollTo() {};
 }
 
-export function renderPage() {
+export function renderPage(path = '/app/integrations') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const utils = render(
     <QueryClientProvider client={qc}>
       <TooltipProvider>
-        <MemoryRouter initialEntries={['/app/integrations']}>
+        <MemoryRouter initialEntries={[path]}>
           <IntegrationsPage />
         </MemoryRouter>
       </TooltipProvider>

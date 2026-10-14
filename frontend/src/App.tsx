@@ -29,6 +29,8 @@ const PendingApprovalScreen = named(
 const JobActionModal = named(() => import('./components/extraction/JobActionModal'), 'JobActionModal');
 const ConfirmDialog = named(() => import('./components/extraction/ConfirmDialog'), 'ConfirmDialog');
 const LandingPage = named(() => import('./pages/LandingPage'), 'LandingPage');
+const PrivacyPolicyPage = named(() => import('./pages/PrivacyPolicyPage'), 'PrivacyPolicyPage');
+const TermsOfServicePage = named(() => import('./pages/TermsOfServicePage'), 'TermsOfServicePage');
 const HomePage = named(() => import('./features/home/HomePage'), 'HomePage');
 const OnboardingPage = named(() => import('./features/onboarding/OnboardingPage'), 'OnboardingPage');
 const AssistantPage = named(() => import('./features/assistant/AssistantPage'), 'AssistantPage');
@@ -344,7 +346,11 @@ function App() {
     return (
       <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
         <Routes>
+          {/* Public marketing + legal pages must never fall through to the login form.
+              Google OAuth branding verification fetches these URLs without a session. */}
           <Route path="/" element={<LandingPage />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+          <Route path="/terms" element={<TermsOfServicePage />} />
           <Route
             path="/login"
             element={
@@ -428,6 +434,32 @@ function App() {
       </Suspense>
 
       <Routes>
+        {/* Keep marketing/legal public even while signed in so reviewers and share
+            links never land inside the authenticated workspace by accident. */}
+        <Route
+          path="/"
+          element={
+            <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
+              <LandingPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/privacy-policy"
+          element={
+            <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
+              <PrivacyPolicyPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/terms"
+          element={
+            <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
+              <TermsOfServicePage />
+            </Suspense>
+          }
+        />
         <Route
           path="/onboarding"
           element={

@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+Allow: /privacy-policy
+Allow: /terms
+Allow: /login
+Allow: /signup
+
+Disallow: /app/
+Disallow: /admin/
+Disallow: /onboarding
+Disallow: /extension/
+
+Sitemap: https://nao.it.com/sitemap.xml

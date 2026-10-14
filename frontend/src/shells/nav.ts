@@ -40,7 +40,7 @@ export const applicantNav: NavSection[] = [
     items: [
       { to: '/app/profile', label: 'Profile', icon: UserCircle, keywords: ['resume data', 'experience'] },
       { to: '/app/preferences', label: 'Preferences', icon: SlidersHorizontal, keywords: ['settings', 'filters'] },
-      { to: '/app/integrations', label: 'Integrations', icon: Puzzle, keywords: ['sheets', 'pumble', 'job sites'] },
+      { to: '/app/integrations', label: 'Integrations', icon: Puzzle, keywords: ['sheets', 'pumble', 'job sites', 'gmail', 'inbox'] },
     ],
   },
 ];

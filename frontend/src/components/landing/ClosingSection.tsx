@@ -1,9 +1,8 @@
-import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
-import { NaoWordmark } from '@/components/brand/NaoLogo';
-import { HERO_STATS, NAV_LINKS } from './landingData';
+import { HERO_STATS } from './landingData';
 import { BRAND_HORIZON } from './landingMedia';
 import { Eyebrow, GhostCta, LANDING_CONTAINER, PrimaryCta } from './landingUi';
+import { SiteFooter } from './SiteFooter';
 
 export function ClosingSection() {
   return (
@@ -35,7 +34,7 @@ export function ClosingSection() {
                 Your next application is already written
               </h2>
               <p className="mx-auto mt-5 max-w-2xl text-pretty text-base leading-relaxed text-white/70 sm:text-lg">
-                Create an account, add your profile once, and let the pipeline do the searching,
+                Create an account on NAO, add your profile once, and let the pipeline do the searching,
                 scoring and writing. You keep the final click.
               </p>
 
@@ -67,45 +66,7 @@ export function ClosingSection() {
         </div>
       </section>
 
-      <footer className="border-t border-white/10 bg-[#04060F]">
-        <div className={`${LANDING_CONTAINER} flex flex-col gap-10 py-14 sm:flex-row sm:items-start sm:justify-between`}>
-          <div>
-            <Link to="/" className="inline-flex text-white" aria-label="NAO home">
-              <NaoWordmark className="h-5 text-white" />
-            </Link>
-            <p className="mt-3 max-w-sm text-[13px] leading-relaxed text-white/55">
-              An AI workspace that sources, scores and prepares job applications end to end.
-            </p>
-          </div>
-
-          <nav className="flex flex-wrap items-center gap-x-6 gap-y-3" aria-label="Footer">
-            {NAV_LINKS.map((link) => (
-              <a
-                key={link.id}
-                href={`#${link.id}`}
-                className="text-[13px] font-semibold text-white/60 transition hover:text-white"
-              >
-                {link.label}
-              </a>
-            ))}
-            <Link
-              to="/login"
-              className="text-[13px] font-semibold text-white/60 transition hover:text-white"
-            >
-              Sign in
-            </Link>
-            <Link to="/signup" className="text-[13px] font-bold text-[#6F9BFF] transition hover:text-[#BFD6FF]">
-              Sign up
-            </Link>
-          </nav>
-        </div>
-
-        <div className={`${LANDING_CONTAINER} border-t border-white/5 py-6`}>
-          <p className="text-[12px] font-semibold text-white/50">
-            © {new Date().getFullYear()} NAO. All rights reserved.
-          </p>
-        </div>
-      </footer>
+      <SiteFooter />
     </>
   );
 }

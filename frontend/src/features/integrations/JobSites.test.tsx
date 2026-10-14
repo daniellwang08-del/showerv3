@@ -24,6 +24,10 @@ vi.mock('@/api/pumbleApi', () => ({
   fetchPumbleStatus: vi.fn(async () => ({ integration_available: true })),
   fetchPumbleConfig: vi.fn(async () => ({ configured: false, integrations: [] })),
 }));
+vi.mock('@/api/gmailApi', () => ({
+  fetchGmailStatus: vi.fn(async () => ({ server_configured: true, scopes: [] })),
+  fetchGmailConfig: vi.fn(async () => ({ configured: false })),
+}));
 vi.mock('@/lib/extensionBridge', () => ({
   detectExtension: vi.fn(),
   startJobSiteConnect: vi.fn(),
@@ -135,19 +139,21 @@ describe('IntegrationsPage, job sites', () => {
     expect(within(card('Arbeitnow')).getByText('Off')).toBeInTheDocument();
     expect(within(card('LinkedIn')).getByText('Unavailable')).toBeInTheDocument();
     expect(within(card('LinkedIn')).getByRole('button', { name: 'Why not? LinkedIn' })).toBeInTheDocument();
-    expect(await screen.findByRole('article', { name: 'Google Sheets' })).toHaveTextContent('Not connected');
+    expect(screen.queryByRole('article', { name: 'Google Sheets' })).not.toBeInTheDocument();
   });
 
-  it('puts connected sites first as sync panels and the posting integrations last', async () => {
+  it('puts connected sites first as sync panels and keeps posting on its own tab', async () => {
+    const user = userEvent.setup();
     renderPage();
     const yours = await screen.findByRole('region', { name: 'Your job sites' });
     const add = screen.getByRole('region', { name: 'Add a job site' });
-    const posting = screen.getByRole('region', { name: 'Post matching jobs' });
     expect(within(yours).getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual(['Jobicy', 'Reed', 'Arbeitnow']);
     expect(within(add).queryByRole('article', { name: 'Jobicy' })).not.toBeInTheDocument();
     expect(within(add).getByRole('article', { name: 'Remotive' })).toBeInTheDocument();
     expect(yours.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(add.compareDocumentPosition(posting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Post matching jobs' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Posting' }));
+    const posting = await screen.findByRole('region', { name: 'Post matching jobs' });
     expect(within(posting).getByRole('article', { name: 'Google Sheets' })).toBeInTheDocument();
   });
 

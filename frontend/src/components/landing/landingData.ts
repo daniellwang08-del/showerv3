@@ -8,9 +8,10 @@
  * registered in extension/src/engines.js.
  */
 
-export type LandingSectionId = 'how-it-works' | 'features' | 'autofill' | 'faq';
+export type LandingSectionId = 'about' | 'how-it-works' | 'features' | 'autofill' | 'faq';
 
 export const NAV_LINKS: { id: LandingSectionId; label: string }[] = [
+  { id: 'about', label: 'About' },
   { id: 'how-it-works', label: 'How it works' },
   { id: 'features', label: 'Platform' },
   { id: 'autofill', label: 'Autofill' },
@@ -209,6 +210,10 @@ export const FAQS = [
   },
   {
     q: 'What happens to my profile data?',
-    a: 'Your profile, documents and preferences are used to score and tailor jobs for your own account. Provider API keys are stored encrypted, and low-scoring or excluded jobs are filtered per user rather than shared.',
+    a: 'Your profile, documents and preferences are used to score and tailor jobs for your own account. Provider API keys are stored encrypted, and low-scoring or excluded jobs are filtered per user rather than shared. Full details are in the Privacy Policy, including optional Gmail read-only access.',
+  },
+  {
+    q: 'Why would NAO ask for Gmail access?',
+    a: 'Only if you connect Gmail under Integrations. NAO requests read-only access so you can search your own inbox for recruiter and interview mail. It cannot send or delete messages. You can disconnect anytime, and use of Google user data follows Google’s Limited Use requirements.',
   },
 ];

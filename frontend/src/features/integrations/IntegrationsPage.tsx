@@ -1,25 +1,82 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { RotateCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageLayout } from '@/components/app/PageLayout';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CardGrid, IntegrationCard, IntegrationCardError, IntegrationCardSkeleton } from './IntegrationCard';
+import { GmailSheet, GMAIL_BLURB, GMAIL_LOGO, GMAIL_NAME } from './GmailSheet';
 import { GoogleSheetsSheet, SHEETS_BLURB, SHEETS_LOGO, SHEETS_NAME } from './GoogleSheetsSheet';
 import { JobSiteManagePanel } from './JobSiteManagePanel';
 import { JobSiteSheet } from './JobSiteSheet';
 import { PumbleSheet, PUMBLE_BLURB, PUMBLE_LOGO, PUMBLE_NAME } from './PumbleSheet';
-import { useJobSites, usePumble, useSheets } from './queries';
-import { errorDetail, jobSiteStatus, pumbleStatus, sheetsStatus } from './status';
+import { invalidateGmail, useGmail, useJobSites, usePumble, useSheets } from './queries';
+import { errorDetail, gmailStatus, jobSiteStatus, pumbleStatus, sheetsStatus } from './status';
+import { useQueryClient } from '@tanstack/react-query';
 
-type Active = { kind: 'job-site'; slug: string } | { kind: 'sheets' } | { kind: 'pumble' };
+const TABS = [
+  { value: 'job-sites', label: 'Job sites' },
+  { value: 'posting', label: 'Posting' },
+  { value: 'inbox', label: 'Inbox & chat' },
+] as const;
+
+type TabId = (typeof TABS)[number]['value'];
+const DEFAULT_TAB: TabId = 'job-sites';
+const isTabId = (v: string | null): v is TabId => TABS.some((t) => t.value === v);
+
+type Active =
+  | { kind: 'job-site'; slug: string }
+  | { kind: 'sheets' }
+  | { kind: 'pumble' }
+  | { kind: 'gmail' };
 
 export function IntegrationsPage() {
   const jobSites = useJobSites();
   const sheets = useSheets();
   const pumble = usePumble();
+  const gmail = useGmail();
+  const qc = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const rawTab = params.get('tab');
+  const tab: TabId = isTabId(rawTab) ? rawTab : DEFAULT_TAB;
   const [active, setActive] = useState<Active | null>(null);
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const flag = params.get('gmail');
+    if (!flag) return;
+    if (flag === 'connected') {
+      invalidateGmail(qc);
+      toast.success('Gmail connected');
+    } else if (flag === 'error') {
+      const reason = params.get('reason')?.trim();
+      toast.error(reason ? `Gmail connection failed (${reason})` : 'Gmail connection failed');
+    }
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('gmail');
+        next.delete('reason');
+        if (!next.get('tab')) next.set('tab', 'inbox');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [params, qc, setParams]);
+
+  const selectTab = (next: TabId) =>
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next === DEFAULT_TAB) p.delete('tab');
+        else p.set('tab', next);
+        return p;
+      },
+      { replace: true },
+    );
 
   const show = (next: Active) => {
     setActive(next);
@@ -51,117 +108,172 @@ export function IntegrationsPage() {
     sheetBody = <GoogleSheetsSheet data={sheets.data} />;
   } else if (active?.kind === 'pumble' && pumble.data) {
     sheetBody = <PumbleSheet data={pumble.data} />;
+  } else if (active?.kind === 'gmail' && gmail.data) {
+    sheetBody = <GmailSheet data={gmail.data} />;
   }
 
   return (
     <PageLayout
       title="Integrations"
-      description="Pull openings from job sites into your pipeline, then post the best matches to Google Sheets or Pumble."
+      description="Connect job boards, posting destinations, and read-only inbox sources."
       width="wide"
     >
-      <div className="space-y-10">
-        {connected.length > 0 ? (
+      <Tabs value={tab} onValueChange={(v) => isTabId(String(v)) && selectTab(String(v) as TabId)} className="gap-6">
+        <div className="no-scrollbar -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <TabsList aria-label="Integration sections" className="w-max">
+            {TABS.map((t) => (
+              <TabsTrigger key={t.value} value={t.value} className="px-3">
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+
+        <TabsContent value="job-sites" className="space-y-10">
+          {connected.length > 0 ? (
+            <Group
+              title="Your job sites"
+              description="Each connected site syncs on its own schedule. Sync now runs it right away; progress also shows at the top of the Jobs page."
+            >
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {connected.map(({ plugin, connection }) => (
+                  <JobSiteManagePanel
+                    key={plugin.slug}
+                    plugin={plugin}
+                    connection={connection}
+                    onManage={() => show({ kind: 'job-site', slug: plugin.slug })}
+                  />
+                ))}
+              </div>
+            </Group>
+          ) : null}
+
           <Group
-            title="Your job sites"
-            description="Each connected site syncs on its own schedule. Sync now runs it right away; progress also shows at the top of the Jobs page."
+            title={connected.length > 0 ? 'Add a job site' : 'Job sites'}
+            description="Connect boards with your account, an API key, or a public feed. Account sites open in a new tab and connect automatically if you're already signed in."
           >
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {connected.map(({ plugin, connection }) => (
-                <JobSiteManagePanel
-                  key={plugin.slug}
-                  plugin={plugin}
-                  connection={connection}
-                  onManage={() => show({ kind: 'job-site', slug: plugin.slug })}
-                />
-              ))}
-            </div>
+            {jobSites.isPending ? (
+              <CardGrid>
+                {Array.from({ length: 6 }, (_, i) => (
+                  <IntegrationCardSkeleton key={i} />
+                ))}
+              </CardGrid>
+            ) : jobSites.isError ? (
+              <Alert variant="destructive">
+                <AlertTitle>Couldn't load job sites</AlertTitle>
+                <AlertDescription>{errorDetail(jobSites.error, 'Failed to load job sites.')}</AlertDescription>
+                <AlertAction>
+                  <Button variant="outline" size="sm" onClick={() => void jobSites.refetch()}>
+                    <RotateCw />
+                    Retry
+                  </Button>
+                </AlertAction>
+              </Alert>
+            ) : plugins.length === 0 ? (
+              <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
+                No job sites are available on this server yet.
+              </p>
+            ) : available.length === 0 ? (
+              <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
+                Every available job site is connected.
+              </p>
+            ) : (
+              <CardGrid>
+                {available.map((plugin) => (
+                  <IntegrationCard
+                    key={plugin.slug}
+                    name={plugin.name}
+                    description={plugin.blurb}
+                    logoSrc={plugin.logo_src}
+                    status={jobSiteStatus(plugin, connectionFor(plugin.slug))}
+                    onOpen={() => show({ kind: 'job-site', slug: plugin.slug })}
+                  />
+                ))}
+              </CardGrid>
+            )}
           </Group>
-        ) : null}
+        </TabsContent>
 
-        <Group
-          title={connected.length > 0 ? 'Add a job site' : 'Job sites'}
-          description="Connect boards with your account, an API key, or a public feed. Account sites open in a new tab and connect automatically if you're already signed in."
-        >
-          {jobSites.isPending ? (
+        <TabsContent value="posting" className="space-y-10">
+          <Group title="Post matching jobs" description="After jobs are scored, auto-post matching URLs to a spreadsheet or a chat channel.">
             <CardGrid>
-              {Array.from({ length: 6 }, (_, i) => (
-                <IntegrationCardSkeleton key={i} />
-              ))}
-            </CardGrid>
-          ) : jobSites.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Couldn't load job sites</AlertTitle>
-              <AlertDescription>{errorDetail(jobSites.error, 'Failed to load job sites.')}</AlertDescription>
-              <AlertAction>
-                <Button variant="outline" size="sm" onClick={() => void jobSites.refetch()}>
-                  <RotateCw />
-                  Retry
-                </Button>
-              </AlertAction>
-            </Alert>
-          ) : plugins.length === 0 ? (
-            <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
-              No job sites are available on this server yet.
-            </p>
-          ) : available.length === 0 ? (
-            <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
-              Every available job site is connected.
-            </p>
-          ) : (
-            <CardGrid>
-              {available.map((plugin) => (
-                <IntegrationCard
-                  key={plugin.slug}
-                  name={plugin.name}
-                  description={plugin.blurb}
-                  logoSrc={plugin.logo_src}
-                  status={jobSiteStatus(plugin, connectionFor(plugin.slug))}
-                  onOpen={() => show({ kind: 'job-site', slug: plugin.slug })}
+              {sheets.isPending ? (
+                <IntegrationCardSkeleton />
+              ) : sheets.isError ? (
+                <IntegrationCardError
+                  name={SHEETS_NAME}
+                  message={errorDetail(sheets.error, 'Failed to load Google Sheets settings.')}
+                  onRetry={() => void sheets.refetch()}
                 />
-              ))}
+              ) : (
+                <IntegrationCard
+                  name={SHEETS_NAME}
+                  description={SHEETS_BLURB}
+                  logoSrc={SHEETS_LOGO}
+                  status={sheetsStatus(sheets.data)}
+                  onOpen={() => show({ kind: 'sheets' })}
+                />
+              )}
+              {pumble.isPending ? (
+                <IntegrationCardSkeleton />
+              ) : pumble.isError ? (
+                <IntegrationCardError
+                  name={PUMBLE_NAME}
+                  message={errorDetail(pumble.error, 'Failed to load Pumble settings.')}
+                  onRetry={() => void pumble.refetch()}
+                />
+              ) : (
+                <IntegrationCard
+                  name={PUMBLE_NAME}
+                  description={PUMBLE_BLURB}
+                  logoSrc={PUMBLE_LOGO}
+                  status={pumbleStatus(pumble.data)}
+                  onOpen={() => show({ kind: 'pumble' })}
+                />
+              )}
             </CardGrid>
-          )}
-        </Group>
+          </Group>
+        </TabsContent>
 
-        <Group title="Post matching jobs" description="After jobs are scored, auto-post matching URLs to a spreadsheet or a chat channel.">
-          <CardGrid>
-            {sheets.isPending ? (
-              <IntegrationCardSkeleton />
-            ) : sheets.isError ? (
-              <IntegrationCardError
-                name={SHEETS_NAME}
-                message={errorDetail(sheets.error, 'Failed to load Google Sheets settings.')}
-                onRetry={() => void sheets.refetch()}
-              />
-            ) : (
+        <TabsContent value="inbox" className="space-y-10">
+          <Group
+            title="Mail and messaging"
+            description="Read-only connections for searching important messages. NAO does not send mail or post chat on your behalf from this tab."
+          >
+            <CardGrid>
+              {gmail.isPending ? (
+                <IntegrationCardSkeleton />
+              ) : gmail.isError ? (
+                <IntegrationCardError
+                  name={GMAIL_NAME}
+                  message={errorDetail(gmail.error, 'Failed to load Gmail settings.')}
+                  onRetry={() => void gmail.refetch()}
+                />
+              ) : (
+                <IntegrationCard
+                  name={GMAIL_NAME}
+                  description={GMAIL_BLURB}
+                  logoSrc={GMAIL_LOGO}
+                  status={gmailStatus(gmail.data)}
+                  onOpen={() => show({ kind: 'gmail' })}
+                />
+              )}
               <IntegrationCard
-                name={SHEETS_NAME}
-                description={SHEETS_BLURB}
-                logoSrc={SHEETS_LOGO}
-                status={sheetsStatus(sheets.data)}
-                onOpen={() => show({ kind: 'sheets' })}
+                name="Outlook"
+                description="Search Microsoft Outlook / Microsoft 365 mail. Coming soon."
+                status={{ kind: 'unavailable', detail: 'Not available yet' }}
+                onOpen={() => toast.message('Outlook integration is coming soon')}
               />
-            )}
-            {pumble.isPending ? (
-              <IntegrationCardSkeleton />
-            ) : pumble.isError ? (
-              <IntegrationCardError
-                name={PUMBLE_NAME}
-                message={errorDetail(pumble.error, 'Failed to load Pumble settings.')}
-                onRetry={() => void pumble.refetch()}
-              />
-            ) : (
               <IntegrationCard
-                name={PUMBLE_NAME}
-                description={PUMBLE_BLURB}
-                logoSrc={PUMBLE_LOGO}
-                status={pumbleStatus(pumble.data)}
-                onOpen={() => show({ kind: 'pumble' })}
+                name="Slack"
+                description="Search Slack messages you can already access. Coming soon."
+                status={{ kind: 'unavailable', detail: 'Not available yet' }}
+                onOpen={() => toast.message('Slack integration is coming soon')}
               />
-            )}
-          </CardGrid>
-        </Group>
-      </div>
+            </CardGrid>
+          </Group>
+        </TabsContent>
+      </Tabs>
 
       <Sheet open={open && sheetBody !== null} onOpenChange={setOpen}>
         <SheetContent

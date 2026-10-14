@@ -173,8 +173,18 @@ export function AuthShell({
               <p className="mt-6 flex items-start gap-2 border-t border-white/10 pt-5 text-xs leading-relaxed text-white/50">
                 <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-[#6F9BFF]" />
                 <span>
-                  By continuing you agree to use NAO for your own applications. Autofill never
-                  submits without you.
+                  By continuing you agree to NAO&apos;s{' '}
+                  <a href="/terms" className="font-semibold text-[#9DB9FF] underline-offset-2 hover:underline">
+                    Terms
+                  </a>{' '}
+                  and{' '}
+                  <a
+                    href="/privacy-policy"
+                    className="font-semibold text-[#9DB9FF] underline-offset-2 hover:underline"
+                  >
+                    Privacy Policy
+                  </a>
+                  . Autofill never submits without you.
                   <span className="mt-1 flex items-center gap-1 text-white/60">
                     Prefer the tour first?
                     <a

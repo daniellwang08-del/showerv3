@@ -907,6 +907,29 @@ class PumbleConfig(Base):
     )
 
 
+class GmailConnection(Base):
+    """Per-user Gmail OAuth connection for read-only inbox search.
+
+    Tokens are Fernet-encrypted at rest. Scopes must stay read-only
+    (gmail.readonly); the service never requests send/modify scopes.
+    """
+    __tablename__ = "gmail_connections"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    google_email = Column(String(255), nullable=False)
+    refresh_token_encrypted = Column(Text, nullable=False)
+    access_token_encrypted = Column(Text, nullable=True)
+    access_token_expires_at = Column(DateTime, nullable=True)
+    scopes = Column(Text, nullable=False)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+    # connected | needs_reauth
+    status = Column(String(32), default="connected", nullable=False)
+    last_error = Column(Text, nullable=True)
+    connected_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class GoogleSheetsConfig(Base):
     """Per-user Google Sheets integration settings.
 

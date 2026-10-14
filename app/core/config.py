@@ -355,6 +355,16 @@ class Settings(BaseSettings):
 
     google_sheets_credentials_path: str = Field(default="google_credentials.json")
 
+    # Gmail read-only OAuth (per-user inbox search). Empty client id/secret
+    # means the integration is unavailable until configured.
+    google_oauth_client_id: str = Field(default="")
+    google_oauth_client_secret: str = Field(default="")
+    # Full callback URL registered in Google Cloud (must match exactly), e.g.
+    # https://api.example.com/api/v1/gmail/callback or
+    # http://127.0.0.1:8000/api/v1/gmail/callback. Empty = derive from the
+    # incoming request URL at connect time (fine for local Vite/proxy setups).
+    google_oauth_redirect_uri: str = Field(default="")
+
     # Default GPA written to optional "Overall Result (GPA)" application fields when
     # the profile has no stored value (Workday). Applied only when the field exists
     # and is empty; a stored profile GPA always takes precedence. Blank disables it.

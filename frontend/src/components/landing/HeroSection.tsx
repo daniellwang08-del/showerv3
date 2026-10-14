@@ -55,8 +55,9 @@ export function HeroSection() {
             </h1>
 
             <p className="mt-5 max-w-lg text-pretty text-[15px] leading-relaxed text-white/70 sm:text-base xl:text-[17px]">
-              NAO finds fresh roles across five job networks, reads the real posting from the
-              hiring system, scores it against your profile, then writes the tailored résumé and
+              <strong className="font-semibold text-white">NAO</strong> is an AI job application
+              workspace. It finds fresh roles across five job networks, reads the real posting from
+              the hiring system, scores it against your profile, then writes the tailored résumé and
               cover letter. When you are ready to apply, it fills the form for you.
             </p>
 

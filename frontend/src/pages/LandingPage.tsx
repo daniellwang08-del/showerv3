@@ -3,6 +3,7 @@ import { usePublicViewport } from '../hooks/usePublicViewport';
 import { useRevealOnScroll } from '../hooks/useRevealOnScroll';
 import { LandingHeader } from '../components/landing/LandingHeader';
 import { HeroSection } from '../components/landing/HeroSection';
+import { PurposeSection } from '../components/landing/PurposeSection';
 import { ProofStrip } from '../components/landing/ProofStrip';
 import { FilmStrip } from '../components/landing/FilmStrip';
 import { HowItWorksSection } from '../components/landing/HowItWorksSection';
@@ -11,7 +12,7 @@ import { AutofillSection } from '../components/landing/AutofillSection';
 import { FaqSection } from '../components/landing/FaqSection';
 import { ClosingSection } from '../components/landing/ClosingSection';
 
-/** Public marketing page shown to visitors before they sign in or sign up. */
+/** Public marketing page shown without login. Brand name on this page is NAO. */
 export function LandingPage() {
   // `landing-theme` paints the document dark so overscroll never flashes the
   // app's light background behind this page.
@@ -46,6 +47,7 @@ export function LandingPage() {
         <HeroSection />
       </div>
       <main>
+        <PurposeSection />
         <ProofStrip />
         <FilmStrip />
         <HowItWorksSection />

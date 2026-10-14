@@ -34,6 +34,10 @@ vi.mock('@/api/pumbleApi', () => ({
   deletePumbleIntegration: vi.fn(),
   disconnectPumble: vi.fn(),
 }));
+vi.mock('@/api/gmailApi', () => ({
+  fetchGmailStatus: vi.fn(async () => ({ server_configured: true, scopes: [] })),
+  fetchGmailConfig: vi.fn(async () => ({ configured: false })),
+}));
 
 const sheets = vi.mocked(sheetsApi);
 const pumble = vi.mocked(pumbleApi);
@@ -77,7 +81,7 @@ beforeEach(() => {
 
 async function openCard(name: string) {
   const user = userEvent.setup();
-  renderPage();
+  renderPage('/app/integrations?tab=posting');
   const card = await screen.findByRole('article', { name });
   await user.click(within(card).getByRole('button'));
   return { user, sheet: await screen.findByRole('dialog') };
@@ -146,7 +150,7 @@ describe('IntegrationsPage, Google Sheets', () => {
       return { success: true, configured: true, ...connectedSheets, spreadsheet_url: SHEET_URL, tab_groups: [], auto_post_threshold: 70, group_count: 2, assigned_tab_count: 2, is_enabled };
     });
     const user = userEvent.setup();
-    const { qc } = renderPage();
+    const { qc } = renderPage('/app/integrations?tab=posting');
     const spy = vi.spyOn(qc, 'invalidateQueries');
     await user.click(within(await screen.findByRole('article', { name: 'Google Sheets' })).getByRole('button'));
     const sheet = await screen.findByRole('dialog');
@@ -212,7 +216,7 @@ describe('IntegrationsPage, Google Sheets', () => {
 describe('IntegrationsPage, Pumble', () => {
   it('shows Unavailable when the integration is disabled on the server', async () => {
     pumble.fetchPumbleStatus.mockResolvedValue({ integration_available: false });
-    renderPage();
+    renderPage('/app/integrations?tab=posting');
     const card = await screen.findByRole('article', { name: 'Pumble' });
     expect(within(card).getByText('Unavailable')).toBeInTheDocument();
   });
