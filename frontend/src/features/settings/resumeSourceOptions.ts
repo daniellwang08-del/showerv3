@@ -22,6 +22,6 @@ export const TAILORING_STRATEGY_OPTIONS: { value: TailoringStrategy; label: stri
   {
     value: 'job_first',
     label: 'Rebuild around the job',
-    hint: 'Keeps your employers, titles, dates, education and each company\'s product, then rewrites every role to emphasize the job\'s required skills. Can invent stack history under real employers; use only if you accept that risk.',
+    hint: 'Keeps your employers, dates and education, then rewrites titles, metrics, ownership and stack so the resume matches the job. Can invent tools under real employers; every listed skill still needs an experience story.',
   },
 ];

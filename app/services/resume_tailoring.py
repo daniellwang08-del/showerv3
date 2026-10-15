@@ -1,13 +1,10 @@
-"""Resume tailoring: the candidate's real career, written to fit one posting.
+"""Resume tailoring: job-first compose for one posting (strategy job_first).
 
-The original resume supplies who the candidate is (contact details, education),
-where and when they worked (company, title, dates, location), what each
-company's product or domain was, and the technologies each role used. What each
-role says the candidate did is written fresh. Posting skills the profile already
-supports are emphasized in the roles that used them; skills the profile never
-names stay out. Every role's scope fits its tenure and career stage, and the
-candidate's wider stack stays, so the career reads as one engineer's story.
-The only numbers allowed are ones the original resume states for the same company.
+Employers, dates, education and role order stay real. Titles, metrics, ownership,
+tools and bullet substance are rewritten so the posting's requirements read as
+the candidate's work, including stack the original profile never named. Every
+skill listed in technical_skills needs an experience story; optional posting
+skills may appear in bullets without being listed.
 """
 
 from __future__ import annotations
@@ -32,7 +29,6 @@ from app.services.required_skills import (
     _is_injectable,
     _skill_category,
     ensure_required_skills,
-    filter_technical_skills_to_evidence,
     lexicon_hits,
 )
 from app.services.skill_lexicon import SKILLS
@@ -47,7 +43,6 @@ from app.utils.resume_evidence import (
     _sections,
     ProfileRole,
     cap_skills_section,
-    enforce_role_evidence,
     is_mentioned,
     is_named_technology,
     parse_profile_roles,
@@ -62,7 +57,7 @@ from app.utils.resume_skill_taxonomy import fill_thin_skill_rows, fold_small_ski
 
 STRATEGY_REBUILD = "job_first"
 STRATEGY_EVIDENCE = "evidence"
-DEFAULT_STRATEGY = STRATEGY_EVIDENCE
+DEFAULT_STRATEGY = STRATEGY_REBUILD
 
 MAX_REWRITE_RETRIES = 2
 
@@ -224,7 +219,8 @@ class TailoringPlan:
     breadth: list[str]
     total_years: float | None
     has_required_section: bool
-    # Posting skills the profile never names; the resume must not invent them.
+    # Domain / compliance vocabulary from the posting (not inventable stack). Used to keep
+    # older roles from adopting the posting's domain language.
     missing: list[str] = field(default_factory=list)
 
     @property
@@ -404,16 +400,18 @@ def _carryable(skill: JobSkill, category: str | None, job_text: str) -> bool:
 
 
 def build_tailoring_plan(job_skills: list[JobSkill], profile_text: str, job_text: str = "") -> TailoringPlan:
-    """Posting skills the profile supports, where each may go, plus skills the resume must not invent."""
+    """Posting skills to place in experience, including JD stack the profile never named."""
     roles = parse_profile_roles(profile_text)
     has_required = any(s.importance == REQUIRED for s in job_skills)
     profile_skills = parse_profile_skills(profile_text)
     source = profile_text or ""
     skills: list[RequiredSkill] = []
-    missing: list[str] = []
+    # Domain / compliance vocabulary (KYC, SOC 2): not inventable stack, but kept so older roles
+    # cannot paste the posting's domain language.
+    domain_vocab: list[str] = []
     seen: set[str] = set()
     for skill in job_skills:
-        if skill.importance == MENTIONED or len(skills) + len(missing) >= _MAX_SKILLS * 2:
+        if skill.importance == MENTIONED or len(skills) >= _MAX_SKILLS:
             continue
         category = _skill_category(skill)
         if not _carryable(skill, category, job_text):
@@ -428,25 +426,24 @@ def build_tailoring_plan(job_skills: list[JobSkill], profile_text: str, job_text
         seen.add(key)
         if category in _PRACTICE_CATEGORIES:
             category = "practice"
-        # Honesty: only skills the profile names are carried. JD-only stack stays out.
-        if not is_mentioned(term, source):
-            if skill.importance in (REQUIRED, PREFERRED, CORE):
-                missing.append(term)
-            continue
-        if len(skills) >= _MAX_SKILLS:
-            continue
-        injectable = (
+        in_profile = is_mentioned(term, source)
+        tech_ok = (
             category in _TECH_CATEGORIES and category != "practice"
             if category
             else is_named_technology(term) and not _DOMAIN_ACRONYM_RE.fullmatch(term)
-        ) and _norm(term) not in _GENERIC_SURFACES and _is_injectable(skill, profile_skills)
+        ) and _norm(term) not in _GENERIC_SURFACES
+        if not in_profile and not tech_ok and category != "practice":
+            if skill.importance in (REQUIRED, PREFERRED, CORE) and _DOMAIN_ACRONYM_RE.fullmatch(term):
+                domain_vocab.append(term)
+            continue
         skills.append(
             RequiredSkill(
                 term=term,
                 importance=skill.importance,
-                injectable=injectable,
+                # Job-first: listable JD technologies are injectable even when absent from the profile.
+                injectable=bool(tech_ok) or (category != "practice" and _is_injectable(skill, profile_skills)),
                 category=category,
-                added=False,
+                added=not in_profile,
             )
         )
     # Fragments of another posting skill (".NET 8+" read as "NET" and "NET 8+") go.
@@ -496,7 +493,6 @@ def build_tailoring_plan(job_skills: list[JobSkill], profile_text: str, job_text
             ][:12],
         )
         for s in skills:
-            # Host a posting skill only in a role whose own text (or Project Evidence) names it.
             if not usable_in_role(s.term, end_year, is_current=is_current):
                 plan_role.too_new.append(s.term)
             elif is_mentioned(s.term, evidence):
@@ -509,14 +505,22 @@ def build_tailoring_plan(job_skills: list[JobSkill], profile_text: str, job_text
         breadth=[t for t in profile_technologies(profile_text, roles) if not is_posting_skill(t)][:_MAX_BREADTH],
         total_years=_total_years(roles),
         has_required_section=has_required,
-        missing=missing,
+        missing=domain_vocab,
     )
-    # One home role per posting skill (most recent that can host it). Avoids stuffing every
-    # primary into both recent roles, which reads as written for one JD.
+    # One home role per posting skill. Profile-named homes win; otherwise place in the most
+    # recent era-ok role so JD stack still gets dated experience.
     for s in skills:
         homes = [r for r in plan.recent if s.term in r.stack][:1]
         if not homes:
             homes = [r for r in plan.roles if s.term in r.stack][:1]
+        if not homes:
+            for r in plan.roles:
+                if s.term in r.too_new:
+                    continue
+                if usable_in_role(s.term, r.end_year, is_current=r.is_current):
+                    r.stack.append(s.term)
+                    homes = [r]
+                    break
         s.roles = [r.role.company for r in homes]
     return plan
 
@@ -550,6 +554,54 @@ def _product_context(text: str, role: ProfileRole | None = None) -> str:
     return re.sub(r"(?:,\s*){2,}", ", ", stripped).strip(" ,;")
 
 
+_CONSULTING_RE = re.compile(
+    r"\b(?:consult\w*|professional services|multi[- ]client|various clients|client engagement|"
+    r"contractor|contracting)\b",
+    re.IGNORECASE,
+)
+_GENERIC_CLIENT_RE = re.compile(
+    r"\b(?:various clients?|multiple clients?|several clients?|diverse clients?|many clients?)\b",
+    re.IGNORECASE,
+)
+
+
+def _role_is_consulting(role: RolePlan) -> bool:
+    blob = " ".join(
+        [
+            role.role.company,
+            role.role.title,
+            role.meta,
+            role.project_name,
+            role.project_description,
+            role.domain_clues,
+        ]
+    )
+    return bool(_CONSULTING_RE.search(blob))
+
+
+def _real_client_hints(role: RolePlan) -> list[str]:
+    """Proper client/project names from Career facts; excludes generic multi-client phrasing."""
+    hints: list[str] = []
+    for raw in (role.project_name, role.project_description, role.domain_clues):
+        text = (raw or "").strip()
+        if not text or _GENERIC_CLIENT_RE.search(text):
+            continue
+        if role.project_name and raw == role.project_name:
+            hints.append(text)
+            continue
+        # Keep short noun phrases that look like a named engagement, not whole paragraphs.
+        if len(text.split()) <= 12:
+            hints.append(_product_context(text, role.role) or text)
+    out: list[str] = []
+    seen: set[str] = set()
+    for h in hints:
+        key = _norm(h)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(h)
+    return out[:4]
+
+
 def career_facts_block(plan: TailoringPlan) -> str:
     if not plan.roles:
         return "No structured work history found in the profile."
@@ -561,7 +613,8 @@ def career_facts_block(plan: TailoringPlan) -> str:
         )
     lines.append(
         f"Roles, most recent first (index in brackets). Bullets: {plan.max_bullets} at most in total; each role "
-        "uses the range shown, so a long role carries more work than a short one."
+        "uses the range shown, so a long role carries more work than a short one. Company names and dates stay; "
+        "job titles may be rewritten toward the posting when the role's stage supports it."
     )
     for r in plan.roles:
         head = f"- [{r.index}] {r.role.company} | {r.role.title} | {r.period}"
@@ -572,20 +625,35 @@ def career_facts_block(plan: TailoringPlan) -> str:
         career = f", starting {r.career_year:g} years into the career" if r.career_year is not None else ""
         lines.append(f"  Tenure: {r.tenure}{career}. Bullets: {low}-{high}.")
         lines.append(f"  Scope: {_STAGE_SCOPE[r.stage]}")
+        if _role_is_consulting(r):
+            clients = _real_client_hints(r)
+            if clients:
+                lines.append(
+                    "  Consulting / multi-client: write one real client and one major project as the spine "
+                    f"of this role. Prefer: {'; '.join(clients)}. Do not invent a fake client name."
+                )
+            else:
+                lines.append(
+                    "  Consulting / multi-client: write one concrete client engagement and major project as "
+                    "the spine of this role. Do not invent a fake client name; if none is known, describe the "
+                    "engagement by product without a proper client name, never 'various clients'."
+                )
         if r.project_name:
             lines.append(f"  Project: {r.project_name}")
         if r.project_description:
             lines.append(
-                "  Product / domain (what the company built; its technologies and wording are the original "
-                f"resume's, not this one's): {_product_context(r.project_description, r.role)}"
+                "  Product / domain (what the company or client built; rewrite stack and wording for this "
+                f"posting): {_product_context(r.project_description, r.role)}"
             )
         elif r.domain_clues:
             lines.append(
-                "  Domain clues (only to learn the product and industry; never reuse these tasks, tools or "
-                f"wording): {_product_context(r.domain_clues, r.role)}"
+                "  Domain clues (product and industry context; rewrite tasks and tools for this posting): "
+                f"{_product_context(r.domain_clues, r.role)}"
             )
         if r.metrics:
-            lines.append("  Results you may reuse at this company only: " + "; ".join(r.metrics))
+            lines.append(
+                "  Results you may reuse or rewrite at this company: " + "; ".join(r.metrics)
+            )
     return "\n".join(lines)
 
 
@@ -607,31 +675,30 @@ def _spell_out(term: str) -> str:
 
 
 def target_stack_block(plan: TailoringPlan) -> str:
-    if not plan.skills and not plan.missing:
+    if not plan.skills:
         return "- The posting names no specific technologies; write the work around its responsibilities."
     lines: list[str] = []
     recent = ", ".join(f"[{r.index}]" for r in plan.recent) or "[0]"
     if plan.primary:
         lines.append(
-            f"Primary skills the profile supports. Name each in the role shown (or in {recent} when no home "
-            "is listed) and in that role's used_skills, using the spelling shown. Never move a skill into a "
-            "role that did not use it:"
+            f"Primary posting skills. Name each in the role shown (or in {recent} when no home is listed) "
+            "and in that role's used_skills and technical_skills, using the spelling shown. You may place "
+            "these in recent roles even when the original profile never named them:"
         )
         for s in plan.primary:
-            home = f" -> {s.roles[0]}" if s.roles else " (technical_skills only; no dated role names it)"
-            lines.append(f"- {s.term}{_spell_out(s.term)}{home}")
+            home = f" -> {s.roles[0]}" if s.roles else f" -> place in {recent}"
+            added = " [align to posting]" if s.added else ""
+            lines.append(f"- {s.term}{_spell_out(s.term)}{home}{added}")
     if plan.secondary:
-        lines.append("Other supported posting skills. Name each only in a role that used it:")
-        for s in plan.secondary:
-            home = f" -> {s.roles[0]}" if s.roles else " (technical_skills only)"
-            lines.append(f"- {s.term} [{s.importance}]{_spell_out(s.term)}{home}")
-    if plan.missing:
         lines.append(
-            "Never invent these posting skills (the profile does not name them). Leave them out of bullets, "
-            "used_skills, project_description and technical_skills:"
+            "Other posting skills. Prefer naming each in a recent role's bullets when it strengthens the "
+            "hire story. Optional / nice-to-have skills may appear in bullets without being listed in "
+            "technical_skills:"
         )
-        for term in plan.missing[:24]:
-            lines.append(f"- {term}")
+        for s in plan.secondary:
+            home = f" -> {s.roles[0]}" if s.roles else f" -> {recent}"
+            added = " [align to posting]" if s.added else ""
+            lines.append(f"- {s.term} [{s.importance}]{_spell_out(s.term)}{home}{added}")
     for r in plan.recent:
         if r.too_new:
             lines.append(
@@ -640,22 +707,20 @@ def target_stack_block(plan: TailoringPlan) -> str:
             )
     older = plan.roles[2:]
     if older:
-        technologies = {s.term for s in plan.skills if s.category}
         lines.append(
-            "Older roles may name only technologies that role's own stack already used, limited to what "
-            "existed while they ran; never the posting's domain or compliance vocabulary:"
+            "Older roles keep their own product and an era-correct stack; never the posting's domain or "
+            "compliance vocabulary:"
         )
         for r in older:
-            stack = ", ".join(t for t in r.stack if t in technologies) or "(none of the supported posting skills)"
+            stack = ", ".join(r.own_stack[:8] or r.stack[:8]) or "(role's own stack)"
             line = f"- [{r.index}] {r.role.company} ({r.period}): {stack}"
             if r.too_new:
                 line += f". Never here: {', '.join(r.too_new)}"
             lines.append(line)
     lines.append(
-        "Career breadth (a real engineer's stack is wider than one posting). Each role also names technologies "
-        f"from that role's own stack below (at least {MIN_BREADTH_PER_RECENT_ROLE} in each of {recent} when the "
-        "role lists them). Never invent tools the profile never names. Only technologies that existed while "
-        "the role ran."
+        "Career breadth (a real engineer's stack is wider than one posting). Each recent role also names "
+        f"technologies from that role's own stack below (at least {MIN_BREADTH_PER_RECENT_ROLE} in each of "
+        f"{recent} when the role lists them). Only technologies that existed while the role ran."
     )
     for r in plan.roles:
         if r.own_stack:
@@ -737,11 +802,11 @@ def _plain_prose(resume: dict) -> None:
 
 
 def finalize_tailored_resume(resume: dict | None, plan: TailoringPlan, profile_text: str, job_text: str) -> dict | None:
-    """Restore the career facts; skills sections lead with the posting's stack and keep the career's breadth."""
+    """Restore employers/dates; keep rewritten titles; lead skills with the posting stack."""
     if not resume or not isinstance(resume, dict):
         return resume
     _plain_prose(resume)
-    matched = restore_role_facts(resume, profile_text)
+    matched = restore_role_facts(resume, profile_text, restore_titles=False)
     entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
     roles = {r.index: r for r in plan.roles}
     recent = {r.index for r in plan.recent}
@@ -781,17 +846,15 @@ def finalize_tailored_resume(resume: dict | None, plan: TailoringPlan, profile_t
         if kept:
             rows.append({**row, "skills": ", ".join(kept)})
     resume["technical_skills"] = rows
+    # Job-first: ensure required posting skills are listed; do not strip JD-aligned stack for lack
+    # of profile evidence, and do not restore profile-only role evidence ceilings.
     resume = ensure_required_skills(resume, plan.skill_plan, profile_text) or resume
-    resume = filter_technical_skills_to_evidence(resume, plan.skill_plan, profile_text) or resume
-    resume = enforce_role_evidence(resume, profile_text) or resume
     rows = _dedupe_skill_rows(resume.get("technical_skills") or [], plan.skill_plan)
     rows = fill_thin_skill_rows(fold_small_skill_rows(rows), plan.placeable + plan.breadth, MIN_SKILLS_PER_CATEGORY)
     keep_text = "\n".join([job_text, ", ".join(plan.terms)])
     resume["technical_skills"] = order_skills_for_posting(
         cap_skills_section(rows, keep_text, limit=MAX_SKILL_ITEMS), plan.terms
     )
-    # Cap/fill can reintroduce unsupported items; filter once more after layout helpers.
-    resume = filter_technical_skills_to_evidence(resume, plan.skill_plan, profile_text) or resume
     return resume
 
 
@@ -1165,12 +1228,13 @@ def tailoring_problems(resume: dict | None, plan: TailoringPlan, profile_text: s
                 "existed while the role ran."
             )
         problems.update(_role_shape_problems(pos, entry, role, plan))
-        invented = _invented_numbers(entry, role, plan.terms + plan.breadth + _technologies_in(prose))
-        if invented:
-            problems[f"work_experience[{pos}]_invented_metric"] = (
-                f"{company}: {'; '.join(invented[:4])} is not a result the profile states for this company. Use "
-                "only that company's reusable results, or state the concrete outcome without a number."
-            )
+        if _role_is_consulting(role) and _GENERIC_CLIENT_RE.search(prose):
+            known = _real_client_hints(role)
+            if known and not any(is_mentioned(name, prose) for name in known):
+                problems[f"work_experience[{pos}]_generic_consulting_story"] = (
+                    f"{company}: consulting/multi-client role still reads as generic clients. Write one real "
+                    f"engagement using: {', '.join(known)}."
+                )
         reused = _reused_bullets(entry, role)
         if reused and (len(reused) >= 2 or len(reused) * 3 > len(entry.get("bullets") or [])):
             problems[f"work_experience[{pos}]_reuses_original_wording"] = (
@@ -1190,10 +1254,21 @@ def tailoring_problems(resume: dict | None, plan: TailoringPlan, profile_text: s
             "No bullet names " + ", ".join(missing_primary)
             + ". Name each primary skill in at least one of the two most recent roles that can host it."
         )
-    missing_any = [s.term for s in plan.secondary if s.roles and not is_mentioned(s.term, all_prose)]
-    if missing_any:
-        problems["posting_skills_missing_from_experience"] = (
-            "No bullet names " + ", ".join(missing_any) + ". Name each in a bullet of one of the two most recent roles."
+    # Posting skills that appear in technical_skills need an experience story. Optional posting
+    # skills may omit the list entirely; career-breadth fillers are not gated here.
+    skills_blob = ", ".join(
+        str(r.get("skills") or "") for r in resume.get("technical_skills") or [] if isinstance(r, dict)
+    )
+    orphan = [
+        s.term
+        for s in plan.skills
+        if s.injectable and is_mentioned(s.term, skills_blob) and not is_mentioned(s.term, all_prose)
+    ]
+    if orphan:
+        problems["technical_skills_without_experience_story"] = (
+            "These posting skills are listed in technical_skills with no experience story: "
+            + ", ".join(orphan[:12])
+            + ". Name each in a role bullet or project_description, or drop optional ones from the list."
         )
     summary = str(resume.get("profile_summary") or "")
     named = _technologies_in(summary)
@@ -1232,8 +1307,8 @@ def tailoring_retry_note(problems: dict[str, str], extra: list[str] | None = Non
     lines += [f"- {text}" for text in problems.values()]
     lines += [f"- {text}" for text in extra or []]
     lines.append(
-        "Keep company names, titles and dates verbatim and keep each role's product and domain; every other "
-        "sentence is written for this posting, including each project_description, which introduces the system "
-        "that role's bullets build with their technologies."
+        "Keep company names and dates; titles, metrics, ownership and stack may be rewritten toward the "
+        "posting. Keep each role's product or client domain believable. Every listed technical skill needs an "
+        "experience story. Each project_description introduces the system that role's bullets build."
     )
     return "\n".join(lines)

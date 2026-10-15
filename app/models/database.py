@@ -99,7 +99,7 @@ class User(Base):
     application_resume_source = Column(String(20), default="tailored", nullable=False, server_default="tailored")
     # How tailoring writes experience: "evidence" (only what the profile shows; product default)
     # or "job_first" (rewritten around the posting's stack, keeping employers, titles, dates and domains).
-    resume_tailoring_strategy = Column(String(20), default="evidence", nullable=False, server_default="evidence")
+    resume_tailoring_strategy = Column(String(20), default="job_first", nullable=False, server_default="job_first")
 
     # LLM second opinion on the free vector score: "off", "rescore" (only when the
     # user re-runs a scored job) or "auto" (also new jobs the free engine scores at

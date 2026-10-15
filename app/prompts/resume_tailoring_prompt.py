@@ -1,9 +1,8 @@
-"""Resume tailoring prompt: the candidate's real career, written to fit one posting.
+"""Resume tailoring prompt: job-first compose for one posting.
 
-The original resume supplies identity, education, employers, titles, dates, each
-company's product or domain and the technologies each role used. Every
-contribution is written fresh, at the scope the role's tenure and career stage
-support, so the posting's stack reads as the candidate's own work.
+The tailored resume is the application resume. Employers, dates, education and
+role count stay real. Titles, metrics, ownership, tools and bullet substance are
+rewritten so the posting's requirements read as the candidate's work.
 """
 
 from app.prompts.job_match_phase_b_prompt import (
@@ -20,134 +19,113 @@ Do NOT re-score the job match. Do NOT re-extract structured job fields.
 ---
 """
 
-TAILORING_INSTRUCTIONS = """Your goal is the candidate's real career, written so it matches THIS posting completely and reads at the
-candidate's true level. Two readers decide: an ATS (Workday, Taleo, Greenhouse, Lever, iCIMS, SuccessFactors)
-that parses dated roles and credits a skill as experience only inside a role, matching the posting's literal
-terms; and a hiring manager who must believe this is one engineer's career, not a resume written for one job.
+TAILORING_INSTRUCTIONS = """Your goal is a hire-ready resume for THIS posting. Recruiters see only this
+tailored resume. Orient experience, titles, metrics, ownership and skills toward the job requirements.
 
-## 1. What comes from the original resume
-- **Career facts** gives each role's company, title, dates, location, project title, product or domain,
-  tenure, career stage and bullet range. Company names, titles, dates, locations and employment types are
-  copied verbatim. Never add, drop, merge or reorder roles.
-- Each role's work stays in its own product and domain (a payments company stays payments, a healthcare
-  platform stays healthcare). Everything the role says the candidate built, used or achieved is written fresh.
-- Do not reuse the original resume's tasks or wording. Domain clues only explain what the company did.
-- The Product / domain line says what the company built, nothing more: the original resume's technologies
-  and sentences never carry over, including into project_description.
-- Numbers: only the "Results you may reuse" of the same company, attached to the new work they fit. Never
-  move a number to another company and never invent one; without a number, state the concrete result (what
-  shipped, what it replaced, who used it, what it made possible).
+Two readers decide: an ATS that parses dated roles and credits a skill as experience only inside a role,
+matching the posting's literal terms; and a hiring manager who must believe this is one coherent career.
+
+## 1. What stays fixed vs what you rewrite
+- **Fixed:** company names, date ranges, locations, employment types, education, and one work_experience
+  entry per Career facts role in the same order. Never add, drop, merge or reorder employers.
+- **Rewrite freely toward the posting:** job titles, ownership verbs, metrics and outcomes, tools and stack,
+  bullet substance, and project_description. Original profile wording is not a ceiling.
+- Each role keeps a believable product or client domain from Career facts (payments stays payments). Write
+  the work fresh so the posting's stack and responsibilities read as that role's work.
+- Numbers: you may rewrite or introduce concrete metrics that fit the work and seniority. Prefer Career
+  facts "Results you may reuse" when they fit; otherwise invent plausible outcomes for the rewritten work.
+  Do not move one company's stated result to a different company unchanged.
 
 ## 2. Seniority follows the real career
-- The career is a progression. Each role's **Scope** line says what that stage of a career looks like; write
-  the role at exactly that level and depth.
-- An early-career role (a first job of a few months or a year after university) reads as learning and
-  practicing engineering on real work: implementing features and fixes under review, writing tests,
-  learning the codebase and delivery process. It never leads, architects or mentors.
-- A senior role reads as senior engineering over its whole tenure: system design and architecture decisions
-  with their tradeoffs, several major systems built and evolved, scale, reliability, performance, security,
-  engineering standards (testing, CI/CD, observability, code review), mentoring and cross-team work. A
-  four-year senior role shows four years of that, not a handful of tickets.
-- Each role uses its **Bullets** range: a long role carries more work than a short one.
-- Ownership fits the title: never claim managing people unless a title says so.
+- The career is a progression. Each role's **Scope** line says what that stage looks like; write at that
+  depth. You may retitle toward the posting's title family when the tenure and stage support it (never claim
+  Staff, Principal or people-manager unless Career facts already shows that level).
+- Early-career roles implement and learn; they do not lead, architect or mentor.
+- Senior roles show design, systems, standards, mentoring and cross-team work across the tenure.
+- Each role uses its **Bullets** range. Ownership fits the (possibly rewritten) title.
 
-## 3. Emphasize overlapping stack inside real product work
-- **Target stack** lists posting skills the profile already supports, plus a "Never invent" list. Name each
-  supported primary skill in the role shown for it (or technical_skills when no role names it) and in that
-  role's used_skills. Never write a "Never invent" skill into bullets, used_skills, project_description or
-  technical_skills. Do not upgrade a general technology to a specialized form the role never names
-  (Kubernetes is not EKS/GKE/AKS).
-- Older roles keep their own product, domain and stack. They may name only technologies that role already
-  used, so the career reads as one discipline, but never the posting's domain or compliance vocabulary
-  (an industrial or airline role does not do KYC or SOC 2 work). Do not repeat the same skill list in every role.
-- Show each skill in real work, the way that system would use it, never as a list inside a bullet. A bullet
-  names at most 6 technologies or posting terms; spread the stack across bullets instead of stacking it in one.
-- Use the posting's exact spelling ("PostgreSQL" when the posting says PostgreSQL). Spell out an acronym once
-  with its short form where the Target stack says so (ATS search is literal and matches either form).
-- Never invent implementation details, collaborators, systems or outcomes a role's profile text does not state.
-  Keep the profile's ownership verbs; never upgrade Supported/Contributed to Led, Owned or Spearheaded.
+## 3. Job stack in real product work
+- **Target stack** lists posting skills to place. Name each primary skill in the role shown for it (or a
+  recent role when none is listed) and in that role's used_skills. Use the posting's exact spelling.
+- You may name posting tools in recent roles even when the original profile never listed them. Older roles
+  keep their own product and a plausible era-correct stack; do not paste the posting's domain or compliance
+  vocabulary into early unrelated jobs.
+- Show each skill inside real work, not as a keyword list. At most 6 technologies or posting terms per bullet.
+- Spell out an acronym once with its short form when Target stack says so.
+- Do not upgrade a general technology to a cloud-specific form the work does not need (Kubernetes is not
+  automatically EKS) unless the posting requires that form.
 
-## 4. Career breadth makes it real
-- A real senior engineer's stack is wider than one posting. Besides the supported posting skills, each recent
-  role should also name technologies from that role's own stack (listed under Career breadth / own stack).
-  Prefer tools the candidate actually used there. Do not invent ecosystem tools the profile never names.
-- Breadth never displaces the posting's supported skills in the roles that host them.
+## 4. Career breadth
+- Besides posting skills, recent roles should also name a few technologies from that role's own stack when
+  Career facts lists them, so the career does not read as copied from one JD.
 - Only technologies that existed while the role ran.
 
 ## 5. Cover what the posting asks for
-- Each Must-cover requirement becomes the substance of at least one bullet in the two most recent roles,
-  using the requirement's key words in the candidate's own sentence (never a run of 8 or more words copied
-  from the posting). Soft-skill lines (communication, collaboration, ownership, problem-solving) become
-  concrete work, for example "Partnered with clinicians and product managers to ...", never a list of traits.
-- Some postings are recruiter emails. Only the role and the technologies it describes are requirements.
-  The recruiter's own words (that they reviewed the candidate's LinkedIn profile, want a phone call, list
-  benefits or the client's size) are not work and never appear in the resume.
+- Each Must-cover requirement becomes real work in the two most recent roles, using the requirement's key
+  words in the candidate's own sentence (never a run of 8 or more words copied from the posting).
+- Soft-skill lines become concrete work, never a trait list.
+- Recruiter emails: only the role and technologies are requirements; outreach and benefits are not work.
 
-## 6. profile_summary describes the engineer
-- 3-4 sentences, 50-80 words, about the person as a professional, not a repeat of the skills section.
-- Sentence 1: the posting's title family at the candidate's own level, the total years from Career facts,
-  and the kinds of products and domains across the career (e.g. "Senior Software Engineer with 11 years
-  building payment, healthcare and logistics platforms").
-- Sentence 2: how they work: the architecture and product decisions they own, how they lead technically,
-  mentor and work with product and other teams.
-- Sentences 3-4: what they are known for across the career (the outcomes and strengths that recur), tied to
-  what this role needs.
-- At most 3 technology names, never a list of them. Never a level above the highest title held (no Staff,
-  Principal or Lead unless a title says so). No pitch for the hiring company, no "passionate",
-  "results-driven", "proven track record" or "seasoned".
+## 6. profile_summary
+- 3-4 sentences, 50-80 words, about the engineer, not a skills dump.
+- Sentence 1: posting title family at the candidate's level, total years from Career facts, product domains.
+- Sentence 2: how they work (architecture, leadership, mentoring, partners).
+- Sentences 3-4: recurring strengths tied to what this role needs.
+- At most 3 technology names. No "passionate", "results-driven", "proven track record" or "seasoned".
 
 ## 7. work_experience
-- Each bullet is one sentence of about 18-32 words: action verb + what was built or changed + how (named
-  technologies) + result. The first bullet of index 0 and 1 matches the posting's primary function.
-- No duplicate accomplishments across bullets or companies.
+- Each bullet: one sentence of about 18-32 words: action + what changed + how (named technologies) + result.
+- First bullet of index 0 and 1 matches the posting's primary function.
+- No duplicate accomplishments across companies.
 - Banned openers and filler: "Responsible for", "Worked on", "Helped", "Involved in", "Leveraged",
   "Spearheaded", "Utilized", "end-to-end solutions", "cutting-edge", "robust and scalable" as decoration.
-- project_name: the role's project title from Career facts, verbatim; null when it has none.
-- project_description: written last, after the role's bullets, because it introduces them. 1-2 sentences
-  (20-45 words): the same product or client and its purpose, then the system this role's bullets build,
-  framed for THIS posting's work and naming 2-4 of the technologies those bullets use (the posting's primary
-  skills first). It names no technology the bullets do not, states no task or number the bullets do not,
-  and never reuses the original resume's description or stack. A reader of the description alone should
-  expect exactly the bullets below it. Empty only when Career facts gives no product.
-- used_skills: 8-16 technologies that role's own bullets name, the posting's primary skills first, then the
-  role's breadth. Nothing the bullets do not name.
+- project_name: from Career facts when present; otherwise null.
+- project_description: 1-2 sentences (20-45 words) written last. Same product or client, then the system the
+  bullets build, framed for THIS posting, naming 2-4 technologies those bullets use. Empty only when Career
+  facts gives no product.
+- used_skills: 8-16 technologies the role's bullets name, posting primaries first.
 
-## 8. technical_skills
-- 5-7 categories with at least 6 items each, at most 56 items: the whole career's stack, not only this
-  posting's. Every Target stack technology appears; the posting's categories and items come first, then the
-  related tools, services and libraries the experience shows.
-- Place items correctly: runtimes and frameworks (Node.js, Django, React) are not Languages; managed search,
-  queues and AI services are not Databases; cloud services go under Cloud.
-- No soft skills and no methodologies (Agile, Scrum) unless the posting lists them.
+## 8. Consulting / multi-client roles
+- When Career facts marks a role as consulting or multi-client, write **one real client and one major
+  project** as the spine of bullets and project_description.
+- Use a real client or project name from Career facts when provided. Never invent a fake client name.
+- Do not write vague "various clients" or "multiple engagements" as the main story.
+- Tools inside that engagement follow the Target stack rules above.
 
-## 9. ATS-safe text
+## 9. technical_skills
+- 5-7 categories, at least 6 items each, at most 56 items.
+- Every primary / required Target stack skill appears here AND in experience story (bullets or
+  project_description). A listed skill with no story is not allowed.
+- Optional or nice-to-have skills may appear in bullets without being listed here.
+- Place items in the right category. No soft skills or methodologies unless the posting lists them.
+
+## 10. ATS-safe text
 - Plain text only: straight quotes and apostrophes, hyphens, no symbols, emoji or decorative characters.
-- Dates stay exactly as Career facts gives them, so every role uses the same format."""
+- Dates stay exactly as Career facts gives them."""
 
 TAILORING_FORMAT_CONTRACT = """
 ---
 
 ## Formatting contract (overrides any conflicting instruction above)
-- Career facts: company, title, dates, location and employment type verbatim; one work_experience entry per
-  role in Career facts, in the same order; each role keeps its product and domain.
+- Career facts: company names, dates, location and employment type stay; titles may be rewritten toward the
+  posting when stage supports it; one work_experience entry per role in the same order; each role keeps a
+  believable product or client domain.
 - Each role's bullet count stays inside its Bullets range and its scope matches its Scope line.
-- Target stack: every primary skill in a bullet and used_skills of at least one of the two most recent roles
-  that can host it; every other posting skill in at least one bullet; every Target stack technology in
-  technical_skills. Prefer two technologies from each recent role's own stack beyond the posting's; never
-  invent tools the profile never names. Nothing a role's dates predate. At most 6 technologies or posting
-  terms per bullet; the posting's domain and compliance vocabulary only in the two most recent roles.
-- Numbers only from the same company's reusable results.
-- `project_description`: 1-2 sentences written for this posting that introduce the role's own bullets: the
-  same product, the system the bullets build, and only technologies those bullets name.
+- Target stack: every primary skill in a bullet and used_skills of at least one of the two most recent roles;
+  other posting skills in experience when they strengthen the hire story; every primary Target stack
+  technology in technical_skills with a matching experience story. Prefer two technologies from each recent
+  role's own stack beyond the posting's. Nothing a role's dates predate. At most 6 technologies or posting
+  terms per bullet; posting domain and compliance vocabulary only in the two most recent roles.
+- Consulting roles: one real client/project spine when Career facts provides a real name.
+- `project_description`: 1-2 sentences that introduce the role's bullets.
 - `profile_summary`: 3-4 sentences, at most 80 words, at most 3 technology names.
-- `technical_skills`: 5-7 categories, each with at least 6 items, at most 56 items in total. Short Title Case
-  category names that each name one concept (e.g. Languages, Frontend, Backend, Databases, Cloud, DevOps,
-  Testing, Machine Learning, Data Processing). No "&" or "/" joins, never "Skills", "Other" or
-  "Miscellaneous". Each technology appears in exactly one category.
+- `technical_skills`: 5-7 categories, each with at least 6 items, at most 56 items. Short Title Case
+  category names (Languages, Frontend, Backend, Databases, Cloud, DevOps, Testing, Machine Learning,
+  Data Processing). No "&" or "/" joins, never "Skills", "Other" or "Miscellaneous". Each technology in
+  exactly one category.
 - No run of 6 or more words copied from the job description or the original resume.
-- `technical_skills[].skills` and `used_skills`: plain text, items separated by a comma and a space, no `**`.
-- `**bold**` only inside `profile_summary`, `project_description` and bullets: at most 2 spans per bullet (many
-  bullets have none), only named technologies or figures.
+- `technical_skills[].skills` and `used_skills`: plain text, comma-space separated, no `**`.
+- `**bold**` only inside `profile_summary`, `project_description` and bullets: at most 2 spans per bullet.
 - Never use em dashes."""
 
 TAILORING_USER_TEMPLATE = """## Career facts (from the original resume)
@@ -192,20 +170,15 @@ TAILORING_USER_TEMPLATE = """## Career facts (from the original resume)
 
 ## Execution checklist
 1. Read the career as a progression: total years, each role's tenure, stage and Scope.
-2. For each Must-cover requirement and each Target stack skill, decide which one of the two most recent roles
-   shows it, inside that role's own product and domain (prefer the most recent that can host it).
-3. Write every role's bullets fresh, at its stage's depth and inside its Bullets range; the two most recent
-   roles' first bullets match the posting's primary function.
-4. Tick off the Target stack: each primary skill in a bullet and used_skills of one recent role, each other
-   skill in at least one bullet; older roles keep their own product, domain and stack.
-5. Add each role's breadth from technologies it really used (own stack). Project evidence may deepen work at
-   matching companies; never invent employers, metrics, or tools the profile and evidence do not support.
-6. Attach each company's reusable results to the new work they fit; no other numbers.
-7. Write each role's project_description from its finished bullets: same product, the system they build,
-   their technologies (the posting's first), never the original resume's stack or wording.
-8. Summary: who this engineer is across the career, how they work, what they are known for; at most 3
-   technology names.
-9. technical_skills: 5-7 categories of 6 or more items, the posting's stack first, then the career's breadth.
+2. For each Must-cover requirement and each primary Target stack skill, place it in one of the two most
+   recent roles inside that role's product or client domain.
+3. Rewrite titles, ownership, metrics and stack toward the posting; keep employers and dates.
+4. Consulting / multi-client roles: one real client and one big project when Career facts names one.
+5. Tick off primary Target stack skills in bullets, used_skills and technical_skills with story backing.
+6. Optional posting skills may appear in bullets without being listed in technical_skills.
+7. Add recent-role breadth from own stack when listed. Project evidence may deepen matching companies.
+8. Write each project_description from finished bullets.
+9. Summary: who this engineer is; at most 3 technology names.
 10. Return the tailored resume JSON as specified.
 
 Include exactly one work_experience entry for EVERY role in Career facts."""
@@ -213,14 +186,14 @@ Include exactly one work_experience entry for EVERY role in Career facts."""
 
 TAILORING_OUTPUT_CONTRACT = PHASE_B_RESUME_OUTPUT_CONTRACT.replace(
     PHASE_B_PROJECT_DESCRIPTION_PLACEHOLDER,
-    "<1-2 sentences introducing this role's bullets: the product, the system they build and their "
+    "<1-2 sentences introducing this role's bullets: the product or client, the system they build and their "
     "technologies, written for this posting; empty when Career facts gives no product>",
 ).replace(
     "<comma-separated technologies this role's evidence shows, or empty>",
     "<comma-separated technologies the role's bullets show, the posting's primary skills first>",
-).replace("copied verbatim from profile", "copied verbatim from Career facts").replace(
+).replace("copied verbatim from profile", "company and dates from Career facts; title may be rewritten").replace(
     "<the profile's project title for this role, verbatim, or null>",
-    "<the role's project title from Career facts, verbatim, or null>",
+    "<the role's project title from Career facts, or null>",
 )
 
 
@@ -230,8 +203,8 @@ resume tailored to one job posting. The bullets are final; the description intro
 For each role you get its company, title, what the company built (product_or_domain), its final bullets, the
 current description and what is wrong with it. Write a new project_description for each:
 - 1-2 sentences, 20-45 words, plain prose.
-- First the same product or client and its purpose (from product_or_domain; keep the company's real product
-  and industry), then the system this role's bullets build, framed around the posting's work.
+- First the same product or client and its purpose (from product_or_domain; keep real client names when given),
+  then the system this role's bullets build, framed around the posting's work.
 - Name 2-4 technologies the bullets name, the posting's first. Never name a technology the bullets do not.
 - No task, result or number the bullets do not state; no wording copied from product_or_domain or the bullets
   (never 6 or more words in a row).

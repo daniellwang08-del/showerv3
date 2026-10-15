@@ -656,6 +656,9 @@ def ensure_required_skills(resume: dict | None, plan: SkillPlan | None, profile_
     for skill in plan.supported:
         if not skill.injectable:
             continue
+        # Optional / nice-to-have skills invented for the posting may stay out of the skills list.
+        if skill.importance == PREFERRED and skill.added and plan.has_required_section:
+            continue
         blob = ", ".join(str(r.get("skills") or "") for r in rows)
         if is_mentioned(skill.term, blob):
             continue

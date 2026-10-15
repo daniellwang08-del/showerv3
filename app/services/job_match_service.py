@@ -1468,8 +1468,8 @@ async def _tailor_resume(
     anchors = plan.terms
     tasks, _facts = posting_requirements(structured_block, job_text)
     evidence_block = (project_evidence_context or "").strip() or (
-        "No project source evidence available. Deepen roles from Career facts only; never invent employers, "
-        "metrics, or tools the profile does not support."
+        "No project source evidence available. Deepen roles from Career facts and the Target stack; keep "
+        "real employers and dates; titles, metrics, ownership and tools may be rewritten toward the posting."
     )
     user_content = TAILORING_USER_TEMPLATE.format(
         career_facts=career_facts_block(plan),
@@ -1573,10 +1573,10 @@ async def _tailor_resume(
         uncovered = match.get("uncovered_lines") or []
         if force_match_retry and uncovered:
             extra.append(
-                f"Requirement match is {rate}% (advisory target {REQUIREMENT_MATCH_TARGET}%). Prefer covering these "
-                "posting lines in one of the two most recent roles when the profile supports that work, using the "
-                "line's key words in your own sentence (never a run of 8 or more words copied from the posting). "
-                "Do not invent employers, metrics, or tools: "
+                f"Requirement match is {rate}% (advisory target {REQUIREMENT_MATCH_TARGET}%). Cover these posting "
+                "lines in one of the two most recent roles, using the line's key words in your own sentence "
+                "(never a run of 8 or more words copied from the posting). Keep real employers and dates; "
+                "rewrite titles, metrics, ownership and tools toward the posting as needed: "
                 + " | ".join(f'"{line}"' for line in uncovered)
             )
         previous = {k: v for k, v in best.items() if k != "match_check"}

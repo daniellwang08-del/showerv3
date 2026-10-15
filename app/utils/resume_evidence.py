@@ -453,11 +453,16 @@ def _role_candidates(profile_text: str, role: ProfileRole, extra_terms: list[str
 
 
 def restore_role_facts(
-    resume: dict, profile_text: str, roles: list[ProfileRole] | None = None
+    resume: dict,
+    profile_text: str,
+    roles: list[ProfileRole] | None = None,
+    *,
+    restore_titles: bool = True,
 ) -> list[int | None]:
-    """Copy company, title, dates and project title back from the profile; returns each entry's role index.
+    """Copy company, dates and project title back from the profile; returns each entry's role index.
 
-    An empty project description falls back to the profile's.
+    When *restore_titles* is True (evidence mode), job titles are restored too. Job-first compose
+    leaves rewritten titles in place. An empty project description falls back to the profile's.
     """
     roles = parse_profile_roles(profile_text) if roles is None else roles
     entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
@@ -467,7 +472,7 @@ def restore_role_facts(
             continue
         role = roles[idx]
         entry["company_name"] = role.company or entry.get("company_name")
-        if role.title:
+        if restore_titles and role.title:
             entry["job_title"] = role.title
         if role.period_start:
             entry["period_start"] = role.period_start

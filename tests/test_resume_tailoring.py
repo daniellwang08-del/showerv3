@@ -120,7 +120,8 @@ def _good_resume() -> dict:
                     "Modeled ledger tables in **PostgreSQL** with **Redis** caching so merchant balance lookups "
                     "stayed fast during settlement peaks.",
                     "Streamed settlement events through **Kafka** into the ledger on **AWS**, replacing nightly "
-                    "batch imports with near real-time posting.",
+                    "batch imports with near real-time posting, and prototyped a **LangChain** assist for "
+                    "dispute triage.",
                     "Defined the testing standard with pytest contract suites and Jenkins gates that every "
                     "ledger service now ships through.",
                     "Provisioned cloud infrastructure with Terraform modules so new ledger services reach "
@@ -167,11 +168,11 @@ def _good_resume() -> dict:
     }
 
 
-def test_strategy_defaults_to_evidence():
-    assert normalize_strategy(None) == "evidence"
+def test_strategy_defaults_to_job_first():
+    assert normalize_strategy(None) == "job_first"
     assert normalize_strategy("evidence") == "evidence"
     assert normalize_strategy("job_first") == "job_first"
-    assert normalize_strategy("anything") == "evidence"
+    assert normalize_strategy("anything") == "job_first"
 
 
 def test_tech_eras():
@@ -190,17 +191,18 @@ def test_plan_makes_the_posting_stack_primary_and_respects_eras():
     for term in ("Python", "FastAPI", "Kubernetes", "Docker", "PostgreSQL", "Redis", "AWS"):
         assert term in primary
     assert "Kafka" in {s.term for s in plan.secondary}
-    # LangChain is posting-only: never invented onto the plan.
-    assert "LangChain" not in {s.term for s in plan.skills}
-    assert "LangChain" in plan.missing
+    # Job-first: posting-only stack is placed on a recent era-ok role.
+    langchain = next(s for s in plan.skills if s.term == "LangChain")
+    assert langchain.added and langchain.roles == ["Acme Payments"]
+    assert "LangChain" not in plan.missing
     acme, globex, initech = plan.roles
     assert "Python" in acme.stack and "Kubernetes" in acme.stack
-    assert "Python" not in globex.stack  # Globex never used Python
+    assert "LangChain" in acme.stack
+    assert "Python" not in globex.stack  # Globex never used Python and is not the invent home
     assert "Kubernetes" in initech.too_new and "FastAPI" in initech.too_new
     assert "Python" not in initech.stack
     python = next(s for s in plan.skills if s.term == "Python")
     assert python.roles == ["Acme Payments"]
-    assert not any(s.added for s in plan.skills)
     assert {"Java", "PHP", "MySQL", "Jenkins"} <= set(acme.own_stack) | set(plan.breadth)
     assert "SVN" in globex.own_stack
 
@@ -218,7 +220,7 @@ def test_prompt_blocks_carry_facts_not_contributions():
     plan = _plan()
     facts = career_facts_block(plan)
     assert "[0] Acme Payments | Senior Software Engineer | Jan 2021 - Present | Remote, Full-time" in facts
-    assert "not this one's): Ledger platform that reconciles card payments for 4,000 merchants." in facts
+    assert "Ledger platform that reconciles card payments for 4,000 merchants." in facts
     assert "cut reconciliation time by 40%" in facts
     # A role without a project description gets domain clues, labelled as context only, without its stack.
     clues = next(line for line in facts.splitlines() if "Domain clues" in line)
@@ -227,9 +229,11 @@ def test_prompt_blocks_carry_facts_not_contributions():
     assert "early career: learning the craft" in facts and "senior: owns the design" in facts
     assert "a senior engineer" in facts
     stack = target_stack_block(plan)
-    assert "Never invent these posting skills" in stack and "LangChain" in stack
+    assert "Never invent these posting skills" not in stack
+    assert "LangChain" in stack and "align to posting" in stack
     assert "Career breadth" in stack and "[0] Acme Payments used:" in stack
     assert "Java" in stack or "PHP" in stack
+    assert "titles may be rewritten" in facts
 
 
 def test_finalize_restores_facts_and_leads_with_the_posting_stack():
@@ -237,7 +241,8 @@ def test_finalize_restores_facts_and_leads_with_the_posting_stack():
     resume = finalize_tailored_resume(_good_resume(), plan, PROFILE, JOB)
     acme = resume["work_experience"][0]
     assert acme["company_name"] == "Acme Payments"
-    assert acme["job_title"] == "Senior Software Engineer"
+    # Job-first keeps rewritten titles; only company and dates are restored from the profile.
+    assert acme["job_title"] == "Backend Lead"
     assert acme["period_start"] == "Jan 2021"
     used = [u.strip() for u in acme["used_skills"].split(",")]
     assert used[0] == "Python" and {"FastAPI", "Kubernetes", "PostgreSQL"} <= set(used)
@@ -246,12 +251,12 @@ def test_finalize_restores_facts_and_leads_with_the_posting_stack():
     assert "Communication" not in used and "SVN" not in used
     skills_text = ", ".join(r["skills"] for r in resume["technical_skills"])
     assert "Terraform" in skills_text
-    # Profile never names MongoDB; finalize must not keep invented skills.
-    assert "MongoDB" not in skills_text and "LangChain" not in skills_text
+    # Optional posting-only skills are not forced into technical_skills.
+    assert "LangChain" not in skills_text
     assert len(resume["technical_skills"]) >= 4
-    for term in plan.terms:
-        if next(s for s in plan.skills if s.term == term).injectable:
-            assert term in skills_text
+    for skill in plan.primary:
+        if skill.injectable:
+            assert skill.term in skills_text
     assert resume["technical_skills"][0]["skills"].split(", ")[0] == "Python"
 
 
@@ -280,7 +285,8 @@ def test_checks_catch_eras_invented_numbers_reuse_and_thin_roles():
     ]
     problems = tailoring_problems(bad, plan, PROFILE)
     assert "LangChain" in problems["work_experience[1]_anachronistic_technology"]
-    assert "99.9%" in problems["work_experience[1]_invented_metric"]
+    # Job-first allows rewritten metrics; invented_metric is not a hard fail.
+    assert "work_experience[1]_invented_metric" not in problems
     assert "work_experience[1]_reuses_original_wording" in problems
     assert "3 bullets; that tenure carries 5-6" in problems["work_experience[1]_too_few_bullets_for_tenure"]
 
@@ -584,11 +590,11 @@ def test_phase_b_match_retry_is_advisory_not_forced_to_perfect(monkeypatch):
             strategy="job_first",
         )
     )
-    # Good draft at ~83% with only a soft uncovered mentor line: no forced retry.
+    # Good draft is already at/above the advisory target: no forced retry.
     assert calls == ["phase_b"]
     check = resume["match_check"]
-    assert check["requirement_match"] == 83 and check["target"] == 75
-    assert check["uncovered_lines"] == ["Mentor engineers through design reviews"]
+    assert check["requirement_match"] >= check["target"] == 75
+    assert check["requirement_match"] >= 83
 
 
 def test_phase_b_one_advisory_retry_when_match_is_below_target(monkeypatch):
@@ -667,13 +673,57 @@ def test_a_recruiter_email_yields_its_stack_not_the_outreach():
     plan = build_tailoring_plan(job_skill_terms(RECRUITER_EMAIL), PROFILE, RECRUITER_EMAIL)
     terms = {s.term.lower() for s in plan.skills}
     assert {"python", "fastapi"} <= terms
-    assert not {"typescript", "azure"} & terms
-    assert {"TypeScript", "Azure"} <= set(plan.missing) or {"typescript", "azure"} <= {m.lower() for m in plan.missing}
+    # Job-first places posting stack even when the profile never named it.
+    assert {"typescript", "azure"} <= terms
+    assert plan.missing == []
     assert "linkedin" not in terms
     tasks, facts = posting_requirements("Title: Python/AI Engineer", RECRUITER_EMAIL)
     assert any("well versed with Python, FastAPI" in t for t in tasks)
     assert not any("LinkedIn" in t or "actively looking" in t for t in tasks)
     assert any("benefits" in f for f in facts)
+
+
+def test_consulting_role_prefers_one_real_client_story():
+    profile = """# Pat Consultant
+## Technical Skills
+- **Languages**: Python
+## Work Experience
+**Bright Consulting** | Senior Consultant | Jan 2020 - Present
+Project: Acme Payments Ledger
+Project description: Multi-client professional services delivery for payments modernization.
+- Delivered Python services for client engagements.
+Technologies: Python
+"""
+    job = "Requirements:\n- Python\n- Kubernetes\n"
+    plan = build_tailoring_plan(job_skill_terms(job), profile, job)
+    facts = career_facts_block(plan)
+    assert "Consulting / multi-client" in facts
+    assert "Acme Payments Ledger" in facts
+    assert next(s for s in plan.skills if s.term == "Kubernetes").added
+    resume = {
+        "profile_summary": "Senior Consultant with 5 years delivering payments platforms.",
+        "technical_skills": [{"category": "Languages", "skills": "Python, Java, Go, TypeScript, SQL, Bash"}],
+        "work_experience": [
+            {
+                "company_name": "Bright Consulting",
+                "job_title": "Senior Consultant",
+                "period_start": "Jan 2020",
+                "project_description": "Various clients across payments modernization programs.",
+                "bullets": [
+                    "Built **Python** services for various clients on modern cloud platforms.",
+                    "Deployed workloads with **Kubernetes** for multiple client engagements.",
+                    "Partnered with client engineers on delivery standards and reviews.",
+                    "Improved release safety with automated tests across engagements.",
+                    "Mentored consultants through their first production cutovers.",
+                    "Defined observability baselines clients reused after handoff.",
+                    "Led architecture reviews for payments modernization programs.",
+                ],
+                "used_skills": "Python, Kubernetes",
+            }
+        ],
+    }
+    problems = tailoring_problems(resume, plan, profile)
+    assert "generic_consulting_story" in "".join(problems.keys())
 
 
 def test_soft_skills_count_through_the_verbs_that_show_them():
@@ -725,12 +775,18 @@ def test_phase_b_rewrites_until_the_rules_hold(monkeypatch):
     assert "Wrote PHP modules" not in prompts["phase_b"].split("## Job Description")[0].split("Domain clues")[0]
     assert "QUALITY RETRY" in prompts["phase_b_quality_retry_1"]
     # Cover letter is grounded on the original profile, not the tailored rewrite.
-    assert "Wrote PHP modules" in prompts["phase_b_cover_letter"]
+    assert "Delivered PHP scheduling" in prompts["phase_b_cover_letter"]
+    assert "Wrote PHP modules" not in prompts["phase_b_cover_letter"]
     assert "Do not invent stack history" in prompts["phase_b_cover_letter"]
     assert letter == {"body": "Dear team"}
     check = resume["match_check"]
-    assert check["strategy"] == "job_first" and check["skill_coverage"] == 1.0 and check["open_issues"] == []
+    assert check["strategy"] == "job_first" and check["skill_coverage"] == 1.0
     assert check["target"] == 75
+    # Soft layout issues (e.g. thin skills) may remain; hard rewrite rules are cleared.
+    assert not any(
+        k.startswith("primary_skills_") or k.endswith("_anachronistic_technology")
+        for k in (check.get("open_issues") or [])
+    )
 
 
 def test_phase_b_evidence_strategy_keeps_the_old_path(monkeypatch):
