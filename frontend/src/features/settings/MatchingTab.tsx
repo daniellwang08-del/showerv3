@@ -595,9 +595,9 @@ function AutomationSection({ settings }: { settings: UserSettings }) {
   const strategy = useImmediateSetting(
     saveTailoringStrategy,
     (body) =>
-      body.resume_tailoring_strategy === 'evidence'
-        ? 'Saved. Tailored resumes stay close to your own experience.'
-        : 'Saved. Tailored resumes are rebuilt around each job.',
+      body.resume_tailoring_strategy === 'job_first'
+        ? 'Saved. Tailored resumes are rebuilt around each job (can invent stack history).'
+        : 'Saved. Tailored resumes stay close to your own experience.',
     'Failed to save how tailoring writes your experience.',
   );
 

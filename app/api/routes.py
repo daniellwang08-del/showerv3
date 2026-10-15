@@ -4999,7 +4999,7 @@ class UserSettingsResponse(BaseModel):
     auto_prepare_match: bool = False
     auto_prepare_full: bool = False
     application_resume_source: str = "tailored"
-    resume_tailoring_strategy: str = "job_first"
+    resume_tailoring_strategy: str = "evidence"
     match_quality_check: str = "rescore"
     match_quality_check_min_score: int = 70
     manual_submit_pipeline: str = "full"

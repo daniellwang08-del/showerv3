@@ -24,8 +24,9 @@ _CURRENT_WORDS = frozenset({"present", "current", "now"})
 _KEEP_SLASH = frozenset({"ci/cd", "ai/ml", "tcp/ip", "ui/ux", "a/b", "pl/sql", "i/o"})
 
 # Spellings that refer to the same technology. Lower case; the first entry is canonical.
+# Specializations (EKS/GKE/AKS) are not equivalents of Kubernetes: see _SPECIALIZATIONS.
 _ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
-    ("kubernetes", "k8s", "aks", "eks", "gke"),
+    ("kubernetes", "k8s"),
     ("aws", "amazon web services"),
     ("gcp", "google cloud", "google cloud platform"),
     ("azure", "microsoft azure"),
@@ -34,10 +35,13 @@ _ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
     ("react", "react.js", "reactjs"),
     ("next.js", "nextjs"),
     (".net", "dotnet", ".net core", "asp.net", "c#/.net"),
-    ("ci/cd", "continuous integration", "continuous delivery", "continuous deployment"),
+    ("ci/cd", "ci", "cd", "cicd", "continuous integration", "continuous delivery", "continuous deployment"),
     ("llm", "llms", "large language model", "large language models"),
     ("rest", "rest api", "rest apis", "restful"),
     ("amazon s3", "s3", "aws s3"),
+    ("amazon ec2", "ec2", "aws ec2"),
+    ("amazon sqs", "sqs", "aws sqs"),
+    ("apache cassandra", "cassandra"),
     ("sagemaker", "aws sagemaker", "amazon sagemaker"),
     ("entra id", "azure ad", "microsoft entra id", "azure active directory"),
     ("machine learning", "ml"),
@@ -69,6 +73,76 @@ _ALIAS_GROUPS: tuple[tuple[str, ...], ...] = (
     ("github actions", "gh actions"),
 )
 _ALIASES: dict[str, tuple[str, ...]] = {a: group for group in _ALIAS_GROUPS for a in group}
+
+# More specific form -> general form. Profile "Kubernetes" supports claiming Kubernetes,
+# not EKS/GKE/AKS. Profile "EKS" supports claiming EKS or Kubernetes.
+_SPECIALIZATIONS: dict[str, str] = {
+    "eks": "kubernetes",
+    "amazon eks": "kubernetes",
+    "aws eks": "kubernetes",
+    "gke": "kubernetes",
+    "google kubernetes engine": "kubernetes",
+    "aks": "kubernetes",
+    "azure kubernetes service": "kubernetes",
+}
+_SPECIALIZATION_CHILDREN: dict[str, tuple[str, ...]] = {
+    general: tuple(spec for spec, g in _SPECIALIZATIONS.items() if g == general)
+    for general in sorted({g for g in _SPECIALIZATIONS.values()})
+}
+# Longest first so "Amazon EKS" replaces before bare "EKS".
+_SPEC_REPLACE: tuple[tuple[str, str], ...] = (
+    ("Amazon EKS", "Kubernetes"),
+    ("AWS EKS", "Kubernetes"),
+    ("Google Kubernetes Engine", "Kubernetes"),
+    ("Azure Kubernetes Service", "Kubernetes"),
+    ("EKS", "Kubernetes"),
+    ("GKE", "Kubernetes"),
+    ("AKS", "Kubernetes"),
+)
+
+# Ownership verbs ranked weakest to strongest. A tailored bullet may not open stronger
+# than the strongest verb the matching profile role uses.
+_OWNERSHIP_OPEN: tuple[tuple[int, re.Pattern[str]], ...] = (
+    (0, re.compile(
+        r"^\s*(?:\*\*)?(?:contributed(?:\s+to)?|helped|assisted|supported|participated(?:\s+in)?|"
+        r"worked\s+on|collaborated(?:\s+on|\s+with)?)\b",
+        re.IGNORECASE,
+    )),
+    (1, re.compile(
+        r"^\s*(?:\*\*)?(?:built|developed|implemented|created|designed|wrote|delivered|shipped|"
+        r"maintained|improved|optimized|refactored|migrated|deployed|configured|ran|operated)\b",
+        re.IGNORECASE,
+    )),
+    (2, re.compile(
+        r"^\s*(?:\*\*)?(?:led|leading|leads|managed|directed|owned|owns|owning)\b",
+        re.IGNORECASE,
+    )),
+    (3, re.compile(
+        r"^\s*(?:\*\*)?(?:spearheaded|architected|drove|championed|pioneered)\b",
+        re.IGNORECASE,
+    )),
+)
+# Profile roles often put ownership mid-sentence; use these for the allowed ceiling only.
+_OWNERSHIP_ANY: tuple[tuple[int, re.Pattern[str]], ...] = (
+    (0, re.compile(
+        r"\b(?:contributed(?:\s+to)?|helped|assisted|supported|participated(?:\s+in)?|"
+        r"worked\s+on|collaborated(?:\s+on|\s+with)?)\b",
+        re.IGNORECASE,
+    )),
+    (1, re.compile(
+        r"\b(?:built|developed|implemented|created|designed|wrote|delivered|shipped|"
+        r"maintained|improved|optimized|refactored|migrated|deployed|configured|ran|operated)\b",
+        re.IGNORECASE,
+    )),
+    (2, re.compile(
+        r"\b(?:led|leading|leads|managed|directed|owned|owns|owning)\b",
+        re.IGNORECASE,
+    )),
+    (3, re.compile(
+        r"\b(?:spearheaded|architected|drove|championed|pioneered)\b",
+        re.IGNORECASE,
+    )),
+)
 
 _VENDOR_PREFIXES = ("microsoft ", "amazon ", "aws ", "azure ", "google ", "gcp ", "apache ")
 
@@ -242,7 +316,21 @@ def evidence_by_company(evidence_text: str) -> dict[str, str]:
     return out
 
 
+def general_form(term: str) -> str:
+    """Canonical general spelling key (EKS -> kubernetes; Postgres -> postgresql)."""
+    key = _norm(term)
+    if not key:
+        return ""
+    key = _SPECIALIZATIONS.get(key, key)
+    return _ALIASES.get(key, (key,))[0]
+
+
 def _forms(term: str) -> list[str]:
+    """Match forms for *term*: equivalents, plus specializations when *term* is the general.
+
+    Directional: ``Kubernetes`` matches text with EKS, but ``EKS`` does not match text that
+    only says Kubernetes. Claiming a specialization needs that specialization in evidence.
+    """
     base = _norm(term)
     if not base:
         return []
@@ -263,6 +351,7 @@ def _forms(term: str) -> list[str]:
             break
     for f in list(forms):
         forms.update(_ALIASES.get(f, ()))
+        forms.update(_SPECIALIZATION_CHILDREN.get(f, ()))
         if len(f) > 4 and f.endswith("s") and not f.endswith("ss"):
             forms.add(f[:-1])
     return [f for f in forms if f]
@@ -391,6 +480,105 @@ def restore_role_facts(
     return matched
 
 
+def _ownership_rank(text: str) -> int | None:
+    """Strongest ownership tier evidenced anywhere in the profile role text."""
+    best: int | None = None
+    blob = text or ""
+    for rank, pattern in _OWNERSHIP_ANY:
+        if pattern.search(blob):
+            best = rank if best is None else max(best, rank)
+    return best
+
+
+def _bullet_ownership_rank(bullet: str) -> int | None:
+    s = (bullet or "").strip()
+    if not s:
+        return None
+    for rank, pattern in reversed(_OWNERSHIP_OPEN):
+        if pattern.search(s):
+            return rank
+    return None
+
+
+def ownership_upgrades(
+    resume: dict | None,
+    profile_text: str,
+) -> dict[int, list[str]]:
+    """Bullets whose opening ownership verb is stronger than the matching profile role allows."""
+    if not resume or not isinstance(resume, dict):
+        return {}
+    roles = parse_profile_roles(profile_text)
+    if not roles:
+        return {}
+    entries = [e for e in resume.get("work_experience") or [] if isinstance(e, dict)]
+    out: dict[int, list[str]] = {}
+    for pos, (entry, idx) in enumerate(zip(entries, _match_roles(entries, roles))):
+        if idx is None:
+            continue
+        allowed = _ownership_rank(roles[idx].text)
+        if allowed is None:
+            allowed = 1  # craft verbs are fine when the profile states no ownership verb
+        bad: list[str] = []
+        for bullet in entry.get("bullets") or []:
+            if not isinstance(bullet, str):
+                continue
+            rank = _bullet_ownership_rank(bullet)
+            if rank is not None and rank > allowed:
+                verb = bullet.strip().split(None, 1)[0].strip("*")
+                if verb and verb not in bad:
+                    bad.append(verb)
+        if bad:
+            out[pos] = bad
+    return out
+
+
+def _demote_specializations(text: str, evidence: str) -> str:
+    """Replace EKS/GKE/AKS with Kubernetes when evidence only supports the general form."""
+    if not text or not evidence:
+        return text
+    out = text
+    for claimed, replacement in _SPEC_REPLACE:
+        if not is_mentioned(claimed, out):
+            continue
+        if is_mentioned(claimed, evidence):
+            continue
+        if not is_mentioned(replacement, evidence):
+            continue
+        pattern = re.compile(
+            r"(?<![a-zA-Z0-9])(\*\*)?" + re.escape(claimed) + r"(?(1)\*\*)(?![a-zA-Z0-9])",
+            re.IGNORECASE,
+        )
+
+        def _sub(m: re.Match[str], *, _rep: str = replacement) -> str:
+            bold = m.group(1) or ""
+            return f"{bold}{_rep}{bold}"
+
+        out = pattern.sub(_sub, out)
+    return out
+
+
+def _specialization_general(term: str) -> str | None:
+    key = _norm(term)
+    if key in _SPECIALIZATIONS:
+        return _SPECIALIZATIONS[key]
+    for spec, general in _SPECIALIZATIONS.items():
+        if key == spec or key.endswith(" " + spec) or key.startswith(spec + " "):
+            return general
+    return None
+
+
+def _skill_supported(item: str, evidence: str) -> str | None:
+    """Keep *item*, demote a specialization to its general form, or drop it."""
+    if not item or not evidence:
+        return None
+    if is_mentioned(item, evidence):
+        return item
+    general = _specialization_general(item)
+    if general and is_mentioned(general, evidence):
+        return "Kubernetes" if general == "kubernetes" else general
+    return None
+
+
 def enforce_role_evidence(
     resume: dict | None,
     profile_text: str,
@@ -400,9 +588,10 @@ def enforce_role_evidence(
 
     - company, title and dates come from the matching profile role;
     - ``used_skills`` keeps only items that role's text or Project Evidence mentions;
+    - specializations (EKS/GKE/AKS) demote to Kubernetes when only the general form is evidenced;
     - ``technical_skills`` keeps only items the profile or evidence mentions anywhere;
     - the project title is the profile's, and an empty project description falls back to it.
-    Bullets are left alone: they need a rewrite, which ``unattributed_role_terms`` reports.
+    Bullets still need a rewrite for fully foreign tech; ``unattributed_role_terms`` reports those.
     """
     if not resume or not isinstance(resume, dict):
         return resume
@@ -414,19 +603,51 @@ def enforce_role_evidence(
     for entry, idx in zip(entries, restore_role_facts(resume, profile_text, roles)):
         if idx is None:
             continue
+        evidence = texts[idx]
         raw = entry.get("used_skills")
         if isinstance(raw, str) and raw.strip():
-            kept = [s for s in split_skill_items(raw) if is_mentioned(s, texts[idx])]
-            entry["used_skills"] = ", ".join(dict.fromkeys(kept)) or None
+            kept: list[str] = []
+            seen: set[str] = set()
+            for s in split_skill_items(raw):
+                shown = _skill_supported(s, evidence)
+                if not shown:
+                    continue
+                key = _norm(shown)
+                if key in seen:
+                    continue
+                seen.add(key)
+                kept.append(shown)
+            entry["used_skills"] = ", ".join(kept) or None
+        desc = entry.get("project_description")
+        if isinstance(desc, str) and desc.strip():
+            entry["project_description"] = _demote_specializations(desc, evidence)
+        bullets = entry.get("bullets")
+        if isinstance(bullets, list):
+            entry["bullets"] = [
+                _demote_specializations(b, evidence) if isinstance(b, str) else b for b in bullets
+            ]
 
     source = "\n".join([profile_text or "", evidence_text or ""])
+    summary = resume.get("profile_summary")
+    if isinstance(summary, str) and summary.strip():
+        resume["profile_summary"] = _demote_specializations(summary, source)
     skills: list[dict] = []
     for row in resume.get("technical_skills") or []:
         if not isinstance(row, dict):
             continue
-        items = [s for s in split_skill_items(str(row.get("skills") or "")) if is_mentioned(s, source)]
+        items: list[str] = []
+        seen_skills: set[str] = set()
+        for s in split_skill_items(str(row.get("skills") or "")):
+            shown = _skill_supported(s, source)
+            if not shown:
+                continue
+            key = _norm(shown)
+            if key in seen_skills:
+                continue
+            seen_skills.add(key)
+            items.append(shown)
         if items:
-            skills.append({**row, "skills": ", ".join(dict.fromkeys(items))})
+            skills.append({**row, "skills": ", ".join(items)})
     if skills:
         resume["technical_skills"] = skills
     return resume

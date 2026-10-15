@@ -23,6 +23,7 @@ from app.utils.company_name import companies_match
 from app.utils.resume_evidence import (
     _ALIAS_GROUPS,
     _EXPANSIONS,
+    _SPECIALIZATIONS,
     _norm,
     is_mentioned,
     is_named_technology,
@@ -66,8 +67,10 @@ _ENGLISH_HOMONYMS = frozenset(
 )
 # Lexicon categories that read wrong on a resume for the skill ("Kafka" is streaming data, not DevOps).
 _CATEGORY_OVERRIDES = {"kafka": "data", "rabbitmq": "backend", "nats": "backend"}
-# Most required skills a posting can add to a profile that never names them.
-_MAX_ADDED_SKILLS = 12
+# Skills the profile never names are not invented onto the resume (required or preferred).
+# They stay in SkillPlan.missing ("Not in the profile") so ATS stuffing cannot create
+# interview-undefendable claims (NestJS when the profile only has Express).
+_MAX_ADDED_SKILLS = 0
 # Lexicon aliases too generic to list as a skill on their own.
 _GENERIC_SURFACES = frozenset(
     {
@@ -78,6 +81,8 @@ _GENERIC_SURFACES = frozenset(
         "data analysis", "data extraction", "data pipelines", "data pipeline", "client facing", "crm",
         "e-commerce", "ecommerce", "banking", "financial services", "on-prem", "on-premise", "high availability",
         "pull requests", "version control", "technical writing", "remote", "virtualization", "firewalls",
+        "fintech", "saas", "b2b", "customer success", "debugging", "secure coding", "authentication",
+        "quality assurance", "qa", "bi", "code review", "code reviews", "automated testing",
     }
 )
 # Categories whose skills belong in a resume's technical skills section.
@@ -346,6 +351,7 @@ def _listed_items(line: str) -> list[str]:
 def _alias_key(term: str) -> str:
     """One key per skill: lexicon clusters are too loose (data lake vs data warehousing), alias groups are not."""
     norm = _norm(term)
+    norm = _SPECIALIZATIONS.get(norm, norm)
     for group in _ALIAS_GROUPS:
         if norm in group:
             return group[0]
@@ -439,10 +445,18 @@ def plan_required_skills(
                 )
             )
             continue
-        wanted = skill.importance in (REQUIRED, PREFERRED) or (
+        # Only hard requirements may be invented onto the resume. Preferred / nice-to-have
+        # skills the profile never names stay in missing (shown as "Not in the profile").
+        addable_importance = skill.importance == REQUIRED or (
             not plan.has_required_section and skill.importance == CORE
         )
-        if wanted and roles and len(plan.added) < _MAX_ADDED_SKILLS and _is_addable(skill, category):
+        wanted = addable_importance or skill.importance == PREFERRED
+        if (
+            addable_importance
+            and roles
+            and len(plan.added) < _MAX_ADDED_SKILLS
+            and _is_addable(skill, category)
+        ):
             pick = _best_role_for(skill, category, roles, role_canon, plan)
             plan.supported.append(
                 RequiredSkill(
@@ -527,8 +541,8 @@ def required_skills_block(plan: SkillPlan) -> str:
         lines.append("- (No skill the posting names appears in the profile.)")
     if plan.added:
         lines.append(
-            "Add to the resume (the posting requires these and the profile does not name them yet; none may be "
-            "missing). Each goes in technical_skills under its category, and in used_skills and at least one bullet "
+            "Add to the resume (rare; only when the product intentionally carries a required skill the profile "
+            "omits). Each goes in technical_skills under its category, and in used_skills and at least one bullet "
             "of the role shown, describing how that role's real work used it (same product, scope and metrics):"
         )
         for s in plan.added:
@@ -673,4 +687,156 @@ def ensure_required_skills(resume: dict | None, plan: SkillPlan | None, profile_
             items.append(_display_term(skill.term, profile_skills))
         if items:
             entry["used_skills"] = ", ".join(dict.fromkeys(items))
+    return resume
+
+
+_SKILL_QUALIFIER_RE = re.compile(
+    r"\b(basics?|beginner|fundamentals?|awareness|exposure|familiar(?:ity)?|inspired|"
+    r"proof[-\s]?of[-\s]?concept|poc|light|limited)\b",
+    re.IGNORECASE,
+)
+# Bare labels that are not listable technologies on a resume.
+_NON_SKILL_ITEMS = frozenset(
+    {
+        "api", "apis", "architecture", "accessibility", "observability", "sre", "ui", "ux",
+        "firmware", "embedded software", "electrical engineering", "agile", "scrum", "kanban",
+        "e-commerce", "ecommerce", "experimentation", "roadmapping", "prioritization",
+        "customer discovery", "customer segmentation", "funnel analysis", "cohort analysis",
+        "launch planning", "beta programs", "unit tests", "iso", "sdk", "caching",
+        "offline caching", "test data setup", "react app testing", "angular app testing",
+        "integration mapping", "usage reporting", "meal-planning", "fda", "iso 13485",
+        "kpi reporting", "dashboard design", "pivot tables", "vlookup", "xlookup",
+        "power query", "forecasting", "campaign reporting", "conversion metrics",
+        "retention analysis", "permissions", "billing workflows", "shipping workflows",
+        "customer support", "stakeholder updates", "agile delivery", "product analytics",
+        "event funnels", "data validation queries", "runbooks", "vulnerability management",
+    }
+)
+
+
+def _bare_skill(item: str) -> str:
+    """Strip light/basics qualifiers so 'Terraform basics' and 'Terraform' share a key."""
+    s = (item or "").strip()
+    s = re.sub(r"^(basics?|beginner|fundamental)\s+(of\s+)?", "", s, flags=re.IGNORECASE)
+    s = re.sub(
+        r"\s+\((basics?|beginner|awareness|fundamentals?|exposure|familiar(?:ity)?)[^)]*\)\s*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(
+        r"\s*[-:]?\s*(basics?|beginner|awareness|fundamentals?|exposure|familiar(?:ity)?|inspired)\s*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return s.strip(" -") or (item or "").strip()
+
+
+def _profile_skill_display_map(profile_text: str) -> dict[str, str]:
+    """Map alias keys to the profile's preferred spelling (keeps 'Terraform basics', 'Looker Studio')."""
+    display: dict[str, str] = {}
+
+    def _remember(item: str) -> None:
+        bare = _bare_skill(item)
+        if not bare:
+            return
+        key = _alias_key(bare)
+        prev = display.get(key)
+        # Prefer qualified or more specific profile forms over bare ones.
+        if prev is None:
+            display[key] = item.strip()
+            return
+        prev_q = bool(_SKILL_QUALIFIER_RE.search(prev))
+        new_q = bool(_SKILL_QUALIFIER_RE.search(item))
+        if new_q and not prev_q:
+            display[key] = item.strip()
+        elif len(item.strip()) > len(prev) and (new_q == prev_q):
+            display[key] = item.strip()
+
+    for item in parse_profile_skills(profile_text):
+        _remember(item)
+    for role in parse_profile_roles(profile_text):
+        for line in role.text.splitlines():
+            low = line.strip().lower()
+            if low.startswith("technologies:") or low.startswith("tech:"):
+                for item in split_skill_items(line.split(":", 1)[1]):
+                    _remember(item)
+    return display
+
+
+def _resolve_profile_skill(item: str, display: dict[str, str], plan_keys: set[str]) -> str | None:
+    """Profile spelling for *item*, or None when the profile/plan does not support it."""
+    bare = _bare_skill(item)
+    if not bare:
+        return None
+    if _norm(bare) in _GENERIC_SURFACES or _norm(bare) in _NON_SKILL_ITEMS:
+        return None
+    key = _alias_key(bare)
+    if key in display:
+        shown = display[key]
+        return "CI/CD" if key == _alias_key("CI/CD") and not _SKILL_QUALIFIER_RE.search(shown) else shown
+    bare_n = _norm(bare)
+    # Resume says Looker; profile has Looker Studio (more specific, still honest).
+    specifics = [
+        shown
+        for shown in display.values()
+        if _norm(shown) == bare_n
+        or _norm(shown).startswith(bare_n + " ")
+        or _norm(_bare_skill(shown)) == bare_n
+    ]
+    if specifics:
+        return max(specifics, key=len)
+    # Resume invents a specialization the profile lacks (GKE when profile only says Kubernetes
+    # remaps via _SPECIALIZATIONS in _alias_key; Looker Cloud when profile has Looker is dropped).
+    for shown in display.values():
+        sn = _norm(_bare_skill(shown))
+        if bare_n.startswith(sn + " ") and _norm(shown) != bare_n:
+            return None
+    if key in plan_keys:
+        return "CI/CD" if key == _alias_key("CI/CD") else item
+    return None
+
+
+def filter_technical_skills_to_evidence(
+    resume: dict | None,
+    plan: SkillPlan | None,
+    profile_text: str,
+) -> dict | None:
+    """Drop unsupported skills and restore the profile's qualified spellings.
+
+    Allowlist is the Technical Skills block, role ``Technologies:`` lines, and the skill
+    plan. Summary prose like "interested in fintech" or "still building FedRAMP" does not
+    admit a skill. Profile forms such as "Terraform basics" and "Looker Studio" win over
+    upgraded JD spellings.
+    """
+    if not resume or not isinstance(resume, dict):
+        return resume
+    display = _profile_skill_display_map(profile_text)
+    plan_keys = {
+        _alias_key(_bare_skill(s.term)) for s in (plan.supported if plan else []) if s.injectable
+    }
+
+    rows: list[dict] = []
+    dropped: list[str] = []
+    for row in resume.get("technical_skills") or []:
+        if not isinstance(row, dict):
+            continue
+        kept: list[str] = []
+        seen: set[str] = set()
+        for item in split_skill_items(str(row.get("skills") or "")):
+            shown = _resolve_profile_skill(item, display, plan_keys)
+            if not shown:
+                dropped.append(item)
+                continue
+            sk = _alias_key(_bare_skill(shown))
+            if sk in seen:
+                continue
+            seen.add(sk)
+            kept.append(shown)
+        if kept:
+            rows.append({**row, "skills": ", ".join(kept)})
+    resume["technical_skills"] = rows
+    if dropped:
+        logger.info("tailored_resume_unsupported_skills_dropped", skills=dropped[:40], count=len(dropped))
     return resume

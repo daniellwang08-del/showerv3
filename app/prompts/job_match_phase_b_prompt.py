@@ -31,6 +31,10 @@ roles and numbers. Write for both readers: evidence inside the right role, the p
   role's profile text. Technologies on the "Skills list only" line belong in technical_skills, never in a role.
 - Never move a technology, project, metric or responsibility from one employer to another, and never tie a
   technology to a specific accomplishment unless the profile's line for that accomplishment names it.
+- Never invent implementation details the role text does not state: queues, parameters, landing zones,
+  collaborators, systems, or outcomes. Reframe the same facts; do not add new ones.
+- Do not upgrade a general technology to a specialized form the role never names (Kubernetes is not EKS,
+  GKE or AKS; CI/CD is not GitHub Actions unless that role names it).
 - When Project Evidence lists technologies_to_emphasize for a company, use them in that company's bullets.
 - The one exception: skills under "Add to the resume" in the Required skills checklist. Each is tied to the
   role listed for it; name it in that role as part of the work the profile describes there.
@@ -46,20 +50,25 @@ roles and numbers. Write for both readers: evidence inside the right role, the p
   specifics (name the collaborators and criteria), unless it is irrelevant to this posting. Senior and staff
   postings weigh this evidence heavily; it is the last thing to cut, not the first.
 - Keep the profile's ownership verbs in both directions: "Led" stays Led, "Contributed to" stays Contributed to.
-  Never upgrade to Architected, Owned or Spearheaded, and never downgrade a lead claim.
+  Never upgrade Supported/Helped/Contributed to Led, Owned, Architected or Spearheaded, and never downgrade a
+  lead claim.
 - No invented metrics. When the profile gives no number, state the concrete result (what shipped, what it
   replaced, who used it) instead of "improving efficiency" or "measurable outcomes".
 
 ## 3. Speak the posting's language
-- The **Required skills checklist** lists every skill and technique the posting asks for. None may be missing,
-  and each uses the spelling shown ("PostgreSQL" not "Postgres" when the posting says PostgreSQL). Each goes in
-  technical_skills under its category. Each one tied to a role is also named in at least one bullet of that
-  role (the most recent such role first, required skills before preferred) and in its used_skills. Practices
-  (data quality, distributed systems, data modeling) are shown in a bullet.
-- "Add to the resume" items: write them into the listed role's existing work, the way that system would use
-  them (a streaming ingestion bullet names Kafka, a table-format bullet names Iceberg). Keep the role's real
-  product, scope, metrics and ownership; never invent a new project, employer or number for them.
-- Items under "Not in the profile" stay out entirely. Items under "Related evidence" use the profile's term.
+- The **Required skills checklist** lists every skill and technique the posting asks for that the profile
+  supports, plus a short "Add to the resume" list. Use the spelling shown ("PostgreSQL" not "Postgres" when
+  the posting says PostgreSQL). Each supported item goes in technical_skills under its category. Each one
+  tied to a role is also named in at least one bullet of that role (the most recent such role first,
+  required skills before preferred) and in its used_skills. Practices (data quality, distributed systems,
+  data modeling) are shown in a bullet.
+- "Add to the resume" is usually empty. When it lists an item, write it into the listed role's existing work
+  only, the way that system would use it. Keep the role's real product, scope, metrics and ownership; never
+  invent a new project, employer or number for it.
+- Items under "Not in the profile" stay out entirely: never list them in technical_skills, used_skills,
+  bullets or the summary, and never substitute a sibling tool (NestJS for Express, Fastify for Node.js,
+  Weaviate when the profile names Pinecone). Cover the gap with adjacent real work instead. Items under
+  "Related evidence" use the profile's term.
 - Spell out acronyms once alongside the abbreviation, in the summary or the first role that uses them:
   "Large Language Models (LLMs)". The Required skills checklist marks the ones to spell out.
 - Mirror the posting's vocabulary, not its sentences. Never copy a run of 6 or more words from the posting:
@@ -84,6 +93,9 @@ roles and numbers. Write for both readers: evidence inside the right role, the p
 Profile order is most recent first. Length budget (keeps a senior resume to about two pages):
 - Index 0 and 1: 6-8 bullets each. Index 2: 4-5. Older roles: 3-4. Internships and roles under a year: 2-3.
 - 20-26 bullets in total. Fewer, stronger bullets beat padding; a role with thin evidence gets fewer bullets.
+- When the total would exceed about 26 bullets or two pages, compress older or low-relevance roles to 1-2
+  bullets (or one short combined note of transferable work). Keep every employer from the profile; never
+  invent or drop companies. Recent high-signal roles (index 0 and 1) keep full evidence.
 - Select and order bullets by relevance to THIS posting, not by profile order: for each role, rank its profile
   facts against the posting's requirements, keep the top ones, and merge related minor facts into one bullet
   rather than dropping a requirement's only evidence. Drop the facts least relevant to the posting first.
@@ -105,14 +117,20 @@ Profile order is most recent first. Length budget (keeps a senior resume to abou
 - used_skills: 4-12 technologies from that role's evidence line, the posting's terms first.
 
 ## 6. technical_skills
-- 4-6 categories and at most 30 items in total, only technologies the profile states somewhere or the Required
-  skills checklist lists. A long list
-  dilutes the match: first keep every item of the Required skills checklist and every other item the posting
-  names, then the role family's core stack, and cut the rest.
-- Lead with the categories and items the posting asks for.
+- 4-6 categories and at most 30 items in total. Only technologies the profile states somewhere, or items under
+  "Supported by the profile" / "Add to the resume" in the Required skills checklist. Never invent posting
+  ecosystem tools, preferred/nice-to-have skills the profile lacks, or domain labels (Fintech, SaaS, B2B,
+  Customer Success). A long list dilutes the match: keep checklist items the candidate can defend, then the
+  role family's core stack from the profile, and cut the rest.
+- Lead with the categories and items the posting asks for that the profile supports.
 - Place items correctly: runtimes and frameworks (Node.js, Django, React) are not Languages; managed search,
-  queues and AI services are not Databases; cloud services go under Cloud.
-- No soft skills, no inferred items, and methodologies (Agile, Scrum) only when the posting lists them."""
+  queues and AI services are not Databases; cloud services go under Cloud. Prefer single-concept category
+  names (Languages, Frontend, Backend, Databases, Cloud, DevOps, Testing); do not invent catch-all buckets
+  like Quality that mix soft skills with tools.
+- Keep the profile's skill qualifiers and exact product names: "Terraform basics" stays basics, "Looker Studio"
+  is not Looker, "PCI awareness" is not PCI. Never upgrade beginner/exposure language into an unqualified skill.
+- No soft skills, no inferred items, and methodologies (Agile, Scrum) only when the posting lists them and
+  the profile shows them."""
 
 JOB_MATCH_PHASE_B_INSTRUCTIONS = (
     f"{_PHASE_B_SHARED_HEADER}{RESUME_TAILORING_INSTRUCTIONS.strip()}\n\n---\n\n{COVER_LETTER_INSTRUCTIONS.strip()}"
@@ -215,8 +233,9 @@ PHASE_B_FORMAT_CONTRACT = """
 - Projects: `project_name` is the profile's project title. `project_description` is 1-2 sentences about the
   same product, rewritten for this posting so it introduces the role's own bullets and names only technologies
   they name; neither is dropped when the profile has one.
-- Length: 6-8 bullets for each of the two most recent roles, 4-5 for the third, 3-4 for older roles, at most
-  26 in total, chosen by relevance to the posting; `profile_summary` is 3-4 sentences and at most 75 words;
+- Length: 6-8 bullets for each of the two most recent roles, 4-5 for the third, older roles 1-4 (compress to
+  1-2 when the total would exceed ~26), at most 26 in total, chosen by relevance to the posting. Keep every
+  employer; never invent or drop companies. `profile_summary` is 3-4 sentences and at most 75 words;
   `technical_skills` holds at most 30 items. Never pad to reach a count.
 - No run of 6 or more words copied from the job description.
 - `profile_summary` opens with the posting's engineering title family, never a profession or specialty the
@@ -229,7 +248,8 @@ PHASE_B_FORMAT_CONTRACT = """
 - `**bold**` only inside `profile_summary`, `project_description` and bullets: at most 2 spans per bullet (many bullets
   have none), only named technologies or figures, never common words or fragments of a name.
 - Truthfulness: keep the profile's ownership verbs, years of experience, and skill qualifiers ("basic");
-  never add tools, scale, domains, collaborators, or outcomes the profile does not state.
+  never add tools, scale, domains, collaborators, systems, or outcomes the profile does not state, and never
+  upgrade Kubernetes to EKS/GKE/AKS unless that role names the specialized form.
 - Never use em dashes."""
 
 
@@ -343,7 +363,8 @@ JOB_MATCH_PHASE_B_USER_TEMPLATE = """## Candidate Profile
 3. **Rewrite** (do not lightly edit) the summary, skills and bullets so THIS job's evidenced stack dominates,
    naming in each role only the technologies its Role evidence map line allows.
 4. Keep every Facts to preserve item that is relevant to the posting, with its number, specifics and ownership verb.
-5. Length budget: index 0-1 get 6-8 bullets each, index 2 gets 4-5, older roles 3-4; 20-26 in total.
+5. Length budget: index 0-1 get 6-8 bullets each, index 2 gets 4-5, older roles 1-4 (compress low-relevance
+   older roles to 1-2 when needed); about 20-26 in total. Keep every employer from the profile.
 6. Summary: 3-4 sentences, 45-75 words, opening with the posting's engineering title family (never an unheld
    specialty), truthful years in the right discipline, one metric, at most 4 technologies.
 7. Technical skills: 4-6 clean single-concept categories, at most 30 technologies from the profile (every

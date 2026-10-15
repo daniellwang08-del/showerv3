@@ -85,7 +85,7 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     auto_prepare_match: Boolean(data.auto_prepare_match),
     auto_prepare_full: Boolean(data.auto_prepare_full),
     application_resume_source: data.application_resume_source === 'original' ? 'original' : 'tailored',
-    resume_tailoring_strategy: data.resume_tailoring_strategy === 'evidence' ? 'evidence' : 'job_first',
+    resume_tailoring_strategy: data.resume_tailoring_strategy === 'job_first' ? 'job_first' : 'evidence',
     match_quality_check: MATCH_QUALITY_CHECK_MODES.includes(data.match_quality_check as MatchQualityCheckMode)
       ? (data.match_quality_check as MatchQualityCheckMode)
       : 'rescore',

@@ -63,6 +63,7 @@ from app.services.job_field_utils import (
 from app.services.required_skills import (
     SkillPlan,
     ensure_required_skills,
+    filter_technical_skills_to_evidence,
     job_skill_terms,
     missing_from_experience,
     plan_required_skills,
@@ -82,11 +83,16 @@ from app.utils.resume_evidence import (
     copied_job_phrases,
     enforce_role_evidence,
     expand_acronyms_once,
+    ownership_upgrades,
     summary_unattributed_terms,
     summary_unheld_title,
     unattributed_role_terms,
 )
-from app.utils.resume_skill_taxonomy import normalize_tailored_formatting, rehome_misplaced_skills
+from app.utils.resume_skill_taxonomy import (
+    normalize_skill_categories,
+    normalize_tailored_formatting,
+    rehome_misplaced_skills,
+)
 
 logger = get_logger(__name__)
 
@@ -638,6 +644,8 @@ def tailored_resume_quality_issues(
         terms = claim_terms if claim_terms is not None else job_anchor_terms
         for idx in unattributed_role_terms(resume, profile_text, evidence_text, terms):
             issues.append(f"work_experience[{idx}]_unattributed_technology")
+        for idx in ownership_upgrades(resume, profile_text):
+            issues.append(f"work_experience[{idx}]_ownership_upgrade")
         if summary_unattributed_terms(resume, profile_text, evidence_text, terms):
             issues.append("profile_summary_unattributed_technology")
         if summary_unheld_title(resume, profile_text):
@@ -671,7 +679,12 @@ _MAX_TOTAL_BULLETS = 30
 # Issues a second LLM call does not fix: anchors are a noisy keyword list (a rerun
 # lands on the same coverage) and emphasis is applied deterministically.
 _ADVISORY_QUALITY_ISSUES = frozenset(
-    {"insufficient_job_keyword_alignment", "profile_summary_missing_role_domain_cues"}
+    {
+        "insufficient_job_keyword_alignment",
+        "profile_summary_missing_role_domain_cues",
+        # Length budget: warn and prefer a tighter draft, but do not hard-fail Phase B.
+        "too_many_bullets",
+    }
 )
 
 
@@ -705,6 +718,14 @@ def quality_retry_instructions(
                 f"- {company}: the profile never ties {', '.join(bad)} to this role. Remove them from its "
                 "bullets, project_description and used_skills; describe the work with the technologies "
                 "the Role evidence map lists for it. They may stay in technical_skills."
+            )
+    if any(i.endswith("_ownership_upgrade") for i in blocking) and resume:
+        for idx, verbs in ownership_upgrades(resume, profile_text).items():
+            company = entries[idx].get("company_name") if idx < len(entries) else f"role {idx}"
+            lines.append(
+                f"- {company}: bullets open with {', '.join(verbs)}, stronger ownership than the profile "
+                "states for this role. Keep the profile's verb strength (Supported/Contributed stay; never "
+                "upgrade to Led, Owned, Architected or Spearheaded)."
             )
     if "profile_summary_unattributed_technology" in blocking and resume:
         bad = summary_unattributed_terms(resume, profile_text, evidence_text, terms)
@@ -749,7 +770,9 @@ def quality_retry_instructions(
     if any(i.endswith("_no_bullets") or i.endswith("_invalid") or i.endswith("_missing") for i in blocking):
         lines.append("- Include exactly one work_experience entry, with bullets, for every company in the profile.")
     lines.append(
-        "Never invent employers, dates, metrics, scale or ownership, or technologies beyond the Required skills checklist."
+        "Never invent employers, dates, metrics, scale, ownership, collaborators, systems or outcomes, "
+        "or technologies beyond the Required skills checklist. Reframe the same facts; do not add new ones. "
+        "Do not upgrade Kubernetes to EKS/GKE/AKS unless that role's profile text names the specialized form."
     )
     return "\n".join(lines)
 
@@ -1216,13 +1239,13 @@ async def generate_tailored_content_phase_b(
         resume = enforce_role_evidence(resume, profile_truncated, evidence_checked)
         resume = normalize_tailored_formatting(apply_keyword_emphasis_to_resume(resume, job_anchors))
         resume = expand_acronyms_once(resume, truthful_anchors)
+        resume = ensure_required_skills(resume, skill_plan, profile_truncated)
+        resume = filter_technical_skills_to_evidence(resume, skill_plan, profile_truncated)
         if resume and resume.get("technical_skills"):
             resume["technical_skills"] = cap_skills_section(
-                rehome_misplaced_skills(resume["technical_skills"]), keep_skills_text
+                rehome_misplaced_skills(normalize_skill_categories(resume["technical_skills"])),
+                keep_skills_text,
             )
-        resume = ensure_required_skills(resume, skill_plan, profile_truncated)
-        if resume and resume.get("technical_skills"):
-            resume["technical_skills"] = cap_skills_section(resume["technical_skills"], keep_skills_text)
         return resume
 
     async def _cover_call(observe_name: str) -> dict | None:
@@ -1262,6 +1285,7 @@ async def generate_tailored_content_phase_b(
             structured_block=structured_block,
             domain_cues=domain_cues,
             role_cues=role_cues,
+            project_evidence_context=evidence_truncated,
             resume_system=resume_system,
             cover_system=cover_system,
             user_id=user_id,
@@ -1345,8 +1369,14 @@ async def generate_tailored_content_phase_b(
     return tailored_resume, cover_letter
 
 
-# Worth a retry note, but a draft that covers more of the posting still wins over one without them.
+# Worth a retry note / ranking penalty, but do not force another rewrite solely for these.
 _TAILORING_SOFT_ISSUES = frozenset({"copies_job_posting_phrases", "technical_skills_too_thin"})
+
+
+def _is_soft_tailoring_issue(key: str) -> bool:
+    if key in _TAILORING_SOFT_ISSUES:
+        return True
+    return key.endswith("_no_career_breadth")
 
 
 def _format_retry_lines(resume: dict | None, issues: list[str], *, anchors: list[str], job_text: str) -> list[str]:
@@ -1411,6 +1441,7 @@ async def _tailor_resume(
     structured_block: str,
     domain_cues: str,
     role_cues: list[str],
+    project_evidence_context: str = "",
     resume_system: str,
     cover_system: str,
     user_id: str | None,
@@ -1421,7 +1452,7 @@ async def _tailor_resume(
     temperature: float,
     reasoning_effort: str | None,
 ) -> tuple[dict | None, dict | None]:
-    """Phase B tailoring: draft, check, and rewrite until the resume meets every rule and the match target."""
+    """Phase B Rebuild: draft, check hard rules, and optionally soft-retry for match advisory."""
     from app.services.tailored_match_check import (
         REQUIREMENT_MATCH_TARGET,
         posting_requirements,
@@ -1436,6 +1467,10 @@ async def _tailor_resume(
     )
     anchors = plan.terms
     tasks, _facts = posting_requirements(structured_block, job_text)
+    evidence_block = (project_evidence_context or "").strip() or (
+        "No project source evidence available. Deepen roles from Career facts only; never invent employers, "
+        "metrics, or tools the profile does not support."
+    )
     user_content = TAILORING_USER_TEMPLATE.format(
         career_facts=career_facts_block(plan),
         education=education_block(profile_text),
@@ -1448,6 +1483,7 @@ async def _tailor_resume(
         ),
         company_domain_cues=domain_cues,
         target_stack=target_stack_block(plan),
+        project_evidence_context=evidence_block,
     )
 
     async def draft(content: str, observe_name: str) -> dict | None:
@@ -1505,8 +1541,10 @@ async def _tailor_resume(
             logger.warning("requirement_match_failed", error=str(e)[:300])
             match = {}
         rate = match.get("rate")
-        soft = [i for i in [*layout, *problems] if i in _TAILORING_SOFT_ISSUES]
-        key = (len(layout) + len(problems) - len(soft), -(rate or 0), len(soft))
+        hard_layout = [i for i in layout if not _is_soft_tailoring_issue(i)]
+        hard_problems = {k: v for k, v in problems.items() if not _is_soft_tailoring_issue(k)}
+        soft_n = (len(layout) - len(hard_layout)) + (len(problems) - len(hard_problems))
+        key = (len(hard_layout) + len(hard_problems), -(rate or 0), soft_n)
         if best_key is None or key < best_key:
             best, best_key, best_report = resume, key, (layout, problems, match)
         logger.info(
@@ -1519,22 +1557,26 @@ async def _tailor_resume(
         )
         layout, problems, match = best_report
         rate = match.get("rate")
+        hard_layout = [i for i in layout if not _is_soft_tailoring_issue(i)]
+        hard_problems = {k: v for k, v in problems.items() if not _is_soft_tailoring_issue(k)}
         below = rate is not None and rate < REQUIREMENT_MATCH_TARGET
-        if attempt == MAX_REWRITE_RETRIES or (not layout and not problems and not below):
+        # Match rate is advisory: at most one extra pass when below target and hard rules already hold.
+        force_match_retry = below and attempt == 0 and not hard_layout and not hard_problems
+        if attempt == MAX_REWRITE_RETRIES or (not hard_layout and not hard_problems and not force_match_retry):
             break
         if on_stage is not None:
             try:
                 await on_stage("quality_retry")
             except Exception:  # noqa: BLE001 - progress reporting must never break the run
                 pass
-        extra = _format_retry_lines(best, layout, anchors=anchors, job_text=job_text)
+        extra = _format_retry_lines(best, hard_layout, anchors=anchors, job_text=job_text)
         uncovered = match.get("uncovered_lines") or []
-        if below and uncovered:
+        if force_match_retry and uncovered:
             extra.append(
-                f"Requirement match is {rate}%; the target is {REQUIREMENT_MATCH_TARGET}%. No bullet does the work of "
-                "these posting lines. For each, write a bullet in one of the two most recent roles that does that "
-                "work with the posting's stack, inside the role's product or domain, using the line's key words "
-                "in your own sentence (never a run of 8 or more words copied from the posting): "
+                f"Requirement match is {rate}% (advisory target {REQUIREMENT_MATCH_TARGET}%). Prefer covering these "
+                "posting lines in one of the two most recent roles when the profile supports that work, using the "
+                "line's key words in your own sentence (never a run of 8 or more words copied from the posting). "
+                "Do not invent employers, metrics, or tools: "
                 + " | ".join(f'"{line}"' for line in uncovered)
             )
         previous = {k: v for k, v in best.items() if k != "match_check"}
@@ -1580,16 +1622,18 @@ async def _tailor_resume(
 
     cover_letter = None
     if include_cover_letter:
+        # Ground the letter on the original profile so Rebuild cannot reinforce invented stack history.
         cover_user = COVER_LETTER_USER_TEMPLATE.format(
             job_text=job_text,
-            profile_text=tailored_resume_to_profile_text(best, profile_text) if best else profile_text,
+            profile_text=profile_text,
             structured_context=structured_block,
             company_domain_cues=domain_cues,
             match_summary=(
-                "The candidate profile above is the resume sent with this application. The letter tells the same "
-                "story: the same employers, work, technologies and results, nothing it does not state."
+                "The candidate profile above is the original resume. The letter must only claim employers, work, "
+                "technologies and results stated there (or in Project Evidence). Do not invent stack history from "
+                "a tailored rewrite."
             ),
-            project_evidence_context="Not used: the candidate profile above is the resume for this application.",
+            project_evidence_context=evidence_block,
         )
         for observe in ("phase_b_cover_letter", "phase_b_cover_letter_retry"):
             try:

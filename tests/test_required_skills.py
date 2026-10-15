@@ -1,3 +1,5 @@
+import re
+
 from app.models.resume_design_schemas import ContentWork
 from app.services.resume_design_service import _with_profile_project
 from app.utils.profile_converter import user_profile_to_openai_text
@@ -12,6 +14,7 @@ from app.services.required_skills import (
     PREFERRED,
     REQUIRED,
     ensure_required_skills,
+    filter_technical_skills_to_evidence,
     job_skill_terms,
     missing_from_experience,
     plan_required_skills,
@@ -105,7 +108,7 @@ def test_job_skill_terms_reads_requirements_not_boilerplate():
     assert skills["kubernetes"].importance == MENTIONED
 
 
-def test_plan_splits_held_and_added_skills():
+def test_plan_splits_held_and_missing_skills():
     plan = _plan()
     held = _by_term(s for s in plan.supported if not s.added)
     assert set(held) >= {"spark", "python", "java", "aws", "data quality", "distributed systems"}
@@ -113,28 +116,21 @@ def test_plan_splits_held_and_added_skills():
     assert held["java"].roles == ["Under Armour"]
     assert held["aws"].roles == []
 
-    added = _by_term(plan.added)
-    assert set(added) >= {"hadoop", "kafka", "scala", "hudi", "iceberg", "delta lake", "airflow", "terraform", "docker"}
-    # The data-platform role takes the data stack; Under Armour has a single bullet of Java work.
-    assert added["kafka"].roles == ["Tableau"] and added["kafka"].category == "data"
-    assert added["iceberg"].roles == ["Tableau"]
-    assert all(s.injectable for s in added.values())
+    # Honesty: nothing the profile lacks is invented onto the resume.
+    assert plan.added == []
+    missing = {t.lower() for t in plan.missing}
+    assert {"hadoop", "kafka", "scala", "hudi", "iceberg", "docker", "airflow", "terraform"} <= missing
     for generic in ("mentoring", "oss", "kubernetes"):
-        assert generic not in added
-    assert plan.missing == []
-
-    addendum = plan.evidence_addendum()
-    assert addendum.startswith("## Tableau\nTechnologies: ") and "Kafka" in addendum
+        assert generic not in missing or generic == "kubernetes"
 
 
-def test_required_skills_block_lists_roles_and_additions():
+def test_required_skills_block_lists_roles_and_gaps():
     block = required_skills_block(_plan())
     assert "- Spark [required]: Tableau" in block
     assert "- AWS [required]: skills list or summary only (technical_skills)" in block
     assert "Amazon Web Services (AWS)" in block
-    assert "Add to the resume" in block and "- Kafka [required]: Tableau" in block
-    assert "- Delta Lake [required]: Tableau" in block
-    assert "Not in the profile" not in block
+    assert "Add to the resume" not in block
+    assert "Not in the profile" in block and "Kafka" in block and "Airflow" in block
     assert "\u2014" not in block
 
 
@@ -175,19 +171,20 @@ def _tailored():
     }
 
 
-def test_ensure_required_skills_adds_every_supported_skill():
+def test_ensure_required_skills_adds_held_skills_only():
     resume = ensure_required_skills(_tailored(), _plan(), PROFILE)
     rows = {r["category"]: r["skills"] for r in resume["technical_skills"]}
     assert "Java" in rows["Languages"]
     assert "Spark" in rows["Data Engineering"].split(", ")
     assert "Data Quality" in rows["Data Engineering"]
     assert "AWS" in rows["Cloud"]
-    for added in ("Hadoop", "Kafka", "Iceberg", "Delta Lake", "Airflow"):
-        assert added in rows["Data Engineering"].split(", "), added
-    assert "Scala" in rows["Languages"]
+    blob = ", ".join(rows.values())
+    for invented in ("Hadoop", "Kafka", "Iceberg", "Delta Lake", "Airflow", "Scala", "Docker"):
+        assert invented not in blob, invented
     tableau, ua = resume["work_experience"]
-    assert "Spark" in tableau["used_skills"] and "Kafka" in tableau["used_skills"]
-    assert "Java" in ua["used_skills"] and "Kafka" not in ua["used_skills"]
+    assert "Spark" in tableau["used_skills"]
+    assert "Kafka" not in tableau["used_skills"]
+    assert "Java" in ua["used_skills"]
     assert "AWS" not in tableau["used_skills"]
     assert "_required_skills_added" not in resume
 
@@ -200,21 +197,67 @@ def test_ensure_required_skills_adds_every_supported_skill():
     assert "Amazon Web Services" not in rows["Cloud"]
 
 
-def test_missing_from_experience_blocks_and_retry_names_role():
+def test_filter_drops_jd_only_and_soft_domain_skills():
+    plan = _plan()
+    resume = ensure_required_skills(_tailored(), plan, PROFILE)
+    resume["technical_skills"].append(
+        {"category": "Quality", "skills": "Fintech, SaaS, NestJS, Airflow, Customer Success"}
+    )
+    resume["technical_skills"][0]["skills"] += ", Weaviate"
+    out = filter_technical_skills_to_evidence(resume, plan, PROFILE)
+    blob = ", ".join(r["skills"] for r in out["technical_skills"])
+    for junk in ("Fintech", "SaaS", "NestJS", "Airflow", "Customer Success", "Weaviate"):
+        assert junk not in blob, junk
+    assert "Python" in blob and "Spark" in blob
+
+
+def test_filter_keeps_profile_skill_qualifiers_and_specific_names():
+    profile = """## Technical Skills
+- **DevOps**: Terraform basics, Docker, CI/CD
+- **Analytics**: Looker Studio, Tableau
+- **Cloud**: Kubernetes
+
+## Work Experience
+**Acme** | Engineer | Jan 2021 - Present
+- Built dashboards.
+Technologies: Looker Studio, Docker
+"""
+    resume = {
+        "technical_skills": [
+            {"category": "DevOps", "skills": "Terraform, Docker, CI, CD, CI/CD"},
+            {"category": "Analytics", "skills": "Looker, Tableau"},
+            {"category": "Cloud", "skills": "GKE, EKS, Kubernetes"},
+            {"category": "Other", "skills": "FedRAMP, architecture, SDK"},
+        ],
+        "work_experience": [],
+    }
+    out = filter_technical_skills_to_evidence(resume, None, profile)
+    blob = ", ".join(r["skills"] for r in out["technical_skills"])
+    assert "Terraform basics" in blob
+    assert "Looker Studio" in blob
+    assert re.search(r"\bLooker\b", blob.replace("Looker Studio", "")) is None
+    assert "CI/CD" in blob
+    assert "FedRAMP" not in blob and "architecture" not in blob and "SDK" not in blob
+    # Prefer the profile's kubernetes spelling over a JD-only GKE upgrade.
+    assert "Kubernetes" in blob
+    assert "GKE" not in blob
+
+
+def test_missing_from_experience_only_tracks_held_role_skills():
     plan = _plan()
     resume = _tailored()
     missing = {s.term for s in missing_from_experience(resume, plan)}
-    assert {"Spark", "Java", "Kafka", "Airflow"} <= missing
+    assert {"Spark", "Java"} <= missing
+    assert "Kafka" not in missing and "Airflow" not in missing
     assert "AWS" not in missing
     issues = tailored_resume_quality_issues(resume, required_skills=plan)
     assert "required_skills_missing_from_experience" in issues
     note = quality_retry_instructions(resume, issues, required_skills=plan)
-    assert "Spark (Tableau)" in note and "Java (Under Armour)" in note and "Kafka (Tableau)" in note
+    assert "Spark (Tableau)" in note and "Java (Under Armour)" in note
+    assert "Kafka" not in note
 
     resume["work_experience"][0]["bullets"] += [
         "Ran **PySpark** and Python jobs over distributed systems with data quality checks.",
-        "Streamed events through Kafka into Hadoop and Delta Lake tables with Iceberg and Hudi, written in Scala.",
-        "Scheduled loads with Airflow, deployed with Docker and Terraform, with data warehousing models.",
     ]
     resume["work_experience"][1]["bullets"].append("Wrote **Java** loaders.")
     assert [s.term for s in missing_from_experience(resume, plan)] == []
@@ -224,7 +267,13 @@ def test_missing_from_experience_blocks_and_retry_names_role():
 
 
 def test_added_skill_is_allowed_only_in_its_assigned_role():
+    # When a skill is intentionally carried via evidence addendum, it stays in that role only.
     plan = _plan()
+    from app.services.required_skills import RequiredSkill
+
+    plan.supported.append(
+        RequiredSkill(term="Kafka", importance=REQUIRED, roles=["Tableau"], injectable=True, category="data", added=True)
+    )
     evidence = plan.evidence_addendum()
     resume = _tailored()
     resume["work_experience"][0]["bullets"].append("Streamed events through **Kafka** into the lakehouse.")

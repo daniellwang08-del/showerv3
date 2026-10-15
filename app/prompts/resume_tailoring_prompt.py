@@ -51,26 +51,27 @@ terms; and a hiring manager who must believe this is one engineer's career, not 
 - Each role uses its **Bullets** range: a long role carries more work than a short one.
 - Ownership fits the title: never claim managing people unless a title says so.
 
-## 3. The posting's stack is the candidate's stack
-- **Target stack** lists every skill the posting asks for. Each primary skill is named in at least one
-  bullet of each of the two most recent roles and in their used_skills; each other posting skill is named
-  in at least one bullet. A role whose dates predate a technology never names it.
-- Older roles keep their own product, domain and stack. They may use the posting's core technologies their
-  dates allow where that product would really use them, so the career reads as one discipline, but never the
-  posting's domain or compliance vocabulary (an industrial or airline role does not do KYC or SOC 2 work).
-  Do not repeat the same skill list in every role.
-- Show each skill in real work, the way that system would use it (a streaming ingestion bullet names Kafka,
-  a retrieval bullet names the vector store), never as a list inside a bullet. A bullet names at most 6
-  technologies or posting terms; spread the stack across bullets instead of stacking it in one.
+## 3. Emphasize overlapping stack inside real product work
+- **Target stack** lists posting skills the profile already supports, plus a "Never invent" list. Name each
+  supported primary skill in the role shown for it (or technical_skills when no role names it) and in that
+  role's used_skills. Never write a "Never invent" skill into bullets, used_skills, project_description or
+  technical_skills. Do not upgrade a general technology to a specialized form the role never names
+  (Kubernetes is not EKS/GKE/AKS).
+- Older roles keep their own product, domain and stack. They may name only technologies that role already
+  used, so the career reads as one discipline, but never the posting's domain or compliance vocabulary
+  (an industrial or airline role does not do KYC or SOC 2 work). Do not repeat the same skill list in every role.
+- Show each skill in real work, the way that system would use it, never as a list inside a bullet. A bullet
+  names at most 6 technologies or posting terms; spread the stack across bullets instead of stacking it in one.
 - Use the posting's exact spelling ("PostgreSQL" when the posting says PostgreSQL). Spell out an acronym once
   with its short form where the Target stack says so (ATS search is literal and matches either form).
+- Never invent implementation details, collaborators, systems or outcomes a role's profile text does not state.
+  Keep the profile's ownership verbs; never upgrade Supported/Contributed to Led, Owned or Spearheaded.
 
 ## 4. Career breadth makes it real
-- A real senior engineer's stack is wider than one posting. Besides the posting's skills, each role names the
-  technologies that work really involves: first the ones the candidate used there (listed under Career
-  breadth), then the surrounding ecosystem a senior engineer with this stack uses in that kind of product
-  (testing frameworks, CI/CD, observability, security, data stores, cloud services, messaging, libraries).
-- Breadth never displaces the posting's skills: in the two most recent roles the posting's stack leads.
+- A real senior engineer's stack is wider than one posting. Besides the supported posting skills, each recent
+  role should also name technologies from that role's own stack (listed under Career breadth / own stack).
+  Prefer tools the candidate actually used there. Do not invent ecosystem tools the profile never names.
+- Breadth never displaces the posting's supported skills in the roles that host them.
 - Only technologies that existed while the role ran.
 
 ## 5. Cover what the posting asks for
@@ -130,11 +131,11 @@ TAILORING_FORMAT_CONTRACT = """
 - Career facts: company, title, dates, location and employment type verbatim; one work_experience entry per
   role in Career facts, in the same order; each role keeps its product and domain.
 - Each role's bullet count stays inside its Bullets range and its scope matches its Scope line.
-- Target stack: every primary skill in a bullet and used_skills of each of the two most recent roles (unless
-  that role predates it); every other posting skill in at least one bullet; every Target stack technology in
-  technical_skills. At least two technologies beyond the posting's in each of the two most recent roles.
-  Nothing a role's dates predate. At most 6 technologies or posting terms per bullet; the posting's domain
-  and compliance vocabulary only in the two most recent roles.
+- Target stack: every primary skill in a bullet and used_skills of at least one of the two most recent roles
+  that can host it; every other posting skill in at least one bullet; every Target stack technology in
+  technical_skills. Prefer two technologies from each recent role's own stack beyond the posting's; never
+  invent tools the profile never names. Nothing a role's dates predate. At most 6 technologies or posting
+  terms per bullet; the posting's domain and compliance vocabulary only in the two most recent roles.
 - Numbers only from the same company's reusable results.
 - `project_description`: 1-2 sentences written for this posting that introduce the role's own bullets: the
   same product, the system the bullets build, and only technologies those bullets name.
@@ -184,15 +185,21 @@ TAILORING_USER_TEMPLATE = """## Career facts (from the original resume)
 
 ---
 
+## Project evidence (optional depth for companies in Career facts)
+{project_evidence_context}
+
+---
+
 ## Execution checklist
 1. Read the career as a progression: total years, each role's tenure, stage and Scope.
-2. For each Must-cover requirement and each Target stack skill, decide which of the two most recent roles
-   shows it, inside that role's own product and domain.
+2. For each Must-cover requirement and each Target stack skill, decide which one of the two most recent roles
+   shows it, inside that role's own product and domain (prefer the most recent that can host it).
 3. Write every role's bullets fresh, at its stage's depth and inside its Bullets range; the two most recent
    roles' first bullets match the posting's primary function.
-4. Tick off the Target stack: each primary skill in a bullet and used_skills of both recent roles, each
-   other skill in at least one bullet; older roles keep their own product, domain and stack.
-5. Add each role's breadth: the technologies it really used and the ecosystem around the posting's stack.
+4. Tick off the Target stack: each primary skill in a bullet and used_skills of one recent role, each other
+   skill in at least one bullet; older roles keep their own product, domain and stack.
+5. Add each role's breadth from technologies it really used (own stack). Project evidence may deepen work at
+   matching companies; never invent employers, metrics, or tools the profile and evidence do not support.
 6. Attach each company's reusable results to the new work they fit; no other numbers.
 7. Write each role's project_description from its finished bullets: same product, the system they build,
    their technologies (the posting's first), never the original resume's stack or wording.

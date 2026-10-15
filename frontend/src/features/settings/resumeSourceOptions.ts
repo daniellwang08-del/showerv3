@@ -15,13 +15,13 @@ export const RESUME_SOURCE_OPTIONS: { value: ApplicationResumeSource; label: str
 
 export const TAILORING_STRATEGY_OPTIONS: { value: TailoringStrategy; label: string; hint: string }[] = [
   {
-    value: 'job_first',
-    label: 'Rebuild around the job',
-    hint: 'Keeps your employers, titles, dates, education and each company\'s product, then writes every role around the job\'s required skills so they read as your main stack. Aims for a 98% skills and experience fit.',
-  },
-  {
     value: 'evidence',
     label: 'Stay close to my resume',
-    hint: 'Rewrites and reorders your own experience for the job. A required skill your resume never mentions is added to one role only.',
+    hint: 'Rewrites and reorders your own experience for the job. Skills the resume never mentions stay out, even if the posting requires them. Recommended for interviews you can defend.',
+  },
+  {
+    value: 'job_first',
+    label: 'Rebuild around the job',
+    hint: 'Keeps your employers, titles, dates, education and each company\'s product, then rewrites every role to emphasize the job\'s required skills. Can invent stack history under real employers; use only if you accept that risk.',
   },
 ];

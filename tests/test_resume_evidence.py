@@ -10,6 +10,7 @@ from app.utils.resume_evidence import (
     enforce_role_evidence,
     expand_acronyms_once,
     is_mentioned,
+    ownership_upgrades,
     parse_profile_roles,
     parse_profile_skills,
     split_skill_items,
@@ -86,9 +87,48 @@ def test_split_skill_items_keeps_concepts_together():
 
 def test_aliases_and_word_boundaries():
     assert is_mentioned("Kubernetes", "deployed on EKS")
+    assert not is_mentioned("EKS", "deployed on Kubernetes")
+    assert not is_mentioned("GKE", "ran Kubernetes clusters")
     assert is_mentioned("PostgreSQL", "tuned Postgres queries")
+    assert is_mentioned("EC2", "Amazon EC2 instances")
+    assert is_mentioned("SQS", "Amazon SQS queues")
+    assert is_mentioned("Cassandra", "Apache Cassandra clusters")
     assert not is_mentioned("Java", "JavaScript services")
     assert not is_mentioned("Go", "Google Cloud")
+
+
+def test_enforce_demotes_k8s_specializations_in_bullets():
+    profile = PROFILE.replace(
+        "Technologies: Python, AWS, Lambda",
+        "Technologies: Python, AWS, Lambda, Kubernetes",
+    )
+    resume = _resume()
+    resume["work_experience"][0]["used_skills"] = "Python, EKS, Lambda"
+    resume["work_experience"][0]["bullets"] = [
+        "Ran billing workers on **EKS** and **GKE** after the Lambda migration.",
+    ]
+    out = enforce_role_evidence(resume, profile)
+    first = out["work_experience"][0]
+    assert first["used_skills"] == "Python, Kubernetes, Lambda"
+    assert first["bullets"] == [
+        "Ran billing workers on **Kubernetes** and **Kubernetes** after the Lambda migration.",
+    ]
+    assert unattributed_role_terms(out, profile, extra_terms=["EKS", "GKE"]) == {}
+
+
+def test_ownership_upgrade_flags_stronger_verbs():
+    resume = enforce_role_evidence(_resume(), PROFILE)
+    resume["work_experience"][1]["bullets"] = [
+        "Spearheaded a rewrite of the C# order service for large device fleets.",
+    ]
+    assert ownership_upgrades(resume, PROFILE) == {1: ["Spearheaded"]}
+    issues = tailored_resume_quality_issues(resume, profile_text=PROFILE)
+    assert "work_experience[1]_ownership_upgrade" in issues
+    note = quality_retry_instructions(resume, issues, profile_text=PROFILE)
+    assert "Globex: bullets open with Spearheaded" in note
+    assert "\u2014" not in note
+    # Acme already uses Led; the same verb strength is allowed.
+    assert 0 not in ownership_upgrades(resume, PROFILE)
 
 
 def test_enforce_role_evidence_restores_facts_and_filters_skills():

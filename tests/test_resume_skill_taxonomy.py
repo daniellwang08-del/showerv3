@@ -21,6 +21,11 @@ def test_category_names_drop_filler_and_join_noise():
     assert normalize_skill_category("Programming Languages") == "Languages"
     assert normalize_skill_category("Front-End") == "Frontend"
     assert normalize_skill_category("**Backend**:") == "Backend"
+    assert normalize_skill_category("Tooling") == "DevOps"
+    assert normalize_skill_category("Compliance") == "Security"
+    assert normalize_skill_category("Automation") == "Testing"
+    assert normalize_skill_category("BI") == "Analytics"
+    assert normalize_skill_category("Pipelines") == "Data Engineering"
 
 
 def test_category_names_keep_meaningful_terms():

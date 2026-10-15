@@ -965,13 +965,10 @@ async def run_tailored_content_generation(
                 profile_text = (
                     f"## Original Resume (sent with this application)\n{original_text}\n\n{profile_text}"
                 ).strip()
-        from app.services.resume_tailoring import STRATEGY_REBUILD, normalize_strategy
+        from app.services.resume_tailoring import normalize_strategy
 
-        job_first = not cover_only and normalize_strategy(
-            getattr(user, "resume_tailoring_strategy", None)
-        ) == STRATEGY_REBUILD
-        # Rebuild mode writes each role from the career facts alone, so per-company evidence is unused.
-        if user and source_docs and not job_first:
+        # Evidence pack deepens real company work for both strategies; Rebuild must not invent from it.
+        if user and source_docs and not cover_only:
             try:
                 project_evidence_context = await extract_job_evidence_pack(
                     job_text=job_text,
@@ -987,6 +984,7 @@ async def run_tailored_content_generation(
                     user_id=user_id,
                     doc_count=len(source_docs),
                     evidence_chars=len(project_evidence_context),
+                    strategy=normalize_strategy(getattr(user, "resume_tailoring_strategy", None)),
                 )
             except Exception as e:
                 logger.warning(

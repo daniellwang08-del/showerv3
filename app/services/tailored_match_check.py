@@ -29,7 +29,8 @@ logger = get_logger(__name__)
 
 FIT_DIMENSIONS = ("skills_match", "experience_match")
 
-REQUIREMENT_MATCH_TARGET = 98
+# Soft advisory for Rebuild retries: do not force rewrites until this rate; log in match_check.
+REQUIREMENT_MATCH_TARGET = 75
 # all-MiniLM-L6-v2 cosine between a posting line and one bullet. Bullets that do the work score
 # 0.45 to 0.8; unrelated bullets stay under 0.4.
 LINE_MATCH_SIMILARITY = 0.45
