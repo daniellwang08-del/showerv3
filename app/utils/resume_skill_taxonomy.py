@@ -473,14 +473,19 @@ _SKILL_DISPLAY: dict[str, str] = {
     "sagemaker": "SageMaker",
 }
 
-# Employment / ATS junk and concatenated non-skills that must never appear in the section.
-# CamelCase mashup patterns stay case-sensitive so real tech names (python, azure) are kept.
-_JUNK_SKILL_RE = re.compile(
-    r"(?i)^(?:c2c|w2|1099|corp[- ]?to[- ]?corp|contract(?:or)?|full[- ]?time|part[- ]?time|"
-    r"remote(?:new)?|onsite|hybrid|agentic)$|"
-    r"(?i)^(?:.*contractor|loginregister|talentnet|cloudops)$|"
-    r"^[A-Z][a-z]+(?:[A-Z]{2,}[A-Za-z]*)+$|"  # CapgeminiCONTRACTOR
-    r"^[A-Z]{2,}[a-z]+[A-Z]{2,}"  # YorkNYUS / RemoteNew mashups
+# Employment / ATS junk labels (case-insensitive). Kept separate from CamelCase mashup
+# patterns: Python rejects inline (?i) after the start of an expression, and a global
+# IGNORECASE would make the mashup patterns match ordinary tech names like "python".
+_JUNK_SKILL_LABELS_RE = re.compile(
+    r"^(?:c2c|w2|1099|corp[- ]?to[- ]?corp|contract(?:or)?|full[- ]?time|part[- ]?time|"
+    r"remote(?:new)?|onsite|hybrid|agentic|"
+    r".*contractor|loginregister|talentnet|cloudops)$",
+    re.IGNORECASE,
+)
+# CamelCase mashups such as CapgeminiCONTRACTOR / YorkNYUS (case-sensitive).
+_JUNK_SKILL_MASHUP_RE = re.compile(
+    r"^[A-Z][a-z]+(?:[A-Z]{2,}[A-Za-z]*)+$|"
+    r"^[A-Z]{2,}[a-z]+[A-Z]{2,}"
 )
 
 # Resume-standard category order (not JD-highlight order).
@@ -563,7 +568,7 @@ def is_junk_skill_item(item: str) -> bool:
     s = strip_bold_markers(item or "").strip()
     if not s or len(s) > 48:
         return True
-    if _JUNK_SKILL_RE.search(s):
+    if _JUNK_SKILL_LABELS_RE.fullmatch(s) or _JUNK_SKILL_MASHUP_RE.fullmatch(s):
         return True
     # CamelCase mashups with an embedded ALLCAPS run (CapgeminiCONTRACTOR).
     if re.search(r"[a-z][A-Z]{2,}", s) and " " not in s and "." not in s:
