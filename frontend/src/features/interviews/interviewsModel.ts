@@ -58,13 +58,205 @@ const COLUMNS: Omit<BoardColumn, 'processes'>[] = [
   { id: 'offer', label: 'Offer', stages: ['offer'] },
 ];
 
-/** Active processes grouped into board columns; closed ones are returned separately. */
-export function buildBoard(processes: InterviewProcess[]): { columns: BoardColumn[]; closed: InterviewProcess[] } {
-  const active = processes.filter((p) => p.status === 'active' && !['rejected', 'withdrawn'].includes(p.stage));
-  return {
-    columns: COLUMNS.map((c) => ({ ...c, processes: active.filter((p) => c.stages.includes(p.stage)) })),
-    closed: processes.filter((p) => !active.includes(p)),
+const time = (iso: string | null | undefined) => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(t) ? null : t;
+};
+
+/** Column order: soonest upcoming round first, then the most recent activity. */
+export function compareByDate(a: InterviewProcess, b: InterviewProcess, now = Date.now()): number {
+  const upcoming = (p: InterviewProcess) => {
+    const t = time(p.next_event?.scheduled_at);
+    return t !== null && t >= now ? t : null;
   };
+  const ua = upcoming(a);
+  const ub = upcoming(b);
+  if (ua !== null || ub !== null) {
+    if (ua === null) return 1;
+    if (ub === null) return -1;
+    return ua - ub;
+  }
+  return (time(b.last_activity_at) ?? 0) - (time(a.last_activity_at) ?? 0);
+}
+
+/** Active processes grouped into board columns; closed ones are returned separately. */
+export function buildBoard(
+  processes: InterviewProcess[],
+  now = Date.now(),
+): { columns: BoardColumn[]; closed: InterviewProcess[] } {
+  const active = processes.filter((p) => p.status === 'active' && !['rejected', 'withdrawn'].includes(p.stage));
+  const byDate = (a: InterviewProcess, b: InterviewProcess) => compareByDate(a, b, now);
+  return {
+    columns: COLUMNS.map((c) => ({ ...c, processes: active.filter((p) => c.stages.includes(p.stage)).sort(byDate) })),
+    closed: processes
+      .filter((p) => !active.includes(p))
+      .sort((a, b) => (time(b.last_activity_at) ?? 0) - (time(a.last_activity_at) ?? 0)),
+  };
+}
+
+/** Events newest first by their date: the interview time, else when the email arrived. */
+export function eventsByDate(events: InterviewEvent[]): InterviewEvent[] {
+  const key = (e: InterviewEvent) => time(e.scheduled_at) ?? time(e.email_date) ?? 0;
+  return [...events].sort((a, b) => key(b) - key(a) || (time(b.email_date) ?? 0) - (time(a.email_date) ?? 0));
+}
+
+// ── interview rounds ────────────────────────────────────────────────────────
+
+export type RoundType = 'screen' | 'assessment' | 'coding' | 'design' | 'culture' | 'manager' | 'onsite' | 'other';
+
+export const ROUND_META: Record<RoundType, { label: string; dot: string; tone: string }> = {
+  screen: { label: 'Screen', dot: 'bg-sky-500', tone: 'bg-sky-500/10 text-sky-700 dark:text-sky-300' },
+  assessment: { label: 'Assessment', dot: 'bg-amber-500', tone: 'bg-amber-500/10 text-amber-700 dark:text-amber-300' },
+  coding: { label: 'Coding', dot: 'bg-violet-500', tone: 'bg-violet-500/10 text-violet-700 dark:text-violet-300' },
+  design: { label: 'System design', dot: 'bg-indigo-500', tone: 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-300' },
+  culture: { label: 'Culture fit', dot: 'bg-teal-500', tone: 'bg-teal-500/10 text-teal-700 dark:text-teal-300' },
+  manager: { label: 'Hiring manager', dot: 'bg-orange-500', tone: 'bg-orange-500/10 text-orange-700 dark:text-orange-300' },
+  onsite: { label: 'Onsite / panel', dot: 'bg-fuchsia-500', tone: 'bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300' },
+  other: { label: 'Interview', dot: 'bg-muted-foreground/60', tone: 'bg-muted text-muted-foreground' },
+};
+
+/** Which kind of round an event is, from its kind and wording. */
+export function roundType(event: Pick<InterviewEvent, 'kind' | 'title' | 'summary'>): RoundType {
+  const text = `${event.title ?? ''} ${event.summary ?? ''}`.toLowerCase();
+  if (event.kind === 'recruiter_screen') return 'screen';
+  if (event.kind === 'assessment') return 'assessment';
+  if (event.kind === 'hiring_manager' || /hiring manager|manager (interview|round|chat|call)/.test(text)) return 'manager';
+  if (/\bdesign\b|architect|whiteboard/.test(text)) return 'design';
+  if (event.kind === 'behavioral' || /culture|values|behavio|team fit|bar raiser/.test(text)) return 'culture';
+  if (event.kind === 'technical' || /\bcod(e|ing)\b|technical|programming|algorithm|leetcode|pair/.test(text)) return 'coding';
+  if (event.kind === 'onsite' || event.kind === 'final' || /on-?site|\bloop\b|final|panel|superday/.test(text)) return 'onsite';
+  if (/screen|recruiter|intro call|phone call/.test(text)) return 'screen';
+  return 'other';
+}
+
+export type ProcessStep = {
+  key: string;
+  type: RoundType;
+  title: string;
+  /** Interview time, when one is set. */
+  at: string | null;
+  /** What the step is ordered by: its interview time, else when the email arrived. */
+  date: string | null;
+  status: InterviewEventStatus;
+  /** Cancelled because a later round of the same type replaced it. */
+  rescheduled: boolean;
+  /** The newest email about this step. */
+  event: InterviewEvent;
+};
+
+const NOT_A_STEP = new Set<InterviewEventKind>(['application_received', 'rejection', 'offer']);
+const NOISE_WORDS = /\b(reminder|rescheduled?|cancell?ed|cancellation|confirm(ed|ation)?|updated?|invit(e|ation)|re|fwd?)\b/g;
+const NOISY_TITLE = /reminder|cancel|reschedul/i;
+
+function normTitle(title: string): string {
+  return title.toLowerCase().replace(NOISE_WORDS, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+const byEmail = (a: InterviewEvent, b: InterviewEvent) => (time(a.email_date) ?? 0) - (time(b.email_date) ?? 0);
+
+/**
+ * A process's interview rounds, oldest first. Reminders, confirmations and
+ * reschedules of one round collapse into a single step; a request to pick a
+ * time drops once that round is booked, and until then sits after the booked rounds.
+ */
+export function processSteps(process: Pick<InterviewProcess, 'events'>): ProcessStep[] {
+  const groups = new Map<string, InterviewEvent[]>();
+  for (const event of process.events) {
+    if (NOT_A_STEP.has(event.kind) || event.status === 'info') continue;
+    const type = roundType(event);
+    const at = time(event.scheduled_at);
+    const key = at !== null ? `${type}@${at}` : `${type}#${normTitle(eventTitle(event))}`;
+    groups.set(key, [...(groups.get(key) ?? []), event]);
+  }
+
+  let steps: ProcessStep[] = [...groups.entries()].map(([key, events]) => {
+    const sorted = [...events].sort(byEmail);
+    const latest = sorted[sorted.length - 1];
+    let status = latest.status;
+    if (status === 'scheduled' && sorted.some((e) => e.status === 'completed')) status = 'completed';
+    const named = sorted.find((e) => !NOISY_TITLE.test(eventTitle(e))) ?? sorted[0];
+    const at = latest.scheduled_at ?? sorted.find((e) => e.scheduled_at)?.scheduled_at ?? null;
+    return {
+      key,
+      type: roundType(named),
+      title: eventTitle(named),
+      at,
+      date: at ?? sorted[0].email_date,
+      status,
+      rescheduled: false,
+      event: latest,
+    };
+  });
+
+  const emailTime = (s: ProcessStep) => time(s.event.email_date) ?? 0;
+  steps = steps.filter(
+    (s) =>
+      !(s.status === 'needs_scheduling' && !s.at) ||
+      !steps.some((o) => o !== s && o.type === s.type && o.at && emailTime(o) >= emailTime(s)),
+  );
+  for (const s of steps) {
+    if (s.status !== 'cancelled') continue;
+    const sAt = time(s.date) ?? 0;
+    s.rescheduled = steps.some((o) => o.type === s.type && o.status !== 'cancelled' && (time(o.date) ?? 0) > sAt);
+  }
+  const open = (s: ProcessStep) => !s.at && (s.status === 'needs_scheduling' || s.status === 'action_required');
+  return steps.sort((a, b) => {
+    const ta = open(a) ? null : time(a.date);
+    const tb = open(b) ? null : time(b.date);
+    if (ta === null || tb === null) return ta === null ? (tb === null ? 0 : 1) : -1;
+    return ta - tb || emailTime(a) - emailTime(b);
+  });
+}
+
+/** Rounds the emails say are still to come, as `{ type, title }`; review and wait notes are left out. */
+export function plannedSteps(
+  process: Pick<InterviewProcess, 'remaining_steps'>,
+  steps: ProcessStep[] = [],
+): { type: RoundType; title: string }[] {
+  const have = new Set(steps.map((s) => normTitle(s.title)));
+  return (process.remaining_steps ?? [])
+    .map((text) => String(text || '').trim())
+    .filter((text) => text && /interview|round|call|screen|onsite|on-site|panel|chat|meet/i.test(text))
+    .filter((text) => !/\b(review|wait|hear back|update|decision)\b/i.test(text) && !have.has(normTitle(text)))
+    .map((text) => ({ type: roundType({ kind: 'other', title: text, summary: null }), title: text }));
+}
+
+/** The step the candidate is heading to: the next booked round, else an open request. */
+export function upcomingStep(steps: ProcessStep[], now = Date.now()): ProcessStep | null {
+  const booked = steps.find((s) => s.status === 'scheduled' && s.at && Date.parse(s.at) >= now);
+  if (booked) return booked;
+  return steps.find((s) => s.status === 'needs_scheduling' || s.status === 'action_required') ?? null;
+}
+
+export type InterviewLane = { process: InterviewProcess; steps: ProcessStep[]; next: ProcessStep | null };
+export type LaneGroup = { id: RoundType | 'waiting'; label: string; lanes: InterviewLane[] };
+
+/**
+ * Interviewing processes as sub-lists keyed by the kind of round coming up
+ * (coding, system design, culture fit, ...), soonest first. Processes with
+ * nothing booked or requested wait for feedback at the end.
+ */
+export function interviewLanes(processes: InterviewProcess[], now = Date.now()): LaneGroup[] {
+  const lanes = processes.map((process) => {
+    const steps = processSteps(process);
+    return { process, steps, next: upcomingStep(steps, now) };
+  });
+  const nextTime = (l: InterviewLane) => time(l.next?.at) ?? Number.MAX_SAFE_INTEGER;
+  const groups = new Map<LaneGroup['id'], InterviewLane[]>();
+  for (const lane of lanes) {
+    const id = lane.next ? lane.next.type : 'waiting';
+    groups.set(id, [...(groups.get(id) ?? []), lane]);
+  }
+  return [...groups.entries()]
+    .map(([id, items]) => ({
+      id,
+      label: id === 'waiting' ? 'Waiting on feedback' : `Up next: ${ROUND_META[id].label}`,
+      lanes: items.sort((a, b) => nextTime(a) - nextTime(b) || compareByDate(a.process, b.process, now)),
+    }))
+    .sort((a, b) => {
+      if (a.id === 'waiting' || b.id === 'waiting') return a.id === 'waiting' ? 1 : -1;
+      return nextTime(a.lanes[0]) - nextTime(b.lanes[0]);
+    });
 }
 
 export type UpcomingItem = { event: InterviewEvent; process: InterviewProcess };

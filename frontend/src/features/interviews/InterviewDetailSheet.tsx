@@ -51,6 +51,7 @@ import {
   dateTimeLabel,
   EVENT_KINDS,
   EVENT_STATUS_META,
+  eventsByDate,
   eventTitle,
   fromLocalInput,
   KIND_LABEL,
@@ -201,7 +202,7 @@ export function InterviewDetailSheet({ process, onDeleted }: { process: Intervie
         <Block title="Timeline">
           {process.events.length ? (
             <ol className="relative space-y-4 border-l border-border/70 pl-5">
-              {[...process.events].reverse().map((event) => (
+              {eventsByDate(process.events).map((event) => (
                 <TimelineItem key={event.id} event={event} />
               ))}
             </ol>

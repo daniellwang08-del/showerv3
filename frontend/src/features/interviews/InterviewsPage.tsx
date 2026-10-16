@@ -193,7 +193,7 @@ export function InterviewsPage() {
     <PageLayout
       title="Interviews"
       description="Every interview, stage and next step across your applications, kept up to date from your email."
-      width="wide"
+      width="full"
       variant="hero"
       icon={CalendarClock}
       meta={meta}
@@ -430,7 +430,7 @@ function PipelineView({
 
       <section aria-label="Pipeline" className="space-y-3">
         <h2 className="text-sm font-semibold">Pipeline</h2>
-        <InterviewBoard processes={processes} onOpen={onOpen} />
+        <InterviewBoard processes={processes} onOpen={onOpen} now={now} />
       </section>
     </div>
   );

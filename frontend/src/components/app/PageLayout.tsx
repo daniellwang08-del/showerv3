@@ -20,7 +20,7 @@ export function PageLayout({
   description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
-  width?: 'narrow' | 'default' | 'wide';
+  width?: 'narrow' | 'default' | 'wide' | 'full';
   className?: string;
   /** `hero` adds the ambient backdrop and an aurora header card. */
   variant?: 'plain' | 'hero';
@@ -41,6 +41,7 @@ export function PageLayout({
           width === 'narrow' && 'max-w-2xl',
           width === 'default' && 'max-w-4xl',
           width === 'wide' && 'max-w-6xl',
+          width === 'full' && 'max-w-none lg:px-8',
           className,
         )}
       >

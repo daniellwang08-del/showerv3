@@ -126,6 +126,47 @@ describe('InterviewsPage', () => {
     expect(mocked.syncInterviews).not.toHaveBeenCalled();
   });
 
+  it('lays out every interview round of a company on one line, in date order', async () => {
+    const day = (h: number) => new Date(new Date(Date.now() + 3 * 86_400_000).setHours(h, 0, 0, 0)).toISOString();
+    const sent = new Date(Date.now() - 86_400_000).toISOString();
+    mocked.fetchInterviews.mockResolvedValue(
+      makeOverview({
+        processes: [
+          makeProcess({
+            id: 'p9',
+            company: 'Hooli',
+            stage: 'interviewing',
+            remaining_steps: ['Culture interview with the team'],
+            events: [
+              makeEvent({ id: 'c', kind: 'behavioral', title: 'Values interview', scheduled_at: day(15), email_date: sent }),
+              makeEvent({ id: 'a', kind: 'technical', title: 'Live coding', scheduled_at: day(10), email_date: sent }),
+              makeEvent({ id: 'r', kind: 'technical', title: 'Reminder: Live coding', scheduled_at: day(10), email_date: sent }),
+              makeEvent({ id: 'b', kind: 'technical', title: 'System design', scheduled_at: day(12), email_date: sent }),
+              makeEvent({ id: 'n', kind: 'scheduling', status: 'needs_scheduling', title: 'Book your onsite loop', email_date: sent }),
+            ],
+          }),
+        ],
+      }),
+    );
+    renderPage();
+
+    const column = await screen.findByRole('region', { name: 'Interviewing column' });
+    const steps = within(column).getByRole('list', { name: 'Hooli interview steps' });
+    const names = within(steps)
+      .getAllByRole('button')
+      .map((el) => el.getAttribute('aria-label'));
+    expect(names).toEqual([
+      'Step 1, Live coding, Hooli',
+      'Step 2, System design, Hooli',
+      'Step 3, Values interview, Hooli',
+      'Step 4, Book your onsite loop, Hooli',
+    ]);
+    expect(steps).toHaveTextContent('Culture interview with the team');
+    expect(steps).toHaveTextContent('Coming up');
+    expect(within(column).getByRole('region', { name: 'Up next: Coding' })).toHaveTextContent('Hooli');
+    expect(within(column).getByRole('list', { name: 'Rounds by type' })).toHaveTextContent('System design 1');
+  });
+
   it('syncs automatically when the last sync is stale and on demand', async () => {
     mocked.fetchInterviews.mockResolvedValue(
       makeOverview({
