@@ -124,6 +124,21 @@ export async function fetchScraperStats(): Promise<ScraperStats> {
   return data;
 }
 
+export interface WeeklyProgress {
+  timezone: string;
+  days: number;
+  min_match_score: number;
+  series: Array<{ date: string; label: string; posted: number; recommended: number; applied: number }>;
+  totals: { posted: number; recommended: number; applied: number };
+}
+
+/** Daily new / above-minimum / applied counts for the last ``days`` local days. */
+export async function fetchWeeklyProgress(days: number): Promise<WeeklyProgress> {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const { data } = await apiClient.get('/jobs/dashboard/weekly-progress', { params: { timezone, days } });
+  return data;
+}
+
 export async function fetchAdminScraperStats(): Promise<AdminScraperStats> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const { data } = await apiClient.get('/scraper/stats/admin', { params: { timezone } });

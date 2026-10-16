@@ -24,7 +24,9 @@ export function makeStats(over: Partial<ScraperStats> = {}): ScraperStats {
     sheet_posted_jobs: 0,
     pumble_posted_jobs: 0,
     trends: {
-      labels: ['2026-09-27', '2026-09-28'],
+      labels: ['27', '28'],
+      dates: ['2026-09-27', '2026-09-28'],
+      applied: [0, 6],
       ready: [1, 2],
       available: [3, 4],
       remote: [5],

@@ -96,9 +96,10 @@ async def fetch_weekly_progress_series(
     days: int = 7,
 ) -> dict:
     start_utc, end_utc, day_list = recent_week_bounds_for_timezone(tz_name, days=days)
-    min_score = await UserRepository(session).get_effective_min_match_score(user_id)
+    users = UserRepository(session)
+    min_score = await users.get_effective_min_match_score(user_id)
 
-    visible = _visible_job_clause(user_id)
+    visible = _visible_job_clause(user_id, await users.get_country_preferences(user_id))
     added_at = _job_added_at_expr()
     added_day = _local_date_expr(added_at, tz_name)
 
@@ -189,7 +190,8 @@ async def fetch_board_trend_series(
                   and not marked applied ("Scored")
     """
     start_utc, end_utc, day_list = recent_week_bounds_for_timezone(tz_name, days=days)
-    visible = _visible_job_clause(user_id)
+    countries = await UserRepository(session).get_country_preferences(user_id)
+    visible = _visible_job_clause(user_id, countries)
     added_at = _job_added_at_expr()
     added_day = _local_date_expr(added_at, tz_name)
     is_remote = _is_remote_expr()
