@@ -274,10 +274,25 @@ async def fetch_board_trend_series(
         )
     ).all()
 
+    applied_day = _local_date_expr(ValidJobUserApplication.applied_at, tz_name)
+    applied_rows = (
+        await session.execute(
+            select(applied_day.label("day"), func.count().label("cnt"))
+            .where(
+                ValidJobUserApplication.user_id == user_id,
+                ValidJobUserApplication.applied_at >= start_utc,
+                ValidJobUserApplication.applied_at < end_utc,
+            )
+            .group_by(applied_day)
+        )
+    ).all()
+
     # Day-of-month numbers for the sparkline X-axis (e.g. 27, 28, …, 2).
     labels = [str(d.day) for d in day_list]
     return {
         "labels": labels,
+        "dates": [d.isoformat() for d in day_list],
+        "applied": _series_for_days(day_list, _rows_to_day_map(applied_rows)),
         "ready": _series_for_days(day_list, _rows_to_day_map(ready_rows)),
         "best": _series_for_days(day_list, _rows_to_day_map(best_rows)),
         "remote": _series_for_days(day_list, _rows_to_day_map(remote_rows)),

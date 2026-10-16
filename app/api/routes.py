@@ -7207,6 +7207,29 @@ async def trigger_resume_build(
     return {"success": True, "message": "Tailored content generation enqueued"}
 
 
+class ScoredReadyRequest(BaseModel):
+    job_ids: list[str] | None = Field(default=None, max_length=500)
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+@router.post("/jobs/scored/make-ready", dependencies=[Depends(get_current_user)])
+async def make_scored_jobs_ready(
+    body: ScoredReadyRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Build application documents for Scored jobs so they move to Ready to apply.
+
+    Follows the user's résumé preference: tailored résumé + cover letter, or the
+    original résumé as is with a cover letter only.
+    """
+    from app.services.scored_ready_service import queue_scored_jobs_ready
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return await queue_scored_jobs_ready(user_id, job_ids=body.job_ids, limit=body.limit)
+
+
 @router.get(
     "/jobs/valid/{job_id}/resume-build/download/{file_type}",
     dependencies=[Depends(get_current_user)],

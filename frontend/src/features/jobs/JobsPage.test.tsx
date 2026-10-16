@@ -142,6 +142,39 @@ describe('JobsPage', () => {
     expect(actions.setView).toHaveBeenCalledWith('applied_today');
   });
 
+  it('splits ready jobs into today and staged and charts the applied week', () => {
+    seed([makeJob()], {
+      stats: {
+        ready_jobs: 5,
+        today_ready_jobs: 2,
+        available_jobs: 7,
+        applied_today: 4,
+        trends: { applied: [1, 0, 3, 2, 0, 5, 4], dates: ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16'] },
+      },
+    } as never);
+    renderPage();
+    const summary = screen.getByLabelText('Job summary');
+    expect(summary).toHaveTextContent(/Today\s*2/);
+    expect(summary).toHaveTextContent(/Staged\s*3/);
+    expect(within(summary).getByRole('img', { name: 'Applications over the last 7 days' })).toBeInTheDocument();
+    expect(within(summary).getByText('15')).toBeInTheDocument();
+  });
+
+  it('runs scored jobs to ready from the Scored card', async () => {
+    const { apiClient } = await import('@/api/client');
+    const post = vi.mocked(apiClient.post);
+    post.mockResolvedValueOnce({
+      data: { queued: 7, already_running: 0, failed: 0, remaining: 0, resume_source: 'original', original_resume_missing: false },
+    });
+    const user = userEvent.setup();
+    seed([makeJob()], { stats: { ready_jobs: 0, available_jobs: 7, applied_today: 0 } } as never);
+    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Make scored jobs ready to apply' }));
+    await user.click(await screen.findByRole('button', { name: /^7\s*All$/ }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/jobs/scored/make-ready', { limit: 7 }));
+    expect(actions.bgRefreshJobs).toHaveBeenCalled();
+  });
+
   it('hides dismissed duplicates', () => {
     seed([makeJob({ title: 'Visible' }), makeJob({ title: 'Dismissed', user_status: 'duplicated' })]);
     renderPage();

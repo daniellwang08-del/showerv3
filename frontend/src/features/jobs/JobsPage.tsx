@@ -255,8 +255,11 @@ export function JobsPage() {
 
       <JobsSummary
         ready={stats?.ready_jobs}
+        todayReady={stats?.today_ready_jobs}
         scored={stats?.available_jobs}
         appliedToday={stats?.applied_today}
+        appliedWeek={stats?.trends?.applied}
+        weekDates={stats?.trends?.dates}
         activeView={s.view}
         onView={onView}
       />

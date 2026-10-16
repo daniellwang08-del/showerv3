@@ -148,6 +148,8 @@ class SourceStats(BaseModel):
 class BoardTrends(BaseModel):
     """Last-7-day daily counts for the four main board side tiles."""
     labels: list[str] = Field(default_factory=list)
+    dates: list[str] = Field(default_factory=list)
+    applied: list[int] = Field(default_factory=list)
     ready: list[int] = Field(default_factory=list)
     best: list[int] = Field(default_factory=list)
     remote: list[int] = Field(default_factory=list)

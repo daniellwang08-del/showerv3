@@ -187,6 +187,9 @@ export interface ScraperStats {
   /** Last-7-day daily series for the four main side tiles. */
   trends?: {
     labels?: string[];
+    /** ISO local dates matching each series index. */
+    dates?: string[];
+    applied?: number[];
     ready?: number[];
     best?: number[];
     remote?: number[];
