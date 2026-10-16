@@ -82,7 +82,8 @@ export interface SharedReport {
     summary: InterviewSummary;
   };
   activity: WeeklyProgress;
-  applications: { items: ReportApplication[]; lookback_days: number; all_time: number };
+  /** `items` holds the newest applications; `total` counts all of them in the lookback window. */
+  applications: { items: ReportApplication[]; total: number; lookback_days: number; all_time: number };
   pool: ReportPool | null;
 }
 

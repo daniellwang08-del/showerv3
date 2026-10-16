@@ -37,7 +37,7 @@ MAX_SHARES = 25
 MAX_EMAILS_PER_REQUEST = 10
 EXPIRY_CHOICES = (7, 30, 90)
 APPLICATIONS_LOOKBACK = timedelta(days=90)
-MAX_APPLICATIONS = 400
+MAX_APPLICATIONS = 1000
 ACTIVITY_DAYS = 30
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$", re.I)
@@ -387,6 +387,22 @@ async def _applications(session: AsyncSession, owner_id: str, since: datetime) -
     return apps[:MAX_APPLICATIONS]
 
 
+async def _applications_total(session: AsyncSession, owner_id: str, since: datetime) -> int:
+    marked = await session.execute(
+        select(func.count()).where(
+            ValidJobUserApplication.user_id == owner_id, ValidJobUserApplication.applied_at >= since
+        )
+    )
+    inbox_only = await session.execute(
+        select(func.count()).where(
+            MailApplication.user_id == owner_id,
+            MailApplication.applied_at >= since,
+            MailApplication.job_id.is_(None),
+        )
+    )
+    return int(marked.scalar_one() or 0) + int(inbox_only.scalar_one() or 0)
+
+
 async def _job_pool(session: AsyncSession, owner_id: str, tz_name: str | None) -> dict[str, Any] | None:
     from app.services.dashboard_stats import fetch_dashboard_stats
     from app.storage.user_repository import UserRepository
@@ -419,7 +435,8 @@ async def build_report(
     conn = await nylas_service.get_connection(session, owner_id)
     processes = await interview_service.list_processes(session, owner_id, None)
     clean = [sanitize_process(p, include_notes=include_notes) for p in processes]
-    applications = link_applications(await _applications(session, owner_id, _utcnow() - APPLICATIONS_LOOKBACK), clean)
+    since = _utcnow() - APPLICATIONS_LOOKBACK
+    applications = link_applications(await _applications(session, owner_id, since), clean)
     activity = await fetch_weekly_progress_series(session, owner_id, tz_name=tz_name, days=ACTIVITY_DAYS)
     total_applied = (
         await session.execute(select(func.count()).where(ValidJobUserApplication.user_id == owner_id))
@@ -440,6 +457,7 @@ async def build_report(
         "activity": activity,
         "applications": {
             "items": applications,
+            "total": await _applications_total(session, owner_id, since),
             "lookback_days": APPLICATIONS_LOOKBACK.days,
             "all_time": int(total_applied or 0),
         },

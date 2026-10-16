@@ -361,7 +361,7 @@ function ApplicationsCard({
   now: number;
   onOpen: (id: string) => void;
 }) {
-  const { items, lookback_days: lookback } = data.report.applications;
+  const { items, total, lookback_days: lookback } = data.report.applications;
   const [filter, setFilter] = useState<ApplicationFilter>('all');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE);
@@ -372,7 +372,11 @@ function ApplicationsCard({
     <SectionCard
       title="Applications"
       icon={ClipboardCheck}
-      description={`${fmt(items.length)} in the last ${lookback} days · ${fmt(counts.week)} this week`}
+      description={
+        total > items.length
+          ? `Latest ${fmt(items.length)} of ${fmt(total)} in the last ${lookback} days · ${fmt(counts.week)} this week`
+          : `${fmt(total)} in the last ${lookback} days · ${fmt(counts.week)} this week`
+      }
       actions={
         <div className="relative w-full sm:w-60">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />

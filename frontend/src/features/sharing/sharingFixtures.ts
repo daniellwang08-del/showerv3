@@ -65,7 +65,7 @@ export function makeReport(
         })),
         totals: { posted: 90, recommended: 30, applied: 14 },
       },
-      applications: { items: applications, lookback_days: 90, all_time: 120 },
+      applications: { items: applications, total: applications.length, lookback_days: 90, all_time: 120 },
       pool: {
         total_jobs: 800,
         scored_jobs: 600,
