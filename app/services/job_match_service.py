@@ -79,7 +79,6 @@ from app.utils.resume_keyword_emphasis import (
 from app.utils.resume_evidence import (
     build_role_evidence_block,
     build_source_facts_block,
-    cap_skills_section,
     copied_job_phrases,
     enforce_role_evidence,
     expand_acronyms_once,
@@ -89,9 +88,8 @@ from app.utils.resume_evidence import (
     unattributed_role_terms,
 )
 from app.utils.resume_skill_taxonomy import (
-    normalize_skill_categories,
     normalize_tailored_formatting,
-    rehome_misplaced_skills,
+    polish_technical_skills,
 )
 
 logger = get_logger(__name__)
@@ -1242,9 +1240,13 @@ async def generate_tailored_content_phase_b(
         resume = ensure_required_skills(resume, skill_plan, profile_truncated)
         resume = filter_technical_skills_to_evidence(resume, skill_plan, profile_truncated)
         if resume and resume.get("technical_skills"):
-            resume["technical_skills"] = cap_skills_section(
-                rehome_misplaced_skills(normalize_skill_categories(resume["technical_skills"])),
-                keep_skills_text,
+            resume["technical_skills"] = polish_technical_skills(
+                resume["technical_skills"],
+                candidates=list(skill_plan.supported_terms) if skill_plan else [],
+                posting_terms=list(job_anchors or []),
+                minimum=6,
+                max_items=56,
+                allow_related_pad=False,
             )
         return resume
 
@@ -1502,8 +1504,6 @@ async def _tailor_resume(
             return None
         resume = normalize_tailored_formatting(apply_keyword_emphasis_to_resume(resume, anchors))
         resume = expand_acronyms_once(resume, anchors)
-        if resume and resume.get("technical_skills"):
-            resume["technical_skills"] = rehome_misplaced_skills(resume["technical_skills"])
         return finalize_tailored_resume(resume, plan, profile_text, job_text)
 
     best: dict | None = None

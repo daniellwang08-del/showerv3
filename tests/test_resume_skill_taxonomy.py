@@ -8,6 +8,8 @@ from app.utils.resume_skill_taxonomy import (
     normalize_skill_category,
     normalize_skill_list,
     normalize_tailored_formatting,
+    polish_technical_skills,
+    professional_skill_label,
 )
 from app.utils.resume_text_format import parse_inline_markup
 
@@ -140,6 +142,41 @@ def test_emphasis_never_bolds_name_fragments():
     )
     assert out == "Machine learning engineer at BrightLane Market using **Python**"
     assert cap_bold_spans("Grew **BrightLane** **Market** sales", 3) == "Grew **BrightLane Market** sales"
+
+
+def test_professional_skill_label_fixes_common_casing():
+    assert professional_skill_label("aws") == "AWS"
+    assert professional_skill_label("kafka") == "Kafka"
+    assert professional_skill_label("typescript") == "TypeScript"
+    assert professional_skill_label("git") == "Git"
+    assert professional_skill_label(".Net") == ".NET"
+    assert professional_skill_label("kubernetes") == "Kubernetes"
+
+
+def test_polish_technical_skills_orders_pads_and_drops_junk():
+    rows = [
+        {"category": "Tools", "skills": "C2C, CapgeminiCONTRACTOR, YorkNYUS"},
+        {"category": "Machine Learning", "skills": "Agentic"},
+        {"category": "Cloud", "skills": "aws, azure"},
+        {"category": "Languages", "skills": "python, typescript"},
+        {"category": "Testing", "skills": "jest"},
+    ]
+    out = polish_technical_skills(
+        rows,
+        candidates=["Docker", "Kubernetes", "PostgreSQL", "Redis", "Node.js", "React"],
+        posting_terms=["aws", "typescript"],
+        minimum=6,
+        allow_related_pad=True,
+    )
+    cats = [r["category"] for r in out]
+    assert "Tools" not in cats
+    assert cats.index("Languages") < cats.index("Cloud")
+    by_cat = {r["category"]: r["skills"] for r in out}
+    assert "AWS" in by_cat["Cloud"] and "aws" not in by_cat["Cloud"]
+    assert "TypeScript" in by_cat["Languages"]
+    assert all(len(v.split(", ")) >= 5 for v in by_cat.values())
+    flat = ", ".join(by_cat.values())
+    assert "C2C" not in flat and "CapgeminiCONTRACTOR" not in flat and "Agentic" not in flat
 
 
 def test_normalize_tailored_formatting_end_to_end():

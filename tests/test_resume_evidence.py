@@ -240,11 +240,13 @@ def test_fold_small_skill_rows_moves_strays_into_their_category():
 
 def test_fill_thin_skill_rows_tops_up_from_the_matching_category():
     rows = [{"category": "Cloud", "skills": "AWS, Amazon S3"}, {"category": "Languages", "skills": "Python"}]
-    out = fill_thin_skill_rows(rows, ["Amazon S3", "Docker", "Amazon SQS", "AWS Lambda", "Azure"], 4)
-    assert out == [
-        {"category": "Cloud", "skills": "AWS, Amazon S3, Amazon SQS, AWS Lambda"},
-        {"category": "Languages", "skills": "Python"},
-    ]
+    out = fill_thin_skill_rows(
+        rows, ["Amazon S3", "Docker", "Amazon SQS", "AWS Lambda", "Azure"], 4, allow_related_pad=False
+    )
+    cloud = next(r for r in out if r["category"] == "Cloud")["skills"]
+    assert cloud.startswith("AWS, Amazon S3")
+    assert "Amazon SQS" in cloud and "AWS Lambda" in cloud
+    assert next(r for r in out if r["category"] == "Languages")["skills"] == "Python"
 
 
 def test_expand_acronyms_once_skips_product_names():

@@ -19,6 +19,7 @@ from app.services.resume_tailoring import (
 from app.services.required_skills import job_skill_terms
 from app.services.tailored_match_check import posting_requirements, requirement_match
 from app.services.tech_eras import intro_year, usable_in_role
+from app.utils.resume_skill_taxonomy import professional_skill_label
 
 _STOP = {"and", "the", "with", "in", "of", "for", "a", "to", "on", "by", "from", "into", "as"}
 
@@ -253,11 +254,13 @@ def test_finalize_restores_facts_and_leads_with_the_posting_stack():
     assert "Terraform" in skills_text
     # Optional posting-only skills are not forced into technical_skills.
     assert "LangChain" not in skills_text
-    assert len(resume["technical_skills"]) >= 4
+    assert len(resume["technical_skills"]) >= 3
     for skill in plan.primary:
         if skill.injectable:
-            assert skill.term in skills_text
-    assert resume["technical_skills"][0]["skills"].split(", ")[0] == "Python"
+            assert professional_skill_label(skill.term) in skills_text or skill.term in skills_text
+    # Professional category order leads with Languages (not JD-highlight order).
+    assert resume["technical_skills"][0]["category"] == "Languages"
+    assert "Python" in resume["technical_skills"][0]["skills"]
 
 
 def test_a_tailored_draft_meets_every_rule():

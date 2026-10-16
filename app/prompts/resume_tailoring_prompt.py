@@ -93,11 +93,16 @@ matching the posting's literal terms; and a hiring manager who must believe this
 - Tools inside that engagement follow the Target stack rules above.
 
 ## 9. technical_skills
-- 5-7 categories, at least 6 items each, at most 56 items.
+- 5-7 categories, at least 6 items each, at most 56 items. Never leave a category with only 1-2 items.
+- Order categories professionally for a senior engineer, not by which posting skill appears first.
+  Prefer: Languages, Backend, Frontend, Cloud, Databases, DevOps, Testing (adapt to the career; skip
+  empty ones). Do not lead with Tools, a one-off domain label, or JD-only categories.
+- Spell every technology professionally (AWS not aws, Kafka not kafka, TypeScript not typescript,
+  Git not git, .NET not .Net). Every item starts with a capital letter or standard product casing.
 - Every primary / required Target stack skill appears here AND in experience story (bullets or
   project_description). A listed skill with no story is not allowed.
 - Optional or nice-to-have skills may appear in bullets without being listed here.
-- Place items in the right category. No soft skills or methodologies unless the posting lists them.
+- Place items in the right category. No soft skills, employment labels (C2C, W2), or ATS junk.
 
 ## 10. ATS-safe text
 - Plain text only: straight quotes and apostrophes, hyphens, no symbols, emoji or decorative characters.
@@ -119,10 +124,10 @@ TAILORING_FORMAT_CONTRACT = """
 - Consulting roles: one real client/project spine when Career facts provides a real name.
 - `project_description`: 1-2 sentences that introduce the role's bullets.
 - `profile_summary`: 3-4 sentences, at most 80 words, at most 3 technology names.
-- `technical_skills`: 5-7 categories, each with at least 6 items, at most 56 items. Short Title Case
-  category names (Languages, Frontend, Backend, Databases, Cloud, DevOps, Testing, Machine Learning,
-  Data Processing). No "&" or "/" joins, never "Skills", "Other" or "Miscellaneous". Each technology in
-  exactly one category.
+- `technical_skills`: 5-7 categories, each with at least 6 items, at most 56 items. Professional
+  category order (Languages, Backend, Frontend, Cloud, Databases, DevOps, Testing, ...). Short Title
+  Case names. Professional technology casing. No "&" or "/" joins, never "Skills", "Other",
+  "Miscellaneous", or 1-item categories. Each technology in exactly one category.
 - No run of 6 or more words copied from the job description or the original resume.
 - `technical_skills[].skills` and `used_skills`: plain text, comma-space separated, no `**`.
 - `**bold**` only inside `profile_summary`, `project_description` and bullets: at most 2 spans per bullet.

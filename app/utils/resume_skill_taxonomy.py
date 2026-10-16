@@ -319,21 +319,411 @@ def fold_small_skill_rows(skills: list[dict], minimum: int = 3) -> list[dict]:
     return [{**r, "skills": ", ".join(b)} for r, b in zip(rows, buckets) if b]
 
 
-def fill_thin_skill_rows(skills: list[dict], candidates: list[str], minimum: int) -> list[dict]:
-    """Top up categories under *minimum* items with *candidates* the lexicon files under them."""
+# Professional resume spelling for lexicon canonical keys and common aliases.
+_SKILL_DISPLAY: dict[str, str] = {
+    "aws": "AWS",
+    "amazon web services": "AWS",
+    "amazon s3": "Amazon S3",
+    "amazon sqs": "Amazon SQS",
+    "amazon sns": "Amazon SNS",
+    "amazon ec2": "Amazon EC2",
+    "aws lambda": "AWS Lambda",
+    "aws networking": "AWS Networking",
+    "gcp": "GCP",
+    "sql": "SQL",
+    "html": "HTML",
+    "html5": "HTML5",
+    "css": "CSS",
+    "css3": "CSS3",
+    "typescript": "TypeScript",
+    "javascript": "JavaScript",
+    "python": "Python",
+    "java": "Java",
+    "c#": "C#",
+    "c++": "C++",
+    "go": "Go",
+    "golang": "Go",
+    "rust": "Rust",
+    "kotlin": "Kotlin",
+    "swift": "Swift",
+    "bash": "Bash",
+    "powershell": "PowerShell",
+    "kafka": "Kafka",
+    "apache kafka": "Apache Kafka",
+    "postgresql": "PostgreSQL",
+    "postgres": "PostgreSQL",
+    "mongodb": "MongoDB",
+    "mysql": "MySQL",
+    "redis": "Redis",
+    "elasticsearch": "Elasticsearch",
+    "dynamodb": "DynamoDB",
+    "sql server": "SQL Server",
+    "mssql": "SQL Server",
+    "node.js": "Node.js",
+    "nodejs": "Node.js",
+    "node": "Node.js",
+    "next.js": "Next.js",
+    "express.js": "Express.js",
+    "express": "Express.js",
+    "react": "React",
+    "react native": "React Native",
+    "angular": "Angular",
+    "vue": "Vue",
+    "vue.js": "Vue.js",
+    "jquery": "jQuery",
+    "graphql": "GraphQL",
+    "rest": "REST",
+    "rest apis": "REST APIs",
+    "rest api": "REST APIs",
+    "grpc": "gRPC",
+    "ci/cd": "CI/CD",
+    "git": "Git",
+    "github": "GitHub",
+    "github actions": "GitHub Actions",
+    "gitlab": "GitLab",
+    "docker": "Docker",
+    "kubernetes": "Kubernetes",
+    "k8s": "Kubernetes",
+    "terraform": "Terraform",
+    "ansible": "Ansible",
+    "jenkins": "Jenkins",
+    "linux": "Linux",
+    ".net": ".NET",
+    ".net core": ".NET Core",
+    "asp.net": "ASP.NET",
+    "asp.net core": "ASP.NET Core",
+    "fastapi": "FastAPI",
+    "django": "Django",
+    "flask": "Flask",
+    "spring": "Spring",
+    "spring boot": "Spring Boot",
+    "pytest": "pytest",
+    "jest": "Jest",
+    "xunit": "xUnit",
+    "playwright": "Playwright",
+    "cypress": "Cypress",
+    "selenium": "Selenium",
+    "azure": "Azure",
+    "iam": "IAM",
+    "s3": "S3",
+    "ec2": "EC2",
+    "rds": "RDS",
+    "sqs": "SQS",
+    "sns": "SNS",
+    "lambda": "Lambda",
+    "oauth": "OAuth",
+    "oidc": "OIDC",
+    "saml": "SAML",
+    "jwt": "JWT",
+    "llm": "LLM",
+    "llms": "LLMs",
+    "ai": "AI",
+    "ml": "ML",
+    "mlops": "MLOps",
+    "etl": "ETL",
+    "elt": "ELT",
+    "iac": "IaC",
+    "sre": "SRE",
+    "api": "API",
+    "apis": "APIs",
+    "db2": "DB2",
+    "nosql": "NoSQL",
+    "microservices": "Microservices",
+    "event-driven": "Event-driven",
+    "rabbitmq": "RabbitMQ",
+    "datadog": "Datadog",
+    "pagerduty": "PagerDuty",
+    "splunk": "Splunk",
+    "prometheus": "Prometheus",
+    "grafana": "Grafana",
+    "opentelemetry": "OpenTelemetry",
+    "application insights": "Application Insights",
+    "active directory": "Active Directory",
+    "scikit-learn": "scikit-learn",
+    "pytorch": "PyTorch",
+    "tensorflow": "TensorFlow",
+    "rxjs": "RxJS",
+    "scss": "SCSS",
+    "sass": "Sass",
+    "redux": "Redux",
+    "webpack": "Webpack",
+    "vite": "Vite",
+    "tailwind css": "Tailwind CSS",
+    "bootstrap": "Bootstrap",
+    "jira": "Jira",
+    "confluence": "Confluence",
+    "figma": "Figma",
+    "airflow": "Airflow",
+    "spark": "Spark",
+    "dbt": "dbt",
+    "snowflake": "Snowflake",
+    "clickhouse": "ClickHouse",
+    "bigquery": "BigQuery",
+    "tableau": "Tableau",
+    "looker": "Looker",
+    "power bi": "Power BI",
+    "nginx": "Nginx",
+    "helm": "Helm",
+    "istio": "Istio",
+    "vault": "Vault",
+    "pulumi": "Pulumi",
+    "packer": "Packer",
+    "mlflow": "MLflow",
+    "kubeflow": "Kubeflow",
+    "sagemaker": "SageMaker",
+}
+
+# Employment / ATS junk and concatenated non-skills that must never appear in the section.
+# CamelCase mashup patterns stay case-sensitive so real tech names (python, azure) are kept.
+_JUNK_SKILL_RE = re.compile(
+    r"(?i)^(?:c2c|w2|1099|corp[- ]?to[- ]?corp|contract(?:or)?|full[- ]?time|part[- ]?time|"
+    r"remote(?:new)?|onsite|hybrid|agentic)$|"
+    r"(?i)^(?:.*contractor|loginregister|talentnet|cloudops)$|"
+    r"^[A-Z][a-z]+(?:[A-Z]{2,}[A-Za-z]*)+$|"  # CapgeminiCONTRACTOR
+    r"^[A-Z]{2,}[a-z]+[A-Z]{2,}"  # YorkNYUS / RemoteNew mashups
+)
+
+# Resume-standard category order (not JD-highlight order).
+_CATEGORY_ORDER: tuple[str, ...] = (
+    "Languages",
+    "Backend",
+    "Frontend",
+    "Mobile",
+    "Cloud",
+    "Databases",
+    "Data Engineering",
+    "Data",
+    "DevOps",
+    "Infrastructure as Code",
+    "Infrastructure",
+    "Containers",
+    "Messaging",
+    "Streaming",
+    "Observability",
+    "Machine Learning",
+    "MLOps",
+    "LLMs",
+    "Security",
+    "Testing",
+    "Analytics",
+    "Embedded",
+    "Product",
+    "Tools",
+)
+
+
+def professional_skill_label(item: str) -> str:
+    """Professional resume spelling: aws -> AWS, kafka -> Kafka, typescript -> TypeScript."""
+    raw = strip_bold_markers(item or "").strip().rstrip(".")
+    if not raw:
+        return ""
+    key = re.sub(r"\s+", " ", raw).strip().lower()
+    if key in _SKILL_DISPLAY:
+        return _SKILL_DISPLAY[key]
+    # Qualifiers: "typescript (basic)" -> "TypeScript (basic)"
+    m = re.match(r"^(.+?)\s*(\([^)]*\))\s*$", raw)
+    if m:
+        base = professional_skill_label(m.group(1))
+        return f"{base} {m.group(2).strip()}" if base else raw
+    # Multi-word vendor names: title each token; do not collapse "Amazon SQS" to "SQS".
+    if " " in key:
+        parts = []
+        for w in raw.split():
+            lk = w.lower()
+            if lk in _SKILL_DISPLAY:
+                parts.append(_SKILL_DISPLAY[lk])
+            elif w.isupper() or any(ch in ".+#" for ch in w):
+                parts.append(w)
+            else:
+                parts.append(w[:1].upper() + w[1:] if w else w)
+        return " ".join(parts)
+    try:
+        from app.services.skill_lexicon import extract_skills
+
+        hits = extract_skills(raw)
+        if len(hits) == 1:
+            canon = next(iter(hits))
+            if canon in _SKILL_DISPLAY:
+                return _SKILL_DISPLAY[canon]
+    except Exception:  # noqa: BLE001 - display must never break finalize
+        pass
+    # Already looks professional (Node.js, ASP.NET Core, GitHub Actions).
+    if any(ch.isupper() for ch in raw[1:]) or any(ch in ".+#" for ch in raw):
+        return raw[:1].upper() + raw[1:] if raw[:1].islower() and raw[:1].isalpha() else raw
+    # Short acronyms: aws, iam, sql -> AWS
+    if raw.isalpha() and 2 <= len(raw) <= 5 and raw.isupper():
+        return raw
+    if raw.isalpha() and 2 <= len(raw) <= 4 and raw.islower():
+        return raw.upper()
+    return raw[:1].upper() + raw[1:] if raw[:1].islower() and raw[:1].isalpha() else raw
+
+
+def is_junk_skill_item(item: str) -> bool:
+    """True for employment labels, ATS mashups, and non-technology noise."""
+    s = strip_bold_markers(item or "").strip()
+    if not s or len(s) > 48:
+        return True
+    if _JUNK_SKILL_RE.search(s):
+        return True
+    # CamelCase mashups with an embedded ALLCAPS run (CapgeminiCONTRACTOR).
+    if re.search(r"[a-z][A-Z]{2,}", s) and " " not in s and "." not in s:
+        return True
+    return False
+
+
+def filter_junk_skill_items(skills: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for row in skills or []:
+        if not isinstance(row, dict):
+            continue
+        kept = [
+            professional_skill_label(i)
+            for i in normalize_skill_list(str(row.get("skills") or "")).split(", ")
+            if i and not is_junk_skill_item(i)
+        ]
+        # De-dupe after professionalization.
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for item in kept:
+            key = item.lower()
+            if not item or key in seen:
+                continue
+            seen.add(key)
+            uniq.append(item)
+        if uniq:
+            out.append({**row, "skills": ", ".join(uniq)})
+    return out
+
+
+def order_skill_categories_professionally(skills: list[dict]) -> list[dict]:
+    """Stable professional category order; unknown names keep relative order at the end."""
+    rank = {name.lower(): i for i, name in enumerate(_CATEGORY_ORDER)}
+    indexed = list(enumerate(skills or []))
+    indexed.sort(
+        key=lambda pair: (
+            rank.get(str(pair[1].get("category") or "").lower(), len(_CATEGORY_ORDER) + pair[0]),
+            pair[0],
+        )
+    )
+    return [row for _, row in indexed if isinstance(row, dict)]
+
+
+def drop_thin_skill_categories(skills: list[dict], minimum: int) -> list[dict]:
+    """Drop categories that stay under *minimum* after fill/fold (never leave 1-2 item rows)."""
+    out: list[dict] = []
+    for row in skills or []:
+        if not isinstance(row, dict):
+            continue
+        items = [i for i in normalize_skill_list(str(row.get("skills") or "")).split(", ") if i]
+        if len(items) >= minimum:
+            out.append({**row, "skills": ", ".join(items)})
+    return out
+
+
+def polish_technical_skills(
+    skills: list[dict] | None,
+    *,
+    candidates: list[str] | None = None,
+    posting_terms: list[str] | None = None,
+    minimum: int = 6,
+    max_items: int = 56,
+    allow_related_pad: bool = True,
+) -> list[dict]:
+    """Canonicalize, spell professionally, pad thin rows, fold leftovers, order for a senior resume.
+
+    When *allow_related_pad* is False (evidence mode), only candidates already on the resume/plan
+    may top up a category; inventing related stack is skipped.
+    """
+    rows = normalize_skill_categories(skills or [])
+    rows = rehome_misplaced_skills(rows)
+    rows = filter_junk_skill_items(rows)
+    pool = [professional_skill_label(c) for c in (candidates or []) if c]
+    for term in posting_terms or []:
+        label = professional_skill_label(term)
+        if label and label.lower() not in {p.lower() for p in pool}:
+            pool.append(label)
+    rows = fill_thin_skill_rows(rows, pool, minimum, allow_related_pad=allow_related_pad)
+    rows = fold_small_skill_rows(rows, minimum=minimum)
+    rows = fill_thin_skill_rows(rows, pool, minimum, allow_related_pad=allow_related_pad)
+    rows = drop_thin_skill_categories(rows, minimum=max(3, minimum - 1) if allow_related_pad else 1)
+    # Within each category, put posting skills first; keep professional category order.
+    post_rank = {professional_skill_label(t).lower(): i for i, t in enumerate(posting_terms or [])}
+
+    def item_key(item: str) -> tuple[int, str]:
+        return (post_rank.get(item.lower(), len(post_rank) + 1), item.lower())
+
+    ordered: list[dict] = []
+    for row in order_skill_categories_professionally(rows):
+        items = sorted(
+            [i for i in normalize_skill_list(str(row.get("skills") or "")).split(", ") if i],
+            key=item_key,
+        )
+        if items:
+            ordered.append({**row, "skills": ", ".join(items)})
+    from app.utils.resume_evidence import cap_skills_section
+
+    keep = " ".join(posting_terms or [])
+    return cap_skills_section(ordered, keep, limit=max_items)
+
+
+# Related stack used to top up thin categories for senior resumes (category-correct only).
+_CATEGORY_PAD: dict[str, tuple[str, ...]] = {
+    "Languages": ("Python", "TypeScript", "JavaScript", "SQL", "Bash", "Go", "C#", "Java"),
+    "Backend": ("Node.js", "REST APIs", "GraphQL", "Express.js", "Microservices", "gRPC", "ASP.NET Core", ".NET"),
+    "Frontend": ("React", "TypeScript", "JavaScript", "HTML", "CSS", "Next.js", "Redux", "Angular"),
+    "Mobile": ("React Native", "iOS", "Android", "Swift", "Kotlin", "TypeScript"),
+    "Cloud": ("AWS", "Azure", "GCP", "Amazon S3", "AWS Lambda", "IAM"),
+    "Databases": ("PostgreSQL", "MySQL", "MongoDB", "Redis", "SQL Server", "DynamoDB"),
+    "Data Engineering": ("Apache Kafka", "Airflow", "Spark", "dbt", "ETL", "Snowflake"),
+    "DevOps": ("Docker", "Kubernetes", "Terraform", "CI/CD", "GitHub Actions", "Linux", "Git"),
+    "Infrastructure as Code": ("Terraform", "Pulumi", "Ansible", "CloudFormation", "Packer"),
+    "Messaging": ("Apache Kafka", "RabbitMQ", "SQS", "SNS", "Redis"),
+    "Observability": ("Prometheus", "Grafana", "Datadog", "Splunk", "OpenTelemetry", "CloudWatch"),
+    "Machine Learning": ("Python", "PyTorch", "TensorFlow", "LLM", "scikit-learn", "MLOps"),
+    "MLOps": ("MLflow", "Kubeflow", "SageMaker", "Docker", "Kubernetes"),
+    "Security": ("IAM", "OAuth", "OIDC", "SAML", "Secrets Manager", "TLS"),
+    "Testing": ("Jest", "pytest", "Playwright", "Cypress", "xUnit", "Postman", "Unit Testing"),
+    "Analytics": ("SQL", "Tableau", "Looker", "Power BI", "Excel", "Python"),
+    "Embedded": ("C", "C++", "Linux", "ARM", "FreeRTOS", "SPI"),
+    "Product": ("Jira", "Confluence", "Figma", "Agile", "Roadmapping"),
+}
+
+
+def fill_thin_skill_rows(
+    skills: list[dict],
+    candidates: list[str],
+    minimum: int,
+    *,
+    allow_related_pad: bool = True,
+) -> list[dict]:
+    """Top up categories under *minimum* items from *candidates*, then category-related defaults."""
     rows = [dict(r) for r in skills or [] if isinstance(r, dict)]
     buckets = [[i for i in normalize_skill_list(str(r.get("skills") or "")).split(", ") if i] for r in rows]
     listed = {i.lower() for b in buckets for i in b}
+
+    def _add(items: list[str], item: str) -> None:
+        label = professional_skill_label(item)
+        key = label.lower()
+        if key in listed or not label:
+            return
+        items.append(label)
+        listed.add(key)
+
     for row, items in zip(rows, buckets):
         cat = str(row.get("category") or "")
-        if cat not in _LEXICON or len(items) >= minimum:
+        if len(items) >= minimum:
+            row["skills"] = ", ".join(professional_skill_label(i) for i in items)
             continue
         for item in candidates:
             if len(items) >= minimum:
                 break
-            if item.lower() not in listed and _lexicon_home(item, [cat]):
-                items.append(item)
-                listed.add(item.lower())
+            if cat in _LEXICON and _lexicon_home(item, [cat]):
+                _add(items, item)
+        if allow_related_pad:
+            for item in _CATEGORY_PAD.get(cat, ()):
+                if len(items) >= minimum:
+                    break
+                _add(items, item)
         row["skills"] = ", ".join(items)
     return rows
 

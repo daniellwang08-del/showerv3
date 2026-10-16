@@ -581,12 +581,12 @@ def missing_from_experience(resume: dict | None, plan: SkillPlan | None) -> list
 
 
 def _display_term(term: str, profile_skills: list[str]) -> str:
+    from app.utils.resume_skill_taxonomy import professional_skill_label
+
     for item in profile_skills:
         if _norm(item) == _norm(term):
-            return item
-    if term.islower() and (" " in term or len(term) > 4):
-        return " ".join(w[:1].upper() + w[1:] for w in term.split())
-    return term
+            return professional_skill_label(item)
+    return professional_skill_label(term)
 
 
 def _pick_category(rows: list[dict], skill: RequiredSkill, profile_text: str) -> int | None:

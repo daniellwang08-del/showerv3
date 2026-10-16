@@ -42,7 +42,6 @@ from app.utils.resume_evidence import (
     _norm,
     _sections,
     ProfileRole,
-    cap_skills_section,
     is_mentioned,
     is_named_technology,
     parse_profile_roles,
@@ -53,7 +52,7 @@ from app.utils.resume_evidence import (
     split_skill_items,
     summary_opening_title,
 )
-from app.utils.resume_skill_taxonomy import fill_thin_skill_rows, fold_small_skill_rows
+from app.utils.resume_skill_taxonomy import polish_technical_skills, professional_skill_label
 
 STRATEGY_REBUILD = "job_first"
 STRATEGY_EVIDENCE = "evidence"
@@ -734,24 +733,14 @@ def target_stack_block(plan: TailoringPlan) -> str:
 
 
 def order_skills_for_posting(rows: list[dict], terms: list[str]) -> list[dict]:
-    """Posting skills lead: categories holding them first, and within each category in posting order."""
-    rank = {_alias_key(t): i for i, t in enumerate(terms)}
-
-    def item_rank(item: str) -> int:
-        key = _alias_key(item)
-        if key in rank:
-            return rank[key]
-        hit = next((i for t, i in ((t, rank[_alias_key(t)]) for t in terms) if is_mentioned(t, item)), None)
-        return hit if hit is not None else len(terms) + 1
-
-    ordered: list[tuple[int, int, dict]] = []
-    for pos, row in enumerate(rows):
-        items = sorted(split_skill_items(str(row.get("skills") or "")), key=item_rank)
-        if not items:
-            continue
-        ordered.append((min(item_rank(i) for i in items), pos, {**row, "skills": ", ".join(items)}))
-    ordered.sort(key=lambda x: (x[0], x[1]))
-    return [row for _, _, row in ordered]
+    """Deprecated alias: categories use professional order; posting terms lead within a category."""
+    return polish_technical_skills(
+        rows,
+        candidates=[],
+        posting_terms=terms,
+        minimum=MIN_SKILLS_PER_CATEGORY,
+        max_items=MAX_SKILL_ITEMS,
+    )
 
 
 _SOFT_SKILLS = frozenset(
@@ -773,13 +762,15 @@ def _skill_item(item: str, plan: TailoringPlan, role: RolePlan | None = None) ->
     # Exact match only: "AWS Lambda" is its own skill, not the posting's "AWS".
     posting = next((t for t in plan.terms if _alias_key(t) == key), None)
     if posting:
-        return posting if role is None or posting in role.stack else None
+        if role is not None and posting not in role.stack:
+            return None
+        return professional_skill_label(posting)
     clean = item.strip()
     if not clean or _norm(clean) in _SOFT_SKILLS or not _is_technology(clean):
         return None
     if role is not None and not usable_in_role(clean, role.end_year, is_current=role.is_current):
         return None
-    return clean
+    return professional_skill_label(clean)
 
 
 # Parsers such as Taleo garble typographic punctuation.
@@ -850,10 +841,12 @@ def finalize_tailored_resume(resume: dict | None, plan: TailoringPlan, profile_t
     # of profile evidence, and do not restore profile-only role evidence ceilings.
     resume = ensure_required_skills(resume, plan.skill_plan, profile_text) or resume
     rows = _dedupe_skill_rows(resume.get("technical_skills") or [], plan.skill_plan)
-    rows = fill_thin_skill_rows(fold_small_skill_rows(rows), plan.placeable + plan.breadth, MIN_SKILLS_PER_CATEGORY)
-    keep_text = "\n".join([job_text, ", ".join(plan.terms)])
-    resume["technical_skills"] = order_skills_for_posting(
-        cap_skills_section(rows, keep_text, limit=MAX_SKILL_ITEMS), plan.terms
+    resume["technical_skills"] = polish_technical_skills(
+        rows,
+        candidates=plan.placeable + plan.breadth,
+        posting_terms=plan.terms,
+        minimum=MIN_SKILLS_PER_CATEGORY,
+        max_items=MAX_SKILL_ITEMS,
     )
     return resume
 

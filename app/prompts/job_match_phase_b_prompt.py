@@ -117,20 +117,22 @@ Profile order is most recent first. Length budget (keeps a senior resume to abou
 - used_skills: 4-12 technologies from that role's evidence line, the posting's terms first.
 
 ## 6. technical_skills
-- 4-6 categories and at most 30 items in total. Only technologies the profile states somewhere, or items under
-  "Supported by the profile" / "Add to the resume" in the Required skills checklist. Never invent posting
-  ecosystem tools, preferred/nice-to-have skills the profile lacks, or domain labels (Fintech, SaaS, B2B,
-  Customer Success). A long list dilutes the match: keep checklist items the candidate can defend, then the
-  role family's core stack from the profile, and cut the rest.
-- Lead with the categories and items the posting asks for that the profile supports.
+- 5-7 categories with at least 6 items each when the profile supports that breadth, at most 56 items.
+  Never leave a category with only 1-2 items; fold thin leftovers into a real category or omit them.
+- Only technologies the profile states somewhere, or items under "Supported by the profile" / "Add to the
+  resume" in the Required skills checklist. Never invent posting ecosystem tools, preferred/nice-to-have
+  skills the profile lacks, or domain labels (Fintech, SaaS, B2B, Customer Success).
+- Order categories professionally (Languages, Backend, Frontend, Cloud, Databases, DevOps, Testing), not by
+  which posting skill appears first. Do not lead with Tools or a one-off JD-only label.
+- Spell every technology professionally (AWS, Kafka, TypeScript, Git, .NET). Every item starts with a capital
+  letter or standard product casing.
 - Place items correctly: runtimes and frameworks (Node.js, Django, React) are not Languages; managed search,
   queues and AI services are not Databases; cloud services go under Cloud. Prefer single-concept category
-  names (Languages, Frontend, Backend, Databases, Cloud, DevOps, Testing); do not invent catch-all buckets
-  like Quality that mix soft skills with tools.
+  names; do not invent catch-all buckets like Quality that mix soft skills with tools.
 - Keep the profile's skill qualifiers and exact product names: "Terraform basics" stays basics, "Looker Studio"
   is not Looker, "PCI awareness" is not PCI. Never upgrade beginner/exposure language into an unqualified skill.
-- No soft skills, no inferred items, and methodologies (Agile, Scrum) only when the posting lists them and
-  the profile shows them."""
+- No soft skills, employment labels (C2C, W2), ATS junk, or inferred items. Methodologies (Agile, Scrum) only
+  when the posting lists them and the profile shows them."""
 
 JOB_MATCH_PHASE_B_INSTRUCTIONS = (
     f"{_PHASE_B_SHARED_HEADER}{RESUME_TAILORING_INSTRUCTIONS.strip()}\n\n---\n\n{COVER_LETTER_INSTRUCTIONS.strip()}"
