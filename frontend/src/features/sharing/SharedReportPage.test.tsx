@@ -102,14 +102,33 @@ describe('SharedReportPage', () => {
     expect(await screen.findByRole('heading', { name: 'This report is no longer shared with you' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Back to Shared with me' })).toHaveAttribute('href', '/app/shared');
   });
+
+  it('opens under the admin workspace for admin accounts', async () => {
+    mocked.fetchSharedReport.mockResolvedValue(makeReport());
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={['/admin/shared/s1']}>
+            <Routes>
+              <Route path="/admin/shared/:shareId" element={<SharedReportPage />} />
+            </Routes>
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole('heading', { name: "Sam Lee's job search" })).toBeInTheDocument();
+    expect(mocked.fetchSharedReport).toHaveBeenCalledWith('s1');
+    expect(screen.getByRole('link', { name: 'Shared with me' })).toHaveAttribute('href', '/admin/shared');
+  });
 });
 
 describe('SharedWithMePage', () => {
-  function renderList() {
+  function renderList(path = '/app/shared') {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
       <QueryClientProvider client={qc}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[path]}>
           <SharedWithMePage />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -134,5 +153,13 @@ describe('SharedWithMePage', () => {
     mocked.fetchIncomingShares.mockResolvedValue({ shares: [] });
     renderList();
     expect(await screen.findByRole('heading', { name: 'Nothing shared with you yet' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to Interviews' })).toBeInTheDocument();
+  });
+
+  it('keeps admin accounts inside the admin workspace', async () => {
+    mocked.fetchIncomingShares.mockResolvedValue({ shares: [makeIncoming()] });
+    renderList('/admin/shared');
+    const list = await screen.findByRole('list', { name: 'Shared reports' });
+    expect(within(list).getByRole('link')).toHaveAttribute('href', '/admin/shared/s1');
   });
 });

@@ -34,8 +34,13 @@ export function parseEmails(text: string): { valid: string[]; invalid: string[] 
   return { valid, invalid };
 }
 
-export function sharedReportPath(shareId: string): string {
-  return `/app/shared/${encodeURIComponent(shareId)}`;
+/** Shared with me lives in the applicant workspace and, for admin accounts, in the admin one. */
+export function sharedBase(pathname: string): '/app/shared' | '/admin/shared' {
+  return pathname.startsWith('/admin') ? '/admin/shared' : '/app/shared';
+}
+
+export function sharedReportPath(shareId: string, base: string = '/app/shared'): string {
+  return `${base}/${encodeURIComponent(shareId)}`;
 }
 
 const DATE_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });

@@ -533,6 +533,8 @@ function App() {
           <Route index element={<Page><AdminPipelinePage /></Page>} />
           <Route path="data" element={<Page><AdminDataPage /></Page>} />
           <Route path="users" element={<Page><AdminUsersPage /></Page>} />
+          <Route path="shared" element={<Page title="Shared with me"><SharedWithMePage /></Page>} />
+          <Route path="shared/:shareId" element={<Page title="Shared report"><SharedReportPage /></Page>} />
           <Route path="settings" element={<Page><AdminSystemPage /></Page>} />
           <Route path="logs" element={<Page><AdminLogsPage /></Page>} />
           <Route path="*" element={<Navigate to="/admin" replace />} />

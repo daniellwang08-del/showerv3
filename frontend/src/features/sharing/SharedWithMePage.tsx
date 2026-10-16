@@ -1,16 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, MessageSquareQuote, Timer, Users } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { fetchIncomingShares } from '@/api/reportShareApi';
 import { PageLayout } from '@/components/app/PageLayout';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { IncomingShare } from '@/types/reportShare';
 import { relativeAgo } from '../interviews/interviewsModel';
-import { INCOMING_SHARES_KEY, initials, sharedReportPath, shortDate } from './shareModel';
+import { INCOMING_SHARES_KEY, initials, sharedBase, sharedReportPath, shortDate } from './shareModel';
 
 /** Every report other NAO users shared with the signed-in account. */
 export function SharedWithMePage() {
+  const base = sharedBase(useLocation().pathname);
   const query = useQuery({ queryKey: INCOMING_SHARES_KEY, queryFn: fetchIncomingShares, staleTime: 60_000 });
   const shares = query.data?.shares ?? [];
 
@@ -35,7 +36,7 @@ export function SharedWithMePage() {
       ) : shares.length ? (
         <ul aria-label="Shared reports" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {shares.map((share) => (
-            <SharedCard key={share.id} share={share} />
+            <SharedCard key={share.id} share={share} to={sharedReportPath(share.id, base)} />
           ))}
         </ul>
       ) : (
@@ -45,23 +46,25 @@ export function SharedWithMePage() {
           </span>
           <h2 className="mt-3 text-sm font-semibold">Nothing shared with you yet</h2>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            When someone shares their job search report with your account email, it shows up here. You can share yours from
-            the Interviews page.
+            When someone shares their job search report with your account email, it shows up here.
+            {base === '/app/shared' ? ' You can share yours from the Interviews page.' : ''}
           </p>
-          <Link to="/app/interviews" className={buttonVariants({ variant: 'outline', size: 'sm', className: 'mt-4' })}>
-            Go to Interviews
-          </Link>
+          {base === '/app/shared' ? (
+            <Link to="/app/interviews" className={buttonVariants({ variant: 'outline', size: 'sm', className: 'mt-4' })}>
+              Go to Interviews
+            </Link>
+          ) : null}
         </div>
       )}
     </PageLayout>
   );
 }
 
-function SharedCard({ share }: { share: IncomingShare }) {
+function SharedCard({ share, to }: { share: IncomingShare; to: string }) {
   return (
     <li>
       <Link
-        to={sharedReportPath(share.id)}
+        to={to}
         className="group flex h-full flex-col gap-3 rounded-2xl border bg-card p-4 shadow-xs transition-colors outline-none hover:border-brand/40 hover:bg-brand/[0.03] focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <div className="flex items-center gap-3">

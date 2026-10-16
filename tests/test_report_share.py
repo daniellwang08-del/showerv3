@@ -51,20 +51,39 @@ class TestFields:
         assert rs.display_name(user()) == "sam"
         assert rs.display_name(None) == "A NAO user"
 
-    def test_only_approved_applicants_can_receive_reports(self):
+    def test_approved_active_accounts_can_receive_reports(self):
         assert rs.can_view_shares(_user("u", "a@x.com"))
+        assert rs.can_view_shares(_user("u", "a@x.com", is_admin=True))
         assert not rs.can_view_shares(None)
-        assert not rs.can_view_shares(_user("u", "a@x.com", is_admin=True))
         assert not rs.can_view_shares(_user("u", "a@x.com", is_active=False))
         assert not rs.can_view_shares(_user("u", "a@x.com", approval_status="pending"))
 
     def test_resolve_viewers_names_missing_accounts(self):
-        users = {"a@x.com": _user("ua", "a@x.com"), "admin@x.com": _user("ad", "admin@x.com", is_admin=True)}
-        assert [u.id for u in rs.resolve_viewers(["a@x.com"], users)] == ["ua"]
+        users = {
+            "a@x.com": _user("ua", "a@x.com"),
+            "admin@x.com": _user("ad", "admin@x.com", is_admin=True),
+            "wait@x.com": _user("uw", "wait@x.com", approval_status="pending"),
+        }
+        assert [u.id for u in rs.resolve_viewers(["a@x.com", "admin@x.com"], users)] == ["ua", "ad"]
         with pytest.raises(rs.ShareError, match="b@x.com does not have a NAO account"):
             rs.resolve_viewers(["a@x.com", "b@x.com"], users)
-        with pytest.raises(rs.ShareError, match="b@x.com, admin@x.com"):
-            rs.resolve_viewers(["b@x.com", "admin@x.com"], users)
+        with pytest.raises(rs.ShareError, match="b@x.com, wait@x.com"):
+            rs.resolve_viewers(["b@x.com", "wait@x.com"], users)
+
+
+def test_only_owner_routes_require_an_applicant_account():
+    from app.api.report_share_routes import router
+    from app.api.routes import require_applicant
+
+    owner_only = {
+        (method, route.path)
+        for route in router.routes
+        for method in route.methods
+        if any(d.call is require_applicant for d in route.dependant.dependencies)
+    }
+    viewer = {(m, r.path) for r in router.routes for m in r.methods} - owner_only
+    assert viewer == {("GET", "/report-shares/incoming"), ("GET", "/report-shares/incoming/{share_id}")}
+    assert ("POST", "/report-shares") in owner_only and ("GET", "/report-shares/preview") in owner_only
 
 
 class TestReport:

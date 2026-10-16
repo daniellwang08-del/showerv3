@@ -9,6 +9,7 @@ import {
   LayoutTemplate,
   Puzzle,
   ScrollText,
+  Share2,
   SlidersHorizontal,
   UserCircle,
   Users,
@@ -59,6 +60,7 @@ export const adminNav: NavSection[] = [
       { to: '/admin', label: 'Jobs pipeline', icon: Briefcase, end: true, keywords: ['scraper', 'extraction', 'sync'] },
       { to: '/admin/data', label: 'Data', icon: Database, keywords: ['analysis', 'management', 'cleanup'] },
       { to: '/admin/users', label: 'Users', icon: Users, keywords: ['accounts', 'team'] },
+      { to: '/admin/shared', label: 'Shared with me', icon: Share2, keywords: ['shared', 'reports', 'interviews'] },
     ],
   },
   {

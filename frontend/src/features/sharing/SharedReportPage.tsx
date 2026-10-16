@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { isAxiosError } from 'axios';
 import {
   AlertTriangle,
@@ -40,6 +40,7 @@ import {
   applicationCounts,
   filterApplications,
   INCOMING_SHARES_KEY,
+  sharedBase,
   shortDate,
   type ApplicationFilter,
 } from './shareModel';
@@ -100,9 +101,10 @@ function useNow(intervalMs: number): number {
 const PILL = 'inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/60 px-2.5 py-1 backdrop-blur';
 
 function BackLink({ preview }: { preview?: boolean }) {
+  const base = sharedBase(useLocation().pathname);
   return (
     <Link
-      to={preview ? '/app/interviews' : '/app/shared'}
+      to={preview ? '/app/interviews' : base}
       className={cn(PILL, 'font-medium text-foreground transition-colors hover:bg-muted')}
     >
       <ArrowLeft className="size-3" aria-hidden />
@@ -547,6 +549,7 @@ function ReportLoading() {
 
 function ReportUnavailable({ status, onRetry }: { status?: number; onRetry: () => void }) {
   const gone = status === 404;
+  const base = sharedBase(useLocation().pathname);
   return (
     <div className="flex flex-1 items-center justify-center px-4">
       <div className="max-w-sm text-center">
@@ -561,7 +564,7 @@ function ReportUnavailable({ status, onRetry }: { status?: number; onRetry: () =
         </p>
         <div className="mt-4 flex justify-center gap-2">
           {gone ? (
-            <Link to="/app/shared" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <Link to={base} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
               Back to Shared with me
             </Link>
           ) : (

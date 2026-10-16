@@ -10,7 +10,8 @@ from app.models.database import User
 from app.services import report_share
 from app.storage.database import get_session
 
-router = APIRouter(prefix="/report-shares", tags=["report-shares"], dependencies=[Depends(require_applicant)])
+router = APIRouter(prefix="/report-shares", tags=["report-shares"])
+_owner_only = [Depends(require_applicant)]
 
 
 class ShareCreate(BaseModel):
@@ -33,7 +34,7 @@ def _not_found(detail: str = "Share not found") -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
 
 
-@router.get("")
+@router.get("", dependencies=_owner_only)
 async def list_report_shares(current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         rows = await report_share.list_shares(session, current_user["user_id"])
@@ -44,7 +45,7 @@ async def list_report_shares(current_user: dict = Depends(get_current_user)):
     }
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, dependencies=_owner_only)
 async def create_report_shares(body: ShareCreate, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         owner = await session.get(User, current_user["user_id"])
@@ -63,7 +64,7 @@ async def create_report_shares(body: ShareCreate, current_user: dict = Depends(g
         return {"shares": [report_share.share_public(share, viewer) for share, viewer in rows]}
 
 
-@router.patch("/{share_id}")
+@router.patch("/{share_id}", dependencies=_owner_only)
 async def update_report_share(share_id: str, body: ShareUpdate, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         try:
@@ -78,7 +79,7 @@ async def update_report_share(share_id: str, body: ShareUpdate, current_user: di
         return report_share.share_public(share, await session.get(User, share.viewer_id))
 
 
-@router.delete("/{share_id}")
+@router.delete("/{share_id}", dependencies=_owner_only)
 async def delete_report_share(share_id: str, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         try:
@@ -89,7 +90,7 @@ async def delete_report_share(share_id: str, current_user: dict = Depends(get_cu
     return {"success": True}
 
 
-@router.get("/preview")
+@router.get("/preview", dependencies=_owner_only)
 async def preview_report(
     include_notes: bool = Query(False),
     timezone_name: str | None = Query(None, alias="timezone", max_length=64),
@@ -105,7 +106,7 @@ async def preview_report(
 
 @router.get("/incoming")
 async def incoming_report_shares(current_user: dict = Depends(get_current_user)):
-    """Reports other people shared with you."""
+    """Reports other people shared with you. Open to admins too, who can receive but not share."""
     async with get_session() as session:
         items = await report_share.incoming(session, current_user["user_id"])
     return {"shares": items}

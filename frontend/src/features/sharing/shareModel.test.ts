@@ -7,6 +7,7 @@ import {
   filterApplications,
   initials,
   parseEmails,
+  sharedBase,
   sharedReportPath,
   viewLabel,
 } from './shareModel';
@@ -24,6 +25,9 @@ describe('shareModel', () => {
 
   it('links to a shared report inside the app', () => {
     expect(sharedReportPath('abc-123')).toBe('/app/shared/abc-123');
+    expect(sharedBase('/admin/shared/abc')).toBe('/admin/shared');
+    expect(sharedBase('/app/shared')).toBe('/app/shared');
+    expect(sharedReportPath('abc-123', sharedBase('/admin/shared'))).toBe('/admin/shared/abc-123');
   });
 
   it('labels access and views', () => {

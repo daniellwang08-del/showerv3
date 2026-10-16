@@ -93,13 +93,8 @@ def display_name(user: User | None) -> str:
 
 
 def can_view_shares(user: User | None) -> bool:
-    """Approved, active applicant accounts; admins have no applicant workspace to open a report in."""
-    return bool(
-        user
-        and user.is_active
-        and not user.is_admin
-        and (user.approval_status or "approved") == "approved"
-    )
+    """Approved, active accounts, admins included; they open reports under Shared with me."""
+    return bool(user and user.is_active and (user.approval_status or "approved") == "approved")
 
 
 def share_public(share: ReportShare, viewer: User | None = None, now: datetime | None = None) -> dict[str, Any]:
