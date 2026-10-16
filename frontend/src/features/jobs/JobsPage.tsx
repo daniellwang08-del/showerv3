@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { BarChart3, Briefcase, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { useSearchParams } from 'react-router-dom';
+import { Briefcase, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { apiClient } from '@/api/client';
@@ -10,6 +10,7 @@ import { useScraperStore } from '@/stores/scraperStore';
 import { useJobsStore } from '@/stores/jobsStore';
 import { useShellStore } from '@/stores/shellStore';
 import type { DashboardJob } from '@/types/scraper';
+import { JobsHeader } from './JobsHeader';
 import { JobsTable, type JobsTableTier } from './JobsTable';
 import { JobsSummary } from './JobsSummary';
 import { JobsToolbar, type JobsViewTab } from './JobsToolbar';
@@ -247,21 +248,7 @@ export function JobsPage() {
 
   return (
     <div ref={containerRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden px-4 pb-4 pt-5 md:px-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Jobs</h1>
-          <p className="text-sm text-muted-foreground">Every job you can act on, scored against your profile.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} className="hidden md:inline-flex">
-            Jump to… <kbd className="ml-1 text-xs text-muted-foreground">⌘K</kbd>
-          </Button>
-          <Link to="/app/analysis" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-            <BarChart3 /> Insights
-          </Link>
-        </div>
-        <JobSyncStatus />
-      </header>
+      <JobsHeader onJump={() => setPaletteOpen(true)} syncSlot={<JobSyncStatus />} />
 
       <JobsSummary
         ready={stats?.ready_jobs}

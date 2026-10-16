@@ -1,6 +1,7 @@
 import { CheckCircle2, Clock3, Send, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { DashboardView } from '@/api/scraperApi';
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { viewTone } from './viewTone';
 
 interface Card {
@@ -25,6 +26,7 @@ export function JobsSummary({
   activeView: DashboardView;
   onView: (view: DashboardView) => void;
 }) {
+  const reduceMotion = usePrefersReducedMotion();
   const cards: Card[] = [
     { view: 'ready', label: 'Ready to apply', hint: 'Scored with resume and cover letter', value: ready, icon: CheckCircle2 },
     { view: 'available', label: 'Upcoming', hint: 'Being read, scored and tailored', value: upcoming, icon: Clock3 },
@@ -33,7 +35,7 @@ export function JobsSummary({
 
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Job summary">
-      {cards.map((card) => {
+      {cards.map((card, index) => {
         const tone = viewTone(card.view);
         const active = activeView === card.view;
         return (
@@ -43,13 +45,21 @@ export function JobsSummary({
             aria-pressed={active}
             aria-label={`${card.label}: ${card.value == null ? 'loading' : card.value.toLocaleString()}`}
             onClick={() => onView(card.view)}
+            style={reduceMotion ? undefined : { animationDelay: `${80 + index * 70}ms` }}
             className={cn(
-              'group flex items-center gap-3 rounded-xl border bg-card px-3.5 py-3 text-left shadow-xs outline-none transition-all',
-              'hover:-translate-y-px hover:shadow-sm focus-visible:ring-2 focus-visible:ring-ring/50',
+              'group flex items-center gap-3 rounded-xl border bg-card/90 px-3.5 py-3 text-left shadow-xs outline-none backdrop-blur-sm transition-all',
+              'hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/50',
               active && cn('ring-2', tone.ring),
+              !reduceMotion && 'jobs-summary-card',
             )}
           >
-            <span className={cn('inline-flex size-10 shrink-0 items-center justify-center rounded-lg', tone.soft)}>
+            <span
+              className={cn(
+                'inline-flex size-10 shrink-0 items-center justify-center rounded-lg transition-transform duration-300',
+                'group-hover:scale-105',
+                tone.soft,
+              )}
+            >
               <card.icon className="size-5" />
             </span>
             <span className="min-w-0 flex-1">

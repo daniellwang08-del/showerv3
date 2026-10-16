@@ -53,34 +53,34 @@ html, body { transition: background-color 0.25s ease, color 0.25s ease; }
 html.dark { color-scheme: dark; }
 
 .dark {
-  /* Neutral scale inverted: light surfaces -> dark, dark text -> light */
-  --color-slate-50: #0b0f19;
-  --color-slate-100: #161b28;
-  --color-slate-200: #252c3d;
-  --color-slate-300: #3a4256;
-  --color-slate-400: #64748b;
-  --color-slate-500: #94a3b8;
-  --color-slate-600: #cbd5e1;
+  /* Soft blue-gray neutrals (less harsh than near-black). */
+  --color-slate-50: #151c2a;
+  --color-slate-100: #1c2436;
+  --color-slate-200: #2a3348;
+  --color-slate-300: #3d475e;
+  --color-slate-400: #6b7a94;
+  --color-slate-500: #9aabc4;
+  --color-slate-600: #c5d0e0;
   --color-slate-700: #dde5ef;
   --color-slate-800: #eef2f7;
   --color-slate-900: #f8fafc;
   --color-slate-950: #ffffff;
 
-  --color-gray-50: #0b0f19;
-  --color-gray-100: #161b28;
-  --color-gray-200: #252c3d;
-  --color-gray-300: #3a4256;
-  --color-gray-400: #64748b;
-  --color-gray-500: #94a3b8;
-  --color-gray-600: #cbd5e1;
+  --color-gray-50: #151c2a;
+  --color-gray-100: #1c2436;
+  --color-gray-200: #2a3348;
+  --color-gray-300: #3d475e;
+  --color-gray-400: #6b7a94;
+  --color-gray-500: #9aabc4;
+  --color-gray-600: #c5d0e0;
   --color-gray-700: #dde5ef;
   --color-gray-800: #eef2f7;
   --color-gray-900: #f8fafc;
   --color-gray-950: #ffffff;
 
-  --color-zinc-50: #0b0f19;
-  --color-zinc-100: #161b28;
-  --color-zinc-200: #252c3d;
+  --color-zinc-50: #151c2a;
+  --color-zinc-100: #1c2436;
+  --color-zinc-200: #2a3348;
   --color-zinc-800: #eef2f7;
   --color-zinc-900: #f8fafc;
 
@@ -108,11 +108,11 @@ html.dark { color-scheme: dark; }
 }
 
 html.dark {
-  --app-bg: #080c15;
-  --app-card: #0e121d;
-  --app-input: #0b0f19;
-  --app-fg: #e2e8f0;
-  --app-muted: #94a3b8;
+  --app-bg: #151c2a;
+  --app-card: #1c2436;
+  --app-input: #1a2232;
+  --app-fg: #e8eef7;
+  --app-muted: #9aabc4;
 }
 
 .dark body {
@@ -128,29 +128,29 @@ html.dark {
    (they sit on accent buttons and glass), so only backgrounds change.
    Public pages (landing-theme) are always dark and use white chips with navy
    text on purpose, so they are excluded. */
-html.dark:not(.landing-theme) .bg-white { background-color: #0e121d; }
-html.dark:not(.landing-theme) .bg-white\/95 { background-color: rgba(14, 18, 29, 0.95); }
-html.dark:not(.landing-theme) .bg-white\/90 { background-color: rgba(14, 18, 29, 0.9); }
-html.dark:not(.landing-theme) .bg-white\/85 { background-color: rgba(14, 18, 29, 0.85); }
-html.dark:not(.landing-theme) .bg-white\/80 { background-color: rgba(14, 18, 29, 0.8); }
-html.dark:not(.landing-theme) .bg-white\/75 { background-color: rgba(14, 18, 29, 0.75); }
-html.dark:not(.landing-theme) .bg-white\/70 { background-color: rgba(14, 18, 29, 0.7); }
-html.dark:not(.landing-theme) .bg-white\/65 { background-color: rgba(14, 18, 29, 0.65); }
-html.dark:not(.landing-theme) .bg-white\/60 { background-color: rgba(14, 18, 29, 0.6); }
-html.dark:not(.landing-theme) .bg-white\/55 { background-color: rgba(22, 27, 40, 0.5); }
-html.dark:not(.landing-theme) .bg-white\/50 { background-color: rgba(14, 18, 29, 0.5); }
-html.dark:not(.landing-theme) .bg-white\/45 { background-color: rgba(22, 27, 40, 0.42); }
-html.dark:not(.landing-theme) .bg-white\/40 { background-color: rgba(22, 27, 40, 0.4); }
-html.dark:not(.landing-theme) .bg-white\/35 { background-color: rgba(22, 27, 40, 0.34); }
-html.dark:not(.landing-theme) .bg-white\/30 { background-color: rgba(22, 27, 40, 0.3); }
-html.dark:not(.landing-theme) .bg-white\/25 { background-color: rgba(22, 27, 40, 0.25); }
-html.dark:not(.landing-theme) .bg-white\/20 { background-color: rgba(22, 27, 40, 0.2); }
-html.dark:not(.landing-theme) .hover\:bg-white:hover { background-color: #1b2131; }
+html.dark:not(.landing-theme) .bg-white { background-color: #1c2436; }
+html.dark:not(.landing-theme) .bg-white\/95 { background-color: rgba(28, 36, 54, 0.95); }
+html.dark:not(.landing-theme) .bg-white\/90 { background-color: rgba(28, 36, 54, 0.9); }
+html.dark:not(.landing-theme) .bg-white\/85 { background-color: rgba(28, 36, 54, 0.85); }
+html.dark:not(.landing-theme) .bg-white\/80 { background-color: rgba(28, 36, 54, 0.8); }
+html.dark:not(.landing-theme) .bg-white\/75 { background-color: rgba(28, 36, 54, 0.75); }
+html.dark:not(.landing-theme) .bg-white\/70 { background-color: rgba(28, 36, 54, 0.7); }
+html.dark:not(.landing-theme) .bg-white\/65 { background-color: rgba(28, 36, 54, 0.65); }
+html.dark:not(.landing-theme) .bg-white\/60 { background-color: rgba(28, 36, 54, 0.6); }
+html.dark:not(.landing-theme) .bg-white\/55 { background-color: rgba(36, 46, 68, 0.55); }
+html.dark:not(.landing-theme) .bg-white\/50 { background-color: rgba(28, 36, 54, 0.5); }
+html.dark:not(.landing-theme) .bg-white\/45 { background-color: rgba(36, 46, 68, 0.45); }
+html.dark:not(.landing-theme) .bg-white\/40 { background-color: rgba(36, 46, 68, 0.4); }
+html.dark:not(.landing-theme) .bg-white\/35 { background-color: rgba(36, 46, 68, 0.35); }
+html.dark:not(.landing-theme) .bg-white\/30 { background-color: rgba(36, 46, 68, 0.3); }
+html.dark:not(.landing-theme) .bg-white\/25 { background-color: rgba(36, 46, 68, 0.25); }
+html.dark:not(.landing-theme) .bg-white\/20 { background-color: rgba(36, 46, 68, 0.2); }
+html.dark:not(.landing-theme) .hover\:bg-white:hover { background-color: #24304a; }
 /* Focus-driven white surfaces (e.g. the agent composer that flips to bg-white
    on focus-within) are a distinct utility class, so the .bg-white override
    above does not reach them - map them to the same dark surface. */
-html.dark:not(.landing-theme) .focus-within\:bg-white:focus-within { background-color: #1b2131; }
-html.dark:not(.landing-theme) .focus\:bg-white:focus { background-color: #1b2131; }
+html.dark:not(.landing-theme) .focus-within\:bg-white:focus-within { background-color: #24304a; }
+html.dark:not(.landing-theme) .focus\:bg-white:focus { background-color: #24304a; }
 
 /* Modal/overlay scrims use bg-slate-900/xx; keep them dark (the palette
    inversion would otherwise flip them to a light wash). */
@@ -164,15 +164,15 @@ html.dark:not(.landing-theme) .focus\:bg-white:focus { background-color: #1b2131
    (bg-slate-900 + text-slate-100) must stay dark with light text. */
 .dark .bg-slate-900.text-white,
 .dark .bg-slate-800.text-white {
-  background-color: #161b28;
+  background-color: #1c2436;
 }
 .dark .bg-slate-900.text-white:hover,
 .dark .bg-slate-800.text-white:hover {
-  background-color: #252c3d;
+  background-color: #2a3348;
 }
 .dark .bg-slate-900.text-slate-100 {
-  background-color: #080c15;
-  color: #e2e8f0;
+  background-color: #151c2a;
+  color: #e8eef7;
 }
 
 /* Dark slate GRADIENT chips (e.g. icon chips using
@@ -180,20 +180,20 @@ html.dark:not(.landing-theme) .focus\:bg-white:focus { background-color: #1b2131
    like the solid bg-slate-900 buttons above. Without this, the neutral palette
    remap flips the 700/800/900 gradient stops to near-white and a white icon on
    top disappears into a white box. */
-.dark .from-slate-700 { --tw-gradient-from: #161b28 var(--tw-gradient-from-position); }
-.dark .from-slate-800 { --tw-gradient-from: #161b28 var(--tw-gradient-from-position); }
-.dark .from-slate-900 { --tw-gradient-from: #0b0f19 var(--tw-gradient-from-position); }
-.dark .via-slate-800 { --tw-gradient-via: #161b28 var(--tw-gradient-via-position); }
-.dark .via-slate-900 { --tw-gradient-via: #0b0f19 var(--tw-gradient-via-position); }
-.dark .to-slate-800 { --tw-gradient-to: #161b28 var(--tw-gradient-to-position); }
-.dark .to-slate-900 { --tw-gradient-to: #0b0f19 var(--tw-gradient-to-position); }
+.dark .from-slate-700 { --tw-gradient-from: #1c2436 var(--tw-gradient-from-position); }
+.dark .from-slate-800 { --tw-gradient-from: #1c2436 var(--tw-gradient-from-position); }
+.dark .from-slate-900 { --tw-gradient-from: #151c2a var(--tw-gradient-from-position); }
+.dark .via-slate-800 { --tw-gradient-via: #1c2436 var(--tw-gradient-via-position); }
+.dark .via-slate-900 { --tw-gradient-via: #151c2a var(--tw-gradient-via-position); }
+.dark .to-slate-800 { --tw-gradient-to: #1c2436 var(--tw-gradient-to-position); }
+.dark .to-slate-900 { --tw-gradient-to: #151c2a var(--tw-gradient-to-position); }
 
 /* White gradient stops -> dark surface so light-to-white gradients stay dark. */
-html.dark:not(.landing-theme) .from-white { --tw-gradient-from: #0e121d var(--tw-gradient-from-position); }
-html.dark:not(.landing-theme) .via-white { --tw-gradient-via: #0e121d var(--tw-gradient-via-position); }
-html.dark:not(.landing-theme) .to-white { --tw-gradient-to: #0e121d var(--tw-gradient-to-position); }
-html.dark:not(.landing-theme) .from-white\/90 { --tw-gradient-from: rgba(14, 18, 29, 0.9) var(--tw-gradient-from-position); }
-html.dark:not(.landing-theme) .to-white\/90 { --tw-gradient-to: rgba(14, 18, 29, 0.9) var(--tw-gradient-to-position); }
+html.dark:not(.landing-theme) .from-white { --tw-gradient-from: #1c2436 var(--tw-gradient-from-position); }
+html.dark:not(.landing-theme) .via-white { --tw-gradient-via: #1c2436 var(--tw-gradient-via-position); }
+html.dark:not(.landing-theme) .to-white { --tw-gradient-to: #1c2436 var(--tw-gradient-to-position); }
+html.dark:not(.landing-theme) .from-white\/90 { --tw-gradient-from: rgba(28, 36, 54, 0.9) var(--tw-gradient-from-position); }
+html.dark:not(.landing-theme) .to-white\/90 { --tw-gradient-to: rgba(28, 36, 54, 0.9) var(--tw-gradient-to-position); }
 
 /* Blue chips stay as background-only overrides (blue 50/100 vars double as
    light text on the auth + agent surfaces, so they are NOT remapped above). */
@@ -1329,6 +1329,37 @@ html.landing-theme body {
   animation: landing-step-progress 4.2s linear both;
 }
 
+/* Jobs page masthead: calm entrance + slow horizon drift. */
+@keyframes jobs-hero-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes jobs-hero-art-drift {
+  from { transform: scale(1.04) translate3d(0, 0, 0); }
+  to { transform: scale(1.08) translate3d(-1.5%, -1%, 0); }
+}
+@keyframes jobs-hero-wash-pulse {
+  0%, 100% { opacity: 0.55; transform: translate3d(0, 0, 0); }
+  50% { opacity: 0.9; transform: translate3d(4%, 2%, 0); }
+}
+.jobs-hero__copy {
+  animation: jobs-hero-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.jobs-hero__actions {
+  animation: jobs-hero-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both;
+}
+.jobs-hero__art--drift {
+  animation: jobs-hero-art-drift 28s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.jobs-hero__wash--pulse {
+  animation: jobs-hero-wash-pulse 12s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.jobs-summary-card {
+  animation: jobs-hero-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html.public-viewport { scroll-behavior: auto; }
   .landing-reveal { opacity: 1; transform: none; transition: none; }
@@ -1340,7 +1371,12 @@ html.landing-theme body {
   .landing-word-swap,
   .landing-dash-row,
   .landing-caret,
-  .landing-step-progress {
+  .landing-step-progress,
+  .jobs-hero__copy,
+  .jobs-hero__actions,
+  .jobs-hero__art--drift,
+  .jobs-hero__wash--pulse,
+  .jobs-summary-card {
     animation: none !important;
   }
 }
