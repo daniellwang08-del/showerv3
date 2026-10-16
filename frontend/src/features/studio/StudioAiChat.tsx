@@ -327,14 +327,16 @@ export function StudioAiChatToggle({
       aria-label={open ? 'Close resume AI' : 'Open resume AI'}
       title={open ? 'Close resume AI' : 'Edit with AI'}
       className={cn(
-        'group absolute top-1/2 right-0 z-30 flex h-24 w-7 -translate-y-1/2 flex-col items-center justify-center gap-1 rounded-l-xl border border-r-0 bg-card/95 shadow-md backdrop-blur transition-[width,background-color,color]',
-        'hover:w-8 hover:bg-brand-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        open ? 'border-brand/40 bg-brand-soft text-brand' : 'text-muted-foreground hover:text-brand',
+        'studio-ai-tab group absolute top-1/2 right-0 z-30 flex h-28 w-8 -translate-y-1/2 flex-col items-center justify-center gap-1.5 rounded-l-xl text-white transition-[width] duration-200',
+        'hover:w-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        open && 'studio-ai-tab--open',
       )}
     >
-      <Sparkles className="size-3.5 shrink-0" />
+      <span aria-hidden className="studio-ai-tab__glow" />
+      <span aria-hidden className="studio-ai-tab__shine" />
+      <Sparkles className="studio-ai-tab__icon relative size-4 shrink-0 drop-shadow-[0_0_4px_rgba(255,255,255,0.8)]" />
       <span
-        className="text-[10px] font-semibold tracking-wide uppercase"
+        className="relative text-[11px] font-bold tracking-[0.2em] uppercase drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
         style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
       >
         AI

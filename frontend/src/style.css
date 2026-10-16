@@ -1396,6 +1396,73 @@ html.landing-theme body {
   opacity: 1;
   animation: jobs-hero-sheen 9s cubic-bezier(0.45, 0, 0.25, 1) 1.5s infinite;
 }
+
+/* Resume Studio AI edge tab: flowing blue/violet/pink gradient with a glow. */
+@keyframes studio-ai-flow {
+  from { background-position: 50% 0%; }
+  to { background-position: 50% 100%; }
+}
+@keyframes studio-ai-glow {
+  0%, 100% { opacity: 0.45; transform: scale(0.94); }
+  50% { opacity: 0.9; transform: scale(1.08); }
+}
+@keyframes studio-ai-shine {
+  0%, 55% { transform: translateY(-140%) skewY(-18deg); }
+  100% { transform: translateY(340%) skewY(-18deg); }
+}
+@keyframes studio-ai-sparkle {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  20% { transform: rotate(-18deg) scale(1.25); }
+  40% { transform: rotate(12deg) scale(0.92); }
+  60% { transform: rotate(0deg) scale(1.1); }
+}
+.studio-ai-tab {
+  isolation: isolate;
+  background: linear-gradient(170deg, #3b6bff 0%, #7c4dff 30%, #ec4fb5 55%, #7c4dff 78%, #2fa8ff 100%);
+  background-size: 100% 260%;
+  box-shadow:
+    0 6px 20px -4px rgb(124 77 255 / 0.55),
+    0 0 0 1px rgb(255 255 255 / 0.18) inset;
+  animation: studio-ai-flow 4.5s ease-in-out infinite alternate;
+}
+.studio-ai-tab__glow {
+  position: absolute;
+  inset: -5px 0 -5px -7px;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(170deg, #3b6bff, #a855f7, #ec4fb5, #2fa8ff);
+  filter: blur(12px);
+  animation: studio-ai-glow 2.2s ease-in-out infinite;
+}
+.studio-ai-tab__shine {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.studio-ai-tab__shine::after {
+  content: "";
+  position: absolute;
+  inset: 0 -20%;
+  height: 35%;
+  background: linear-gradient(to bottom, transparent, rgb(255 255 255 / 0.55), transparent);
+  animation: studio-ai-shine 3.2s ease-in-out infinite;
+}
+.studio-ai-tab__icon {
+  animation: studio-ai-sparkle 2.2s ease-in-out infinite;
+}
+.studio-ai-tab:hover .studio-ai-tab__glow {
+  opacity: 1;
+  animation-duration: 1.2s;
+}
+.studio-ai-tab--open {
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 0.55) inset,
+    0 6px 20px -4px rgb(236 79 181 / 0.6);
+}
+.studio-ai-tab--open .studio-ai-tab__glow { animation-duration: 4s; }
+.studio-ai-tab--open .studio-ai-tab__icon { animation: none; }
 .jobs-summary-card {
   animation: jobs-hero-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -1414,6 +1481,10 @@ html.landing-theme body {
   .landing-step-progress,
   .jobs-hero__blob,
   .jobs-hero__sheen,
+  .studio-ai-tab,
+  .studio-ai-tab__glow,
+  .studio-ai-tab__shine::after,
+  .studio-ai-tab__icon,
   .jobs-summary-card {
     animation: none !important;
   }
