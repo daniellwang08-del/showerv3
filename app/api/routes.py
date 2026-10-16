@@ -2350,6 +2350,101 @@ async def submit_job(
         )
 
 
+class QuickApplyRequest(BaseModel):
+    description: str = Field(..., min_length=1, max_length=60_000)
+    url: str | None = Field(default=None, max_length=2048)
+    title: str | None = Field(default=None, max_length=500)
+    company: str | None = Field(default=None, max_length=500)
+
+
+class QuickApplyResponse(BaseModel):
+    job_id: str
+    reused: bool
+    title: str | None
+    company: str | None
+    analysis: str
+
+
+@router.post("/jobs/quick-apply", response_model=QuickApplyResponse, dependencies=[Depends(get_current_user)])
+async def quick_apply_from_description(
+    body: QuickApplyRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+) -> QuickApplyResponse:
+    """Add a job from its pasted description (no scraping), then score it and build
+    the application documents the user's resume setting calls for."""
+    from app.services.quick_apply import (
+        MIN_DESCRIPTION_CHARS,
+        create_quick_apply_job,
+        guess_job_header,
+    )
+
+    user_id = current_user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    description = body.description.strip()
+    if len(description) < MIN_DESCRIPTION_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail="Paste the full job description (at least a few sentences).",
+        )
+
+    async with get_session() as session:
+        profile_text = await UserRepository(session).get_profile_openai_text(user_id)
+    if not (profile_text or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Add your experience on the Profile page first, then try again.",
+        )
+
+    title = (body.title or "").strip() or None
+    company = (body.company or "").strip() or None
+    location = None
+    if not (title and company):
+        guess = await guess_job_header(user_id, description)
+        if not guess["is_job_posting"]:
+            raise HTTPException(
+                status_code=400,
+                detail="That doesn't look like a job description. Paste the full posting and try again.",
+            )
+        title = title or guess["title"]
+        company = company or guess["company"]
+        location = guess["location"]
+
+    async with get_session() as session:
+        try:
+            job, reused = await create_quick_apply_job(
+                session,
+                user_id=user_id,
+                description=description,
+                url=body.url,
+                title=title,
+                company=company,
+                location=location,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        job_id = job.id
+        source_url = job.source_url
+        await session.commit()
+
+    await _publish_job_submitted(user_id, job_id, source_url)
+    started = await start_personal_job_analysis(
+        job_id, user_id, background_tasks=background_tasks, force=False, skip_phase_b=False
+    )
+    analysis = str(started.get("status") or "queued")
+    if analysis == "cached":
+        async with get_session() as session:
+            build = await ResumeBuildRepository(session).get(job_id, user_id)
+        if build is None:
+            from app.services.job_match_orchestrator import enqueue_tailored_content_generation
+
+            await enqueue_tailored_content_generation(job_id, user_id, manual=True)
+            analysis = "building"
+
+    return QuickApplyResponse(job_id=job_id, reused=reused, title=title, company=company, analysis=analysis)
+
+
 _MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024
 _MAX_ATTACHMENT_FILES = 15
 

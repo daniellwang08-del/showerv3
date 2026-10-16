@@ -696,7 +696,8 @@ async def _after_save(
             "reason": (dedup_result or {}).get("reason"),
         })
 
-    if action == "saved_active" and match_data.get("should_run_phase_b"):
+    quick_apply = bool((dedup_result or {}).get("quick_apply"))
+    if action == "saved_active" and (match_data.get("should_run_phase_b") or quick_apply):
         try:
             pool = await get_tailoring_pool()
             await pool.enqueue_job(

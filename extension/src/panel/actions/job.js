@@ -4,7 +4,7 @@
 import * as api from "../../api.js";
 import { autofillPermissionOrigins, resolveEngine } from "../../engines.js";
 import { teardownAutofill } from "../autofill/index.js";
-import { localTimezone, messageOf, toJobCard } from "../format.js";
+import { isPastedJobUrl, localTimezone, messageOf, toJobCard } from "../format.js";
 import { LISTS, listQuery } from "../lists.js";
 import { live } from "../live.js";
 import { setState, state } from "../state.js";
@@ -41,11 +41,12 @@ export function docsResumeSource(docs) {
   return ((state.cache && state.cache.settings) || {}).application_resume_source === "original" ? "original" : "tailored";
 }
 
-function jobFromSession(s) {
+export function jobFromSession(s) {
   const snap = s.job_snapshot || {};
+  const url = snap.url || s.job_url || "";
   return {
     job_id: String(s.job_id),
-    url: snap.url || s.job_url || "",
+    url: isPastedJobUrl(url) ? "" : url,
     title: snap.title || s.job_title || "Untitled role",
     company: snap.company || s.company || "",
     location: snap.location || "",
@@ -63,8 +64,9 @@ function jobFromSession(s) {
 /**
  * Open a job in the panel. `navigate` loads its posting in the work tab.
  * `context` is the list it came from, used by "Applied, next job".
+ * `analyzing` marks a job whose analysis was just queued, so the view waits for it.
  */
-export async function openJob(jobId, { navigate = false, context, keepReportNotice = false } = {}) {
+export async function openJob(jobId, { navigate = false, context, keepReportNotice = false, analyzing = false } = {}) {
   const id = String(jobId);
   const seq = ++openSeq;
   stopStreaming();
@@ -81,6 +83,7 @@ export async function openJob(jobId, { navigate = false, context, keepReportNoti
     const session = await api.openSession(id, { fresh: true });
     if (seq !== openSeq) return;
     const job = jobFromSession(session);
+    job.analyzing = !!analyzing && !job.ready;
     job.engine = resolveEngine({ snapshot: job.snapshot });
     const tabId = navigate && job.url ? await openInWorkTab(job.url) : null;
     if (seq !== openSeq) return;
@@ -351,7 +354,8 @@ async function advance(fromJobId, { keepReportNotice = false } = {}) {
     await openJob(next.jobId, { navigate: true, keepReportNotice });
     return;
   }
-  toast(`That was the last job in ${title}.`, "ok");
+  const quick = state.applyContext && state.applyContext.listId === "quick";
+  toast(quick ? "Back home. Paste the next job whenever you're ready." : `That was the last job in ${title}.`, "ok");
   await goHome();
 }
 

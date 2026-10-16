@@ -31,6 +31,10 @@ export function emptyAutofill() {
   };
 }
 
+export function emptyQuickApply() {
+  return { open: false, description: "", title: "", company: "", url: "", details: false, busy: false, reading: false, error: null };
+}
+
 export function emptyList() {
   return { items: [], total: 0, page: 1, pages: 1, loading: false, error: null, key: null, loadedAt: 0 };
 }
@@ -74,6 +78,7 @@ function initialState() {
     tailor: { tab: "paste", runs: [], library: null, libraryLoading: false },
     stats: { period: "week", progress: null, scraper: null, loading: false },
     addJobs: null,
+    quickApply: emptyQuickApply(),
 
     toast: null,
     modal: null,

@@ -7,6 +7,7 @@ import { formatCount, plural, timeAgo } from "../../format.js";
 import { LISTS } from "../../lists.js";
 import { Badge, Banner, Button, Count, Section } from "../components.js";
 import { Icon } from "../icons.js";
+import { QuickApply } from "../QuickApply.js";
 
 function TodayCard({ data, loading, target }) {
   const applied = data ? data.counts.applied_today : null;
@@ -130,6 +131,7 @@ export function HomeView({ s }) {
       <${ReadyCard} count=${counts ? counts.ready : null} loading=${loading} />
       <${TodayCard} data=${data} loading=${loading} target=${s.dailyApplyTarget} />
     </div>
+    <${QuickApply} q=${s.quickApply} settings=${s.cache && s.cache.settings} />
     <${InProgress} data=${data} />
     <${ListTiles} counts=${counts} loading=${loading} />
     <${AddJobs} result=${s.addJobs} />

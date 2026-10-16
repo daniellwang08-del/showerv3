@@ -271,6 +271,9 @@ export const postJobsToPumble = (jobIds) =>
 
 export const submitJobUrl = (url) => apiFetch("/jobs/submit", { method: "POST", body: { url } });
 
+/** A job from its pasted description: { description, url?, title?, company? } -> { job_id, title, company, analysis } */
+export const quickApply = (body) => apiFetch("/jobs/quick-apply", { method: "POST", body, timeoutMs: 60_000 });
+
 export const createJobAddBatch = (jobIds, source = "extension") =>
   apiFetch("/job-add-batches", { method: "POST", body: { job_ids: jobIds, source } });
 

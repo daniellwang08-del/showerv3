@@ -152,11 +152,13 @@ function Documents({ job, s }) {
 }
 
 function ActionBar({ job, s }) {
+  const quick = s.applyContext && s.applyContext.listId === "quick";
+  const label = quick ? (job.applied ? "Done" : "Mark applied") : job.applied ? "Next job" : "Applied, next";
   return html`<footer class="actionbar">
     <${Button} variant="secondary" icon="clock" disabled=${s.skipping} title="Skip for now. It stays in In progress so you can apply later." onClick=${skipJob}>Skip</${Button}>
     <${Button} variant="ghost" icon="flag" title="Report this posting as expired" onClick=${reportExpired}>Expired</${Button}>
     <${Button} variant="primary" icon=${job.applied ? "chevron" : "check"} block onClick=${() => completeJob({ next: true })}>
-      ${job.applied ? "Next job" : "Applied, next"}
+      ${label}
     </${Button}>
   </footer>`;
 }

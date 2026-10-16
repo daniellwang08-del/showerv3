@@ -302,6 +302,11 @@ export function extractHttpUrls(text) {
   return out;
 }
 
+/** Stand-in URL the server gives a job added from a pasted description with no link. */
+export function isPastedJobUrl(url) {
+  return /[?&]pasted=[0-9a-f]{24}(?:[&#]|$)/i.test(String(url || ""));
+}
+
 export function messageOf(err, fallback = "Something went wrong.") {
   if (!err) return fallback;
   if (typeof err === "string") return err;

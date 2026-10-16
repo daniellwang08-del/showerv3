@@ -311,6 +311,13 @@ async def run_post_analysis_dedup(
             logger.warning("post_analysis_dedup_job_not_found", job_id=job_id)
             return {"action": "skipped", "reason": "job_not_found"}
 
+        from app.services.quick_apply import is_quick_apply_for
+
+        if is_quick_apply_for(current_job.raw_metadata, user_id):
+            result = await _save_active(session, job_id, user_id, match_data, overall_score)
+            result["quick_apply"] = True
+            return result
+
         if match_data.get("requires_security_clearance"):
             logger.info(
                 "post_analysis_dedup_security_clearance",
