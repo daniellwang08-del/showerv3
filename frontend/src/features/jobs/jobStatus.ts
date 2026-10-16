@@ -139,7 +139,7 @@ const SOURCE_SLUG_ALIASES: Record<string, string> = {
   'the-muse': 'themuse',
   zip: 'ziprecruiter',
   angelist: 'wellfound',
-  angel.co: 'wellfound',
+  'angel.co': 'wellfound',
 };
 
 const CAREER_PAGE_HOST_RE =
