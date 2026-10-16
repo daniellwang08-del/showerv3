@@ -1467,6 +1467,72 @@ html.landing-theme body {
   animation: jobs-hero-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Documents page: soft drifting glows over a faint dot grid. */
+@keyframes docs-glow-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(6%, 4%, 0) scale(1.12); }
+}
+@keyframes docs-cta-flow {
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
+}
+.docs-backdrop {
+  background: linear-gradient(180deg, color-mix(in oklch, var(--brand) 5%, var(--background)) 0%, var(--background) 420px);
+}
+.docs-backdrop__glow {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(80px);
+  opacity: 0.22;
+}
+.dark .docs-backdrop__glow { opacity: 0.16; }
+.docs-backdrop__glow--a { width: 38rem; height: 22rem; left: -10rem; top: -8rem; background: oklch(0.68 0.2 264); }
+.docs-backdrop__glow--b { width: 30rem; height: 20rem; right: -8rem; top: 6rem; background: oklch(0.72 0.19 320); }
+.docs-backdrop__glow--c { width: 34rem; height: 18rem; left: 35%; top: 30rem; background: oklch(0.78 0.14 195); opacity: 0.14; }
+.docs-backdrop--motion .docs-backdrop__glow--a { animation: docs-glow-drift 26s ease-in-out infinite; }
+.docs-backdrop--motion .docs-backdrop__glow--b { animation: docs-glow-drift 32s ease-in-out infinite reverse; }
+.docs-backdrop--motion .docs-backdrop__glow--c { animation: docs-glow-drift 38s ease-in-out infinite; }
+.docs-backdrop__grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(color-mix(in oklch, var(--foreground) 9%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, black 0%, transparent 70%);
+}
+.docs-composer::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, #3b6bff, #a855f7, #ec4fb5, #2fa8ff);
+  opacity: 0.85;
+}
+.docs-composer__icon {
+  background: linear-gradient(135deg, #3b6bff, #a855f7 60%, #ec4fb5);
+}
+.docs-composer__cta {
+  background: linear-gradient(90deg, #3b6bff, #7c4dff, #c04dff, #3b6bff);
+  background-size: 300% 100%;
+  animation: docs-cta-flow 6s linear infinite alternate;
+  box-shadow: 0 8px 22px -8px rgb(124 77 255 / 0.6);
+}
+.docs-composer__progress {
+  background: linear-gradient(90deg, #3b6bff, #a855f7, #ec4fb5);
+}
+.docs-paper-stage {
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in oklch, var(--brand) 9%, transparent), transparent 70%),
+    color-mix(in oklch, var(--muted) 65%, var(--card));
+}
+.docs-preview-stage {
+  background:
+    radial-gradient(color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 1px) 0 0 / 18px 18px,
+    var(--muted);
+}
+.docs-item {
+  animation: jobs-hero-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html.public-viewport { scroll-behavior: auto; }
   .landing-reveal { opacity: 1; transform: none; transition: none; }
@@ -1485,7 +1551,10 @@ html.landing-theme body {
   .studio-ai-tab__glow,
   .studio-ai-tab__shine::after,
   .studio-ai-tab__icon,
-  .jobs-summary-card {
+  .jobs-summary-card,
+  .docs-backdrop__glow,
+  .docs-composer__cta,
+  .docs-item {
     animation: none !important;
   }
 }
