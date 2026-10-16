@@ -95,6 +95,22 @@ test("only real posting pages become the job link", async () => {
   assert.equal(postingUrlFromTab(undefined, backend), "");
 });
 
+test("a pasted job has no posting link and waits for its documents", async () => {
+  const { isPreparing, jobFromSession } = await import("../src/panel/actions/job.js");
+  const job = jobFromSession({
+    job_id: 7,
+    job_snapshot: { url: "https://nao.it.com/app/jobs?pasted=0123456789abcdef01234567", title: "Engineer", ready: true },
+    docs: {},
+  });
+  assert.equal(job.url, "");
+  assert.equal(job.job_id, "7");
+  const now = 1_000_000;
+  assert.equal(isPreparing({ ...job, preparingUntil: now + 1 }, now), true);
+  assert.equal(isPreparing({ ...job, preparingUntil: now - 1 }, now), false);
+  assert.equal(isPreparing({ ...job, preparingUntil: now + 1, docs: { ...job.docs, resumePdf: true, coverPdf: true } }, now), false);
+  assert.equal(isPreparing(job, now), false);
+});
+
 test("quickApply posts the description and optional fields", async () => {
   await storage.setToken("tok");
   const calls = [];

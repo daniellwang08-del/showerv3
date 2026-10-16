@@ -61,12 +61,20 @@ export function jobFromSession(s) {
   };
 }
 
+// A quick apply job is scored, then Phase B is queued on save; until its build
+// shows up the view says so instead of offering a duplicate Build.
+const PREPARE_WINDOW_MS = 120_000;
+
+export function isPreparing(job, now = Date.now()) {
+  return !!job && Number(job.preparingUntil || 0) > now && !docsComplete(job.docs);
+}
+
 /**
  * Open a job in the panel. `navigate` loads its posting in the work tab.
  * `context` is the list it came from, used by "Applied, next job".
- * `analyzing` marks a job whose analysis was just queued, so the view waits for it.
+ * `preparing` marks a job whose analysis and documents were just queued.
  */
-export async function openJob(jobId, { navigate = false, context, keepReportNotice = false, analyzing = false } = {}) {
+export async function openJob(jobId, { navigate = false, context, keepReportNotice = false, preparing = false } = {}) {
   const id = String(jobId);
   const seq = ++openSeq;
   stopStreaming();
@@ -83,7 +91,10 @@ export async function openJob(jobId, { navigate = false, context, keepReportNoti
     const session = await api.openSession(id, { fresh: true });
     if (seq !== openSeq) return;
     const job = jobFromSession(session);
-    job.analyzing = !!analyzing && !job.ready;
+    if (preparing && !docsComplete(job.docs)) {
+      job.preparingUntil = Date.now() + PREPARE_WINDOW_MS;
+      job.analyzing = job.score == null;
+    }
     job.engine = resolveEngine({ snapshot: job.snapshot });
     const tabId = navigate && job.url ? await openInWorkTab(job.url) : null;
     if (seq !== openSeq) return;
@@ -179,7 +190,7 @@ function watchJob(jobId, attempt = 0) {
   watchTimer = null;
   const job = state.job;
   if (!job || job.job_id !== jobId || attempt > 40) return;
-  const waiting = job.analyzing || (!docsComplete(job.docs) && docsBuilding(job.docs));
+  const waiting = job.analyzing || (!docsComplete(job.docs) && (docsBuilding(job.docs) || isPreparing(job)));
   if (!waiting) return;
   watchTimer = setTimeout(async () => {
     if (live.status !== "online") {
@@ -213,7 +224,7 @@ export async function refreshSnapshot(jobId = state.job && state.job.job_id) {
       company: next.company,
       location: next.location,
       docs: next.docs,
-      analyzing: job.analyzing && !next.ready,
+      analyzing: job.analyzing && (job.preparingUntil ? next.score == null : !next.ready),
     }));
   } catch {
     /* next event or poll retries */

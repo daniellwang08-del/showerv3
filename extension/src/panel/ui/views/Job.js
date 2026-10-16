@@ -4,6 +4,7 @@ import {
   dismissReportNotice,
   docsResumeSource,
   downloadDoc,
+  isPreparing,
   openJob,
   refreshDocs,
   reportExpired,
@@ -79,6 +80,8 @@ function OriginalDocuments({ job, d, building, failed, build }) {
     cover = html`
       <${DocFile} ready=${d.coverPdf} kind="pdf" type="cover_letter_pdf" name="Cover letter PDF" />
       <${DocFile} ready=${d.coverDocx} kind="word" type="cover_letter_docx" name="Cover letter Word file" />`;
+  } else if (job.analyzing && job.ready) {
+    cover = html`<span class="docs-status"><${Spinner} size=${13} />Scoring</span>`;
   } else if (building) {
     cover = html`<span class="docs-status"><${Spinner} size=${13} />Writing</span>`;
   } else if (!job.ready) {
@@ -111,7 +114,10 @@ function Documents({ job, s }) {
   const hasResume = d.resumePdf || d.resumeDocx;
   const hasCover = d.coverPdf || d.coverDocx;
   const status = String(d.contentStatus || "").toLowerCase();
-  const building = ["queued", "pending", "processing", "running", "generating"].includes(status) || s.tailor.runs.some((r) => r.jobId === job.job_id && r.status !== "error");
+  const building =
+    ["queued", "pending", "processing", "running", "generating"].includes(status) ||
+    s.tailor.runs.some((r) => r.jobId === job.job_id && r.status !== "error") ||
+    (isPreparing(job) && !d.buildError);
   const failed = status === "failed" || !!d.buildError;
   const build = () => buildForJob({ id: job.job_id, title: job.title, company: job.company });
   if (docsResumeSource(d) === "original") {
@@ -129,6 +135,8 @@ function Documents({ job, s }) {
       <${DocFile} ready=${d.coverPdf} kind="pdf" type="cover_letter_pdf" name="Cover letter PDF" />
       <${DocFile} ready=${d.coverDocx} kind="word" type="cover_letter_docx" name="Cover letter Word file" />
     </div>`;
+  } else if (job.analyzing && job.ready) {
+    body = html`<p class="docs-status"><${Spinner} size=${13} />Scoring your fit, then writing your tailored resume.</p>`;
   } else if (building) {
     body = html`<p class="docs-status"><${Spinner} size=${13} />Writing your tailored resume.</p>`;
   } else if (!job.ready) {

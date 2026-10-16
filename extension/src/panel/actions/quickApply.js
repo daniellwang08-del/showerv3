@@ -113,7 +113,7 @@ export async function submitQuickApply() {
     toast(res.reused ? "Already in your pool. Opening it." : "Job added. Scoring it and writing your documents.", "ok");
     const jobId = String(res.job_id);
     await openJob(jobId, {
-      analyzing: res.analysis === "queued",
+      preparing: res.analysis === "queued" || res.analysis === "building",
       // "Applied, next" comes back home for the next paste instead of walking a list.
       context: { listId: "quick", title: "Quick apply", query: null, ids: [jobId], page: 1, pages: 1, seen: [] },
     });
