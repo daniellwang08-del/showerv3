@@ -27,7 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import type { ReportApplication, ReportPool, SharedReportResponse } from '@/types/reportShare';
+import type { ReportApplication, ReportApplied, ReportPool, SharedReportResponse } from '@/types/reportShare';
 import type { ActivitySeries } from '../insights/InsightsCharts';
 import { buildActivityRows, fmt } from '../insights/insightsData';
 import { CompanyAvatar, InterviewBoard, StageChip } from '../interviews/InterviewBoard';
@@ -47,11 +47,29 @@ import {
 
 const ActivityChart = lazy(() => import('../insights/InsightsCharts').then((m) => ({ default: m.ActivityChart })));
 
-const ACTIVITY_SERIES: ActivitySeries[] = [
-  { key: 'posted', label: 'New jobs', color: 'var(--chart-4)', kind: 'area' },
-  { key: 'recommended', label: 'Strong enough to apply', color: 'var(--chart-1)', kind: 'line' },
-  { key: 'applied', label: 'Applied', color: 'var(--status-ready)', kind: 'bar' },
-];
+function activitySeries(source: ReportApplied['source'], minScore: number): ActivitySeries[] {
+  return [
+    { key: 'posted', label: 'New jobs', color: 'var(--chart-4)', kind: 'area' },
+    {
+      key: 'recommended',
+      label: minScore > 0 ? `New jobs scoring ${minScore}+` : 'New jobs scored',
+      color: 'var(--chart-1)',
+      kind: 'line',
+    },
+    {
+      key: 'applied',
+      label: source === 'email' ? 'Applied (confirmation emails)' : 'Applied (marked in NAO)',
+      color: 'var(--status-ready)',
+      kind: 'bar',
+    },
+  ];
+}
+
+function appliedSourceNote(source: ReportApplied['source']): string {
+  return source === 'email'
+    ? 'Applied counts application confirmation emails, so it includes jobs applied to outside NAO.'
+    : 'Applied counts jobs marked applied in NAO; no synced inbox yet.';
+}
 const RANGES = [7, 30] as const;
 const PAGE = 40;
 
@@ -122,12 +140,13 @@ export function SharedReportView({ data, preview = false }: { data: SharedReport
   const upcoming = upcomingInterviews(processes);
   const actions = actionItems(processes);
   const outcome = awaitingOutcome(processes);
-  const appliedWeek = activityWindow(report.activity, 7).totals.applied;
+  const applied = report.applied;
   const selected = processes.find((p) => p.id === selectedId) ?? null;
   const name = report.owner.name;
+  const appliedTone = 'bg-indigo-500/12 text-indigo-700 dark:text-indigo-300';
 
   const meta = (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
       <HeroStat icon={CalendarClock} label="Active processes" value={summary.active} />
       <HeroStat icon={CalendarCheck} label="Interviews this week" value={summary.upcoming_week} tone="bg-chart-2/10 text-chart-2" />
       <HeroStat
@@ -137,7 +156,8 @@ export function SharedReportView({ data, preview = false }: { data: SharedReport
         tone={summary.needs_action ? 'bg-status-preparing/15 text-status-preparing' : 'bg-muted text-muted-foreground'}
       />
       <HeroStat icon={Trophy} label="Offers" value={summary.offers} tone="bg-status-ready/15 text-status-ready" />
-      <HeroStat icon={ClipboardCheck} label="Applied this week" value={appliedWeek} tone="bg-indigo-500/12 text-indigo-700 dark:text-indigo-300" />
+      <HeroStat icon={ClipboardCheck} label="Applied, last 7 days" value={fmt(applied.last_7_days)} tone={appliedTone} />
+      <HeroStat icon={ClipboardCheck} label="Applied, last 30 days" value={fmt(applied.last_30_days)} tone={appliedTone} />
     </div>
   );
 
@@ -262,7 +282,7 @@ export function SharedReportView({ data, preview = false }: { data: SharedReport
 
           <div className="grid gap-4 lg:grid-cols-3">
             <ActivityCard data={data} />
-            <PoolCard pool={report.pool} allTime={report.applications.all_time} />
+            <PoolCard pool={report.pool} applied={applied} />
           </div>
 
           <ApplicationsCard data={data} now={now} onOpen={setSelectedId} />
@@ -282,10 +302,13 @@ function ActivityCard({ data }: { data: SharedReportResponse }) {
   const [days, setDays] = useState<(typeof RANGES)[number]>(7);
   const range = activityWindow(data.report.activity, days);
   const rows = buildActivityRows(range);
+  const { applied } = data.report;
+  const series = activitySeries(applied.source, range.min_match_score);
+  const marked = days === 7 ? applied.marked_in_nao.last_7_days : applied.marked_in_nao.last_30_days;
   return (
     <SectionCard
       title="Job posts and applications"
-      description={`New jobs, jobs scoring ${range.min_match_score}+ and applications sent per day.`}
+      description={`Per day, last ${days} days. ${appliedSourceNote(applied.source)}`}
       className="lg:col-span-2"
       actions={
         <div role="tablist" aria-label="Activity range" className="inline-flex rounded-lg bg-muted p-0.5">
@@ -308,7 +331,7 @@ function ActivityCard({ data }: { data: SharedReportResponse }) {
       }
     >
       <div className="mb-3 grid grid-cols-3 gap-2">
-        {ACTIVITY_SERIES.map((s) => (
+        {series.map((s) => (
           <div key={s.key} className="min-w-0 rounded-xl border bg-background/50 px-3 py-2">
             <div className="flex items-center gap-1.5 truncate text-[11px] font-medium text-muted-foreground">
               <span className="size-2 shrink-0 rounded-full" style={{ background: s.color }} />
@@ -318,9 +341,15 @@ function ActivityCard({ data }: { data: SharedReportResponse }) {
           </div>
         ))}
       </div>
+      {applied.source === 'email' ? (
+        <p className="mb-3 text-xs text-muted-foreground">
+          {fmt(marked)} {marked === 1 ? 'job was' : 'jobs were'} marked applied in NAO in the same {days} days. They are listed below and
+          not added to the email count, since most also have a confirmation email.
+        </p>
+      ) : null}
       {rows.length ? (
         <Suspense fallback={<Skeleton className="h-[240px] w-full rounded-xl" />}>
-          <ActivityChart data={rows} series={ACTIVITY_SERIES} height={240} />
+          <ActivityChart data={rows} series={series} height={240} />
         </Suspense>
       ) : (
         <p className="py-14 text-center text-sm text-muted-foreground">No activity in this window.</p>
@@ -329,16 +358,21 @@ function ActivityCard({ data }: { data: SharedReportResponse }) {
   );
 }
 
-function PoolCard({ pool, allTime }: { pool: ReportPool | null; allTime: number }) {
+function PoolCard({ pool, applied }: { pool: ReportPool | null; applied: ReportApplied }) {
+  const appliedRow = {
+    label: 'Applied, all time',
+    value: fmt(applied.all_time),
+    hint: applied.source === 'email' ? 'confirmation emails' : 'marked in NAO',
+  };
   const rows: { label: string; value: ReactNode; hint?: string }[] = pool
     ? [
         { label: 'Jobs found', value: fmt(pool.total_jobs), hint: `${fmt(pool.today_scraped)} today` },
         { label: 'Scored against the profile', value: fmt(pool.scored_jobs), hint: `average ${pool.avg_match_score}` },
         { label: 'Strong matches', value: fmt(pool.best_jobs) },
         { label: 'Tailored documents ready', value: fmt(pool.ready_jobs) },
-        { label: 'Applied, all time', value: fmt(allTime) },
+        appliedRow,
       ]
-    : [{ label: 'Applied, all time', value: fmt(allTime) }];
+    : [appliedRow];
   return (
     <SectionCard title="Search at a glance" icon={BriefcaseBusiness} description={pool ? `Applies at a match score of ${pool.min_match_score}+.` : undefined}>
       <dl className="divide-y">
@@ -365,12 +399,13 @@ function ApplicationsCard({
   now: number;
   onOpen: (id: string) => void;
 }) {
-  const { items, total, lookback_days: lookback } = data.report.applications;
+  const { items, total, by_source: bySource, lookback_days: lookback } = data.report.applications;
   const [filter, setFilter] = useState<ApplicationFilter>('all');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE);
   const counts = applicationCounts(items, now);
   const shown = filterApplications(items, filter, query);
+  const sources = `${fmt(bySource.email)} from confirmation emails, ${fmt(bySource.nao)} marked in NAO`;
 
   return (
     <SectionCard
@@ -378,8 +413,8 @@ function ApplicationsCard({
       icon={ClipboardCheck}
       description={
         total > items.length
-          ? `Latest ${fmt(items.length)} of ${fmt(total)} in the last ${lookback} days · ${fmt(counts.week)} this week`
-          : `${fmt(total)} in the last ${lookback} days · ${fmt(counts.week)} this week`
+          ? `Latest ${fmt(items.length)} of ${fmt(total)} in the last ${lookback} days (${sources})`
+          : `${fmt(total)} in the last ${lookback} days (${sources})`
       }
       actions={
         <div className="relative w-full sm:w-60">

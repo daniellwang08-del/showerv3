@@ -59,6 +59,15 @@ export interface ReportApplication {
   process_active: boolean;
 }
 
+export interface ReportApplied {
+  /** `email`: confirmation emails, once the inbox has synced. `nao`: jobs marked applied in NAO. */
+  source: 'email' | 'nao';
+  last_7_days: number;
+  last_30_days: number;
+  all_time: number;
+  marked_in_nao: { last_7_days: number; last_30_days: number };
+}
+
 export interface ReportPool {
   total_jobs: number;
   scored_jobs: number;
@@ -82,8 +91,15 @@ export interface SharedReport {
     summary: InterviewSummary;
   };
   activity: WeeklyProgress;
+  /** Same source and calendar days as the `applied` series in `activity`. */
+  applied: ReportApplied;
   /** `items` holds the newest applications; `total` counts all of them in the lookback window. */
-  applications: { items: ReportApplication[]; total: number; lookback_days: number; all_time: number };
+  applications: {
+    items: ReportApplication[];
+    total: number;
+    by_source: { email: number; nao: number };
+    lookback_days: number;
+  };
   pool: ReportPool | null;
 }
 

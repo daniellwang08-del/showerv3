@@ -379,20 +379,69 @@ async def _applications(session: AsyncSession, owner_id: str, since: datetime) -
     return apps[:MAX_APPLICATIONS]
 
 
-async def _applications_total(session: AsyncSession, owner_id: str, since: datetime) -> int:
-    marked = await session.execute(
-        select(func.count()).where(
-            ValidJobUserApplication.user_id == owner_id, ValidJobUserApplication.applied_at >= since
-        )
+async def _count(session: AsyncSession, *where) -> int:
+    return int((await session.execute(select(func.count()).where(*where))).scalar_one() or 0)
+
+
+async def _applications_counts(session: AsyncSession, owner_id: str, since: datetime) -> dict[str, int]:
+    """Applications in the list window by where they were found, matching ``_applications``."""
+    marked = ValidJobUserApplication
+    by_hand = await _count(
+        session,
+        marked.user_id == owner_id,
+        marked.applied_at >= since,
+        func.coalesce(marked.applied_by_name, "") != mail_applications.EMAIL_APPLIED_LABEL,
     )
-    inbox_only = await session.execute(
-        select(func.count()).where(
-            MailApplication.user_id == owner_id,
-            MailApplication.applied_at >= since,
-            MailApplication.job_id.is_(None),
-        )
+    marked_from_email = await _count(
+        session,
+        marked.user_id == owner_id,
+        marked.applied_at >= since,
+        marked.applied_by_name == mail_applications.EMAIL_APPLIED_LABEL,
     )
-    return int(marked.scalar_one() or 0) + int(inbox_only.scalar_one() or 0)
+    inbox_only = await _count(
+        session, MailApplication.user_id == owner_id, MailApplication.applied_at >= since, MailApplication.job_id.is_(None)
+    )
+    email = marked_from_email + inbox_only
+    return {"total": by_hand + email, "email": email, "nao": by_hand}
+
+
+async def applied_summary(
+    session: AsyncSession, owner_id: str, activity: dict[str, Any], tz_name: str
+) -> dict[str, Any]:
+    """Applied counts from the same source and calendar days as the activity chart.
+
+    Once the inbox has synced, confirmation emails are the applied count (people
+    also apply outside NAO). Jobs marked applied in NAO are reported alongside
+    so a viewer can see both without them being added together.
+    """
+    from app.utils.date_bounds import recent_week_bounds_for_timezone
+
+    from_inbox = await mail_applications.counts_from_inbox(session, owner_id)
+    series = activity["series"]
+    week_start, end, _ = recent_week_bounds_for_timezone(tz_name, days=7)
+    month_start = recent_week_bounds_for_timezone(tz_name, days=ACTIVITY_DAYS)[0]
+    marked = ValidJobUserApplication
+
+    async def marks(start: datetime | None) -> int:
+        where = [marked.user_id == owner_id]
+        if start is not None:
+            where += [marked.applied_at >= start, marked.applied_at < end]
+        return await _count(session, *where)
+
+    if from_inbox:
+        all_time = await _count(session, MailApplication.user_id == owner_id)
+    else:
+        all_time = await marks(None)
+    return {
+        "source": "email" if from_inbox else "nao",
+        "last_7_days": sum(d["applied"] for d in series[-7:]),
+        "last_30_days": int(activity["totals"]["applied"]),
+        "all_time": all_time,
+        "marked_in_nao": {
+            "last_7_days": await marks(week_start),
+            "last_30_days": await marks(month_start),
+        },
+    }
 
 
 async def _job_pool(session: AsyncSession, owner_id: str, tz_name: str | None) -> dict[str, Any] | None:
@@ -430,9 +479,7 @@ async def build_report(
     since = _utcnow() - APPLICATIONS_LOOKBACK
     applications = link_applications(await _applications(session, owner_id, since), clean)
     activity = await fetch_weekly_progress_series(session, owner_id, tz_name=tz_name, days=ACTIVITY_DAYS)
-    total_applied = (
-        await session.execute(select(func.count()).where(ValidJobUserApplication.user_id == owner_id))
-    ).scalar_one()
+    counts = await _applications_counts(session, owner_id, since)
     return {
         "owner": {
             "name": display_name(owner),
@@ -447,11 +494,12 @@ async def build_report(
             "summary": interview_service.summarize(clean),
         },
         "activity": activity,
+        "applied": await applied_summary(session, owner_id, activity, tz_name),
         "applications": {
             "items": applications,
-            "total": await _applications_total(session, owner_id, since),
+            "total": counts["total"],
+            "by_source": {"email": counts["email"], "nao": counts["nao"]},
             "lookback_days": APPLICATIONS_LOOKBACK.days,
-            "all_time": int(total_applied or 0),
         },
         "pool": await _job_pool(session, owner_id, tz_name),
     }

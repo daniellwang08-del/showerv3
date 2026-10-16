@@ -72,7 +72,11 @@ describe('SharedReportPage', () => {
     expect(screen.getByText('Thanks for helping me prep!')).toBeInTheDocument();
     expect(screen.getByText('Read only')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Shared with me' })).toHaveAttribute('href', '/app/shared');
-    expect(screen.getByText('Applied this week').nextElementSibling).toHaveTextContent('14');
+    expect(screen.getByText('Applied, last 7 days').nextElementSibling).toHaveTextContent('14');
+    expect(screen.getByText('Applied, last 30 days').nextElementSibling).toHaveTextContent('14');
+    expect(screen.getAllByText('Applied (confirmation emails)').length).toBeGreaterThan(0);
+    expect(screen.getByText(/9 jobs were marked applied in NAO in the same 7 days/)).toBeInTheDocument();
+    expect(screen.getByText('3 in the last 90 days (1 from confirmation emails, 2 marked in NAO)')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Interviewing column' })).getByText('Acme')).toBeInTheDocument();
     expect(await screen.findByTestId('activity-chart')).toHaveAttribute('data-points', '7');
 
@@ -101,6 +105,18 @@ describe('SharedReportPage', () => {
     renderShared();
     expect(await screen.findByRole('heading', { name: 'This report is no longer shared with you' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Back to Shared with me' })).toHaveAttribute('href', '/app/shared');
+  });
+
+  it('labels applied counts as NAO marks when the inbox has not synced', async () => {
+    const report = makeReport();
+    report.report.applied = { source: 'nao', last_7_days: 582, last_30_days: 1037, all_time: 1037, marked_in_nao: { last_7_days: 582, last_30_days: 1037 } };
+    mocked.fetchSharedReport.mockResolvedValue(report);
+    renderShared();
+    expect(await screen.findByText('Applied, last 7 days')).toBeInTheDocument();
+    expect(screen.getByText('Applied, last 7 days').nextElementSibling).toHaveTextContent('582');
+    expect(screen.getByText('Applied, last 30 days').nextElementSibling).toHaveTextContent('1,037');
+    expect(screen.getAllByText('Applied (marked in NAO)').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/marked applied in NAO in the same/)).not.toBeInTheDocument();
   });
 
   it('opens under the admin workspace for admin accounts', async () => {

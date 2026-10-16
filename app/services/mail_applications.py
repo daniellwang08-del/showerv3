@@ -294,9 +294,18 @@ async def company_keys_since(session: AsyncSession, user_id: str, since: datetim
 # ── Insights ────────────────────────────────────────────────────────────────
 
 
-async def has_connection(session: AsyncSession, user_id: str) -> bool:
-    row = await session.execute(select(MailConnection.id).where(MailConnection.user_id == user_id))
-    return row.scalar_one_or_none() is not None
+async def counts_from_inbox(session: AsyncSession, user_id: str) -> bool:
+    """Confirmation emails are the applied count once the inbox has synced at least once.
+
+    A mailbox that is connected but never synced (first sync failed or still
+    running) holds no confirmations yet, so counting from it would show zero.
+    """
+    row = await session.execute(
+        select(MailConnection.id).where(
+            MailConnection.user_id == user_id, MailConnection.last_synced_at.is_not(None)
+        )
+    )
+    return row.first() is not None
 
 
 async def applied_by_day(

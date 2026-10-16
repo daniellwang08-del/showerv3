@@ -78,7 +78,22 @@ export function makeReport(
         })),
         totals: { posted: 90, recommended: 30, applied: 14 },
       },
-      applications: { items: applications, total: applications.length, lookback_days: 90, all_time: 120 },
+      applied: {
+        source: 'email',
+        last_7_days: 14,
+        last_30_days: 14,
+        all_time: 120,
+        marked_in_nao: { last_7_days: 9, last_30_days: 21 },
+      },
+      applications: {
+        items: applications,
+        total: applications.length,
+        by_source: {
+          email: applications.filter((a) => a.source === 'email').length,
+          nao: applications.filter((a) => a.source === 'nao').length,
+        },
+        lookback_days: 90,
+      },
       pool: {
         total_jobs: 800,
         scored_jobs: 600,

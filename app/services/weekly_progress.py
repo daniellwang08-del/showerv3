@@ -4,8 +4,8 @@ Per local calendar day (user timezone):
   * posted, jobs added to the platform (same semantics as dashboard ``today``)
   * recommended, posted that day AND match score >= the user's effective min
                   (Preferences page threshold → dashboard ``suggested`` rule)
-  * applied, application confirmation emails received that day when a
-             mailbox is connected, otherwise jobs the user marked applied
+  * applied, application confirmation emails received that day once the
+             inbox has synced, otherwise jobs the user marked applied
 """
 
 from __future__ import annotations
@@ -97,10 +97,10 @@ async def _applied_by_day(
     end_utc: datetime,
     tz_name: str | None,
 ) -> dict[date, int]:
-    """Applications per local day: confirmation emails when a mailbox is connected, else marks."""
+    """Applications per local day: confirmation emails once the inbox has synced, else marks."""
     from app.services import mail_applications
 
-    if await mail_applications.has_connection(session, user_id):
+    if await mail_applications.counts_from_inbox(session, user_id):
         return await mail_applications.applied_by_day(
             session, user_id, start_utc=start_utc, end_utc=end_utc, tz_name=tz_name
         )

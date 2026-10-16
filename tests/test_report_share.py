@@ -133,6 +133,37 @@ class TestReport:
         assert (out["c"]["stage"], out["c"]["process_id"], out["c"]["process_active"]) == ("applied", None, False)
 
 
+class TestAppliedSummary:
+    ACTIVITY = {
+        "series": [{"applied": 1} for _ in range(23)] + [{"applied": 5} for _ in range(7)],
+        "totals": {"applied": 58},
+    }
+
+    def _run(self, monkeypatch, from_inbox):
+        async def fake_inbox(session, owner_id):
+            return from_inbox
+
+        counts = iter([300, 40, 90] if from_inbox else [1037, 40, 90])
+
+        async def fake_count(session, *where):
+            return next(counts)
+
+        monkeypatch.setattr(rs.mail_applications, "counts_from_inbox", fake_inbox)
+        monkeypatch.setattr(rs, "_count", fake_count)
+        return asyncio.run(rs.applied_summary(None, "u1", self.ACTIVITY, "America/New_York"))
+
+    def test_week_and_month_come_from_the_chart_series(self, monkeypatch):
+        out = self._run(monkeypatch, from_inbox=True)
+        assert out["source"] == "email"
+        assert (out["last_7_days"], out["last_30_days"], out["all_time"]) == (35, 58, 300)
+        assert out["marked_in_nao"] == {"last_7_days": 40, "last_30_days": 90}
+
+    def test_falls_back_to_marks_without_a_synced_inbox(self, monkeypatch):
+        out = self._run(monkeypatch, from_inbox=False)
+        assert out["source"] == "nao"
+        assert out["all_time"] == 1037
+
+
 class _FakeSession:
     def __init__(self):
         self.added = []
