@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { RotateCw } from 'lucide-react';
+import { AlertTriangle, Globe, Inbox, type LucideIcon, PlugZap, RotateCw, Send } from 'lucide-react';
 import { toast } from 'sonner';
-import { PageLayout } from '@/components/app/PageLayout';
+import { HeroStat, PageLayout } from '@/components/app/PageLayout';
+import { PAGE_TABS_LIST, PAGE_TABS_TRIGGER } from '@/components/app/pageTabs';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -25,6 +26,7 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['value'];
 const DEFAULT_TAB: TabId = 'job-sites';
+const TAB_ICON: Record<TabId, LucideIcon> = { 'job-sites': Globe, posting: Send, inbox: Inbox };
 const isTabId = (v: string | null): v is TabId => TABS.some((t) => t.value === v);
 
 type Active =
@@ -91,6 +93,36 @@ export function IntegrationsPage() {
   });
   const available = plugins.filter((plugin) => !connected.some((c) => c.plugin.slug === plugin.slug));
 
+  const siteKinds = connected.map(({ plugin, connection }) => jobSiteStatus(plugin, connection).kind);
+  const postingKinds = [sheets.data && sheetsStatus(sheets.data).kind, pumble.data && pumbleStatus(pumble.data).kind];
+  const inboxKinds = [gmail.data && gmailStatus(gmail.data).kind];
+  const countLive = (kinds: unknown[]) => kinds.filter((k) => k === 'connected' || k === 'attention').length;
+  const tabCount: Record<TabId, number> = {
+    'job-sites': connected.length,
+    posting: countLive(postingKinds),
+    inbox: countLive(inboxKinds),
+  };
+  const attention = [...siteKinds, ...postingKinds, ...inboxKinds].filter((k) => k === 'attention').length;
+  const newJobs = connected.reduce((n, c) => n + (c.connection.last_new_jobs ?? 0), 0);
+
+  const meta = (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <HeroStat
+        icon={Globe}
+        label="Job sites connected"
+        value={jobSites.data ? `${connected.length} of ${plugins.length}` : '-'}
+      />
+      <HeroStat icon={PlugZap} label="New from last syncs" value={jobSites.data ? newJobs : '-'} tone="bg-chart-4/10 text-chart-4" />
+      <HeroStat icon={Send} label="Posting destinations" value={`${tabCount.posting} of 2`} tone="bg-chart-2/10 text-chart-2" />
+      <HeroStat
+        icon={AlertTriangle}
+        label="Need attention"
+        value={attention}
+        tone={attention ? 'bg-status-preparing/15 text-status-preparing' : 'bg-muted text-muted-foreground'}
+      />
+    </div>
+  );
+
   let sheetBody: ReactNode = null;
   if (active?.kind === 'job-site') {
     const plugin = plugins.find((p) => p.slug === active.slug);
@@ -117,15 +149,30 @@ export function IntegrationsPage() {
       title="Integrations"
       description="Connect job boards, posting destinations, and read-only inbox sources."
       width="wide"
+      variant="hero"
+      icon={PlugZap}
+      meta={meta}
     >
       <Tabs value={tab} onValueChange={(v) => isTabId(String(v)) && selectTab(String(v) as TabId)} className="gap-6">
         <div className="no-scrollbar -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-          <TabsList aria-label="Integration sections" className="w-max">
-            {TABS.map((t) => (
-              <TabsTrigger key={t.value} value={t.value} className="px-3">
-                {t.label}
-              </TabsTrigger>
-            ))}
+          <TabsList aria-label="Integration sections" className={PAGE_TABS_LIST}>
+            {TABS.map((t) => {
+              const Icon = TAB_ICON[t.value];
+              return (
+                <TabsTrigger key={t.value} value={t.value} className={PAGE_TABS_TRIGGER}>
+                  <Icon aria-hidden />
+                  {t.label}
+                  {tabCount[t.value] > 0 ? (
+                    <span
+                      aria-hidden
+                      className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-status-ready/15 px-1 text-[10px] font-semibold text-status-ready tabular-nums"
+                    >
+                      {tabCount[t.value]}
+                    </span>
+                  ) : null}
+                </TabsTrigger>
+              );
+            })}
           </TabsList>
         </div>
 
@@ -170,11 +217,11 @@ export function IntegrationsPage() {
                 </AlertAction>
               </Alert>
             ) : plugins.length === 0 ? (
-              <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
+              <p className="rounded-2xl border border-dashed bg-card/60 px-4 py-8 text-center text-sm text-muted-foreground backdrop-blur-sm">
                 No job sites are available on this server yet.
               </p>
             ) : available.length === 0 ? (
-              <p className="rounded-xl border px-4 py-8 text-center text-sm text-muted-foreground">
+              <p className="rounded-2xl border border-dashed bg-card/60 px-4 py-8 text-center text-sm text-muted-foreground backdrop-blur-sm">
                 Every available job site is connected.
               </p>
             ) : (
@@ -291,11 +338,14 @@ function Group({ title, description, children }: { title: string; description: s
   const id = `integrations-${title.toLowerCase().replace(/\W+/g, '-')}`;
   return (
     <section aria-labelledby={id} className="space-y-3">
-      <div>
-        <h2 id={id} className="text-sm font-medium">
-          {title}
-        </h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+      <div className="flex items-start gap-2.5 px-1">
+        <span aria-hidden className="mt-1.5 h-4 w-1 shrink-0 rounded-full bg-gradient-to-b from-brand to-brand/30" />
+        <div className="min-w-0">
+          <h2 id={id} className="text-sm font-semibold tracking-tight">
+            {title}
+          </h2>
+          <p className="mt-0.5 max-w-3xl text-sm text-muted-foreground">{description}</p>
+        </div>
       </div>
       {children}
     </section>

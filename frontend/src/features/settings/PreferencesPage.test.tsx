@@ -208,6 +208,18 @@ describe('PreferencesPage', () => {
     expect(screen.getByText(/Re-run jobs to regenerate documents/)).toBeInTheDocument();
   });
 
+  it('summarises the saved preferences in the header', async () => {
+    api.fetchUserSettings.mockResolvedValue(
+      makeSettings({ application_resume_source: 'original', work_mode_preferences: ['remote', 'hybrid'] }),
+    );
+    renderPage();
+    const summary = await screen.findByLabelText('Current preferences');
+    expect(summary).toHaveTextContent('Original résumé');
+    expect(summary).toHaveTextContent('40 and up');
+    expect(summary).toHaveTextContent('Remote, Hybrid');
+    expect(summary).toHaveTextContent('US');
+  });
+
   it('shows an error with retry when settings fail to load', async () => {
     api.fetchUserSettings.mockRejectedValueOnce({ response: { data: { detail: 'Server down' } } });
     const user = userEvent.setup();

@@ -1,7 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, RotateCw } from 'lucide-react';
-import { PageLayout } from '@/components/app/PageLayout';
+import {
+  AlertCircle,
+  Briefcase,
+  FileText,
+  Gauge,
+  Globe2,
+  KeyRound,
+  type LucideIcon,
+  MessageSquareCode,
+  RotateCw,
+  Search,
+  SlidersHorizontal,
+  Target,
+  UserRoundCheck,
+} from 'lucide-react';
+import { HeroStat, PageLayout } from '@/components/app/PageLayout';
+import { PAGE_TABS_LIST, PAGE_TABS_TRIGGER } from '@/components/app/pageTabs';
 import { Alert, AlertAction, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,6 +42,52 @@ const TABS = [
 type TabId = (typeof TABS)[number]['value'];
 const DEFAULT_TAB: TabId = 'job-search';
 const isTabId = (v: string | null): v is TabId => TABS.some((t) => t.value === v);
+
+const TAB_ICON: Record<TabId, LucideIcon> = {
+  'job-search': Search,
+  matching: Target,
+  application: UserRoundCheck,
+  ai: KeyRound,
+  prompts: MessageSquareCode,
+};
+
+const WORK_MODE_LABEL: Record<string, string> = { remote: 'Remote', hybrid: 'Hybrid', onsite: 'Onsite' };
+
+function SettingsSummary({ settings }: { settings: UserSettings }) {
+  const modes = settings.work_mode_preferences ?? [];
+  const countries = settings.country_preferences ?? [];
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Current preferences">
+      <HeroStat
+        icon={FileText}
+        label="Apply with"
+        value={settings.application_resume_source === 'original' ? 'Original résumé' : 'Tailored résumé'}
+      />
+      <HeroStat
+        icon={Gauge}
+        label="Minimum match"
+        value={settings.min_match_score ? `${settings.min_match_score} and up` : 'Any score'}
+        tone="bg-match-strong/10 text-match-strong"
+      />
+      <HeroStat
+        icon={Briefcase}
+        label="Work mode"
+        value={modes.length ? modes.map((m) => WORK_MODE_LABEL[m] ?? m).join(', ') : 'Any mode'}
+        tone="bg-chart-4/10 text-chart-4"
+      />
+      <HeroStat
+        icon={Globe2}
+        label="Countries"
+        value={
+          countries.length
+            ? countries.slice(0, 3).join(', ').toUpperCase() + (countries.length > 3 ? ` +${countries.length - 3}` : '')
+            : 'All countries'
+        }
+        tone="bg-chart-2/10 text-chart-2"
+      />
+    </div>
+  );
+}
 
 export function PreferencesPage() {
   const query = useSettingsQuery();
@@ -69,12 +130,18 @@ export function PreferencesPage() {
     );
 
   return (
-    <PageLayout title="Preferences" description="How NAO finds, scores, and prepares jobs for you.">
+    <PageLayout
+      title="Preferences"
+      description="How NAO finds, scores, and prepares jobs for you."
+      variant="hero"
+      icon={SlidersHorizontal}
+      meta={query.data ? <SettingsSummary settings={query.data} /> : undefined}
+    >
       {query.isPending ? (
         <div className="space-y-6" aria-busy="true" aria-label="Loading preferences">
-          <Skeleton className="h-8 w-full max-w-lg" />
-          <Skeleton className="h-56 rounded-xl" />
-          <Skeleton className="h-72 rounded-xl" />
+          <Skeleton className="h-10 w-full max-w-lg rounded-xl" />
+          <Skeleton className="h-56 rounded-2xl" />
+          <Skeleton className="h-72 rounded-2xl" />
         </div>
       ) : query.isError ? (
         <Alert variant="destructive">
@@ -90,9 +157,12 @@ export function PreferencesPage() {
       ) : (
         <Tabs value={tab} onValueChange={(v) => isTabId(String(v)) && selectTab(String(v) as TabId)} className="gap-6">
           <div className="no-scrollbar -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-            <TabsList aria-label="Preference sections" className="w-max">
-              {TABS.map((t) => (
-                <TabsTrigger key={t.value} value={t.value} className="px-3">
+            <TabsList aria-label="Preference sections" className={PAGE_TABS_LIST}>
+              {TABS.map((t) => {
+                const Icon = TAB_ICON[t.value];
+                return (
+                <TabsTrigger key={t.value} value={t.value} className={PAGE_TABS_TRIGGER}>
+                  <Icon aria-hidden />
                   {t.label}
                   {'advanced' in t ? (
                     <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
@@ -106,7 +176,8 @@ export function PreferencesPage() {
                     </>
                   ) : null}
                 </TabsTrigger>
-              ))}
+                );
+              })}
             </TabsList>
           </div>
 

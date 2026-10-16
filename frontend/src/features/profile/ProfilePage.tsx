@@ -1,9 +1,23 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Pencil } from 'lucide-react';
+import {
+  Award,
+  BriefcaseBusiness,
+  CircleCheck,
+  FileStack,
+  GraduationCap,
+  IdCard,
+  Loader2,
+  type LucideIcon,
+  NotebookPen,
+  Pencil,
+  Puzzle,
+  UserRound,
+  Wrench,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchUserProfile, saveUserProfile } from '@/api/profileApi';
-import { PageLayout, SectionCard } from '@/components/app/PageLayout';
+import { HeroStat, PageLayout, SectionCard } from '@/components/app/PageLayout';
 import { SaveBar } from '@/components/app/SaveBar';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -76,18 +90,30 @@ const SECTION_UI: Record<
   },
 };
 
+const SECTION_ICON: Record<SectionId, LucideIcon> = {
+  basics: IdCard,
+  summary: NotebookPen,
+  skills: Wrench,
+  experience: BriefcaseBusiness,
+  education: GraduationCap,
+  certifications: Award,
+  additional: Puzzle,
+  documents: FileStack,
+};
+
 const PAGE_DESCRIPTION = 'The source of truth for every tailored résumé, cover letter and application.';
+const LAYOUT = { title: 'Profile', description: PAGE_DESCRIPTION, width: 'wide', variant: 'hero', icon: UserRound } as const;
 
 export function ProfilePage({ onProfileSaved, accountEmail }: ProfilePageProps) {
   const query = useQuery({ queryKey: PROFILE_QUERY_KEY, queryFn: fetchUserProfile });
 
   if (query.isPending) {
     return (
-      <PageLayout title="Profile" description={PAGE_DESCRIPTION} width="wide">
+      <PageLayout {...LAYOUT}>
         <div className="flex flex-col gap-4" aria-label="Loading profile">
-          <Skeleton className="h-20 w-full rounded-xl" />
-          <Skeleton className="h-48 w-full rounded-xl" />
-          <Skeleton className="h-48 w-full rounded-xl" />
+          <Skeleton className="h-28 w-full rounded-2xl" />
+          <Skeleton className="h-48 w-full rounded-2xl" />
+          <Skeleton className="h-48 w-full rounded-2xl" />
         </div>
       </PageLayout>
     );
@@ -95,8 +121,8 @@ export function ProfilePage({ onProfileSaved, accountEmail }: ProfilePageProps) 
 
   if (query.isError) {
     return (
-      <PageLayout title="Profile" description={PAGE_DESCRIPTION} width="wide">
-        <div role="alert" className="flex flex-col items-start gap-3 rounded-xl border bg-card p-5 text-sm">
+      <PageLayout {...LAYOUT}>
+        <div role="alert" className="flex flex-col items-start gap-3 rounded-2xl border bg-card/90 p-5 text-sm backdrop-blur-sm">
           <p className="text-destructive">{profileErrorFromUnknown(query.error, 'Could not load your profile.')}</p>
           <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
             Retry
@@ -111,6 +137,25 @@ export function ProfilePage({ onProfileSaved, accountEmail }: ProfilePageProps) 
 
 function workCompanies(form: ProfileFormData): string[] {
   return [...new Set(form.work_experience.map((w) => w.company_name.trim()).filter(Boolean))];
+}
+
+function skillCount(form: ProfileFormData): number {
+  return form.technical_skills.reduce(
+    (n, block) => n + (block.skills ?? '').split(/[,;\n]/).filter((s) => s.trim()).length,
+    0,
+  );
+}
+
+function filledSections(form: ProfileFormData): Set<SectionId> {
+  const filled = new Set<SectionId>();
+  if (form.name_first.trim() && form.email.trim()) filled.add('basics');
+  if (form.profile_summary.trim()) filled.add('summary');
+  if (skillCount(form) > 0) filled.add('skills');
+  if (form.work_experience.length) filled.add('experience');
+  if (form.education.length) filled.add('education');
+  if (form.certificates.length) filled.add('certifications');
+  if (form.extra.some((e) => e.trim())) filled.add('additional');
+  return filled;
 }
 
 function ProfileEditor({
@@ -258,8 +303,23 @@ function ProfileEditor({
     return () => observer.disconnect();
   }, []);
 
+  const filled = filledSections(saved);
+  const meta = (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <HeroStat icon={CircleCheck} label="Required fields" value={`${completion.requiredPercent}%`} tone="bg-match-strong/10 text-match-strong" />
+      <HeroStat icon={BriefcaseBusiness} label="Roles" value={saved.work_experience.length} />
+      <HeroStat icon={Wrench} label="Skills" value={skillCount(saved)} tone="bg-chart-4/10 text-chart-4" />
+      <HeroStat
+        icon={GraduationCap}
+        label="Education & certs"
+        value={saved.education.length + saved.certificates.length}
+        tone="bg-chart-2/10 text-chart-2"
+      />
+    </div>
+  );
+
   return (
-    <PageLayout title="Profile" description={PAGE_DESCRIPTION} width="wide">
+    <PageLayout {...LAYOUT} meta={isNew ? undefined : meta}>
       <div className="flex flex-col gap-4">
         {isNew ? (
           <ResumeImportCard
@@ -272,8 +332,8 @@ function ProfileEditor({
         <CompletenessMeter completion={completion} onSuggestion={onSuggestion} />
       </div>
 
-      <div className="mt-6 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-8">
-        <SectionNav active={active} editing={editing} onSelect={(id) => scrollToSection(id)} />
+      <div className="mt-6 lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-6">
+        <SectionNav active={active} editing={editing} filled={filled} onSelect={(id) => scrollToSection(id)} />
 
         <div className="flex min-w-0 flex-col gap-4">
           {FORM_SECTIONS.map((id) => {
@@ -286,6 +346,8 @@ function ProfileEditor({
                 id={sectionDomId(id)}
                 title={SECTION_LABEL[id]}
                 description={description}
+                icon={SECTION_ICON[id]}
+                className={cn(isEditing && 'border-brand/40 ring-2 ring-brand/10')}
                 actions={
                   isEditing ? (
                     <>
@@ -333,6 +395,7 @@ function ProfileEditor({
             id={sectionDomId('documents')}
             title={SECTION_LABEL.documents}
             description="Project write-ups used to tailor résumés."
+            icon={SECTION_ICON.documents}
           >
             <div className="flex flex-col gap-5">
               {!isNew ? (
@@ -366,15 +429,19 @@ function ProfileEditor({
 function SectionNav({
   active,
   editing,
+  filled,
   onSelect,
 }: {
   active: SectionId;
   editing: Set<FormSectionId>;
+  filled: Set<SectionId>;
   onSelect: (id: SectionId) => void;
 }) {
+  const formFilled = FORM_SECTIONS.filter((id) => filled.has(id)).length;
   const item = (id: SectionId, label: string, chip: boolean) => {
     const isActive = active === id;
     const isEditing = editing.has(id as FormSectionId);
+    const Icon = SECTION_ICON[id];
     return (
       <button
         key={id}
@@ -382,15 +449,28 @@ function SectionNav({
         aria-current={isActive ? 'true' : undefined}
         onClick={() => onSelect(id)}
         className={cn(
-          'flex items-center gap-2 text-sm transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+          'group flex items-center gap-2 text-sm transition-all outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
           chip
             ? 'shrink-0 rounded-full border px-3 py-1'
-            : 'w-full rounded-lg px-2.5 py-1.5 text-left',
-          isActive ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+            : 'relative w-full rounded-lg px-2.5 py-2 text-left',
+          isActive
+            ? chip
+              ? 'border-brand/40 bg-brand/10 font-medium text-foreground'
+              : 'bg-brand/10 font-medium text-foreground'
+            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
         )}
       >
-        <span className="truncate">{label}</span>
-        {isEditing ? <span className="size-1.5 shrink-0 rounded-full bg-brand" aria-label="editing" /> : null}
+        {!chip && isActive ? <span aria-hidden className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-brand" /> : null}
+        <Icon
+          aria-hidden
+          className={cn('size-4 shrink-0', isActive ? 'text-brand' : 'text-muted-foreground/70 group-hover:text-foreground')}
+        />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {isEditing ? (
+          <span className="size-1.5 shrink-0 rounded-full bg-brand" aria-label="editing" />
+        ) : !chip && filled.has(id) ? (
+          <CircleCheck aria-hidden className="size-3.5 shrink-0 text-match-strong" />
+        ) : null}
       </button>
     );
   };
@@ -398,12 +478,32 @@ function SectionNav({
     <>
       <nav
         aria-label="Profile sections"
-        className="sticky top-0 z-10 -mx-4 mb-4 flex gap-1.5 overflow-x-auto bg-background/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:hidden"
+        className="sticky top-0 z-10 -mx-4 mb-4 flex gap-1.5 overflow-x-auto bg-background/80 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:hidden"
       >
         {SECTIONS.map((s) => item(s.id, s.label, true))}
       </nav>
-      <nav aria-label="Profile sections" className="sticky top-6 hidden self-start lg:flex lg:flex-col lg:gap-0.5">
+      <nav
+        aria-label="Profile sections"
+        className="sticky top-6 hidden self-start rounded-2xl border bg-card/80 p-2 shadow-xs backdrop-blur-sm lg:flex lg:flex-col lg:gap-0.5"
+      >
+        <p className="px-2.5 pt-1.5 pb-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          Sections
+        </p>
         {SECTIONS.map((s) => item(s.id, s.label, false))}
+        <div className="mt-2 border-t border-border/60 px-2.5 pt-2.5 pb-1.5">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+            <span>Filled</span>
+            <span className="font-medium text-foreground">
+              {formFilled}/{FORM_SECTIONS.length}
+            </span>
+          </div>
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-brand to-match-strong transition-[width] duration-700"
+              style={{ width: `${(formFilled / FORM_SECTIONS.length) * 100}%` }}
+            />
+          </div>
+        </div>
       </nav>
     </>
   );

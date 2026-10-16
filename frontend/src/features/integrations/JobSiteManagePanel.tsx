@@ -3,7 +3,7 @@ import type { JobSiteConnection, JobSitePlugin } from '@/api/jobSitesApi';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import { IntegrationLogo, StatusBadge } from './IntegrationCard';
+import { IntegrationLogo, STATUS_ACCENT, StatusBadge } from './IntegrationCard';
 import { jobSiteStatus, parseServerDate, relativeTime } from './status';
 import { SyncProgress } from './SyncProgress';
 import { useJobSiteControls } from './useJobSiteControls';
@@ -43,9 +43,14 @@ export function JobSiteManagePanel({
   else if (enabled) schedule = nextSync ? `Next ${nextSync}` : 'Due now';
 
   return (
-    <article aria-label={plugin.name} className="flex flex-col rounded-xl border bg-card">
+    <article
+      aria-label={plugin.name}
+      data-status={status.kind}
+      className="jobs-summary-card relative flex flex-col overflow-hidden rounded-2xl border bg-card/90 shadow-xs backdrop-blur-sm transition-shadow hover:shadow-md"
+    >
+      <span aria-hidden className={cn('absolute inset-x-0 top-0 h-0.5', STATUS_ACCENT[status.kind])} />
       <div className="flex items-start gap-3 p-4 pb-3">
-        <IntegrationLogo name={plugin.name} src={plugin.logo_src} />
+        <IntegrationLogo name={plugin.name} src={plugin.logo_src} size="lg" />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <h3 className="min-w-0 text-sm font-medium break-words">{plugin.name}</h3>
@@ -67,7 +72,7 @@ export function JobSiteManagePanel({
           <SyncProgress activity={[connection.sync]} className="rounded-lg bg-brand-soft/40 px-3 py-2" />
         ) : null}
 
-        <dl className="grid grid-cols-3 gap-3 rounded-lg bg-muted/40 px-3 py-2.5">
+        <dl className="grid grid-cols-3 gap-3 rounded-xl border border-border/50 bg-muted/30 px-3 py-2.5">
           <Stat label="Last sync" value={relativeTime(connection.last_synced_at) ?? 'Not yet'} title={synced?.toLocaleString()} />
           <Stat label="New jobs" value={connection.last_new_jobs != null ? String(connection.last_new_jobs) : '-'} />
           <Stat label="Schedule" value={schedule} />
@@ -87,7 +92,7 @@ export function JobSiteManagePanel({
         ) : null}
       </div>
 
-      <div className="mt-auto flex flex-wrap items-center gap-2 border-t px-4 py-3">
+      <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-border/60 bg-muted/20 px-4 py-3">
         <div className="mr-auto flex items-center gap-2">
           <Switch
             id={switchId}
