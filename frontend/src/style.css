@@ -1329,32 +1329,72 @@ html.landing-theme body {
   animation: landing-step-progress 4.2s linear both;
 }
 
-/* Jobs page masthead: calm entrance + slow horizon drift. */
+/* Jobs page masthead: compact bar over a drifting multi-color aurora. */
 @keyframes jobs-hero-fade-up {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
-@keyframes jobs-hero-art-drift {
-  from { transform: scale(1.04) translate3d(0, 0, 0); }
-  to { transform: scale(1.08) translate3d(-1.5%, -1%, 0); }
+@keyframes jobs-hero-blob-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(38%, 18%, 0) scale(1.25); }
 }
-@keyframes jobs-hero-wash-pulse {
-  0%, 100% { opacity: 0.55; transform: translate3d(0, 0, 0); }
-  50% { opacity: 0.9; transform: translate3d(4%, 2%, 0); }
+@keyframes jobs-hero-blob-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.1); }
+  50% { transform: translate3d(-34%, -12%, 0) scale(0.9); }
 }
-.jobs-hero__copy {
-  animation: jobs-hero-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+@keyframes jobs-hero-blob-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
+  50% { transform: translate3d(-22%, 26%, 0) scale(1.2); }
 }
-.jobs-hero__actions {
-  animation: jobs-hero-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both;
+@keyframes jobs-hero-blob-d {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(26%, -20%, 0) scale(1.15); }
 }
-.jobs-hero__art--drift {
-  animation: jobs-hero-art-drift 28s ease-in-out infinite alternate;
-  will-change: transform;
+@keyframes jobs-hero-sheen {
+  from { transform: translateX(-120%) skewX(-18deg); }
+  to { transform: translateX(320%) skewX(-18deg); }
 }
-.jobs-hero__wash--pulse {
-  animation: jobs-hero-wash-pulse 12s ease-in-out infinite;
-  will-change: transform, opacity;
+.jobs-hero__aurora {
+  overflow: hidden;
+}
+.jobs-hero__blob {
+  position: absolute;
+  width: 42%;
+  aspect-ratio: 2 / 1;
+  border-radius: 999px;
+  filter: blur(36px);
+  opacity: 0.38;
+  mix-blend-mode: multiply;
+}
+.dark .jobs-hero__blob {
+  opacity: 0.42;
+  mix-blend-mode: screen;
+}
+.jobs-hero__blob--a { left: -8%;  top: -60%; background: oklch(0.68 0.2 264); }
+.jobs-hero__blob--b { right: -6%; top: -40%; background: oklch(0.72 0.19 320); }
+.jobs-hero__blob--c { left: 30%;  top: 10%;  background: oklch(0.78 0.14 195); }
+.jobs-hero__blob--d { right: 20%; top: 30%;  background: oklch(0.8 0.15 75); width: 30%; opacity: 0.28; }
+.dark .jobs-hero__blob--d { opacity: 0.26; }
+.jobs-hero__sheen {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 22%;
+  background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.22), transparent);
+  opacity: 0;
+}
+.jobs-hero__veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--card) 0%, color-mix(in oklch, var(--card) 70%, transparent) 45%, color-mix(in oklch, var(--card) 35%, transparent) 100%);
+}
+.jobs-hero--motion .jobs-hero__blob--a { animation: jobs-hero-blob-a 16s ease-in-out infinite; }
+.jobs-hero--motion .jobs-hero__blob--b { animation: jobs-hero-blob-b 19s ease-in-out infinite; }
+.jobs-hero--motion .jobs-hero__blob--c { animation: jobs-hero-blob-c 22s ease-in-out infinite; }
+.jobs-hero--motion .jobs-hero__blob--d { animation: jobs-hero-blob-d 25s ease-in-out infinite; }
+.jobs-hero--motion .jobs-hero__blob { will-change: transform; }
+.jobs-hero--motion .jobs-hero__sheen {
+  opacity: 1;
+  animation: jobs-hero-sheen 9s cubic-bezier(0.45, 0, 0.25, 1) 1.5s infinite;
 }
 .jobs-summary-card {
   animation: jobs-hero-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -1372,10 +1412,8 @@ html.landing-theme body {
   .landing-dash-row,
   .landing-caret,
   .landing-step-progress,
-  .jobs-hero__copy,
-  .jobs-hero__actions,
-  .jobs-hero__art--drift,
-  .jobs-hero__wash--pulse,
+  .jobs-hero__blob,
+  .jobs-hero__sheen,
   .jobs-summary-card {
     animation: none !important;
   }

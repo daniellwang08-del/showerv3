@@ -560,38 +560,10 @@ export function ResumeStudioPage() {
         className={cn(
           'relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden',
           aiOpen
-            ? 'xl:grid-cols-[minmax(20rem,22rem)_minmax(18rem,22rem)_minmax(0,1fr)] lg:grid-cols-[minmax(20rem,22rem)_minmax(0,1fr)]'
+            ? 'lg:grid-cols-[minmax(0,1fr)_minmax(20rem,22rem)] xl:grid-cols-[minmax(20rem,22rem)_minmax(0,1fr)_minmax(20rem,22rem)]'
             : 'lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)]',
         )}
       >
-        <StudioAiChatToggle
-          open={aiOpen}
-          onToggle={() => {
-            setAiOpen((v) => {
-              const next = !v;
-              if (next && !isDesktop) setMobileView('edit');
-              return next;
-            });
-          }}
-        />
-
-        <div
-          className={cn(
-            'relative z-10 min-h-0 min-w-0 bg-background',
-            aiOpen && (isDesktop || mobileView === 'edit') ? 'flex flex-col' : 'hidden',
-          )}
-        >
-          <StudioAiChat
-            open={aiOpen}
-            resumeId={activeId}
-            onClose={() => setAiOpen(false)}
-            onCoverLetter={(body) => {
-              setLetter(body);
-              if (body.trim()) setDoc('resume');
-            }}
-          />
-        </div>
-
         <div
           className={cn(
             'relative z-10 min-h-0 bg-background',
@@ -621,6 +593,33 @@ export function ResumeStudioPage() {
           inert={parkPreview || undefined}
         >
           {canvas}
+          <StudioAiChatToggle
+            open={aiOpen}
+            onToggle={() => {
+              setAiOpen((v) => {
+                const next = !v;
+                if (next && !isDesktop) setMobileView('edit');
+                return next;
+              });
+            }}
+          />
+        </div>
+
+        <div
+          className={cn(
+            'relative z-10 min-h-0 min-w-0 bg-background',
+            aiOpen && (isDesktop || mobileView === 'edit') ? 'flex flex-col' : 'hidden',
+          )}
+        >
+          <StudioAiChat
+            open={aiOpen}
+            resumeId={activeId}
+            onClose={() => setAiOpen(false)}
+            onCoverLetter={(body) => {
+              setLetter(body);
+              if (body.trim()) setDoc('resume');
+            }}
+          />
         </div>
       </div>
     </div>

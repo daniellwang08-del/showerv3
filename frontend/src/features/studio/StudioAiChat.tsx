@@ -193,7 +193,7 @@ export function StudioAiChat({ open, resumeId, onClose, onCoverLetter }: Props) 
   return (
     <aside
       aria-label="Resume AI chat"
-      className="flex h-full min-h-0 w-full min-w-0 flex-col border-r bg-background"
+      className="flex h-full min-h-0 w-full min-w-0 flex-col border-l bg-background"
     >
       <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
         <AssistantAvatar thinking={busy} />
@@ -311,7 +311,7 @@ export function StudioAiChat({ open, resumeId, onClose, onCoverLetter }: Props) 
   );
 }
 
-/** Fixed mid-left edge control that toggles the studio AI rail. */
+/** Mid-right edge tab that toggles the studio AI rail. */
 export function StudioAiChatToggle({
   open,
   onToggle,
@@ -327,7 +327,7 @@ export function StudioAiChatToggle({
       aria-label={open ? 'Close resume AI' : 'Open resume AI'}
       title={open ? 'Close resume AI' : 'Edit with AI'}
       className={cn(
-        'group absolute top-1/2 left-0 z-30 flex h-24 w-7 -translate-y-1/2 flex-col items-center justify-center gap-1 rounded-r-xl border border-l-0 bg-card/95 shadow-md backdrop-blur transition',
+        'group absolute top-1/2 right-0 z-30 flex h-24 w-7 -translate-y-1/2 flex-col items-center justify-center gap-1 rounded-l-xl border border-r-0 bg-card/95 shadow-md backdrop-blur transition-[width,background-color,color]',
         'hover:w-8 hover:bg-brand-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
         open ? 'border-brand/40 bg-brand-soft text-brand' : 'text-muted-foreground hover:text-brand',
       )}
