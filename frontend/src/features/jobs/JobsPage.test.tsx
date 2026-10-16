@@ -124,7 +124,7 @@ describe('JobsPage', () => {
     expect(actions.loadJobs).toHaveBeenCalledTimes(1);
     expect(rows()).toHaveLength(2);
     expect(screen.getByText('Staff Engineer')).toBeInTheDocument();
-    expect(within(rows()[0]).getByText('Ready to apply', { selector: 'span' })).toBeInTheDocument();
+    expect(within(rows()[0]).getByText('Ready', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getAllByText('Matching').length).toBeGreaterThan(0);
     expect(screen.getByText('1–2 of 2')).toBeInTheDocument();
   });

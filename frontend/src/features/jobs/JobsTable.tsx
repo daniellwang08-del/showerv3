@@ -514,6 +514,7 @@ function Cell({
                 label={action.label}
                 active={Boolean(action.active)}
                 activeClass={ACTIVE_CLASS[action.id] ?? 'text-foreground'}
+                toneClass={ACTION_TONE[action.id]}
                 disabled={action.disabled}
                 destructive={action.destructive}
                 onClick={() => onAction(action.id, [job])}
@@ -549,10 +550,20 @@ const ACTIVE_CLASS: Partial<Record<JobActionId, string>> = {
   'post-pumble': 'text-brand',
 };
 
+/** Always-on color for primary row actions (Apply / Rerun / Delete). */
+const ACTION_TONE: Partial<Record<JobActionId, string>> = {
+  apply:
+    'text-blue-600 hover:bg-blue-500/12 dark:text-sky-400 dark:hover:bg-sky-400/15',
+  prepare:
+    'text-amber-600 hover:bg-amber-500/15 dark:text-amber-400 dark:hover:bg-amber-400/15',
+  delete: 'text-destructive hover:bg-destructive/10',
+};
+
 function TrackButton({
   label,
   active,
   activeClass,
+  toneClass,
   disabled,
   destructive,
   onClick,
@@ -561,6 +572,7 @@ function TrackButton({
   label: string;
   active: boolean;
   activeClass: string;
+  toneClass?: string;
   disabled?: boolean;
   destructive?: boolean;
   onClick: () => void;
@@ -584,9 +596,11 @@ function TrackButton({
                 ? 'cursor-not-allowed text-muted-foreground/25'
                 : active
                   ? cn(activeClass, 'hover:bg-accent')
-                  : destructive
-                    ? 'text-muted-foreground/50 hover:bg-destructive/10 hover:text-destructive'
-                    : 'text-muted-foreground/50 hover:bg-accent hover:text-foreground',
+                  : toneClass
+                    ? toneClass
+                    : destructive
+                      ? 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive'
+                      : 'text-muted-foreground/50 hover:bg-accent hover:text-foreground',
             )}
           />
         }

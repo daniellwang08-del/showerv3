@@ -64,7 +64,7 @@ export function jobStage(job: DashboardJob): JobStage {
 
 export const STAGE_META: Record<JobStage, { label: string; tone: string; pulse?: boolean }> = {
   applied: { label: 'Applied', tone: 'bg-status-applied' },
-  ready: { label: 'Ready to apply', tone: 'bg-status-ready' },
+  ready: { label: 'Ready', tone: 'bg-status-ready' },
   documents: { label: 'Writing documents', tone: 'bg-status-preparing', pulse: true },
   matching: { label: 'Matching', tone: 'bg-status-new', pulse: true },
   scored: { label: 'Scored', tone: 'bg-status-new' },
