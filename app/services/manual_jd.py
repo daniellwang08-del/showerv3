@@ -8,6 +8,7 @@ from sqlalchemy.orm import undefer
 from app.core.logging import get_logger
 from app.models.database import Job, JobExtraction, UserJobStatus
 from app.services.job_exclusion_types import EXTRACTION_FAILED_EXCLUSION
+from app.services.job_metadata_hydrator import STRUCTURED_DATA_KEY
 from app.services.url_manager import URLManager
 from app.storage.repository import JobExtractionRepository, _utcnow
 from app.utils.text_sanitizer import sanitize_for_postgres_text
@@ -69,6 +70,7 @@ async def apply_manual_job_description(
     metadata = dict(extraction.raw_metadata or {})
     metadata.pop("ai_structured_source", None)
     metadata.pop("ai_structured_updated_at", None)
+    metadata.pop(STRUCTURED_DATA_KEY, None)
     metadata["manual_jd"] = True
     metadata["manual_jd_saved_at"] = now.isoformat()
     if saved_by_user_id:

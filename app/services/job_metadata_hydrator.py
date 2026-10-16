@@ -21,7 +21,10 @@ from app.services.job_field_utils import (
 )
 from app.services.job_location_parse import (
     infer_location_from_text,
+    is_plausible_location,
+    location_specificity,
     prefer_job_location,
+    refines_location,
     strip_work_mode_from_location,
 )
 from app.services.job_source_boards import detect_board
@@ -35,6 +38,10 @@ from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, JobRepository
 
 logger = get_logger(__name__)
+
+# Extractor structured fields, kept on the extraction's raw_metadata so a
+# text-only re-hydrate (vector "mark ready") still sees vendor-only signals.
+STRUCTURED_DATA_KEY = "extractor_structured_data"
 
 _LABEL_NAMES = (
     "Title",
@@ -61,6 +68,17 @@ _LABEL_RE = re.compile(
     rf"^({'|'.join(re.escape(n) for n in _LABEL_NAMES)})\s*:\s*(.*)$",
     re.IGNORECASE,
 )
+# Any "Requisition ID:" style header line, known label or not. A multiline
+# location block ends there instead of swallowing the posting body.
+_ANY_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 /&().'#-]{0,40}:(?:\s|$)")
+# Buttons and section headings that follow a location block on career sites
+# ("START YOUR APPLICATION", "Who we are", "Job Summary").
+_LOCATION_BLOCK_END_RE = re.compile(
+    r"(?i)\b(?:apply|application|share|save\s+job|who\s+we\s+are|about\s+(?:us|the)"
+    r"|job\s+(?:summary|description|family|details|type)|overview|responsibilities|requisition)\b"
+)
+_MAX_LOCATION_LINE_CHARS = 80
+_MAX_LOCATION_LINES = 12
 _JOB_DETAILS_TITLE_RE = re.compile(
     r"^(?P<title>.+?)\s+Job Details\s*[|\u2013\-]\s*(?P<company>.+)$",
     re.IGNORECASE,
@@ -308,10 +326,18 @@ def parse_labeled_metadata(plain_text: str | None) -> dict[str, str]:
                 if nxt.lower() in _NAV_NOISE:
                     i += 1
                     continue
+                is_location = label in {"location", "all locations"}
+                if is_location and (
+                    _ANY_LABEL_RE.match(nxt)
+                    or _LOCATION_BLOCK_END_RE.search(nxt)
+                    or len(nxt) > _MAX_LOCATION_LINE_CHARS
+                    or len(chunks) >= _MAX_LOCATION_LINES
+                ):
+                    break
                 chunks.append(nxt)
                 i += 1
                 # Location often spans several cities; keep collecting until blank/label.
-                if label not in {"location", "all locations"} and len(chunks) >= 1:
+                if not is_location and len(chunks) >= 1:
                     break
             value = ", ".join(chunks).strip()
 
@@ -382,6 +408,7 @@ def metadata_from_structured_data(data: dict[str, Any] | None) -> dict[str, str]
     mapping = {
         "title": ("title", "text", "name", "job_title"),
         "company": ("company", "company_name", "organization"),
+        "company_hint": ("company_hint",),
         "location": ("location", "location_name"),
         "employment_type": ("employment_type", "commitment", "job_type", "type"),
         "workplace": ("workplace", "workplace_type", "workplaceType", "work_mode"),
@@ -490,27 +517,46 @@ def build_metadata(
         or clean_optional_job_field(heading.get("title"))
         or clean_optional_job_field(existing_title)
     )
+    # ``company_hint`` is an employer name the vendor implies but does not
+    # declare (an ATS site brand). It beats only a hostname guess.
+    company_hint = clean_optional_job_field(structured.get("company_hint"))
+    url_company = infer_company_from_url(source_url)
+    stored_company = clean_optional_job_field(existing_company)
+    if company_hint and stored_company and stored_company == url_company:
+        stored_company = None
     company = (
         clean_optional_job_field(structured.get("company"))
         or clean_optional_job_field(labeled.get("company"))
         or clean_optional_job_field(heading.get("company"))
-        or clean_optional_job_field(existing_company)
-        or infer_company_from_url(source_url)
+        or stored_company
+        or company_hint
+        or url_company
     )
     if company and company.lower() in _UNKNOWN_COMPANY:
         company = (
             clean_optional_job_field(heading.get("company"))
-            or infer_company_from_url(source_url)
+            or company_hint
+            or url_company
         )
 
+    # The posting's own declared location beats a stored one, which may be an
+    # aggregator feed's guess (Jobright lists Durham for a Morrisville role).
     location = None
     for candidate in (
         clean_optional_job_field(structured.get("location")),
         clean_optional_job_field(labeled.get("location")),
-        clean_optional_job_field(existing_location),
-        infer_location_from_text(plain_text),
     ):
-        location = prefer_job_location(location, candidate)
+        if is_plausible_location(candidate):
+            location = prefer_job_location(location, candidate)
+    location_from_page = location_specificity(location) >= 2
+    if location_from_page and refines_location(existing_location, location):
+        location = clean_optional_job_field(existing_location)
+    if not location_from_page:
+        for candidate in (
+            clean_optional_job_field(existing_location),
+            infer_location_from_text(plain_text),
+        ):
+            location = prefer_job_location(location, candidate)
     employment_type = normalize_employment_type(
         clean_optional_job_field(structured.get("employment_type") or labeled.get("employment_type"))
     ) or infer_employment_type(title, plain_text)
@@ -569,6 +615,8 @@ def build_metadata(
         "remote_policy": clean_optional_job_field(workplace),
         "description": description,
         "posted_date": posted_date,
+        "location_from_page": location_from_page,
+        "work_mode_from_page": bool(explicit_workplace and work_mode),
     }
 
 
@@ -628,6 +676,9 @@ async def hydrate_job_metadata(
             url = job.source_url
         if not url and extraction is not None:
             url = extraction.source_url
+        if structured_data is None and extraction is not None:
+            stored = (extraction.raw_metadata or {}).get(STRUCTURED_DATA_KEY)
+            structured_data = stored if isinstance(stored, dict) else None
 
         meta = build_metadata(
             plain_text=text,
@@ -672,8 +723,15 @@ async def hydrate_job_metadata(
                 is_job_posting=is_posting,
             )
         else:
-            await ext_repo.patch_display_metadata(extraction_id, schema)
-        await job_repo.update_from_structured_extraction(job_id, schema)
+            await ext_repo.patch_display_metadata(
+                extraction_id,
+                schema,
+                replace_location=meta["location_from_page"],
+                replace_work_mode=meta["work_mode_from_page"],
+            )
+        await job_repo.update_from_structured_extraction(
+            job_id, schema, replace_location=meta["location_from_page"]
+        )
 
     logger.info(
         "job_metadata_hydrated",

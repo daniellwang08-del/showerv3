@@ -135,12 +135,21 @@ def classify_work_mode_rules(
     """
     from app.services.job_text_rules import classify_work_mode_phrases
 
+    phrase_mode, phrase_strong = classify_work_mode_phrases(plain_text)
     for value in (workplace, remote_policy):
         mode = normalize_work_mode_display(value)
         if mode:
+            # ATS dropdowns are sometimes stale (Workday "Hybrid" on a "California
+            # Remote" posting whose body says "fully remote"). Two independent
+            # signals agreeing against the dropdown win.
+            if (
+                phrase_strong
+                and phrase_mode != mode
+                and normalize_work_mode_display(location) == phrase_mode
+            ):
+                return phrase_mode
             return mode
 
-    phrase_mode, phrase_strong = classify_work_mode_phrases(plain_text)
     if phrase_mode and phrase_strong:
         return phrase_mode
 

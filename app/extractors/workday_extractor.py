@@ -90,6 +90,33 @@ def is_workday_job_url(url: str) -> bool:
     return _parse_workday_url(url) is not None
 
 
+def _cxs_additional_locations(data: dict, job_info: dict) -> list[str]:
+    extra = job_info.get("additionalLocations") or data.get("additionalLocations")
+    if not isinstance(extra, list):
+        return []
+    return [str(loc).strip() for loc in extra if str(loc).strip()]
+
+
+def _cxs_locations(data: dict, job_info: dict) -> list[str]:
+    """Primary location first, then the posting's additional locations."""
+    found: list[str] = []
+    primary = job_info.get("location")
+    candidates = [primary] if isinstance(primary, str) else []
+    for loc in candidates + _cxs_additional_locations(data, job_info):
+        loc = " ".join(loc.split())
+        if loc and loc.lower() not in {f.lower() for f in found}:
+            found.append(loc)
+    return found
+
+
+def _cxs_remote_type(data: dict, job_info: dict) -> str | None:
+    """Workday's workplace field: ``Hybrid``, ``Remote``, ``On-site``, ``Flexible``."""
+    raw = job_info.get("remoteType") or data.get("remoteType")
+    if isinstance(raw, dict):
+        raw = raw.get("descriptor") or raw.get("name")
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
 class WorkdayExtractor(BaseExtractor):
     """Workday cxs JSON extractor with HTML fallback."""
 
@@ -209,12 +236,9 @@ class WorkdayExtractor(BaseExtractor):
             raw_content=plain_text,
             structured_data={
                 "title": (job_info.get("title") or data.get("title") or "").strip() or None,
-                "location": (
-                    job_info.get("location").strip()
-                    if isinstance(job_info.get("location"), str) and job_info.get("location").strip()
-                    else None
-                ),
+                "location": " / ".join(_cxs_locations(data, job_info)) or None,
                 "employment_type": job_info.get("timeType") or job_info.get("jobType") or None,
+                "workplace": _cxs_remote_type(data, job_info),
             },
         )
 
@@ -260,8 +284,14 @@ class WorkdayExtractor(BaseExtractor):
         if title:
             parts.append(f"Title: {title}")
 
+        location = job_info.get("location")
+        if isinstance(location, str) and location.strip():
+            parts.append(f"Location: {location.strip()}")
+        remote_type = _cxs_remote_type(data, job_info)
+        if remote_type:
+            parts.append(f"Workplace Type: {remote_type}")
+
         for label, key in (
-            ("Location", "location"),
             ("Time Type", "timeType"),
             ("Posted On", "postedOn"),
             ("Job Type", "jobType"),
@@ -292,11 +322,9 @@ class WorkdayExtractor(BaseExtractor):
                 if mn or mx:
                     parts.append(f"Pay Range: {mn or '?'} - {mx or '?'} {cur}".strip())
 
-        locations_extra = job_info.get("additionalLocations") or data.get("additionalLocations")
-        if isinstance(locations_extra, list):
-            locs = [str(loc).strip() for loc in locations_extra if str(loc).strip()]
-            if locs:
-                parts.append(f"Additional Locations: {', '.join(locs)}")
+        locs = _cxs_additional_locations(data, job_info)
+        if locs:
+            parts.append(f"Additional Locations: {', '.join(locs)}")
 
         description = job_info.get("jobDescription") or data.get("jobDescription") or ""
         if isinstance(description, str) and description.strip():

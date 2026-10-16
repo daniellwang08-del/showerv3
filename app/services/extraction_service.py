@@ -8,8 +8,8 @@ engine (LLM) determines the structured content.
 Pipeline order:
   0. Apply / login / one-click URLs are mapped to the posting page
      (job_url_canonical.description_url)
-  1. Vendor APIs by URL (Ashby / Lever / Workable / Workday / WTTJ /
-     SmartRecruiters / Greenhouse) - no HTML required
+  1. Vendor APIs by URL (Ashby / Lever / Workable / Workday / Oracle HCM /
+     WTTJ / SmartRecruiters / Greenhouse) - no HTML required
   2. HTTP fetch (httpx, auto-falls-back to curl_cffi Chrome impersonation
      on 401/403 to bypass Lever/Workday/careers anti-bot)
      - SKIPPED for known job-aggregator domains (adzuna.com, etc.) that block
@@ -28,6 +28,7 @@ Pipeline order:
      (closed, removed, blocked, not a description) so the job is hidden
 """
 
+import json
 from urllib.parse import urlparse
 
 from app.models.schemas import ExtractionMethod, ExtractionStatus
@@ -46,6 +47,7 @@ from app.extractors.greenhouse_board_extractor import (
     parse_greenhouse_job_id_from_url,
 )
 from app.extractors.lever_api_extractor import LeverApiExtractor, is_lever_job_url
+from app.extractors.oracle_hcm_extractor import OracleHcmExtractor, is_oracle_hcm_job_url
 from app.extractors.smartrecruiters_api_extractor import (
     SmartRecruitersApiExtractor,
     is_smartrecruiters_job_url,
@@ -130,6 +132,7 @@ class ExtractionService:
         self.lever_api_extractor = LeverApiExtractor(self.http_service)
         self.workable_api_extractor = WorkableApiExtractor(self.http_service)
         self.workday_extractor = WorkdayExtractor(self.http_service)
+        self.oracle_hcm_extractor = OracleHcmExtractor(self.http_service)
         self.smartrecruiters_api_extractor = SmartRecruitersApiExtractor(self.http_service)
         self.api_extractor = APIDetectorExtractor()
         self.embedded_job_extractor = EmbeddedJobDataExtractor()
@@ -234,7 +237,7 @@ class ExtractionService:
         try:
             # 1a. Ashby public API (native URL - no HTML needed)
             # 1a-1f. Vendor APIs addressed by the URL itself (no HTML needed):
-            # Ashby, Lever, Workable, Workday cxs, WTTJ Algolia (bypasses AWS
+            # Ashby, Lever, Workable, Workday cxs, Oracle HCM REST, WTTJ Algolia (bypasses AWS
             # WAF), SmartRecruiters (bypasses its bot wall), and Greenhouse
             # boards when the token and job id are both in the URL.
             native_vendors = (
@@ -242,6 +245,7 @@ class ExtractionService:
                 ("lever_api", is_lever_job_url(url), self.lever_api_extractor),
                 ("workable_api", is_workable_job_url(url), self.workable_api_extractor),
                 ("workday", is_workday_job_url(url), self.workday_extractor),
+                ("oracle_hcm", is_oracle_hcm_job_url(url), self.oracle_hcm_extractor),
                 ("wttj_algolia", is_wttj_job_url(url), self.wttj_algolia_extractor),
                 ("smartrecruiters_api", is_smartrecruiters_job_url(url), self.smartrecruiters_api_extractor),
                 (
@@ -494,6 +498,8 @@ class ExtractionService:
         self, job_id: str, url: str, plain_text: str, method: str,
         structured_data: dict | None = None,
     ) -> dict:
+        from app.services.job_metadata_hydrator import STRUCTURED_DATA_KEY
+
         content = ExtractionContent.create(
             plain_text=plain_text,
             source_url=url,
@@ -509,6 +515,11 @@ class ExtractionService:
             # Persist the original plain text permanently so any user can run
             # analysis later without re-fetching the job posting.
             await repository.save_raw_plain_text(job_id, plain_text)
+            await repository.save_structured_data(
+                job_id,
+                STRUCTURED_DATA_KEY,
+                json.loads(json.dumps(structured_data, default=str)) if structured_data else None,
+            )
 
         try:
             from app.services.job_metadata_hydrator import hydrate_job_metadata

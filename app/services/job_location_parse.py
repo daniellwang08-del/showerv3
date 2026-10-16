@@ -142,14 +142,21 @@ def location_specificity(location: str | None) -> int:
     has_city = _has_known_city(text)
     comma = _COMMA_SEGMENT_RE.match(text)
     first = comma.group(1).strip() if comma else ""
-    region = comma.group(2).strip() if comma else ""
+    rest = comma.group(2).strip() if comma else ""
+    # "Morrisville, NC, US": the region is the segment after the place, and a
+    # trailing country segment adds detail rather than hiding the region.
+    region, _, tail = rest.partition(",")
+    region, tail = region.strip(), tail.strip()
     first_is_place = bool(first) and first not in _PLACEHOLDER and not first.startswith("remote")
     has_region = bool(
         comma
         and _looks_like_region_name(region)
         and region not in _PLACEHOLDER
     )
+    has_country_tail = bool(tail) and bool(detect_countries_in_text(tail))
     if has_city and (codes or has_region):
+        return 4
+    if has_region and first_is_place and has_country_tail:
         return 4
     if has_city or (has_region and first_is_place):
         return 3
@@ -158,6 +165,42 @@ def location_specificity(location: str | None) -> int:
     if text.startswith("remote") or text.startswith("hybrid"):
         return 1
     return 1 if len(text) >= 3 else 0
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_PLACE_SEGMENT_SPLIT_RE = re.compile(r"[,;/|\u2022\u00b7]|\s[-\u2013]\s")
+_MAX_LOCATION_CHARS = 300
+_MAX_SEGMENT_WORDS = 6
+
+
+def is_plausible_location(location: str | None) -> bool:
+    """False for run-on page text captured as a location ("Remote Schedule:
+    Full-time; Eastern Time core hours of ..."). Place lists stay plausible."""
+    text = clean_optional_job_field(location)
+    if not text or len(text) > _MAX_LOCATION_CHARS:
+        return False
+    return all(
+        len(segment.split()) <= _MAX_SEGMENT_WORDS
+        for segment in _PLACE_SEGMENT_SPLIT_RE.split(text)
+    )
+
+
+def refines_location(detail: str | None, broad: str | None) -> bool:
+    """True when ``detail`` names the same place as ``broad`` with at least as
+    much detail: "New York, NY" refines "New York", "Chicago, IL" refines
+    "IL-Chicago", "United States" refines "US". "Durham, NC" does not refine
+    "Morrisville, NC, US", and nothing refines a different country."""
+    left = _normalize(detail)
+    right = _normalize(broad)
+    if not left or not right or left == right:
+        return False
+    broad_score = location_specificity(broad)
+    if location_specificity(detail) < broad_score:
+        return False
+    if right in left or set(_TOKEN_RE.findall(right)) <= set(_TOKEN_RE.findall(left)):
+        return True
+    countries = detect_countries_in_text(broad)
+    return broad_score <= 2 and bool(countries) and detect_countries_in_text(detail) == countries
 
 
 def prefer_job_location(existing: str | None, incoming: str | None) -> str | None:

@@ -212,8 +212,15 @@ class JobExtractionRepository:
         self,
         job_id: str,
         job_data: JobDescriptionSchema,
+        *,
+        replace_location: bool = False,
+        replace_work_mode: bool = False,
     ) -> None:
-        """Fill empty display columns without forcing COMPLETED status."""
+        """Fill empty display columns without forcing COMPLETED status.
+
+        ``replace_*`` overwrite a filled column when the posting itself
+        declared the value.
+        """
         existing = await self.get_by_id(job_id)
         if not existing:
             return
@@ -227,7 +234,7 @@ class JobExtractionRepository:
         if company and not clean_optional_job_field(existing.company):
             values["company"] = company
         location = _truncate_for_db(strip_work_mode_from_location(job_data.location), limits["location"])
-        if location and not clean_optional_job_field(existing.location):
+        if location and (replace_location or not clean_optional_job_field(existing.location)):
             values["location"] = location
         employment_type = _truncate_for_db(job_data.employment_type, limits["employment_type"])
         if employment_type and not clean_optional_job_field(existing.employment_type):
@@ -236,7 +243,7 @@ class JobExtractionRepository:
         if salary_range and not clean_optional_job_field(existing.salary_range):
             values["salary_range"] = salary_range
         work_mode = _truncate_for_db(job_data.work_mode, limits["work_mode"])
-        if work_mode and not clean_optional_job_field(existing.work_mode):
+        if work_mode and (replace_work_mode or not clean_optional_job_field(existing.work_mode)):
             values["work_mode"] = work_mode
         remote_policy = _truncate_for_db(job_data.remote_policy, limits["remote_policy"])
         if remote_policy and not clean_optional_job_field(existing.remote_policy):
@@ -249,6 +256,19 @@ class JobExtractionRepository:
         await self._session.execute(
             update(JobExtraction).where(JobExtraction.id == job_id).values(**values)
         )
+
+    async def save_structured_data(self, job_id: str, key: str, data: dict | None) -> None:
+        """Keep the extractor's structured fields under ``raw_metadata[key]``."""
+        extraction = await self.get_by_id(job_id)
+        if extraction is None:
+            return
+        metadata = dict(extraction.raw_metadata or {})
+        if data:
+            metadata[key] = data
+        else:
+            metadata.pop(key, None)
+        extraction.raw_metadata = metadata
+        await self._session.flush()
 
     async def save_raw_plain_text(self, job_id: str, plain_text: str) -> None:
         await self._session.execute(
@@ -393,6 +413,8 @@ class JobRepository:
         self,
         job_id: str,
         job_data: JobDescriptionSchema,
+        *,
+        replace_location: bool = False,
     ) -> None:
         from sqlalchemy.orm import undefer
 
@@ -413,10 +435,11 @@ class JobRepository:
         new_company = _truncate_for_db(job_data.company, 500)
         if new_company:
             job.company = new_company
-        job.location = prefer_job_location(
-            job.location,
-            _truncate_for_db(job_data.location, 500),
-        )
+        new_location = _truncate_for_db(job_data.location, 500)
+        if replace_location and new_location:
+            job.location = new_location
+        else:
+            job.location = prefer_job_location(job.location, new_location)
         job.work_mode = _truncate_for_db(job_data.work_mode, 20) or job.work_mode
         old_vj = (job.description or "").strip()
         new_vj = (job_data.description or "").strip()
