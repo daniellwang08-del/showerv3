@@ -1,17 +1,14 @@
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import { BarChart3 } from 'lucide-react';
-import { Button, buttonVariants } from '@/components/ui/button';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { cn } from '@/lib/utils';
 
 /** Compact Jobs masthead over a slow multi-color aurora. */
 export function JobsHeader({
   syncSlot,
-  onJump,
+  actions,
 }: {
   syncSlot?: ReactNode;
-  onJump: () => void;
+  actions?: ReactNode;
 }) {
   const reduceMotion = usePrefersReducedMotion();
 
@@ -39,14 +36,7 @@ export function JobsHeader({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onJump} className="hidden md:inline-flex">
-            Jump to… <kbd className="ml-1 text-xs text-muted-foreground">⌘K</kbd>
-          </Button>
-          <Link to="/app/analysis" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-            <BarChart3 /> Insights
-          </Link>
-        </div>
+        {actions}
 
         {syncSlot}
       </div>

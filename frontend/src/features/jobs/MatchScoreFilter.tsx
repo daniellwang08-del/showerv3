@@ -137,7 +137,7 @@ export function MatchScoreFilter({ minScore, onMinScore }: Props) {
         <span className="truncate">{triggerLabel}</span>
         <ChevronDown className="opacity-70" />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 gap-3 p-3">
+      <PopoverContent align="end" className="w-80 gap-3 p-3">
         <div className="space-y-1">
           <p className="text-xs font-medium text-muted-foreground">This list only</p>
           <p className="text-xs text-muted-foreground">

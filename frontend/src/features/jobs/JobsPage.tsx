@@ -11,6 +11,7 @@ import { useJobsStore } from '@/stores/jobsStore';
 import { useShellStore } from '@/stores/shellStore';
 import type { DashboardJob } from '@/types/scraper';
 import { JobsHeader } from './JobsHeader';
+import { JobsHeaderActions } from './JobsHeaderActions';
 import { JobsTable, type JobsTableTier } from './JobsTable';
 import { JobsSummary } from './JobsSummary';
 import { JobsToolbar, type JobsViewTab } from './JobsToolbar';
@@ -60,7 +61,6 @@ export function JobsPage() {
   const activeJobId = params.get(JOB_PARAM);
   const openJobRef = useOpenJob();
   const openJob = useCallback((job: DashboardJob) => openJobRef(job), [openJobRef]);
-  const setPaletteOpen = useShellStore((st) => st.setPaletteOpen);
   const toggleAssistant = useShellStore((st) => st.toggleAssistant);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -248,7 +248,10 @@ export function JobsPage() {
 
   return (
     <div ref={containerRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden px-4 pb-4 pt-5 md:px-6">
-      <JobsHeader onJump={() => setPaletteOpen(true)} syncSlot={<JobSyncStatus />} />
+      <JobsHeader
+        syncSlot={<JobSyncStatus />}
+        actions={<JobsHeaderActions duplicateCount={duplicateCount} onOpenDuplicates={() => setDupOpen(true)} />}
+      />
 
       <JobsSummary
         ready={stats?.ready_jobs}
@@ -269,8 +272,6 @@ export function JobsPage() {
         minScore={s.minScore}
         onMinScore={s.setMinScore}
         chips={chips}
-        duplicateCount={duplicateCount}
-        onOpenDuplicates={() => setDupOpen(true)}
       />
 
       <JobsTable
