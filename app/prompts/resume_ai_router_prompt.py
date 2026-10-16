@@ -26,7 +26,8 @@ Rules for choosing intent:
 - "analyze": the user only wants a match score / fit assessment for a job description present in the
   message (e.g. "how well do I match this?", "score this"). Set has_job_description=true.
 - "refine": the user is asking to adjust/improve a resume that was ALREADY tailored earlier in the
-  conversation (e.g. "make the summary shorter", "emphasize Python", "add more leadership"). There is
+  conversation, or to edit the open Resume Studio content for a known job (e.g. "make the summary
+  shorter", "emphasize Python", "add more leadership", "rewrite my experience bullets"). There is
   usually NO new job description in this message. Put the adjustment in "instructions".
 - "chat": greetings, questions about how to use the builder, or anything not covered above. No JD.
 

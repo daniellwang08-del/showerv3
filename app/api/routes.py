@@ -51,7 +51,7 @@ from app.models.profile_source_schemas import (
     ProfileSourceDocumentUploadResponse,
 )
 from app.models.resume_design_schemas import ResumeDesign, ResumeDesignSaveRequest
-from app.models.resume_ai_schemas import ResumeAiChatRequest
+from app.models.resume_ai_schemas import ResumeAiChatContextResponse, ResumeAiChatMessage, ResumeAiChatRequest
 from app.storage.database import get_session, check_database_connection
 from app.storage.repository import (
     JobExtractionRepository,
@@ -5962,6 +5962,133 @@ async def preview_resume_template_design_doc(
     )
 
 
+async def _resolve_resume_ai_job_description(
+    user_id: str,
+    resume_id: str | None,
+    last_job_description: str | None,
+) -> str | None:
+    """Prefer the client JD, then the studio chat session, then the resume's saved posting."""
+    if last_job_description and last_job_description.strip():
+        return last_job_description.strip()
+    if not resume_id:
+        return None
+    from app.storage.resume_ai_chat_repository import ResumeAiChatRepository
+
+    async with get_session() as session:
+        repo = ResumeAiChatRepository(session)
+        chat = await repo.get_session(user_id, resume_id)
+        if chat and chat.last_job_description and str(chat.last_job_description).strip():
+            return str(chat.last_job_description).strip()
+        doc = await repo.get_owned_resume(user_id, resume_id)
+        if doc and doc.job_description and str(doc.job_description).strip():
+            return str(doc.job_description).strip()
+    return None
+
+
+async def _persist_resume_ai_turn(
+    user_id: str,
+    resume_id: str,
+    messages: list[ResumeAiChatMessage],
+    result_job_description: str | None,
+) -> None:
+    from app.storage.resume_ai_chat_repository import ResumeAiChatRepository
+
+    payload = [{"role": m.role, "content": m.content or ""} for m in messages]
+    async with get_session() as session:
+        repo = ResumeAiChatRepository(session)
+        if await repo.get_owned_resume(user_id, resume_id) is None:
+            return
+        await repo.upsert_messages(
+            user_id,
+            resume_id,
+            payload,
+            result_job_description,
+        )
+        await session.commit()
+
+
+@router.get(
+    "/resume-builder/resumes/{resume_id}/ai-chat",
+    response_model=ResumeAiChatContextResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_resume_ai_chat_context(
+    resume_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Load job context, current resume JSON, and prior AI chat for Resume Studio."""
+    from app.models.resume_design_schemas import ResumeDesign
+    from app.storage.resume_ai_chat_repository import ResumeAiChatRepository
+
+    user_id = _require_user_id(current_user)
+    async with get_session() as session:
+        repo = ResumeAiChatRepository(session)
+        doc = await repo.get_owned_resume(user_id, resume_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Resume not found")
+        chat = await repo.get_session(user_id, resume_id)
+
+        content = None
+        if isinstance(doc.design, dict):
+            try:
+                design = ResumeDesign.model_validate(doc.design)
+                if design.content is not None:
+                    content = design.content.model_dump(mode="json")
+            except Exception:  # noqa: BLE001 - still return metadata when design is stale
+                content = (doc.design or {}).get("content") if isinstance(doc.design, dict) else None
+
+        messages_raw = chat.messages if chat and isinstance(chat.messages, list) else []
+        messages: list[ResumeAiChatMessage] = []
+        for item in messages_raw:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip()
+            if role not in {"user", "assistant"}:
+                continue
+            messages.append(ResumeAiChatMessage(role=role, content=str(item.get("content") or "")))
+
+        last_jd = None
+        if chat and chat.last_job_description:
+            last_jd = str(chat.last_job_description)
+        elif doc.job_description:
+            last_jd = str(doc.job_description)
+
+        return ResumeAiChatContextResponse(
+            resume_id=doc.id,
+            name=doc.name or "Untitled resume",
+            source=doc.source or "manual",
+            origin=doc.origin,
+            job_description=doc.job_description,
+            job_title=doc.job_title,
+            company=doc.company,
+            match_score=doc.match_score,
+            content=content,
+            messages=messages,
+            last_job_description=last_jd,
+        )
+
+
+@router.delete(
+    "/resume-builder/resumes/{resume_id}/ai-chat",
+    dependencies=[Depends(get_current_user)],
+)
+async def clear_resume_ai_chat(
+    resume_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Clear the studio AI conversation for one library resume."""
+    from app.storage.resume_ai_chat_repository import ResumeAiChatRepository
+
+    user_id = _require_user_id(current_user)
+    async with get_session() as session:
+        repo = ResumeAiChatRepository(session)
+        if await repo.get_owned_resume(user_id, resume_id) is None:
+            raise HTTPException(status_code=404, detail="Resume not found")
+        await repo.clear(user_id, resume_id)
+        await session.commit()
+    return {"ok": True}
+
+
 @router.post(
     "/resume-builder/ai/chat",
     dependencies=[Depends(get_current_user)],
@@ -5970,7 +6097,7 @@ async def resume_builder_ai_chat(
     body: ResumeAiChatRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """OneClick AI center: tailor a resume / score the match from a pasted job description.
+    """OneClick AI: tailor / score / refine from a pasted job description.
 
     Streams Server-Sent Events so the builder can show live progress through the
     multi-step pipeline (routing → match analysis → evidence → tailoring). Event
@@ -5978,7 +6105,7 @@ async def resume_builder_ai_chat(
       {"stage": "routing"|"analyzing"|"evidence"|"tailoring", "label": "..."}  # progress
       {"stage": "done", "result": <ResumeAiChatResponse json>}                  # success
       {"stage": "error", "message": "..."}                                     # failure
-    Job-less - nothing is persisted; the tailored content is returned to the builder."""
+    When ``resume_id`` is set (Resume Studio), the turn is persisted for that resume."""
     import json as _json
 
     from app.services.resume_ai_chat_service import run_resume_ai_chat
@@ -5986,6 +6113,17 @@ async def resume_builder_ai_chat(
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    if body.resume_id:
+        from app.storage.resume_ai_chat_repository import ResumeAiChatRepository
+
+        async with get_session() as session:
+            if await ResumeAiChatRepository(session).get_owned_resume(user_id, body.resume_id) is None:
+                raise HTTPException(status_code=404, detail="Resume not found")
+
+    resolved_jd = await _resolve_resume_ai_job_description(
+        user_id, body.resume_id, body.last_job_description
+    )
 
     def _sse(obj: dict) -> str:
         return f"data: {_json.dumps(obj, ensure_ascii=False)}\n\n"
@@ -5999,8 +6137,18 @@ async def resume_builder_ai_chat(
         async def run() -> None:
             try:
                 resp = await run_resume_ai_chat(
-                    user_id, body.messages, body.last_job_description, emit=emit
+                    user_id, body.messages, resolved_jd, emit=emit
                 )
+                if body.resume_id:
+                    history = list(body.messages)
+                    if resp.reply:
+                        history.append(ResumeAiChatMessage(role="assistant", content=resp.reply))
+                    await _persist_resume_ai_turn(
+                        user_id,
+                        body.resume_id,
+                        history,
+                        resp.job_description or resolved_jd,
+                    )
                 await queue.put({"stage": "done", "result": resp.model_dump(mode="json")})
             except Exception as e:  # noqa: BLE001 - surface a clean SSE error
                 logger.exception("resume_ai_chat_failed", user_id=user_id, error=str(e))

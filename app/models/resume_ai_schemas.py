@@ -27,6 +27,25 @@ class ResumeAiChatRequest(BaseModel):
     # The job description the client most recently captured, so "refine"/follow-up
     # turns can re-tailor without the user re-pasting the whole posting.
     last_job_description: str | None = None
+    # When set (Resume Studio), the turn is persisted against this library resume
+    # and missing JD falls back to the resume's saved posting / prior chat JD.
+    resume_id: str | None = None
+
+
+class ResumeAiChatContextResponse(BaseModel):
+    """Everything the studio AI rail needs when the panel opens."""
+
+    resume_id: str
+    name: str = ""
+    source: str = "manual"
+    origin: str | None = None
+    job_description: str | None = None
+    job_title: str | None = None
+    company: str | None = None
+    match_score: int | None = None
+    content: dict | None = None
+    messages: list[ResumeAiChatMessage] = Field(default_factory=list)
+    last_job_description: str | None = None
 
 
 class ResumeAiMatch(BaseModel):

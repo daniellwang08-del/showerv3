@@ -55,9 +55,11 @@ import {
   saveLibraryCoverLetter,
 } from '@/api/documentsApi';
 import type { PaperSize } from '@/types/resumeDesign';
+import { StudioAiChat, StudioAiChatToggle } from './StudioAiChat';
 
 type Tab = 'style' | 'format' | 'sections' | 'content';
 type DocKind = 'resume' | 'letter';
+const AI_OPEN_KEY = 'nao.studio.aiOpen';
 
 const TABS: { id: Tab; label: string; icon: typeof Palette }[] = [
   { id: 'style', label: 'Style', icon: Palette },
@@ -104,6 +106,13 @@ export function ResumeStudioPage() {
   const [letterSaving, setLetterSaving] = useState(false);
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
   const letterTimer = useRef<number | null>(null);
+  const [aiOpen, setAiOpen] = useState(() => {
+    try {
+      return sessionStorage.getItem(AI_OPEN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     void store.load();
@@ -112,6 +121,19 @@ export function ResumeStudioPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(AI_OPEN_KEY, aiOpen ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [aiOpen]);
+
+  // When AI applies tailored content it jumps the store to the Content tab.
+  useEffect(() => {
+    if (store.panelTab === 'content') setTab('content');
+  }, [store.panelTab]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -534,11 +556,54 @@ export function ResumeStudioPage() {
         </div>
       </div>
 
-      <div className="relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)]">
+      <div
+        className={cn(
+          'relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden',
+          aiOpen
+            ? 'xl:grid-cols-[minmax(20rem,22rem)_minmax(18rem,22rem)_minmax(0,1fr)] lg:grid-cols-[minmax(20rem,22rem)_minmax(0,1fr)]'
+            : 'lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)]',
+        )}
+      >
+        <StudioAiChatToggle
+          open={aiOpen}
+          onToggle={() => {
+            setAiOpen((v) => {
+              const next = !v;
+              if (next && !isDesktop) setMobileView('edit');
+              return next;
+            });
+          }}
+        />
+
+        <div
+          className={cn(
+            'relative z-10 min-h-0 min-w-0 bg-background',
+            aiOpen && (isDesktop || mobileView === 'edit') ? 'flex flex-col' : 'hidden',
+          )}
+        >
+          <StudioAiChat
+            open={aiOpen}
+            resumeId={activeId}
+            onClose={() => setAiOpen(false)}
+            onCoverLetter={(body) => {
+              setLetter(body);
+              if (body.trim()) setDoc('resume');
+            }}
+          />
+        </div>
+
         <div
           className={cn(
             'relative z-10 min-h-0 bg-background',
-            isDesktop || mobileView === 'edit' ? 'flex flex-col' : 'hidden',
+            // On lg (but not xl) the AI rail replaces the control column so the
+            // canvas stays readable. xl+ keeps both AI and controls.
+            aiOpen && !isDesktop
+              ? 'hidden'
+              : aiOpen && isDesktop
+                ? 'hidden xl:flex xl:flex-col'
+                : isDesktop || mobileView === 'edit'
+                  ? 'flex flex-col'
+                  : 'hidden',
           )}
         >
           {controlPanel}

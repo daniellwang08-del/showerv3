@@ -24,6 +24,8 @@ type ComposerProps = {
   className?: string;
 };
 
+const MAX_HEIGHT = { md: 200, lg: 280 } as const;
+
 export function Composer({
   value,
   onChange,
@@ -45,7 +47,7 @@ export function Composer({
   const length = value.trim().length;
   const tooShort = !!block && length < block.minChars;
   const canSend = length > 0 && !tooShort && !busy && !disabled;
-  const maxHeight = size === 'lg' ? 280 : 200;
+  const maxHeight = MAX_HEIGHT[size];
 
   useLayoutEffect(() => {
     if (block) ref.current?.focus();
@@ -54,9 +56,13 @@ export function Composer({
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.style.height = '0px';
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
-  }, [value, maxHeight]);
+    // Measure natural height, then cap so long drafts scroll inside the field
+    // instead of painting outside the composer shell.
+    el.style.height = 'auto';
+    const natural = el.scrollHeight;
+    el.style.height = `${Math.min(natural, maxHeight)}px`;
+    el.style.overflowY = natural > maxHeight ? 'auto' : 'hidden';
+  }, [value, maxHeight, block]);
 
   const submit = () => {
     if (canSend) onSubmit(value.trim());
@@ -77,7 +83,7 @@ export function Composer({
   return (
     <div
       className={cn(
-        'group/composer relative flex w-full flex-col rounded-3xl border bg-card shadow-sm transition-shadow',
+        'group/composer relative flex w-full min-w-0 flex-col rounded-3xl border bg-card shadow-sm transition-shadow',
         'focus-within:border-ring/60 focus-within:shadow-md focus-within:ring-4 focus-within:ring-ring/10',
         className,
       )}
@@ -111,12 +117,14 @@ export function Composer({
         rows={1}
         aria-label={block?.placeholder ?? placeholder}
         className={cn(
-          'scrollbar-thin w-full resize-none bg-transparent px-5 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60',
+          'scrollbar-thin w-full min-w-0 resize-none bg-transparent px-5 text-foreground outline-none',
+          'overflow-x-hidden break-words [overflow-wrap:anywhere] placeholder:text-muted-foreground disabled:opacity-60',
           size === 'lg' ? 'text-base' : 'text-sm',
-          block ? 'min-h-24 pt-2' : size === 'lg' ? 'min-h-16 pt-5' : 'min-h-12 pt-3.5',
+          block ? 'min-h-24 pt-2 pb-1' : size === 'lg' ? 'min-h-16 pt-5 pb-1' : 'min-h-12 pt-3.5 pb-1',
         )}
+        style={{ maxHeight }}
       />
-      <div className="flex items-center gap-2 px-3 pt-1 pb-3">
+      <div className="flex shrink-0 items-center gap-2 px-3 pt-1 pb-3">
         <div className="flex min-w-0 flex-1 items-center gap-1">{tools}</div>
         {block && length > 0 && tooShort ? (
           <span className="text-xs text-muted-foreground">Paste the full posting to continue</span>

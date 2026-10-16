@@ -1008,6 +1008,36 @@ class AssistantMessage(Base):
     )
 
 
+class ResumeAiChatSession(Base):
+    """OneClick AI conversation scoped to a library resume (Resume Studio).
+
+    Messages are ``[{role, content}, ...]``. Reopening the studio AI rail for
+    the same resume restores the thread and the last job description used.
+    """
+
+    __tablename__ = "resume_ai_chat_sessions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    resume_id = Column(
+        String(36),
+        ForeignKey("resume_documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    messages = Column(JSON, nullable=False, default=list)
+    last_job_description = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "resume_id", name="uq_resume_ai_chat_user_resume"),
+        Index("ix_resume_ai_chat_sessions_user_updated", "user_id", "updated_at"),
+    )
+
+
 class AgentChatSession(Base):
     """One conversation with the in-app assistant. ``items`` is the rendered
     timeline (user and assistant turns, tool rows, confirmations), so reopening

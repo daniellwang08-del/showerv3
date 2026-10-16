@@ -11,7 +11,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea';
 import type { DashboardView } from '@/api/scraperApi';
 import { AUTO_POST_WORK_MODE_OPTIONS, type AutoPostWorkMode } from '@/types/autoPostFilters';
 import { extractHttpUrlsFromText } from '@/utils/extractHttpUrls';
+import { MatchScoreFilter } from './MatchScoreFilter';
 import { submitJobUrls } from './submitJobUrls';
 import { viewTone } from './viewTone';
 
@@ -33,12 +33,7 @@ export interface JobsViewTab {
   count?: number;
 }
 
-export const MATCH_FILTERS = [
-  { value: '0', label: 'Any match' },
-  { value: '50', label: 'Fair+ (50)' },
-  { value: '65', label: 'Good+ (65)' },
-  { value: '80', label: 'Strong (80+)' },
-];
+export { MATCH_FILTERS } from './matchFilters';
 
 interface Props {
   tabs: JobsViewTab[];
@@ -68,10 +63,6 @@ export function JobsToolbar(props: Props) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
-
-  const matchValue = MATCH_FILTERS.some((f) => f.value === String(props.minScore))
-    ? String(props.minScore)
-    : '0';
 
   const workModeActive = props.workModes.length > 0;
   const workModeLabel = (() => {
@@ -187,22 +178,7 @@ export function JobsToolbar(props: Props) {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Select
-          value={matchValue}
-          items={MATCH_FILTERS}
-          onValueChange={(v) => props.onMinScore(Number(v ?? 0))}
-        >
-          <SelectTrigger size="sm" aria-label="Minimum match score" className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {MATCH_FILTERS.map((f) => (
-              <SelectItem key={f.value} value={f.value}>
-                {f.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <MatchScoreFilter minScore={props.minScore} onMinScore={props.onMinScore} />
 
         {props.chips.map((chip) => (
           <span

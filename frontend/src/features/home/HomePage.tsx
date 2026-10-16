@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { NaoSpaceHorizon } from '@/components/brand/NaoSpaceHorizon';
 import { Composer } from '@/features/assistant/Composer';
 import { PROMPT_BLOCKS } from '@/features/assistant/promptBlocks';
 import { ToolsMenu } from '@/features/assistant/ToolsMenu';
@@ -30,6 +31,7 @@ import { shouldOnboard } from '@/features/onboarding/onboardingState';
 import { JobLocationLabel } from '@/components/app/JobLocationLabel';
 import { MatchScore } from '@/components/app/MatchScore';
 import { PageTitle } from '@/components/app/PageTitle';
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { cn } from '@/lib/utils';
 import { useJobsStore } from '@/stores/jobsStore';
 import { useScraperStore } from '@/stores/scraperStore';
@@ -65,6 +67,7 @@ type Tile = {
 export function HomePage({ firstName, userId }: { firstName?: string; userId?: string }) {
   const navigate = useNavigate();
   const openJob = useOpenJob();
+  const reduceMotion = usePrefersReducedMotion();
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const stats = useJobStats();
@@ -131,28 +134,40 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
   return (
     <div className="scrollbar-thin relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <PageTitle title="Home" />
-      <div aria-hidden className="nao-horizon" />
+      <NaoSpaceHorizon />
       <div className="relative z-10 mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 pt-[clamp(11rem,22vh,14rem)] pb-10">
-        <h1 className="text-center text-3xl font-semibold tracking-tight sm:text-4xl">
+        <h1
+          className={cn(
+            'text-center text-3xl font-semibold tracking-tight sm:text-4xl',
+            !reduceMotion && 'nao-home-enter',
+          )}
+        >
           {greeting()}
           {firstName ? `, ${firstName}` : ''}
         </h1>
-        <p className="mt-2 text-center text-muted-foreground">
+        <p
+          className={cn(
+            'mt-2 text-center text-muted-foreground',
+            !reduceMotion && 'nao-home-enter-delay',
+          )}
+        >
           Ask about your search, paste job links to analyze, or tailor your resume to a job description.
         </p>
-        <NextStepButton
-          step={step}
-          onRun={(s) => {
-            if (!s) return;
-            if (s.kind === 'onboarding') navigate('/onboarding');
-            else if (s.kind === 'profile') navigate('/app/profile');
-            else if (s.kind === 'add-jobs') focusComposer();
-            else if (s.kind === 'review-ready') goToBoard('ready');
-            else goToBoard('available', GOOD_MATCH_SCORE);
-          }}
-        />
+        <div className={cn(!reduceMotion && 'nao-home-enter-delay')}>
+          <NextStepButton
+            step={step}
+            onRun={(s) => {
+              if (!s) return;
+              if (s.kind === 'onboarding') navigate('/onboarding');
+              else if (s.kind === 'profile') navigate('/app/profile');
+              else if (s.kind === 'add-jobs') focusComposer();
+              else if (s.kind === 'review-ready') goToBoard('ready');
+              else goToBoard('available', GOOD_MATCH_SCORE);
+            }}
+          />
+        </div>
 
-        <div ref={composerRef} className="mt-6">
+        <div ref={composerRef} className={cn('mt-6 min-w-0', !reduceMotion && 'nao-home-enter-delay-2')}>
           <Composer
             size="lg"
             value={draft}

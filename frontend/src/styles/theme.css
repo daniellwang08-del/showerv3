@@ -258,3 +258,269 @@
     0 -10px 40px -6px color-mix(in oklch, var(--brand) 45%, transparent),
     0 -50px 140px -20px color-mix(in oklch, var(--brand) 30%, transparent);
 }
+
+/* Live space layer on the home horizon: moon skin, satellites, meteors. */
+.nao-space {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.nao-space__stars {
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background-image:
+    radial-gradient(1px 1px at 8% 18%, oklch(0.7 0.04 260 / 70%), transparent),
+    radial-gradient(1px 1px at 18% 40%, oklch(0.65 0.03 260 / 55%), transparent),
+    radial-gradient(1.5px 1.5px at 32% 12%, oklch(0.75 0.05 258 / 65%), transparent),
+    radial-gradient(1px 1px at 46% 28%, oklch(0.7 0.04 260 / 50%), transparent),
+    radial-gradient(1px 1px at 58% 8%, oklch(0.72 0.05 258 / 60%), transparent),
+    radial-gradient(1px 1px at 72% 34%, oklch(0.68 0.04 260 / 45%), transparent),
+    radial-gradient(1.5px 1.5px at 84% 16%, oklch(0.78 0.05 258 / 55%), transparent),
+    radial-gradient(1px 1px at 92% 42%, oklch(0.7 0.03 260 / 40%), transparent);
+}
+.dark .nao-space__stars {
+  opacity: 0.85;
+  background-image:
+    radial-gradient(1px 1px at 8% 18%, oklch(1 0 0 / 55%), transparent),
+    radial-gradient(1px 1px at 18% 40%, oklch(1 0 0 / 35%), transparent),
+    radial-gradient(1.5px 1.5px at 32% 12%, oklch(1 0 0 / 60%), transparent),
+    radial-gradient(1px 1px at 46% 28%, oklch(1 0 0 / 40%), transparent),
+    radial-gradient(1px 1px at 58% 8%, oklch(1 0 0 / 50%), transparent),
+    radial-gradient(1px 1px at 72% 34%, oklch(1 0 0 / 35%), transparent),
+    radial-gradient(1.5px 1.5px at 84% 16%, oklch(1 0 0 / 55%), transparent),
+    radial-gradient(1px 1px at 92% 42%, oklch(1 0 0 / 30%), transparent),
+    radial-gradient(1px 1px at 24% 6%, oklch(1 0 0 / 45%), transparent),
+    radial-gradient(1px 1px at 66% 22%, oklch(1 0 0 / 38%), transparent);
+}
+.nao-space__moon-wrap {
+  position: absolute;
+  left: 50%;
+  top: 4.6rem;
+  width: 9.5rem;
+  height: 9.5rem;
+  translate: -42% -58%;
+  pointer-events: none;
+}
+.nao-space__moon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 0 18px color-mix(in oklch, var(--brand-glow) 35%, transparent));
+}
+.nao-space__moon-skin {
+  opacity: 0.92;
+}
+.nao-space__sun-wash {
+  opacity: 0.7;
+}
+.nao-space__orbit-tilt {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  transform: rotateX(64deg) rotateZ(-20deg);
+  transform-style: preserve-3d;
+}
+.nao-space__orbit-tilt--near {
+  width: 70%;
+  height: 70%;
+}
+.nao-space__orbit-tilt--far {
+  width: 98%;
+  height: 98%;
+}
+.nao-space__orbit-spin {
+  position: absolute;
+  inset: 0;
+  border: 1px solid color-mix(in oklch, var(--brand-glow) 16%, transparent);
+  border-radius: 50%;
+}
+.nao-space__orbit-tilt--far .nao-space__orbit-spin {
+  border-color: color-mix(in oklch, var(--brand-glow) 10%, transparent);
+}
+.nao-space__sat {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0.3rem;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: color-mix(in oklch, white 90%, var(--brand-glow));
+  box-shadow:
+    0 0 7px color-mix(in oklch, var(--brand-glow) 75%, transparent),
+    0 0 1px color-mix(in oklch, white 85%, transparent);
+  translate: -50% -50%;
+}
+.nao-space__sat--b {
+  width: 0.22rem;
+  height: 0.22rem;
+  opacity: 0.88;
+}
+.nao-space__meteor {
+  position: absolute;
+  width: 5.5rem;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, white 90%, var(--brand-glow)),
+    color-mix(in oklch, var(--brand-glow) 40%, transparent),
+    transparent
+  );
+  opacity: 0;
+  transform-origin: left center;
+  pointer-events: none;
+}
+.nao-space__meteor--a {
+  top: 14%;
+  left: 62%;
+  rotate: -32deg;
+}
+.nao-space__meteor--b {
+  top: 28%;
+  left: 78%;
+  width: 4.25rem;
+  rotate: -38deg;
+}
+.nao-space__meteor--c {
+  top: 10%;
+  left: 40%;
+  width: 3.5rem;
+  rotate: -28deg;
+}
+
+.nao-horizon--live .nao-space__stars {
+  animation: nao-star-twinkle 7s ease-in-out infinite;
+}
+.nao-horizon--live .nao-space__sun-wash {
+  animation: nao-sun-breathe 8s ease-in-out infinite;
+}
+.nao-horizon--live .nao-space__moon-skin {
+  animation: nao-moon-skin 10s ease-in-out infinite;
+}
+.nao-horizon--live .nao-space__orbit-spin--near {
+  animation: nao-orbit-spin 26s linear infinite;
+}
+.nao-horizon--live .nao-space__orbit-spin--far {
+  animation: nao-orbit-spin 42s linear infinite reverse;
+}
+.nao-horizon.nao-horizon--live::after {
+  animation: nao-crest-glow 9s ease-in-out infinite;
+}
+.nao-horizon--live .nao-space__meteor--a {
+  animation: nao-meteor 11s cubic-bezier(0.22, 0.61, 0.36, 1) 3s infinite;
+}
+.nao-horizon--live .nao-space__meteor--b {
+  animation: nao-meteor 15s cubic-bezier(0.22, 0.61, 0.36, 1) 8s infinite;
+}
+.nao-horizon--live .nao-space__meteor--c {
+  animation: nao-meteor 13s cubic-bezier(0.22, 0.61, 0.36, 1) 14s infinite;
+}
+
+@keyframes nao-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes nao-star-twinkle {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+@keyframes nao-sun-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.92;
+  }
+}
+@keyframes nao-moon-skin {
+  0%,
+  100% {
+    opacity: 0.78;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes nao-crest-glow {
+  0%,
+  100% {
+    opacity: 0.5;
+    filter: blur(6px);
+  }
+  50% {
+    opacity: 0.85;
+    filter: blur(5px);
+  }
+}
+@keyframes nao-meteor {
+  0%,
+  78% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scaleX(0.35);
+  }
+  80% {
+    opacity: 0.95;
+    transform: translate3d(0, 0, 0) scaleX(1);
+  }
+  92% {
+    opacity: 0;
+    transform: translate3d(-9rem, 6.5rem, 0) scaleX(0.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-9rem, 6.5rem, 0) scaleX(0.2);
+  }
+}
+
+.nao-home-enter {
+  animation: nao-home-fade-up 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.nao-home-enter-delay {
+  animation: nao-home-fade-up 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both;
+}
+.nao-home-enter-delay-2 {
+  animation: nao-home-fade-up 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.16s both;
+}
+@keyframes nao-home-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nao-horizon--live .nao-space__stars,
+  .nao-horizon--live .nao-space__sun-wash,
+  .nao-horizon--live .nao-space__moon-skin,
+  .nao-horizon--live .nao-space__orbit-spin--near,
+  .nao-horizon--live .nao-space__orbit-spin--far,
+  .nao-horizon.nao-horizon--live::after,
+  .nao-horizon--live .nao-space__meteor--a,
+  .nao-horizon--live .nao-space__meteor--b,
+  .nao-horizon--live .nao-space__meteor--c,
+  .nao-home-enter,
+  .nao-home-enter-delay,
+  .nao-home-enter-delay-2 {
+    animation: none !important;
+  }
+  .nao-space__orbit-spin--static {
+    animation: none !important;
+  }
+  .dark .nao-space__stars {
+    opacity: 0.7;
+  }
+}
