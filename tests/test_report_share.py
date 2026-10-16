@@ -7,7 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.services import report_share as rs
-from app.utils.secret_encryption import decrypt_secret
+
+
+def _user(uid, email, **kw):
+    fields = {"is_active": True, "is_admin": False, "approval_status": "approved", "name": None, "name_first": None, "name_last": None}
+    return SimpleNamespace(id=uid, email=email, **{**fields, **kw})
 
 
 class TestFields:
@@ -47,11 +51,20 @@ class TestFields:
         assert rs.display_name(user()) == "sam"
         assert rs.display_name(None) == "A NAO user"
 
-    def test_tokens_hash_consistently(self):
-        token, digest = rs.new_token()
-        assert len(token) >= 32
-        assert rs.hash_token(token) == digest
-        assert rs.new_token()[0] != token
+    def test_only_approved_applicants_can_receive_reports(self):
+        assert rs.can_view_shares(_user("u", "a@x.com"))
+        assert not rs.can_view_shares(None)
+        assert not rs.can_view_shares(_user("u", "a@x.com", is_admin=True))
+        assert not rs.can_view_shares(_user("u", "a@x.com", is_active=False))
+        assert not rs.can_view_shares(_user("u", "a@x.com", approval_status="pending"))
+
+    def test_resolve_viewers_names_missing_accounts(self):
+        users = {"a@x.com": _user("ua", "a@x.com"), "admin@x.com": _user("ad", "admin@x.com", is_admin=True)}
+        assert [u.id for u in rs.resolve_viewers(["a@x.com"], users)] == ["ua"]
+        with pytest.raises(rs.ShareError, match="b@x.com does not have a NAO account"):
+            rs.resolve_viewers(["a@x.com", "b@x.com"], users)
+        with pytest.raises(rs.ShareError, match="b@x.com, admin@x.com"):
+            rs.resolve_viewers(["b@x.com", "admin@x.com"], users)
 
 
 class TestReport:
@@ -113,32 +126,50 @@ class _FakeSession:
 
 
 class TestShareWith:
+    ACCOUNTS = {
+        "a@x.com": _user("ua", "A@x.com"),
+        "b@x.com": _user("ub", "b@x.com"),
+        "new@x.com": _user("un", "new@x.com"),
+    }
+
     def _run(self, monkeypatch, existing, emails, **kw):
         async def fake_list(session, owner_id):
             return existing
 
+        async def fake_users(session, wanted):
+            return {e: self.ACCOUNTS[e] for e in wanted if e in self.ACCOUNTS}
+
         monkeypatch.setattr(rs, "list_shares", fake_list)
+        monkeypatch.setattr(rs, "users_by_email", fake_users)
         session = _FakeSession()
         owner = SimpleNamespace(id="u1", email="me@x.com")
-        opts = {"expires_in_days": 30, "include_notes": False, "message": None, **kw}
+        opts = {"expires_in_days": None, "include_notes": False, "message": None, **kw}
         return session, asyncio.run(rs.share_with(session, owner, emails, **opts))
 
-    def test_creates_one_link_per_person(self, monkeypatch):
-        session, shares = self._run(monkeypatch, [], ["a@x.com", "b@x.com"], message="  Hi  ")
+    def test_shares_with_each_account(self, monkeypatch):
+        session, rows = self._run(monkeypatch, [], ["a@x.com", "b@x.com"], message="  Hi  ", expires_in_days=30)
+        shares = [s for s, _ in rows]
+        assert [s.viewer_id for s in shares] == ["ua", "ub"]
         assert [s.email for s in shares] == ["a@x.com", "b@x.com"]
         assert len(session.added) == 2
-        assert shares[0].token_hash != shares[1].token_hash
-        assert rs.hash_token(decrypt_secret(shares[0].token_enc)) == shares[0].token_hash
         assert shares[0].message == "Hi"
         assert shares[0].expires_at is not None
 
-    def test_reinvite_keeps_the_link_and_renews_access(self, monkeypatch):
-        old = SimpleNamespace(email="a@x.com", token_hash="h", token_enc="t", include_notes=False, expires_at=None, message=None)
-        session, shares = self._run(monkeypatch, [old], ["a@x.com"], expires_in_days=7, include_notes=True)
-        assert shares == [old] and session.added == []
-        assert old.token_hash == "h" and old.include_notes is True and old.expires_at is not None
+    def test_no_end_date_by_default(self, monkeypatch):
+        _, rows = self._run(monkeypatch, [], ["a@x.com"])
+        assert rows[0][0].expires_at is None
+
+    def test_unknown_email_is_rejected_and_nothing_is_saved(self, monkeypatch):
+        with pytest.raises(rs.ShareError, match="nobody@x.com does not have a NAO account"):
+            self._run(monkeypatch, [], ["a@x.com", "nobody@x.com"])
+
+    def test_sharing_again_updates_access(self, monkeypatch):
+        old = SimpleNamespace(viewer_id="ua", email="a@x.com", include_notes=False, expires_at=None, message=None)
+        session, rows = self._run(monkeypatch, [(old, self.ACCOUNTS["a@x.com"])], ["a@x.com"], expires_in_days=7, include_notes=True)
+        assert rows[0][0] is old and session.added == []
+        assert old.include_notes is True and old.expires_at is not None
 
     def test_limit(self, monkeypatch):
-        existing = [SimpleNamespace(email=f"p{i}@x.com") for i in range(rs.MAX_SHARES)]
+        existing = [(SimpleNamespace(viewer_id=f"v{i}"), None) for i in range(rs.MAX_SHARES)]
         with pytest.raises(rs.ShareError, match="up to"):
             self._run(monkeypatch, existing, ["new@x.com"])

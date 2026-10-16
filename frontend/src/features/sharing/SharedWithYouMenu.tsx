@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ExternalLink, Users } from 'lucide-react';
+import { ChevronDown, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { fetchIncomingShares } from '@/api/reportShareApi';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,11 +13,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { relativeAgo } from '../interviews/interviewsModel';
-import { INCOMING_SHARES_KEY, initials, shareUrl } from './shareModel';
+import { INCOMING_SHARES_KEY, initials, sharedReportPath } from './shareModel';
 
-/** Reports other people shared with this account's email. Hidden when there are none. */
+/** Reports other people shared with this account. Hidden when there are none. */
 export function SharedWithYouMenu() {
-  const query = useQuery({ queryKey: INCOMING_SHARES_KEY, queryFn: fetchIncomingShares, staleTime: 5 * 60_000 });
+  const navigate = useNavigate();
+  const query = useQuery({ queryKey: INCOMING_SHARES_KEY, queryFn: fetchIncomingShares, staleTime: 60_000 });
   const shares = query.data?.shares ?? [];
   if (!shares.length) return null;
   return (
@@ -33,7 +35,7 @@ export function SharedWithYouMenu() {
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         {shares.map((s) => (
-          <DropdownMenuItem key={s.id} onClick={() => window.open(shareUrl(s.token), '_blank', 'noopener')}>
+          <DropdownMenuItem key={s.id} onClick={() => navigate(sharedReportPath(s.id))}>
             <span
               aria-hidden
               className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand"
@@ -46,9 +48,10 @@ export function SharedWithYouMenu() {
                 Shared {relativeAgo(s.shared_at) ?? 'recently'}
               </span>
             </span>
-            <ExternalLink className="opacity-60" />
           </DropdownMenuItem>
         ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => navigate('/app/shared')}>See all shared reports</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -1,15 +1,13 @@
 import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   Check,
-  Copy,
   Eye,
   EyeOff,
-  Link2,
   Loader2,
-  Mail,
   MoreHorizontal,
-  RotateCcw,
+  Share2,
   ShieldCheck,
   Timer,
   Trash2,
@@ -41,10 +39,8 @@ import {
   EXPIRY_OPTIONS,
   initials,
   isEmail,
-  mailtoLink,
   parseEmails,
   REPORT_SHARES_KEY,
-  shareUrl,
   viewLabel,
 } from './shareModel';
 
@@ -55,15 +51,6 @@ const SHARED_ITEMS = [
   'Every application with its current status',
 ];
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: REPORT_SHARES_KEY, queryFn: fetchReportShares, enabled: open });
@@ -71,7 +58,7 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
   const [draft, setDraft] = useState('');
   const [message, setMessage] = useState('');
   const [showMessage, setShowMessage] = useState(false);
-  const [expires, setExpires] = useState<number | null>(30);
+  const [expires, setExpires] = useState<number | null>(null);
   const [includeNotes, setIncludeNotes] = useState(false);
   const [fresh, setFresh] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,19 +75,15 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
         include_notes: includeNotes,
         message: message.trim() || null,
       }),
-    onSuccess: async ({ shares: created }) => {
+    onSuccess: ({ shares: created }) => {
       void qc.invalidateQueries({ queryKey: REPORT_SHARES_KEY });
       setEmails([]);
       setDraft('');
       setFresh(created.map((s) => s.id));
-      const only = created.length === 1 ? created[0] : null;
-      if (only?.token && (await copyText(shareUrl(only.token)))) {
-        toast.success(`Link for ${only.email} copied. Paste it in a message or send the email draft.`);
-      } else {
-        toast.success(`${created.length} links ready. Copy each one or send the email drafts below.`);
-      }
+      const who = created.length === 1 ? (created[0].viewer_name ?? created[0].email) : `${created.length} people`;
+      toast.success(`Shared with ${who}. They can open it under Shared with me.`);
     },
-    onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not create the links.')),
+    onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not share your report.')),
   });
 
   const addFrom = (text: string) => {
@@ -140,7 +123,7 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
             <div className="min-w-0">
               <DialogTitle>Share your job search report</DialogTitle>
               <DialogDescription className="mt-0.5">
-                People you invite get a live, read-only view that updates as your search moves.
+                Add someone by their NAO account email. They see a live, read-only view under Shared with me.
               </DialogDescription>
             </div>
           </div>
@@ -148,7 +131,7 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
 
         <div className="space-y-5 px-5 py-4">
           <form
-            aria-label="Invite people"
+            aria-label="Share with people"
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
@@ -186,7 +169,7 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
                 autoComplete="off"
                 autoFocus
                 className="min-w-40 flex-1 bg-transparent px-1 py-0.5 text-sm outline-none placeholder:text-muted-foreground"
-                placeholder={emails.length ? 'Add another' : 'Add emails, separated by commas'}
+                placeholder={emails.length ? 'Add another' : 'NAO account emails, separated by commas'}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={onKeyDown}
@@ -235,7 +218,7 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
                 </button>
               ) : null}
               <Button type="submit" size="sm" className="ml-auto" disabled={!pending.length || create.isPending}>
-                {create.isPending ? <Loader2 className="animate-spin" /> : <Link2 />}
+                {create.isPending ? <Loader2 className="animate-spin" /> : <Share2 />}
                 {pending.length > 1 ? `Share with ${pending.length} people` : 'Share'}
               </Button>
             </div>
@@ -270,15 +253,14 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
               <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                 People with access{shares.length ? ` · ${shares.length}` : ''}
               </h3>
-              <a
-                href={`/app/interviews/report-preview${includeNotes ? '?notes=1' : ''}`}
-                target="_blank"
-                rel="noreferrer"
+              <Link
+                to={`/app/interviews/report-preview${includeNotes ? '?notes=1' : ''}`}
+                onClick={() => onOpenChange(false)}
                 className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline"
               >
                 <Eye className="size-3.5" aria-hidden />
                 Preview what they see
-              </a>
+              </Link>
             </div>
             {list.isPending ? (
               <div className="space-y-2">
@@ -293,7 +275,7 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
               </ul>
             ) : (
               <p className="rounded-xl border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                Nobody has access yet. Each person you add gets their own private link you can remove at any time.
+                Nobody has access yet. You can change or remove anyone's access at any time.
               </p>
             )}
           </section>
@@ -305,15 +287,13 @@ export function ShareReportDialog({ open, onOpenChange }: { open: boolean; onOpe
 
 function ShareRow({ share, highlight }: { share: ReportShare; highlight: boolean }) {
   const qc = useQueryClient();
-  const [copied, setCopied] = useState(false);
-  const url = share.token ? shareUrl(share.token) : null;
+  const name = share.viewer_name || share.email;
 
   const update = useMutation({
     mutationFn: (changes: ShareChanges) => updateReportShare(share.id, changes),
-    onSuccess: (_, changes) => {
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: REPORT_SHARES_KEY });
-      if (changes.reset_link) toast.success(`New link for ${share.email}. The old one stops working now.`);
-      else toast.success('Access updated');
+      toast.success('Access updated');
     },
     onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not update access.')),
   });
@@ -321,20 +301,10 @@ function ShareRow({ share, highlight }: { share: ReportShare; highlight: boolean
     mutationFn: () => deleteReportShare(share.id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: REPORT_SHARES_KEY });
-      toast.success(`${share.email} can no longer open your report`);
+      toast.success(`${name} can no longer see your report`);
     },
     onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not remove access.')),
   });
-
-  const copy = async () => {
-    if (!url) return;
-    if (await copyText(url)) {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } else {
-      toast.error('Could not copy. Select the link in the email draft instead.');
-    }
-  };
 
   return (
     <li
@@ -348,10 +318,13 @@ function ShareRow({ share, highlight }: { share: ReportShare; highlight: boolean
         aria-hidden
         className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand/20 to-brand/5 text-[11px] font-semibold text-brand"
       >
-        {initials(share.email)}
+        {initials(name)}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{share.email}</p>
+        <p className="truncate text-sm font-medium">
+          {name}
+          {share.viewer_name ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">{share.email}</span> : null}
+        </p>
         <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
           <span className={cn(!share.active && 'font-medium text-destructive')}>{accessLabel(share)}</span>
           <span aria-hidden>·</span>
@@ -364,28 +337,6 @@ function ShareRow({ share, highlight }: { share: ReportShare; highlight: boolean
           ) : null}
         </p>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-7 gap-1 px-2 text-xs"
-        onClick={() => void copy()}
-        disabled={!url || !share.active}
-        aria-label={`Copy link for ${share.email}`}
-      >
-        {copied ? <Check className="text-status-ready" /> : <Copy />}
-        {copied ? 'Copied' : 'Copy link'}
-      </Button>
-      {url && share.active ? (
-        <a
-          href={mailtoLink({ email: share.email, url, message: share.message })}
-          aria-label={`Email the link to ${share.email}`}
-          title="Open an email draft with the link"
-          className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-        >
-          <Mail className="size-4" />
-        </a>
-      ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`Access options for ${share.email}`} />}>
           <MoreHorizontal />
@@ -404,10 +355,6 @@ function ShareRow({ share, highlight }: { share: ReportShare; highlight: boolean
           <DropdownMenuItem onClick={() => update.mutate({ include_notes: !share.include_notes })}>
             {share.include_notes ? <EyeOff /> : <Eye />}
             {share.include_notes ? 'Hide my notes' : 'Show my notes'}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => update.mutate({ reset_link: true })}>
-            <RotateCcw />
-            Reset link
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onClick={() => remove.mutate()}>

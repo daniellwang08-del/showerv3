@@ -1,4 +1,4 @@
-import type { ReportApplication, ReportShare, SharedReportResponse } from '@/types/reportShare';
+import type { IncomingShare, ReportApplication, ReportShare, SharedReportResponse } from '@/types/reportShare';
 import type { InterviewProcess } from '@/types/interviews';
 
 export function makeApp(overrides: Partial<ReportApplication> = {}): ReportApplication {
@@ -23,7 +23,7 @@ export function makeShare(overrides: Partial<ReportShare> = {}): ReportShare {
   return {
     id: 's1',
     email: 'coach@example.com',
-    token: 'tok-1',
+    viewer_name: 'Jordan Coach',
     include_notes: false,
     message: null,
     expires_at: null,
@@ -35,13 +35,26 @@ export function makeShare(overrides: Partial<ReportShare> = {}): ReportShare {
   };
 }
 
+export function makeIncoming(overrides: Partial<IncomingShare> = {}): IncomingShare {
+  return {
+    id: 's1',
+    owner_name: 'Sam Lee',
+    owner_headline: 'Senior Engineer',
+    message: null,
+    shared_at: '2026-10-10T00:00:00Z',
+    expires_at: null,
+    last_viewed_at: null,
+    ...overrides,
+  };
+}
+
 export function makeReport(
   processes: InterviewProcess[] = [],
   applications: ReportApplication[] = [],
   overrides: Partial<SharedReportResponse> = {},
 ): SharedReportResponse {
   return {
-    share: { email: 'coach@example.com', expires_at: null, message: null },
+    share: makeIncoming(),
     report: {
       owner: { name: 'Sam Lee', headline: 'Senior Engineer' },
       generated_at: new Date().toISOString(),

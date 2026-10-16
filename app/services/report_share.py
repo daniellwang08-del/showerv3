@@ -1,16 +1,16 @@
-"""Read-only report links: the owner's interviews, applications and job activity.
+"""Report sharing between NAO accounts: the owner's interviews, applications and job activity.
 
-Each invited person gets their own link so access can be revoked or expire per
-person. The report leaves out anything that only works for, or exposes, the
-owner: mailbox deep links, recruiter addresses and meeting join links. Private
-notes are included only when the owner opts in for that person.
+An owner shares with other NAO users by their account email. Viewers find the
+report under "Shared with me" once signed in; nothing is sent and there is no
+public link. Access can expire or be removed per person. The report leaves
+out anything that only works for, or exposes, the owner: mailbox deep links,
+recruiter addresses and meeting join links. Private notes are included only
+when the owner opts in for that person.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
-import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Iterable
@@ -29,7 +29,6 @@ from app.models.database import (
 )
 from app.services import interview_extraction as extraction
 from app.services import interview_service, mail_applications, nylas_service
-from app.utils.secret_encryption import decrypt_secret, encrypt_secret
 
 logger = get_logger(__name__)
 
@@ -61,16 +60,7 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() + "Z" if dt else None
 
 
-# ── Tokens and fields ───────────────────────────────────────────────────────
-
-
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def new_token() -> tuple[str, str]:
-    token = secrets.token_urlsafe(24)
-    return token, hash_token(token)
+# ── Fields ──────────────────────────────────────────────────────────────────
 
 
 def normalize_email(value: str | None) -> str | None:
@@ -102,15 +92,21 @@ def display_name(user: User | None) -> str:
     return (user.email or "A NAO user").split("@")[0]
 
 
-def share_public(share: ReportShare, now: datetime | None = None) -> dict[str, Any]:
-    try:
-        token = decrypt_secret(share.token_enc)
-    except ValueError:
-        token = None
+def can_view_shares(user: User | None) -> bool:
+    """Approved, active applicant accounts; admins have no applicant workspace to open a report in."""
+    return bool(
+        user
+        and user.is_active
+        and not user.is_admin
+        and (user.approval_status or "approved") == "approved"
+    )
+
+
+def share_public(share: ReportShare, viewer: User | None = None, now: datetime | None = None) -> dict[str, Any]:
     return {
         "id": share.id,
         "email": share.email,
-        "token": token,
+        "viewer_name": display_name(viewer) if viewer else None,
         "include_notes": bool(share.include_notes),
         "message": share.message,
         "expires_at": _iso(share.expires_at),
@@ -124,11 +120,30 @@ def share_public(share: ReportShare, now: datetime | None = None) -> dict[str, A
 # ── Owner actions ───────────────────────────────────────────────────────────
 
 
-async def list_shares(session: AsyncSession, owner_id: str) -> list[ReportShare]:
+async def list_shares(session: AsyncSession, owner_id: str) -> list[tuple[ReportShare, User | None]]:
     rows = await session.execute(
-        select(ReportShare).where(ReportShare.owner_id == owner_id).order_by(ReportShare.created_at.desc())
+        select(ReportShare, User)
+        .outerjoin(User, User.id == ReportShare.viewer_id)
+        .where(ReportShare.owner_id == owner_id)
+        .order_by(ReportShare.created_at.desc())
     )
-    return list(rows.scalars())
+    return [(share, viewer) for share, viewer in rows.all()]
+
+
+async def users_by_email(session: AsyncSession, emails: list[str]) -> dict[str, User]:
+    rows = await session.execute(select(User).where(func.lower(User.email).in_(emails)))
+    return {u.email.lower(): u for u in rows.scalars()}
+
+
+def resolve_viewers(emails: list[str], users: dict[str, User]) -> list[User]:
+    """The NAO account for each email. Raises naming every address that cannot receive a report."""
+    missing = [e for e in emails if not can_view_shares(users.get(e))]
+    if missing:
+        listed = ", ".join(missing)
+        if len(missing) == 1:
+            raise ShareError(f"{listed} does not have a NAO account yet. Ask them to sign up, then share again.")
+        raise ShareError(f"These emails do not have NAO accounts yet: {listed}. Ask them to sign up, then share again.")
+    return [users[e] for e in emails]
 
 
 def clean_emails(raw: Iterable[str], owner_email: str | None) -> list[str]:
@@ -158,34 +173,28 @@ async def share_with(
     expires_in_days: int | None,
     include_notes: bool,
     message: str | None,
-) -> list[ReportShare]:
-    """Create a link per person. Inviting someone again renews their access and keeps their link."""
+) -> list[tuple[ReportShare, User]]:
+    """Give each NAO account access. Sharing with someone again updates their access settings."""
     wanted = clean_emails(emails, owner.email)
     expires_at = expiry_from_days(expires_in_days)
     message = (message or "").strip()[:500] or None
-    existing = {s.email: s for s in await list_shares(session, owner.id)}
-    new_count = sum(1 for e in wanted if e not in existing)
+    viewers = resolve_viewers(wanted, await users_by_email(session, wanted))
+    existing = {share.viewer_id: share for share, _ in await list_shares(session, owner.id)}
+    new_count = sum(1 for v in viewers if v.id not in existing)
     if len(existing) + new_count > MAX_SHARES:
         raise ShareError(f"You can share with up to {MAX_SHARES} people. Remove someone first.")
 
-    out: list[ReportShare] = []
-    for email in wanted:
-        share = existing.get(email)
+    out: list[tuple[ReportShare, User]] = []
+    for viewer in viewers:
+        share = existing.get(viewer.id)
         if share is None:
-            token, token_hash = new_token()
-            share = ReportShare(
-                id=str(uuid.uuid4()),
-                owner_id=owner.id,
-                email=email,
-                token_hash=token_hash,
-                token_enc=encrypt_secret(token),
-                view_count=0,
-            )
+            share = ReportShare(id=str(uuid.uuid4()), owner_id=owner.id, viewer_id=viewer.id, view_count=0)
             session.add(share)
+        share.email = viewer.email.lower()
         share.include_notes = include_notes
         share.expires_at = expires_at
         share.message = message
-        out.append(share)
+        out.append((share, viewer))
     await session.flush()
     return out
 
@@ -203,12 +212,6 @@ async def update_share(session: AsyncSession, owner_id: str, share_id: str, chan
         share.expires_at = expiry_from_days(changes["expires_in_days"])
     if "include_notes" in changes and changes["include_notes"] is not None:
         share.include_notes = bool(changes["include_notes"])
-    if changes.get("reset_link"):
-        token, token_hash = new_token()
-        share.token_hash = token_hash
-        share.token_enc = encrypt_secret(token)
-        share.view_count = 0
-        share.last_viewed_at = None
     await session.flush()
     return share
 
@@ -221,16 +224,18 @@ async def delete_share(session: AsyncSession, owner_id: str, share_id: str) -> N
 # ── Viewer side ─────────────────────────────────────────────────────────────
 
 
-async def find_active(session: AsyncSession, token: str) -> tuple[ReportShare | None, bool]:
-    """(share, expired). The share is None when the token is unknown or revoked."""
-    if not token or len(token) > 128:
-        return None, False
-    share = (
-        await session.execute(select(ReportShare).where(ReportShare.token_hash == hash_token(token)))
-    ).scalar_one_or_none()
-    if share is None:
-        return None, False
-    return share, not is_active(share)
+async def viewer_share(session: AsyncSession, viewer_id: str, share_id: str) -> tuple[ReportShare, User]:
+    """An active share for this viewer and its owner. Raises ShareNotFound otherwise, also when expired."""
+    row = (
+        await session.execute(
+            select(ReportShare, User)
+            .join(User, User.id == ReportShare.owner_id)
+            .where(ReportShare.id == share_id, ReportShare.viewer_id == viewer_id)
+        )
+    ).first()
+    if row is None or not is_active(row[0]):
+        raise ShareNotFound()
+    return row[0], row[1]
 
 
 def record_view(share: ReportShare, now: datetime | None = None) -> None:
@@ -238,38 +243,30 @@ def record_view(share: ReportShare, now: datetime | None = None) -> None:
     share.view_count = int(share.view_count or 0) + 1
 
 
-async def incoming(session: AsyncSession, email: str | None, user_id: str) -> list[dict[str, Any]]:
-    """Active reports shared with this account's email."""
-    email = normalize_email(email)
-    if not email:
-        return []
+def incoming_public(share: ReportShare, owner: User) -> dict[str, Any]:
+    return {
+        "id": share.id,
+        "owner_name": display_name(owner),
+        "owner_headline": owner.profile_title or None,
+        "message": share.message,
+        "shared_at": _iso(share.created_at),
+        "expires_at": _iso(share.expires_at),
+        "last_viewed_at": _iso(share.last_viewed_at),
+    }
+
+
+async def incoming(session: AsyncSession, viewer_id: str) -> list[dict[str, Any]]:
+    """Active reports other people shared with this account, newest first."""
     rows = (
         await session.execute(
             select(ReportShare, User)
             .join(User, User.id == ReportShare.owner_id)
-            .where(ReportShare.email == email, ReportShare.owner_id != user_id)
+            .where(ReportShare.viewer_id == viewer_id, User.is_active.is_(True))
             .order_by(ReportShare.created_at.desc())
         )
     ).all()
     now = _utcnow()
-    out = []
-    for share, owner in rows:
-        if not is_active(share, now):
-            continue
-        public = share_public(share, now)
-        if not public["token"]:
-            continue
-        out.append(
-            {
-                "id": share.id,
-                "token": public["token"],
-                "owner_name": display_name(owner),
-                "shared_at": public["created_at"],
-                "expires_at": public["expires_at"],
-                "last_viewed_at": public["last_viewed_at"],
-            }
-        )
-    return out
+    return [incoming_public(share, owner) for share, owner in rows if is_active(share, now)]
 
 
 # ── Report ──────────────────────────────────────────────────────────────────

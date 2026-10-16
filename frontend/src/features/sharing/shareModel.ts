@@ -34,31 +34,8 @@ export function parseEmails(text: string): { valid: string[]; invalid: string[] 
   return { valid, invalid };
 }
 
-export function shareUrl(token: string, origin = window.location.origin): string {
-  return `${origin}/shared/${token}`;
-}
-
-export function mailtoLink({
-  email,
-  url,
-  ownerName,
-  message,
-}: {
-  email: string;
-  url: string;
-  ownerName?: string | null;
-  message?: string | null;
-}): string {
-  const who = ownerName?.trim() || 'I';
-  const subject = ownerName?.trim() ? `${ownerName.trim()} shared their job search report` : 'My job search report';
-  const lines = [
-    message?.trim() || `Hi, ${who === 'I' ? 'I am' : `${who} is`} sharing a live, read-only view of the job search with you.`,
-    '',
-    'It shows interview processes, upcoming interviews, what needs attention, and every application with its current status.',
-    '',
-    url,
-  ];
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
+export function sharedReportPath(shareId: string): string {
+  return `/app/shared/${encodeURIComponent(shareId)}`;
 }
 
 const DATE_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -75,9 +52,8 @@ export function accessLabel(share: Pick<ReportShare, 'expires_at' | 'active'>): 
 }
 
 export function viewLabel(share: Pick<ReportShare, 'last_viewed_at' | 'view_count'>, now = Date.now()): string {
-  if (!share.last_viewed_at || !share.view_count) return 'Not opened yet';
-  const views = share.view_count === 1 ? '1 view' : `${share.view_count} views`;
-  return `Opened ${relativeAgo(share.last_viewed_at, now) ?? shortDate(share.last_viewed_at)} · ${views}`;
+  if (!share.last_viewed_at || !share.view_count) return 'Not viewed yet';
+  return `Viewed ${relativeAgo(share.last_viewed_at, now) ?? shortDate(share.last_viewed_at)}`;
 }
 
 export function initials(value: string): string {

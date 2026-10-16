@@ -37,6 +37,7 @@ export const applicantNav: NavSection[] = [
         icon: CalendarClock,
         keywords: ['interviews', 'schedule', 'mail', 'email', 'pipeline', 'calendar'],
       },
+      { to: '/app/shared', label: 'Shared with me', icon: Users, keywords: ['shared', 'reports', 'team', 'coach', 'friend'] },
       { to: '/app/analysis', label: 'Insights', icon: BarChart3, keywords: ['analysis', 'pipeline', 'trends'] },
       { to: '/app/documents', label: 'Documents', icon: FileText, keywords: ['resume', 'cover letter', 'tailor', 'downloads'] },
       { to: '/app/studio', label: 'Resume studio', icon: LayoutTemplate, keywords: ['builder', 'template', 'design', 'theme'] },

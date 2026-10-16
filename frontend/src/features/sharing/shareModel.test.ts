@@ -6,9 +6,8 @@ import {
   applicationCounts,
   filterApplications,
   initials,
-  mailtoLink,
   parseEmails,
-  shareUrl,
+  sharedReportPath,
   viewLabel,
 } from './shareModel';
 import { makeApp } from './sharingFixtures';
@@ -23,20 +22,16 @@ describe('shareModel', () => {
     });
   });
 
-  it('builds share and mail links', () => {
-    expect(shareUrl('tok', 'https://nao.it.com')).toBe('https://nao.it.com/shared/tok');
-    const mail = mailtoLink({ email: 'sam@x.com', url: 'https://nao.it.com/shared/tok', message: 'Take a look' });
-    expect(mail.startsWith('mailto:sam%40x.com?subject=')).toBe(true);
-    expect(decodeURIComponent(mail)).toContain('Take a look');
-    expect(decodeURIComponent(mail)).toContain('https://nao.it.com/shared/tok');
+  it('links to a shared report inside the app', () => {
+    expect(sharedReportPath('abc-123')).toBe('/app/shared/abc-123');
   });
 
   it('labels access and views', () => {
     expect(accessLabel({ active: false, expires_at: '2026-10-01T00:00:00Z' })).toBe('Expired');
     expect(accessLabel({ active: true, expires_at: null })).toBe('No end date');
     expect(accessLabel({ active: true, expires_at: '2026-11-15T12:00:00Z' })).toMatch(/^Until /);
-    expect(viewLabel({ last_viewed_at: null, view_count: 0 }, NOW)).toBe('Not opened yet');
-    expect(viewLabel({ last_viewed_at: '2026-10-16T10:00:00Z', view_count: 3 }, NOW)).toBe('Opened 2 hours ago · 3 views');
+    expect(viewLabel({ last_viewed_at: null, view_count: 0 }, NOW)).toBe('Not viewed yet');
+    expect(viewLabel({ last_viewed_at: '2026-10-16T10:00:00Z', view_count: 3 }, NOW)).toBe('Viewed 2 hours ago');
     expect(initials('sam.lee@x.com')).toBe('SL');
     expect(initials('Raoyinc')).toBe('R');
   });

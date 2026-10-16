@@ -8,10 +8,15 @@ import * as api from '@/api/reportShareApi';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { stubLayout } from '../integrations/testUtils';
 import { makeEvent, makeProcess } from '../interviews/interviewsFixtures';
-import { makeApp, makeReport } from './sharingFixtures';
+import { makeApp, makeIncoming, makeReport } from './sharingFixtures';
 import { SharedReportPage } from './SharedReportPage';
+import { SharedWithMePage } from './SharedWithMePage';
 
-vi.mock('@/api/reportShareApi', () => ({ fetchSharedReport: vi.fn(), fetchReportPreview: vi.fn() }));
+vi.mock('@/api/reportShareApi', () => ({
+  fetchSharedReport: vi.fn(),
+  fetchReportPreview: vi.fn(),
+  fetchIncomingShares: vi.fn(async () => ({ shares: [] })),
+}));
 vi.mock('../insights/InsightsCharts', () => ({
   ActivityChart: ({ data }: { data: unknown[] }) => <div data-testid="activity-chart" data-points={data.length} />,
 }));
@@ -22,9 +27,9 @@ function renderShared() {
   return render(
     <QueryClientProvider client={qc}>
       <TooltipProvider>
-        <MemoryRouter initialEntries={['/shared/tok-1']}>
+        <MemoryRouter initialEntries={['/app/shared/s1']}>
           <Routes>
-            <Route path="/shared/:token" element={<SharedReportPage />} />
+            <Route path="/app/shared/:shareId" element={<SharedReportPage />} />
           </Routes>
         </MemoryRouter>
       </TooltipProvider>
@@ -57,14 +62,16 @@ describe('SharedReportPage', () => {
           makeApp({ id: 'b', company: 'Globex', process_id: 'p2', stage: 'rejected', applied_at: recently }),
           makeApp({ id: 'c', company: 'Initech', source: 'email', applied_at: recently, match_score: 82 }),
         ],
-        { share: { email: 'coach@example.com', expires_at: null, message: 'Thanks for helping me prep!' } },
+        { share: makeIncoming({ message: 'Thanks for helping me prep!' }) },
       ),
     );
     renderShared();
 
     expect(await screen.findByRole('heading', { name: "Sam Lee's job search" })).toBeInTheDocument();
-    expect(mocked.fetchSharedReport).toHaveBeenCalledWith('tok-1');
+    expect(mocked.fetchSharedReport).toHaveBeenCalledWith('s1');
     expect(screen.getByText('Thanks for helping me prep!')).toBeInTheDocument();
+    expect(screen.getByText('Read only')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Shared with me' })).toHaveAttribute('href', '/app/shared');
     expect(screen.getByText('Applied this week').nextElementSibling).toHaveTextContent('14');
     expect(within(screen.getByRole('region', { name: 'Interviewing column' })).getByText('Acme')).toBeInTheDocument();
     expect(await screen.findByTestId('activity-chart')).toHaveAttribute('data-points', '7');
@@ -88,10 +95,44 @@ describe('SharedReportPage', () => {
     expect(within(sheet).queryByRole('combobox', { name: 'Stage' })).not.toBeInTheDocument();
   });
 
-  it('explains an expired link', async () => {
-    const res = { status: 410, statusText: 'Gone', data: {}, headers: {}, config: { headers: new AxiosHeaders() } };
-    mocked.fetchSharedReport.mockRejectedValue(new AxiosError('Gone', '410', undefined, undefined, res));
+  it('explains when access was removed or ended', async () => {
+    const res = { status: 404, statusText: 'Not Found', data: {}, headers: {}, config: { headers: new AxiosHeaders() } };
+    mocked.fetchSharedReport.mockRejectedValue(new AxiosError('Not Found', '404', undefined, undefined, res));
     renderShared();
-    expect(await screen.findByRole('heading', { name: 'This link has expired' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'This report is no longer shared with you' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to Shared with me' })).toHaveAttribute('href', '/app/shared');
+  });
+});
+
+describe('SharedWithMePage', () => {
+  function renderList() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SharedWithMePage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('lists everyone who shared a report, linking into the app', async () => {
+    mocked.fetchIncomingShares.mockResolvedValue({
+      shares: [makeIncoming({ message: 'Would love your eyes on this' }), makeIncoming({ id: 's2', owner_name: 'Alex Kim', owner_headline: null, last_viewed_at: recently })],
+    });
+    renderList();
+    const list = await screen.findByRole('list', { name: 'Shared reports' });
+    const links = within(list).getAllByRole('link');
+    expect(links.map((l) => l.getAttribute('href'))).toEqual(['/app/shared/s1', '/app/shared/s2']);
+    expect(links[0]).toHaveTextContent('Sam Lee');
+    expect(links[0]).toHaveTextContent('Would love your eyes on this');
+    expect(links[0]).toHaveTextContent('New');
+    expect(links[1]).not.toHaveTextContent('New');
+  });
+
+  it('explains how sharing works when nothing is shared yet', async () => {
+    mocked.fetchIncomingShares.mockResolvedValue({ shares: [] });
+    renderList();
+    expect(await screen.findByRole('heading', { name: 'Nothing shared with you yet' })).toBeInTheDocument();
   });
 });

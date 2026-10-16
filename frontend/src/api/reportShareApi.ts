@@ -41,8 +41,8 @@ export async function fetchReportPreview(includeNotes: boolean): Promise<SharedR
   return data;
 }
 
-export async function fetchSharedReport(token: string): Promise<SharedReportResponse> {
-  const { data } = await apiClient.get<SharedReportResponse>(`/shared-reports/${encodeURIComponent(token)}`, {
+export async function fetchSharedReport(shareId: string): Promise<SharedReportResponse> {
+  const { data } = await apiClient.get<SharedReportResponse>(`/report-shares/incoming/${encodeURIComponent(shareId)}`, {
     params: { timezone: timezone() },
   });
   return data;

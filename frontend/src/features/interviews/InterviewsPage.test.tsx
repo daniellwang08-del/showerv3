@@ -25,7 +25,17 @@ vi.mock('@/api/interviewsApi', () => ({
 }));
 vi.mock('@/api/reportShareApi', () => ({
   fetchIncomingShares: vi.fn(async () => ({
-    shares: [{ id: 'in1', token: 'tk', owner_name: 'Alex Kim', shared_at: null, expires_at: null, last_viewed_at: null }],
+    shares: [
+      {
+        id: 'in1',
+        owner_name: 'Alex Kim',
+        owner_headline: null,
+        message: null,
+        shared_at: null,
+        expires_at: null,
+        last_viewed_at: null,
+      },
+    ],
   })),
   fetchReportShares: vi.fn(async () => ({ shares: [], max_shares: 25, expiry_choices: [7, 30, 90] })),
   createReportShares: vi.fn(),

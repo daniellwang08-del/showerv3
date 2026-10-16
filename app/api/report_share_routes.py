@@ -1,23 +1,21 @@
-"""Share a read-only interview and application report with invited people."""
+"""Share a read-only interview and application report with other NAO accounts."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from app.api.rate_limit import enforce_auth_rate_limit
 from app.api.routes import get_current_user, require_applicant
 from app.models.database import User
 from app.services import report_share
 from app.storage.database import get_session
 
-router = APIRouter(prefix="/report-shares", tags=["report-shares"])
-public_router = APIRouter(prefix="/shared-reports", tags=["report-shares"])
+router = APIRouter(prefix="/report-shares", tags=["report-shares"], dependencies=[Depends(require_applicant)])
 
 
 class ShareCreate(BaseModel):
     emails: list[str] = Field(..., min_length=1, max_length=report_share.MAX_EMAILS_PER_REQUEST)
-    expires_in_days: int | None = 30
+    expires_in_days: int | None = None
     include_notes: bool = False
     message: str | None = Field(default=None, max_length=500)
 
@@ -25,34 +23,33 @@ class ShareCreate(BaseModel):
 class ShareUpdate(BaseModel):
     expires_in_days: int | None = None
     include_notes: bool | None = None
-    reset_link: bool = False
 
 
 def _bad_request(e: report_share.ShareError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-def _not_found() -> HTTPException:
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share not found")
+def _not_found(detail: str = "Share not found") -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
 
 
-@router.get("", dependencies=[Depends(require_applicant)])
+@router.get("")
 async def list_report_shares(current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
-        shares = await report_share.list_shares(session, current_user["user_id"])
+        rows = await report_share.list_shares(session, current_user["user_id"])
     return {
-        "shares": [report_share.share_public(s) for s in shares],
+        "shares": [report_share.share_public(share, viewer) for share, viewer in rows],
         "max_shares": report_share.MAX_SHARES,
         "expiry_choices": list(report_share.EXPIRY_CHOICES),
     }
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_applicant)])
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_report_shares(body: ShareCreate, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         owner = await session.get(User, current_user["user_id"])
         try:
-            shares = await report_share.share_with(
+            rows = await report_share.share_with(
                 session,
                 owner,
                 body.emails,
@@ -63,10 +60,10 @@ async def create_report_shares(body: ShareCreate, current_user: dict = Depends(g
         except report_share.ShareError as e:
             raise _bad_request(e) from e
         await session.commit()
-        return {"shares": [report_share.share_public(s) for s in shares]}
+        return {"shares": [report_share.share_public(share, viewer) for share, viewer in rows]}
 
 
-@router.patch("/{share_id}", dependencies=[Depends(require_applicant)])
+@router.patch("/{share_id}")
 async def update_report_share(share_id: str, body: ShareUpdate, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         try:
@@ -78,10 +75,10 @@ async def update_report_share(share_id: str, body: ShareUpdate, current_user: di
         except report_share.ShareNotFound as e:
             raise _not_found() from e
         await session.commit()
-        return report_share.share_public(share)
+        return report_share.share_public(share, await session.get(User, share.viewer_id))
 
 
-@router.delete("/{share_id}", dependencies=[Depends(require_applicant)])
+@router.delete("/{share_id}")
 async def delete_report_share(share_id: str, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         try:
@@ -92,13 +89,13 @@ async def delete_report_share(share_id: str, current_user: dict = Depends(get_cu
     return {"success": True}
 
 
-@router.get("/preview", dependencies=[Depends(require_applicant)])
+@router.get("/preview")
 async def preview_report(
     include_notes: bool = Query(False),
     timezone_name: str | None = Query(None, alias="timezone", max_length=64),
     current_user: dict = Depends(get_current_user),
 ):
-    """The report exactly as an invited person sees it."""
+    """The report exactly as the people you share with see it."""
     async with get_session() as session:
         report = await report_share.build_report(
             session, current_user["user_id"], include_notes=include_notes, tz_name=timezone_name
@@ -108,39 +105,26 @@ async def preview_report(
 
 @router.get("/incoming")
 async def incoming_report_shares(current_user: dict = Depends(get_current_user)):
+    """Reports other people shared with you."""
     async with get_session() as session:
-        user = await session.get(User, current_user["user_id"])
-        items = await report_share.incoming(session, user.email if user else None, current_user["user_id"])
+        items = await report_share.incoming(session, current_user["user_id"])
     return {"shares": items}
 
 
-@public_router.get("/{token}")
-async def view_shared_report(
-    token: str,
-    request: Request,
+@router.get("/incoming/{share_id}")
+async def view_incoming_report(
+    share_id: str,
     timezone_name: str | None = Query(None, alias="timezone", max_length=64),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Public: anyone holding an active link sees the owner's report, read only."""
-    await enforce_auth_rate_limit(request, scope="shared_report", per_ip=120, per_ip_window=300)
     async with get_session() as session:
-        share, expired = await report_share.find_active(session, token)
-        if share is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This link was removed or never existed.")
-        if expired:
-            raise HTTPException(
-                status_code=status.HTTP_410_GONE,
-                detail="This link has expired. Ask the person who shared it for a new one.",
-            )
+        try:
+            share, owner = await report_share.viewer_share(session, current_user["user_id"], share_id)
+        except report_share.ShareNotFound as e:
+            raise _not_found("This report is no longer shared with you.") from e
         report_share.record_view(share)
         await session.commit()
         report = await report_share.build_report(
             session, share.owner_id, include_notes=bool(share.include_notes), tz_name=timezone_name
         )
-        return {
-            "share": {
-                "email": share.email,
-                "expires_at": report_share.share_public(share)["expires_at"],
-                "message": share.message,
-            },
-            "report": report,
-        }
+        return {"share": report_share.incoming_public(share, owner), "report": report}

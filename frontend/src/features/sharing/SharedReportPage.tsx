@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { isAxiosError } from 'axios';
 import {
   AlertTriangle,
+  ArrowLeft,
   BriefcaseBusiness,
   CalendarCheck,
   CalendarClock,
@@ -20,9 +21,8 @@ import {
   Trophy,
 } from 'lucide-react';
 import { fetchReportPreview, fetchSharedReport } from '@/api/reportShareApi';
-import { NaoMark } from '@/components/brand/NaoLogo';
 import { HeroStat, PageLayout, SectionCard } from '@/components/app/PageLayout';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -39,6 +39,7 @@ import {
   APPLICATION_FILTERS,
   applicationCounts,
   filterApplications,
+  INCOMING_SHARES_KEY,
   shortDate,
   type ApplicationFilter,
 } from './shareModel';
@@ -53,24 +54,27 @@ const ACTIVITY_SERIES: ActivitySeries[] = [
 const RANGES = [7, 30] as const;
 const PAGE = 40;
 
+/** A report another NAO user shared with the signed-in account. */
 export function SharedReportPage() {
-  const { token = '' } = useParams();
+  const { shareId = '' } = useParams();
+  const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ['shared-report', token],
-    queryFn: () => fetchSharedReport(token),
+    queryKey: ['shared-report', shareId],
+    queryFn: () => fetchSharedReport(shareId),
     retry: false,
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
+    staleTime: 60_000,
   });
+  const status = isAxiosError(query.error) ? query.error.response?.status : undefined;
+  const settled = query.isSuccess || status === 404;
+  useEffect(() => {
+    if (settled) void queryClient.invalidateQueries({ queryKey: INCOMING_SHARES_KEY });
+  }, [settled, queryClient]);
   if (query.isPending) return <ReportLoading />;
-  if (query.isError) {
-    const status = isAxiosError(query.error) ? query.error.response?.status : undefined;
-    return <ReportUnavailable status={status} onRetry={() => void query.refetch()} />;
-  }
+  if (query.isError) return <ReportUnavailable status={status} onRetry={() => void query.refetch()} />;
   return <SharedReportView data={query.data} />;
 }
 
-/** The owner's own report, exactly as invited people see it. */
+/** The owner's own report, exactly as the people they share with see it. */
 export function ReportPreviewPage() {
   const [params] = useSearchParams();
   const includeNotes = params.get('notes') === '1';
@@ -93,33 +97,17 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-function ReportShell({ preview, children }: { preview?: boolean; children: ReactNode }) {
+const PILL = 'inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/60 px-2.5 py-1 backdrop-blur';
+
+function BackLink({ preview }: { preview?: boolean }) {
   return (
-    <div className="flex h-dvh flex-col bg-background">
-      <header className="z-20 flex h-12 shrink-0 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur lg:px-8">
-        <a href="/" className="flex items-center gap-2 text-sm font-semibold tracking-tight">
-          <span className="inline-flex size-7 items-center justify-center rounded-lg bg-gradient-to-br from-[#111A3F] to-[#04060F] ring-1 ring-white/10">
-            <NaoMark className="size-4.5" />
-          </span>
-          NAO
-        </a>
-        <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-          <Lock className="size-3" aria-hidden />
-          Read only
-        </span>
-        {preview ? (
-          <span className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-medium text-brand">
-            <Eye className="size-3.5" aria-hidden />
-            Preview: people you invite see exactly this page
-          </span>
-        ) : (
-          <a href="/" className="ml-auto text-xs font-medium text-muted-foreground hover:text-foreground">
-            Track your own job search with NAO
-          </a>
-        )}
-      </header>
-      {children}
-    </div>
+    <Link
+      to={preview ? '/app/interviews' : '/app/shared'}
+      className={cn(PILL, 'font-medium text-foreground transition-colors hover:bg-muted')}
+    >
+      <ArrowLeft className="size-3" aria-hidden />
+      {preview ? 'Interviews' : 'Shared with me'}
+    </Link>
   );
 }
 
@@ -153,27 +141,41 @@ export function SharedReportView({ data, preview = false }: { data: SharedReport
 
   const actionsBar = (
     <div className="flex flex-wrap items-center gap-2 text-xs">
-      <span className="rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-muted-foreground backdrop-blur">
+      <BackLink preview={preview} />
+      {preview ? (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-2.5 py-1 font-medium text-brand">
+          <Eye className="size-3.5" aria-hidden />
+          Preview: this is what people you share with see
+        </span>
+      ) : (
+        <span className={cn(PILL, 'text-muted-foreground')}>
+          <Lock className="size-3" aria-hidden />
+          Read only
+        </span>
+      )}
+      <span className={cn(PILL, 'text-muted-foreground')}>
         Updated {relativeAgo(report.generated_at, now) ?? 'just now'}
         {report.interviews.last_synced_at ? ` · email synced ${relativeAgo(report.interviews.last_synced_at, now)}` : ''}
       </span>
-      {share ? (
-        <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-muted-foreground backdrop-blur">
+      {share?.expires_at ? (
+        <span className={cn(PILL, 'text-muted-foreground')}>
           <Timer className="size-3" aria-hidden />
-          {share.expires_at ? `Access until ${shortDate(share.expires_at)}` : 'Shared with you'}
+          Access until {shortDate(share.expires_at)}
         </span>
       ) : null}
     </div>
   );
 
   return (
-    <ReportShell preview={preview}>
+    <>
       <PageLayout
         title={`${name}'s job search`}
         description={
           <>
             {report.owner.headline ? <span className="font-medium text-foreground">{report.owner.headline}. </span> : null}
-            A live view of interviews and applications{share ? `, shared with ${share.email}` : ''}.
+            {share
+              ? `Shared with you${share.shared_at ? ` on ${shortDate(share.shared_at)}` : ''}. A live view of interviews and applications.`
+              : 'A live view of interviews and applications.'}
           </>
         }
         width="full"
@@ -270,7 +272,7 @@ export function SharedReportView({ data, preview = false }: { data: SharedReport
           {selected ? <InterviewDetailSheet key={selected.id} process={selected} readOnly /> : null}
         </SheetContent>
       </Sheet>
-    </ReportShell>
+    </>
   );
 }
 
@@ -532,44 +534,43 @@ function ApplicationRow({ app, now, onOpen }: { app: ReportApplication; now: num
 
 function ReportLoading() {
   return (
-    <ReportShell>
-      <div className="space-y-4 p-4 lg:p-8" aria-busy="true" aria-label="Loading report">
-        <Skeleton className="h-36 w-full rounded-2xl" />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Skeleton className="h-56 rounded-2xl" />
-          <Skeleton className="h-56 rounded-2xl" />
-        </div>
-        <Skeleton className="h-72 w-full rounded-2xl" />
+    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 lg:p-8" aria-busy="true" aria-label="Loading report">
+      <Skeleton className="h-36 w-full rounded-2xl" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Skeleton className="h-56 rounded-2xl" />
+        <Skeleton className="h-56 rounded-2xl" />
       </div>
-    </ReportShell>
+      <Skeleton className="h-72 w-full rounded-2xl" />
+    </div>
   );
 }
 
 function ReportUnavailable({ status, onRetry }: { status?: number; onRetry: () => void }) {
-  const gone = status === 404 || status === 410;
-  const title = status === 410 ? 'This link has expired' : status === 404 ? 'This link is no longer active' : 'Could not load the report';
-  const body =
-    status === 410
-      ? 'Access to this report ended. Ask the person who shared it to renew your access.'
-      : status === 404
-        ? 'The person who shared it removed access or created a new link. Ask them for the current one.'
-        : 'Check your connection and try again.';
+  const gone = status === 404;
   return (
-    <ReportShell>
-      <div className="flex flex-1 items-center justify-center px-4">
-        <div className="max-w-sm text-center">
-          <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-            {gone ? <Link2Off className="size-5" aria-hidden /> : <AlertTriangle className="size-5" aria-hidden />}
-          </span>
-          <h1 className="mt-4 text-lg font-semibold">{title}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{body}</p>
-          {!gone ? (
-            <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
+    <div className="flex flex-1 items-center justify-center px-4">
+      <div className="max-w-sm text-center">
+        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+          {gone ? <Link2Off className="size-5" aria-hidden /> : <AlertTriangle className="size-5" aria-hidden />}
+        </span>
+        <h1 className="mt-4 text-lg font-semibold">{gone ? 'This report is no longer shared with you' : 'Could not load the report'}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {gone
+            ? 'The person who shared it removed your access, or the access period ended.'
+            : 'Check your connection and try again.'}
+        </p>
+        <div className="mt-4 flex justify-center gap-2">
+          {gone ? (
+            <Link to="/app/shared" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+              Back to Shared with me
+            </Link>
+          ) : (
+            <Button variant="outline" size="sm" onClick={onRetry}>
               Try again
             </Button>
-          ) : null}
+          )}
         </div>
       </div>
-    </ReportShell>
+    </div>
   );
 }

@@ -1,7 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import * as api from '@/api/reportShareApi';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { stubLayout } from '../integrations/testUtils';
@@ -22,18 +24,15 @@ function renderDialog() {
   return render(
     <QueryClientProvider client={qc}>
       <TooltipProvider>
-        <ShareReportDialog open onOpenChange={() => undefined} />
+        <MemoryRouter>
+          <ShareReportDialog open onOpenChange={() => undefined} />
+        </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
   );
 }
 
-const writeText = vi.fn(async () => undefined);
-
-beforeAll(() => {
-  stubLayout();
-  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-});
+beforeAll(stubLayout);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -43,23 +42,21 @@ beforeEach(() => {
     expiry_choices: [7, 30, 90],
   });
   mocked.createReportShares.mockResolvedValue({
-    shares: [makeShare({ id: 's2', email: 'a@x.com', token: 't2' }), makeShare({ id: 's3', email: 'b@y.org', token: 't3' })],
+    shares: [makeShare({ id: 's2', email: 'a@x.com', viewer_name: 'A' }), makeShare({ id: 's3', email: 'b@y.org', viewer_name: 'B' })],
   });
 });
 
 describe('ShareReportDialog', () => {
-  it('lists people with access and how they used it', async () => {
+  it('lists people with access by account, with no links to send', async () => {
     renderDialog();
     const people = await screen.findByRole('region', { name: 'People with access' });
-    expect(await within(people).findByText('coach@example.com')).toBeInTheDocument();
+    expect(await within(people).findByText('Jordan Coach')).toBeInTheDocument();
+    expect(people).toHaveTextContent('coach@example.com');
     expect(people).toHaveTextContent('No end date');
-    expect(people).toHaveTextContent('Opened 1 hour ago · 2 views');
-
-    await userEvent.click(within(people).getByRole('button', { name: 'Copy link for coach@example.com' }));
-    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/shared/tok-1`);
-    expect(within(people).getByRole('link', { name: 'Email the link to coach@example.com' }).getAttribute('href')).toMatch(
-      /^mailto:coach%40example\.com\?/,
-    );
+    expect(people).toHaveTextContent('Viewed 1 hour ago');
+    expect(within(people).queryByRole('button', { name: /Copy link/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Email the link/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Preview what they see' })).toHaveAttribute('href', '/app/interviews/report-preview');
   });
 
   it('turns typed emails into chips and shares with each person', async () => {
@@ -74,7 +71,7 @@ describe('ShareReportDialog', () => {
     await waitFor(() =>
       expect(mocked.createReportShares).toHaveBeenCalledWith({
         emails: ['a@x.com', 'b@y.org'],
-        expires_in_days: 30,
+        expires_in_days: null,
         include_notes: true,
         message: null,
       }),
@@ -87,5 +84,21 @@ describe('ShareReportDialog', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Access options for coach@example.com' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Remove access' }));
     await waitFor(() => expect(mocked.deleteReportShare).toHaveBeenCalledWith('s1'));
+  });
+
+  it('shows why a share failed, such as an email without a NAO account', async () => {
+    const { toast } = await import('sonner');
+    const res = {
+      status: 400,
+      statusText: 'Bad Request',
+      data: { detail: 'nobody@x.com does not have a NAO account yet. Ask them to sign up, then share again.' },
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+    };
+    mocked.createReportShares.mockRejectedValue(new AxiosError('Bad Request', '400', undefined, undefined, res));
+    renderDialog();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Email addresses' }), 'nobody@x.com{Enter}');
+    await userEvent.click(screen.getByRole('button', { name: 'Share' }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('does not have a NAO account')));
   });
 });

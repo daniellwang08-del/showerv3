@@ -3,9 +3,9 @@ import type { InterviewProcess, InterviewStage, InterviewSummary } from './inter
 
 export interface ReportShare {
   id: string;
+  /** The viewer's NAO account email. */
   email: string;
-  /** Null only if the stored link can no longer be decrypted; reset the link to fix. */
-  token: string | null;
+  viewer_name: string | null;
   include_notes: boolean;
   message: string | null;
   expires_at: string | null;
@@ -31,13 +31,13 @@ export interface ShareInput {
 export interface ShareChanges {
   expires_in_days?: number | null;
   include_notes?: boolean;
-  reset_link?: boolean;
 }
 
 export interface IncomingShare {
   id: string;
-  token: string;
   owner_name: string;
+  owner_headline: string | null;
+  message: string | null;
   shared_at: string | null;
   expires_at: string | null;
   last_viewed_at: string | null;
@@ -89,6 +89,6 @@ export interface SharedReport {
 
 export interface SharedReportResponse {
   /** Null in the owner's preview. */
-  share: { email: string; expires_at: string | null; message: string | null } | null;
+  share: IncomingShare | null;
   report: SharedReport;
 }
