@@ -48,11 +48,12 @@ UPDATE_ONLY_KINDS = ("application_received", "rejection")
 FIRST_SYNC_LOOKBACK = timedelta(days=60)
 # Headers are cheap (one request per 200); bodies and LLM calls are not.
 MAX_SCAN = 5000
-MAX_CANDIDATES = 400
+# Active job seekers get 30 to 60 confirmations a day; one first sync should cover the window.
+MAX_CANDIDATES = 1200
 CHUNK_SIZE = 60
 STALE_SYNC = timedelta(minutes=30)
 BODY_CONCURRENCY = 5
-LLM_CONCURRENCY = 3
+LLM_CONCURRENCY = 4
 
 
 def _utcnow() -> datetime:
