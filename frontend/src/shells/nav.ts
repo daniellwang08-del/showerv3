@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Briefcase,
+  CalendarClock,
   Cpu,
   Database,
   FileText,
@@ -30,6 +31,12 @@ export const applicantNav: NavSection[] = [
     items: [
       { to: '/app', label: 'Home', icon: Home, end: true, keywords: ['start', 'composer'] },
       { to: '/app/jobs', label: 'Jobs', icon: Briefcase, keywords: ['dashboard', 'list', 'scraper'] },
+      {
+        to: '/app/interviews',
+        label: 'Interviews',
+        icon: CalendarClock,
+        keywords: ['interviews', 'schedule', 'mail', 'email', 'pipeline', 'calendar'],
+      },
       { to: '/app/analysis', label: 'Insights', icon: BarChart3, keywords: ['analysis', 'pipeline', 'trends'] },
       { to: '/app/documents', label: 'Documents', icon: FileText, keywords: ['resume', 'cover letter', 'tailor', 'downloads'] },
       { to: '/app/studio', label: 'Resume studio', icon: LayoutTemplate, keywords: ['builder', 'template', 'design', 'theme'] },
@@ -40,7 +47,7 @@ export const applicantNav: NavSection[] = [
     items: [
       { to: '/app/profile', label: 'Profile', icon: UserCircle, keywords: ['resume data', 'experience'] },
       { to: '/app/preferences', label: 'Preferences', icon: SlidersHorizontal, keywords: ['settings', 'filters'] },
-      { to: '/app/integrations', label: 'Integrations', icon: Puzzle, keywords: ['sheets', 'pumble', 'job sites', 'gmail', 'inbox'] },
+      { to: '/app/integrations', label: 'Integrations', icon: Puzzle, keywords: ['sheets', 'pumble', 'job sites'] },
     ],
   },
 ];

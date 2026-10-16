@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gmailStatus, jobSiteStatus, pumbleStatus, relativeTime, resumeLabel, sheetsStatus } from './status';
+import { jobSiteStatus, pumbleStatus, relativeTime, resumeLabel, sheetsStatus } from './status';
 import { extensionStatusText, extensionSteps } from './useJobSiteConnect';
 import { makeConnection, makePlugin } from './testUtils';
 
@@ -46,7 +46,7 @@ describe('integration status helpers', () => {
     expect(relativeTime('garbage', now)).toBeNull();
   });
 
-  it('maps Sheets, Pumble, and Gmail configs to card status', () => {
+  it('maps Sheets and Pumble configs to card status', () => {
     const status = { server_configured: true, service_account_email: 'a@b' };
     expect(sheetsStatus({ status: { ...status, server_configured: false }, config: { configured: true } }).kind).toBe('unavailable');
     expect(sheetsStatus({ status, config: { configured: false } }).kind).toBe('not_connected');
@@ -59,28 +59,6 @@ describe('integration status helpers', () => {
     expect(
       pumbleStatus({ status: { integration_available: true }, config: { configured: true, integrations: [{ ...dest, is_enabled: true }] } }).detail,
     ).toBe('1 destination · score ≥ 75');
-
-    const gmailOk = { server_configured: true, scopes: [] };
-    expect(gmailStatus({ status: { server_configured: false }, config: { configured: false } }).kind).toBe('unavailable');
-    expect(gmailStatus({ status: gmailOk, config: { configured: false } }).kind).toBe('not_connected');
-    expect(
-      gmailStatus({
-        status: gmailOk,
-        config: { configured: true, status: 'needs_reauth', last_error: 'revoked' },
-      }),
-    ).toEqual({ kind: 'attention', detail: 'revoked' });
-    expect(
-      gmailStatus({
-        status: gmailOk,
-        config: { configured: true, google_email: 'you@gmail.com', is_enabled: false },
-      }),
-    ).toEqual({ kind: 'off', detail: 'Paused · you@gmail.com' });
-    expect(
-      gmailStatus({
-        status: gmailOk,
-        config: { configured: true, google_email: 'you@gmail.com', is_enabled: true, status: 'connected' },
-      }).kind,
-    ).toBe('connected');
   });
 
   it('walks the extension connect steps', () => {

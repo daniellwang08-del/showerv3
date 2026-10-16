@@ -1,7 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Globe, Inbox, type LucideIcon, PlugZap, RotateCw, Send } from 'lucide-react';
-import { toast } from 'sonner';
+import { AlertTriangle, Globe, type LucideIcon, PlugZap, RotateCw, Send } from 'lucide-react';
 import { HeroStat, PageLayout } from '@/components/app/PageLayout';
 import { PAGE_TABS_LIST, PAGE_TABS_TRIGGER } from '@/components/app/pageTabs';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -9,65 +8,37 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CardGrid, IntegrationCard, IntegrationCardError, IntegrationCardSkeleton } from './IntegrationCard';
-import { GmailSheet, GMAIL_BLURB, GMAIL_LOGO, GMAIL_NAME } from './GmailSheet';
 import { GoogleSheetsSheet, SHEETS_BLURB, SHEETS_LOGO, SHEETS_NAME } from './GoogleSheetsSheet';
 import { JobSiteManagePanel } from './JobSiteManagePanel';
 import { JobSiteSheet } from './JobSiteSheet';
 import { PumbleSheet, PUMBLE_BLURB, PUMBLE_LOGO, PUMBLE_NAME } from './PumbleSheet';
-import { invalidateGmail, useGmail, useJobSites, usePumble, useSheets } from './queries';
-import { errorDetail, gmailStatus, jobSiteStatus, pumbleStatus, sheetsStatus } from './status';
-import { useQueryClient } from '@tanstack/react-query';
+import { useJobSites, usePumble, useSheets } from './queries';
+import { errorDetail, jobSiteStatus, pumbleStatus, sheetsStatus } from './status';
 
 const TABS = [
   { value: 'job-sites', label: 'Job sites' },
   { value: 'posting', label: 'Posting' },
-  { value: 'inbox', label: 'Inbox & chat' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['value'];
 const DEFAULT_TAB: TabId = 'job-sites';
-const TAB_ICON: Record<TabId, LucideIcon> = { 'job-sites': Globe, posting: Send, inbox: Inbox };
+const TAB_ICON: Record<TabId, LucideIcon> = { 'job-sites': Globe, posting: Send };
 const isTabId = (v: string | null): v is TabId => TABS.some((t) => t.value === v);
 
 type Active =
   | { kind: 'job-site'; slug: string }
   | { kind: 'sheets' }
-  | { kind: 'pumble' }
-  | { kind: 'gmail' };
+  | { kind: 'pumble' };
 
 export function IntegrationsPage() {
   const jobSites = useJobSites();
   const sheets = useSheets();
   const pumble = usePumble();
-  const gmail = useGmail();
-  const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const rawTab = params.get('tab');
   const tab: TabId = isTabId(rawTab) ? rawTab : DEFAULT_TAB;
   const [active, setActive] = useState<Active | null>(null);
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const flag = params.get('gmail');
-    if (!flag) return;
-    if (flag === 'connected') {
-      invalidateGmail(qc);
-      toast.success('Gmail connected');
-    } else if (flag === 'error') {
-      const reason = params.get('reason')?.trim();
-      toast.error(reason ? `Gmail connection failed (${reason})` : 'Gmail connection failed');
-    }
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete('gmail');
-        next.delete('reason');
-        if (!next.get('tab')) next.set('tab', 'inbox');
-        return next;
-      },
-      { replace: true },
-    );
-  }, [params, qc, setParams]);
 
   const selectTab = (next: TabId) =>
     setParams(
@@ -95,14 +66,12 @@ export function IntegrationsPage() {
 
   const siteKinds = connected.map(({ plugin, connection }) => jobSiteStatus(plugin, connection).kind);
   const postingKinds = [sheets.data && sheetsStatus(sheets.data).kind, pumble.data && pumbleStatus(pumble.data).kind];
-  const inboxKinds = [gmail.data && gmailStatus(gmail.data).kind];
   const countLive = (kinds: unknown[]) => kinds.filter((k) => k === 'connected' || k === 'attention').length;
   const tabCount: Record<TabId, number> = {
     'job-sites': connected.length,
     posting: countLive(postingKinds),
-    inbox: countLive(inboxKinds),
   };
-  const attention = [...siteKinds, ...postingKinds, ...inboxKinds].filter((k) => k === 'attention').length;
+  const attention = [...siteKinds, ...postingKinds].filter((k) => k === 'attention').length;
   const newJobs = connected.reduce((n, c) => n + (c.connection.last_new_jobs ?? 0), 0);
 
   const meta = (
@@ -140,14 +109,12 @@ export function IntegrationsPage() {
     sheetBody = <GoogleSheetsSheet data={sheets.data} />;
   } else if (active?.kind === 'pumble' && pumble.data) {
     sheetBody = <PumbleSheet data={pumble.data} />;
-  } else if (active?.kind === 'gmail' && gmail.data) {
-    sheetBody = <GmailSheet data={gmail.data} />;
   }
 
   return (
     <PageLayout
       title="Integrations"
-      description="Connect job boards, posting destinations, and read-only inbox sources."
+      description="Connect job boards and the destinations matching jobs are posted to."
       width="wide"
       variant="hero"
       icon={PlugZap}
@@ -278,45 +245,6 @@ export function IntegrationsPage() {
                   onOpen={() => show({ kind: 'pumble' })}
                 />
               )}
-            </CardGrid>
-          </Group>
-        </TabsContent>
-
-        <TabsContent value="inbox" className="space-y-10">
-          <Group
-            title="Mail and messaging"
-            description="Read-only connections for searching important messages. NAO does not send mail or post chat on your behalf from this tab."
-          >
-            <CardGrid>
-              {gmail.isPending ? (
-                <IntegrationCardSkeleton />
-              ) : gmail.isError ? (
-                <IntegrationCardError
-                  name={GMAIL_NAME}
-                  message={errorDetail(gmail.error, 'Failed to load Gmail settings.')}
-                  onRetry={() => void gmail.refetch()}
-                />
-              ) : (
-                <IntegrationCard
-                  name={GMAIL_NAME}
-                  description={GMAIL_BLURB}
-                  logoSrc={GMAIL_LOGO}
-                  status={gmailStatus(gmail.data)}
-                  onOpen={() => show({ kind: 'gmail' })}
-                />
-              )}
-              <IntegrationCard
-                name="Outlook"
-                description="Search Microsoft Outlook / Microsoft 365 mail. Coming soon."
-                status={{ kind: 'unavailable', detail: 'Not available yet' }}
-                onOpen={() => toast.message('Outlook integration is coming soon')}
-              />
-              <IntegrationCard
-                name="Slack"
-                description="Search Slack messages you can already access. Coming soon."
-                status={{ kind: 'unavailable', detail: 'Not available yet' }}
-                onOpen={() => toast.message('Slack integration is coming soon')}
-              />
             </CardGrid>
           </Group>
         </TabsContent>

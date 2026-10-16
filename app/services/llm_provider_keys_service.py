@@ -54,6 +54,10 @@ LLM_JOB_TYPES: dict[str, dict[str, str]] = {
         "label": "Attachment URL extraction",
         "description": "Extract job URLs from uploaded attachments",
     },
+    "interview_mail": {
+        "label": "Interview mail",
+        "description": "Read hiring emails into the interview pipeline",
+    },
     "resume_ai_chat": {
         "label": "Resume AI chat",
         "description": "Resume builder AI chat / intent routing",

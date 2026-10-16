@@ -34,11 +34,6 @@ vi.mock('@/api/pumbleApi', () => ({
   deletePumbleIntegration: vi.fn(),
   disconnectPumble: vi.fn(),
 }));
-vi.mock('@/api/gmailApi', () => ({
-  fetchGmailStatus: vi.fn(async () => ({ server_configured: true, scopes: [] })),
-  fetchGmailConfig: vi.fn(async () => ({ configured: false })),
-}));
-
 const sheets = vi.mocked(sheetsApi);
 const pumble = vi.mocked(pumbleApi);
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/abc123/edit';

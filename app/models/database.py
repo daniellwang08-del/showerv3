@@ -934,6 +934,93 @@ class GmailConnection(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class MailConnection(Base):
+    """Per-user mailbox connected through Nylas v3 hosted auth.
+
+    Nylas holds and refreshes the provider tokens; we keep only the grant id
+    and call the API with the server's Nylas API key. Sync state lives here so
+    the Interviews page can show progress without a separate job table.
+    """
+    __tablename__ = "mail_connections"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    grant_id = Column(String(255), nullable=False)
+    email = Column(String(255), nullable=False)
+    provider = Column(String(50), nullable=True)
+    # connected | needs_reauth
+    status = Column(String(32), default="connected", nullable=False)
+    last_error = Column(Text, nullable=True)
+    # idle | running | error
+    sync_status = Column(String(16), default="idle", nullable=False)
+    sync_started_at = Column(DateTime, nullable=True)
+    last_synced_at = Column(DateTime, nullable=True)
+    last_sync_error = Column(Text, nullable=True)
+    # Newest message timestamp already scanned; next sync reads after it.
+    sync_cursor = Column(DateTime, nullable=True)
+    last_sync_stats = Column(JSON, nullable=True)
+    connected_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class InterviewProcess(Base):
+    """One hiring process (company + role) built from interview emails or added by hand."""
+    __tablename__ = "interview_processes"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company = Column(String(300), nullable=False)
+    company_key = Column(String(300), nullable=False)
+    role_title = Column(String(300), nullable=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    # applied | screening | assessment | interviewing | final | offer | rejected | withdrawn
+    stage = Column(String(20), default="screening", nullable=False)
+    # active | closed
+    status = Column(String(16), default="active", nullable=False)
+    next_step = Column(Text, nullable=True)
+    remaining_steps = Column(JSON, nullable=True)
+    notes = Column(Text, nullable=True)
+    # email | manual
+    source = Column(String(16), default="email", nullable=False)
+    last_activity_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_interview_processes_user_company", "user_id", "company_key"),
+    )
+
+
+class InterviewEvent(Base):
+    """A single step in a process: a scheduled round, a request, an offer or a rejection."""
+    __tablename__ = "interview_events"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    process_id = Column(String(36), ForeignKey("interview_processes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(32), nullable=False)
+    # scheduled | needs_scheduling | action_required | completed | cancelled | info
+    status = Column(String(24), default="info", nullable=False)
+    title = Column(String(300), nullable=True)
+    scheduled_at = Column(DateTime, nullable=True)
+    duration_minutes = Column(Integer, nullable=True)
+    meeting_url = Column(Text, nullable=True)
+    location = Column(String(500), nullable=True)
+    interviewers = Column(String(500), nullable=True)
+    summary = Column(Text, nullable=True)
+    message_id = Column(String(255), nullable=True)
+    thread_id = Column(String(255), nullable=True)
+    email_subject = Column(String(500), nullable=True)
+    email_from = Column(String(500), nullable=True)
+    email_date = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "message_id", name="uq_interview_event_user_message"),
+    )
+
+
 class GoogleSheetsConfig(Base):
     """Per-user Google Sheets integration settings.
 

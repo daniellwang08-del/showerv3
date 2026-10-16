@@ -24,10 +24,6 @@ vi.mock('@/api/pumbleApi', () => ({
   fetchPumbleStatus: vi.fn(async () => ({ integration_available: true })),
   fetchPumbleConfig: vi.fn(async () => ({ configured: false, integrations: [] })),
 }));
-vi.mock('@/api/gmailApi', () => ({
-  fetchGmailStatus: vi.fn(async () => ({ server_configured: true, scopes: [] })),
-  fetchGmailConfig: vi.fn(async () => ({ configured: false })),
-}));
 vi.mock('@/lib/extensionBridge', () => ({
   detectExtension: vi.fn(),
   startJobSiteConnect: vi.fn(),

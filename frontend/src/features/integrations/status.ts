@@ -1,5 +1,4 @@
 import type { JobSiteConnection, JobSitePlugin } from '@/api/jobSitesApi';
-import type { GmailConfig, GmailStatus } from '@/types/gmail';
 import type { SheetsConfig, SheetsStatus } from '@/types/googleSheets';
 import type { PumbleConfig, PumbleStatus } from '@/types/pumble';
 
@@ -131,29 +130,6 @@ export function pumbleStatus({ status, config }: PumbleData): IntegrationStatus 
   const summary = `${list.length} destination${list.length === 1 ? '' : 's'} · score ≥ ${threshold}`;
   if (!list.some((i) => i.is_enabled !== false)) return { kind: 'off', detail: `Auto-post paused · ${summary}` };
   return { kind: 'connected', detail: summary };
-}
-
-export interface GmailData {
-  status: GmailStatus;
-  config: GmailConfig;
-}
-
-export function gmailStatus({ status, config }: GmailData): IntegrationStatus {
-  if (!status.server_configured) {
-    return { kind: 'unavailable', detail: "Gmail isn't configured on this server" };
-  }
-  if (!config.configured) return { kind: 'not_connected' };
-  if (config.status === 'needs_reauth') {
-    return {
-      kind: 'attention',
-      detail: config.last_error?.trim() || 'Reconnect Google to resume inbox search',
-    };
-  }
-  const email = config.google_email?.trim();
-  if (config.is_enabled === false) {
-    return { kind: 'off', detail: email ? `Paused · ${email}` : 'Paused' };
-  }
-  return { kind: 'connected', detail: email || 'Read-only inbox access' };
 }
 
 export function primaryActionLabel(kind: StatusKind): string {

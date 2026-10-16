@@ -40,6 +40,7 @@ const ProfilePage = named(() => import('./features/profile/ProfilePage'), 'Profi
 const PreferencesPage = named(() => import('./features/settings/PreferencesPage'), 'PreferencesPage');
 const IntegrationsPage = named(() => import('./features/integrations/IntegrationsPage'), 'IntegrationsPage');
 const InsightsPage = named(() => import('./features/insights/InsightsPage'), 'InsightsPage');
+const InterviewsPage = named(() => import('./features/interviews/InterviewsPage'), 'InterviewsPage');
 const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
 const DocumentsPage = named(() => import('./features/documents/DocumentsPage'), 'DocumentsPage');
 const ResumeStudioPage = named(() => import('./features/studio/ResumeStudioPage'), 'ResumeStudioPage');
@@ -496,6 +497,7 @@ function App() {
           <Route path="assistant/:sessionId" element={<Page><AssistantPage /></Page>} />
           <Route path="jobs" element={<Page title="Jobs"><JobsPage /></Page>} />
           <Route path="analysis" element={<Page><InsightsPage /></Page>} />
+          <Route path="interviews" element={<Page><InterviewsPage /></Page>} />
           <Route path="documents" element={<Page><DocumentsPage /></Page>} />
           <Route path="studio" element={<Page><ResumeStudioPage /></Page>} />
           <Route

@@ -1,9 +1,8 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
-import { fetchGmailConfig, fetchGmailStatus } from '@/api/gmailApi';
 import { fetchJobSiteActivity, fetchJobSites } from '@/api/jobSitesApi';
 import { fetchSheetsConfig, fetchSheetsStatus } from '@/api/googleSheetsApi';
 import { fetchPumbleConfig, fetchPumbleStatus } from '@/api/pumbleApi';
-import type { GmailData, PumbleData, SheetsData } from './status';
+import type { PumbleData, SheetsData } from './status';
 
 export const integrationKeys = {
   jobSites: ['integrations', 'job-sites'] as const,
@@ -11,7 +10,6 @@ export const integrationKeys = {
   jobSiteActivity: ['integrations', 'job-site-activity'] as const,
   sheets: ['integrations', 'sheets'] as const,
   pumble: ['integrations', 'pumble'] as const,
-  gmail: ['integrations', 'gmail'] as const,
   /** Read by the Jobs page (`useIntegrationTargets`) to offer "Post to…" actions. */
   jobsSheetsConfig: ['integrations', 'sheets-config'] as const,
   jobsPumbleConfig: ['integrations', 'pumble-config'] as const,
@@ -58,16 +56,6 @@ export function usePumble() {
   });
 }
 
-export function useGmail() {
-  return useQuery({
-    queryKey: integrationKeys.gmail,
-    queryFn: async (): Promise<GmailData> => {
-      const [status, config] = await Promise.all([fetchGmailStatus(), fetchGmailConfig()]);
-      return { status, config };
-    },
-  });
-}
-
 export function invalidateSheets(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: integrationKeys.sheets });
   void qc.invalidateQueries({ queryKey: integrationKeys.jobsSheetsConfig });
@@ -81,8 +69,4 @@ export function invalidatePumble(qc: QueryClient) {
 export function invalidateJobSites(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: integrationKeys.jobSites });
   void qc.invalidateQueries({ queryKey: integrationKeys.jobSiteActivity });
-}
-
-export function invalidateGmail(qc: QueryClient) {
-  void qc.invalidateQueries({ queryKey: integrationKeys.gmail });
 }

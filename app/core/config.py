@@ -365,6 +365,18 @@ class Settings(BaseSettings):
     # incoming request URL at connect time (fine for local Vite/proxy setups).
     google_oauth_redirect_uri: str = Field(default="")
 
+    # Nylas v3 mail access (Interviews page). Hosted auth lets users connect
+    # Gmail, Outlook, Yahoo, iCloud or IMAP; we only keep the grant id. Empty
+    # key or client id means mail connect is unavailable.
+    nylas_api_key: str = Field(default="")
+    nylas_client_id: str = Field(default="")
+    # Regional API host: https://api.us.nylas.com or https://api.eu.nylas.com
+    nylas_api_uri: str = Field(default="https://api.us.nylas.com")
+    # Callback registered in the Nylas dashboard (Hosted authentication >
+    # Callback URIs), e.g. https://example.com/api/v1/mail/callback. Empty =
+    # derive from the incoming request URL.
+    nylas_redirect_uri: str = Field(default="")
+
     # Default GPA written to optional "Overall Result (GPA)" application fields when
     # the profile has no stored value (Workday). Applied only when the field exists
     # and is empty; a stored profile GPA always takes precedence. Blank disables it.
