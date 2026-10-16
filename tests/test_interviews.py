@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -160,6 +161,53 @@ def test_not_configured_raises(monkeypatch):
     assert not nylas.configured()
     with pytest.raises(nylas.MailNotConfiguredError):
         nylas.build_authorize_url(user_id="u1", redirect_uri="https://app/cb")
+
+
+class _Result:
+    def scalars(self):
+        return iter(())
+
+    def scalar_one_or_none(self):
+        return None
+
+    def all(self):
+        return []
+
+
+class _RecordingSession:
+    """Records add/flush order; every query returns no rows."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def execute(self, _stmt):
+        return _Result()
+
+    def add(self, obj):
+        self.calls.append(f"add:{type(obj).__name__}")
+
+    async def flush(self):
+        self.calls.append("flush")
+
+
+def test_new_process_is_flushed_before_its_event():
+    session = _RecordingSession()
+    message = {"id": "m1", "subject": "Interview", "from": "hr@acme.com", "date": datetime(2026, 10, 6, 12, 0)}
+    result = ex.normalize_result(
+        {
+            "relevant": True,
+            "company": "Acme",
+            "kind": "recruiter_screen",
+            "status": "scheduled",
+            "scheduled_at": "2026-10-08T18:00:00Z",
+        },
+        "UTC",
+    )
+    outcome = asyncio.run(svc.apply_extraction(session, "u1", message, result))
+    assert outcome == "created"
+    assert session.calls.index("add:InterviewProcess") < session.calls.index("flush") < session.calls.index(
+        "add:InterviewEvent"
+    )
 
 
 def test_summarize_counts():

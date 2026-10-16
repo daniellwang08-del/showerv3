@@ -160,6 +160,9 @@ async def apply_extraction(
             last_activity_at=email_date,
         )
         session.add(process)
+        # No relationship() links the two models and sessions don't autoflush,
+        # so the unit of work may insert the event first and break its FK.
+        await session.flush()
         outcome = "created"
 
     existing = (
@@ -331,7 +334,18 @@ async def run_sync(user_id: str, tz_name: str | None = None) -> dict[str, Any]:
                 if not result:
                     continue
                 stats["relevant"] += 1
-                outcome = await apply_extraction(session, user_id, m, result)
+                try:
+                    async with session.begin_nested():
+                        outcome = await apply_extraction(session, user_id, m, result)
+                except Exception as e:
+                    logger.warning(
+                        "interview_apply_failed",
+                        user_id=user_id,
+                        message_id=m["id"],
+                        error_type=type(e).__name__,
+                        error=str(e)[:500],
+                    )
+                    continue
                 if outcome in ("created", "updated"):
                     stats[outcome] += 1
             conn = await nylas_service.get_connection(session, user_id)
@@ -349,7 +363,7 @@ async def run_sync(user_id: str, tz_name: str | None = None) -> dict[str, Any]:
     except nylas_service.MailAuthError as e:
         await _finish_with_error(user_id, str(e), needs_reauth=True)
     except Exception as e:
-        logger.exception("interview_sync_failed", user_id=user_id)
+        logger.exception("interview_sync_failed", user_id=user_id, error_type=type(e).__name__, error=str(e)[:500])
         message = str(e) if isinstance(e, nylas_service.MailError) else "Sync failed. Try again in a few minutes."
         await _finish_with_error(user_id, message)
     return stats
