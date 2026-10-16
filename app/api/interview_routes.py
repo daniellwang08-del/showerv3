@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.routes import get_current_user, require_applicant
-from app.services import interview_service, nylas_service
+from app.services import interview_service, mail_applications, nylas_service
 from app.storage.database import get_session
 
 router = APIRouter(prefix="/interviews", tags=["interviews"], dependencies=[Depends(require_applicant)])
@@ -105,13 +105,28 @@ async def get_interviews(current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     async with get_session() as session:
         conn = await nylas_service.get_connection(session, user_id)
-        processes = await interview_service.list_processes(session, user_id) if conn else []
+        processes = await interview_service.list_processes(session, user_id, conn) if conn else []
     return {
         "server": nylas_service.server_status(),
         "connection": nylas_service.connection_public(conn),
         "processes": processes,
         "summary": interview_service.summarize(processes),
     }
+
+
+@router.get("/applications")
+async def get_mail_applications(
+    days: int = Query(30, ge=1, le=31),
+    timezone_name: str | None = Query(None, alias="timezone", max_length=64),
+    current_user: dict = Depends(get_current_user),
+):
+    """Applications counted from confirmation emails, for the Insights chart."""
+    user_id = current_user["user_id"]
+    async with get_session() as session:
+        conn = await nylas_service.get_connection(session, user_id)
+        data = await mail_applications.overview(session, user_id, conn, tz_name=timezone_name, days=days)
+    data["server"] = nylas_service.server_status()
+    return data
 
 
 @router.post("/sync", status_code=status.HTTP_202_ACCEPTED)

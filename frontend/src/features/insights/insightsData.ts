@@ -75,7 +75,8 @@ function tile(key: TileKey, label: string, value: number, filters: BoardFilters,
   return { key, label, value, display: fmt(value), hint, filters };
 }
 
-export function buildTodayTiles(stats: ScraperStats): InsightTile[] {
+/** ``inboxToday`` is today's confirmation emails; when given it replaces the marked-applied count. */
+export function buildTodayTiles(stats: ScraperStats, inboxToday?: number | null): InsightTile[] {
   const todayAvailable = safe(stats.today_available_jobs);
   const todayNew = safe(stats.today_scraped);
   return [
@@ -94,7 +95,9 @@ export function buildTodayTiles(stats: ScraperStats): InsightTile[] {
       { view: 'ready' },
       todayAvailable > 0 ? `${fmt(todayAvailable)} scored, not ready yet` : `${fmt(stats.ready_jobs)} ready in total`,
     ),
-    tile('applied_today', 'Applied today', safe(stats.applied_today), { view: 'applied_today' }, 'Marked applied since midnight'),
+    inboxToday != null
+      ? tile('applied_today', 'Applied today', safe(inboxToday), { view: 'applied_today' }, 'Confirmation emails since midnight')
+      : tile('applied_today', 'Applied today', safe(stats.applied_today), { view: 'applied_today' }, 'Marked applied since midnight'),
   ];
 }
 
@@ -153,7 +156,7 @@ export function buildPipeline(stats: ScraperStats): PipelineStage[] {
     filters: BoardFilters | null,
   ): PipelineStage => ({ key, label, hint, value, ofPool: pct(value, total), filters });
   return [
-    stage('applied', 'Applied', 'Marked applied', applied, { view: 'applied' }),
+    stage('applied', 'Applied', 'Marked applied or confirmed by email', applied, { view: 'applied' }),
     stage('ready', 'Ready', 'Documents built, not applied', ready, { view: 'ready' }),
     stage('scored', 'Scored', 'Match scored, documents not built', scored, { view: 'available' }),
     stage('unscored', 'Not scored yet', 'Still reading or waiting for a score', unscored, null),

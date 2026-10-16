@@ -51,6 +51,15 @@ _SIGNALS = re.compile(
     r"invitation:)",
     re.IGNORECASE,
 )
+# Application confirmations. Job boards send these from addresses that also
+# send alerts (jobs-noreply@linkedin.com), so a match here skips the sender check.
+_APPLIED_SIGNALS = re.compile(
+    r"(thanks? (you )?for (applying|your application|submitting your application)|"
+    r"application (was |has been )?(received|submitted|sent|confirmation)|"
+    r"(received|receipt of) your application|your application (to|for|at|was sent|has been)|"
+    r"successfully (applied|submitted)|you applied (to|for)|application submitted)",
+    re.IGNORECASE,
+)
 _NOISE_SENDERS = re.compile(
     r"(jobalerts?|job-alerts?|jobs-noreply|jobs-listings|newsletter|digest|marketing|promo|"
     r"notifications?@(linkedin|indeed|glassdoor|ziprecruiter)|noreply@(medium|substack))",
@@ -68,11 +77,16 @@ _COMPANY_SUFFIX = re.compile(
 
 
 def is_candidate(subject: str | None, snippet: str | None, sender: str | None) -> bool:
-    """Cheap check: could this email be about an interview process?"""
+    """Cheap check: could this email be about an application or interview process?"""
     subject = subject or ""
-    if _NOISE_SENDERS.search(sender or "") or _NOISE_SUBJECTS.search(subject):
+    if _NOISE_SUBJECTS.search(subject):
         return False
-    return bool(_SIGNALS.search(f"{subject}\n{snippet or ''}"))
+    if _APPLIED_SIGNALS.search(subject):
+        return True
+    if _NOISE_SENDERS.search(sender or ""):
+        return False
+    text = f"{subject}\n{snippet or ''}"
+    return bool(_SIGNALS.search(text) or _APPLIED_SIGNALS.search(text))
 
 
 def company_key(name: str | None) -> str:
@@ -107,6 +121,7 @@ For each email return one result. Return ONLY JSON:
 
 Rules:
 - relevant=true only for emails about the candidate's own application or interview process with an employer or recruiter. Job alerts, marketing, newsletters and generic recruiter outreach without a process are relevant=false.
+- kind "application_received" (status "info") is a confirmation that the candidate's application was submitted or received, including job board confirmations such as "Your application was sent to Acme". company is the employer the candidate applied to (not LinkedIn, Indeed, Workday, Greenhouse or another tool) and role is the job title applied for. "Your application was viewed" and similar updates are kind "other".
 - kind: the step the email is about. A request to pick a time is kind "scheduling" with status "needs_scheduling" unless the round type is clear, then use that round's kind with status "needs_scheduling".
 - status: "scheduled" when a date and time are confirmed, "needs_scheduling" when they ask for availability or a booking link, "action_required" when the candidate must do something else (complete an assessment, sign, reply), "cancelled" for cancellations, "completed" for thank-you notes after a round, otherwise "info".
 - scheduled_at: only when the email states a concrete date and time. Resolve relative dates ("tomorrow") from the email's received time. If no timezone is given, use the candidate timezone provided.

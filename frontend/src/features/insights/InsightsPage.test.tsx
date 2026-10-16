@@ -3,7 +3,9 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fetchMailApplications, syncInterviews } from '@/api/interviewsApi';
 import { fetchScraperStats, fetchWeeklyProgress } from '@/api/scraperApi';
+import type { MailApplicationsOverview } from '@/types/interviews';
 import { useScraperStore } from '@/stores/scraperStore';
 import { useShellStore } from '@/stores/shellStore';
 import { emptyStats, makeStats } from './insightsFixtures';
@@ -26,12 +28,56 @@ vi.mock('./InsightsCharts', () => {
   return {
     ActivityChart: chart('activity-chart'),
     TrendChart: chart('trend-chart'),
+    ApplicationsChart: chart('applications-chart'),
     MatchDonut: ({ avg }: { avg: number }) => <div data-testid="match-donut">{avg}</div>,
   };
 });
 
+vi.mock('@/api/interviewsApi', () => ({
+  fetchMailApplications: vi.fn(),
+  syncInterviews: vi.fn(async () => ({ started: true })),
+}));
+
+vi.mock('sonner', () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), message: vi.fn() }) }));
+
 const fetchStats = vi.mocked(fetchScraperStats);
 const fetchProgress = vi.mocked(fetchWeeklyProgress);
+const fetchInbox = vi.mocked(fetchMailApplications);
+const startSync = vi.mocked(syncInterviews);
+
+function inbox(overrides: Partial<MailApplicationsOverview> = {}): MailApplicationsOverview {
+  return {
+    connected: true,
+    connection: {
+      email: 'me@gmail.com',
+      provider: 'google',
+      sync_status: 'idle',
+      last_synced_at: '2026-10-16T14:05:00Z',
+      last_sync_error: null,
+      last_sync_stats: null,
+      status: 'connected',
+    },
+    server: { server_configured: true, providers: ['google'] },
+    timezone: 'UTC',
+    days: 30,
+    series: Array.from({ length: 30 }, (_, i) => ({ date: `2026-09-${String(i + 1).padStart(2, '0')}`, label: String(i + 1), count: i === 29 ? 3 : 1 })),
+    totals: { range: 32, today: 3, week: 9, companies: 21, linked_jobs: 4, all_time: 40 },
+    top_companies: [{ company: 'Acme', count: 3 }],
+    recent: [
+      {
+        id: 'a1',
+        company: 'Acme',
+        role_title: 'Data Engineer',
+        applied_at: '2026-10-16T09:00:00Z',
+        email_subject: 'Thanks for applying',
+        email_from: 'jobs@acme.com',
+        email_url: 'https://mail.google.com/mail/?authuser=me@gmail.com#all/abc',
+        job: { id: 'j1', title: 'Data Engineer' },
+      },
+    ],
+    ...overrides,
+  };
+}
 let applyAgentDashboard: ReturnType<typeof vi.fn>;
 
 function progress(days: number) {
@@ -69,6 +115,9 @@ describe('InsightsPage', () => {
     fetchStats.mockReset();
     fetchProgress.mockReset();
     fetchProgress.mockImplementation(async (days: number) => progress(days));
+    fetchInbox.mockReset();
+    fetchInbox.mockResolvedValue(inbox({ connected: false, connection: null }));
+    startSync.mockClear();
     applyAgentDashboard = vi.fn();
     useScraperStore.setState({ applyAgentDashboard } as never);
   });
@@ -184,6 +233,46 @@ describe('InsightsPage', () => {
     expect(useShellStore.getState().assistantDocked).toBe(true);
     await user.click(screen.getByRole('button', { name: 'Add jobs' }));
     expect(screen.getByText('Jobs page')).toBeInTheDocument();
+  });
+
+  it('asks to connect email when no mailbox is linked', async () => {
+    fetchStats.mockResolvedValue(makeStats());
+    renderPage();
+    const card = await screen.findByRole('region', { name: 'Applications from your inbox' });
+    expect(await within(card).findByRole('button', { name: 'Connect email' })).toHaveAttribute('href', '/app/interviews');
+    const today = screen.getByRole('region', { name: 'Today' });
+    expect(within(today).getByRole('button', { name: /Applied today\s*2\s*Marked applied/ })).toBeInTheDocument();
+  });
+
+  it('charts applications from email with the exact sync time and opens each email', async () => {
+    fetchStats.mockResolvedValue(makeStats());
+    fetchInbox.mockResolvedValue(inbox());
+    renderPage();
+    const card = await screen.findByRole('region', { name: 'Applications from your inbox' });
+    expect(await within(card).findByTestId('applications-chart')).toHaveAttribute('data-points', '30');
+    expect(within(card).getByTestId('applications-chart')).toHaveTextContent('Applications / 7-day average');
+    expect(within(card).getByText('Last 30 days').nextSibling).toHaveTextContent('32');
+    expect(within(card).getByText('Companies').nextSibling).toHaveTextContent('21');
+    expect(within(card).getByRole('status')).toHaveTextContent(/Last synced Oct 16, 2026/);
+    expect(within(card).getByRole('link', { name: 'Acme, Data Engineer. Open email' })).toHaveAttribute(
+      'href',
+      'https://mail.google.com/mail/?authuser=me@gmail.com#all/abc',
+    );
+    const today = screen.getByRole('region', { name: 'Today' });
+    expect(within(today).getByRole('button', { name: /Applied today\s*3\s*Confirmation emails/ })).toBeInTheDocument();
+    expect(fetchInbox).toHaveBeenCalledWith(30, expect.any(String));
+  });
+
+  it('Sync now starts an inbox sync and the range tabs refetch', async () => {
+    const user = userEvent.setup();
+    fetchStats.mockResolvedValue(makeStats());
+    fetchInbox.mockResolvedValue(inbox());
+    renderPage();
+    const card = await screen.findByRole('region', { name: 'Applications from your inbox' });
+    await user.click(await within(card).findByRole('button', { name: 'Sync inbox now' }));
+    expect(startSync).toHaveBeenCalledTimes(1);
+    await user.click(within(card).getByRole('tab', { name: '7 days' }));
+    await waitFor(() => expect(fetchInbox).toHaveBeenCalledWith(7, expect.any(String)));
   });
 
   it('shows an error with Retry that refetches', async () => {

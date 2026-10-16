@@ -11,6 +11,7 @@ from sqlalchemy import and_, func, or_, select
 from app.api.websocket import publish_ws_event
 from app.core.logging import get_logger
 from app.models.database import Job, JobMatchResult, User, UserJobStatus, ValidJobUserApplication
+from app.services import mail_applications
 from app.services.job_exclusion_types import (
     APPLIED_COMPANY_EXCLUSION,
     LOCATION_UNKNOWN_EXCLUSION,
@@ -187,7 +188,7 @@ async def preview_dedup_rules_for_user(
 
         hide_samples: list[dict] = []
         if applied_company_enabled:
-            for job, applied_job_id in hide_applied_candidates[:5]:
+            for job, applied_job_id, _reason in hide_applied_candidates[:5]:
                 hide_samples.append(
                     {
                         "job_id": job.id,
@@ -298,17 +299,14 @@ async def reconcile_dedup_rules_for_user(
             targets = await _collect_applied_company_hide_targets(
                 session, user_id=user_id, recycle_days=recycle_days
             )
-            for job, applied_job_id in targets:
+            for job, applied_job_id, reason in targets:
                 await ujs_repo.upsert(
                     user_id=user_id,
                     job_id=job.id,
                     status="duplicated",
                     exclusion_type=APPLIED_COMPANY_EXCLUSION,
                     duplicated_because_id=applied_job_id,
-                    reason=(
-                        f"User already applied to another posting at this company "
-                        f"within the {recycle_days}-day recycle window."
-                    ),
+                    reason=reason,
                     match_score_at_decision=None,
                 )
                 await publish_ws_event({
@@ -417,14 +415,17 @@ async def _collect_applied_company_hide_targets(
         .where(ValidJobUserApplication.applied_at >= cutoff)
     )
     applied_by_key: dict[str, str] = {}
+    applied_job_ids: set[str] = set()
     for job, app in applied_rows.all():
+        applied_job_ids.add(app.job_id)
         key = resolve_employer_key(job)
         if not key:
             continue
         # Prefer any applied job id for duplicated_because_id.
         applied_by_key.setdefault(key, app.job_id)
 
-    if not applied_by_key:
+    inbox_by_company = await mail_applications.company_keys_since(session, user_id, cutoff)
+    if not applied_by_key and not inbox_by_company:
         return []
 
     visible_rows = await session.execute(
@@ -433,16 +434,25 @@ async def _collect_applied_company_hide_targets(
         .where(*_visible_in_dashboard_filter(user_id))
         .where(func.coalesce(Job.posted_date, Job.created_at) >= cutoff)
     )
-    applied_job_ids = set(applied_by_key.values())
-    targets: list[tuple[Job, str]] = []
+    targets: list[tuple[Job, str | None, str]] = []
     for job in visible_rows.scalars().all():
         if job.id in applied_job_ids:
             continue
         key = resolve_employer_key(job)
-        if not key or key not in applied_by_key:
+        if key and key in applied_by_key:
+            targets.append((job, applied_by_key[key], _applied_company_reason(recycle_days)))
             continue
-        targets.append((job, applied_by_key[key]))
+        inbox = next((inbox_by_company[k] for k in mail_applications.job_company_keys(job) if k in inbox_by_company), None)
+        if inbox is not None and not mail_applications.roles_match(inbox.role_title, job.title):
+            targets.append((job, inbox.job_id, mail_applications.dedup_reason(inbox)))
     return targets
+
+
+def _applied_company_reason(recycle_days: int) -> str:
+    return (
+        f"User already applied to another posting at this company "
+        f"within the {recycle_days}-day recycle window."
+    )
 
 
 async def _collect_score_comparison_hide_targets(

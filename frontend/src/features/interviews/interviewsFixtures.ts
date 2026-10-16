@@ -16,6 +16,7 @@ export function makeEvent(overrides: Partial<InterviewEvent> = {}): InterviewEve
     email_subject: null,
     email_from: null,
     email_date: null,
+    email_url: null,
     source: 'email',
     ...overrides,
   };
@@ -37,6 +38,7 @@ export function makeProcess(overrides: Partial<InterviewProcess> = {}): Intervie
     job: null,
     events: [],
     next_event: null,
+    email_url: null,
     needs_action: false,
     ...overrides,
   };

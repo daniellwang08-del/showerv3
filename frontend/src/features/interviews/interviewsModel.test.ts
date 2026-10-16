@@ -9,6 +9,7 @@ import {
   relativeAgo,
   shouldAutoSync,
   stageIndex,
+  syncDoneMessage,
   upcomingInterviews,
 } from './interviewsModel';
 
@@ -82,6 +83,15 @@ describe('interviewsModel', () => {
     expect(shouldAutoSync(null, now)).toBe(true);
     expect(shouldAutoSync(new Date(now - 5 * 60_000).toISOString(), now)).toBe(false);
     expect(shouldAutoSync(new Date(now - 45 * 60_000).toISOString(), now)).toBe(true);
+  });
+
+  it('summarises a finished sync', () => {
+    const base = { scanned: 900, candidates: 40, relevant: 20, created: 0, updated: 0 };
+    expect(syncDoneMessage({ ...base, applications: 1, created: 2, updated: 1, jobs_marked: 3 })).toBe(
+      'Sync done: 1 new application, 2 new processes, 1 updated process, 3 jobs marked applied',
+    );
+    expect(syncDoneMessage(base)).toBe('Sync done. No new hiring emails.');
+    expect(syncDoneMessage(null)).toBe('Sync done. No new hiring emails.');
   });
 
   it('turns callback reasons into readable errors', () => {

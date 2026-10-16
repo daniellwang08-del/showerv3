@@ -4,6 +4,7 @@ import type {
   InterviewEventStatus,
   InterviewProcess,
   InterviewStage,
+  SyncStats,
 } from '@/types/interviews';
 
 export const PIPELINE_STAGES: InterviewStage[] = ['applied', 'screening', 'assessment', 'interviewing', 'final', 'offer'];
@@ -196,4 +197,17 @@ export const AUTO_SYNC_AFTER_MS = 30 * 60_000;
 
 export function shouldAutoSync(lastSyncedAt: string | null | undefined, now = Date.now()): boolean {
   return !lastSyncedAt || now - Date.parse(lastSyncedAt) > AUTO_SYNC_AFTER_MS;
+}
+
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+export function syncDoneMessage(stats: SyncStats | null | undefined): string {
+  const parts: string[] = [];
+  if (stats?.applications) parts.push(plural(stats.applications, 'new application'));
+  if (stats?.created) parts.push(plural(stats.created, 'new process', 'new processes'));
+  if (stats?.updated) parts.push(plural(stats.updated, 'updated process', 'updated processes'));
+  if (stats?.jobs_marked) parts.push(`${plural(stats.jobs_marked, 'job')} marked applied`);
+  return parts.length ? `Sync done: ${parts.join(', ')}` : 'Sync done. No new hiring emails.';
 }

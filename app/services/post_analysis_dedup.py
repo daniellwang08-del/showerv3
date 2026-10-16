@@ -233,6 +233,49 @@ async def _list_active_peer_jobs(
     ]
 
 
+async def _apply_inbox_applications(
+    session,
+    *,
+    current_job: Job,
+    user_id: str,
+    match_data: dict,
+    overall_score: int,
+    recycle_days: int,
+    applied_company_enabled: bool,
+) -> dict | None:
+    """Confirmation emails at this company: same role marks the job applied,
+    another role hides it when the applied-company rule is on. Returns the
+    duplicated result when hidden, else None.
+    """
+    from app.services import mail_applications
+
+    now = _utcnow()
+    recycle_cutoff = now - timedelta(days=recycle_days)
+    same_role, newest = await mail_applications.find_for_job(
+        session,
+        user_id,
+        current_job,
+        since=min(recycle_cutoff, now - mail_applications.LINK_LOOKBACK),
+    )
+    if same_role is not None:
+        await mail_applications.mark_job_from_email(session, user_id, current_job, same_role)
+        logger.info("post_analysis_dedup_applied_from_email", job_id=current_job.id, user_id=user_id)
+        return None
+    if applied_company_enabled and newest is not None and newest.applied_at >= recycle_cutoff:
+        logger.info("post_analysis_dedup_applied_company_email", job_id=current_job.id, user_id=user_id)
+        return await _save_duplicated(
+            session,
+            job_id=current_job.id,
+            user_id=user_id,
+            match_data=match_data,
+            overall_score=overall_score,
+            duplicated_because_id=newest.job_id,
+            exclusion_type=APPLIED_COMPANY_EXCLUSION,
+            reason=mail_applications.dedup_reason(newest),
+        )
+    return None
+
+
 async def run_post_analysis_dedup(
     job_id: str,
     user_id: str,
@@ -397,6 +440,18 @@ async def run_post_analysis_dedup(
                 exclusion_type=SAME_URL_EXCLUSION,
                 reason="Same job URL already exists in your active list.",
             )
+
+        hidden = await _apply_inbox_applications(
+            session,
+            current_job=current_job,
+            user_id=user_id,
+            match_data=match_data,
+            overall_score=overall_score,
+            recycle_days=recycle_days,
+            applied_company_enabled=applied_company_enabled,
+        )
+        if hidden is not None:
+            return hidden
 
         employer_key = resolve_employer_key(current_job)
         if not employer_key:

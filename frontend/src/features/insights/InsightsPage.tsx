@@ -32,6 +32,7 @@ import { useScraperStore } from '@/stores/scraperStore';
 import { useShellStore } from '@/stores/shellStore';
 import { cn } from '@/lib/utils';
 import type { ScraperStats } from '@/types/scraper';
+import { InboxApplicationsCard, useMailApplications } from './InboxApplicationsCard';
 import type { ActivitySeries, TrendSeries } from './InsightsCharts';
 import {
   buildActivityRows,
@@ -118,6 +119,8 @@ export function InsightsPage() {
     staleTime: 60_000,
     enabled: !!stats.data && !isEmptyPool(stats.data),
   });
+  const inbox = useMailApplications(30);
+  const inboxToday = inbox.data?.connected ? inbox.data.totals.today : null;
 
   const goJobs = (filters: BoardFilters) => {
     useScraperStore.getState().applyAgentDashboard({ reset: true, ...filters });
@@ -127,6 +130,7 @@ export function InsightsPage() {
   const refresh = () => {
     void stats.refetch();
     void progress.refetch();
+    void inbox.refetch();
   };
 
   const updatedAt = stats.dataUpdatedAt
@@ -147,6 +151,7 @@ export function InsightsPage() {
     body = (
       <InsightsBody
         stats={stats.data}
+        inboxToday={inboxToday}
         onSelect={goJobs}
         activity={
           <ActivityCard
@@ -253,14 +258,16 @@ function Card({
 
 function InsightsBody({
   stats,
+  inboxToday,
   onSelect,
   activity,
 }: {
   stats: ScraperStats;
+  inboxToday: number | null;
   onSelect: (f: BoardFilters) => void;
   activity: ReactNode;
 }) {
-  const today = buildTodayTiles(stats);
+  const today = buildTodayTiles(stats, inboxToday);
   const overview = buildOverviewTiles(stats);
   const pipeline = buildPipeline(stats);
   const quality = buildMatchQuality(stats);
@@ -276,11 +283,13 @@ function InsightsBody({
             Today
           </h2>
           <p className="text-xs text-muted-foreground tabular-nums">
-            {fmt(stats.today_scraped)} new · {fmt(stats.today_remote)} remote · {fmt(stats.applied_today)} applied
+            {fmt(stats.today_scraped)} new · {fmt(stats.today_remote)} remote · {fmt(inboxToday ?? stats.applied_today)} applied
           </p>
         </div>
         <TileGrid tiles={today} onSelect={onSelect} />
       </section>
+
+      <InboxApplicationsCard />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="min-w-0 lg:col-span-2">{activity}</div>

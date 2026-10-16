@@ -320,7 +320,19 @@ function TimelineItem({ event }: { event: InterviewEvent }) {
             {event.interviewers}
           </span>
         ) : null}
-        {event.email_subject ? (
+        {event.email_subject && event.email_url ? (
+          <a
+            href={event.email_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-w-0 items-center gap-1 text-brand hover:underline"
+            title={event.email_from ? `Open the email from ${event.email_from}` : 'Open the email'}
+          >
+            <Mail className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">{event.email_subject}</span>
+            <ExternalLink className="size-3 shrink-0" aria-hidden />
+          </a>
+        ) : event.email_subject ? (
           <span className="inline-flex min-w-0 items-center gap-1" title={event.email_from ?? undefined}>
             <Mail className="size-3.5 shrink-0" aria-hidden />
             <span className="truncate">{event.email_subject}</span>

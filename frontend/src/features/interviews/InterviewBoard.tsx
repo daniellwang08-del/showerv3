@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { AlertCircle, CalendarClock, ChevronDown, Mail, PenLine } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { AlertCircle, CalendarClock, ChevronDown, ExternalLink, Mail, PanelRightOpen, PenLine } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { InterviewProcess } from '@/types/interviews';
 import {
@@ -58,41 +58,108 @@ export function StageProgress({ stage, className }: { stage: InterviewProcess['s
   );
 }
 
-function ProcessCard({ process, onOpen }: { process: InterviewProcess; onOpen: () => void }) {
-  const next = process.next_event;
+export function processLabel(process: Pick<InterviewProcess, 'company' | 'role_title'>): string {
+  return `${process.company}${process.role_title ? `, ${process.role_title}` : ''}`;
+}
+
+/**
+ * The main click target of a row or card: opens the email in the user's
+ * mailbox when we have a link, otherwise opens the details sheet.
+ */
+export function OpenEmailTarget({
+  href,
+  label,
+  onDetails,
+  className,
+  children,
+}: {
+  href: string | null | undefined;
+  label: string;
+  onDetails: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`${label}. Open email`}
+        title="Open the email in your mailbox"
+        className={className}
+      >
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button type="button" onClick={onDetails} aria-label={label} className={className}>
+      {children}
+    </button>
+  );
+}
+
+/** Secondary control that always opens the details sheet. */
+export function DetailsButton({ label, onClick, className }: { label: string; onClick: () => void; className?: string }) {
   return (
     <button
       type="button"
-      onClick={onOpen}
-      aria-label={`${process.company}${process.role_title ? `, ${process.role_title}` : ''}`}
-      className="group w-full rounded-xl border bg-card/95 p-3 text-left shadow-xs transition-all outline-none hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/50"
+      onClick={onClick}
+      aria-label={`Details for ${label}`}
+      title="Details"
+      className={cn(
+        'inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+        className,
+      )}
     >
-      <div className="flex items-start gap-2.5">
-        <CompanyAvatar name={process.company} className="size-8 text-xs" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{process.company}</p>
-          <p className="truncate text-xs text-muted-foreground">{process.role_title || 'Role not specified'}</p>
-        </div>
-        {process.needs_action ? (
-          <AlertCircle className="size-4 shrink-0 text-amber-500" aria-label="Needs your action" />
-        ) : null}
-      </div>
-      <StageProgress stage={process.stage} className="mt-3" />
-      {next?.scheduled_at ? (
-        <p className="mt-2.5 flex items-center gap-1.5 text-xs font-medium text-brand">
-          <CalendarClock className="size-3.5 shrink-0" aria-hidden />
-          <span className="truncate">
-            {dayLabel(next.scheduled_at)} · {timeLabel(next.scheduled_at)} · {eventTitle(next)}
-          </span>
-        </p>
-      ) : process.next_step ? (
-        <p className="mt-2.5 line-clamp-2 text-xs text-muted-foreground">{process.next_step}</p>
-      ) : null}
-      <p className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/80">
-        {process.source === 'manual' ? <PenLine className="size-3" aria-hidden /> : <Mail className="size-3" aria-hidden />}
-        {relativeAgo(process.last_activity_at) ?? 'No activity yet'}
-      </p>
+      <PanelRightOpen className="size-4" aria-hidden />
     </button>
+  );
+}
+
+function ProcessCard({ process, onOpen }: { process: InterviewProcess; onOpen: () => void }) {
+  const next = process.next_event;
+  const label = processLabel(process);
+  return (
+    <div className="group relative transition-transform hover:-translate-y-0.5">
+      <OpenEmailTarget
+        href={process.email_url}
+        label={label}
+        onDetails={onOpen}
+        className="block w-full rounded-xl border bg-card/95 p-3 pb-2.5 text-left shadow-xs transition-all outline-none group-hover:border-brand/30 group-hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <div className="flex items-start gap-2.5">
+          <CompanyAvatar name={process.company} className="size-8 text-xs" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{process.company}</p>
+            <p className="truncate text-xs text-muted-foreground">{process.role_title || 'Role not specified'}</p>
+          </div>
+          {process.needs_action ? (
+            <AlertCircle className="size-4 shrink-0 text-amber-500" aria-label="Needs your action" />
+          ) : null}
+        </div>
+        <StageProgress stage={process.stage} className="mt-3" />
+        {next?.scheduled_at ? (
+          <p className="mt-2.5 flex items-center gap-1.5 text-xs font-medium text-brand">
+            <CalendarClock className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">
+              {dayLabel(next.scheduled_at)} · {timeLabel(next.scheduled_at)} · {eventTitle(next)}
+            </span>
+          </p>
+        ) : process.next_step ? (
+          <p className="mt-2.5 line-clamp-2 text-xs text-muted-foreground">{process.next_step}</p>
+        ) : null}
+        <p className="mt-2 flex items-center gap-1 pr-8 text-[11px] text-muted-foreground/80">
+          {process.source === 'manual' ? <PenLine className="size-3" aria-hidden /> : <Mail className="size-3" aria-hidden />}
+          {relativeAgo(process.last_activity_at) ?? 'No activity yet'}
+          {process.email_url ? (
+            <ExternalLink className="ml-auto size-3 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
+          ) : null}
+        </p>
+      </OpenEmailTarget>
+      <DetailsButton label={label} onClick={onOpen} className="absolute right-1.5 bottom-1.5" />
+    </div>
   );
 }
 
@@ -156,11 +223,12 @@ export function InterviewBoard({
           {showClosed ? (
             <ul className="divide-y border-t">
               {closed.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    onClick={() => onOpen(p.id)}
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-muted/40"
+                <li key={p.id} className="flex items-center gap-1 pr-2 hover:bg-muted/40">
+                  <OpenEmailTarget
+                    href={p.email_url}
+                    label={processLabel(p)}
+                    onDetails={() => onOpen(p.id)}
+                    className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                   >
                     <CompanyAvatar name={p.company} className="size-7 text-xs" />
                     <span className="min-w-0 flex-1 truncate">
@@ -168,7 +236,8 @@ export function InterviewBoard({
                       {p.role_title ? <span className="text-muted-foreground"> · {p.role_title}</span> : null}
                     </span>
                     <StageChip stage={p.stage} />
-                  </button>
+                  </OpenEmailTarget>
+                  <DetailsButton label={processLabel(p)} onClick={() => onOpen(p.id)} />
                 </li>
               ))}
             </ul>

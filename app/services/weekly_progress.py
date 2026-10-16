@@ -4,12 +4,13 @@ Per local calendar day (user timezone):
   * posted, jobs added to the platform (same semantics as dashboard ``today``)
   * recommended, posted that day AND match score >= the user's effective min
                   (Preferences page threshold → dashboard ``suggested`` rule)
-  * applied, jobs the user marked applied that day
+  * applied, application confirmation emails received that day when a
+             mailbox is connected, otherwise jobs the user marked applied
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import and_, cast, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +89,36 @@ def _series_for_days(day_list: list[date], by_day: dict[date, int]) -> list[int]
     return [by_day.get(d, 0) for d in day_list]
 
 
+async def _applied_by_day(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+    tz_name: str | None,
+) -> dict[date, int]:
+    """Applications per local day: confirmation emails when a mailbox is connected, else marks."""
+    from app.services import mail_applications
+
+    if await mail_applications.has_connection(session, user_id):
+        return await mail_applications.applied_by_day(
+            session, user_id, start_utc=start_utc, end_utc=end_utc, tz_name=tz_name
+        )
+    applied_day = _local_date_expr(ValidJobUserApplication.applied_at, tz_name)
+    rows = (
+        await session.execute(
+            select(applied_day.label("day"), func.count().label("cnt"))
+            .where(
+                ValidJobUserApplication.user_id == user_id,
+                ValidJobUserApplication.applied_at >= start_utc,
+                ValidJobUserApplication.applied_at < end_utc,
+            )
+            .group_by(applied_day)
+        )
+    ).all()
+    return _rows_to_day_map(rows)
+
+
 async def fetch_weekly_progress_series(
     session: AsyncSession,
     user_id: str,
@@ -137,19 +168,9 @@ async def fetch_weekly_progress_series(
     ).all()
     recommended_by_day = _rows_to_day_map(recommended_rows)
 
-    applied_day = _local_date_expr(ValidJobUserApplication.applied_at, tz_name)
-    applied_rows = (
-        await session.execute(
-            select(applied_day.label("day"), func.count().label("cnt"))
-            .where(
-                ValidJobUserApplication.user_id == user_id,
-                ValidJobUserApplication.applied_at >= start_utc,
-                ValidJobUserApplication.applied_at < end_utc,
-            )
-            .group_by(applied_day)
-        )
-    ).all()
-    applied_by_day = _rows_to_day_map(applied_rows)
+    applied_by_day = await _applied_by_day(
+        session, user_id, start_utc=start_utc, end_utc=end_utc, tz_name=tz_name
+    )
 
     series = [
         {
@@ -276,25 +297,16 @@ async def fetch_board_trend_series(
         )
     ).all()
 
-    applied_day = _local_date_expr(ValidJobUserApplication.applied_at, tz_name)
-    applied_rows = (
-        await session.execute(
-            select(applied_day.label("day"), func.count().label("cnt"))
-            .where(
-                ValidJobUserApplication.user_id == user_id,
-                ValidJobUserApplication.applied_at >= start_utc,
-                ValidJobUserApplication.applied_at < end_utc,
-            )
-            .group_by(applied_day)
-        )
-    ).all()
+    applied_by_day = await _applied_by_day(
+        session, user_id, start_utc=start_utc, end_utc=end_utc, tz_name=tz_name
+    )
 
     # Day-of-month numbers for the sparkline X-axis (e.g. 27, 28, …, 2).
     labels = [str(d.day) for d in day_list]
     return {
         "labels": labels,
         "dates": [d.isoformat() for d in day_list],
-        "applied": _series_for_days(day_list, _rows_to_day_map(applied_rows)),
+        "applied": _series_for_days(day_list, applied_by_day),
         "ready": _series_for_days(day_list, _rows_to_day_map(ready_rows)),
         "best": _series_for_days(day_list, _rows_to_day_map(best_rows)),
         "remote": _series_for_days(day_list, _rows_to_day_map(remote_rows)),

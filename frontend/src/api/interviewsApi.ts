@@ -4,6 +4,7 @@ import type {
   InterviewEventStatus,
   InterviewsOverview,
   InterviewStage,
+  MailApplicationsOverview,
   ProcessChanges,
 } from '../types/interviews';
 
@@ -19,6 +20,13 @@ export function startMailConnect(): void {
 
 export async function disconnectMail(): Promise<void> {
   await apiClient.delete('/mail/config');
+}
+
+export async function fetchMailApplications(days: number, timezone: string): Promise<MailApplicationsOverview> {
+  const { data } = await apiClient.get<MailApplicationsOverview>('/interviews/applications', {
+    params: { days, timezone },
+  });
+  return data;
 }
 
 export async function syncInterviews(timezone: string): Promise<{ started: boolean }> {

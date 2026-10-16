@@ -12,6 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import type { ApplicationsRow } from './inboxApplications';
 import type { ActivityRow, MatchSlice, TrendRow } from './insightsData';
 
 export type ChartSeries<K extends string> = {
@@ -154,6 +155,20 @@ export function ActivityChart({ data, series, height = 260 }: { data: ActivityRo
 
 export function TrendChart({ data, series, height = 200 }: { data: TrendRow[]; series: TrendSeries[]; height?: number }) {
   return <SeriesChart id={`trend-${series.map((s) => s.key).join('-')}`} data={data} series={series} height={height} />;
+}
+
+export type ApplicationsSeries = ChartSeries<keyof Omit<ApplicationsRow, 'day' | 'date'>>;
+
+export function ApplicationsChart({
+  data,
+  series,
+  height = 240,
+}: {
+  data: ApplicationsRow[];
+  series: ApplicationsSeries[];
+  height?: number;
+}) {
+  return <SeriesChart id="inbox-applications" data={data} series={series} height={height} />;
 }
 
 export const MATCH_COLORS: Record<MatchSlice['key'], string> = {

@@ -172,6 +172,44 @@ describe('InterviewsPage', () => {
     await waitFor(() => expect(mocked.updateInterviewEvent).toHaveBeenCalledWith('e1', { status: 'completed' }));
   });
 
+  it('opens the exact email from cards and rows, with Details for the side sheet', async () => {
+    const acmeMail = 'https://mail.google.com/mail/?authuser=me@example.com#all/m-acme';
+    const globexMail = 'https://mail.google.com/mail/?authuser=me@example.com#all/m-globex';
+    mocked.fetchInterviews.mockResolvedValue(
+      makeOverview({
+        ...pipeline,
+        processes: [
+          { ...pipeline.processes[0], email_url: acmeMail, next_event: { ...pipeline.processes[0].next_event!, email_url: acmeMail } },
+          {
+            ...pipeline.processes[1],
+            email_url: globexMail,
+            events: [{ ...pipeline.processes[1].events[0], email_url: globexMail }],
+          },
+          pipeline.processes[2],
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    const board = await screen.findByRole('region', { name: 'Pipeline' });
+    const card = within(board).getByRole('link', { name: 'Acme, Engineer. Open email' });
+    expect(card).toHaveAttribute('href', acmeMail);
+    expect(card).toHaveAttribute('target', '_blank');
+    expect(card).toHaveAttribute('rel', expect.stringContaining('noopener'));
+
+    const upcoming = screen.getByRole('region', { name: 'Upcoming interviews' });
+    expect(within(upcoming).getByRole('link', { name: 'Acme, System design. Open email' })).toHaveAttribute('href', acmeMail);
+    const actions = screen.getByRole('region', { name: 'Needs your action' });
+    expect(within(actions).getByRole('link', { name: 'Globex, Book recruiter call. Open email' })).toHaveAttribute(
+      'href',
+      globexMail,
+    );
+
+    await user.click(within(board).getByRole('button', { name: 'Details for Acme, Engineer' }));
+    expect(await screen.findByLabelText('Stage')).toBeInTheDocument();
+  });
+
   it('adds a process manually', async () => {
     mocked.fetchInterviews.mockResolvedValue(pipeline);
     const user = userEvent.setup();

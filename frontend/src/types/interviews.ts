@@ -45,6 +45,8 @@ export interface InterviewEvent {
   email_subject: string | null;
   email_from: string | null;
   email_date: string | null;
+  /** Opens this message in the user's own mailbox; null for manual steps or unsupported providers. */
+  email_url: string | null;
   source: 'email' | 'manual';
 }
 
@@ -63,7 +65,20 @@ export interface InterviewProcess {
   job: { id: string; title: string | null; url: string | null } | null;
   events: InterviewEvent[];
   next_event: InterviewEvent | null;
+  /** The most relevant email for this process (next round, open request, else latest). */
+  email_url: string | null;
   needs_action: boolean;
+}
+
+export interface SyncStats {
+  scanned: number;
+  candidates: number;
+  processed?: number;
+  relevant: number;
+  created: number;
+  updated: number;
+  applications?: number;
+  jobs_marked?: number;
 }
 
 export interface MailConnection {
@@ -77,7 +92,7 @@ export interface MailConnection {
   sync_started_at?: string | null;
   last_synced_at?: string | null;
   last_sync_error?: string | null;
-  last_sync_stats?: { scanned: number; candidates: number; relevant: number; created: number; updated: number } | null;
+  last_sync_stats?: SyncStats | null;
   connected_at?: string | null;
 }
 
@@ -94,6 +109,37 @@ export interface InterviewsOverview {
   connection: MailConnection;
   processes: InterviewProcess[];
   summary: InterviewSummary;
+}
+
+export interface MailApplication {
+  id: string;
+  company: string;
+  role_title: string | null;
+  applied_at: string;
+  email_subject: string | null;
+  email_from: string | null;
+  email_url: string | null;
+  job: { id: string; title: string | null } | null;
+}
+
+export interface MailApplicationsOverview {
+  connected: boolean;
+  connection: {
+    email: string;
+    provider: string | null;
+    sync_status: 'idle' | 'running' | 'error';
+    last_synced_at: string | null;
+    last_sync_error: string | null;
+    last_sync_stats: SyncStats | null;
+    status: 'connected' | 'needs_reauth';
+  } | null;
+  server: { server_configured: boolean; providers: string[] };
+  timezone: string;
+  days: number;
+  series: { date: string; label: string; count: number }[];
+  totals: { range: number; today: number; week: number; companies: number; linked_jobs: number; all_time: number };
+  top_companies: { company: string; count: number }[];
+  recent: MailApplication[];
 }
 
 export interface ProcessChanges {

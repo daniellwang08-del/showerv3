@@ -1021,6 +1021,36 @@ class InterviewEvent(Base):
     )
 
 
+class MailApplication(Base):
+    """An application confirmation email ("thanks for applying") from the user's inbox.
+
+    These count as applications even when the job was never in NAO. ``job_id``
+    is the first job auto-marked applied from this email; ``linked_job_ids``
+    lists every job it marked so a later "unmark" is not undone by the next sync.
+    """
+    __tablename__ = "mail_applications"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    company = Column(String(300), nullable=False)
+    company_key = Column(String(300), nullable=False)
+    role_title = Column(String(300), nullable=True)
+    applied_at = Column(DateTime, nullable=False)
+    message_id = Column(String(255), nullable=False)
+    thread_id = Column(String(255), nullable=True)
+    email_subject = Column(String(500), nullable=True)
+    email_from = Column(String(500), nullable=True)
+    job_id = Column(String(36), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    linked_job_ids = Column(JSON, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "message_id", name="uq_mail_application_user_message"),
+        Index("ix_mail_applications_user_company", "user_id", "company_key"),
+        Index("ix_mail_applications_user_applied", "user_id", "applied_at"),
+    )
+
+
 class GoogleSheetsConfig(Base):
     """Per-user Google Sheets integration settings.
 

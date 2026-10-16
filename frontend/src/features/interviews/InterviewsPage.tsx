@@ -48,7 +48,7 @@ import type { InterviewsOverview, MailConnection } from '@/types/interviews';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { AddInterviewDialog } from './AddInterviewDialog';
 import { ConnectMailGate } from './ConnectMailGate';
-import { CompanyAvatar, InterviewBoard, StageChip } from './InterviewBoard';
+import { CompanyAvatar, DetailsButton, InterviewBoard, OpenEmailTarget, StageChip } from './InterviewBoard';
 import { InterviewDetailSheet } from './InterviewDetailSheet';
 import {
   actionItems,
@@ -60,11 +60,12 @@ import {
   mailErrorMessage,
   relativeAgo,
   shouldAutoSync,
+  syncDoneMessage,
   timeLabel,
   upcomingInterviews,
   type UpcomingItem,
 } from './interviewsModel';
-import { INTERVIEWS_KEY } from './queries';
+import { INTERVIEWS_KEY, MAIL_APPLICATIONS_KEY } from './queries';
 
 export function InterviewsPage() {
   const qc = useQueryClient();
@@ -134,17 +135,12 @@ export function InterviewsPage() {
       if (status === 'error') {
         toast.error(connection?.last_sync_error || 'Sync failed.');
       } else {
-        const stats = connection?.last_sync_stats;
-        const changed = (stats?.created ?? 0) + (stats?.updated ?? 0);
-        toast.success(
-          changed
-            ? `Sync done: ${stats?.created ?? 0} new, ${stats?.updated ?? 0} updated`
-            : 'Sync done. No new interview emails.',
-        );
+        toast.success(syncDoneMessage(connection?.last_sync_stats));
       }
+      void qc.invalidateQueries({ queryKey: MAIL_APPLICATIONS_KEY });
     }
     prevStatus.current = status;
-  }, [connection]);
+  }, [connection, qc]);
 
   const selected = data?.processes.find((p) => p.id === selectedId) ?? null;
   const syncing = sync.isPending || connection?.sync_status === 'running';
@@ -313,9 +309,12 @@ function SyncBar({ connection, syncing }: { connection: MailConnection; syncing:
       )}
     >
       {syncing ? (
-        <span className="flex items-center gap-1.5 font-medium text-brand">
+        <span className="flex items-center gap-1.5 font-medium text-brand tabular-nums">
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          Reading your recent hiring emails...
+          Reading your recent hiring emails
+          {connection.sync_status === 'running' && stats?.candidates
+            ? `: ${stats.processed ?? 0} of ${stats.candidates} done`
+            : '...'}
         </span>
       ) : failed ? (
         <span className="flex items-center gap-1.5 font-medium">
@@ -326,8 +325,9 @@ function SyncBar({ connection, syncing }: { connection: MailConnection; syncing:
       {stats && !syncing ? (
         <span className="flex items-center gap-1.5 tabular-nums">
           {!failed ? <Inbox className="size-3.5" aria-hidden /> : null}
-          Last sync: {stats.scanned} emails checked · {stats.relevant} about interviews
-          {stats.created || stats.updated ? ` · ${stats.created} new, ${stats.updated} updated` : ''}
+          Last sync: {stats.scanned} emails checked · {stats.relevant} about your applications
+          {stats.applications ? ` · ${stats.applications} new applications` : ''}
+          {stats.created || stats.updated ? ` · ${stats.created} new, ${stats.updated} updated processes` : ''}
         </span>
       ) : null}
     </div>
@@ -366,7 +366,7 @@ function PipelineView({
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
             {syncing
               ? 'This takes a minute on the first run. Processes appear here as they are found.'
-              : 'Recruiter emails, invites and assessments from the last 45 days show up here. You can also add a process yourself.'}
+              : 'Recruiter emails, invites and assessments from the last 60 days show up here. You can also add a process yourself.'}
           </p>
           {!syncing ? (
             <Button size="sm" className="mt-5" onClick={onAdd}>
@@ -439,12 +439,14 @@ function PipelineView({
 function UpcomingRow({ item, onOpen }: { item: UpcomingItem; onOpen: (id: string) => void }) {
   const { event, process } = item;
   const at = event.scheduled_at!;
+  const label = `${process.company}, ${eventTitle(event)}`;
   return (
-    <li>
-      <button
-        type="button"
-        onClick={() => onOpen(process.id)}
-        className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted/50"
+    <li className="flex items-center gap-1 rounded-xl pr-1 transition-colors hover:bg-muted/50">
+      <OpenEmailTarget
+        href={event.email_url ?? process.email_url}
+        label={label}
+        onDetails={() => onOpen(process.id)}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span className="flex w-14 shrink-0 flex-col items-center rounded-lg bg-brand/10 py-1 text-brand">
           <span className="text-[10px] font-semibold uppercase">{dayLabel(at)}</span>
@@ -466,7 +468,8 @@ function UpcomingRow({ item, onOpen }: { item: UpcomingItem; onOpen: (id: string
           </span>
         </span>
         <StageChip stage={process.stage} />
-      </button>
+      </OpenEmailTarget>
+      <DetailsButton label={label} onClick={() => onOpen(process.id)} />
     </li>
   );
 }
@@ -484,12 +487,14 @@ function ActionRow({
 }) {
   const { event, process } = item;
   const ago = relativeAgo(event.email_date, now);
+  const label = `${process.company}, ${eventTitle(event)}`;
   return (
-    <li>
-      <button
-        type="button"
-        onClick={() => onOpen(process.id)}
-        className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted/50"
+    <li className="flex items-center gap-1 rounded-xl pr-1 transition-colors hover:bg-muted/50">
+      <OpenEmailTarget
+        href={event.email_url ?? process.email_url}
+        label={label}
+        onDetails={() => onOpen(process.id)}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       >
         <span aria-hidden className="size-2 shrink-0 rounded-full bg-amber-500" />
         <span className="min-w-0 flex-1">
@@ -512,7 +517,8 @@ function ActionRow({
             </span>
           ) : null}
         </span>
-      </button>
+      </OpenEmailTarget>
+      <DetailsButton label={label} onClick={() => onOpen(process.id)} />
     </li>
   );
 }
