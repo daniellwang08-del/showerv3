@@ -125,6 +125,11 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     country_preferences_source:
       (['unset', 'auto', 'manual'] as const).find((s) => s === data.country_preferences_source) ??
       'unset',
+    work_mode_preferences: Array.isArray(data.work_mode_preferences)
+      ? (data.work_mode_preferences as UserSettings['work_mode_preferences']).filter((m) =>
+          m === 'remote' || m === 'hybrid' || m === 'onsite',
+        )
+      : [],
     available_countries: Array.isArray(data.available_countries)
       ? (data.available_countries as UserSettings['available_countries'])
       : [],
@@ -327,6 +332,12 @@ export async function saveCoverLetterPromptSettings(
 
 export async function saveCountryPreferences(countries: string[]): Promise<UserSettings> {
   return updateUserSettings({ country_preferences: countries });
+}
+
+export async function saveWorkModePreferences(
+  modes: UserSettings['work_mode_preferences'],
+): Promise<UserSettings> {
+  return updateUserSettings({ work_mode_preferences: modes });
 }
 
 export async function saveJobMatchPreferences(

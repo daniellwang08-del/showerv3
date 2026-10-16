@@ -95,6 +95,8 @@ export interface UserSettings {
   country_preferences: string[];
   /** How the preferences were set: unset | auto (resume) | manual. */
   country_preferences_source: 'unset' | 'auto' | 'manual';
+  /** Preferred work modes (remote / hybrid / onsite). Empty = any mode. */
+  work_mode_preferences: Array<'remote' | 'hybrid' | 'onsite'>;
   /** Full country list for the preferences dropdown. */
   available_countries: CountryOption[];
   resume_template_status: ResumeTemplateStatus;
@@ -151,6 +153,8 @@ export interface UserSettingsUpdate {
   clear_job_match_preferences?: boolean;
   /** ISO alpha-2 codes; empty array disables location filtering. */
   country_preferences?: string[];
+  /** remote / hybrid / onsite; empty array disables work-mode filtering. */
+  work_mode_preferences?: Array<'remote' | 'hybrid' | 'onsite'>;
 }
 
 export const RESUME_TAILORING_PROMPT_MIN_LENGTH = 50;

@@ -19,6 +19,7 @@ vi.mock('@/api/settingsApi', () => ({
   fetchUserSettings: vi.fn(),
   updateUserSettings: vi.fn(),
   saveCountryPreferences: vi.fn(),
+  saveWorkModePreferences: vi.fn(),
   saveJobMatchPreferences: vi.fn(),
   saveMinMatchScoreSettings: vi.fn(),
   saveDedupSettings: vi.fn(),
@@ -115,6 +116,7 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     job_match_preferences_max_length: 4000,
     country_preferences: ['US'],
     country_preferences_source: 'manual',
+    work_mode_preferences: [],
     available_countries: [
       { code: 'US', name: 'United States' },
       { code: 'CA', name: 'Canada' },
@@ -252,6 +254,24 @@ describe('PreferencesPage', () => {
       timeout: 2500,
     });
     expect(loadJobs).toHaveBeenCalled();
+  });
+
+  it('saves work mode multi-select preferences from the Job search tab', async () => {
+    api.saveWorkModePreferences.mockResolvedValue(makeSettings({ work_mode_preferences: ['remote'] }));
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByText('Any work mode (remote, hybrid, or onsite)')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remote' }));
+    expect(screen.getByText('Only: remote. Unknown modes stay visible.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Hybrid' }));
+    expect(screen.getByText('Only: remote, hybrid. Unknown modes stay visible.')).toBeInTheDocument();
+
+    await user.click(saveButton());
+    await waitFor(() => expect(api.saveWorkModePreferences).toHaveBeenCalledWith(['remote', 'hybrid']));
+    await waitFor(() => expect(refreshLists).toHaveBeenCalledWith({ showLoading: false, reset: true }), {
+      timeout: 2500,
+    });
   });
 
   it('saves the default job-sharing choice immediately', async () => {

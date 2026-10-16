@@ -31,6 +31,7 @@ from app.services.match_quality_check import (
     normalize_mode as normalize_quality_check_mode,
 )
 from app.core.logging import get_logger
+from app.services.work_mode_preferences import normalize_work_mode_preferences
 
 logger = get_logger(__name__)
 
@@ -455,6 +456,12 @@ class UserRepository:
         user = await self.get_by_id(user_id)
         return self._cover_letter_instructions_for_user(user)
 
+    async def get_work_mode_preferences(self, user_id: str) -> list[str]:
+        user = await self.get_by_id(user_id)
+        if not user:
+            return []
+        return normalize_work_mode_preferences(getattr(user, "work_mode_preferences", None) or [])
+
     async def get_country_preferences(self, user_id: str) -> list[str]:
         """Preferred job countries (ISO codes). Empty list = no location filter."""
         user = await self.get_by_id(user_id)
@@ -664,6 +671,9 @@ class UserRepository:
             "country_preferences_source": (
                 getattr(user, "country_preferences_source", None) or "unset"
             ),
+            "work_mode_preferences": normalize_work_mode_preferences(
+                getattr(user, "work_mode_preferences", None) or []
+            ),
             **template_status_payload(user),
             **cover_letter_template_status_payload(user),
         }
@@ -709,6 +719,7 @@ class UserRepository:
         job_match_preferences: str | None = None,
         clear_job_match_preferences: bool = False,
         country_preferences: list[str] | None = None,
+        work_mode_preferences: list[str] | None = None,
     ) -> dict | None:
         user = await self.get_by_id(user_id)
         if not user:
@@ -899,6 +910,9 @@ class UserRepository:
 
             user.country_preferences = normalize_country_preferences(country_preferences)
             user.country_preferences_source = "manual"
+
+        if work_mode_preferences is not None:
+            user.work_mode_preferences = normalize_work_mode_preferences(work_mode_preferences)
 
         await self.session.flush()
         logger.info("user_settings_updated", user_id=user_id)

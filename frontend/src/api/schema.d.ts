@@ -7683,6 +7683,8 @@ export interface components {
              * @default unset
              */
             country_preferences_source: string;
+            /** Work Mode Preferences */
+            work_mode_preferences?: string[];
             /** Available Countries */
             available_countries?: Record<string, never>[];
             /** Resume Template Status */
@@ -7801,6 +7803,8 @@ export interface components {
             clear_job_match_preferences: boolean;
             /** Country Preferences */
             country_preferences?: string[] | null;
+            /** Work Mode Preferences */
+            work_mode_preferences?: string[] | null;
         };
         /**
          * ValidJobDeleteBatchRequest

@@ -147,6 +147,10 @@ class User(Base):
         String(20), default="unset", nullable=False, server_default="unset"
     )
 
+    # Preferred work modes (remote / hybrid / onsite). Empty = any mode.
+    # Non-empty allow-list hides known outside modes from the jobs board.
+    work_mode_preferences = Column(JSON, default=list, nullable=False, server_default="[]")
+
     # Starting share for jobs this user adds: private | team | all | ask.
     # ask keeps the add private and prompts after the add.
     job_share_default = Column(String(16), default="private", nullable=False, server_default="private")

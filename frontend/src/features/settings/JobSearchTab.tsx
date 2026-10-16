@@ -6,13 +6,20 @@ import { SaveBar } from '@/components/app/SaveBar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { Field, FieldContent, FieldDescription, FieldError, FieldLabel, FieldTitle } from '@/components/ui/field';
+import { Field, FieldContent, FieldDescription, FieldError, FieldLabel, FieldLegend, FieldSet, FieldTitle } from '@/components/ui/field';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
+import { Toggle } from '@/components/ui/toggle';
 import { cn } from '@/lib/utils';
-import { saveCountryPreferences, saveJobMatchPreferences, saveJobShareDefaultSettings } from '@/api/settingsApi';
+import {
+  saveCountryPreferences,
+  saveJobMatchPreferences,
+  saveJobShareDefaultSettings,
+  saveWorkModePreferences,
+} from '@/api/settingsApi';
 import { JOB_SHARE_DEFAULT_OPTIONS } from '@/features/jobs/jobAddShare';
+import { AUTO_POST_WORK_MODE_OPTIONS, type AutoPostWorkMode } from '@/types/autoPostFilters';
 import type { JobShareDefault, UserSettings } from '@/types/settings';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { refreshJobStores, useSetSettings } from './queries';
@@ -23,6 +30,11 @@ const SOURCE_HINTS: Record<UserSettings['country_preferences_source'], string> =
   auto: 'Detected from your resume. Editing here makes it manual.',
   manual: 'Set manually. Resume parsing will not overwrite this.',
 };
+
+function sameModes(a: AutoPostWorkMode[], b: AutoPostWorkMode[]) {
+  if (a.length !== b.length) return false;
+  return AUTO_POST_WORK_MODE_OPTIONS.every(({ value }) => a.includes(value) === b.includes(value));
+}
 
 export function JobSearchTab({
   settings,
@@ -35,7 +47,11 @@ export function JobSearchTab({
 }) {
   const setSettings = useSetSettings();
   const [savingShare, setSavingShare] = useState(false);
-  const saved = { countries: settings.country_preferences, preferences: settings.job_match_preferences ?? '' };
+  const saved = {
+    countries: settings.country_preferences,
+    workModes: settings.work_mode_preferences ?? [],
+    preferences: settings.job_match_preferences ?? '',
+  };
   const { values, set, clear } = useDraft(saved);
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -46,12 +62,22 @@ export function JobSearchTab({
   const countriesChanged =
     values.countries.length !== saved.countries.length ||
     values.countries.some((code, i) => saved.countries[i] !== code);
+  const workModesChanged = !sameModes(values.workModes, saved.workModes);
   const prefsChanged = values.preferences.trim() !== saved.preferences.trim();
-  const dirty = countriesChanged || prefsChanged;
+  const dirty = countriesChanged || workModesChanged || prefsChanged;
   useReportDirty(dirty, onDirtyChange);
 
   const nameByCode = new Map(settings.available_countries.map((c) => [c.code, c.name]));
   const addable = settings.available_countries.filter((c) => !values.countries.includes(c.code));
+
+  const toggleMode = (mode: AutoPostWorkMode, pressed: boolean) => {
+    const next = new Set(values.workModes);
+    if (pressed) next.add(mode);
+    else next.delete(mode);
+    set({
+      workModes: AUTO_POST_WORK_MODE_OPTIONS.map((o) => o.value).filter((m) => next.has(m)),
+    });
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -65,6 +91,17 @@ export function JobSearchTab({
           countries.length
             ? 'Existing jobs are being re-checked in the background.'
             : 'Location filtering is off; jobs from every country stay visible.',
+        );
+        window.setTimeout(refreshJobStores, 1500);
+      }
+      if (workModesChanged) {
+        const modes = values.workModes;
+        setSettings(await saveWorkModePreferences(modes));
+        clear(['workModes']);
+        notes.push(
+          modes.length
+            ? 'Jobs outside your selected work modes are hidden from the table.'
+            : 'Work mode filtering is off; remote, hybrid, and onsite stay visible.',
         );
         window.setTimeout(refreshJobStores, 1500);
       }
@@ -162,6 +199,48 @@ export function JobSearchTab({
       </SectionCard>
 
       <SectionCard
+        title="Work mode"
+        description="Hide jobs that are not remote, hybrid, or onsite. Multi-select; leave empty for any mode."
+      >
+        <FieldSet className="gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <FieldLegend variant="label" className="mb-0">
+              Allowed work modes
+            </FieldLegend>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={saving || values.workModes.length === 0}
+              onClick={() => set({ workModes: [] })}
+            >
+              Allow all
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Work mode preferences">
+            {AUTO_POST_WORK_MODE_OPTIONS.map(({ value: mode, label }) => (
+              <Toggle
+                key={mode}
+                variant="outline"
+                size="sm"
+                disabled={saving}
+                pressed={values.workModes.includes(mode)}
+                onPressedChange={(pressed) => toggleMode(mode, pressed)}
+                className="rounded-full px-3 aria-pressed:border-brand aria-pressed:bg-brand-soft aria-pressed:text-brand"
+              >
+                {label}
+              </Toggle>
+            ))}
+          </div>
+          <FieldDescription>
+            {values.workModes.length === 0
+              ? 'Any work mode (remote, hybrid, or onsite)'
+              : `Only: ${values.workModes.join(', ')}. Unknown modes stay visible.`}
+          </FieldDescription>
+        </FieldSet>
+      </SectionCard>
+
+      <SectionCard
         title="When you add jobs"
         description="Every job you add is stored with this sharing. You can change it later for a single add from the sidebar history."
       >
@@ -228,8 +307,8 @@ export function JobSearchTab({
             }
           />
           <FieldDescription>
-            Titles, industries, salary, company size, tech stack, or roles to avoid. Remote vs onsite is not used in
-            the score. Re-run analysis to apply changes to existing jobs.
+            Titles, industries, salary, company size, tech stack, or roles to avoid. Work mode is controlled by the
+            toggles above, not this text. Re-run analysis to apply changes to existing jobs.
           </FieldDescription>
           {prefsTooLong ? <FieldError>Keep it under {maxLength.toLocaleString()} characters.</FieldError> : null}
         </Field>

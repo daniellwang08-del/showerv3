@@ -31,6 +31,7 @@ vi.mock('@/features/jobs/submitJobUrls', () => ({ submitJobUrls: api.submitJobUr
 const settings = {
   country_preferences: [],
   country_preferences_source: 'unset',
+  work_mode_preferences: [],
   available_countries: [
     { code: 'US', name: 'United States' },
     { code: 'CA', name: 'Canada' },
@@ -134,7 +135,7 @@ describe('OnboardingPage', () => {
     });
 
     expect(await screen.findByRole('heading', { name: 'What are you looking for?' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Remote only' }));
+    await user.click(screen.getByRole('button', { name: 'Remote' }));
     await user.click(screen.getByRole('switch'));
     expect(screen.getByRole('radio', { name: 'Tailored resume per job' })).toBeChecked();
     await user.click(screen.getByRole('radio', { name: 'My original resume' }));
@@ -142,7 +143,8 @@ describe('OnboardingPage', () => {
     await waitFor(() =>
       expect(api.updateUserSettings).toHaveBeenCalledWith({
         country_preferences: [],
-        job_match_preferences: 'Remote only',
+        work_mode_preferences: ['remote'],
+        clear_job_match_preferences: true,
         auto_prepare_match: true,
         application_resume_source: 'original',
       }),

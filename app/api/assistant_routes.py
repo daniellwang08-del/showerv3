@@ -2596,9 +2596,17 @@ async def next_job(
         needs_match_join = needs_match_join or score_needs_join or True
         search_clauses = _dashboard_search_clauses(remote_only=remote_only)
         is_admin = bool(current_user.get("is_admin"))
-        countries = [] if is_admin else await UserRepository(session).get_country_preferences(user_id)
+        countries: list[str] = []
+        work_modes: list[str] = []
+        if not is_admin:
+            from app.api.routes import _applicant_board_preferences
+
+            countries, work_modes = await _applicant_board_preferences(session, user_id)
         pool_filter, _ = _dashboard_visible_base_filter(
-            user_id, country_preferences=countries, is_admin=is_admin
+            user_id,
+            country_preferences=countries,
+            work_mode_preferences=work_modes,
+            is_admin=is_admin,
         )
 
         filters = [

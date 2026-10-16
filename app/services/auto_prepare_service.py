@@ -403,6 +403,7 @@ async def catch_up_free_scores_on_visit(user_id: str) -> dict[str, Any]:
                     User.is_active,
                     User.is_admin,
                     User.country_preferences,
+                    User.work_mode_preferences,
                 ).where(User.id == user_id)
             )
         ).one_or_none()
@@ -420,11 +421,16 @@ async def catch_up_free_scores_on_visit(user_id: str) -> dict[str, Any]:
         ]
         if not user.is_admin:
             from app.services.job_location_classifier import preferred_pool_visibility_clause
+            from app.services.work_mode_preferences import work_mode_pool_visibility_clause
 
             countries = user.country_preferences if isinstance(user.country_preferences, list) else []
             pool = preferred_pool_visibility_clause(user_id, countries)
             if pool is not None:
                 extra.append(pool)
+            modes = user.work_mode_preferences if isinstance(user.work_mode_preferences, list) else []
+            mode_pool = work_mode_pool_visibility_clause(user_id, modes)
+            if mode_pool is not None:
+                extra.append(mode_pool)
         rows = (await session.execute(_missing_match_stmt(user_id, limit, *extra))).all()
 
     skip_phase_b = not bool(user.auto_prepare_full)
