@@ -41,6 +41,8 @@ const PreferencesPage = named(() => import('./features/settings/PreferencesPage'
 const IntegrationsPage = named(() => import('./features/integrations/IntegrationsPage'), 'IntegrationsPage');
 const InsightsPage = named(() => import('./features/insights/InsightsPage'), 'InsightsPage');
 const InterviewsPage = named(() => import('./features/interviews/InterviewsPage'), 'InterviewsPage');
+const SharedReportPage = named(() => import('./features/sharing/SharedReportPage'), 'SharedReportPage');
+const ReportPreviewPage = named(() => import('./features/sharing/SharedReportPage'), 'ReportPreviewPage');
 const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
 const DocumentsPage = named(() => import('./features/documents/DocumentsPage'), 'DocumentsPage');
 const ResumeStudioPage = named(() => import('./features/studio/ResumeStudioPage'), 'ResumeStudioPage');
@@ -269,6 +271,7 @@ function App() {
   const { isAuthenticated, pendingApproval, authNotice, user, authPage, logout, onAuthSuccess, refreshUser } =
     useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   const modal = useModalStore((s) => s.modal);
   const modalUrl = useModalStore((s) => s.modalUrl);
@@ -305,6 +308,18 @@ function App() {
     // In-memory stores still hold the previous account's jobs; start the next session clean.
     window.location.replace('/login');
   }, [logout]);
+
+  // Shared reports open for anyone holding the link, signed in or not.
+  if (pathname.startsWith('/shared/')) {
+    return (
+      <Suspense fallback={<BrandedLoader fullscreen label="Loading report" />}>
+        <Routes>
+          <Route path="/shared/:token" element={<SharedReportPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
+    );
+  }
 
   if (isAuthenticated === null) {
     return <BrandedLoader fullscreen label="Starting NAO…" />;
@@ -480,6 +495,18 @@ function App() {
               <PageTitle title="Connect extension" />
               <ExtensionConnectPage email={user?.email} />
             </Suspense>
+          }
+        />
+        <Route
+          path="/app/interviews/report-preview"
+          element={
+            isAdmin ? (
+              <Navigate to="/admin" replace />
+            ) : (
+              <Suspense fallback={<BrandedLoader fullscreen label="Loading report" />}>
+                <ReportPreviewPage />
+              </Suspense>
+            )
           }
         />
         <Route

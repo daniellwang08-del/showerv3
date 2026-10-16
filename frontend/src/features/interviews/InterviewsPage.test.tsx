@@ -23,6 +23,15 @@ vi.mock('@/api/interviewsApi', () => ({
   updateInterviewEvent: vi.fn(async () => undefined),
   deleteInterviewEvent: vi.fn(async () => undefined),
 }));
+vi.mock('@/api/reportShareApi', () => ({
+  fetchIncomingShares: vi.fn(async () => ({
+    shares: [{ id: 'in1', token: 'tk', owner_name: 'Alex Kim', shared_at: null, expires_at: null, last_viewed_at: null }],
+  })),
+  fetchReportShares: vi.fn(async () => ({ shares: [], max_shares: 25, expiry_choices: [7, 30, 90] })),
+  createReportShares: vi.fn(),
+  updateReportShare: vi.fn(),
+  deleteReportShare: vi.fn(),
+}));
 const mocked = vi.mocked(api);
 
 function renderPage(path = '/app/interviews') {
@@ -124,6 +133,16 @@ describe('InterviewsPage', () => {
     expect(syncButton).toHaveTextContent('Sync now· synced just now');
     expect(screen.getByText('Interviews this week')).toBeInTheDocument();
     expect(mocked.syncInterviews).not.toHaveBeenCalled();
+  });
+
+  it('opens the share dialog and lists reports shared with you', async () => {
+    mocked.fetchInterviews.mockResolvedValue(pipeline);
+    renderPage();
+    await screen.findByRole('region', { name: 'Pipeline' });
+    expect(await screen.findByRole('button', { name: 'Shared with you, 1' }, { timeout: 3000 })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Share report' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share your job search report' });
+    expect(await within(dialog).findByText(/Nobody has access yet/)).toBeInTheDocument();
   });
 
   it('lays out every interview round of a company on one line, in date order', async () => {

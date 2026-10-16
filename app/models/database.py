@@ -1051,6 +1051,32 @@ class MailApplication(Base):
     )
 
 
+class ReportShare(Base):
+    """A read-only link to the owner's interview and application report for one invited person.
+
+    The link token is looked up by its SHA-256 hash; the token itself is kept
+    encrypted so the owner can copy the link again later.
+    """
+    __tablename__ = "report_shares"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    token_enc = Column(Text, nullable=False)
+    include_notes = Column(Boolean, default=False, nullable=False)
+    message = Column(String(500), nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    last_viewed_at = Column(DateTime, nullable=True)
+    view_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "email", name="uq_report_share_owner_email"),
+    )
+
+
 class GoogleSheetsConfig(Base):
     """Per-user Google Sheets integration settings.
 

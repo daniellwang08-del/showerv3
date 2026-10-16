@@ -45,7 +45,7 @@ import type {
   InterviewStage,
   ProcessChanges,
 } from '@/types/interviews';
-import { CompanyAvatar } from './InterviewBoard';
+import { CompanyAvatar, StageChip } from './InterviewBoard';
 import {
   ALL_STAGES,
   dateTimeLabel,
@@ -74,7 +74,16 @@ function useInterviewMutation<T>(fn: (arg: T) => Promise<unknown>, success?: str
   });
 }
 
-export function InterviewDetailSheet({ process, onDeleted }: { process: InterviewProcess; onDeleted: () => void }) {
+export function InterviewDetailSheet({
+  process,
+  onDeleted,
+  readOnly = false,
+}: {
+  process: InterviewProcess;
+  onDeleted?: () => void;
+  /** Shared report view: no editing, and only the notes the owner chose to share. */
+  readOnly?: boolean;
+}) {
   const update = useInterviewMutation((changes: ProcessChanges) => updateInterview(process.id, changes));
   const remove = useInterviewMutation(() => deleteInterview(process.id), 'Process deleted');
   const [nextStep, setNextStep] = useState(process.next_step ?? '');
@@ -94,29 +103,38 @@ export function InterviewDetailSheet({ process, onDeleted }: { process: Intervie
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <label className="sr-only" htmlFor="interview-stage">
-            Stage
-          </label>
-          <select
-            id="interview-stage"
-            className={SELECT_CLASS}
-            value={process.stage}
-            onChange={(e) => update.mutate({ stage: e.target.value as InterviewStage })}
-          >
-            {ALL_STAGES.map((s) => (
-              <option key={s} value={s}>
-                {STAGE_META[s].label}
-              </option>
-            ))}
-          </select>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => update.mutate({ status: closed ? 'active' : 'closed' })}
-            disabled={update.isPending}
-          >
-            {closed ? 'Reopen' : 'Close process'}
-          </Button>
+          {readOnly ? (
+            <>
+              <StageChip stage={process.stage} />
+              {closed ? <span className="text-xs text-muted-foreground">Closed</span> : null}
+            </>
+          ) : (
+            <>
+              <label className="sr-only" htmlFor="interview-stage">
+                Stage
+              </label>
+              <select
+                id="interview-stage"
+                className={SELECT_CLASS}
+                value={process.stage}
+                onChange={(e) => update.mutate({ stage: e.target.value as InterviewStage })}
+              >
+                {ALL_STAGES.map((s) => (
+                  <option key={s} value={s}>
+                    {STAGE_META[s].label}
+                  </option>
+                ))}
+              </select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => update.mutate({ status: closed ? 'active' : 'closed' })}
+                disabled={update.isPending}
+              >
+                {closed ? 'Reopen' : 'Close process'}
+              </Button>
+            </>
+          )}
           {process.job?.url ? (
             <a
               href={process.job.url}
@@ -169,6 +187,9 @@ export function InterviewDetailSheet({ process, onDeleted }: { process: Intervie
         </section>
 
         <Block title="Next step">
+          {readOnly ? (
+            <p className="text-sm">{process.next_step || <span className="text-muted-foreground">Nothing noted yet.</span>}</p>
+          ) : (
           <div className="flex gap-2">
             <Input
               aria-label="Next step"
@@ -185,6 +206,7 @@ export function InterviewDetailSheet({ process, onDeleted }: { process: Intervie
               Save
             </Button>
           </div>
+          )}
           {process.remaining_steps.length ? (
             <div className="mt-3">
               <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Remaining steps</p>
@@ -203,15 +225,22 @@ export function InterviewDetailSheet({ process, onDeleted }: { process: Intervie
           {process.events.length ? (
             <ol className="relative space-y-4 border-l border-border/70 pl-5">
               {eventsByDate(process.events).map((event) => (
-                <TimelineItem key={event.id} event={event} />
+                <TimelineItem key={event.id} event={event} readOnly={readOnly} />
               ))}
             </ol>
           ) : (
             <p className="text-sm text-muted-foreground">No steps yet.</p>
           )}
-          <AddStepForm processId={process.id} />
+          {readOnly ? null : <AddStepForm processId={process.id} />}
         </Block>
 
+        {readOnly ? (
+          process.notes ? (
+            <Block title="Notes">
+              <p className="rounded-xl border bg-muted/20 px-3 py-2.5 text-sm whitespace-pre-wrap">{process.notes}</p>
+            </Block>
+          ) : null
+        ) : (
         <Block title="Notes">
           <Textarea
             aria-label="Notes"
@@ -231,16 +260,25 @@ export function InterviewDetailSheet({ process, onDeleted }: { process: Intervie
             </Button>
           </div>
         </Block>
+        )}
       </div>
 
-      <div className="flex items-center justify-between border-t px-5 py-3">
+      <div className="flex min-h-12 items-center justify-between border-t px-5 py-3">
         <span className="text-xs text-muted-foreground">
-          {process.source === 'manual' ? 'Added by you' : 'Built from your email'}
+          {readOnly
+            ? process.source === 'manual'
+              ? 'Added by hand'
+              : 'Built from hiring emails'
+            : process.source === 'manual'
+              ? 'Added by you'
+              : 'Built from your email'}
         </span>
-        <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDelete(true)}>
-          <Trash2 />
-          Delete process
-        </Button>
+        {readOnly ? null : (
+          <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDelete(true)}>
+            <Trash2 />
+            Delete process
+          </Button>
+        )}
       </div>
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
@@ -255,7 +293,7 @@ export function InterviewDetailSheet({ process, onDeleted }: { process: Intervie
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={() => remove.mutate(undefined, { onSuccess: onDeleted })}
+              onClick={() => remove.mutate(undefined, { onSuccess: () => onDeleted?.() })}
             >
               Delete
             </AlertDialogAction>
@@ -275,7 +313,7 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function TimelineItem({ event }: { event: InterviewEvent }) {
+function TimelineItem({ event, readOnly }: { event: InterviewEvent; readOnly: boolean }) {
   const update = useInterviewMutation((status: InterviewEvent['status']) => updateInterviewEvent(event.id, { status }));
   const remove = useInterviewMutation(() => deleteInterviewEvent(event.id));
   const meta = EVENT_STATUS_META[event.status];
@@ -340,6 +378,7 @@ function TimelineItem({ event }: { event: InterviewEvent }) {
           </span>
         ) : null}
       </div>
+      {readOnly ? null : (
       <div className="mt-2 flex flex-wrap gap-1.5">
         {open ? (
           <Button size="xs" variant="outline" onClick={() => update.mutate('completed')} disabled={update.isPending}>
@@ -364,6 +403,7 @@ function TimelineItem({ event }: { event: InterviewEvent }) {
           <Trash2 />
         </Button>
       </div>
+      )}
     </li>
   );
 }
