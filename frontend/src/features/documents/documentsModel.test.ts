@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { groupByRecency, rowStatus, type DocRow } from './documentsModel';
+import type { JobBuildDocument } from '@/api/documentsApi';
+import { groupByRecency, rowStatus, toRows, type DocRow } from './documentsModel';
+
+function build(id: string, content_status: string | null, status: string | null): JobBuildDocument {
+  return {
+    id,
+    job_id: `job-${id}`,
+    job_title: id,
+    company: null,
+    content_status,
+    content_error: null,
+    files: { resume_pdf: status, resume_docx: status, cover_letter_pdf: status, cover_letter_docx: status },
+    updated_at: '2026-10-16T12:00:00Z',
+  } as unknown as JobBuildDocument;
+}
 
 function row(key: string, updatedAt: string | null, files: Partial<DocRow['files']> = {}, note: string | null = null): DocRow {
   return {
@@ -36,6 +50,26 @@ describe('documentsModel', () => {
       ['Today', ['a']],
       ['This week', ['b']],
       ['Earlier', ['c', 'd']],
+    ]);
+  });
+
+  it('only treats queued or running content as generating and drops skipped placeholders', () => {
+    const rows = toRows({
+      library: [],
+      active_id: null,
+      builds: [
+        build('skipped', 'skipped', 'skipped'),
+        build('queued', 'pending', null),
+        build('running', 'processing', 'pending'),
+        build('building', 'completed', 'processing'),
+        build('done', 'completed', 'completed'),
+      ],
+    } as never);
+    expect(rows.map((r) => [r.title, rowStatus(r)])).toEqual([
+      ['queued', 'working'],
+      ['running', 'working'],
+      ['building', 'working'],
+      ['done', 'ready'],
     ]);
   });
 

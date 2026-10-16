@@ -16,7 +16,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.api.routes import get_current_user
 from app.core.logging import get_logger
@@ -203,7 +203,15 @@ async def list_documents(current_user: dict = Depends(get_current_user)):
             await session.execute(
                 select(ResumeBuildResult, Job)
                 .join(Job, Job.id == ResumeBuildResult.job_id)
-                .where(ResumeBuildResult.user_id == user_id)
+                .where(
+                    ResumeBuildResult.user_id == user_id,
+                    # Skipped placeholders (hidden or applied jobs) never produce files.
+                    or_(
+                        ResumeBuildResult.content_generation_status.is_distinct_from("skipped"),
+                        ResumeBuildResult.tailored_resume_data.isnot(None),
+                        ResumeBuildResult.cover_letter_data.isnot(None),
+                    ),
+                )
                 .order_by(ResumeBuildResult.updated_at.desc())
                 .limit(300)
             )

@@ -107,15 +107,16 @@ export function toRows(data: DocumentsResponse): DocRow[] {
       fromChat: d.origin === 'assistant',
     };
   });
-  const builds: DocRow[] = data.builds.map((b: JobBuildDocument) => {
-    const contentReady = b.content_status === 'completed';
+  const builds = data.builds.flatMap<DocRow>((b: JobBuildDocument) => {
     const contentFailed = b.content_status === 'failed';
+    const contentWorking = b.content_status === 'pending' || b.content_status === 'processing';
     const files = Object.fromEntries(
       (Object.keys(b.files) as DocumentFileType[]).map((k) => [
         k,
-        contentFailed ? 'failed' : contentReady ? buildFileState(b.files[k]) : 'working',
+        contentFailed ? 'failed' : contentWorking ? 'working' : buildFileState(b.files[k]),
       ]),
     ) as Record<DocumentFileType, FileState>;
+    if (Object.values(files).every((s) => s === 'none')) return [];
     return {
       key: `build-${b.id}`,
       kind: 'build',
