@@ -74,8 +74,8 @@ export function MatchScoreFilter({ minScore, onMinScore }: Props) {
         {
           description:
             result.min_match_score > 0
-              ? 'Upcoming jobs below this score stay hidden.'
-              : 'All scored jobs can appear in Upcoming.',
+              ? 'New jobs below this score stay out of Scored.'
+              : 'Every scored job can appear in Scored.',
         },
       );
       refreshJobStores();
@@ -177,7 +177,7 @@ export function MatchScoreFilter({ minScore, onMinScore }: Props) {
           <div>
             <p className="text-xs font-medium text-muted-foreground">Your saved limit</p>
             <p className="text-xs text-muted-foreground">
-              Click the number, then drag the bar. New Upcoming jobs below this score are filtered out.
+              Click the number, then drag the bar. New jobs scoring below it are filtered out.
             </p>
           </div>
 
@@ -235,7 +235,7 @@ export function MatchScoreFilter({ minScore, onMinScore }: Props) {
               <p className="min-w-0 flex-1 text-xs text-muted-foreground">
                 {prefScore <= 0
                   ? 'No limit yet. Click the number to set one.'
-                  : `Jobs under ${prefScore} stay out of Upcoming after analysis.`}
+                  : `Jobs scoring under ${prefScore} stay out of Scored.`}
               </p>
             )}
           </div>

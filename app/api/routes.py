@@ -2629,8 +2629,10 @@ def _dashboard_view_clauses(
     elif view == "available":
         from app.models.schemas import ExtractionStatus
 
-        # Upcoming jobs: shared JD scraped, not yet resume-ready, not applied,
-        # the pool where applicants run match / tailor / resume pipelines.
+        # "Scored" tab: shared JD scraped, match score computed, not yet
+        # resume-ready, not applied.
+        needs_match_join = True
+        clauses.append(JobMatchResult.overall_score.is_not(None))
         clauses.append(
             JobExtraction.status.in_(
                 (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
@@ -3544,7 +3546,7 @@ class DashboardCountsResponse(BaseModel):
     all: int
     today: int
     mine: int
-    available: int = 0  # Upcoming jobs (JD ready, pipeline incomplete)
+    available: int = 0  # Scored jobs (match score computed, not ready, not applied)
     suggested: int = 0  # Deprecated alias; kept for older clients
     applied_today: int = 0
     ready: int = 0  # Tailored resume ready, not applied

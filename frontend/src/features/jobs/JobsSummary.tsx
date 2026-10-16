@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock3, Send, type LucideIcon } from 'lucide-react';
+import { CheckCircle2, Gauge, Send, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { DashboardView } from '@/api/scraperApi';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
@@ -15,13 +15,13 @@ interface Card {
 /** Headline counts above the jobs table; each card opens its view. */
 export function JobsSummary({
   ready,
-  upcoming,
+  scored,
   appliedToday,
   activeView,
   onView,
 }: {
   ready: number | undefined;
-  upcoming: number | undefined;
+  scored: number | undefined;
   appliedToday: number | undefined;
   activeView: DashboardView;
   onView: (view: DashboardView) => void;
@@ -29,7 +29,7 @@ export function JobsSummary({
   const reduceMotion = usePrefersReducedMotion();
   const cards: Card[] = [
     { view: 'ready', label: 'Ready to apply', hint: 'Scored with resume and cover letter', value: ready, icon: CheckCircle2 },
-    { view: 'available', label: 'Upcoming', hint: 'Being read, scored and tailored', value: upcoming, icon: Clock3 },
+    { view: 'available', label: 'Scored', hint: 'Match scored, not ready to apply yet', value: scored, icon: Gauge },
     { view: 'applied_today', label: 'Applied today', hint: 'Applications sent since midnight', value: appliedToday, icon: Send },
   ];
 

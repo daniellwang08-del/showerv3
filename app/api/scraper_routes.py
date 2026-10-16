@@ -174,14 +174,14 @@ class ScraperStatsResponse(BaseModel):
     extracted_jobs: int = 0   # shared JD ready (extracted or completed)
     ready_jobs: int = 0       # tailored resume ready AND not yet applied
     today_ready_jobs: int = 0  # ready-to-apply among jobs added today
-    today_available_jobs: int = 0  # available-to-start among jobs added today
+    today_available_jobs: int = 0  # Scored (not ready, not applied) among jobs added today
     best_jobs: int = 0        # match score >= 75 (Strong)
     good_jobs: int = 0        # match score 50-74 (Good)
     unapplied_good_jobs: int = 0  # match score >= 50 and not yet applied
     qualified_jobs: int = 0   # match score >= user's preference minimum
     scored_jobs: int = 0      # jobs with any match score
     avg_match_score: int = 0  # average match score across scored jobs
-    available_jobs: int = 0   # Upcoming: JD scraped, not resume-ready, not applied
+    available_jobs: int = 0   # Scored: match score computed, not resume-ready, not applied
     applied_jobs: int = 0     # marked applied
     applied_today: int = 0    # marked applied today
     sheet_posted_jobs: int = 0

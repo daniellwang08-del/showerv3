@@ -137,7 +137,7 @@ describe('JobsPage', () => {
     renderPage();
     const summary = screen.getByLabelText('Job summary');
     expect(within(summary).getByRole('button', { name: 'Ready to apply: 3' })).toBeInTheDocument();
-    expect(within(summary).getByRole('button', { name: 'Upcoming: 7' })).toBeInTheDocument();
+    expect(within(summary).getByRole('button', { name: 'Scored: 7' })).toBeInTheDocument();
     await user.click(within(summary).getByRole('button', { name: 'Applied today: 2' }));
     expect(actions.setView).toHaveBeenCalledWith('applied_today');
   });
@@ -269,7 +269,7 @@ describe('JobsPage', () => {
     renderPage();
     await user.click(screen.getByRole('button', { name: 'Match' }));
     expect(actions.setSort).toHaveBeenCalledWith('match_score');
-    await user.click(screen.getByRole('tab', { name: /Upcoming/ }));
+    await user.click(screen.getByRole('tab', { name: /Scored/ }));
     expect(actions.setView).toHaveBeenCalledWith('available');
     await user.type(screen.getByRole('searchbox', { name: 'Search jobs' }), 'acme');
     await waitFor(() => expect(actions.setSearchQuery).toHaveBeenCalledWith('acme'));

@@ -63,7 +63,7 @@ const FUNNEL_COLORS = ['bg-chart-4', 'bg-chart-3', 'bg-chart-2', 'bg-chart-1'];
 
 const READY_SERIES: TrendSeries[] = [
   { key: 'ready', label: 'Ready', color: 'var(--chart-2)' },
-  { key: 'available', label: 'In progress', color: 'var(--chart-3)' },
+  { key: 'available', label: 'Scored', color: 'var(--chart-3)' },
 ];
 const REMOTE_SERIES: TrendSeries[] = [
   { key: 'remote', label: 'Remote', color: 'var(--chart-4)' },
@@ -176,7 +176,7 @@ function InsightsBody({ stats, onSelect }: { stats: ScraperStats; onSelect: (f: 
       </SectionCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <SectionCard title="Ready vs in progress" description="Daily counts, last 7 days.">
+        <SectionCard title="Ready vs scored" description="Daily counts, last 7 days.">
           <TrendBlock data={trends} series={READY_SERIES} emptyText="Trend data will appear as you use the pipeline." />
         </SectionCard>
         <SectionCard title="Remote & strong matches" description="Daily counts, last 7 days.">

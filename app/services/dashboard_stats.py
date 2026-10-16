@@ -195,6 +195,7 @@ async def fetch_dashboard_stats(
                         JobExtraction.status.in_(
                             (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
                         ),
+                        JobMatchResult.overall_score.is_not(None),
                         or_(
                             ResumeBuildResult.id.is_(None),
                             ResumeBuildResult.resume_docx_status.is_(None),
@@ -225,13 +226,14 @@ async def fetch_dashboard_stats(
                     JobMatchResult.overall_score.is_not(None)
                 ).label("scored_jobs"),
                 func.coalesce(func.avg(JobMatchResult.overall_score), 0).label("avg_match_score"),
-                # Upcoming jobs: shared JD scraped, pipeline not finished (no
-                # tailored resume yet), and not marked applied.
+                # Scored jobs: shared JD scraped, match score computed, no
+                # tailored resume yet, and not marked applied.
                 func.count().filter(
                     and_(
                         JobExtraction.status.in_(
                             (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
                         ),
+                        JobMatchResult.overall_score.is_not(None),
                         or_(
                             ResumeBuildResult.id.is_(None),
                             ResumeBuildResult.resume_docx_status.is_(None),

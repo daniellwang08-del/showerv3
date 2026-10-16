@@ -104,7 +104,7 @@ describe('HomePage', () => {
     renderHome();
     const next = await screen.findByRole('button', { name: /Review 3 jobs ready to apply/ });
     expect(screen.getByRole('button', { name: /Applied this week/ })).toHaveTextContent('1');
-    expect(screen.getByRole('button', { name: /In progress/ })).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: /Scored/ })).toHaveTextContent('2');
     expect(await screen.findByText('Platform Engineer')).toBeInTheDocument();
     await user.click(next);
     expect(api.applyAgentDashboard).toHaveBeenCalledWith(expect.objectContaining({ view: 'ready', reset: true }));

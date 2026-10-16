@@ -72,7 +72,7 @@ export interface DashboardCounts {
   all: number;
   today: number;
   mine: number;
-  /** Upcoming jobs: JD ready, pipeline not finished (match / tailor / resume). */
+  /** Scored jobs: match score computed, not ready to apply yet, not applied. */
   available: number;
   /** @deprecated Prefer `available`. Kept for older API responses. */
   suggested?: number;

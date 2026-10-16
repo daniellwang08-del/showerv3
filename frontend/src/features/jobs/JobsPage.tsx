@@ -182,7 +182,7 @@ export function JobsPage() {
   const stats = s.stats;
   const tabs: JobsViewTab[] = [
     { id: 'today', label: 'Today', count: s.counts.today },
-    { id: 'available', label: 'Upcoming', count: s.counts.available },
+    { id: 'available', label: 'Scored', count: s.counts.available },
     { id: 'ready', label: 'Ready to apply', count: stats?.ready_jobs },
     { id: 'all', label: 'All', count: s.counts.all },
     { id: 'mine', label: 'Added by me', count: s.counts.mine },
@@ -252,7 +252,7 @@ export function JobsPage() {
 
       <JobsSummary
         ready={stats?.ready_jobs}
-        upcoming={stats?.available_jobs}
+        scored={stats?.available_jobs}
         appliedToday={stats?.applied_today}
         activeView={s.view}
         onView={onView}

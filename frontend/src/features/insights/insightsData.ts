@@ -79,7 +79,7 @@ export function buildTodayTiles(stats: ScraperStats): InsightTile[] {
       'Ready among them',
       safe(stats.today_ready_jobs),
       { view: 'ready' },
-      todayAvailable > 0 ? `${fmt(todayAvailable)} still in progress` : undefined,
+      todayAvailable > 0 ? `${fmt(todayAvailable)} scored, not ready yet` : undefined,
     ),
     tile('applied_today', 'Applied today', safe(stats.applied_today), { view: 'applied_today' }),
   ];
@@ -142,7 +142,7 @@ export function buildFunnel(stats: ScraperStats): FunnelStep[] {
   });
   return [
     step('pool', 'Visible pool', total, { view: 'all' }),
-    step('in_progress', 'In progress', available, { view: 'available' }),
+    step('in_progress', 'Scored', available, { view: 'available' }),
     step('ready', 'Ready', ready, { view: 'ready' }),
     step('applied', 'Applied', applied, { view: 'applied' }),
   ];

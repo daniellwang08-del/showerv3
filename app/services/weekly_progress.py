@@ -185,8 +185,8 @@ async def fetch_board_trend_series(
     * ready, resumes that became ready (docx completed) that day
     * best, strong match analyses (score >= 75) completed that day
     * remote, remote-friendly jobs added that day
-    * available, jobs added that day with shared JD that are still not resume-ready
-                  and not marked applied ("available to start")
+    * available, jobs added that day that are scored but not resume-ready
+                  and not marked applied ("Scored")
     """
     start_utc, end_utc, day_list = recent_week_bounds_for_timezone(tz_name, days=days)
     visible = _visible_job_clause(user_id)
@@ -243,7 +243,9 @@ async def fetch_board_trend_series(
         )
     ).all()
 
-    available_from = _dashboard_from(user_id, with_resume=True, with_application=True)
+    available_from = _dashboard_from(
+        user_id, with_match=True, with_resume=True, with_application=True
+    )
     available_from = available_from.outerjoin(
         JobExtraction.__table__,
         Job.extraction_id == JobExtraction.id,
@@ -260,6 +262,7 @@ async def fetch_board_trend_series(
                 JobExtraction.status.in_(
                     (ExtractionStatus.EXTRACTED, ExtractionStatus.COMPLETED)
                 ),
+                JobMatchResult.overall_score.is_not(None),
                 or_(
                     ResumeBuildResult.id.is_(None),
                     ResumeBuildResult.resume_docx_status.is_(None),

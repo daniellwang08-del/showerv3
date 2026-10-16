@@ -6,7 +6,7 @@ import {
   CalendarCheck,
   CheckCircle2,
   Circle,
-  Loader2,
+  Gauge,
   Paperclip,
   Rocket,
   Sparkles,
@@ -61,7 +61,6 @@ type Tile = {
   value: number | undefined;
   icon: typeof Rocket;
   view: DashboardView;
-  live?: boolean;
 };
 
 export function HomePage({ firstName, userId }: { firstName?: string; userId?: string }) {
@@ -123,7 +122,7 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
   const tiles: Tile[] = [
     { label: 'New today', value: s?.today_scraped, icon: Rocket, view: 'today' },
     { label: 'Ready to apply', value: s?.ready_jobs, icon: Target, view: 'ready' },
-    { label: 'In progress', value: s?.available_jobs, icon: Loader2, view: 'available', live: true },
+    { label: 'Scored', value: s?.available_jobs, icon: Gauge, view: 'available' },
     { label: 'Applied this week', value: appliedWeek, icon: CalendarCheck, view: 'applied' },
   ];
 
@@ -288,30 +287,22 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
 
         <section className="mt-10" aria-label="Your search">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {tiles.map((t) => {
-              const active = t.live && (t.value ?? 0) > 0;
-              return (
-                <button
-                  key={t.label}
-                  type="button"
-                  onClick={() => goToBoard(t.view)}
-                  className="group rounded-2xl border bg-card p-3.5 text-left transition-colors hover:bg-muted/60"
-                >
-                  <t.icon
-                    className={cn(
-                      'size-4 text-muted-foreground group-hover:text-brand',
-                      active && 'animate-spin text-brand motion-reduce:animate-none',
-                    )}
-                  />
-                  {t.value === undefined ? (
-                    <Skeleton className="mt-3 h-7 w-12" />
-                  ) : (
-                    <p className="mt-2 text-2xl font-semibold tabular-nums">{t.value}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">{t.label}</p>
-                </button>
-              );
-            })}
+            {tiles.map((t) => (
+              <button
+                key={t.label}
+                type="button"
+                onClick={() => goToBoard(t.view)}
+                className="group rounded-2xl border bg-card p-3.5 text-left transition-colors hover:bg-muted/60"
+              >
+                <t.icon className="size-4 text-muted-foreground group-hover:text-brand" />
+                {t.value === undefined ? (
+                  <Skeleton className="mt-3 h-7 w-12" />
+                ) : (
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">{t.value}</p>
+                )}
+                <p className="text-xs text-muted-foreground">{t.label}</p>
+              </button>
+            ))}
           </div>
         </section>
 

@@ -70,7 +70,7 @@ describe('InsightsPage', () => {
     expect(within(overview).queryByRole('button', { name: /In Pumble/ })).not.toBeInTheDocument();
 
     const pipeline = screen.getByRole('region', { name: 'Apply pipeline' });
-    expect(within(pipeline).getByRole('button', { name: /In progress\s*45% of pool\s*90/ })).toBeInTheDocument();
+    expect(within(pipeline).getByRole('button', { name: /Scored\s*45% of pool\s*90/ })).toBeInTheDocument();
 
     const sources = screen.getByRole('region', { name: 'Sources' });
     expect(within(sources).getByText('remote ok')).toBeInTheDocument();
@@ -81,7 +81,7 @@ describe('InsightsPage', () => {
     fetchStats.mockResolvedValue(makeStats());
     renderPage();
     const charts = await screen.findAllByTestId('trend-chart');
-    expect(charts.map((c) => c.textContent)).toEqual(['Ready / In progress', 'Remote / Strong matches']);
+    expect(charts.map((c) => c.textContent)).toEqual(['Ready / Scored', 'Remote / Strong matches']);
     expect(charts[0]).toHaveAttribute('data-points', '2');
   });
 
