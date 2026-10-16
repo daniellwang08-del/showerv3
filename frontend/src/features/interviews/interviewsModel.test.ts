@@ -6,6 +6,7 @@ import {
   buildBoard,
   dayLabel,
   mailErrorMessage,
+  relativeAgo,
   shouldAutoSync,
   stageIndex,
   upcomingInterviews,
@@ -62,6 +63,18 @@ describe('interviewsModel', () => {
     expect(stageIndex('applied')).toBe(0);
     expect(stageIndex('offer')).toBe(5);
     expect(stageIndex('rejected')).toBe(-1);
+  });
+
+  it('describes how long ago something happened', () => {
+    const now = NOW.getTime();
+    const ago = (ms: number) => relativeAgo(new Date(now - ms).toISOString(), now);
+    expect(ago(20_000)).toBe('just now');
+    expect(ago(5 * 60_000)).toBe('5 min ago');
+    expect(ago(61 * 60_000)).toBe('1 hour ago');
+    expect(ago(5 * 3_600_000)).toBe('5 hours ago');
+    expect(ago(30 * 3_600_000)).toBe('yesterday');
+    expect(ago(4 * 86_400_000)).toBe('4 days ago');
+    expect(relativeAgo(null, now)).toBeNull();
   });
 
   it('auto-syncs only when the last sync is stale', () => {

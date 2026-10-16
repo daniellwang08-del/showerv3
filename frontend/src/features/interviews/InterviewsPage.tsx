@@ -54,6 +54,7 @@ import {
   actionItems,
   awaitingOutcome,
   browserTimezone,
+  dateTimeLabel,
   dayLabel,
   eventTitle,
   mailErrorMessage,
@@ -147,6 +148,8 @@ export function InterviewsPage() {
 
   const selected = data?.processes.find((p) => p.id === selectedId) ?? null;
   const syncing = sync.isPending || connection?.sync_status === 'running';
+  const now = useNow(60_000);
+  const syncedAgo = relativeAgo(connection?.last_synced_at, now);
 
   let meta: ReactNode = undefined;
   let actions: ReactNode = undefined;
@@ -167,9 +170,19 @@ export function InterviewsPage() {
     );
     actions = (
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={() => sync.mutate()} disabled={syncing}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => sync.mutate()}
+          disabled={syncing}
+          aria-label={syncing ? 'Syncing' : `Sync now, ${syncedAgo ? `last synced ${syncedAgo}` : 'never synced'}`}
+          title={connection?.last_synced_at ? `Last synced ${dateTimeLabel(connection.last_synced_at)}` : undefined}
+        >
           <RefreshCw className={cn(syncing && 'animate-spin')} />
-          {syncing ? 'Syncing' : 'Sync now'}
+          {syncing ? 'Syncing...' : 'Sync now'}
+          {!syncing ? (
+            <span className="font-normal text-muted-foreground">· {syncedAgo ? `synced ${syncedAgo}` : 'never synced'}</span>
+          ) : null}
         </Button>
         <Button size="sm" onClick={() => setAdding(true)}>
           <Plus />
@@ -205,7 +218,7 @@ export function InterviewsPage() {
           reconnect={connection?.status === 'needs_reauth'}
         />
       ) : (
-        <PipelineView data={data} syncing={syncing} onOpen={setSelectedId} onAdd={() => setAdding(true)} />
+        <PipelineView data={data} syncing={syncing} now={now} onOpen={setSelectedId} onAdd={() => setAdding(true)} />
       )}
 
       <Sheet open={!!selected} onOpenChange={(open) => !open && setSelectedId(null)}>
@@ -236,6 +249,16 @@ export function InterviewsPage() {
       </AlertDialog>
     </PageLayout>
   );
+}
+
+/** Current time, refreshed on an interval so relative labels stay fresh. */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
 function MailAccountMenu({ connection, onDisconnect }: { connection: MailConnection; onDisconnect: () => void }) {
@@ -280,6 +303,7 @@ function LoadingState() {
 function SyncBar({ connection, syncing }: { connection: MailConnection; syncing: boolean }) {
   const stats = connection.last_sync_stats;
   const failed = connection.sync_status === 'error' && !syncing;
+  if (!syncing && !failed && !stats) return null;
   return (
     <div
       role="status"
@@ -298,15 +322,12 @@ function SyncBar({ connection, syncing }: { connection: MailConnection; syncing:
           <AlertCircle className="size-3.5" aria-hidden />
           Last sync failed: {connection.last_sync_error || 'unknown error'}
         </span>
-      ) : (
-        <span className="flex items-center gap-1.5">
-          <Clock className="size-3.5" aria-hidden />
-          Synced {relativeAgo(connection.last_synced_at) ?? 'never'}
-        </span>
-      )}
+      ) : null}
       {stats && !syncing ? (
-        <span className="tabular-nums">
-          {stats.scanned} emails checked · {stats.relevant} about interviews
+        <span className="flex items-center gap-1.5 tabular-nums">
+          {!failed ? <Inbox className="size-3.5" aria-hidden /> : null}
+          Last sync: {stats.scanned} emails checked · {stats.relevant} about interviews
+          {stats.created || stats.updated ? ` · ${stats.created} new, ${stats.updated} updated` : ''}
         </span>
       ) : null}
     </div>
@@ -316,11 +337,13 @@ function SyncBar({ connection, syncing }: { connection: MailConnection; syncing:
 function PipelineView({
   data,
   syncing,
+  now,
   onOpen,
   onAdd,
 }: {
   data: InterviewsOverview;
   syncing: boolean;
+  now: number;
   onOpen: (id: string) => void;
   onAdd: () => void;
 }) {
@@ -389,11 +412,12 @@ function PipelineView({
                   key={item.event.id}
                   item={item}
                   hint={item.event.status === 'needs_scheduling' ? 'Pick a time' : 'Action required'}
+                  now={now}
                   onOpen={onOpen}
                 />
               ))}
               {outcome.slice(0, 4).map((item) => (
-                <ActionRow key={item.event.id} item={item} hint="Log the outcome" onOpen={onOpen} />
+                <ActionRow key={item.event.id} item={item} hint="Log the outcome" now={now} onOpen={onOpen} />
               ))}
             </ul>
           ) : (
@@ -447,8 +471,19 @@ function UpcomingRow({ item, onOpen }: { item: UpcomingItem; onOpen: (id: string
   );
 }
 
-function ActionRow({ item, hint, onOpen }: { item: UpcomingItem; hint: string; onOpen: (id: string) => void }) {
+function ActionRow({
+  item,
+  hint,
+  now,
+  onOpen,
+}: {
+  item: UpcomingItem;
+  hint: string;
+  now: number;
+  onOpen: (id: string) => void;
+}) {
   const { event, process } = item;
+  const ago = relativeAgo(event.email_date, now);
   return (
     <li>
       <button
@@ -463,8 +498,19 @@ function ActionRow({ item, hint, onOpen }: { item: UpcomingItem; hint: string; o
           </span>
           <span className="block truncate text-xs text-muted-foreground">{event.summary || process.next_step || hint}</span>
         </span>
-        <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-          {hint}
+        <span className="flex shrink-0 flex-col items-end gap-1">
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+            {hint}
+          </span>
+          {ago ? (
+            <span
+              className="flex items-center gap-1 text-[11px] text-muted-foreground tabular-nums"
+              title={event.email_date ? `Email received ${dateTimeLabel(event.email_date)}` : undefined}
+            >
+              <Clock className="size-3" aria-hidden />
+              {ago}
+            </span>
+          ) : null}
         </span>
       </button>
     </li>

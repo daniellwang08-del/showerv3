@@ -54,7 +54,15 @@ const pipeline = makeOverview({
       company: 'Globex',
       stage: 'screening',
       needs_action: true,
-      events: [makeEvent({ id: 'e2', kind: 'scheduling', status: 'needs_scheduling', title: 'Book recruiter call' })],
+      events: [
+        makeEvent({
+          id: 'e2',
+          kind: 'scheduling',
+          status: 'needs_scheduling',
+          title: 'Book recruiter call',
+          email_date: new Date(Date.now() - 2 * 86_400_000 - 60_000).toISOString(),
+        }),
+      ],
     }),
     makeProcess({ id: 'p3', company: 'Initech', stage: 'rejected', status: 'closed' }),
   ],
@@ -109,7 +117,11 @@ describe('InterviewsPage', () => {
     expect(within(board).getByRole('button', { name: /closed processes \(1\)/i })).toBeInTheDocument();
 
     expect(screen.getByRole('region', { name: 'Upcoming interviews' })).toHaveTextContent('Acme · System design');
-    expect(screen.getByRole('region', { name: 'Needs your action' })).toHaveTextContent('Pick a time');
+    const actions = screen.getByRole('region', { name: 'Needs your action' });
+    expect(actions).toHaveTextContent('Pick a time');
+    expect(actions).toHaveTextContent('2 days ago');
+    const syncButton = screen.getByRole('button', { name: 'Sync now, last synced just now' });
+    expect(syncButton).toHaveTextContent('Sync now· synced just now');
     expect(screen.getByText('Interviews this week')).toBeInTheDocument();
     expect(mocked.syncInterviews).not.toHaveBeenCalled();
   });

@@ -143,12 +143,15 @@ export function dateTimeLabel(iso: string): string {
 
 export function relativeAgo(iso: string | null | undefined, now = Date.now()): string | null {
   if (!iso) return null;
-  const minutes = Math.round((now - Date.parse(iso)) / 60_000);
+  const minutes = Math.floor((now - Date.parse(iso)) / 60_000);
+  if (Number.isNaN(minutes)) return null;
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  return `${Math.round(hours / 24)} d ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return days === 1 ? 'yesterday' : `${days} days ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /** `<input type="datetime-local">` value for an ISO time, in the browser's zone. */
