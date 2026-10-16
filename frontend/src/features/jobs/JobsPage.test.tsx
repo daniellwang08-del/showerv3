@@ -58,7 +58,7 @@ function seed(jobs: DashboardJob[], extra: Partial<ReturnType<typeof useScraperS
     setSort: vi.fn(),
     setPage: vi.fn(),
     setSearchQuery: vi.fn(),
-    setRemoteOnly: vi.fn(),
+    setWorkModes: vi.fn(),
     markJobsApplied: vi.fn(async () => ({ ok: true, message: 'Marked applied' })),
     markJobsUnapplied: vi.fn(async () => ({ ok: true, message: 'Unmarked' })),
     optimisticMarkJobsApplied: vi.fn(),
@@ -81,7 +81,7 @@ function seed(jobs: DashboardJob[], extra: Partial<ReturnType<typeof useScraperS
     titleFilter: '',
     companyFilter: '',
     sourceFilter: '',
-    remoteOnly: false,
+    workModes: [],
     minScore: 0,
     counts: { all: jobs.length, today: 1, mine: 0, available: 2 },
     stats: null,
@@ -273,8 +273,9 @@ describe('JobsPage', () => {
     expect(actions.setView).toHaveBeenCalledWith('available');
     await user.type(screen.getByRole('searchbox', { name: 'Search jobs' }), 'acme');
     await waitFor(() => expect(actions.setSearchQuery).toHaveBeenCalledWith('acme'));
-    await user.click(screen.getByRole('button', { name: 'Remote' }));
-    expect(actions.setRemoteOnly).toHaveBeenCalledWith(true);
+    await user.click(screen.getByRole('button', { name: 'Filter by work mode' }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: 'Remote' }));
+    expect(actions.setWorkModes).toHaveBeenCalledWith(['remote']);
   });
 
   it('shows a filtered empty state with a reset', async () => {

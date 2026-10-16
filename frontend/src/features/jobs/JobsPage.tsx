@@ -208,7 +208,7 @@ export function JobsPage() {
     s.sourceFilter && { key: 'source', label: `Source: ${s.sourceFilter}`, onClear: () => s.setSourceFilter('') },
   ].filter(Boolean) as Array<{ key: string; label: string; onClear: () => void }>;
 
-  const filtered = Boolean(s.searchQuery || s.remoteOnly || s.minScore > 0 || chips.length > 0);
+  const filtered = Boolean(s.searchQuery || s.workModes.length > 0 || s.minScore > 0 || chips.length > 0);
   const clearFilters = () =>
     s.applyAgentDashboard({ reset: true, view: s.view, sort: s.sortField, order: s.sortOrder });
 
@@ -277,8 +277,8 @@ export function JobsPage() {
         onView={onView}
         search={s.searchQuery}
         onSearch={s.setSearchQuery}
-        remoteOnly={s.remoteOnly}
-        onRemoteOnly={s.setRemoteOnly}
+        workModes={s.workModes}
+        onWorkModes={s.setWorkModes}
         minScore={s.minScore}
         onMinScore={s.setMinScore}
         chips={chips}

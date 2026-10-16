@@ -83,7 +83,7 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
   const goToBoard = (view: DashboardView, minMatchScore = 0) => {
     useScraperStore
       .getState()
-      .applyAgentDashboard({ reset: true, view, remote_only: false, min_match_score: minMatchScore });
+      .applyAgentDashboard({ reset: true, view, work_modes: [], min_match_score: minMatchScore });
     navigate('/app/jobs');
   };
 

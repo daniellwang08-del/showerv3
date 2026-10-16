@@ -23,14 +23,9 @@ BEST_MATCH_SCORE = 75
 GOOD_MATCH_SCORE = 50
 
 
-def _visible_job_clause(
-    user_id: str,
-    country_preferences: list[str] | None = None,
-    work_mode_preferences: list[str] | None = None,
-):
+def _visible_job_clause(user_id: str, country_preferences: list[str] | None = None):
     """Same visibility rules as GET /jobs/dashboard."""
     from app.services.job_location_classifier import preferred_pool_visibility_clause
-    from app.services.work_mode_preferences import work_mode_pool_visibility_clause
 
     clauses = [
         Job.status != "blocked",
@@ -39,9 +34,6 @@ def _visible_job_clause(
     country_clause = preferred_pool_visibility_clause(user_id, country_preferences or [])
     if country_clause is not None:
         clauses.append(country_clause)
-    mode_clause = work_mode_pool_visibility_clause(user_id, work_mode_preferences or [])
-    if mode_clause is not None:
-        clauses.append(mode_clause)
     from app.services.job_add_batches import job_share_visibility_clause
 
     clauses.append(job_share_visibility_clause(user_id))
@@ -111,11 +103,9 @@ async def fetch_dashboard_stats(
 ) -> dict:
     from app.storage.user_repository import UserRepository
 
-    repo = UserRepository(session)
-    countries = await repo.get_country_preferences(user_id)
-    work_modes = await repo.get_work_mode_preferences(user_id)
+    countries = await UserRepository(session).get_country_preferences(user_id)
     join = _dashboard_join(user_id)
-    visible = _visible_job_clause(user_id, countries, work_modes)
+    visible = _visible_job_clause(user_id, countries)
     added_at = _job_added_at_expr()
     is_remote = _is_remote_expr()
     qualified_min = max(0, int(min_match_score or 0))

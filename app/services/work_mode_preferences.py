@@ -31,7 +31,7 @@ def normalize_work_mode_preferences(values: list[str] | None) -> list[str]:
     return [m for m in KNOWN_WORK_MODES if m in seen]
 
 
-def _resolved_work_mode_sql_expr():
+def resolved_work_mode_sql_expr():
     """Approximate ``resolve_display_work_mode`` for SQL visibility filters.
 
     Priority: stored ``Job.work_mode``, then hybrid location text (before remote),
@@ -74,7 +74,7 @@ def work_mode_pool_visibility_clause(user_id: str, allowed_modes: Iterable[str] 
     if not allowed or len(allowed) >= len(KNOWN_WORK_MODES):
         return None
 
-    resolved = _resolved_work_mode_sql_expr()
+    resolved = resolved_work_mode_sql_expr()
     # Unknown stays visible; only drop when we know the mode and it is outside.
     return or_(
         job_added_by_user_clause(user_id),

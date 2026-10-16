@@ -2684,6 +2684,25 @@ def _dashboard_view_clauses(
     return clauses, needs_match_join
 
 
+def _parse_work_modes_query(
+    work_modes: str | list[str] | None = None,
+    *,
+    remote_only: bool = False,
+) -> list[str]:
+    """Normalize toolbar ``work_modes`` / legacy ``remote_only`` into an allow-list."""
+    from app.services.work_mode_preferences import normalize_work_mode_preferences
+
+    raw: list[str] = []
+    if isinstance(work_modes, str) and work_modes.strip():
+        raw = [p.strip() for p in work_modes.split(",") if p.strip()]
+    elif isinstance(work_modes, list):
+        raw = [str(p).strip() for p in work_modes if str(p).strip()]
+    modes = normalize_work_mode_preferences(raw)
+    if remote_only and not modes:
+        modes = ["remote"]
+    return modes
+
+
 def _dashboard_search_clauses(
     *,
     q: str | None = None,
@@ -2691,12 +2710,16 @@ def _dashboard_search_clauses(
     company: str | None = None,
     source: str | None = None,
     remote_only: bool = False,
+    work_modes: str | list[str] | None = None,
 ) -> list:
-    """Shared text/source/remote filters for the dashboard list + counts.
+    """Shared text/source/work-mode filters for the dashboard list + counts.
 
     ``title`` and ``company`` are independent column filters (combined with AND),
     while ``q`` is the legacy combined title-or-company search. When ``q`` looks
     like an http(s) URL, also match ``source_url`` / ``normalized_url``.
+
+    ``work_modes`` is a comma-separated allow-list (remote,hybrid,onsite). Legacy
+    ``remote_only=true`` maps to ``work_modes=remote`` when no modes are given.
     """
     clauses: list = []
     if q and q.strip():
@@ -2723,15 +2746,16 @@ def _dashboard_search_clauses(
                 Job.raw_metadata["scraped_source"].as_string().ilike(src),
             )
         )
-    if remote_only:
-        # Keep in sync with dashboard_stats._is_remote_expr (work_mode, metadata, location).
-        clauses.append(
-            or_(
-                Job.work_mode == "remote",
-                Job.raw_metadata["is_remote"].as_boolean() == True,  # noqa: E712
-                Job.location.ilike("%remote%"),
-            )
+    modes = _parse_work_modes_query(work_modes, remote_only=remote_only)
+    if modes:
+        from app.services.work_mode_preferences import (
+            KNOWN_WORK_MODES,
+            resolved_work_mode_sql_expr,
         )
+
+        if len(modes) < len(KNOWN_WORK_MODES):
+            # Toolbar filter: only known matching modes (unknown rows drop out).
+            clauses.append(resolved_work_mode_sql_expr().in_(modes))
     return clauses
 
 
@@ -2788,16 +2812,6 @@ def _dashboard_min_score_clauses(min_match_score: int | None) -> tuple[list, boo
     return [], False
 
 
-async def _applicant_board_preferences(
-    session, user_id: str
-) -> tuple[list[str], list[str]]:
-    """Country + work-mode allow-lists that shape an applicant's jobs board."""
-    repo = UserRepository(session)
-    countries = await repo.get_country_preferences(user_id)
-    work_modes = await repo.get_work_mode_preferences(user_id)
-    return countries, work_modes
-
-
 def _applicant_preferred_pool_clause(
     user_id: str,
     countries: list[str] | None,
@@ -2815,35 +2829,14 @@ def _applicant_preferred_pool_clause(
     return preferred_pool_visibility_clause(user_id, countries or [])
 
 
-def _applicant_work_mode_pool_clause(
-    user_id: str,
-    work_modes: list[str] | None,
-    *,
-    is_admin: bool,
-):
-    """Hide scraped/shared jobs whose work mode is outside the viewer's allow-list."""
-    if is_admin:
-        return None
-    from app.services.work_mode_preferences import work_mode_pool_visibility_clause
-
-    return work_mode_pool_visibility_clause(user_id, work_modes or [])
-
-
-def _applicant_pool_clauses(
-    user_id: str,
-    countries: list[str] | None,
-    work_modes: list[str] | None = None,
-) -> list:
-    """What an applicant's board may hold: not hidden by them, in their countries/modes, shared with them."""
+def _applicant_pool_clauses(user_id: str, countries: list[str] | None) -> list:
+    """What an applicant's board may hold: not hidden by them, in their countries, shared with them."""
     from app.services.job_add_batches import job_share_visibility_clause
 
     clauses = [(UserJobStatus.status.is_(None)) | (UserJobStatus.status == "active")]
     country_clause = _applicant_preferred_pool_clause(user_id, countries, is_admin=False)
     if country_clause is not None:
         clauses.append(country_clause)
-    mode_clause = _applicant_work_mode_pool_clause(user_id, work_modes, is_admin=False)
-    if mode_clause is not None:
-        clauses.append(mode_clause)
     clauses.append(job_share_visibility_clause(user_id))
     return clauses
 
@@ -2853,7 +2846,6 @@ def _dashboard_visible_base_filter(
     min_match_score: int | None = None,
     *,
     country_preferences: list[str] | None = None,
-    work_mode_preferences: list[str] | None = None,
     is_admin: bool = False,
 ) -> tuple[list, bool]:
     """Shared visibility filter for dashboard list / revision / sync (view=all)."""
@@ -2868,9 +2860,7 @@ def _dashboard_visible_base_filter(
         )
         base_filter.append(job_share_visibility_clause(user_id))
     else:
-        base_filter.extend(
-            _applicant_pool_clauses(user_id, country_preferences, work_mode_preferences)
-        )
+        base_filter.extend(_applicant_pool_clauses(user_id, country_preferences))
     return base_filter, needs_match_join
 
 
@@ -3056,14 +3046,12 @@ async def _dashboard_revision_for_user(
 ) -> tuple[str, int, datetime]:
     """Return (revision, total, server_time) for the user's visible job catalog."""
     countries: list[str] = []
-    work_modes: list[str] = []
     if not is_admin:
-        countries, work_modes = await _applicant_board_preferences(session, user_id)
+        countries = await UserRepository(session).get_country_preferences(user_id)
     base_filter, needs_match_join = _dashboard_visible_base_filter(
         user_id,
         min_match_score,
         country_preferences=countries,
-        work_mode_preferences=work_modes,
         is_admin=is_admin,
     )
     # Fingerprint from visible row count + newest related activity timestamps.
@@ -3125,6 +3113,10 @@ async def get_dashboard_jobs(
     company: str | None = Query(None),
     source: str | None = Query(None),
     remote_only: bool = Query(False),
+    work_modes: str | None = Query(
+        None,
+        description="Comma-separated work modes: remote,hybrid,onsite. Empty = any.",
+    ),
     min_match_score: int | None = Query(None, ge=0, le=100),
     view: str = Query("all"),
     timezone: str | None = Query(None),
@@ -3186,11 +3178,16 @@ async def get_dashboard_jobs(
         # see what ``_applicant_pool_clauses`` allows.
         base_filter = [Job.status != "blocked"]
         if not is_admin:
-            countries, work_modes = await _applicant_board_preferences(session, user_id)
-            base_filter.extend(_applicant_pool_clauses(user_id, countries, work_modes))
+            countries = await UserRepository(session).get_country_preferences(user_id)
+            base_filter.extend(_applicant_pool_clauses(user_id, countries))
         base_filter.extend(
             _dashboard_search_clauses(
-                q=q, title=title, company=company, source=source, remote_only=remote_only,
+                q=q,
+                title=title,
+                company=company,
+                source=source,
+                remote_only=remote_only,
+                work_modes=work_modes,
             )
         )
 
@@ -3361,14 +3358,10 @@ async def get_dashboard_sync(
         )
 
         min_score_pref = await UserRepository(session).get_effective_min_match_score(user_id)
-        countries: list[str] = []
-        work_modes: list[str] = []
-        if not is_admin:
-            countries, work_modes = await _applicant_board_preferences(session, user_id)
+        countries = [] if is_admin else await UserRepository(session).get_country_preferences(user_id)
         shared_filter, _ = _dashboard_visible_base_filter(
             user_id,
             country_preferences=countries,
-            work_mode_preferences=work_modes,
             is_admin=is_admin,
         )
 
@@ -3427,7 +3420,6 @@ async def get_dashboard_sync(
             user_id,
             min_match_score,
             country_preferences=countries,
-            work_mode_preferences=work_modes,
             is_admin=is_admin,
         )
         changed_clause = or_(
@@ -3593,15 +3585,9 @@ async def get_new_jobs_count(
 
     is_admin = bool(current_user.get("is_admin"))
     async with get_session() as session:
-        countries: list[str] | None = None
-        work_modes: list[str] | None = None
-        if not is_admin:
-            countries, work_modes = await _applicant_board_preferences(session, user_id)
+        countries = None if is_admin else await UserRepository(session).get_country_preferences(user_id)
         base_filter, _ = _dashboard_visible_base_filter(
-            user_id,
-            country_preferences=countries,
-            work_mode_preferences=work_modes,
-            is_admin=is_admin,
+            user_id, country_preferences=countries, is_admin=is_admin
         )
         added_at = func.coalesce(UserJobStatus.created_at, Job.created_at)
         row = (
@@ -3637,6 +3623,10 @@ async def get_dashboard_counts(
     company: str | None = Query(None),
     source: str | None = Query(None),
     remote_only: bool = Query(False),
+    work_modes: str | None = Query(
+        None,
+        description="Comma-separated work modes: remote,hybrid,onsite. Empty = any.",
+    ),
     min_match_score: int | None = Query(
         None,
         ge=0,
@@ -3670,11 +3660,16 @@ async def get_dashboard_counts(
 
         shared_filter = [Job.status != "blocked"]
         if not is_admin:
-            countries, work_modes = await _applicant_board_preferences(session, user_id)
-            shared_filter.extend(_applicant_pool_clauses(user_id, countries, work_modes))
+            countries = await UserRepository(session).get_country_preferences(user_id)
+            shared_filter.extend(_applicant_pool_clauses(user_id, countries))
         shared_filter.extend(
             _dashboard_search_clauses(
-                q=q, title=title, company=company, source=source, remote_only=remote_only,
+                q=q,
+                title=title,
+                company=company,
+                source=source,
+                remote_only=remote_only,
+                work_modes=work_modes,
             )
         )
 
@@ -3708,7 +3703,8 @@ async def get_dashboard_counts(
                 )
             cond = and_(*per_view) if per_view else true()
             aggregates.append(func.count().filter(cond).label(view))
-        if not remote_only:
+        active_modes = _parse_work_modes_query(work_modes, remote_only=remote_only)
+        if not active_modes:
             remote_cond = and_(*_dashboard_search_clauses(remote_only=True))
             aggregates.append(func.count().filter(remote_cond).label("remote"))
 
@@ -3749,7 +3745,7 @@ async def get_dashboard_counts(
             suggested=0,
             applied_today=int(counts["applied_today"] or 0),
             ready=int(counts["ready"] or 0),
-            remote=int(counts["all"] if remote_only else counts["remote"] or 0),
+            remote=int(counts["all"] if active_modes else counts["remote"] or 0),
         )
 
 

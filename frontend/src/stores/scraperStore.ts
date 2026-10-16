@@ -29,6 +29,26 @@ import { postJobsToSheet as postJobsToSheetApi } from '../api/googleSheetsApi';
 import { postJobsToPumble as postJobsToPumbleApi } from '../api/pumbleApi';
 import { apiClient } from '../api/client';
 import { toFiniteTimeMs } from '../utils/serverDate';
+import { AUTO_POST_WORK_MODE_OPTIONS, type AutoPostWorkMode } from '../types/autoPostFilters';
+
+function normalizeWorkModes(raw: unknown): AutoPostWorkMode[] {
+  if (!Array.isArray(raw)) return [];
+  const known = new Set<string>(AUTO_POST_WORK_MODE_OPTIONS.map((o) => o.value));
+  const out: AutoPostWorkMode[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    let mode = String(item || '').trim().toLowerCase();
+    if (mode === 'on-site') mode = 'onsite';
+    if (!known.has(mode) || seen.has(mode)) continue;
+    seen.add(mode);
+    out.push(mode as AutoPostWorkMode);
+  }
+  return AUTO_POST_WORK_MODE_OPTIONS.map((o) => o.value).filter((m) => seen.has(m));
+}
+
+function workModesParam(modes: AutoPostWorkMode[]): string | undefined {
+  return modes.length ? modes.join(',') : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Stale-poll guard
@@ -174,6 +194,9 @@ const statusRank = (s: string | null | undefined): number =>
 /** Dashboard filter mutations requested by the AI agent (drives the main table). */
 export interface AgentDashboardFilters {
   view?: DashboardView;
+  /** Preferred: remote / hybrid / onsite allow-list. */
+  work_modes?: AutoPostWorkMode[];
+  /** @deprecated Prefer work_modes: ['remote'] */
   remote_only?: boolean;
   min_match_score?: number;
   source?: string;
@@ -189,7 +212,7 @@ export interface AgentDashboardFilters {
 /** Point-in-time dashboard filters the agent can restore via "Discard". */
 export interface AgentDashboardSnapshot {
   view: DashboardView;
-  remoteOnly: boolean;
+  workModes: AutoPostWorkMode[];
   minScore: number;
   sourceFilter: string;
   searchQuery: string;
@@ -229,7 +252,8 @@ interface ScraperState {
   searchQuery: string;
   titleFilter: string;
   companyFilter: string;
-  remoteOnly: boolean;
+  /** Toolbar work-mode allow-list. Empty = any. */
+  workModes: AutoPostWorkMode[];
   /** Minimum match-score filter (0 = any). */
   minScore: number;
   sortField: string;
@@ -310,7 +334,7 @@ interface ScraperState {
   setSearchQuery: (q: string) => void;
   setTitleFilter: (title: string) => void;
   setCompanyFilter: (company: string) => void;
-  setRemoteOnly: (val: boolean) => void;
+  setWorkModes: (modes: AutoPostWorkMode[]) => void;
   setMinScore: (val: number) => void;
   setSort: (field: string) => void;
   /** Apply a batch of filter/view changes from the AI agent, then reload once. */
@@ -581,7 +605,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   searchQuery: '',
   titleFilter: '',
   companyFilter: '',
-  remoteOnly: false,
+  workModes: [],
   minScore: 0,
   sortField: 'created_at',
   sortOrder: 'desc',
@@ -612,7 +636,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         q: s.searchQuery || undefined,
         title: s.titleFilter || undefined,
         company: s.companyFilter || undefined,
-        remote_only: s.remoteOnly || undefined,
+        work_modes: workModesParam(s.workModes),
         min_match_score: s.minScore || undefined,
         sort: s.sortField,
         order: s.sortOrder,
@@ -637,7 +661,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         q: s.searchQuery || undefined,
         title: s.titleFilter || undefined,
         company: s.companyFilter || undefined,
-        remote_only: s.remoteOnly || undefined,
+        work_modes: workModesParam(s.workModes),
         timezone: localTimezone(),
       });
       set({ counts });
@@ -665,7 +689,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         q: s.searchQuery || undefined,
         title: s.titleFilter || undefined,
         company: s.companyFilter || undefined,
-        remote_only: s.remoteOnly || undefined,
+        work_modes: workModesParam(s.workModes),
         min_match_score: s.minScore || undefined,
         sort: s.sortField,
         order: s.sortOrder,
@@ -702,7 +726,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
         q: s.searchQuery || undefined,
         title: s.titleFilter || undefined,
         company: s.companyFilter || undefined,
-        remote_only: s.remoteOnly || undefined,
+        work_modes: workModesParam(s.workModes),
         min_match_score: s.minScore || undefined,
         sort: s.sortField,
         order: s.sortOrder,
@@ -1410,7 +1434,10 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   setSearchQuery: (q) => { set({ searchQuery: q, page: 1 }); get().loadJobs(); },
   setTitleFilter: (title) => { set({ titleFilter: title, page: 1 }); get().loadJobs(); },
   setCompanyFilter: (company) => { set({ companyFilter: company, page: 1 }); get().loadJobs(); },
-  setRemoteOnly: (val) => { set({ remoteOnly: val, page: 1 }); get().loadJobs(); },
+  setWorkModes: (modes) => {
+    set({ workModes: normalizeWorkModes(modes), page: 1 });
+    get().loadJobs();
+  },
   setMinScore: (val) => {
     const clamped = Math.max(0, Math.min(100, Math.round(val)));
     set({ minScore: clamped, page: 1 });
@@ -1427,7 +1454,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
     const s = get();
     return {
       view: s.view,
-      remoteOnly: s.remoteOnly,
+      workModes: s.workModes,
       minScore: s.minScore,
       sourceFilter: s.sourceFilter,
       searchQuery: s.searchQuery,
@@ -1442,7 +1469,7 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   restoreAgentDashboardSnapshot: (snapshot) => {
     set({
       view: snapshot.view,
-      remoteOnly: snapshot.remoteOnly,
+      workModes: normalizeWorkModes(snapshot.workModes),
       minScore: snapshot.minScore,
       sourceFilter: snapshot.sourceFilter,
       searchQuery: snapshot.searchQuery,
@@ -1458,9 +1485,15 @@ export const useScraperStore = create<ScraperState>((set, get) => ({
   applyAgentDashboard: (f) => {
     const s = get();
     const cleared = f.reset === true;
+    let workModes = cleared ? [] : s.workModes;
+    if (f.work_modes !== undefined) {
+      workModes = normalizeWorkModes(f.work_modes);
+    } else if (f.remote_only !== undefined) {
+      workModes = f.remote_only ? (['remote'] as AutoPostWorkMode[]) : [];
+    }
     set({
       view: f.view ?? (cleared ? 'all' : s.view),
-      remoteOnly: f.remote_only ?? (cleared ? false : s.remoteOnly),
+      workModes,
       minScore: f.min_match_score ?? (cleared ? 0 : s.minScore),
       sourceFilter: f.source ?? (cleared ? '' : s.sourceFilter),
       searchQuery: f.query ?? (cleared ? '' : s.searchQuery),

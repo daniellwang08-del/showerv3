@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Copy as CopyIcon, Globe, Plus, Search, X } from 'lucide-react';
+import { ChevronDown, Copy as CopyIcon, Globe, Plus, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -14,6 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import type { DashboardView } from '@/api/scraperApi';
+import { AUTO_POST_WORK_MODE_OPTIONS, type AutoPostWorkMode } from '@/types/autoPostFilters';
 import { extractHttpUrlsFromText } from '@/utils/extractHttpUrls';
 import { submitJobUrls } from './submitJobUrls';
 import { viewTone } from './viewTone';
@@ -37,8 +46,8 @@ interface Props {
   onView: (view: DashboardView) => void;
   search: string;
   onSearch: (q: string) => void;
-  remoteOnly: boolean;
-  onRemoteOnly: (v: boolean) => void;
+  workModes: AutoPostWorkMode[];
+  onWorkModes: (modes: AutoPostWorkMode[]) => void;
   minScore: number;
   onMinScore: (v: number) => void;
   /** Agent-applied title/company filters, shown as removable chips. */
@@ -63,6 +72,22 @@ export function JobsToolbar(props: Props) {
   const matchValue = MATCH_FILTERS.some((f) => f.value === String(props.minScore))
     ? String(props.minScore)
     : '0';
+
+  const workModeActive = props.workModes.length > 0;
+  const workModeLabel = (() => {
+    if (props.workModes.length === 0) return 'Work mode';
+    if (props.workModes.length === 1) {
+      return AUTO_POST_WORK_MODE_OPTIONS.find((o) => o.value === props.workModes[0])?.label ?? 'Work mode';
+    }
+    return `${props.workModes.length} modes`;
+  })();
+
+  const toggleWorkMode = (mode: AutoPostWorkMode, checked: boolean) => {
+    const next = new Set(props.workModes);
+    if (checked) next.add(mode);
+    else next.delete(mode);
+    props.onWorkModes(AUTO_POST_WORK_MODE_OPTIONS.map((o) => o.value).filter((m) => next.has(m)));
+  };
 
   return (
     <div className="space-y-3">
@@ -129,15 +154,38 @@ export function JobsToolbar(props: Props) {
           />
         </InputGroup>
 
-        <Button
-          variant={props.remoteOnly ? 'secondary' : 'outline'}
-          size="sm"
-          aria-pressed={props.remoteOnly}
-          onClick={() => props.onRemoteOnly(!props.remoteOnly)}
-          className={cn(props.remoteOnly && 'border-brand/40 bg-brand-soft text-brand')}
-        >
-          <Globe /> Remote
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant={workModeActive ? 'secondary' : 'outline'}
+                size="sm"
+                aria-label="Filter by work mode"
+                aria-haspopup="menu"
+                className={cn(workModeActive && 'border-brand/40 bg-brand-soft text-brand')}
+              />
+            }
+          >
+            <Globe />
+            {workModeLabel}
+            <ChevronDown className="opacity-70" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-44">
+            {AUTO_POST_WORK_MODE_OPTIONS.map(({ value: mode, label }) => (
+              <DropdownMenuCheckboxItem
+                key={mode}
+                checked={props.workModes.includes(mode)}
+                onCheckedChange={(checked) => toggleWorkMode(mode, checked === true)}
+              >
+                {label}
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={!workModeActive} onClick={() => props.onWorkModes([])}>
+              Any work mode
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Select
           value={matchValue}

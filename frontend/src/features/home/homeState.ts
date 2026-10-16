@@ -54,12 +54,8 @@ export function buildChecklist({ profile, settings, stats }: HomeInputs): Checkl
     {
       id: 'preferences',
       label: 'Tell NAO what you want',
-      hint: 'Countries, work mode, and the roles you are after',
-      done:
-        !!settings &&
-        (settings.country_preferences.length > 0 ||
-          (settings.work_mode_preferences?.length ?? 0) > 0 ||
-          !!settings.job_match_preferences.trim()),
+      hint: 'Countries and the roles you are after',
+      done: !!settings && (settings.country_preferences.length > 0 || !!settings.job_match_preferences.trim()),
     },
     {
       id: 'jobs',

@@ -54,6 +54,9 @@ export async function fetchDashboardJobs(params: {
   q?: string;
   title?: string;
   company?: string;
+  /** Comma-separated remote,hybrid,onsite. Empty = any. */
+  work_modes?: string;
+  /** @deprecated Prefer work_modes=remote */
   remote_only?: boolean;
   min_match_score?: number;
   sort?: string;
@@ -82,6 +85,8 @@ export async function fetchDashboardCounts(params: {
   q?: string;
   title?: string;
   company?: string;
+  work_modes?: string;
+  /** @deprecated Prefer work_modes=remote */
   remote_only?: boolean;
   timezone?: string;
 }): Promise<DashboardCounts> {

@@ -334,12 +334,6 @@ export async function saveCountryPreferences(countries: string[]): Promise<UserS
   return updateUserSettings({ country_preferences: countries });
 }
 
-export async function saveWorkModePreferences(
-  modes: UserSettings['work_mode_preferences'],
-): Promise<UserSettings> {
-  return updateUserSettings({ work_mode_preferences: modes });
-}
-
 export async function saveJobMatchPreferences(
   body: Pick<UserSettingsUpdate, 'job_match_preferences' | 'clear_job_match_preferences'>,
 ) {

@@ -25,8 +25,6 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
   FieldTitle,
 } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -35,12 +33,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Toggle } from '@/components/ui/toggle';
 import { COUNTRY_CODES } from '@/constants/countryCodes';
 import { submitJobUrls } from '@/features/jobs/submitJobUrls';
 import { RESUME_SOURCE_OPTIONS } from '@/features/settings/resumeSourceOptions';
 import { cn } from '@/lib/utils';
-import { AUTO_POST_WORK_MODE_OPTIONS, type AutoPostWorkMode } from '@/types/autoPostFilters';
 import type { ProfileFormData, UserProfile } from '@/types/profile';
 import type { ApplicationResumeSource } from '@/types/settings';
 import { extractHttpUrlsFromText } from '@/utils/extractHttpUrls';
@@ -551,7 +547,6 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
   const settings = useQuery({ queryKey: ['settings'], queryFn: fetchUserSettings });
   const [draft, setDraft] = useState<{
     countries: string[];
-    workModes: AutoPostWorkMode[];
     prefs: string;
     autoScore: boolean;
     resumeSource: ApplicationResumeSource;
@@ -560,7 +555,6 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
   const s = settings.data;
   const loaded = {
     countries: s?.country_preferences ?? [],
-    workModes: s?.work_mode_preferences ?? [],
     prefs: s?.job_match_preferences ?? '',
     autoScore: s?.auto_prepare_match ?? false,
     resumeSource: s?.application_resume_source ?? 'tailored',
@@ -574,22 +568,12 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
     });
   const maxLen = s?.job_match_preferences_max_length || 4000;
 
-  const toggleMode = (mode: AutoPostWorkMode, pressed: boolean) => {
-    const next = new Set(value.workModes);
-    if (pressed) next.add(mode);
-    else next.delete(mode);
-    update({
-      workModes: AUTO_POST_WORK_MODE_OPTIONS.map((o) => o.value).filter((m) => next.has(m)),
-    });
-  };
-
   const save = async () => {
     setSaving(true);
     try {
       const prefs = value.prefs.trim();
       const next = await updateUserSettings({
         country_preferences: value.countries,
-        work_mode_preferences: value.workModes,
         ...(prefs ? { job_match_preferences: prefs } : { clear_job_match_preferences: true }),
         auto_prepare_match: value.autoScore,
         ...(value.autoScore ? {} : { auto_prepare_full: false }),
@@ -638,41 +622,6 @@ function PreferencesStep({ onBack, onDone }: { onBack: () => void; onDone: () =>
                 : 'Leave empty to see jobs from anywhere.'}
             </FieldDescription>
           </Field>
-          <FieldSet className="gap-2">
-            <div className="flex items-center justify-between gap-2">
-              <FieldLegend variant="label" className="mb-0">
-                Work mode
-              </FieldLegend>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                disabled={value.workModes.length === 0}
-                onClick={() => update({ workModes: [] })}
-              >
-                Allow all
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Work mode preferences">
-              {AUTO_POST_WORK_MODE_OPTIONS.map(({ value: mode, label }) => (
-                <Toggle
-                  key={mode}
-                  variant="outline"
-                  size="sm"
-                  pressed={value.workModes.includes(mode)}
-                  onPressedChange={(pressed) => toggleMode(mode, pressed)}
-                  className="rounded-full px-3 aria-pressed:border-brand aria-pressed:bg-brand-soft aria-pressed:text-brand"
-                >
-                  {label}
-                </Toggle>
-              ))}
-            </div>
-            <FieldDescription>
-              {value.workModes.length === 0
-                ? 'Any work mode (remote, hybrid, or onsite)'
-                : `Only: ${value.workModes.join(', ')}`}
-            </FieldDescription>
-          </FieldSet>
           <Field>
             <FieldLabel htmlFor="onb-prefs">Describe your ideal role</FieldLabel>
             <Textarea

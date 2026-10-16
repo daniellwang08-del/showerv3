@@ -52,3 +52,12 @@ def test_location_signals_resolve_when_work_mode_missing():
     assert job_matches_work_mode_preferences(
         _job(work_mode=None, location="Austin, TX (Hybrid)"), allowed
     ) is False
+
+
+def test_parse_work_modes_query_accepts_csv_and_remote_only():
+    from app.api.routes import _parse_work_modes_query
+
+    assert _parse_work_modes_query("remote,hybrid") == ["remote", "hybrid"]
+    assert _parse_work_modes_query(None, remote_only=True) == ["remote"]
+    assert _parse_work_modes_query("remote", remote_only=True) == ["remote"]
+    assert _parse_work_modes_query(None, remote_only=False) == []
