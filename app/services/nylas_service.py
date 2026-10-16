@@ -7,6 +7,7 @@ ever stored in our database.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -28,7 +29,10 @@ logger = get_logger(__name__)
 _OAUTH_STATE_PURPOSE = "nylas_mail_oauth"
 _OAUTH_STATE_TTL = timedelta(minutes=15)
 _MESSAGE_FIELDS = "id,thread_id,subject,from,to,date,snippet"
-MAX_PAGE_SIZE = 200
+# Smaller pages keep each provider query under the Nylas gateway timeout.
+MAX_PAGE_SIZE = 100
+MAX_ATTEMPTS = 4
+RETRY_BASE_DELAY = 1.0
 
 STATUS_CONNECTED = "connected"
 STATUS_NEEDS_REAUTH = "needs_reauth"
@@ -138,12 +142,34 @@ def build_authorize_url(*, user_id: str, redirect_uri: str, login_hint: str | No
     return f"{_api_uri()}/v3/connect/auth?{urlencode(params)}"
 
 
+def _retry_delay(resp: httpx.Response | None, attempt: int) -> float:
+    if resp is not None and resp.status_code == 429:
+        try:
+            return min(float(resp.headers.get("Retry-After", "")), 20.0)
+        except ValueError:
+            pass
+    return RETRY_BASE_DELAY * (3**attempt)
+
+
 async def _request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.request(method, f"{_api_uri()}{path}", headers=_auth_headers(), **kwargs)
-    except httpx.HTTPError as e:
-        raise MailError("Could not reach the mail service. Try again shortly.", code="network", status_code=502) from e
+    # Reads are retried: providers behind Nylas time out (504) or throttle now and then.
+    attempts = MAX_ATTEMPTS if method == "GET" else 1
+    resp: httpx.Response | None = None
+    for attempt in range(attempts):
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                resp = await client.request(method, f"{_api_uri()}{path}", headers=_auth_headers(), **kwargs)
+        except httpx.HTTPError as e:
+            if attempt + 1 < attempts:
+                await asyncio.sleep(_retry_delay(None, attempt))
+                continue
+            raise MailError("Could not reach the mail service. Try again shortly.", code="network", status_code=502) from e
+        if (resp.status_code == 429 or resp.status_code >= 500) and attempt + 1 < attempts:
+            logger.info("nylas_request_retry", path=path.split("?")[0], status=resp.status_code, attempt=attempt + 1)
+            await asyncio.sleep(_retry_delay(resp, attempt))
+            continue
+        break
+    assert resp is not None
     if resp.status_code in (401, 403, 404) and "/grants/" in path:
         raise MailAuthError("Mail access expired or was revoked. Connect your email again.")
     if resp.status_code == 429:

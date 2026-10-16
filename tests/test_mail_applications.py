@@ -175,6 +175,52 @@ class TestPrimaryEmail:
         assert svc.primary_email_event([_event("e3", "info", None)], []) is None
 
 
+class _FakeClient:
+    def __init__(self, responses, calls):
+        self._responses = responses
+        self._calls = calls
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def request(self, method, url, **kwargs):
+        self._calls.append(method)
+        return self._responses.pop(0)
+
+
+def _patch_client(monkeypatch, responses):
+    import httpx
+
+    from app.services import nylas_service
+
+    calls: list[str] = []
+    monkeypatch.setattr(nylas_service, "RETRY_BASE_DELAY", 0.0)
+    monkeypatch.setattr(nylas_service.httpx, "AsyncClient", lambda **_: _FakeClient(responses, calls))
+    return nylas_service, httpx, calls
+
+
+def test_reads_retry_gateway_timeouts(monkeypatch):
+    import httpx
+
+    responses = [httpx.Response(504, text="timeout"), httpx.Response(200, json={"data": [{"id": "m1"}]})]
+    nylas, _, calls = _patch_client(monkeypatch, responses)
+    data = asyncio.run(nylas._request("GET", "/v3/grants/g1/messages"))
+    assert data == {"data": [{"id": "m1"}]}
+    assert calls == ["GET", "GET"]
+
+
+def test_writes_are_not_retried(monkeypatch):
+    import httpx
+
+    nylas, _, calls = _patch_client(monkeypatch, [httpx.Response(503), httpx.Response(200, json={})])
+    with pytest.raises(nylas.MailError):
+        asyncio.run(nylas._request("POST", "/v3/grants/g1/thing"))
+    assert calls == ["POST"]
+
+
 def test_event_payload_carries_email_link():
     conn = SimpleNamespace(provider="google", email="me@gmail.com")
     payload = svc.event_public(_event("e1", "info", "abc", datetime(2026, 10, 1)), conn)
